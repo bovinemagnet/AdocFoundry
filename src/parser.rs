@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use adoc_core::{Diagnostic, DiagnosticSeverity, Document, DocumentTitle, Section, SourceRange};
+use adoc_core::{
+    Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle, Section, SourceRange,
+};
 
 use crate::line_parser::{
     content, find_anchors, find_images, find_includes, find_references, is_verbatim_delimiter,
@@ -70,6 +72,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         for anchor in anchors {
             if let Some(first_range) = anchor_offsets.get(&anchor.id) {
                 diagnostics.push(Diagnostic {
+                    code: DiagnosticCode::DuplicateAnchor,
                     severity: DiagnosticSeverity::Warning,
                     message: format!(
                         "duplicate anchor `{}`; first declared at byte {}",
