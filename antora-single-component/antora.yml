@@ -1,0 +1,6 @@
+name: demo
+title: Demo Documentation
+version: latest
+
+nav:
+  - modules/ROOT/nav.adoc

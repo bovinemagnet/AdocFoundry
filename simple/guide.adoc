@@ -1,0 +1,11 @@
+= Product Guide
+:toc: left
+
+== Introduction
+
+AsciiDoc fixture content.
+
+[source,json]
+----
+{"ready": true}
+----
