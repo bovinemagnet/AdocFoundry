@@ -1,0 +1,15 @@
+[package]
+name = "adoc-ls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-antora = { path = "../adoc-antora" }
+adoc-core = { path = "../adoc-core" }
+adoc-index = { path = "../adoc-index" }
+adoc-parser = { path = "../adoc-parser" }
+
+[lints]
+workspace = true
