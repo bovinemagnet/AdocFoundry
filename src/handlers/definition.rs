@@ -1,12 +1,34 @@
 use std::path::{Path, PathBuf};
 
-use adoc_core::{Reference, ReferenceKind, SourceRange};
-use adoc_index::WorkspaceIndex;
+use adoc_core::{Document, IncludeDirective, Reference, ReferenceKind, SourceRange};
+use adoc_index::{resolve_include_target, WorkspaceIndex};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DefinitionTarget {
     pub path: PathBuf,
     pub range: SourceRange,
+}
+
+#[must_use]
+pub fn definition_at_offset(
+    index: &WorkspaceIndex,
+    current_path: &Path,
+    document: &Document,
+    offset: usize,
+) -> Option<DefinitionTarget> {
+    if let Some(reference) = document
+        .references
+        .iter()
+        .find(|reference| contains_offset(reference.range, offset))
+    {
+        return resolve_reference(index, current_path, reference);
+    }
+
+    document
+        .includes
+        .iter()
+        .find(|include| contains_offset(include.range, offset))
+        .and_then(|include| resolve_include(index, current_path, document, include))
 }
 
 #[must_use]
@@ -56,6 +78,34 @@ pub fn resolve_reference(
     })
 }
 
+#[must_use]
+pub fn resolve_include(
+    index: &WorkspaceIndex,
+    current_path: &Path,
+    document: &Document,
+    include: &IncludeDirective,
+) -> Option<DefinitionTarget> {
+    let path = resolve_include_target(document, current_path, &include.target)?;
+    if let Some(file) = index.file(&path) {
+        return Some(DefinitionTarget {
+            path: file.path.clone(),
+            range: file
+                .document
+                .title
+                .as_ref()
+                .map_or(SourceRange::new(0, 0), |title| title.range),
+        });
+    }
+    path.exists().then(|| DefinitionTarget {
+        path,
+        range: SourceRange::new(0, 0),
+    })
+}
+
+fn contains_offset(range: SourceRange, offset: usize) -> bool {
+    range.start <= offset && offset < range.end
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -82,5 +132,19 @@ mod tests {
 
         assert_eq!(target.path, Path::new("docs/other.adoc"));
         assert!(!target.range.is_empty());
+    }
+
+    #[test]
+    fn resolves_include_at_source_offset() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/includes");
+        let path = root.join("index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(&[root]).unwrap();
+        let document = &index.file(&path).unwrap().document;
+        let offset = document.text.find("partials/intro").unwrap();
+
+        let target = super::definition_at_offset(&index, &path, document, offset).unwrap();
+
+        assert!(target.path.ends_with("partials/intro.adoc"));
     }
 }

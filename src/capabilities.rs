@@ -1,17 +1,23 @@
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ServerCapabilities {
-    pub full_document_sync: bool,
-    pub document_symbols: bool,
-    pub definition: bool,
-    pub diagnostics: bool,
-}
+use lsp_types::{
+    OneOf, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions,
+};
 
 #[must_use]
-pub const fn server_capabilities() -> ServerCapabilities {
+pub(crate) fn server_capabilities(
+    encoding: crate::position::PositionEncoding,
+) -> ServerCapabilities {
     ServerCapabilities {
-        full_document_sync: true,
-        document_symbols: true,
-        definition: true,
-        diagnostics: true,
+        position_encoding: Some(encoding.lsp_kind()),
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::INCREMENTAL),
+                ..TextDocumentSyncOptions::default()
+            },
+        )),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        definition_provider: Some(OneOf::Left(true)),
+        ..ServerCapabilities::default()
     }
 }

@@ -1,23 +1,56 @@
-use std::fmt;
+use std::{fmt, io};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum ServerError {
-    UnsupportedTransport,
     UnknownArgument(String),
+    Protocol(lsp_server::ProtocolError),
+    Json(serde_json::Error),
+    Io(io::Error),
+    ChannelClosed,
+    InvalidChange(String),
 }
 
 impl fmt::Display for ServerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedTransport => formatter.write_str(
-                "stdio transport is not implemented yet; use --version to verify the binary",
-            ),
             Self::UnknownArgument(argument) => write!(formatter, "unknown argument `{argument}`"),
+            Self::Protocol(error) => error.fmt(formatter),
+            Self::Json(error) => error.fmt(formatter),
+            Self::Io(error) => error.fmt(formatter),
+            Self::ChannelClosed => formatter.write_str("LSP connection closed unexpectedly"),
+            Self::InvalidChange(message) => write!(formatter, "invalid document change: {message}"),
         }
     }
 }
 
-impl std::error::Error for ServerError {}
+impl std::error::Error for ServerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Protocol(error) => Some(error),
+            Self::Json(error) => Some(error),
+            Self::Io(error) => Some(error),
+            Self::UnknownArgument(_) | Self::ChannelClosed | Self::InvalidChange(_) => None,
+        }
+    }
+}
+
+impl From<lsp_server::ProtocolError> for ServerError {
+    fn from(error: lsp_server::ProtocolError) -> Self {
+        Self::Protocol(error)
+    }
+}
+
+impl From<serde_json::Error> for ServerError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
+    }
+}
+
+impl From<io::Error> for ServerError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
 
 pub fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), ServerError> {
     let arguments = arguments.into_iter().collect::<Vec<_>>();
@@ -34,9 +67,19 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), ServerErro
             println!("adoc-ls {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        [arg] if arg == "--stdio" => Err(ServerError::UnsupportedTransport),
+        [arg] if arg == "--stdio" => run_stdio(),
         [argument, ..] => Err(ServerError::UnknownArgument(argument.clone())),
     }
+}
+
+fn run_stdio() -> Result<(), ServerError> {
+    let (connection, io_threads) = lsp_server::Connection::stdio();
+    let server_result = crate::protocol::run_connection(&connection);
+    drop(connection);
+    let io_result = io_threads.join();
+    server_result?;
+    io_result?;
+    Ok(())
 }
 
 fn print_help() {
@@ -51,10 +94,10 @@ mod tests {
     use super::{run, ServerError};
 
     #[test]
-    fn rejects_stdio_until_protocol_transport_is_connected() {
-        assert_eq!(
-            run(["--stdio".to_owned()]),
-            Err(ServerError::UnsupportedTransport)
-        );
+    fn rejects_unknown_arguments() {
+        assert!(matches!(
+            run(["--unknown".to_owned()]),
+            Err(ServerError::UnknownArgument(argument)) if argument == "--unknown"
+        ));
     }
 }

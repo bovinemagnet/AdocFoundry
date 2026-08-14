@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -53,6 +54,12 @@ pub struct ServerState {
 }
 
 impl ServerState {
+    pub fn index_workspace(&mut self, roots: Vec<PathBuf>) -> io::Result<usize> {
+        let indexed = self.index.index_roots(&roots)?;
+        self.workspace_roots = roots;
+        Ok(indexed)
+    }
+
     pub fn open(&mut self, uri: &str, text: &str, version: i32) -> &OpenDocument {
         self.update(uri, text, version)
     }
@@ -61,15 +68,21 @@ impl ServerState {
         self.update(uri, text, version)
     }
 
-    pub fn close(&mut self, uri: &str) -> Option<OpenDocument> {
+    pub fn close(&mut self, uri: &str) -> io::Result<Option<OpenDocument>> {
         let closed = self.documents.remove(uri);
-        self.index.remove(&uri_to_path(uri));
-        closed
+        let path = document_path(uri);
+        if path.is_file() {
+            let text = fs::read_to_string(&path)?;
+            self.index.index_source(&path, &text);
+        } else {
+            self.index.remove(&path);
+        }
+        Ok(closed)
     }
 
     fn update(&mut self, uri: &str, text: &str, version: i32) -> &OpenDocument {
         let document = parse(uri, text).document;
-        self.index.replace(uri_to_path(uri), document.clone());
+        self.index.replace(document_path(uri), document.clone());
         self.documents
             .insert(uri.to_owned(), OpenDocument { version, document });
         self.documents
@@ -78,8 +91,12 @@ impl ServerState {
     }
 }
 
-fn uri_to_path(uri: &str) -> PathBuf {
-    Path::new(uri.strip_prefix("file://").unwrap_or(uri)).to_path_buf()
+#[must_use]
+pub fn document_path(uri: &str) -> PathBuf {
+    url::Url::parse(uri)
+        .ok()
+        .and_then(|uri| uri.to_file_path().ok())
+        .unwrap_or_else(|| Path::new(uri).to_path_buf())
 }
 
 #[cfg(test)]
@@ -104,8 +121,16 @@ mod tests {
             .resolve_anchor(std::path::Path::new("/docs/guide.adoc"), "old")
             .is_none());
 
-        state.close(uri);
+        state.close(uri).unwrap();
         assert!(state.documents.is_empty());
         assert_eq!(state.index.files().count(), 0);
+    }
+
+    #[test]
+    fn converts_percent_encoded_file_uris() {
+        assert_eq!(
+            super::document_path("file:///docs/My%20Guide.adoc"),
+            std::path::Path::new("/docs/My Guide.adoc")
+        );
     }
 }
