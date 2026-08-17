@@ -1,9 +1,30 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path, PathBuf},
+};
 
-use crate::{AntoraCoordinate, AntoraResource};
+use crate::{
+    AntoraContext, AntoraCoordinate, AntoraResolver, AntoraResource, AntoraResourceId,
+    ComponentDescriptor, Module, ResolutionError, ResolutionResult, ResourceFamily,
+};
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ComponentKey {
+    name: String,
+    version: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ModuleKey {
+    component: String,
+    version: Option<String>,
+    name: String,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct AntoraCatalog {
+    components: BTreeMap<ComponentKey, ComponentDescriptor>,
+    modules: BTreeMap<ModuleKey, Module>,
     resources: BTreeMap<AntoraCoordinate, AntoraResource>,
 }
 
@@ -13,8 +34,49 @@ impl AntoraCatalog {
         Self::default()
     }
 
+    pub fn insert_component(
+        &mut self,
+        component: ComponentDescriptor,
+    ) -> Option<ComponentDescriptor> {
+        self.components.insert(
+            ComponentKey {
+                name: component.name.clone(),
+                version: component.version.clone(),
+            },
+            component,
+        )
+    }
+
+    pub fn insert_module(&mut self, module: Module) -> Option<Module> {
+        self.modules.insert(
+            ModuleKey {
+                component: module.component.clone(),
+                version: module.version.clone(),
+                name: module.name.clone(),
+            },
+            module,
+        )
+    }
+
     pub fn insert(&mut self, resource: AntoraResource) -> Option<AntoraResource> {
         self.resources.insert(resource.coordinate.clone(), resource)
+    }
+
+    #[must_use]
+    pub fn component(&self, name: &str, version: Option<&str>) -> Option<&ComponentDescriptor> {
+        self.components.get(&ComponentKey {
+            name: name.to_owned(),
+            version: version.map(str::to_owned),
+        })
+    }
+
+    #[must_use]
+    pub fn module(&self, component: &str, version: Option<&str>, name: &str) -> Option<&Module> {
+        self.modules.get(&ModuleKey {
+            component: component.to_owned(),
+            version: version.map(str::to_owned),
+            name: name.to_owned(),
+        })
     }
 
     #[must_use]
@@ -22,7 +84,35 @@ impl AntoraCatalog {
         self.resources.get(coordinate)
     }
 
+    pub fn components(&self) -> impl Iterator<Item = &ComponentDescriptor> {
+        self.components.values()
+    }
+
+    pub fn modules(&self) -> impl Iterator<Item = &Module> {
+        self.modules.values()
+    }
+
+    pub fn resources(&self) -> impl Iterator<Item = &AntoraResource> {
+        self.resources.values()
+    }
+
+    #[must_use]
+    pub fn context_for_path(&self, source_path: &Path) -> Option<AntoraContext> {
+        let source_path = normalize_path(source_path);
+        let resource = self
+            .resources
+            .values()
+            .find(|resource| resource.source_path == source_path)?;
+        Some(AntoraContext {
+            component: resource.coordinate.component.clone(),
+            version: resource.coordinate.version.clone(),
+            module: resource.coordinate.module.clone(),
+            family: resource.coordinate.family,
+        })
+    }
+
     pub fn remove_source(&mut self, source_path: &Path) {
+        let source_path = normalize_path(source_path);
         self.resources
             .retain(|_, resource| resource.source_path != source_path);
     }
@@ -38,19 +128,84 @@ impl AntoraCatalog {
     }
 }
 
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
+}
+
+impl AntoraResolver for AntoraCatalog {
+    fn resolve<'a>(
+        &'a self,
+        id: &AntoraResourceId,
+        context: &AntoraContext,
+    ) -> ResolutionResult<'a> {
+        let component = id.component.as_deref().unwrap_or(&context.component);
+        let version = id.version.clone().or_else(|| context.version.clone());
+        if self.component(component, version.as_deref()).is_none() {
+            return Err(ResolutionError::UnknownComponent {
+                component: component.to_owned(),
+                version,
+            });
+        }
+
+        let module = id.module.as_deref().unwrap_or(&context.module);
+        if self.module(component, version.as_deref(), module).is_none() {
+            return Err(ResolutionError::UnknownModule {
+                component: component.to_owned(),
+                version,
+                module: module.to_owned(),
+            });
+        }
+
+        let family = id.family.unwrap_or(ResourceFamily::Page);
+        let coordinate = AntoraCoordinate {
+            component: component.to_owned(),
+            version: version.clone(),
+            module: module.to_owned(),
+            family,
+            relative_path: id.path.as_str().into(),
+        };
+        self.resources
+            .get(&coordinate)
+            .ok_or_else(|| ResolutionError::UnknownResource {
+                component: component.to_owned(),
+                version,
+                module: module.to_owned(),
+                family,
+                path: coordinate.relative_path,
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{collections::BTreeMap, path::PathBuf};
 
-    use crate::{AntoraCoordinate, AntoraResource, ResourceFamily};
+    use crate::{
+        AntoraContext, AntoraCoordinate, AntoraResolver, AntoraResource, ComponentDescriptor,
+        Module, ResourceFamily,
+    };
 
     use super::AntoraCatalog;
 
     #[test]
-    fn catalogs_resources_by_semantic_coordinate() {
+    fn catalogs_and_resolves_resources_by_semantic_coordinate() {
         let coordinate = AntoraCoordinate {
             component: "demo".to_owned(),
-            version: "latest".to_owned(),
+            version: Some("latest".to_owned()),
             module: "ROOT".to_owned(),
             family: ResourceFamily::Page,
             relative_path: PathBuf::from("index.adoc"),
@@ -60,9 +215,41 @@ mod tests {
             source_path: PathBuf::from("modules/ROOT/pages/index.adoc"),
         };
         let mut catalog = AntoraCatalog::new();
-
+        catalog.insert_component(ComponentDescriptor {
+            root: PathBuf::from("."),
+            name: "demo".to_owned(),
+            title: None,
+            version: Some("latest".to_owned()),
+            display_version: None,
+            start_page: None,
+            nav: Vec::new(),
+            asciidoc_attributes: BTreeMap::new(),
+        });
+        catalog.insert_module(Module {
+            component: "demo".to_owned(),
+            version: Some("latest".to_owned()),
+            name: "ROOT".to_owned(),
+            root: PathBuf::from("modules/ROOT"),
+            nav: None,
+        });
         catalog.insert(resource);
 
         assert_eq!(catalog.resolve(&coordinate).unwrap().coordinate, coordinate);
+        let id = crate::parse_resource_id("index.adoc").unwrap();
+        let resolved = AntoraResolver::resolve(
+            &catalog,
+            &id,
+            &AntoraContext {
+                component: "demo".to_owned(),
+                version: Some("latest".to_owned()),
+                module: "ROOT".to_owned(),
+                family: ResourceFamily::Page,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.source_path,
+            PathBuf::from("modules/ROOT/pages/index.adoc")
+        );
     }
 }

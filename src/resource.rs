@@ -10,6 +10,14 @@ pub enum ResourceFamily {
 }
 
 impl ResourceFamily {
+    pub const ALL: [Self; 5] = [
+        Self::Page,
+        Self::Partial,
+        Self::Example,
+        Self::Image,
+        Self::Attachment,
+    ];
+
     #[must_use]
     pub const fn directory(self) -> &'static str {
         match self {
@@ -53,7 +61,7 @@ impl FromStr for ResourceFamily {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct AntoraCoordinate {
     pub component: String,
-    pub version: String,
+    pub version: Option<String>,
     pub module: String,
     pub family: ResourceFamily,
     pub relative_path: PathBuf,
