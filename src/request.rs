@@ -1,18 +1,66 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RenderSafeMode {
+    Secure,
+    #[default]
+    Safe,
+    Server,
+    Unsafe,
+}
+
+impl RenderSafeMode {
+    #[must_use]
+    pub const fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::Secure => "secure",
+            Self::Safe => "safe",
+            Self::Server => "server",
+            Self::Unsafe => "unsafe",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenderRequest {
-    pub source: String,
-    pub source_path: Option<PathBuf>,
+    pub source_file: PathBuf,
+    pub source_text: Option<String>,
     pub attributes: BTreeMap<String, String>,
+    pub safe_mode: RenderSafeMode,
+    pub stylesheet: Option<PathBuf>,
 }
 
 impl RenderRequest {
     #[must_use]
-    pub fn new(source: impl Into<String>) -> Self {
+    pub fn from_file(source_file: impl Into<PathBuf>) -> Self {
         Self {
-            source: source.into(),
-            ..Self::default()
+            source_file: source_file.into(),
+            source_text: None,
+            attributes: BTreeMap::new(),
+            safe_mode: RenderSafeMode::default(),
+            stylesheet: None,
         }
+    }
+
+    #[must_use]
+    pub fn from_source(source_file: impl Into<PathBuf>, source_text: impl Into<String>) -> Self {
+        Self {
+            source_text: Some(source_text.into()),
+            ..Self::from_file(source_file)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RenderRequest, RenderSafeMode};
+
+    #[test]
+    fn defaults_to_safe_file_rendering() {
+        let request = RenderRequest::from_file("guide.adoc");
+
+        assert_eq!(request.source_file, std::path::Path::new("guide.adoc"));
+        assert_eq!(request.safe_mode, RenderSafeMode::Safe);
+        assert!(request.source_text.is_none());
     }
 }

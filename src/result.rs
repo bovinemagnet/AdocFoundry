@@ -19,7 +19,7 @@ impl fmt::Display for RenderError {
             Self::ExecutableNotFound(executable) => {
                 write!(
                     formatter,
-                    "AsciiDoc renderer executable `{executable}` was not found"
+                    "AsciiDoc preview requires Asciidoctor; executable `{executable}` was not found"
                 )
             }
             Self::ProcessFailed { status, stderr } => {
