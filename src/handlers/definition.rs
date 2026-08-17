@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use adoc_antora::{parse_resource_id, AntoraCatalog, AntoraResolver, AntoraResource};
 use adoc_core::{Document, IncludeDirective, Reference, ReferenceKind, SourceRange};
 use adoc_index::{resolve_include_target, WorkspaceIndex};
 
@@ -12,6 +13,7 @@ pub struct DefinitionTarget {
 #[must_use]
 pub fn definition_at_offset(
     index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
     current_path: &Path,
     document: &Document,
     offset: usize,
@@ -21,14 +23,77 @@ pub fn definition_at_offset(
         .iter()
         .find(|reference| contains_offset(reference.range, offset))
     {
+        if let Some(target) = resolve_antora_reference(index, antora, current_path, reference) {
+            return Some(target);
+        }
         return resolve_reference(index, current_path, reference);
     }
 
-    document
+    let include = document
         .includes
         .iter()
-        .find(|include| contains_offset(include.range, offset))
-        .and_then(|include| resolve_include(index, current_path, document, include))
+        .find(|include| contains_offset(include.range, offset))?;
+    resolve_antora_include(index, antora, current_path, include)
+        .or_else(|| resolve_include(index, current_path, document, include))
+}
+
+fn resolve_antora_reference(
+    index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
+    current_path: &Path,
+    reference: &Reference,
+) -> Option<DefinitionTarget> {
+    if reference.kind != ReferenceKind::Xref {
+        return None;
+    }
+    let context = antora.context_for_path(current_path)?;
+    let (target, anchor) = reference
+        .target
+        .split_once('#')
+        .map_or((reference.target.as_str(), None), |(target, anchor)| {
+            (target, Some(anchor))
+        });
+    let id = parse_resource_id(target).ok()?;
+    let resource = AntoraResolver::resolve(antora, &id, &context).ok()?;
+    resource_definition(index, resource, anchor)
+}
+
+fn resolve_antora_include(
+    index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
+    current_path: &Path,
+    include: &IncludeDirective,
+) -> Option<DefinitionTarget> {
+    if !include.target.contains('$') {
+        return None;
+    }
+    let context = antora.context_for_path(current_path)?;
+    let id = parse_resource_id(&include.target).ok()?;
+    let resource = AntoraResolver::resolve(antora, &id, &context).ok()?;
+    resource_definition(index, resource, None)
+}
+
+fn resource_definition(
+    index: &WorkspaceIndex,
+    resource: &AntoraResource,
+    anchor: Option<&str>,
+) -> Option<DefinitionTarget> {
+    if let Some(anchor) = anchor.filter(|anchor| !anchor.is_empty()) {
+        let location = index.resolve_anchor(&resource.source_path, anchor)?;
+        return Some(DefinitionTarget {
+            path: location.path.clone(),
+            range: location.range,
+        });
+    }
+
+    let range = index
+        .file(&resource.source_path)
+        .and_then(|file| file.document.title.as_ref())
+        .map_or(SourceRange::new(0, 0), |title| title.range);
+    Some(DefinitionTarget {
+        path: resource.source_path.clone(),
+        range,
+    })
 }
 
 #[must_use]
@@ -110,6 +175,7 @@ fn contains_offset(range: SourceRange, offset: usize) -> bool {
 mod tests {
     use std::path::Path;
 
+    use adoc_antora::{discover_antora_workspace, AntoraCatalog};
     use adoc_index::WorkspaceIndex;
 
     use super::resolve_reference;
@@ -143,8 +209,40 @@ mod tests {
         let document = &index.file(&path).unwrap().document;
         let offset = document.text.find("partials/intro").unwrap();
 
-        let target = super::definition_at_offset(&index, &path, document, offset).unwrap();
+        let target =
+            super::definition_at_offset(&index, &AntoraCatalog::default(), &path, document, offset)
+                .unwrap();
 
         assert!(target.path.ends_with("partials/intro.adoc"));
+    }
+
+    #[test]
+    fn resolves_antora_xrefs_and_family_qualified_includes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+
+        let index_path = root.join("modules/ROOT/pages/index.adoc");
+        let document = &index.file(&index_path).unwrap().document;
+        let offset = document.text.find("security:").unwrap();
+        let target =
+            super::definition_at_offset(&index, &antora, &index_path, document, offset).unwrap();
+        assert!(target
+            .path
+            .ends_with("modules/security/pages/authentication.adoc"));
+
+        let authentication_path = root.join("modules/security/pages/authentication.adoc");
+        let document = &index.file(&authentication_path).unwrap().document;
+        let offset = document.text.find("partial$").unwrap();
+        let target =
+            super::definition_at_offset(&index, &antora, &authentication_path, document, offset)
+                .unwrap();
+        assert!(target
+            .path
+            .ends_with("modules/security/partials/token-note.adoc"));
     }
 }

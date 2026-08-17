@@ -5,7 +5,6 @@ use std::{
 };
 
 use adoc_core::DiagnosticSeverity as CoreDiagnosticSeverity;
-use adoc_index::workspace_diagnostics;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::{
     notification::{
@@ -22,7 +21,10 @@ use lsp_types::{
 
 use crate::{
     capabilities::server_capabilities,
-    handlers::{definition::definition_at_offset, document_symbols::document_symbols},
+    handlers::{
+        definition::definition_at_offset, diagnostics::diagnostics,
+        document_symbols::document_symbols,
+    },
     position::PositionEncoding,
     server::ServerError,
     state::{document_path, ServerState},
@@ -192,7 +194,7 @@ impl ProtocolServer {
         let uri_text = uri.as_str();
         let open_document = self.state.documents.get(uri_text)?;
         let path = document_path(uri_text);
-        let diagnostics = workspace_diagnostics(&self.state.index, &path)
+        let diagnostics = diagnostics(&self.state.index, &self.state.antora, &path)
             .into_iter()
             .filter_map(|diagnostic| {
                 Some(Diagnostic {
@@ -263,7 +265,13 @@ impl ProtocolServer {
             params.text_document_position_params.position,
         )?;
         let current_path = document_path(document_uri);
-        let target = definition_at_offset(&self.state.index, &current_path, document, offset)?;
+        let target = definition_at_offset(
+            &self.state.index,
+            &self.state.antora,
+            &current_path,
+            document,
+            offset,
+        )?;
         let target_text = self
             .state
             .index
@@ -336,17 +344,20 @@ fn path_to_uri(path: &Path) -> Option<Uri> {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
+    use std::{fs, path::Path, str::FromStr, thread};
 
     use lsp_server::{Connection, Message, Notification, Request, RequestId};
     use lsp_types::{
         notification::{
             DidOpenTextDocument, Initialized, Notification as LspNotification, PublishDiagnostics,
         },
-        request::{DocumentSymbolRequest, Initialize, Request as LspRequest, Shutdown},
-        ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolParams, InitializeParams,
-        InitializedParams, PartialResultParams, Position, Range, TextDocumentContentChangeEvent,
-        TextDocumentIdentifier, TextDocumentItem, Uri, WorkDoneProgressParams,
+        request::{
+            DocumentSymbolRequest, GotoDefinition, Initialize, Request as LspRequest, Shutdown,
+        },
+        ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams,
+        GotoDefinitionResponse, InitializeParams, InitializedParams, Location, PartialResultParams,
+        Position, Range, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+        TextDocumentPositionParams, Uri, WorkDoneProgressParams, WorkspaceFolder,
     };
 
     use crate::position::PositionEncoding;
@@ -457,5 +468,151 @@ mod tests {
             .unwrap();
 
         server.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn serves_filesystem_and_antora_definitions() {
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+        let (server_connection, client_connection) = Connection::memory();
+        let server = thread::spawn(move || run_connection(&server_connection));
+
+        client_connection
+            .sender
+            .send(Message::Request(Request::new(
+                RequestId::from(1),
+                Initialize::METHOD.to_owned(),
+                InitializeParams {
+                    capabilities: ClientCapabilities::default(),
+                    workspace_folders: Some(vec![WorkspaceFolder {
+                        uri: file_uri(&fixtures),
+                        name: "fixtures".to_owned(),
+                    }]),
+                    ..InitializeParams::default()
+                },
+            )))
+            .unwrap();
+        assert!(matches!(
+            client_connection.receiver.recv().unwrap(),
+            Message::Response(_)
+        ));
+        client_connection
+            .sender
+            .send(Message::Notification(Notification::new(
+                Initialized::METHOD.to_owned(),
+                InitializedParams {},
+            )))
+            .unwrap();
+
+        let xref_path = fixtures.join("xrefs/index.adoc");
+        let xref_uri = open_fixture(&client_connection, &xref_path);
+        let location = request_definition(&client_connection, 2, xref_uri, Position::new(2, 10));
+        assert!(uri_path(&location.uri).ends_with("xrefs/other.adoc"));
+        assert_eq!(location.range.start.line, 2);
+
+        let antora_page = fixtures.join("antora-single-component/modules/ROOT/pages/index.adoc");
+        let antora_uri = open_fixture(&client_connection, &antora_page);
+        let location = request_definition(&client_connection, 3, antora_uri, Position::new(2, 8));
+        assert!(uri_path(&location.uri)
+            .ends_with("antora-single-component/modules/security/pages/authentication.adoc"));
+
+        let authentication =
+            fixtures.join("antora-single-component/modules/security/pages/authentication.adoc");
+        let authentication_uri = open_fixture(&client_connection, &authentication);
+        let location = request_definition(
+            &client_connection,
+            4,
+            authentication_uri,
+            Position::new(2, 12),
+        );
+        assert!(uri_path(&location.uri)
+            .ends_with("antora-single-component/modules/security/partials/token-note.adoc"));
+
+        client_connection
+            .sender
+            .send(Message::Request(Request::new(
+                RequestId::from(5),
+                Shutdown::METHOD.to_owned(),
+                (),
+            )))
+            .unwrap();
+        assert!(matches!(
+            client_connection.receiver.recv().unwrap(),
+            Message::Response(_)
+        ));
+        client_connection
+            .sender
+            .send(Message::Notification(Notification::new(
+                "exit".to_owned(),
+                (),
+            )))
+            .unwrap();
+        server.join().unwrap().unwrap();
+    }
+
+    fn open_fixture(connection: &Connection, path: &Path) -> Uri {
+        let uri = file_uri(path);
+        connection
+            .sender
+            .send(Message::Notification(Notification::new(
+                DidOpenTextDocument::METHOD.to_owned(),
+                DidOpenTextDocumentParams {
+                    text_document: TextDocumentItem {
+                        uri: uri.clone(),
+                        language_id: "asciidoc".to_owned(),
+                        version: 1,
+                        text: fs::read_to_string(path).unwrap(),
+                    },
+                },
+            )))
+            .unwrap();
+        assert!(matches!(
+            connection.receiver.recv().unwrap(),
+            Message::Notification(ref notification)
+                if notification.method == PublishDiagnostics::METHOD
+        ));
+        uri
+    }
+
+    fn request_definition(
+        connection: &Connection,
+        id: i32,
+        uri: Uri,
+        position: Position,
+    ) -> Location {
+        connection
+            .sender
+            .send(Message::Request(Request::new(
+                RequestId::from(id),
+                GotoDefinition::METHOD.to_owned(),
+                GotoDefinitionParams {
+                    text_document_position_params: TextDocumentPositionParams::new(
+                        TextDocumentIdentifier { uri },
+                        position,
+                    ),
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                },
+            )))
+            .unwrap();
+        let Message::Response(response) = connection.receiver.recv().unwrap() else {
+            panic!("expected definition response");
+        };
+        let response: Option<GotoDefinitionResponse> =
+            serde_json::from_value(response.response_result.unwrap()).unwrap();
+        let Some(GotoDefinitionResponse::Scalar(location)) = response else {
+            panic!("expected scalar definition location");
+        };
+        location
+    }
+
+    fn file_uri(path: &Path) -> Uri {
+        Uri::from_str(url::Url::from_file_path(path).unwrap().as_str()).unwrap()
+    }
+
+    fn uri_path(uri: &Uri) -> std::path::PathBuf {
+        url::Url::parse(uri.as_str())
+            .unwrap()
+            .to_file_path()
+            .unwrap()
     }
 }
