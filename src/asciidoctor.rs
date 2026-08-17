@@ -136,10 +136,26 @@ impl Renderer for MockRenderer {
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
+    use std::{
+        process::Command,
+        sync::{Mutex, MutexGuard},
+    };
 
     use super::{MockRenderer, Renderer, SystemAsciidoctor};
     use crate::{RenderError, RenderRequest, RenderSafeMode};
+
+    /// Serializes every test that spawns a process.
+    ///
+    /// `invokes_a_renderer_directly_with_structured_arguments` writes an executable and then
+    /// runs it. A concurrent `fork` in this process inherits the still-open write descriptor,
+    /// and `execve` reports `ETXTBSY` while any process holds the file open for writing, so an
+    /// overlapping spawn from another test made that test fail intermittently. Holding this lock
+    /// across both the write and the spawn removes the overlap.
+    static SPAWN: Mutex<()> = Mutex::new(());
+
+    fn spawn_guard() -> MutexGuard<'static, ()> {
+        SPAWN.lock().unwrap_or_else(|error| error.into_inner())
+    }
 
     #[test]
     fn mock_renderer_is_deterministic() {
@@ -154,6 +170,7 @@ mod tests {
 
     #[test]
     fn missing_executable_is_structured() {
+        let _guard = spawn_guard();
         let renderer = SystemAsciidoctor::new("adoc-render-executable-that-does-not-exist");
         let error = renderer
             .render(&RenderRequest::from_source("guide.adoc", "= Guide"))
@@ -171,6 +188,7 @@ mod tests {
             time::{SystemTime, UNIX_EPOCH},
         };
 
+        let _guard = spawn_guard();
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -209,6 +227,7 @@ mod tests {
 
     #[test]
     fn renders_with_system_asciidoctor_when_available() {
+        let _guard = spawn_guard();
         let available = Command::new("asciidoctor")
             .arg("--version")
             .output()
