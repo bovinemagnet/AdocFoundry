@@ -1,6 +1,13 @@
 name: demo
 title: Demo Documentation
 version: latest
+display_version: Latest
+start_page: ROOT:index.adoc
 
 nav:
   - modules/ROOT/nav.adoc
+
+asciidoc:
+  attributes:
+    sectanchors: ''
+    source-highlighter: highlight.js
