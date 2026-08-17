@@ -354,9 +354,10 @@ mod tests {
         request::{
             DocumentSymbolRequest, GotoDefinition, Initialize, Request as LspRequest, Shutdown,
         },
-        ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams,
-        GotoDefinitionResponse, InitializeParams, InitializedParams, Location, PartialResultParams,
-        Position, Range, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+        ClientCapabilities, DiagnosticSeverity, DidOpenTextDocumentParams, DocumentSymbolParams,
+        GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializedParams,
+        Location, NumberOrString, PartialResultParams, Position, PublishDiagnosticsParams, Range,
+        TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
         TextDocumentPositionParams, Uri, WorkDoneProgressParams, WorkspaceFolder,
     };
 
@@ -378,6 +379,84 @@ mod tests {
         .unwrap();
 
         assert_eq!(text, "ACB\n");
+    }
+
+    #[test]
+    fn publishes_parser_diagnostics_for_duplicate_anchors() {
+        let (server_connection, client_connection) = Connection::memory();
+        let server = thread::spawn(move || run_connection(&server_connection));
+        let uri: Uri = "file:///duplicates.adoc".parse().unwrap();
+
+        client_connection
+            .sender
+            .send(Message::Request(Request::new(
+                RequestId::from(1),
+                Initialize::METHOD.to_owned(),
+                InitializeParams {
+                    capabilities: ClientCapabilities::default(),
+                    ..InitializeParams::default()
+                },
+            )))
+            .unwrap();
+        client_connection.receiver.recv().unwrap();
+        client_connection
+            .sender
+            .send(Message::Notification(Notification::new(
+                Initialized::METHOD.to_owned(),
+                InitializedParams {},
+            )))
+            .unwrap();
+
+        client_connection
+            .sender
+            .send(Message::Notification(Notification::new(
+                DidOpenTextDocument::METHOD.to_owned(),
+                DidOpenTextDocumentParams {
+                    text_document: TextDocumentItem {
+                        uri: uri.clone(),
+                        language_id: "asciidoc".to_owned(),
+                        version: 1,
+                        text: "= Guide\n\n[[intro]]\n== Intro\n\n[[intro]]\n== Intro Again\n"
+                            .to_owned(),
+                    },
+                },
+            )))
+            .unwrap();
+
+        let Message::Notification(notification) = client_connection.receiver.recv().unwrap() else {
+            panic!("expected a publishDiagnostics notification");
+        };
+        assert_eq!(notification.method, PublishDiagnostics::METHOD);
+        let params: PublishDiagnosticsParams = serde_json::from_value(notification.params).unwrap();
+        let duplicate = params
+            .diagnostics
+            .iter()
+            .find(|diagnostic| {
+                diagnostic.code == Some(NumberOrString::String("adoc.duplicate-anchor".to_owned()))
+            })
+            .expect("duplicate anchor diagnostic was published");
+
+        assert_eq!(duplicate.severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(duplicate.range.start.line, 5);
+
+        client_connection
+            .sender
+            .send(Message::Request(Request::new(
+                RequestId::from(2),
+                Shutdown::METHOD.to_owned(),
+                (),
+            )))
+            .unwrap();
+        client_connection.receiver.recv().unwrap();
+        client_connection
+            .sender
+            .send(Message::Notification(Notification::new(
+                "exit".to_owned(),
+                (),
+            )))
+            .unwrap();
+
+        server.join().unwrap().unwrap();
     }
 
     #[test]
