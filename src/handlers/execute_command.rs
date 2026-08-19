@@ -59,7 +59,37 @@ fn antora_attributes(
     source: &Path,
 ) -> impl Iterator<Item = (String, String)> + use<> {
     let context = state.antora.context_for_path(source);
-    context.into_iter().flat_map(|context| {
+    let module_root = context.as_ref().and_then(|context| {
+        state
+            .antora
+            .module(
+                &context.component,
+                context.version.as_deref(),
+                &context.module,
+            )
+            .map(|module| module.root.clone())
+    });
+
+    // Antora sets these for every page; a document written against them fails under a
+    // stock Asciidoctor otherwise. Absolute, so a preview rendered elsewhere still finds
+    // partials, examples, and images.
+    let families = module_root.into_iter().flat_map(|root| {
+        [
+            ("partialsdir", "partials"),
+            ("examplesdir", "examples"),
+            ("attachmentsdir", "attachments"),
+            ("imagesdir", "images"),
+        ]
+        .into_iter()
+        .map(move |(attribute, family)| {
+            (
+                attribute.to_owned(),
+                root.join(family).display().to_string(),
+            )
+        })
+    });
+
+    let page = context.into_iter().flat_map(|context| {
         let mut attributes = vec![
             ("page-component-name".to_owned(), context.component),
             ("page-module".to_owned(), context.module),
@@ -68,7 +98,9 @@ fn antora_attributes(
             attributes.push(("page-component-version".to_owned(), version));
         }
         attributes
-    })
+    });
+
+    page.chain(families)
 }
 
 #[cfg(test)]
@@ -274,6 +306,37 @@ mod tests {
             .expect("a request")
             .base_dir
             .is_none());
+    }
+
+    #[test]
+    fn sets_the_antora_family_directory_attributes() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-nested-pages");
+        let page = root.join("modules/ROOT/pages/guides/composed.adoc");
+        let uri = format!("file://{}", page.display());
+
+        let mut state = ServerState::default();
+        state.index_workspace(vec![root]).expect("index fixture");
+        state.open(&uri, "= Composed\n", 1);
+
+        let renderer = RecordingRenderer::default();
+        render_preview(&state, &renderer, &RecordingSink::default(), &uri).expect("render");
+
+        let attributes = renderer.last_request().expect("a request").attributes;
+        for (name, family) in [
+            ("partialsdir", "partials"),
+            ("examplesdir", "examples"),
+            ("attachmentsdir", "attachments"),
+            ("imagesdir", "images"),
+        ] {
+            let value = attributes
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} is not set: {attributes:?}"));
+            assert!(
+                value.ends_with(&format!("modules/ROOT/{family}")),
+                "{name} = {value}"
+            );
+        }
     }
 
     /// A renderer that captures the request it was given.
