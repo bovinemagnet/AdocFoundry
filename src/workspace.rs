@@ -49,7 +49,7 @@ pub(crate) fn collect_asciidoc_files(path: &Path, output: &mut Vec<PathBuf>) -> 
     Ok(())
 }
 
-pub(crate) fn normalize_path(path: &Path) -> PathBuf {
+pub fn normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {

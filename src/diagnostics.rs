@@ -231,6 +231,42 @@ mod tests {
     }
 
     #[test]
+    fn resolves_references_to_implicit_section_ids() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "= Guide\n\nSee <<Logging Levels>>, <<logging-levels>> and <<_logging_levels>>.\n\n== Logging Levels\n",
+        );
+
+        assert_eq!(workspace_diagnostics(&index, path), Vec::new());
+    }
+
+    #[test]
+    fn matches_section_ids_that_differ_only_in_punctuation() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "= Guide\n\nSee <<flow-d--cancellation-unscheduling-by-external-id>>\nand <<the-fun_parse_weeks-function>>.\n\n== Flow D - Cancellation (Unscheduling) by External ID\n\n== The fun_parse_weeks function\n",
+        );
+
+        assert_eq!(workspace_diagnostics(&index, path), Vec::new());
+    }
+
+    #[test]
+    fn matches_section_ids_whose_punctuation_was_dropped_rather_than_replaced() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "= Guide\n\nSee <<version-0-6-0-supersededroom-in-the-key>>.\n\n== Version 0.6.0 (superseded -- room in the key)\n",
+        );
+
+        assert_eq!(workspace_diagnostics(&index, path), Vec::new());
+    }
+
+    #[test]
     fn resolves_known_attribute_in_include_target() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/includes");
         let index_path = root.join("index.adoc");

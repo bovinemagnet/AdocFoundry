@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use adoc_core::{Document, Reference, SourceRange};
+use adoc_core::{alphanumeric_id, canonical_id, Document, Reference, SourceRange};
 use adoc_parser::parse;
 
 use crate::workspace::{collect_asciidoc_files, normalize_path};
@@ -72,6 +72,22 @@ impl WorkspaceIndex {
             });
         }
 
+        // Sections are reachable without an explicit anchor, so register the ids Asciidoctor
+        // generates for them. They are deliberately not added to `document.anchors`, which
+        // stays the record of explicitly declared anchors for duplicate detection.
+        for section in &document.sections {
+            for id in section.implicit_ids() {
+                let key = AnchorKey {
+                    path: path.clone(),
+                    id,
+                };
+                self.anchors.entry(key).or_default().push(AnchorLocation {
+                    path: path.clone(),
+                    range: section.selection_range,
+                });
+            }
+        }
+
         self.references
             .extend(
                 document
@@ -132,10 +148,23 @@ impl WorkspaceIndex {
 
     #[must_use]
     pub fn resolve_anchor(&self, path: &Path, id: &str) -> Option<&AnchorLocation> {
-        self.anchors
-            .get(&AnchorKey {
-                path: normalize_path(path),
-                id: id.to_owned(),
+        let path = normalize_path(path);
+        let exact = self.anchors.get(&AnchorKey {
+            path: path.clone(),
+            id: id.to_owned(),
+        });
+        exact
+            .or_else(|| {
+                self.anchors.get(&AnchorKey {
+                    path: path.clone(),
+                    id: canonical_id(id),
+                })
+            })
+            .or_else(|| {
+                self.anchors.get(&AnchorKey {
+                    path,
+                    id: alphanumeric_id(id),
+                })
             })
             .and_then(|locations| locations.first())
     }
