@@ -73,9 +73,13 @@ fn antora_attributes(
         ]
         .into_iter()
         .map(move |(attribute, family)| {
+            // Trailing separator so both `{partialsdir}note.adoc` and
+            // `{partialsdir}/note.adoc` resolve. Antora sets these to a family prefix
+            // rather than a path, so both spellings work there and both appear in the
+            // wild; a doubled separator is harmless.
             (
                 attribute.to_owned(),
-                root.join(family).display().to_string(),
+                format!("{}/", root.join(family).display()),
             )
         })
         .chain(std::iter::once(moduledir))
@@ -328,7 +332,7 @@ mod tests {
                 .get(name)
                 .unwrap_or_else(|| panic!("{name} is not set: {attributes:?}"));
             assert!(
-                value.ends_with(&format!("modules/ROOT/{family}")),
+                value.ends_with(&format!("modules/ROOT/{family}/")),
                 "{name} = {value}"
             );
         }
