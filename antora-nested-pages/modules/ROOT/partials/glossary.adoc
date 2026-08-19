@@ -1,0 +1,2 @@
+[#ubiquitous-language]
+Ubiquitous Language:: The shared vocabulary of the domain.
