@@ -151,7 +151,11 @@ fn parse_scope(scope: &str) -> Result<ParsedScope, ResourceIdParseError> {
             module: None,
         });
     }
-    let segments = scope.split(':').collect::<Vec<_>>();
+    let mut segments = scope.split(':').collect::<Vec<_>>();
+    // `component::page.adoc` names the component's ROOT module.
+    if segments.len() == 2 && segments[1].is_empty() {
+        segments[1] = "ROOT";
+    }
     if segments.iter().any(|segment| segment.is_empty()) {
         return Err(ResourceIdParseError::EmptyCoordinate);
     }
@@ -216,6 +220,15 @@ mod tests {
     use crate::ResourceFamily;
 
     use super::{parse_resource_id, ResourceIdParseError};
+
+    #[test]
+    fn reads_an_empty_module_coordinate_as_the_root_module() {
+        let id = parse_resource_id("other-component::page.adoc").unwrap();
+
+        assert_eq!(id.component.as_deref(), Some("other-component"));
+        assert_eq!(id.module.as_deref(), Some("ROOT"));
+        assert_eq!(id.path, "page.adoc");
+    }
 
     #[test]
     fn parses_supported_resource_id_forms() {

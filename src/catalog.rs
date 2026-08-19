@@ -99,15 +99,32 @@ impl AntoraCatalog {
     #[must_use]
     pub fn context_for_path(&self, source_path: &Path) -> Option<AntoraContext> {
         let source_path = normalize_path(source_path);
-        let resource = self
+        if let Some(resource) = self
             .resources
             .values()
-            .find(|resource| resource.source_path == source_path)?;
+            .find(|resource| resource.source_path == source_path)
+        {
+            return Some(AntoraContext {
+                component: resource.coordinate.component.clone(),
+                version: resource.coordinate.version.clone(),
+                module: resource.coordinate.module.clone(),
+                family: resource.coordinate.family,
+            });
+        }
+
+        // Files that sit in a module but outside any family directory - `nav.adoc`, a shared
+        // `_attributes.adoc` - are not catalogued as resources, yet their references still
+        // resolve against the module they belong to.
+        let module = self
+            .modules
+            .values()
+            .filter(|module| source_path.starts_with(&module.root))
+            .max_by_key(|module| module.root.as_os_str().len())?;
         Some(AntoraContext {
-            component: resource.coordinate.component.clone(),
-            version: resource.coordinate.version.clone(),
-            module: resource.coordinate.module.clone(),
-            family: resource.coordinate.family,
+            component: module.component.clone(),
+            version: module.version.clone(),
+            module: module.name.clone(),
+            family: ResourceFamily::Page,
         })
     }
 
