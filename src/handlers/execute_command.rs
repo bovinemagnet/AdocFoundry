@@ -32,26 +32,12 @@ pub fn render_preview(
     let text = source_for_render(&open.document, &state.antora, &source, &scratch_directory());
     let mut request = RenderRequest::from_source(source.clone(), text);
     request.attributes.extend(antora_attributes(state, &source));
-    request.base_dir = antora_component_root(state, &source);
     // Rewritten copies of included files sit in a scratch directory outside the
     // component, which any jailed safe mode refuses to read.
     request.safe_mode = RenderSafeMode::Unsafe;
 
     let output = renderer.render(&request)?;
     sink.deliver(&output, &source)
-}
-
-/// Root of the Antora component owning `source`, if any.
-///
-/// Asciidoctor's safe mode refuses includes outside its base directory. An Antora page
-/// includes partials from sibling directories, so the jail has to be the component root
-/// rather than the page's own directory.
-fn antora_component_root(state: &ServerState, source: &Path) -> Option<PathBuf> {
-    let context = state.antora.context_for_path(source)?;
-    let component = state
-        .antora
-        .component(&context.component, context.version.as_deref())?;
-    Some(component.root.clone())
 }
 
 /// Antora page attributes for `source`, empty when the file is not in an Antora module.
@@ -77,7 +63,9 @@ fn antora_attributes(
     // stock Asciidoctor otherwise. Absolute, so a preview rendered elsewhere still finds
     // partials, examples, and images.
     let families = module_root.into_iter().flat_map(|root| {
+        let moduledir = ("moduledir".to_owned(), root.display().to_string());
         [
+            ("pagesdir", "pages"),
             ("partialsdir", "partials"),
             ("examplesdir", "examples"),
             ("attachmentsdir", "attachments"),
@@ -90,6 +78,7 @@ fn antora_attributes(
                 root.join(family).display().to_string(),
             )
         })
+        .chain(std::iter::once(moduledir))
     });
 
     let page = context.into_iter().flat_map(|context| {
@@ -284,16 +273,11 @@ mod tests {
         let renderer = RecordingRenderer::default();
         render_preview(&state, &renderer, &RecordingSink::default(), &uri).expect("render");
 
-        let base_dir = renderer
+        assert!(renderer
             .last_request()
             .expect("a request")
             .base_dir
-            .expect("an Antora page needs a widened jail");
-        assert!(
-            base_dir.join("antora.yml").is_file(),
-            "{}",
-            base_dir.display()
-        );
+            .is_none());
     }
 
     #[test]
@@ -319,14 +303,22 @@ mod tests {
         let uri = format!("file://{}", page.display());
 
         let mut state = ServerState::default();
-        state.index_workspace(vec![root]).expect("index fixture");
+        state
+            .index_workspace(vec![root.clone()])
+            .expect("index fixture");
         state.open(&uri, "= Composed\n", 1);
 
         let renderer = RecordingRenderer::default();
         render_preview(&state, &renderer, &RecordingSink::default(), &uri).expect("render");
 
         let attributes = renderer.last_request().expect("a request").attributes;
+        let moduledir = attributes.get("moduledir").expect("moduledir is not set");
+        assert!(
+            moduledir.ends_with("modules/ROOT"),
+            "moduledir = {moduledir}"
+        );
         for (name, family) in [
+            ("pagesdir", "pages"),
             ("partialsdir", "partials"),
             ("examplesdir", "examples"),
             ("attachmentsdir", "attachments"),
