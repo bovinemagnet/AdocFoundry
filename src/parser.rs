@@ -33,6 +33,9 @@ pub fn parse(uri: &str, text: &str) -> ParseResult {
     AsciiDocParser.parse(uri, text)
 }
 
+/// Comment blocks are the one delimited block Asciidoctor does not expand includes in.
+const COMMENT_DELIMITER: &str = "////";
+
 fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut document = Document::new(uri, text);
     let mut diagnostics = Vec::new();
@@ -48,6 +51,11 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         if let Some(delimiter) = active_delimiter.as_deref() {
             if trimmed == delimiter {
                 active_delimiter = None;
+            } else if delimiter != COMMENT_DELIMITER {
+                // Asciidoctor processes includes inside listing, literal and passthrough
+                // blocks — a code sample pulled into a `[source]` block is the commonest
+                // use of the `example$` family. Everything else in the block is content.
+                document.includes.extend(find_includes(line, offset));
             }
             offset += line.len();
             continue;
@@ -193,6 +201,50 @@ image::diagram.png[Architecture]\n";
 
         assert_eq!(document.anchors.len(), 1);
         assert_eq!(document.anchors[0].id, "GOOGLE-LIMITS");
+    }
+
+    /// Asciidoctor processes `include::` inside listing, literal and passthrough blocks —
+    /// pulling a code sample into a `[source]` block is the commonest use of the
+    /// `example$` family — but not inside a comment block.
+    #[test]
+    fn records_includes_inside_verbatim_blocks() {
+        for delimiter in ["----", "....", "++++"] {
+            let source = format!(
+                "= Demo\n\n[source,sql]\n{delimiter}\ninclude::example$q.sql[]\n{delimiter}\n"
+            );
+            let document = parse("file:///demo.adoc", &source).document;
+
+            assert_eq!(document.includes.len(), 1, "{delimiter}");
+            assert_eq!(document.includes[0].target, "example$q.sql", "{delimiter}");
+        }
+    }
+
+    #[test]
+    fn ignores_includes_inside_comment_blocks() {
+        let source = "= Demo\n\n////\ninclude::example$q.sql[]\n////\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        assert!(document.includes.is_empty());
+    }
+
+    #[test]
+    fn ignores_an_escaped_include() {
+        let source = "= Demo\n\n----\n\\include::example$q.sql[]\n----\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        assert!(document.includes.is_empty());
+    }
+
+    /// An include inside a verbatim block is real, but the rest of that block is content.
+    #[test]
+    fn still_ignores_other_semantics_inside_verbatim_blocks() {
+        let source =
+            "= Demo\n\n----\ninclude::example$q.sql[]\nxref:not-real.adoc[]\n[[not-real]]\n----\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        assert_eq!(document.includes.len(), 1);
+        assert!(document.references.is_empty());
+        assert!(document.anchors.is_empty());
     }
 
     #[test]

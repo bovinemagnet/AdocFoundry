@@ -234,8 +234,8 @@ fn find_delimited<'a>(
 }
 
 fn is_boundary(line: &str, start: usize) -> bool {
-    line[..start]
-        .chars()
-        .next_back()
-        .is_none_or(|character| !character.is_alphanumeric() && character != '_')
+    // A leading backslash escapes a macro, which is how a document shows one literally.
+    line[..start].chars().next_back().is_none_or(|character| {
+        !character.is_alphanumeric() && character != '_' && character != '\\'
+    })
 }
