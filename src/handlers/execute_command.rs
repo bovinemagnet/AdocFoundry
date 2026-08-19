@@ -9,7 +9,7 @@ use adoc_render::{RenderRequest, RenderSafeMode, Renderer};
 
 use crate::{
     handlers::render_source::source_for_render,
-    preview::{scratch_directory, PreviewError, PreviewSink},
+    preview::{scratch_directory, PreviewError, PreviewMode, PreviewSink},
     state::{document_path, ServerState},
 };
 
@@ -22,7 +22,18 @@ pub fn render_preview(
     renderer: &dyn Renderer,
     sink: &dyn PreviewSink,
     uri: &str,
+    mode: PreviewMode,
 ) -> Result<PathBuf, PreviewError> {
+    let (source, request) = preview_request(state, uri)?;
+    let output = renderer.render(&request)?;
+    sink.deliver(&output, &source, mode)
+}
+
+/// The source path and render request for the document at `uri`.
+fn preview_request(
+    state: &ServerState,
+    uri: &str,
+) -> Result<(PathBuf, RenderRequest), PreviewError> {
     let open = state
         .documents
         .get(uri)
@@ -36,8 +47,22 @@ pub fn render_preview(
     // component, which any jailed safe mode refuses to read.
     request.safe_mode = RenderSafeMode::Unsafe;
 
+    Ok((source, request))
+}
+
+/// Re-render a live preview in place, without presenting it again.
+///
+/// Called when a document being previewed is saved; the artefact is overwritten so the
+/// page picks the change up on its next reload, and focus stays in the editor.
+pub fn refresh_preview(
+    state: &ServerState,
+    renderer: &dyn Renderer,
+    sink: &dyn PreviewSink,
+    uri: &str,
+) -> Result<PathBuf, PreviewError> {
+    let (source, request) = preview_request(state, uri)?;
     let output = renderer.render(&request)?;
-    sink.deliver(&output, &source)
+    sink.refresh(&output, &source)
 }
 
 /// Antora page attributes for `source`, empty when the file is not in an Antora module.
@@ -108,6 +133,8 @@ mod tests {
     #[derive(Default)]
     struct RecordingSink {
         delivered: Mutex<Vec<(String, PathBuf)>>,
+        refreshed: Mutex<Vec<(String, PathBuf)>>,
+        mode: Mutex<Option<PreviewMode>>,
     }
 
     impl PreviewSink for RecordingSink {
@@ -115,8 +142,22 @@ mod tests {
             &self,
             output: &adoc_render::RenderOutput,
             source: &Path,
+            mode: PreviewMode,
         ) -> Result<PathBuf, PreviewError> {
             self.delivered
+                .lock()
+                .unwrap()
+                .push((output.html.clone(), source.to_path_buf()));
+            *self.mode.lock().unwrap() = Some(mode);
+            Ok(source.with_extension("html"))
+        }
+
+        fn refresh(
+            &self,
+            output: &adoc_render::RenderOutput,
+            source: &Path,
+        ) -> Result<PathBuf, PreviewError> {
+            self.refreshed
                 .lock()
                 .unwrap()
                 .push((output.html.clone(), source.to_path_buf()));
@@ -137,7 +178,7 @@ mod tests {
         let renderer = RecordingRenderer::default();
         let sink = RecordingSink::default();
 
-        render_preview(&state, &renderer, &sink, uri).expect("render");
+        render_preview(&state, &renderer, &sink, uri, PreviewMode::Static).expect("render");
 
         let request = renderer.last_request().expect("a request was made");
         assert_eq!(request.source_text.as_deref(), Some("= Unsaved Title\n"));
@@ -149,7 +190,14 @@ mod tests {
         let state = state_with(uri, "= Title\n");
         let sink = RecordingSink::default();
 
-        render_preview(&state, &MockRenderer::new("<h1>Title</h1>"), &sink, uri).expect("render");
+        render_preview(
+            &state,
+            &MockRenderer::new("<h1>Title</h1>"),
+            &sink,
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
 
         let delivered = sink.delivered.lock().unwrap();
         assert_eq!(delivered.len(), 1);
@@ -167,6 +215,7 @@ mod tests {
             &MockRenderer::new("<p/>"),
             &sink,
             "file:///gone.adoc",
+            PreviewMode::Static,
         )
         .expect_err("closed documents cannot be previewed");
 
@@ -183,6 +232,7 @@ mod tests {
             &MockRenderer::new("<h1>Title</h1>"),
             &RecordingSink::default(),
             uri,
+            PreviewMode::Static,
         )
         .expect("render");
 
@@ -201,7 +251,14 @@ mod tests {
         state.open(&uri, "= Authentication\n", 1);
 
         let renderer = RecordingRenderer::default();
-        render_preview(&state, &renderer, &RecordingSink::default(), &uri).expect("render");
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
 
         let attributes = renderer.last_request().expect("a request").attributes;
         assert_eq!(
@@ -224,7 +281,14 @@ mod tests {
         let state = state_with(uri, "= Title\n");
 
         let renderer = RecordingRenderer::default();
-        render_preview(&state, &renderer, &RecordingSink::default(), uri).expect("render");
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
 
         assert!(renderer
             .last_request()
@@ -249,7 +313,14 @@ mod tests {
         );
 
         let renderer = RecordingRenderer::default();
-        render_preview(&state, &renderer, &RecordingSink::default(), &uri).expect("render");
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
 
         let source = renderer
             .last_request()
@@ -275,7 +346,14 @@ mod tests {
         state.open(&uri, "= Authentication\n", 1);
 
         let renderer = RecordingRenderer::default();
-        render_preview(&state, &renderer, &RecordingSink::default(), &uri).expect("render");
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
 
         assert!(renderer
             .last_request()
@@ -290,7 +368,14 @@ mod tests {
         let state = state_with(uri, "= Title\n");
 
         let renderer = RecordingRenderer::default();
-        render_preview(&state, &renderer, &RecordingSink::default(), uri).expect("render");
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
 
         assert!(renderer
             .last_request()
@@ -313,7 +398,14 @@ mod tests {
         state.open(&uri, "= Composed\n", 1);
 
         let renderer = RecordingRenderer::default();
-        render_preview(&state, &renderer, &RecordingSink::default(), &uri).expect("render");
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
 
         let attributes = renderer.last_request().expect("a request").attributes;
         let moduledir = attributes.get("moduledir").expect("moduledir is not set");
@@ -346,12 +438,49 @@ mod tests {
         let state = state_with(uri, "= Title\n");
 
         let renderer = RecordingRenderer::default();
-        render_preview(&state, &renderer, &RecordingSink::default(), uri).expect("render");
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
 
         assert_eq!(
             renderer.last_request().expect("a request").safe_mode,
             adoc_render::RenderSafeMode::Unsafe
         );
+    }
+
+    #[test]
+    fn a_live_preview_is_delivered_in_live_mode() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+        let sink = RecordingSink::default();
+
+        render_preview(
+            &state,
+            &MockRenderer::new("<h1>T</h1>"),
+            &sink,
+            uri,
+            PreviewMode::Live,
+        )
+        .expect("render");
+
+        assert_eq!(*sink.mode.lock().unwrap(), Some(PreviewMode::Live));
+    }
+
+    #[test]
+    fn refreshing_updates_without_redelivering() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+        let sink = RecordingSink::default();
+
+        refresh_preview(&state, &MockRenderer::new("<h1>T</h1>"), &sink, uri).expect("refresh");
+
+        assert!(sink.delivered.lock().unwrap().is_empty());
+        assert_eq!(sink.refreshed.lock().unwrap().len(), 1);
     }
 
     /// A renderer that captures the request it was given.

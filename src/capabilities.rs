@@ -1,6 +1,7 @@
 use lsp_types::{
     CodeActionProviderCapability, ExecuteCommandOptions, OneOf, ServerCapabilities,
     TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions,
 };
 
 use crate::handlers::code_actions::RENDER_PREVIEW_COMMAND;
@@ -15,6 +16,8 @@ pub(crate) fn server_capabilities(
             TextDocumentSyncOptions {
                 open_close: Some(true),
                 change: Some(TextDocumentSyncKind::INCREMENTAL),
+                // A live preview re-renders on save, which needs the notification.
+                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
                 ..TextDocumentSyncOptions::default()
             },
         )),

@@ -69,10 +69,27 @@ pub fn scratch_directory() -> PathBuf {
     std::env::temp_dir().join("adoc-ls-preview-includes")
 }
 
+/// Whether a preview is a one-off or is expected to keep up with the buffer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreviewMode {
+    /// Rendered once. The artefact is exactly what the renderer produced.
+    Static,
+    /// Rendered repeatedly. The artefact carries a reloader so the page keeps up.
+    Live,
+}
+
 /// Where rendered HTML is delivered.
 pub trait PreviewSink: Send + Sync {
-    /// Deliver `output` for `source`, returning the artefact that was produced.
-    fn deliver(&self, output: &RenderOutput, source: &Path) -> Result<PathBuf, PreviewError>;
+    /// Deliver `output` for `source` and present it, returning the artefact produced.
+    fn deliver(
+        &self,
+        output: &RenderOutput,
+        source: &Path,
+        mode: PreviewMode,
+    ) -> Result<PathBuf, PreviewError>;
+
+    /// Update an artefact already on screen, without presenting it again.
+    fn refresh(&self, output: &RenderOutput, source: &Path) -> Result<PathBuf, PreviewError>;
 }
 
 /// Opens a written artefact. Separated from [`BrowserSink`] so tests never open a browser.
@@ -141,13 +158,70 @@ impl<L: Launcher> BrowserSink<L> {
     }
 }
 
-impl<L: Launcher> PreviewSink for BrowserSink<L> {
-    fn deliver(&self, output: &RenderOutput, source: &Path) -> Result<PathBuf, PreviewError> {
+impl<L: Launcher> BrowserSink<L> {
+    fn write(
+        &self,
+        output: &RenderOutput,
+        source: &Path,
+        mode: PreviewMode,
+    ) -> Result<PathBuf, PreviewError> {
         fs::create_dir_all(&self.directory)?;
         let artefact = self.artefact_path(source);
-        fs::write(&artefact, &output.html)?;
+        let html = match mode {
+            PreviewMode::Static => output.html.clone(),
+            PreviewMode::Live => with_reloader(&output.html),
+        };
+        fs::write(&artefact, html)?;
+        Ok(artefact)
+    }
+}
+
+impl<L: Launcher> PreviewSink for BrowserSink<L> {
+    fn deliver(
+        &self,
+        output: &RenderOutput,
+        source: &Path,
+        mode: PreviewMode,
+    ) -> Result<PathBuf, PreviewError> {
+        let artefact = self.write(output, source, mode)?;
         self.launcher.launch(&artefact)?;
         Ok(artefact)
+    }
+
+    fn refresh(&self, output: &RenderOutput, source: &Path) -> Result<PathBuf, PreviewError> {
+        // Always live: only a live preview is ever refreshed, and the reloader has to
+        // survive the rewrite or the page stops keeping up after the first save.
+        self.write(output, source, PreviewMode::Live)
+    }
+}
+
+/// How often a live preview re-reads itself, in seconds.
+const RELOAD_INTERVAL: u8 = 2;
+
+/// `html` with a reloader, and scroll position preserved across the reload.
+///
+/// A `file://` page cannot fetch its own source to test for changes — browsers block it —
+/// so this reloads on a timer rather than on change. `sessionStorage` is unavailable on
+/// `file://` in some browsers, hence the `try`.
+fn with_reloader(html: &str) -> String {
+    let reloader = format!(
+        "<meta http-equiv=\"refresh\" content=\"{RELOAD_INTERVAL}\">\n\
+         <script>try{{addEventListener('beforeunload',function(){{\
+         sessionStorage.setItem('adoc-ls-scroll',String(scrollY))}});\
+         addEventListener('load',function(){{\
+         scrollTo(0,Number(sessionStorage.getItem('adoc-ls-scroll'))||0)}})}}catch(e){{}}</script>\n"
+    );
+
+    match html.find("</head>") {
+        Some(index) => {
+            let mut out = String::with_capacity(html.len() + reloader.len());
+            out.push_str(&html[..index]);
+            out.push_str(&reloader);
+            out.push_str(&html[index..]);
+            out
+        }
+        // A fragment without a head still reloads if the tag leads.
+        None => reloader + html,
     }
 }
 
@@ -177,12 +251,86 @@ mod tests {
     }
 
     #[test]
+    fn a_static_preview_is_delivered_verbatim() {
+        let dir = tempdir("static-verbatim");
+        let sink = BrowserSink::new(dir, RecordingLauncher::default());
+
+        let artefact = sink
+            .deliver(
+                &output("<h1>G</h1>"),
+                Path::new("/docs/g.adoc"),
+                PreviewMode::Static,
+            )
+            .expect("deliver");
+
+        assert_eq!(fs::read_to_string(&artefact).unwrap(), "<h1>G</h1>");
+    }
+
+    #[test]
+    fn a_live_preview_carries_a_reloader() {
+        let dir = tempdir("live-reloader");
+        let sink = BrowserSink::new(dir, RecordingLauncher::default());
+
+        let artefact = sink
+            .deliver(
+                &output("<h1>G</h1>"),
+                Path::new("/docs/g.adoc"),
+                PreviewMode::Live,
+            )
+            .expect("deliver");
+
+        let html = fs::read_to_string(&artefact).unwrap();
+        assert!(html.contains("<h1>G</h1>"), "{html}");
+        assert!(html.contains("http-equiv=\"refresh\""), "{html}");
+    }
+
+    #[test]
+    fn refreshing_rewrites_the_artefact_without_presenting_it() {
+        let dir = tempdir("refresh-silent");
+        let sink = BrowserSink::new(dir, RecordingLauncher::default());
+        let source = Path::new("/docs/g.adoc");
+        let first = sink
+            .deliver(&output("<p>one</p>"), source, PreviewMode::Live)
+            .expect("deliver");
+
+        let again = sink
+            .refresh(&output("<p>two</p>"), source)
+            .expect("refresh");
+
+        assert_eq!(first, again);
+        assert!(fs::read_to_string(&again).unwrap().contains("<p>two</p>"));
+        // Presented once, by the initial deliver; a refresh must not steal focus.
+        assert_eq!(sink.launcher().launched.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_refreshed_artefact_keeps_its_reloader() {
+        let dir = tempdir("refresh-reloader");
+        let sink = BrowserSink::new(dir, RecordingLauncher::default());
+        let source = Path::new("/docs/g.adoc");
+        sink.deliver(&output("<p>one</p>"), source, PreviewMode::Live)
+            .expect("deliver");
+
+        let again = sink
+            .refresh(&output("<p>two</p>"), source)
+            .expect("refresh");
+
+        assert!(fs::read_to_string(&again)
+            .unwrap()
+            .contains("http-equiv=\"refresh\""));
+    }
+
+    #[test]
     fn writes_html_next_to_a_stable_name_derived_from_the_source() {
         let dir = tempdir("writes-html");
         let sink = BrowserSink::new(dir, RecordingLauncher::default());
 
         let artefact = sink
-            .deliver(&output("<h1>Guide</h1>"), Path::new("/docs/guide.adoc"))
+            .deliver(
+                &output("<h1>Guide</h1>"),
+                Path::new("/docs/guide.adoc"),
+                PreviewMode::Static,
+            )
             .expect("deliver");
 
         assert_eq!(artefact.file_name().unwrap(), "guide.html");
@@ -195,7 +343,11 @@ mod tests {
         let sink = BrowserSink::new(dir, RecordingLauncher::default());
 
         let artefact = sink
-            .deliver(&output("<p>x</p>"), Path::new("/docs/guide.adoc"))
+            .deliver(
+                &output("<p>x</p>"),
+                Path::new("/docs/guide.adoc"),
+                PreviewMode::Static,
+            )
             .expect("deliver");
 
         assert_eq!(
@@ -210,8 +362,12 @@ mod tests {
         let sink = BrowserSink::new(dir, RecordingLauncher::default());
         let source = Path::new("/docs/guide.adoc");
 
-        let first = sink.deliver(&output("<p>one</p>"), source).expect("first");
-        let second = sink.deliver(&output("<p>two</p>"), source).expect("second");
+        let first = sink
+            .deliver(&output("<p>one</p>"), source, PreviewMode::Static)
+            .expect("first");
+        let second = sink
+            .deliver(&output("<p>two</p>"), source, PreviewMode::Static)
+            .expect("second");
 
         assert_eq!(first, second);
         assert_eq!(fs::read_to_string(&second).unwrap(), "<p>two</p>");
@@ -223,7 +379,7 @@ mod tests {
         let sink = BrowserSink::new(dir, RecordingLauncher::default());
 
         let artefact = sink
-            .deliver(&output("<p>x</p>"), Path::new("/"))
+            .deliver(&output("<p>x</p>"), Path::new("/"), PreviewMode::Static)
             .expect("deliver");
 
         assert_eq!(artefact.file_name().unwrap(), "preview.html");
