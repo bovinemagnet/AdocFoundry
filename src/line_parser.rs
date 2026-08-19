@@ -59,7 +59,9 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
     let mut anchors = find_delimited(line, "[[", "]]", offset)
         .into_iter()
         .filter_map(|(value, range)| {
-            let id = value.split(',').next()?.trim();
+            // A bibliography entry is written `[[[id, label]]]`, so the extra bracket rides
+            // along on the id.
+            let id = value.trim_start_matches('[').split(',').next()?.trim();
             (!id.is_empty()).then(|| Anchor {
                 id: id.to_owned(),
                 range,
@@ -85,11 +87,14 @@ pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
     let line = content(line);
     let mut references = find_macros(line, "xref:", offset)
         .into_iter()
-        .map(|mac| Reference {
-            kind: ReferenceKind::Xref,
-            target: mac.target.to_owned(),
-            text: nonempty(mac.attributes),
-            range: mac.range,
+        .map(|mac| {
+            let (kind, target) = classify_xref_target(mac.target);
+            Reference {
+                kind,
+                target: target.to_owned(),
+                text: nonempty(mac.attributes),
+                range: mac.range,
+            }
         })
         .collect::<Vec<_>>();
 
@@ -110,6 +115,25 @@ pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
             }),
     );
     references
+}
+
+/// Asciidoctor reads an `xref:` target as another document only when it names an AsciiDoc file
+/// or an Antora resource; otherwise the target is an id in the current document.
+fn classify_xref_target(target: &str) -> (ReferenceKind, &str) {
+    if let Some(fragment) = target.strip_prefix('#') {
+        return (ReferenceKind::LocalAnchor, fragment);
+    }
+    let names_a_document = target.contains('#')
+        || target.contains('$')
+        || target
+            .rsplit('.')
+            .next()
+            .is_some_and(|extension| matches!(extension, "adoc" | "asciidoc" | "ad"));
+    if names_a_document {
+        (ReferenceKind::Xref, target)
+    } else {
+        (ReferenceKind::LocalAnchor, target)
+    }
 }
 
 pub(crate) fn find_includes(line: &str, offset: usize) -> Vec<IncludeDirective> {

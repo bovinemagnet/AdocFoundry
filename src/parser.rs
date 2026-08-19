@@ -167,6 +167,35 @@ image::diagram.png[Architecture]\n";
     }
 
     #[test]
+    fn treats_extensionless_xref_targets_as_id_references() {
+        let source = "= Demo\n\nSee xref:smtp[SMTP], xref:#later[] and xref:page.adoc[Page].\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let kinds = document
+            .references
+            .iter()
+            .map(|reference| (reference.kind, reference.target.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                (ReferenceKind::LocalAnchor, "smtp"),
+                (ReferenceKind::LocalAnchor, "later"),
+                (ReferenceKind::Xref, "page.adoc"),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_bibliography_anchors() {
+        let source = "= Refs\n\nSee <<GOOGLE-LIMITS>>.\n\n[bibliography]\n- [[[GOOGLE-LIMITS, 2]]] Google sending limits\n";
+        let document = parse("file:///refs.adoc", source).document;
+
+        assert_eq!(document.anchors.len(), 1);
+        assert_eq!(document.anchors[0].id, "GOOGLE-LIMITS");
+    }
+
+    #[test]
     fn ignores_semantics_inside_verbatim_blocks() {
         let source = "= Demo\n\n[source,java]\n----\nxref:not-real.adoc[]\n[[not-real]]\n----\n";
         let document = parse("file:///demo.adoc", source).document;
