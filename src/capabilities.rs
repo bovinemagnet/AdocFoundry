@@ -4,7 +4,9 @@ use lsp_types::{
     TextDocumentSyncSaveOptions,
 };
 
-use crate::handlers::code_actions::RENDER_PREVIEW_COMMAND;
+use crate::handlers::code_actions::{
+    RENDER_LIVE_PREVIEW_COMMAND, RENDER_PREVIEW_COMMAND, STOP_LIVE_PREVIEW_COMMAND,
+};
 
 #[must_use]
 pub(crate) fn server_capabilities(
@@ -25,9 +27,45 @@ pub(crate) fn server_capabilities(
         definition_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec![RENDER_PREVIEW_COMMAND.to_owned()],
+            // A client may drop a code action whose command is missing from this list —
+            // Zed does — so every command a code action carries belongs here.
+            commands: vec![
+                RENDER_PREVIEW_COMMAND.to_owned(),
+                RENDER_LIVE_PREVIEW_COMMAND.to_owned(),
+                STOP_LIVE_PREVIEW_COMMAND.to_owned(),
+            ],
             ..ExecuteCommandOptions::default()
         }),
         ..ServerCapabilities::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_capabilities;
+    use crate::{
+        handlers::code_actions::{code_actions_for, LivePreview},
+        position::PositionEncoding,
+    };
+
+    /// A client may silently drop a code action whose command is not advertised — Zed
+    /// does — so the two lists have to stay in step. Nothing is logged when they do not.
+    #[test]
+    fn every_code_action_command_is_advertised() {
+        let capabilities = server_capabilities(PositionEncoding::Utf16);
+        let advertised = capabilities
+            .execute_command_provider
+            .expect("execute command provider")
+            .commands;
+
+        for live in [LivePreview::Inactive, LivePreview::Active] {
+            for action in code_actions_for("file:///docs/guide.adoc", live) {
+                assert!(
+                    advertised.iter().any(|command| command == action.command),
+                    "`{}` is offered as a code action but not advertised: {advertised:?}",
+                    action.command
+                );
+            }
+        }
     }
 }
