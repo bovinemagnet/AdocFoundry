@@ -5,11 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
-use adoc_render::{RenderRequest, Renderer};
+use adoc_render::{RenderRequest, RenderSafeMode, Renderer};
 
 use crate::{
     handlers::render_source::source_for_render,
-    preview::{PreviewError, PreviewSink},
+    preview::{scratch_directory, PreviewError, PreviewSink},
     state::{document_path, ServerState},
 };
 
@@ -29,10 +29,13 @@ pub fn render_preview(
         .ok_or_else(|| PreviewError::NotOpen(uri.to_owned()))?;
 
     let source = document_path(uri);
-    let text = source_for_render(&open.document, &state.antora, &source);
+    let text = source_for_render(&open.document, &state.antora, &source, &scratch_directory());
     let mut request = RenderRequest::from_source(source.clone(), text);
     request.attributes.extend(antora_attributes(state, &source));
     request.base_dir = antora_component_root(state, &source);
+    // Rewritten copies of included files sit in a scratch directory outside the
+    // component, which any jailed safe mode refuses to read.
+    request.safe_mode = RenderSafeMode::Unsafe;
 
     let output = renderer.render(&request)?;
     sink.deliver(&output, &source)
@@ -337,6 +340,22 @@ mod tests {
                 "{name} = {value}"
             );
         }
+    }
+
+    /// Rewritten copies of included files live outside the component's jail, so any safe
+    /// mode above `unsafe` refuses to read them.
+    #[test]
+    fn renders_unsafe_so_rewritten_includes_are_readable() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+
+        let renderer = RecordingRenderer::default();
+        render_preview(&state, &renderer, &RecordingSink::default(), uri).expect("render");
+
+        assert_eq!(
+            renderer.last_request().expect("a request").safe_mode,
+            adoc_render::RenderSafeMode::Unsafe
+        );
     }
 
     /// A renderer that captures the request it was given.

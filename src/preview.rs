@@ -60,6 +60,15 @@ impl From<io::Error> for PreviewError {
     }
 }
 
+/// Directory for rewritten copies of included files.
+///
+/// Separate from the artefact directory so preview output stays browsable without
+/// intermediate files mixed in.
+#[must_use]
+pub fn scratch_directory() -> PathBuf {
+    std::env::temp_dir().join("adoc-ls-preview-includes")
+}
+
 /// Where rendered HTML is delivered.
 pub trait PreviewSink: Send + Sync {
     /// Deliver `output` for `source`, returning the artefact that was produced.
