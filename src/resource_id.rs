@@ -126,6 +126,11 @@ pub fn parse_resource_id(input: &str) -> Result<AntoraResourceId, ResourceIdPars
         ("", None, input)
     };
 
+    // Antora runs on Node, whose `path.join` ignores a leading separator on later
+    // segments, so `partial$/note.adoc` names the same resource as `partial$note.adoc`.
+    // Everything else `validate_path` rejects — `..`, backslashes, empty segments —
+    // still applies.
+    let path = path.strip_prefix('/').unwrap_or(path);
     validate_path(path)?;
     let scope = parse_scope(scope)?;
     Ok(AntoraResourceId {

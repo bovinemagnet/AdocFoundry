@@ -218,6 +218,59 @@ mod tests {
 
     use super::AntoraCatalog;
 
+    /// Antora runs on Node, whose `path.join` ignores a leading separator on later
+    /// segments, so `partial$/note.adoc` resolves the same as `partial$note.adoc`.
+    /// Rust's `PathBuf::join` would treat it as absolute, so it must be trimmed.
+    #[test]
+    fn resolves_a_resource_id_written_with_a_leading_separator() {
+        let mut catalog = AntoraCatalog::new();
+        catalog.insert_component(ComponentDescriptor {
+            root: PathBuf::from("."),
+            name: "demo".to_owned(),
+            title: None,
+            version: Some("latest".to_owned()),
+            display_version: None,
+            start_page: None,
+            nav: Vec::new(),
+            asciidoc_attributes: BTreeMap::new(),
+        });
+        catalog.insert_module(Module {
+            component: "demo".to_owned(),
+            version: Some("latest".to_owned()),
+            name: "ROOT".to_owned(),
+            root: PathBuf::from("modules/ROOT"),
+            nav: None,
+        });
+        catalog.insert(AntoraResource {
+            coordinate: AntoraCoordinate {
+                component: "demo".to_owned(),
+                version: Some("latest".to_owned()),
+                module: "ROOT".to_owned(),
+                family: ResourceFamily::Partial,
+                relative_path: PathBuf::from("api/note.adoc"),
+            },
+            source_path: PathBuf::from("modules/ROOT/partials/api/note.adoc"),
+        });
+        let context = AntoraContext {
+            component: "demo".to_owned(),
+            version: Some("latest".to_owned()),
+            module: "ROOT".to_owned(),
+            family: ResourceFamily::Page,
+        };
+
+        let resolved = AntoraResolver::resolve(
+            &catalog,
+            &crate::parse_resource_id("partial$/api/note.adoc").unwrap(),
+            &context,
+        )
+        .expect("a leading separator must not prevent resolution");
+
+        assert_eq!(
+            resolved.source_path,
+            PathBuf::from("modules/ROOT/partials/api/note.adoc")
+        );
+    }
+
     #[test]
     fn catalogs_and_resolves_resources_by_semantic_coordinate() {
         let coordinate = AntoraCoordinate {
