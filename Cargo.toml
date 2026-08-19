@@ -10,6 +10,7 @@ adoc-antora = { path = "../adoc-antora" }
 adoc-core = { path = "../adoc-core" }
 adoc-index = { path = "../adoc-index" }
 adoc-parser = { path = "../adoc-parser" }
+adoc-render = { path = "../adoc-render" }
 lsp-server = "=0.10.0"
 lsp-types = "=0.97.0"
 serde = "=1.0.229"

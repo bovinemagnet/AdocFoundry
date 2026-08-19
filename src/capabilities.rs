@@ -1,7 +1,9 @@
 use lsp_types::{
-    OneOf, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions,
+    CodeActionProviderCapability, ExecuteCommandOptions, OneOf, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
 };
+
+use crate::handlers::code_actions::RENDER_PREVIEW_COMMAND;
 
 #[must_use]
 pub(crate) fn server_capabilities(
@@ -18,6 +20,11 @@ pub(crate) fn server_capabilities(
         )),
         document_symbol_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        execute_command_provider: Some(ExecuteCommandOptions {
+            commands: vec![RENDER_PREVIEW_COMMAND.to_owned()],
+            ..ExecuteCommandOptions::default()
+        }),
         ..ServerCapabilities::default()
     }
 }

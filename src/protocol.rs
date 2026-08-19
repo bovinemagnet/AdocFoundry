@@ -11,21 +11,29 @@ use lsp_types::{
         DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument,
         Notification as LspNotification, PublishDiagnostics,
     },
-    request::{DocumentSymbolRequest, GotoDefinition, Request as LspRequest},
+    request::{
+        CodeActionRequest, DocumentSymbolRequest, ExecuteCommand, GotoDefinition,
+        Request as LspRequest,
+    },
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse, Command,
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult, Location,
-    NumberOrString, PublishDiagnosticsParams, ServerInfo, SymbolKind,
+    ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
+    InitializeResult, Location, NumberOrString, PublishDiagnosticsParams, ServerInfo, SymbolKind,
     TextDocumentContentChangeEvent, Uri,
 };
 
 use crate::{
     capabilities::server_capabilities,
     handlers::{
-        definition::definition_at_offset, diagnostics::diagnostics,
+        code_actions::{code_actions_for, RENDER_PREVIEW_COMMAND},
+        definition::definition_at_offset,
+        diagnostics::diagnostics,
         document_symbols::document_symbols,
+        execute_command::render_preview,
     },
     position::PositionEncoding,
+    preview::{BrowserSink, PreviewSink, SystemLauncher},
     server::ServerError,
     state::{document_path, ServerState},
 };
@@ -78,6 +86,8 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
 struct ProtocolServer {
     state: ServerState,
     encoding: PositionEncoding,
+    renderer: Box<dyn adoc_render::Renderer>,
+    sink: Box<dyn PreviewSink>,
 }
 
 impl ProtocolServer {
@@ -85,6 +95,11 @@ impl ProtocolServer {
         Self {
             state: ServerState::default(),
             encoding,
+            renderer: Box::new(adoc_render::SystemAsciidoctor::default()),
+            sink: Box::new(BrowserSink::new(
+                std::env::temp_dir().join("adoc-ls-preview"),
+                SystemLauncher,
+            )),
         }
     }
 
@@ -98,6 +113,11 @@ impl ProtocolServer {
                 .request_response::<GotoDefinitionParams, _>(request, |params| {
                     self.definition_response(params)
                 }),
+            CodeActionRequest::METHOD => self
+                .request_response::<CodeActionParams, _>(request, |params| {
+                    self.code_action_response(&params)
+                }),
+            ExecuteCommand::METHOD => self.execute_command_response(request),
             _ => Response::new_err(
                 request.id,
                 ErrorCode::MethodNotFound as i32,
@@ -251,6 +271,60 @@ impl ProtocolServer {
             })
             .collect();
         Some(DocumentSymbolResponse::Nested(symbols))
+    }
+
+    fn code_action_response(&self, params: &CodeActionParams) -> CodeActionResponse {
+        let uri = params.text_document.uri.as_str();
+        if self.state.documents.get(uri).is_none() {
+            return Vec::new();
+        }
+
+        code_actions_for(uri)
+            .into_iter()
+            .map(|action| {
+                CodeActionOrCommand::CodeAction(CodeAction {
+                    title: action.title.clone(),
+                    kind: Some(CodeActionKind::EMPTY),
+                    command: Some(Command {
+                        title: action.title,
+                        command: action.command.to_owned(),
+                        arguments: Some(vec![serde_json::Value::String(action.uri)]),
+                    }),
+                    ..CodeAction::default()
+                })
+            })
+            .collect()
+    }
+
+    fn execute_command_response(&self, request: Request) -> Response {
+        let id = request.id.clone();
+        let params: ExecuteCommandParams = match serde_json::from_value(request.params) {
+            Ok(params) => params,
+            Err(error) => {
+                return Response::new_err(id, ErrorCode::InvalidParams as i32, error.to_string())
+            }
+        };
+
+        if params.command != RENDER_PREVIEW_COMMAND {
+            return Response::new_err(
+                id,
+                ErrorCode::InvalidParams as i32,
+                format!("unsupported command `{}`", params.command),
+            );
+        }
+
+        let Some(uri) = params.arguments.first().and_then(serde_json::Value::as_str) else {
+            return Response::new_err(
+                id,
+                ErrorCode::InvalidParams as i32,
+                format!("`{RENDER_PREVIEW_COMMAND}` requires a document URI argument"),
+            );
+        };
+
+        match render_preview(&self.state, self.renderer.as_ref(), self.sink.as_ref(), uri) {
+            Ok(artefact) => Response::new_ok(id, artefact.display().to_string()),
+            Err(error) => Response::new_err(id, ErrorCode::InternalError as i32, error.to_string()),
+        }
     }
 
     fn definition_response(&self, params: GotoDefinitionParams) -> Option<GotoDefinitionResponse> {
