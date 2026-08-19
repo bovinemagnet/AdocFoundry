@@ -28,6 +28,9 @@ pub struct RenderRequest {
     pub attributes: BTreeMap<String, String>,
     pub safe_mode: RenderSafeMode,
     pub stylesheet: Option<PathBuf>,
+    /// Root of the safe-mode jail. Includes outside it are refused, so a document that
+    /// pulls in files from a sibling directory needs this set to a common ancestor.
+    pub base_dir: Option<PathBuf>,
 }
 
 impl RenderRequest {
@@ -39,6 +42,7 @@ impl RenderRequest {
             attributes: BTreeMap::new(),
             safe_mode: RenderSafeMode::default(),
             stylesheet: None,
+            base_dir: None,
         }
     }
 
@@ -54,6 +58,11 @@ impl RenderRequest {
 #[cfg(test)]
 mod tests {
     use super::{RenderRequest, RenderSafeMode};
+
+    #[test]
+    fn defaults_to_no_base_dir_override() {
+        assert!(RenderRequest::from_file("guide.adoc").base_dir.is_none());
+    }
 
     #[test]
     fn defaults_to_safe_file_rendering() {

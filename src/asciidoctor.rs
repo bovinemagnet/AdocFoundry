@@ -41,6 +41,9 @@ impl Renderer for SystemAsciidoctor {
         for (name, value) in &request.attributes {
             command.args(["--attribute", &format!("{name}={value}")]);
         }
+        if let Some(base_dir) = &request.base_dir {
+            command.arg(format!("--base-dir={}", base_dir.display()));
+        }
         if let Some(stylesheet) = &request.stylesheet {
             command.args([
                 "--attribute",
@@ -223,6 +226,49 @@ mod tests {
         assert_eq!(output.html, "<article>= Guide</article>");
         assert_eq!(output.warnings, ["fixture warning"]);
         assert_eq!(file_output.html, "<article>= On Disk</article>");
+    }
+
+    /// A safe-mode jail refuses includes outside its base directory, so an Antora page
+    /// pulling in a sibling module's partial renders only when `--base-dir` widens it.
+    #[test]
+    fn passes_base_dir_only_when_the_request_sets_one() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let _guard = spawn_guard();
+        let root =
+            std::env::temp_dir().join(format!("adoc-render-base-dir-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join("echo-args");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).unwrap();
+        let renderer = SystemAsciidoctor::new(&executable);
+
+        let without = renderer
+            .render(&RenderRequest::from_source(
+                root.join("guide.adoc"),
+                "= Guide",
+            ))
+            .unwrap();
+
+        let mut request = RenderRequest::from_source(root.join("guide.adoc"), "= Guide");
+        request.base_dir = Some(root.join("component"));
+        let with = renderer.render(&request).unwrap();
+
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(!without.html.contains("--base-dir"), "{}", without.html);
+        assert!(
+            with.html
+                .contains(&format!("--base-dir={}", root.join("component").display())),
+            "{}",
+            with.html
+        );
     }
 
     #[test]
