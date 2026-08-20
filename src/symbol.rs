@@ -37,6 +37,17 @@ pub fn canonical_id(text: &str) -> String {
     generated_id(text, "", '-')
 }
 
+/// The id plain Asciidoctor generates for a heading with no explicit anchor.
+///
+/// Antora's default UI sets `idprefix: ''` and `idseparator: '-'`, which is what
+/// `canonical_id` produces; Asciidoctor's own defaults, used whenever a document is
+/// rendered outside an Antora module, are `idprefix=_` and `idseparator=_`. Both forms are
+/// needed because which one a reference must match depends on how the document is built.
+#[must_use]
+pub fn asciidoctor_id(text: &str) -> String {
+    generated_id(text, "_", '_')
+}
+
 /// The last-resort comparison form: letters and digits only.
 ///
 /// Asciidoctor drops some punctuation outright and turns the rest into the separator, so
