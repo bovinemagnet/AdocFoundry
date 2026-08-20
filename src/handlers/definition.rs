@@ -37,6 +37,34 @@ pub fn definition_at_offset(
         .or_else(|| resolve_include(index, current_path, document, include))
 }
 
+/// The file a reference target names, resolved in the same order `definition_at_offset`
+/// uses: Antora resource ID first when the file sits in a module, then a relative path.
+///
+/// An empty target means the current file, which is how `xref:#anchor` is written.
+#[must_use]
+pub fn reference_target_path(
+    index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
+    current_path: &Path,
+    target: &str,
+) -> Option<PathBuf> {
+    if target.is_empty() {
+        return Some(current_path.to_path_buf());
+    }
+
+    if let Some(context) = antora.context_for_path(current_path) {
+        if let Ok(id) = parse_resource_id(target) {
+            if let Ok(resource) = AntoraResolver::resolve(antora, &id, &context) {
+                return Some(resource.source_path.clone());
+            }
+        }
+    }
+
+    let relative = current_path.parent()?.join(target);
+    let relative = adoc_index::normalize_path(&relative);
+    (index.file(&relative).is_some() || relative.is_file()).then_some(relative)
+}
+
 fn resolve_antora_reference(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,

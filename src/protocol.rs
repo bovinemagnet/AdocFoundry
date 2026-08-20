@@ -12,15 +12,17 @@ use lsp_types::{
         Notification as LspNotification, PublishDiagnostics,
     },
     request::{
-        CodeActionRequest, DocumentSymbolRequest, ExecuteCommand, GotoDefinition,
+        CodeActionRequest, Completion, DocumentSymbolRequest, ExecuteCommand, GotoDefinition,
         Request as LspRequest,
     },
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse, Command,
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentSymbol, DocumentSymbolParams,
-    DocumentSymbolResponse, ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse,
-    InitializeParams, InitializeResult, Location, NumberOrString, PublishDiagnosticsParams,
-    ServerInfo, SymbolKind, TextDocumentContentChangeEvent, Uri,
+    CompletionItem, CompletionItemKind, CompletionList, CompletionParams, CompletionResponse,
+    CompletionTextEdit, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams,
+    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult, Location,
+    NumberOrString, PublishDiagnosticsParams, ServerInfo, SymbolKind,
+    TextDocumentContentChangeEvent, TextEdit, Uri,
 };
 
 use crate::{
@@ -30,6 +32,7 @@ use crate::{
             code_actions_for, LivePreview, RENDER_LIVE_PREVIEW_COMMAND, RENDER_PREVIEW_COMMAND,
             STOP_LIVE_PREVIEW_COMMAND,
         },
+        completion::{completion_at_offset, Candidate, CandidateKind},
         definition::definition_at_offset,
         diagnostics::diagnostics,
         document_symbols::document_symbols,
@@ -119,6 +122,9 @@ impl ProtocolServer {
                 .request_response::<GotoDefinitionParams, _>(request, |params| {
                     self.definition_response(params)
                 }),
+            Completion::METHOD => self.request_response::<CompletionParams, _>(request, |params| {
+                self.completion_response(params)
+            }),
             CodeActionRequest::METHOD => self
                 .request_response::<CodeActionParams, _>(request, |params| {
                     self.code_action_response(&params)
@@ -414,6 +420,53 @@ impl ProtocolServer {
         let uri = path_to_uri(&target.path)?;
         let range = self.encoding.range(&target_text, target.range)?;
         Some(GotoDefinitionResponse::Scalar(Location::new(uri, range)))
+    }
+
+    fn completion_response(&self, params: CompletionParams) -> Option<CompletionResponse> {
+        let document_uri = params.text_document_position.text_document.uri.as_str();
+        let document = &self.state.documents.get(document_uri)?.document;
+        let offset = self
+            .encoding
+            .offset(&document.text, params.text_document_position.position)?;
+        let current_path = document_path(document_uri);
+        let candidates = completion_at_offset(
+            &self.state.index,
+            &self.state.antora,
+            &current_path,
+            document,
+            offset,
+        );
+
+        let items = candidates
+            .into_iter()
+            .filter_map(|candidate| self.completion_item(&document.text, candidate))
+            .collect();
+        Some(CompletionResponse::List(CompletionList {
+            // The candidate set narrows as the target grows, so the client must ask again.
+            is_incomplete: true,
+            items,
+        }))
+    }
+
+    fn completion_item(&self, text: &str, candidate: Candidate) -> Option<CompletionItem> {
+        let range = self.encoding.range(text, candidate.range)?;
+        Some(CompletionItem {
+            label: candidate.label.clone(),
+            kind: Some(match candidate.kind {
+                CandidateKind::Page | CandidateKind::Resource => CompletionItemKind::FILE,
+                CandidateKind::Family => CompletionItemKind::KEYWORD,
+                CandidateKind::Directory => CompletionItemKind::FOLDER,
+                CandidateKind::Anchor => CompletionItemKind::REFERENCE,
+            }),
+            detail: candidate.detail,
+            sort_text: Some(candidate.sort_text),
+            filter_text: Some(candidate.label.clone()),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range,
+                new_text: candidate.label,
+            })),
+            ..CompletionItem::default()
+        })
     }
 }
 

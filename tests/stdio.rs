@@ -7,7 +7,7 @@ use lsp_server::{Message, Notification, Request, RequestId, Response};
 use lsp_types::{
     notification::{Exit, Initialized, Notification as LspNotification},
     request::{Initialize, Request as LspRequest, Shutdown},
-    InitializeParams, InitializeResult, InitializedParams,
+    CompletionResponse, InitializeParams, InitializeResult, InitializedParams,
 };
 
 #[test]
@@ -50,6 +50,86 @@ fn binary_completes_the_stdio_lifecycle() {
         .expect("send exit");
     drop(stdin);
 
+    assert!(child.wait().expect("wait for adoc-ls").success());
+}
+
+#[test]
+fn binary_answers_a_completion_request() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adoc-ls"))
+        .arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start adoc-ls");
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout"));
+
+    Message::Request(Request::new(
+        RequestId::from(1),
+        Initialize::METHOD.to_owned(),
+        InitializeParams::default(),
+    ))
+    .write(&mut stdin)
+    .expect("send initialize");
+    assert_success_response(read_message(&mut stdout), RequestId::from(1));
+    Message::Notification(Notification::new(
+        Initialized::METHOD.to_owned(),
+        InitializedParams {},
+    ))
+    .write(&mut stdin)
+    .expect("send initialized");
+
+    let uri = "file:///docs/guide.adoc";
+    let text = "[[intro]]\n== Intro\n\nSee <<";
+    Message::Notification(Notification::new(
+        "textDocument/didOpen".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri, "languageId": "asciidoc", "version": 1, "text": text },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send didOpen");
+    // didOpen publishes diagnostics before anything else arrives.
+    let _ = read_message(&mut stdout);
+
+    Message::Request(Request::new(
+        RequestId::from(2),
+        "textDocument/completion".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 3, "character": 6 },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send completion");
+
+    let Message::Response(response) = read_message(&mut stdout) else {
+        panic!("expected a completion response");
+    };
+    let result: Option<CompletionResponse> =
+        serde_json::from_value(response.response_result.expect("completion succeeded"))
+            .expect("decode completion");
+    let Some(CompletionResponse::List(list)) = result else {
+        panic!("expected a completion list");
+    };
+    assert!(list.is_incomplete);
+    assert!(
+        list.items.iter().any(|item| item.label == "intro"),
+        "the anchor declared in the buffer must be offered: {:?}",
+        list.items
+    );
+
+    Message::Request(Request::new(
+        RequestId::from(3),
+        Shutdown::METHOD.to_owned(),
+        (),
+    ))
+    .write(&mut stdin)
+    .expect("send shutdown");
+    let _ = read_message(&mut stdout);
+    Message::Notification(Notification::new(Exit::METHOD.to_owned(), ()))
+        .write(&mut stdin)
+        .expect("send exit");
     assert!(child.wait().expect("wait for adoc-ls").success());
 }
 

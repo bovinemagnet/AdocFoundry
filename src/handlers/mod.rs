@@ -1,4 +1,5 @@
 pub mod code_actions;
+pub mod completion;
 pub mod definition;
 pub mod diagnostics;
 pub mod document_symbols;

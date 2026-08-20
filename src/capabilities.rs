@@ -1,6 +1,6 @@
 use lsp_types::{
-    CodeActionProviderCapability, ExecuteCommandOptions, OneOf, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    CodeActionProviderCapability, CompletionOptions, ExecuteCommandOptions, OneOf,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
     TextDocumentSyncSaveOptions,
 };
 
@@ -25,6 +25,19 @@ pub(crate) fn server_capabilities(
         )),
         document_symbol_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
+        // The trigger set is only a hint about when to ask. `completion_context` decides
+        // whether there is anything to offer, so `:` firing on an attribute line is fine.
+        completion_provider: Some(CompletionOptions {
+            trigger_characters: Some(vec![
+                ":".to_owned(),
+                "$".to_owned(),
+                "#".to_owned(),
+                "/".to_owned(),
+                "<".to_owned(),
+            ]),
+            resolve_provider: Some(false),
+            ..CompletionOptions::default()
+        }),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         execute_command_provider: Some(ExecuteCommandOptions {
             // A client may drop a code action whose command is missing from this list —
@@ -67,5 +80,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn advertises_completion_with_its_trigger_characters() {
+        let capabilities = server_capabilities(PositionEncoding::Utf16);
+        let completion = capabilities
+            .completion_provider
+            .expect("completion provider");
+
+        let triggers = completion.trigger_characters.expect("trigger characters");
+        for expected in [":", "$", "#", "/", "<"] {
+            assert!(
+                triggers.iter().any(|trigger| trigger == expected),
+                "`{expected}` must trigger completion: {triggers:?}"
+            );
+        }
+        assert_eq!(completion.resolve_provider, Some(false));
     }
 }
