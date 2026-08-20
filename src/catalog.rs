@@ -96,6 +96,58 @@ impl AntoraCatalog {
         self.resources.values()
     }
 
+    /// Every resource in one module's family, in path order.
+    ///
+    /// This is a range over the ordered map rather than a filter over every resource:
+    /// `AntoraCoordinate` orders component, version, module, family, then path, so the
+    /// matching entries are contiguous and the cost is proportional to the answer.
+    pub fn resources_in(
+        &self,
+        component: &str,
+        version: Option<&str>,
+        module: &str,
+        family: ResourceFamily,
+    ) -> impl Iterator<Item = &AntoraResource> {
+        let start = AntoraCoordinate {
+            component: component.to_owned(),
+            version: version.map(str::to_owned),
+            module: module.to_owned(),
+            family,
+            relative_path: PathBuf::new(),
+        };
+        let component = component.to_owned();
+        let version = version.map(str::to_owned);
+        let module = module.to_owned();
+        self.resources
+            .range(start..)
+            .take_while(move |(coordinate, _)| {
+                coordinate.component == component
+                    && coordinate.version == version
+                    && coordinate.module == module
+                    && coordinate.family == family
+            })
+            .map(|(_, resource)| resource)
+    }
+
+    /// Every module of one component version, in name order.
+    pub fn modules_of(
+        &self,
+        component: &str,
+        version: Option<&str>,
+    ) -> impl Iterator<Item = &Module> {
+        let start = ModuleKey {
+            component: component.to_owned(),
+            version: version.map(str::to_owned),
+            name: String::new(),
+        };
+        let component = component.to_owned();
+        let version = version.map(str::to_owned);
+        self.modules
+            .range(start..)
+            .take_while(move |(key, _)| key.component == component && key.version == version)
+            .map(|(_, module)| module)
+    }
+
     #[must_use]
     pub fn context_for_path(&self, source_path: &Path) -> Option<AntoraContext> {
         let source_path = normalize_path(source_path);
@@ -321,5 +373,87 @@ mod tests {
             resolved.source_path,
             PathBuf::from("modules/ROOT/pages/index.adoc")
         );
+    }
+
+    fn two_module_catalog() -> AntoraCatalog {
+        let mut catalog = AntoraCatalog::new();
+        catalog.insert_component(ComponentDescriptor {
+            root: PathBuf::from("."),
+            name: "demo".to_owned(),
+            title: None,
+            version: Some("latest".to_owned()),
+            display_version: None,
+            start_page: None,
+            nav: Vec::new(),
+            asciidoc_attributes: BTreeMap::new(),
+        });
+        for module in ["ROOT", "security"] {
+            catalog.insert_module(Module {
+                component: "demo".to_owned(),
+                version: Some("latest".to_owned()),
+                name: module.to_owned(),
+                root: PathBuf::from(format!("modules/{module}")),
+                nav: None,
+            });
+            for (family, file) in [
+                (ResourceFamily::Page, "index.adoc"),
+                (ResourceFamily::Partial, "note.adoc"),
+            ] {
+                catalog.insert(AntoraResource {
+                    coordinate: AntoraCoordinate {
+                        component: "demo".to_owned(),
+                        version: Some("latest".to_owned()),
+                        module: module.to_owned(),
+                        family,
+                        relative_path: PathBuf::from(file),
+                    },
+                    source_path: PathBuf::from(format!(
+                        "modules/{module}/{}/{file}",
+                        family.directory()
+                    )),
+                });
+            }
+        }
+        catalog
+    }
+
+    #[test]
+    fn enumerates_only_the_requested_module_and_family() {
+        let catalog = two_module_catalog();
+
+        let partials: Vec<_> = catalog
+            .resources_in("demo", Some("latest"), "ROOT", ResourceFamily::Partial)
+            .map(|resource| resource.source_path.clone())
+            .collect();
+
+        assert_eq!(
+            partials,
+            vec![PathBuf::from("modules/ROOT/partials/note.adoc")],
+            "a neighbouring module or family must not leak in"
+        );
+    }
+
+    #[test]
+    fn enumerates_nothing_for_an_unknown_module() {
+        let catalog = two_module_catalog();
+
+        assert_eq!(
+            catalog
+                .resources_in("demo", Some("latest"), "absent", ResourceFamily::Page)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn enumerates_the_modules_of_a_component() {
+        let catalog = two_module_catalog();
+
+        let names: Vec<_> = catalog
+            .modules_of("demo", Some("latest"))
+            .map(|module| module.name.clone())
+            .collect();
+
+        assert_eq!(names, vec!["ROOT".to_owned(), "security".to_owned()]);
     }
 }
