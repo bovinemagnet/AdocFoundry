@@ -6,7 +6,7 @@ use adoc_core::{
 
 use crate::line_parser::{
     content, find_anchors, find_images, find_includes, find_references, is_verbatim_delimiter,
-    parse_attribute, parse_heading,
+    parse_attribute, parse_heading, COMMENT_DELIMITER,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,9 +32,6 @@ impl DocumentParser for AsciiDocParser {
 pub fn parse(uri: &str, text: &str) -> ParseResult {
     AsciiDocParser.parse(uri, text)
 }
-
-/// Comment blocks are the one delimited block Asciidoctor does not expand includes in.
-const COMMENT_DELIMITER: &str = "////";
 
 fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut document = Document::new(uri, text);

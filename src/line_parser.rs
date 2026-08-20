@@ -158,6 +158,9 @@ pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
         .collect()
 }
 
+/// Comment blocks are the one delimited block Asciidoctor does not expand includes in.
+pub(crate) const COMMENT_DELIMITER: &str = "////";
+
 pub(crate) fn is_verbatim_delimiter(line: &str) -> bool {
     matches!(line.trim(), "----" | "...." | "++++" | "////")
 }
@@ -233,7 +236,7 @@ fn find_delimited<'a>(
     found
 }
 
-fn is_boundary(line: &str, start: usize) -> bool {
+pub(crate) fn is_boundary(line: &str, start: usize) -> bool {
     // A leading backslash escapes a macro, which is how a document shows one literally.
     line[..start].chars().next_back().is_none_or(|character| {
         !character.is_alphanumeric() && character != '_' && character != '\\'
