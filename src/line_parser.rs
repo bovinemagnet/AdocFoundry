@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use adoc_core::{
     Anchor, AttributeDeclaration, ImageDirective, IncludeDirective, Reference, ReferenceKind,
     SourceRange,
@@ -234,6 +236,115 @@ fn find_delimited<'a>(
     }
 
     found
+}
+
+/// `line` with every inline passthrough blanked to spaces of the same byte length.
+///
+/// Asciidoctor extracts passthroughs before any other substitution, so nothing inside one is a
+/// reference, anchor or image. Blanking rather than removing keeps every byte offset valid.
+pub(crate) fn mask_passthroughs(line: &str) -> Cow<'_, str> {
+    let spans = passthrough_spans(line);
+    if spans.is_empty() {
+        return Cow::Borrowed(line);
+    }
+    let mut masked = String::with_capacity(line.len());
+    let mut cursor = 0;
+    for (start, end) in spans {
+        masked.push_str(&line[cursor..start]);
+        masked.extend(std::iter::repeat_n(' ', end - start));
+        cursor = end;
+    }
+    masked.push_str(&line[cursor..]);
+    Cow::Owned(masked)
+}
+
+/// The byte spans of `pass:[…]`, `+++…+++`, `++…++` and constrained `+…+` passthroughs.
+fn passthrough_spans(line: &str) -> Vec<(usize, usize)> {
+    let bytes = line.as_bytes();
+    let mut spans = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            // An escaped character opens nothing. Only ASCII bytes are compared below, so
+            // stepping into the middle of a multi-byte character is harmless.
+            b'\\' => index += 2,
+            b'p' if line[index..].starts_with("pass:") && is_boundary(line, index) => {
+                match pass_macro_end(line, index) {
+                    Some(end) => {
+                        spans.push((index, end));
+                        index = end;
+                    }
+                    None => index += 1,
+                }
+            }
+            b'+' => {
+                let run = bytes[index..]
+                    .iter()
+                    .take_while(|byte| **byte == b'+')
+                    .count();
+                match plus_passthrough_end(line, index, run) {
+                    Some(end) => {
+                        spans.push((index, end));
+                        index = end;
+                    }
+                    None => index += run,
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    spans
+}
+
+/// The end of `pass:subs[content]` starting at `start`.
+fn pass_macro_end(line: &str, start: usize) -> Option<usize> {
+    let after = start + "pass:".len();
+    let open = after + line[after..].find('[')?;
+    let substitutions = &line[after..open];
+    if !substitutions
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == ',')
+    {
+        return None;
+    }
+    let close = open + 1 + line[open + 1..].find(']')?;
+    Some(close + 1)
+}
+
+/// The end of a passthrough opened by a run of `run` plus signs at `start`.
+fn plus_passthrough_end(line: &str, start: usize, run: usize) -> Option<usize> {
+    match run {
+        // `++…++` and `+++…+++` are unconstrained: they may open and close anywhere.
+        2 | 3 => {
+            let delimiter = &line[start..start + run];
+            let content = start + run;
+            let close = content + line[content..].find(delimiter)?;
+            (close > content).then_some(close + run)
+        }
+        // `+…+` is constrained: it opens after a non-word character, and its content starts
+        // and ends with a non-space character before a closing `+` that ends a word.
+        1 => {
+            let opens = line[..start].chars().next_back().is_none_or(|character| {
+                !character.is_alphanumeric() && !matches!(character, '_' | ';' | ':')
+            });
+            let content = start + 1;
+            if !opens || line[content..].starts_with(|character: char| character.is_whitespace()) {
+                return None;
+            }
+            line[content..]
+                .match_indices('+')
+                .map(|(relative, _)| content + relative)
+                .find(|&close| {
+                    close > content
+                        && !line[..close].ends_with(|character: char| character.is_whitespace())
+                        && !line[close + 1..].starts_with(|character: char| {
+                            character.is_alphanumeric() || character == '_'
+                        })
+                })
+                .map(|close| close + 1)
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn is_boundary(line: &str, start: usize) -> bool {

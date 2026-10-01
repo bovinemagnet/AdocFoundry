@@ -6,7 +6,7 @@ use adoc_core::{
 
 use crate::line_parser::{
     content, find_anchors, find_images, find_includes, find_references, is_verbatim_delimiter,
-    parse_attribute, parse_heading, COMMENT_DELIMITER,
+    mask_passthroughs, parse_attribute, parse_heading, COMMENT_DELIMITER,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,7 +71,9 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             continue;
         }
 
-        let anchors = find_anchors(line, offset);
+        // Inline extraction sees passthroughs blanked out; includes are whole-line directives.
+        let inline = mask_passthroughs(line);
+        let anchors = find_anchors(&inline, offset);
         let anchor_only = anchors.len() == 1
             && anchors[0].range == SourceRange::new(offset, offset + line_content.len());
         for anchor in anchors {
@@ -118,9 +120,9 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             pending_anchor = None;
         }
 
-        document.references.extend(find_references(line, offset));
+        document.references.extend(find_references(&inline, offset));
         document.includes.extend(find_includes(line, offset));
-        document.images.extend(find_images(line, offset));
+        document.images.extend(find_images(&inline, offset));
         offset += line.len();
     }
 
@@ -271,5 +273,57 @@ image::diagram.png[Architecture]\n";
         assert_eq!(result.document.sections.len(), 2);
         assert_eq!(result.diagnostics.len(), 1);
         assert!(result.diagnostics[0].message.contains("duplicate anchor"));
+    }
+
+    fn reference_targets(text: &str) -> Vec<String> {
+        parse("file:///guide.adoc", text)
+            .document
+            .references
+            .into_iter()
+            .map(|reference| reference.target)
+            .collect()
+    }
+
+    #[test]
+    fn ignores_references_inside_inline_passthroughs() {
+        // Asciidoctor pulls passthroughs out before anything else, so the `<<` of one and
+        // the `>>` of the next must not pair up into a reference.
+        assert!(reference_targets("| `+<<+` / `+>>+` | Strictly left\n").is_empty());
+        assert!(reference_targets(
+            "Use ++<<a>>++, +++<<b>>+++, pass:[<<c>>], pass:q[<<d>>] and +xref:e.adoc[]+ here.\n"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn still_finds_references_beside_a_passthrough() {
+        let text = "See +literal+ and <<real>>.\n";
+        let references = parse("file:///guide.adoc", text).document.references;
+
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].target, "real");
+        let start = text.find("<<real>>").unwrap();
+        assert_eq!(references[0].range.start, start);
+        assert_eq!(references[0].range.end, start + "<<real>>".len());
+    }
+
+    #[test]
+    fn treats_plus_signs_that_open_no_passthrough_as_text() {
+        // A spaced `+`, a word-internal `+` and an escaped `\+` open no passthrough.
+        assert_eq!(reference_targets("1 + 2 <<a>> 3 + 4\n"), ["a"]);
+        assert_eq!(reference_targets("x+<<b>>+y\n"), ["b"]);
+        assert_eq!(reference_targets("\\+<<c>>+\n"), ["c"]);
+    }
+
+    #[test]
+    fn ignores_anchors_and_images_inside_inline_passthroughs() {
+        let document = parse(
+            "file:///guide.adoc",
+            "Show +[[fake]]+ and +image:x.png[]+ text\n",
+        )
+        .document;
+
+        assert!(document.anchors.is_empty(), "{:?}", document.anchors);
+        assert!(document.images.is_empty(), "{:?}", document.images);
     }
 }
