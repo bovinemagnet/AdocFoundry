@@ -34,6 +34,11 @@ impl DocumentStore {
         self.documents.remove(uri)
     }
 
+    /// The URIs of every open document, in a stable order.
+    pub fn uris(&self) -> impl Iterator<Item = &str> {
+        self.documents.keys().map(String::as_str)
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.documents.len()

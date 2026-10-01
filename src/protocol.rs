@@ -78,7 +78,7 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
                     .map_err(|_| ServerError::ChannelClosed)?;
             }
             Message::Notification(notification) => {
-                if let Some(notification) = server.handle_notification(notification)? {
+                for notification in server.handle_notification(notification)? {
                     connection
                         .sender
                         .send(notification.into())
@@ -160,17 +160,17 @@ impl ProtocolServer {
     fn handle_notification(
         &mut self,
         notification: Notification,
-    ) -> Result<Option<Notification>, ServerError> {
+    ) -> Result<Vec<Notification>, ServerError> {
         match notification.method.as_str() {
             DidOpenTextDocument::METHOD => {
                 let Some(params) = decode_notification(notification.params) else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
                 self.did_open(params)
             }
             DidChangeTextDocument::METHOD => {
                 let Some(params) = decode_notification(notification.params) else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
                 self.did_change(params)
             }
@@ -178,41 +178,41 @@ impl ProtocolServer {
                 let Some(params) =
                     decode_notification::<DidSaveTextDocumentParams>(notification.params)
                 else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
                 self.refresh_live_preview(params.text_document.uri.as_str());
-                Ok(None)
+                Ok(Vec::new())
             }
             DidCloseTextDocument::METHOD => {
                 let Some(params) = decode_notification(notification.params) else {
-                    return Ok(None);
+                    return Ok(Vec::new());
                 };
                 self.did_close(params)
             }
-            _ => Ok(None),
+            _ => Ok(Vec::new()),
         }
     }
 
     fn did_open(
         &mut self,
         params: DidOpenTextDocumentParams,
-    ) -> Result<Option<Notification>, ServerError> {
+    ) -> Result<Vec<Notification>, ServerError> {
         let uri = params.text_document.uri.as_str().to_owned();
         self.state.open(
             &uri,
             &params.text_document.text,
             params.text_document.version,
         );
-        Ok(self.diagnostics_notification(&params.text_document.uri))
+        Ok(self.open_diagnostics(&uri))
     }
 
     fn did_change(
         &mut self,
         params: DidChangeTextDocumentParams,
-    ) -> Result<Option<Notification>, ServerError> {
+    ) -> Result<Vec<Notification>, ServerError> {
         let uri = params.text_document.uri.as_str().to_owned();
         let Some(open_document) = self.state.documents.get(&uri) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let text = apply_content_changes(
             open_document.document.text.clone(),
@@ -220,26 +220,41 @@ impl ProtocolServer {
             self.encoding,
         )?;
         self.state.change(&uri, &text, params.text_document.version);
-        Ok(self.diagnostics_notification(&params.text_document.uri))
+        Ok(self.open_diagnostics(&uri))
     }
 
     fn did_close(
         &mut self,
         params: DidCloseTextDocumentParams,
-    ) -> Result<Option<Notification>, ServerError> {
+    ) -> Result<Vec<Notification>, ServerError> {
         let uri = params.text_document.uri.as_str();
         // Closing the buffer is the only signal available that a preview is finished:
         // a browser tab closing is invisible from here.
         self.live_previews.remove(uri);
         self.state.close(uri)?;
-        Ok(Some(Notification::new(
+        // The index now holds the file as saved on disk, or not at all.
+        let mut notifications = vec![Notification::new(
             PublishDiagnostics::METHOD.to_owned(),
-            PublishDiagnosticsParams::new(params.text_document.uri, Vec::new(), None),
-        )))
+            PublishDiagnosticsParams::new(params.text_document.uri.clone(), Vec::new(), None),
+        )];
+        notifications.extend(self.open_diagnostics(uri));
+        Ok(notifications)
     }
 
-    fn diagnostics_notification(&self, uri: &Uri) -> Option<Notification> {
-        let uri_text = uri.as_str();
+    /// Diagnostics for `changed`, if it is open, then for every other open document.
+    ///
+    /// Any change to the index can resolve or break a reference in another file, and which
+    /// files are affected is not knowable without a reverse lookup for every kind of link.
+    /// The cost grows with the number of open documents, never with the workspace.
+    fn open_diagnostics(&self, changed: &str) -> Vec<Notification> {
+        std::iter::once(changed)
+            .chain(self.state.documents.uris().filter(|uri| *uri != changed))
+            .filter_map(|uri| self.diagnostics_notification(uri))
+            .collect()
+    }
+
+    fn diagnostics_notification(&self, uri_text: &str) -> Option<Notification> {
+        let uri = Uri::from_str(uri_text).ok()?;
         let open_document = self.state.documents.get(uri_text)?;
         let path = document_path(uri_text);
         let diagnostics = diagnostics(&self.state.index, &self.state.antora, &path)
@@ -263,7 +278,7 @@ impl ProtocolServer {
             .collect();
         Some(Notification::new(
             PublishDiagnostics::METHOD.to_owned(),
-            PublishDiagnosticsParams::new(uri.clone(), diagnostics, Some(open_document.version)),
+            PublishDiagnosticsParams::new(uri, diagnostics, Some(open_document.version)),
         ))
     }
 
@@ -566,21 +581,24 @@ mod tests {
     use lsp_server::{Connection, Message, Notification, Request, RequestId};
     use lsp_types::{
         notification::{
-            DidOpenTextDocument, Initialized, Notification as LspNotification, PublishDiagnostics,
+            DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
+            Notification as LspNotification, PublishDiagnostics,
         },
         request::{
             DocumentSymbolRequest, GotoDefinition, Initialize, Request as LspRequest, Shutdown,
         },
-        ClientCapabilities, DiagnosticSeverity, DidOpenTextDocumentParams, DocumentSymbolParams,
+        ClientCapabilities, DiagnosticSeverity, DidChangeTextDocumentParams,
+        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
         GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializedParams,
         Location, NumberOrString, PartialResultParams, Position, PublishDiagnosticsParams, Range,
         TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-        TextDocumentPositionParams, Uri, WorkDoneProgressParams, WorkspaceFolder,
+        TextDocumentPositionParams, Uri, VersionedTextDocumentIdentifier, WorkDoneProgressParams,
+        WorkspaceFolder,
     };
 
     use crate::position::PositionEncoding;
 
-    use super::{apply_content_changes, run_connection};
+    use super::{apply_content_changes, run_connection, ProtocolServer};
 
     #[test]
     fn applies_incremental_utf16_changes() {
@@ -890,9 +908,15 @@ mod tests {
                 },
             )))
             .unwrap();
-        let Message::Response(response) = connection.receiver.recv().unwrap() else {
-            panic!("expected definition response");
-        };
+        // Opening a document republishes every open one, so publishes may precede the response.
+        let response = connection
+            .receiver
+            .iter()
+            .find_map(|message| match message {
+                Message::Response(response) => Some(response),
+                _ => None,
+            })
+            .expect("expected definition response");
         let response: Option<GotoDefinitionResponse> =
             serde_json::from_value(response.response_result.unwrap()).unwrap();
         let Some(GotoDefinitionResponse::Scalar(location)) = response else {
@@ -910,5 +934,118 @@ mod tests {
             .unwrap()
             .to_file_path()
             .unwrap()
+    }
+
+    /// The `(uri, diagnostic codes)` of every publish a notification produces, in order.
+    fn published(
+        server: &mut ProtocolServer,
+        method: &str,
+        params: impl serde::Serialize,
+    ) -> Vec<(String, Vec<String>)> {
+        server
+            .handle_notification(Notification::new(method.to_owned(), params))
+            .unwrap()
+            .into_iter()
+            .map(|notification| {
+                assert_eq!(notification.method, PublishDiagnostics::METHOD);
+                let params: PublishDiagnosticsParams =
+                    serde_json::from_value(notification.params).unwrap();
+                let codes = params
+                    .diagnostics
+                    .into_iter()
+                    .filter_map(|diagnostic| match diagnostic.code {
+                        Some(NumberOrString::String(code)) => Some(code),
+                        _ => None,
+                    })
+                    .collect();
+                (params.uri.as_str().to_owned(), codes)
+            })
+            .collect()
+    }
+
+    fn open(server: &mut ProtocolServer, uri: &str, text: &str) -> Vec<(String, Vec<String>)> {
+        published(
+            server,
+            DidOpenTextDocument::METHOD,
+            DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: uri.parse().unwrap(),
+                    language_id: "asciidoc".to_owned(),
+                    version: 1,
+                    text: text.to_owned(),
+                },
+            },
+        )
+    }
+
+    const PAGE: &str = "file:///docs/page.adoc";
+    const OTHER: &str = "file:///docs/other.adoc";
+
+    #[test]
+    fn republishes_other_open_documents_when_a_file_opens_or_changes() {
+        let mut server = ProtocolServer::new(PositionEncoding::Utf16);
+        open(
+            &mut server,
+            PAGE,
+            "= Page\n\nSee xref:other.adoc#details[].\n",
+        );
+
+        // Opening the target resolves the page's xref, so the page is published again.
+        let after_open = open(&mut server, OTHER, "= Other\n\n[[details]]\n== Details\n");
+        assert_eq!(after_open[0].0, OTHER, "the opened file comes first");
+        assert!(
+            after_open.contains(&(PAGE.to_owned(), Vec::new())),
+            "{after_open:?}"
+        );
+
+        // Removing the anchor breaks the page's xref.
+        let after_change = published(
+            &mut server,
+            DidChangeTextDocument::METHOD,
+            DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier::new(OTHER.parse().unwrap(), 2),
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: "= Other\n".to_owned(),
+                }],
+            },
+        );
+        assert_eq!(after_change[0].0, OTHER, "the changed file comes first");
+        assert!(
+            after_change.contains(&(PAGE.to_owned(), vec!["adoc.unresolved-anchor".to_owned()])),
+            "{after_change:?}"
+        );
+    }
+
+    #[test]
+    fn republishes_other_open_documents_when_a_file_closes() {
+        let mut server = ProtocolServer::new(PositionEncoding::Utf16);
+        open(
+            &mut server,
+            PAGE,
+            "= Page\n\nSee xref:other.adoc#details[].\n",
+        );
+        open(&mut server, OTHER, "= Other\n\n[[details]]\n== Details\n");
+
+        // `/docs/other.adoc` is not on disk, so closing it drops it from the index.
+        let after_close = published(
+            &mut server,
+            DidCloseTextDocument::METHOD,
+            DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier::new(OTHER.parse().unwrap()),
+            },
+        );
+
+        assert_eq!(
+            after_close,
+            vec![
+                (OTHER.to_owned(), Vec::new()),
+                (
+                    PAGE.to_owned(),
+                    vec!["adoc.unresolved-xref-file".to_owned()]
+                ),
+            ]
+        );
     }
 }
