@@ -12,6 +12,8 @@ pub enum CompletionKind {
     IncludeTarget,
     ImageTarget,
     LocalAnchor,
+    /// The name inside an attribute reference such as `{product-name}`.
+    AttributeName,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,6 +87,15 @@ fn line_context(
     offset: usize,
     includes_only: bool,
 ) -> Option<CompletionContext> {
+    // A name being typed after `{` is an attribute reference even inside a macro target,
+    // where Asciidoctor substitutes it before resolving the target.
+    let trimmed = typed.trim_start();
+    if !trimmed.starts_with("//") && (!includes_only || trimmed.starts_with("include::")) {
+        if let Some(context) = attribute_context(typed, line_start, offset) {
+            return Some(context);
+        }
+    }
+
     let mut best: Option<(usize, usize, Marker)> = None;
 
     for (prefix, marker) in [
@@ -151,6 +162,25 @@ fn line_context(
         kind,
         prefix: target.to_owned(),
         range: SourceRange::new(range_start, offset),
+    })
+}
+
+fn attribute_context(typed: &str, line_start: usize, offset: usize) -> Option<CompletionContext> {
+    let brace = typed.rfind('{')?;
+    if typed[..brace].ends_with('\\') {
+        return None;
+    }
+    let name = &typed[brace + 1..];
+    let is_name_character =
+        |character: char| character.is_alphanumeric() || character == '_' || character == '-';
+    if name.starts_with('-') || !name.chars().all(is_name_character) {
+        return None;
+    }
+
+    Some(CompletionContext {
+        kind: CompletionKind::AttributeName,
+        prefix: name.to_owned(),
+        range: SourceRange::new(line_start + brace + 1, offset),
     })
 }
 
@@ -315,5 +345,80 @@ mod tests {
         let text = ":toc:";
 
         assert_eq!(completion_context(text, text.len()), None);
+    }
+
+    #[test]
+    fn detects_an_attribute_name() {
+        let text = "= Demo\n\nVersion {prod";
+        let context = completion_context(text, text.len()).expect("a context");
+
+        assert_eq!(context.kind, CompletionKind::AttributeName);
+        assert_eq!(context.prefix, "prod");
+        assert_eq!(context.range, SourceRange::new(text.len() - 4, text.len()));
+    }
+
+    #[test]
+    fn detects_an_attribute_name_straight_after_the_brace() {
+        let text = "Version {";
+        let context = completion_context(text, text.len()).expect("a context");
+
+        assert_eq!(context.kind, CompletionKind::AttributeName);
+        assert_eq!(context.prefix, "");
+    }
+
+    #[test]
+    fn prefers_an_attribute_name_inside_a_macro_target() {
+        for text in ["include::{par", "See xref:{bas", "image::{img"] {
+            let context = completion_context(text, text.len()).expect("a context");
+
+            assert_eq!(context.kind, CompletionKind::AttributeName, "{text}");
+        }
+    }
+
+    #[test]
+    fn detects_an_attribute_name_in_an_attribute_value() {
+        let text = ":url: {base";
+        let context = completion_context(text, text.len()).expect("a context");
+
+        assert_eq!(context.kind, CompletionKind::AttributeName);
+        assert_eq!(context.prefix, "base");
+    }
+
+    #[test]
+    fn ignores_a_closed_attribute_reference() {
+        let text = "Version {product} and ";
+
+        assert_eq!(completion_context(text, text.len()), None);
+    }
+
+    #[test]
+    fn ignores_an_escaped_attribute_reference() {
+        let text = "Version \\{prod";
+
+        assert_eq!(completion_context(text, text.len()), None);
+    }
+
+    #[test]
+    fn ignores_a_brace_followed_by_something_other_than_a_name() {
+        for text in ["{a b", "{set:foo", "{-x"] {
+            assert_eq!(completion_context(text, text.len()), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn ignores_an_attribute_name_on_a_comment_line() {
+        let text = "// see {prod";
+
+        assert_eq!(completion_context(text, text.len()), None);
+    }
+
+    #[test]
+    fn offers_attribute_names_inside_a_verbatim_block_only_on_include_lines() {
+        let plain = "----\nVersion {prod";
+        assert_eq!(completion_context(plain, plain.len()), None);
+
+        let include = "----\ninclude::{par";
+        let context = completion_context(include, include.len()).expect("a context");
+        assert_eq!(context.kind, CompletionKind::AttributeName);
     }
 }
