@@ -7,8 +7,8 @@ use lsp_server::{Message, Notification, Request, RequestId, Response};
 use lsp_types::{
     notification::{Exit, Initialized, Notification as LspNotification},
     request::{Initialize, Request as LspRequest, Shutdown},
-    CompletionItemKind, CompletionResponse, CompletionTextEdit, InitializeParams, InitializeResult,
-    InitializedParams,
+    CompletionItemKind, CompletionResponse, CompletionTextEdit, Hover, HoverContents,
+    InitializeParams, InitializeResult, InitializedParams, MarkupKind,
 };
 
 #[test]
@@ -119,6 +119,88 @@ fn binary_answers_a_completion_request() {
         "the anchor declared in the buffer must be offered: {:?}",
         list.items
     );
+
+    Message::Request(Request::new(
+        RequestId::from(3),
+        Shutdown::METHOD.to_owned(),
+        (),
+    ))
+    .write(&mut stdin)
+    .expect("send shutdown");
+    let _ = read_message(&mut stdout);
+    Message::Notification(Notification::new(Exit::METHOD.to_owned(), ()))
+        .write(&mut stdin)
+        .expect("send exit");
+    assert!(child.wait().expect("wait for adoc-ls").success());
+}
+
+#[test]
+fn binary_answers_a_hover_request() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adoc-ls"))
+        .arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start adoc-ls");
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout"));
+
+    Message::Request(Request::new(
+        RequestId::from(1),
+        Initialize::METHOD.to_owned(),
+        InitializeParams::default(),
+    ))
+    .write(&mut stdin)
+    .expect("send initialize");
+    assert_success_response(read_message(&mut stdout), RequestId::from(1));
+    Message::Notification(Notification::new(
+        Initialized::METHOD.to_owned(),
+        InitializedParams {},
+    ))
+    .write(&mut stdin)
+    .expect("send initialized");
+
+    let uri = "file:///docs/guide.adoc";
+    let text = ":product: Widget\n\nVersion {product}.";
+    Message::Notification(Notification::new(
+        "textDocument/didOpen".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri, "languageId": "asciidoc", "version": 1, "text": text },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send didOpen");
+    // didOpen publishes diagnostics before anything else arrives.
+    let _ = read_message(&mut stdout);
+
+    Message::Request(Request::new(
+        RequestId::from(2),
+        "textDocument/hover".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 11 },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send hover");
+
+    let Message::Response(response) = read_message(&mut stdout) else {
+        panic!("expected a hover response");
+    };
+    let hover: Option<Hover> =
+        serde_json::from_value(response.response_result.expect("hover succeeded"))
+            .expect("decode hover");
+    let Some(Hover {
+        contents: HoverContents::Markup(markup),
+        range: Some(range),
+    }) = hover
+    else {
+        panic!("expected a Markdown hover with a range");
+    };
+    assert_eq!(markup.kind, MarkupKind::Markdown);
+    assert!(markup.value.contains("`Widget`"), "{}", markup.value);
+    assert_eq!(range.start.character, 8);
+    assert_eq!(range.end.character, 17);
 
     Message::Request(Request::new(
         RequestId::from(3),

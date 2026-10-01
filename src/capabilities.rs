@@ -1,7 +1,7 @@
 use lsp_types::{
-    CodeActionProviderCapability, CompletionOptions, ExecuteCommandOptions, OneOf,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions,
+    CodeActionProviderCapability, CompletionOptions, ExecuteCommandOptions,
+    HoverProviderCapability, OneOf, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions,
 };
 
 use crate::handlers::code_actions::{
@@ -25,6 +25,7 @@ pub(crate) fn server_capabilities(
         )),
         document_symbol_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
         // The trigger set is only a hint about when to ask. `completion_context` decides
         // whether there is anything to offer, so `:` firing on an attribute line is fine.
         completion_provider: Some(CompletionOptions {
@@ -98,5 +99,15 @@ mod tests {
             );
         }
         assert_eq!(completion.resolve_provider, Some(false));
+    }
+
+    #[test]
+    fn advertises_hover() {
+        let capabilities = server_capabilities(PositionEncoding::Utf16);
+
+        assert_eq!(
+            capabilities.hover_provider,
+            Some(lsp_types::HoverProviderCapability::Simple(true))
+        );
     }
 }

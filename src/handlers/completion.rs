@@ -3,13 +3,12 @@ use std::{collections::HashSet, path::Path};
 use adoc_antora::{AntoraCatalog, AntoraContext, ResourceFamily};
 
 use adoc_core::{asciidoctor_id, canonical_id, Document, SourceRange};
-use adoc_index::{list_directory, normalize_path, WorkspaceIndex};
+use adoc_index::{list_directory, WorkspaceIndex};
 use adoc_parser::{completion_context, CompletionKind};
 
 use crate::handlers::{
-    attributes::{antora_attributes, component_attributes, BUILT_IN_ATTRIBUTES},
+    attributes::{attribute_definitions, AttributeSource},
     definition::reference_target_path,
-    includes::composed_files,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -183,11 +182,7 @@ fn candidate(label: String, range: SourceRange) -> Candidate {
     }
 }
 
-/// Every attribute the document can reference, first definition winning.
-///
-/// The document's own declarations come first, then those of the files it includes, then
-/// what Antora supplies, then Asciidoctor's built-ins. An attribute the document unsets
-/// (`:name!:`) is not offered from any source.
+/// Every attribute the document can reference, ranked by where it comes from.
 fn attribute_candidates(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
@@ -195,56 +190,24 @@ fn attribute_candidates(
     document: &Document,
     range: SourceRange,
 ) -> Vec<Candidate> {
-    let mut seen = HashSet::new();
-    let mut candidates = Vec::new();
-    let mut offer = |name: &str, value: Option<&str>, rank: u8| {
-        if let Some(unset) = name.strip_suffix('!').or_else(|| name.strip_prefix('!')) {
-            seen.insert(unset.to_owned());
-            return;
-        }
-        if !seen.insert(name.to_owned()) {
-            return;
-        }
-        candidates.push(Candidate {
-            label: name.to_owned(),
-            insert_text: Some(format!("{name}}}")),
-            detail: value.filter(|value| !value.is_empty()).map(str::to_owned),
-            sort_text: format!("{rank}{name}"),
-            kind: CandidateKind::Attribute,
-            range,
-        });
-    };
-
-    for attribute in &document.attributes {
-        offer(&attribute.name, attribute.value.as_deref(), 0);
-    }
-
-    let antora_context = antora.context_for_path(current_path);
-    let current = normalize_path(current_path);
-    for path in composed_files(index, antora, antora_context.as_ref(), current_path) {
-        if path == current {
-            continue;
-        }
-        let Some(file) = index.file(&path) else {
-            continue;
-        };
-        for attribute in &file.document.attributes {
-            offer(&attribute.name, attribute.value.as_deref(), 0);
-        }
-    }
-
-    for (name, value) in component_attributes(antora, current_path) {
-        offer(name, Some(value), 1);
-    }
-    for (name, value) in antora_attributes(antora, current_path) {
-        offer(&name, Some(&value), 1);
-    }
-
-    for (name, description) in BUILT_IN_ATTRIBUTES {
-        offer(name, Some(description), 2);
-    }
-
-    candidates
+    attribute_definitions(index, antora, current_path, document)
+        .into_iter()
+        .map(|definition| {
+            let rank = match definition.source {
+                AttributeSource::Document | AttributeSource::Included(_) => 0,
+                AttributeSource::Component | AttributeSource::Antora => 1,
+                AttributeSource::BuiltIn => 2,
+            };
+            Candidate {
+                insert_text: Some(format!("{}}}", definition.name)),
+                detail: definition.value.filter(|value| !value.is_empty()),
+                sort_text: format!("{rank}{}", definition.name),
+                kind: CandidateKind::Attribute,
+                range,
+                label: definition.name,
+            }
+        })
+        .collect()
 }
 
 /// Extend `range` over the rest of a name and its closing brace, should they follow.

@@ -13,16 +13,17 @@ use lsp_types::{
     },
     request::{
         CodeActionRequest, Completion, DocumentSymbolRequest, ExecuteCommand, GotoDefinition,
-        Request as LspRequest,
+        HoverRequest, Request as LspRequest,
     },
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse, Command,
     CompletionItem, CompletionItemKind, CompletionList, CompletionParams, CompletionResponse,
     CompletionTextEdit, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams,
-    GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializeResult, Location,
-    NumberOrString, PublishDiagnosticsParams, ServerInfo, SymbolKind,
-    TextDocumentContentChangeEvent, TextEdit, Uri,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    InitializeParams, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
+    PublishDiagnosticsParams, ServerInfo, SymbolKind, TextDocumentContentChangeEvent, TextEdit,
+    Uri,
 };
 
 use crate::{
@@ -37,6 +38,7 @@ use crate::{
         diagnostics::diagnostics,
         document_symbols::document_symbols,
         execute_command::{refresh_preview, render_preview},
+        hover::hover_at_offset,
     },
     position::PositionEncoding,
     preview::{BrowserSink, PreviewMode, PreviewSink, SystemLauncher},
@@ -125,6 +127,8 @@ impl ProtocolServer {
             Completion::METHOD => self.request_response::<CompletionParams, _>(request, |params| {
                 self.completion_response(params)
             }),
+            HoverRequest::METHOD => self
+                .request_response::<HoverParams, _>(request, |params| self.hover_response(params)),
             CodeActionRequest::METHOD => self
                 .request_response::<CodeActionParams, _>(request, |params| {
                     self.code_action_response(&params)
@@ -420,6 +424,33 @@ impl ProtocolServer {
         let uri = path_to_uri(&target.path)?;
         let range = self.encoding.range(&target_text, target.range)?;
         Some(GotoDefinitionResponse::Scalar(Location::new(uri, range)))
+    }
+
+    fn hover_response(&self, params: HoverParams) -> Option<Hover> {
+        let document_uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .as_str();
+        let document = &self.state.documents.get(document_uri)?.document;
+        let offset = self.encoding.offset(
+            &document.text,
+            params.text_document_position_params.position,
+        )?;
+        let content = hover_at_offset(
+            &self.state.index,
+            &self.state.antora,
+            &document_path(document_uri),
+            document,
+            offset,
+        )?;
+        Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: content.markdown,
+            }),
+            range: self.encoding.range(&document.text, content.range),
+        })
     }
 
     fn completion_response(&self, params: CompletionParams) -> Option<CompletionResponse> {
