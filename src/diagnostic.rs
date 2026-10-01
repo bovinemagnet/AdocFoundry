@@ -9,6 +9,9 @@ pub enum DiagnosticCode {
     DuplicateAnchor,
     AntoraUnknownModule,
     AntoraUnknownResource,
+    AntoraInvalidFamily,
+    AntoraInvalidCoordinate,
+    AntoraInvalidDescriptor,
 }
 
 impl DiagnosticCode {
@@ -22,6 +25,9 @@ impl DiagnosticCode {
             Self::DuplicateAnchor => "adoc.duplicate-anchor",
             Self::AntoraUnknownModule => "adoc.antora.unknown-module",
             Self::AntoraUnknownResource => "adoc.antora.unknown-resource",
+            Self::AntoraInvalidFamily => "adoc.antora.invalid-family",
+            Self::AntoraInvalidCoordinate => "adoc.antora.invalid-coordinate",
+            Self::AntoraInvalidDescriptor => "adoc.antora.invalid-descriptor",
         }
     }
 }
