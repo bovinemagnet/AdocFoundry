@@ -4,22 +4,26 @@ use std::path::{Path, PathBuf};
 
 use adoc_antora::{
     parse_resource_id, AntoraCatalog, AntoraResolver, AntoraResourceId, ResourceFamily,
+    ResourceIdParseError,
 };
 use adoc_core::Document;
 use adoc_index::{resolve_image_target, WorkspaceIndex};
 
 /// The Antora resource an image target names, defaulting to the `image` family.
 ///
-/// `None` for targets no catalog can judge: URLs, `data:` URIs, and attribute references.
+/// `Ok(None)` for targets no catalog can judge: URLs, `data:` URIs, and attribute references.
 /// The resolver itself defaults a missing family to `page`, so the family is set here.
-#[must_use]
-pub fn antora_image_id(target: &str) -> Option<AntoraResourceId> {
+///
+/// # Errors
+///
+/// The parse error for a target that is neither of those yet is not a valid resource ID.
+pub fn antora_image_id(target: &str) -> Result<Option<AntoraResourceId>, ResourceIdParseError> {
     if target.contains("://") || target.starts_with("data:") || target.contains('{') {
-        return None;
+        return Ok(None);
     }
-    let mut id = parse_resource_id(target).ok()?;
+    let mut id = parse_resource_id(target)?;
     id.family.get_or_insert(ResourceFamily::Image);
-    Some(id)
+    Ok(Some(id))
 }
 
 /// The existing file an image target names, or `None` when it cannot be resolved.
@@ -36,7 +40,7 @@ pub fn resolve_image(
 ) -> Option<PathBuf> {
     match antora.context_for_path(current_path) {
         Some(context) => {
-            let id = antora_image_id(target)?;
+            let id = antora_image_id(target).ok()??;
             AntoraResolver::resolve(antora, &id, &context)
                 .ok()
                 .map(|resource| resource.source_path.clone())

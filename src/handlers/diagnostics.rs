@@ -1,11 +1,11 @@
 use std::{collections::BTreeSet, path::Path};
 
 use adoc_antora::{
-    parse_resource_id, AntoraCatalog, AntoraContext, AntoraResolver, ResolutionError,
-    ResolutionResult, ResourceFamily,
+    parse_resource_id, AntoraCatalog, AntoraContext, AntoraResolver, DescriptorError,
+    ResolutionError, ResolutionResult, ResourceFamily, ResourceIdParseError,
 };
 use adoc_core::{Diagnostic, DiagnosticCode, DiagnosticSeverity, ReferenceKind, SourceRange};
-use adoc_index::{workspace_diagnostics, WorkspaceIndex};
+use adoc_index::{normalize_path, workspace_diagnostics, WorkspaceIndex};
 
 use super::{images::antora_image_id, includes::composed_files};
 
@@ -34,8 +34,17 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
             .map_or((reference.target.as_str(), None), |(target, anchor)| {
                 (target, Some(anchor))
             });
-        let Ok(id) = parse_resource_id(target) else {
-            continue;
+        let id = match parse_resource_id(target) {
+            Ok(id) => id,
+            Err(error) => {
+                if is_explicit_antora_target(target) {
+                    pending.extend(
+                        invalid_id(target, &error)
+                            .map(|(code, message)| (code, message, reference.range)),
+                    );
+                }
+                continue;
+            }
         };
         match AntoraResolver::resolve(antora, &id, &context) {
             Ok(resource) => {
@@ -108,8 +117,14 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
             if !include.target.contains('$') || is_dynamic(&include.target) {
                 continue;
             }
-            let Ok(id) = parse_resource_id(&include.target) else {
-                continue;
+            let id = match parse_resource_id(&include.target) {
+                Ok(id) => id,
+                Err(error) => {
+                    if let Some((code, message)) = invalid_id(&include.target, &error) {
+                        output.push(code, message, include.range);
+                    }
+                    continue;
+                }
             };
             diagnose_resolution(
                 AntoraResolver::resolve(antora, &id, &context),
@@ -124,8 +139,17 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
         // As with anchors, a partial is judged only as part of the page that includes it.
         if !composed_elsewhere {
             for image in &file.document.images {
-                let Some(id) = antora_image_id(&image.target) else {
-                    continue;
+                let id = match antora_image_id(&image.target) {
+                    Ok(Some(id)) => id,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        if is_explicit_antora_target(&image.target) {
+                            if let Some((code, message)) = invalid_id(&image.target, &error) {
+                                output.push(code, message, image.range);
+                            }
+                        }
+                        continue;
+                    }
                 };
                 match AntoraResolver::resolve(antora, &id, &context) {
                     // A component missing from the workspace is published from elsewhere.
@@ -147,6 +171,53 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
 
     diagnostics.sort_by_key(|diagnostic| (diagnostic.range, diagnostic.code));
     diagnostics
+}
+
+/// Warnings for a file inside a component whose `antora.yml` could not be read.
+///
+/// Such a component is missing from the catalog, so every Antora feature is silently off for
+/// its files; this says why. Descriptors are read when the server starts, so the warning
+/// outlives a fix until the server restarts.
+#[must_use]
+pub fn descriptor_diagnostics(issues: &[DescriptorError], path: &Path) -> Vec<Diagnostic> {
+    let path = normalize_path(path);
+    issues
+        .iter()
+        .filter(|issue| {
+            issue
+                .path
+                .parent()
+                .is_some_and(|root| path.starts_with(normalize_path(root)))
+        })
+        .map(|issue| Diagnostic {
+            code: DiagnosticCode::AntoraInvalidDescriptor,
+            severity: DiagnosticSeverity::Warning,
+            message: format!(
+                "`{}` is invalid, so Antora navigation and checks are off for this component: {}",
+                issue.path.display(),
+                issue.message
+            ),
+            range: SourceRange::new(0, 0),
+        })
+        .collect()
+}
+
+/// The diagnostic for a target written as a resource ID that does not parse.
+///
+/// Path errors are left alone: Antora accepts relative forms such as `./` that the parser
+/// rejects, and a false positive is worse than silence.
+fn invalid_id(target: &str, error: &ResourceIdParseError) -> Option<(DiagnosticCode, String)> {
+    let code = match error {
+        ResourceIdParseError::UnknownFamily(_) => DiagnosticCode::AntoraInvalidFamily,
+        ResourceIdParseError::EmptyCoordinate
+        | ResourceIdParseError::TooManyCoordinates
+        | ResourceIdParseError::InvalidVersionCoordinate => DiagnosticCode::AntoraInvalidCoordinate,
+        ResourceIdParseError::Empty | ResourceIdParseError::InvalidPath(_) => return None,
+    };
+    Some((
+        code,
+        format!("Invalid Antora resource ID `{target}`: {error}"),
+    ))
 }
 
 fn diagnose_resolution(
@@ -261,7 +332,7 @@ mod tests {
     use adoc_core::DiagnosticCode;
     use adoc_index::WorkspaceIndex;
 
-    use super::diagnostics;
+    use super::{descriptor_diagnostics, diagnostics};
 
     #[test]
     fn validates_antora_xrefs_and_includes() {
@@ -503,5 +574,99 @@ mod tests {
             ),
             Vec::new()
         );
+    }
+
+    #[test]
+    fn reports_malformed_resource_ids_by_kind() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+
+        for (text, expected) in [
+            (
+                "include::partials$x.adoc[]\n",
+                DiagnosticCode::AntoraInvalidFamily,
+            ),
+            (
+                "xref:a:b:c:x.adoc[]\n",
+                DiagnosticCode::AntoraInvalidCoordinate,
+            ),
+            (
+                "xref::security:x.adoc[]\n",
+                DiagnosticCode::AntoraInvalidCoordinate,
+            ),
+            (
+                "xref:1@2@demo:x.adoc[]\n",
+                DiagnosticCode::AntoraInvalidCoordinate,
+            ),
+            (
+                "image::pictures$x.svg[]\n",
+                DiagnosticCode::AntoraInvalidFamily,
+            ),
+        ] {
+            let text = format!("= Home\n\n{text}");
+            assert_eq!(
+                codes_for(&mut index, &antora, &home, &text),
+                vec![expected],
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn names_the_malformed_target_in_the_message() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+        index.index_source(&home, "= Home\n\ninclude::partials$x.adoc[]\n");
+
+        let messages: Vec<_> = diagnostics(&index, &antora, &home)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect();
+
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].contains("partials$x.adoc"), "{messages:?}");
+        assert!(messages[0].contains("`partials`"), "{messages:?}");
+    }
+
+    #[test]
+    fn leaves_path_errors_and_non_antora_targets_alone() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nxref:security:../x.adoc[]\ninclude::partial$./x.adoc[]\nxref:{attr}:x.adoc[]\nimage::https://example.com/a:b.svg[]\n",
+            ),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn warns_files_inside_a_component_whose_descriptor_is_invalid() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-invalid-descriptor");
+        let issues = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .issues;
+
+        let inside = descriptor_diagnostics(&issues, &root.join("modules/ROOT/pages/index.adoc"));
+        assert_eq!(
+            inside
+                .iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>(),
+            vec![DiagnosticCode::AntoraInvalidDescriptor]
+        );
+        assert!(inside[0].message.contains("antora.yml"), "{inside:?}");
+        assert!(inside[0].message.contains("name"), "{inside:?}");
+
+        let outside = descriptor_diagnostics(
+            &issues,
+            &root.join("../antora-single-component/modules/ROOT/pages/index.adoc"),
+        );
+        assert!(outside.is_empty(), "{outside:?}");
     }
 }

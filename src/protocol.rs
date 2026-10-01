@@ -36,7 +36,7 @@ use crate::{
         },
         completion::{completion_at_offset, Candidate, CandidateKind},
         definition::definition_at_offset,
-        diagnostics::diagnostics,
+        diagnostics::{descriptor_diagnostics, diagnostics},
         document_symbols::document_symbols,
         execute_command::{refresh_preview, render_preview},
         hover::hover_at_offset,
@@ -264,6 +264,7 @@ impl ProtocolServer {
         let path = document_path(uri_text);
         let diagnostics = diagnostics(&self.state.index, &self.state.antora, &path)
             .into_iter()
+            .chain(descriptor_diagnostics(&self.state.antora_issues, &path))
             .filter_map(|diagnostic| {
                 Some(Diagnostic {
                     range: self
@@ -1109,5 +1110,21 @@ mod tests {
         assert_eq!(symbol.container_name.as_deref(), Some("Guide"));
         assert_eq!(symbol.location.uri.as_str(), PAGE);
         assert_eq!(symbol.location.range.start.line, 2);
+    }
+
+    #[test]
+    fn publishes_a_warning_for_files_under_an_invalid_descriptor() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-invalid-descriptor");
+        let page = root.join("modules/ROOT/pages/index.adoc");
+        let mut server = ProtocolServer::new(PositionEncoding::Utf16);
+        server.state.index_workspace(vec![root]).unwrap();
+
+        let published = open(&mut server, file_uri(&page).as_str(), "= Home\n");
+
+        assert_eq!(
+            published[0].1,
+            vec!["adoc.antora.invalid-descriptor".to_owned()]
+        );
     }
 }
