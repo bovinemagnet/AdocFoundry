@@ -669,4 +669,24 @@ mod tests {
         );
         assert!(outside.is_empty(), "{outside:?}");
     }
+
+    #[test]
+    fn reports_a_missing_page_in_a_navigation_file_and_nothing_else() {
+        let (mut index, antora, root) = antora_single_component();
+        let nav = root.join("modules/ROOT/nav.adoc");
+
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &nav,
+                "* xref:index.adoc[Home]\n* xref:security:authentication.adoc[Auth]\n"
+            ),
+            Vec::new()
+        );
+        assert_eq!(
+            codes_for(&mut index, &antora, &nav, "* xref:missing.adoc[Missing]\n"),
+            vec![DiagnosticCode::UnresolvedXrefFile]
+        );
+    }
 }

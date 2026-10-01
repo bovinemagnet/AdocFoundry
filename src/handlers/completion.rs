@@ -1051,4 +1051,23 @@ mod tests {
 
         assert!(declared.sort_text < built_in.sort_text);
     }
+
+    #[test]
+    fn completes_pages_inside_a_navigation_file() {
+        let (index, catalog, root) = antora_fixture();
+        let path = root.join("modules/ROOT/nav.adoc");
+        let text = "* xref:index.adoc[Home]\n* xref:";
+        let document = parse("file:///nav.adoc", text).document;
+
+        let labels: Vec<_> = completion_at_offset(&index, &catalog, &path, &document, text.len())
+            .into_iter()
+            .map(|candidate| candidate.label)
+            .collect();
+
+        assert!(labels.contains(&"index.adoc".to_owned()), "{labels:?}");
+        assert!(
+            labels.contains(&"security:authentication.adoc".to_owned()),
+            "{labels:?}"
+        );
+    }
 }

@@ -206,7 +206,7 @@ mod tests {
     use adoc_antora::{discover_antora_workspace, AntoraCatalog};
     use adoc_index::WorkspaceIndex;
 
-    use super::resolve_reference;
+    use super::{definition_at_offset, resolve_reference};
 
     #[test]
     fn resolves_file_and_local_anchor_references() {
@@ -272,5 +272,29 @@ mod tests {
         assert!(target
             .path
             .ends_with("modules/security/partials/token-note.adoc"));
+    }
+
+    #[test]
+    fn resolves_page_ids_in_a_navigation_file_against_its_module() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+        let nav = root.join("modules/ROOT/nav.adoc");
+        let document = index.file(&nav).expect("nav is indexed").document.clone();
+        let offset = document.text.find("security:").expect("fixture xref");
+
+        let target = definition_at_offset(&index, &antora, &nav, &document, offset)
+            .expect("the xref resolves");
+
+        assert!(
+            target
+                .path
+                .ends_with("modules/security/pages/authentication.adoc"),
+            "{target:?}"
+        );
     }
 }

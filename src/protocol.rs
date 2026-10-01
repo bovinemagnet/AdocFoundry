@@ -37,7 +37,7 @@ use crate::{
         completion::{completion_at_offset, Candidate, CandidateKind},
         definition::definition_at_offset,
         diagnostics::{descriptor_diagnostics, diagnostics},
-        document_symbols::document_symbols,
+        document_symbols::{document_symbols, nav_symbols, DocumentSymbolKind},
         execute_command::{refresh_preview, render_preview},
         hover::hover_at_offset,
     },
@@ -288,38 +288,50 @@ impl ProtocolServer {
         ))
     }
 
-    #[allow(deprecated)]
     fn document_symbol_response(
         &self,
         params: DocumentSymbolParams,
     ) -> Option<DocumentSymbolResponse> {
-        let document = &self
-            .state
-            .documents
-            .get(params.text_document.uri.as_str())?
-            .document;
-        let symbols = document_symbols(document)
+        let uri = params.text_document.uri.as_str();
+        let document = &self.state.documents.get(uri)?.document;
+        // A navigation file is a list, not sections: its outline is the navigation tree.
+        let symbols = if self.state.antora.is_nav_file(&document_path(uri)) {
+            nav_symbols(document)
+        } else {
+            document_symbols(document)
+        };
+        Some(DocumentSymbolResponse::Nested(
+            symbols
+                .into_iter()
+                .filter_map(|symbol| self.lsp_document_symbol(&document.text, symbol))
+                .collect(),
+        ))
+    }
+
+    #[allow(deprecated)]
+    fn lsp_document_symbol(
+        &self,
+        text: &str,
+        symbol: crate::handlers::document_symbols::DocumentSymbol,
+    ) -> Option<DocumentSymbol> {
+        let children: Vec<_> = symbol
+            .children
             .into_iter()
-            .filter_map(|symbol| {
-                Some(DocumentSymbol {
-                    name: symbol.name,
-                    detail: None,
-                    kind: if symbol.level == 0 {
-                        SymbolKind::FILE
-                    } else {
-                        SymbolKind::NAMESPACE
-                    },
-                    tags: None,
-                    deprecated: None,
-                    range: self.encoding.range(&document.text, symbol.range)?,
-                    selection_range: self
-                        .encoding
-                        .range(&document.text, symbol.selection_range)?,
-                    children: None,
-                })
-            })
+            .filter_map(|child| self.lsp_document_symbol(text, child))
             .collect();
-        Some(DocumentSymbolResponse::Nested(symbols))
+        Some(DocumentSymbol {
+            name: symbol.name,
+            detail: symbol.detail,
+            kind: match symbol.kind {
+                DocumentSymbolKind::Document | DocumentSymbolKind::Page => SymbolKind::FILE,
+                DocumentSymbolKind::Section | DocumentSymbolKind::Category => SymbolKind::NAMESPACE,
+            },
+            tags: None,
+            deprecated: None,
+            range: self.encoding.range(text, symbol.range)?,
+            selection_range: self.encoding.range(text, symbol.selection_range)?,
+            children: (!children.is_empty()).then_some(children),
+        })
     }
 
     /// Re-render a saved document if it has a live preview on screen.
@@ -628,12 +640,13 @@ mod tests {
             DocumentSymbolRequest, GotoDefinition, Initialize, Request as LspRequest, Shutdown,
         },
         ClientCapabilities, DiagnosticSeverity, DidChangeTextDocumentParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
-        GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializedParams,
-        Location, NumberOrString, PartialResultParams, Position, PublishDiagnosticsParams, Range,
-        SymbolKind, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-        TextDocumentPositionParams, Uri, VersionedTextDocumentIdentifier, WorkDoneProgressParams,
-        WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbol,
+        DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+        InitializeParams, InitializedParams, Location, NumberOrString, PartialResultParams,
+        Position, PublishDiagnosticsParams, Range, SymbolKind, TextDocumentContentChangeEvent,
+        TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Uri,
+        VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceFolder,
+        WorkspaceSymbolParams, WorkspaceSymbolResponse,
     };
 
     use crate::position::PositionEncoding;
@@ -1125,6 +1138,62 @@ mod tests {
         assert_eq!(
             published[0].1,
             vec!["adoc.antora.invalid-descriptor".to_owned()]
+        );
+    }
+
+    fn document_symbols_of(server: &ProtocolServer, uri: &str) -> Vec<DocumentSymbol> {
+        let Some(DocumentSymbolResponse::Nested(symbols)) =
+            server.document_symbol_response(DocumentSymbolParams {
+                text_document: TextDocumentIdentifier::new(uri.parse().unwrap()),
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+        else {
+            panic!("expected nested document symbols");
+        };
+        symbols
+    }
+
+    #[test]
+    fn outlines_a_navigation_file_by_its_list() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let nav = file_uri(&root.join("modules/ROOT/nav.adoc"));
+        let mut server = ProtocolServer::new(PositionEncoding::Utf16);
+        server.state.index_workspace(vec![root]).unwrap();
+        open(
+            &mut server,
+            nav.as_str(),
+            "* xref:index.adoc[Home]\n** xref:security:authentication.adoc[Authentication]\n",
+        );
+
+        let symbols = document_symbols_of(&server, nav.as_str());
+
+        assert_eq!(symbols.len(), 1, "{symbols:?}");
+        assert_eq!(symbols[0].name, "Home");
+        assert_eq!(symbols[0].kind, SymbolKind::FILE);
+        assert_eq!(symbols[0].detail.as_deref(), Some("index.adoc"));
+        let children = symbols[0].children.as_deref().unwrap_or_default();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "Authentication");
+        assert_eq!(symbols[0].range.end.line, 1);
+    }
+
+    #[test]
+    fn nests_an_ordinary_document_s_sections() {
+        let mut server = ProtocolServer::new(PositionEncoding::Utf16);
+        open(&mut server, PAGE, "= Guide\n\n== Start\n\n=== Detail\n");
+
+        let symbols = document_symbols_of(&server, PAGE);
+
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].kind, SymbolKind::FILE);
+        let start = &symbols[0].children.as_deref().unwrap_or_default()[0];
+        assert_eq!(start.name, "Start");
+        assert_eq!(start.kind, SymbolKind::NAMESPACE);
+        assert_eq!(
+            start.children.as_deref().unwrap_or_default()[0].name,
+            "Detail"
         );
     }
 }
