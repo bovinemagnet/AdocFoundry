@@ -7,7 +7,7 @@ use adoc_antora::{
 use adoc_core::{Diagnostic, DiagnosticCode, DiagnosticSeverity, ReferenceKind, SourceRange};
 use adoc_index::{workspace_diagnostics, WorkspaceIndex};
 
-use super::includes::composed_files;
+use super::{images::antora_image_id, includes::composed_files};
 
 #[must_use]
 pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) -> Vec<Diagnostic> {
@@ -86,6 +86,9 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
             DiagnosticCode::UnresolvedXrefFile | DiagnosticCode::UnresolvedAnchor
         ) || !resolved.contains(&diagnostic.range)
     });
+    // The index layer resolved images against the document's directory, which is wrong
+    // inside a module: Antora resolves them in the module's `images` family instead.
+    diagnostics.retain(|diagnostic| diagnostic.code != DiagnosticCode::UnresolvedImage);
 
     let mut seen = diagnostics
         .iter()
@@ -116,6 +119,29 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
                 include.range,
                 &mut output,
             );
+        }
+
+        // As with anchors, a partial is judged only as part of the page that includes it.
+        if !composed_elsewhere {
+            for image in &file.document.images {
+                let Some(id) = antora_image_id(&image.target) else {
+                    continue;
+                };
+                match AntoraResolver::resolve(antora, &id, &context) {
+                    // A component missing from the workspace is published from elsewhere.
+                    Ok(_) | Err(ResolutionError::UnknownComponent { .. }) => {}
+                    Err(ResolutionError::UnknownModule { module, .. }) => output.push(
+                        DiagnosticCode::AntoraUnknownModule,
+                        format!("Unknown Antora module: {module}"),
+                        image.range,
+                    ),
+                    Err(ResolutionError::UnknownResource { .. }) => output.push(
+                        DiagnosticCode::UnresolvedImage,
+                        format!("Unresolved AsciiDoc image target: {}", image.target),
+                        image.range,
+                    ),
+                }
+            }
         }
     }
 
@@ -358,6 +384,124 @@ mod tests {
                 DiagnosticCode::UnresolvedXrefFile,
                 DiagnosticCode::UnresolvedAnchor
             ]
+        );
+    }
+
+    fn antora_single_component() -> (
+        WorkspaceIndex,
+        adoc_antora::AntoraCatalog,
+        std::path::PathBuf,
+    ) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+        (index, antora, root)
+    }
+
+    fn codes_for(
+        index: &mut WorkspaceIndex,
+        antora: &adoc_antora::AntoraCatalog,
+        path: &Path,
+        text: &str,
+    ) -> Vec<DiagnosticCode> {
+        index.index_source(path, text);
+        diagnostics(index, antora, path)
+            .into_iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect()
+    }
+
+    #[test]
+    fn resolves_antora_images_in_the_module_s_images_family() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+        let security = root.join("modules/security/pages/authentication.adoc");
+
+        // Bare, explicit-family and module-qualified forms. The index layer alone would
+        // resolve the bare form against `pages/` and warn; the Antora answer replaces it.
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nimage::architecture.svg[]\nimage::image$architecture.svg[]\n",
+            ),
+            Vec::new()
+        );
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &security,
+                "= Auth\n\nimage::ROOT:architecture.svg[]\n"
+            ),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn warns_once_about_a_missing_antora_image() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nimage::missing.svg[]\n"
+            ),
+            vec![DiagnosticCode::UnresolvedImage]
+        );
+    }
+
+    #[test]
+    fn reports_an_unknown_module_but_not_an_absent_component_for_images() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nimage::nowhere:a.svg[]\n"
+            ),
+            vec![DiagnosticCode::AntoraUnknownModule]
+        );
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nimage::2.0@other:ROOT:a.svg[]\n"
+            ),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn leaves_images_in_partials_and_dynamic_targets_alone() {
+        let (mut index, antora, root) = antora_single_component();
+        let partial = root.join("modules/ROOT/partials/welcome.adoc");
+        let home = root.join("modules/ROOT/pages/index.adoc");
+
+        assert_eq!(
+            codes_for(&mut index, &antora, &partial, "image::missing.svg[]\n"),
+            Vec::new()
+        );
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nimage::{undeclared}/a.svg[]\nimage::https://example.com/a.svg[]\nimage::data:image/png;base64,AAAA[]\n",
+            ),
+            Vec::new()
         );
     }
 }
