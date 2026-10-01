@@ -26,6 +26,7 @@ pub(crate) fn server_capabilities(
         document_symbol_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         // The trigger set is only a hint about when to ask. `completion_context` decides
         // whether there is anything to offer, so `:` firing on an attribute line is fine.
         completion_provider: Some(CompletionOptions {
@@ -108,6 +109,16 @@ mod tests {
         assert_eq!(
             capabilities.hover_provider,
             Some(lsp_types::HoverProviderCapability::Simple(true))
+        );
+    }
+
+    #[test]
+    fn advertises_workspace_symbols() {
+        let capabilities = server_capabilities(PositionEncoding::Utf16);
+
+        assert_eq!(
+            capabilities.workspace_symbol_provider,
+            Some(lsp_types::OneOf::Left(true))
         );
     }
 }

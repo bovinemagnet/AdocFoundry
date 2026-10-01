@@ -5,6 +5,7 @@ use std::{
 };
 
 use adoc_core::DiagnosticSeverity as CoreDiagnosticSeverity;
+use adoc_index::WorkspaceSymbolKind;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::{
     notification::{
@@ -13,7 +14,7 @@ use lsp_types::{
     },
     request::{
         CodeActionRequest, Completion, DocumentSymbolRequest, ExecuteCommand, GotoDefinition,
-        HoverRequest, Request as LspRequest,
+        HoverRequest, Request as LspRequest, WorkspaceSymbolRequest,
     },
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse, Command,
     CompletionItem, CompletionItemKind, CompletionList, CompletionParams, CompletionResponse,
@@ -22,8 +23,8 @@ use lsp_types::{
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams,
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
     InitializeParams, InitializeResult, Location, MarkupContent, MarkupKind, NumberOrString,
-    PublishDiagnosticsParams, ServerInfo, SymbolKind, TextDocumentContentChangeEvent, TextEdit,
-    Uri,
+    PublishDiagnosticsParams, ServerInfo, SymbolInformation, SymbolKind,
+    TextDocumentContentChangeEvent, TextEdit, Uri, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 
 use crate::{
@@ -127,6 +128,10 @@ impl ProtocolServer {
             Completion::METHOD => self.request_response::<CompletionParams, _>(request, |params| {
                 self.completion_response(params)
             }),
+            WorkspaceSymbolRequest::METHOD => self
+                .request_response::<WorkspaceSymbolParams, _>(request, |params| {
+                    self.workspace_symbol_response(params)
+                }),
             HoverRequest::METHOD => self
                 .request_response::<HoverParams, _>(request, |params| self.hover_response(params)),
             CodeActionRequest::METHOD => self
@@ -441,6 +446,40 @@ impl ProtocolServer {
         Some(GotoDefinitionResponse::Scalar(Location::new(uri, range)))
     }
 
+    #[allow(deprecated)]
+    fn workspace_symbol_response(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Option<WorkspaceSymbolResponse> {
+        let symbols = self
+            .state
+            .index
+            .symbols_matching(&params.query)
+            .into_iter()
+            .filter_map(|symbol| {
+                // The indexed text is the open buffer when the file is open.
+                let text = &self.state.index.file(&symbol.path)?.document.text;
+                Some(SymbolInformation {
+                    name: symbol.name.clone(),
+                    kind: match symbol.kind {
+                        WorkspaceSymbolKind::Title => SymbolKind::FILE,
+                        WorkspaceSymbolKind::Section => SymbolKind::NAMESPACE,
+                        WorkspaceSymbolKind::Anchor => SymbolKind::KEY,
+                        WorkspaceSymbolKind::Attribute => SymbolKind::VARIABLE,
+                    },
+                    tags: None,
+                    deprecated: None,
+                    location: Location::new(
+                        path_to_uri(&symbol.path)?,
+                        self.encoding.range(text, symbol.range)?,
+                    ),
+                    container_name: symbol.container.clone(),
+                })
+            })
+            .collect();
+        Some(WorkspaceSymbolResponse::Flat(symbols))
+    }
+
     fn hover_response(&self, params: HoverParams) -> Option<Hover> {
         let document_uri = params
             .text_document_position_params
@@ -591,9 +630,9 @@ mod tests {
         DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbolParams,
         GotoDefinitionParams, GotoDefinitionResponse, InitializeParams, InitializedParams,
         Location, NumberOrString, PartialResultParams, Position, PublishDiagnosticsParams, Range,
-        TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+        SymbolKind, TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
         TextDocumentPositionParams, Uri, VersionedTextDocumentIdentifier, WorkDoneProgressParams,
-        WorkspaceFolder,
+        WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
     };
 
     use crate::position::PositionEncoding;
@@ -1047,5 +1086,28 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn answers_workspace_symbol_requests_from_the_index() {
+        let mut server = ProtocolServer::new(PositionEncoding::Utf16);
+        open(&mut server, PAGE, "= Guide\n\n== Authentication Flow\n");
+
+        let Some(WorkspaceSymbolResponse::Flat(symbols)) =
+            server.workspace_symbol_response(WorkspaceSymbolParams {
+                query: "auth".to_owned(),
+                ..WorkspaceSymbolParams::default()
+            })
+        else {
+            panic!("expected a flat symbol list");
+        };
+
+        assert_eq!(symbols.len(), 1, "{symbols:?}");
+        let symbol = &symbols[0];
+        assert_eq!(symbol.name, "Authentication Flow");
+        assert_eq!(symbol.kind, SymbolKind::NAMESPACE);
+        assert_eq!(symbol.container_name.as_deref(), Some("Guide"));
+        assert_eq!(symbol.location.uri.as_str(), PAGE);
+        assert_eq!(symbol.location.range.start.line, 2);
     }
 }
