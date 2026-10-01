@@ -1,3 +1,4 @@
+pub mod attributes;
 pub mod code_actions;
 pub mod completion;
 pub mod definition;

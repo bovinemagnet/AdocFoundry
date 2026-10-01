@@ -3,10 +3,14 @@ use std::{collections::HashSet, path::Path};
 use adoc_antora::{AntoraCatalog, AntoraContext, ResourceFamily};
 
 use adoc_core::{asciidoctor_id, canonical_id, Document, SourceRange};
-use adoc_index::{list_directory, WorkspaceIndex};
+use adoc_index::{list_directory, normalize_path, WorkspaceIndex};
 use adoc_parser::{completion_context, CompletionKind};
 
-use crate::handlers::definition::reference_target_path;
+use crate::handlers::{
+    attributes::{antora_attributes, BUILT_IN_ATTRIBUTES},
+    definition::reference_target_path,
+    includes::composed_files,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CandidateKind {
@@ -15,12 +19,17 @@ pub enum CandidateKind {
     Family,
     Directory,
     Anchor,
+    Attribute,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Candidate {
-    /// Inserted verbatim over `range` when the candidate is accepted.
+    /// Inserted verbatim over `range` when the candidate is accepted, unless
+    /// `insert_text` says otherwise.
     pub label: String,
+    /// Inserted over `range` in place of `label`, for a candidate whose menu entry and
+    /// inserted text differ.
+    pub insert_text: Option<String>,
     pub detail: Option<String>,
     pub sort_text: String,
     pub kind: CandidateKind,
@@ -73,6 +82,13 @@ pub fn completion_at_offset(
             }),
             None => path_candidates(index, current_path, &context.prefix, context.range),
         },
+        CompletionKind::AttributeName => attribute_candidates(
+            index,
+            antora,
+            current_path,
+            document,
+            attribute_range(&document.text, context.range),
+        ),
         CompletionKind::ImageTarget => match antora.context_for_path(current_path) {
             Some(antora_context) => antora_family_candidates(
                 index,
@@ -158,12 +174,97 @@ fn anchor_candidates(
 fn candidate(label: String, range: SourceRange) -> Candidate {
     let sort_text = format!("0{label}");
     Candidate {
+        insert_text: None,
         label,
         detail: None,
         sort_text,
         kind: CandidateKind::Anchor,
         range,
     }
+}
+
+/// Every attribute the document can reference, first definition winning.
+///
+/// The document's own declarations come first, then those of the files it includes, then
+/// what Antora supplies, then Asciidoctor's built-ins. An attribute the document unsets
+/// (`:name!:`) is not offered from any source.
+fn attribute_candidates(
+    index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
+    current_path: &Path,
+    document: &Document,
+    range: SourceRange,
+) -> Vec<Candidate> {
+    let mut seen = HashSet::new();
+    let mut candidates = Vec::new();
+    let mut offer = |name: &str, value: Option<&str>, rank: u8| {
+        if let Some(unset) = name.strip_suffix('!').or_else(|| name.strip_prefix('!')) {
+            seen.insert(unset.to_owned());
+            return;
+        }
+        if !seen.insert(name.to_owned()) {
+            return;
+        }
+        candidates.push(Candidate {
+            label: name.to_owned(),
+            insert_text: Some(format!("{name}}}")),
+            detail: value.filter(|value| !value.is_empty()).map(str::to_owned),
+            sort_text: format!("{rank}{name}"),
+            kind: CandidateKind::Attribute,
+            range,
+        });
+    };
+
+    for attribute in &document.attributes {
+        offer(&attribute.name, attribute.value.as_deref(), 0);
+    }
+
+    let antora_context = antora.context_for_path(current_path);
+    let current = normalize_path(current_path);
+    for path in composed_files(index, antora, antora_context.as_ref(), current_path) {
+        if path == current {
+            continue;
+        }
+        let Some(file) = index.file(&path) else {
+            continue;
+        };
+        for attribute in &file.document.attributes {
+            offer(&attribute.name, attribute.value.as_deref(), 0);
+        }
+    }
+
+    if let Some(component) = antora_context
+        .as_ref()
+        .and_then(|context| antora.component(&context.component, context.version.as_deref()))
+    {
+        for (name, value) in &component.asciidoc_attributes {
+            offer(name, Some(value), 1);
+        }
+    }
+    for (name, value) in antora_attributes(antora, current_path) {
+        offer(&name, Some(&value), 1);
+    }
+
+    for (name, description) in BUILT_IN_ATTRIBUTES {
+        offer(name, Some(description), 2);
+    }
+
+    candidates
+}
+
+/// Extend `range` over the rest of a name and its closing brace, should they follow.
+///
+/// Zed auto-closes `{`, so the cursor usually sits just before a `}` already; replacing it
+/// along with the name leaves exactly one.
+fn attribute_range(text: &str, range: SourceRange) -> SourceRange {
+    let rest = &text[range.end..];
+    let name_length = rest
+        .find(|character: char| {
+            !(character.is_alphanumeric() || character == '_' || character == '-')
+        })
+        .unwrap_or(rest.len());
+    let closing = usize::from(rest[name_length..].starts_with('}'));
+    SourceRange::new(range.start, range.end + name_length + closing)
 }
 
 /// Narrow the list to what the author has typed, case-insensitively and by substring.
@@ -202,6 +303,7 @@ fn antora_page_candidates(
             .to_string_lossy()
             .into_owned();
         candidates.push(Candidate {
+            insert_text: None,
             detail: title_of(index, &resource.source_path),
             sort_text: format!("0{label}"),
             kind: CandidateKind::Page,
@@ -227,6 +329,7 @@ fn antora_page_candidates(
                 resource.coordinate.relative_path.to_string_lossy()
             );
             candidates.push(Candidate {
+                insert_text: None,
                 detail: title_of(index, &resource.source_path),
                 sort_text: format!("1{label}"),
                 kind: CandidateKind::Page,
@@ -259,6 +362,7 @@ fn antora_include_candidates(
                 .map(|family| {
                     let label = format!("{family}$");
                     Candidate {
+                        insert_text: None,
                         detail: None,
                         sort_text: format!("0{label}"),
                         kind: CandidateKind::Family,
@@ -303,6 +407,7 @@ fn antora_family_candidates(
                 resource.coordinate.relative_path.to_string_lossy()
             );
             Candidate {
+                insert_text: None,
                 detail: title_of(index, &resource.source_path),
                 sort_text: format!("0{label}"),
                 kind: CandidateKind::Resource,
@@ -365,6 +470,7 @@ fn path_candidates(
             title_of(index, &directory.join(&entry.name))
         };
         candidates.push(Candidate {
+            insert_text: None,
             detail,
             // Directories sort below files: the file is usually what is wanted.
             sort_text: format!("{}{label}", u8::from(entry.is_directory)),
@@ -387,6 +493,8 @@ mod tests {
     use adoc_antora::AntoraCatalog;
     use adoc_index::WorkspaceIndex;
     use adoc_parser::parse;
+
+    use adoc_core::SourceRange;
 
     use super::completion_at_offset;
 
@@ -834,5 +942,155 @@ mod tests {
                 .collect();
 
         assert_eq!(labels, vec!["../examples/sample.json".to_owned()]);
+    }
+
+    fn attribute_candidates_for(
+        index: &WorkspaceIndex,
+        catalog: &AntoraCatalog,
+        path: &Path,
+        text: &str,
+        offset: usize,
+    ) -> Vec<super::Candidate> {
+        let document = parse("file:///attributes.adoc", text).document;
+        completion_at_offset(index, catalog, path, &document, offset)
+    }
+
+    fn find<'a>(candidates: &'a [super::Candidate], label: &str) -> Option<&'a super::Candidate> {
+        candidates.iter().find(|candidate| candidate.label == label)
+    }
+
+    #[test]
+    fn offers_attributes_declared_in_the_document_with_their_values() {
+        let path = Path::new("/docs/guide.adoc");
+        let text = ":product: Widget\n\nVersion {";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+
+        let candidates =
+            attribute_candidates_for(&index, &AntoraCatalog::new(), path, text, text.len());
+        let product = find(&candidates, "product").expect("product is offered");
+
+        assert_eq!(product.kind, super::CandidateKind::Attribute);
+        assert_eq!(product.detail.as_deref(), Some("Widget"));
+    }
+
+    #[test]
+    fn inserts_the_closing_brace_when_none_follows() {
+        let path = Path::new("/docs/guide.adoc");
+        let text = ":product: Widget\n\nVersion {pro";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+
+        let candidates =
+            attribute_candidates_for(&index, &AntoraCatalog::new(), path, text, text.len());
+        let product = find(&candidates, "product").expect("product is offered");
+
+        assert_eq!(product.insert_text.as_deref(), Some("product}"));
+        assert_eq!(product.range, SourceRange::new(text.len() - 3, text.len()));
+    }
+
+    #[test]
+    fn replaces_the_rest_of_the_name_and_an_existing_closing_brace() {
+        // Zed auto-closes `{`, so the cursor usually sits just before a `}` already.
+        let path = Path::new("/docs/guide.adoc");
+        let text = ":product: Widget\n\nVersion {pro} and";
+        let offset = text.find("pro}").expect("typed name") + 3;
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+
+        let candidates =
+            attribute_candidates_for(&index, &AntoraCatalog::new(), path, text, offset);
+        let product = find(&candidates, "product").expect("product is offered");
+
+        assert_eq!(product.insert_text.as_deref(), Some("product}"));
+        assert_eq!(product.range, SourceRange::new(offset - 3, offset + 1));
+    }
+
+    #[test]
+    fn leaves_out_attributes_the_document_unsets() {
+        let path = Path::new("/docs/guide.adoc");
+        let text = ":draft!:\n:!review:\n\nVersion {";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+
+        let candidates =
+            attribute_candidates_for(&index, &AntoraCatalog::new(), path, text, text.len());
+
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| !candidate.label.contains("draft")
+                    && !candidate.label.contains("review")),
+            "{candidates:?}"
+        );
+    }
+
+    #[test]
+    fn offers_attributes_from_included_files_with_the_document_s_own_value_winning() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/attributes");
+        let mut index = WorkspaceIndex::new();
+        index
+            .index_roots(std::slice::from_ref(&root))
+            .expect("index fixture");
+        let path = root.join("index.adoc");
+        let text = std::fs::read_to_string(&path).expect("read fixture");
+        let offset = text.find('{').expect("brace") + 1;
+
+        let candidates =
+            attribute_candidates_for(&index, &AntoraCatalog::new(), &path, &text, offset);
+
+        assert_eq!(
+            find(&candidates, "support-email").and_then(|c| c.detail.as_deref()),
+            Some("help@example.com")
+        );
+        // Declared two includes deep.
+        assert_eq!(
+            find(&candidates, "release").and_then(|c| c.detail.as_deref()),
+            Some("2.0")
+        );
+        let products: Vec<_> = candidates
+            .iter()
+            .filter(|candidate| candidate.label == "product")
+            .collect();
+        assert_eq!(products.len(), 1, "{products:?}");
+        assert_eq!(products[0].detail.as_deref(), Some("Widget"));
+    }
+
+    #[test]
+    fn offers_antora_component_and_page_attributes() {
+        let (index, catalog, root) = antora_fixture();
+        let path = root.join("modules/ROOT/pages/index.adoc");
+        let text = "= Index\n\nVersion {";
+
+        let candidates = attribute_candidates_for(&index, &catalog, &path, text, text.len());
+
+        assert_eq!(
+            find(&candidates, "source-highlighter").and_then(|c| c.detail.as_deref()),
+            Some("highlight.js")
+        );
+        assert_eq!(
+            find(&candidates, "page-component-name").and_then(|c| c.detail.as_deref()),
+            Some("demo")
+        );
+        assert_eq!(
+            find(&candidates, "page-module").and_then(|c| c.detail.as_deref()),
+            Some("ROOT")
+        );
+        assert!(find(&candidates, "partialsdir").is_some(), "{candidates:?}");
+    }
+
+    #[test]
+    fn offers_asciidoctor_built_in_attributes_below_declared_ones() {
+        let path = Path::new("/docs/guide.adoc");
+        let text = ":nbsp-note: x\n\nA{nbs";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+
+        let candidates =
+            attribute_candidates_for(&index, &AntoraCatalog::new(), path, text, text.len());
+        let built_in = find(&candidates, "nbsp").expect("nbsp is offered");
+        let declared = find(&candidates, "nbsp-note").expect("nbsp-note is offered");
+
+        assert!(declared.sort_text < built_in.sort_text);
     }
 }

@@ -7,7 +7,8 @@ use lsp_server::{Message, Notification, Request, RequestId, Response};
 use lsp_types::{
     notification::{Exit, Initialized, Notification as LspNotification},
     request::{Initialize, Request as LspRequest, Shutdown},
-    CompletionResponse, InitializeParams, InitializeResult, InitializedParams,
+    CompletionItemKind, CompletionResponse, CompletionTextEdit, InitializeParams, InitializeResult,
+    InitializedParams,
 };
 
 #[test]
@@ -118,6 +119,93 @@ fn binary_answers_a_completion_request() {
         "the anchor declared in the buffer must be offered: {:?}",
         list.items
     );
+
+    Message::Request(Request::new(
+        RequestId::from(3),
+        Shutdown::METHOD.to_owned(),
+        (),
+    ))
+    .write(&mut stdin)
+    .expect("send shutdown");
+    let _ = read_message(&mut stdout);
+    Message::Notification(Notification::new(Exit::METHOD.to_owned(), ()))
+        .write(&mut stdin)
+        .expect("send exit");
+    assert!(child.wait().expect("wait for adoc-ls").success());
+}
+
+#[test]
+fn binary_completes_an_attribute_name_over_the_auto_closed_brace() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adoc-ls"))
+        .arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start adoc-ls");
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout"));
+
+    Message::Request(Request::new(
+        RequestId::from(1),
+        Initialize::METHOD.to_owned(),
+        InitializeParams::default(),
+    ))
+    .write(&mut stdin)
+    .expect("send initialize");
+    assert_success_response(read_message(&mut stdout), RequestId::from(1));
+    Message::Notification(Notification::new(
+        Initialized::METHOD.to_owned(),
+        InitializedParams {},
+    ))
+    .write(&mut stdin)
+    .expect("send initialized");
+
+    let uri = "file:///docs/guide.adoc";
+    // Zed auto-closes `{`, so the cursor sits between the braces.
+    let text = ":product: Widget\n\nVersion {pro}";
+    Message::Notification(Notification::new(
+        "textDocument/didOpen".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri, "languageId": "asciidoc", "version": 1, "text": text },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send didOpen");
+    // didOpen publishes diagnostics before anything else arrives.
+    let _ = read_message(&mut stdout);
+
+    Message::Request(Request::new(
+        RequestId::from(2),
+        "textDocument/completion".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 12 },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send completion");
+
+    let Message::Response(response) = read_message(&mut stdout) else {
+        panic!("expected a completion response");
+    };
+    let result: Option<CompletionResponse> =
+        serde_json::from_value(response.response_result.expect("completion succeeded"))
+            .expect("decode completion");
+    let Some(CompletionResponse::List(list)) = result else {
+        panic!("expected a completion list");
+    };
+    let item = list
+        .items
+        .iter()
+        .find(|item| item.label == "product")
+        .unwrap_or_else(|| panic!("the declared attribute must be offered: {:?}", list.items));
+    assert_eq!(item.kind, Some(CompletionItemKind::VARIABLE));
+    let Some(CompletionTextEdit::Edit(edit)) = &item.text_edit else {
+        panic!("expected a text edit: {item:?}");
+    };
+    assert_eq!(edit.new_text, "product}");
+    assert_eq!(edit.range.start.character, 9);
+    assert_eq!(edit.range.end.character, 13);
 
     Message::Request(Request::new(
         RequestId::from(3),

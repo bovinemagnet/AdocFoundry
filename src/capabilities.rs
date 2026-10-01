@@ -34,6 +34,7 @@ pub(crate) fn server_capabilities(
                 "#".to_owned(),
                 "/".to_owned(),
                 "<".to_owned(),
+                "{".to_owned(),
             ]),
             resolve_provider: Some(false),
             ..CompletionOptions::default()
@@ -90,7 +91,7 @@ mod tests {
             .expect("completion provider");
 
         let triggers = completion.trigger_characters.expect("trigger characters");
-        for expected in [":", "$", "#", "/", "<"] {
+        for expected in [":", "$", "#", "/", "<", "{"] {
             assert!(
                 triggers.iter().any(|trigger| trigger == expected),
                 "`{expected}` must trigger completion: {triggers:?}"

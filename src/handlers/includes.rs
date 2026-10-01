@@ -15,12 +15,13 @@ const MAX_INCLUDE_DEPTH: usize = 16;
 /// Every file whose content is composed into `path`, `path` itself included.
 ///
 /// Asciidoctor resolves anchors against the assembled document, so an anchor declared in an
-/// included partial is a legitimate target for a reference in the including page.
+/// included partial is a legitimate target for a reference in the including page. Without
+/// an Antora `context`, only relative and attribute-based include targets are followed.
 #[must_use]
 pub fn composed_files(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
-    context: &AntoraContext,
+    context: Option<&AntoraContext>,
     path: &Path,
 ) -> BTreeSet<PathBuf> {
     let mut visited = BTreeSet::new();
@@ -31,7 +32,7 @@ pub fn composed_files(
 fn collect(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
-    context: &AntoraContext,
+    context: Option<&AntoraContext>,
     path: &Path,
     visited: &mut BTreeSet<PathBuf>,
     depth: usize,
@@ -61,14 +62,14 @@ fn collect(
 fn resolve_target(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
-    context: &AntoraContext,
+    context: Option<&AntoraContext>,
     current: &Path,
     document: &Document,
     target: &str,
 ) -> Option<PathBuf> {
     if target.contains('$') {
         let id = parse_resource_id(target).ok()?;
-        return AntoraResolver::resolve(antora, &id, context)
+        return AntoraResolver::resolve(antora, &id, context?)
             .ok()
             .map(|resource| resource.source_path.clone());
     }
@@ -77,7 +78,7 @@ fn resolve_target(
     if let Some(resolved) = resolve_include_target(document, current, target) {
         return Some(resolved);
     }
-    let substituted = substitute_intrinsic_directories(antora, context, target)?;
+    let substituted = substitute_intrinsic_directories(antora, context?, target)?;
     let resolved = normalize_path(&substituted);
     index
         .file(&resolved)

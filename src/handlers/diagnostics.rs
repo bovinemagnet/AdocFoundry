@@ -171,7 +171,7 @@ fn declares_anchor(
     if index.resolve_anchor(path, anchor).is_some() {
         return true;
     }
-    composed_files(index, antora, context, path)
+    composed_files(index, antora, Some(context), path)
         .iter()
         .any(|composed| index.resolve_anchor(composed, anchor).is_some())
 }

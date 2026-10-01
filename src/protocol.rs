@@ -457,13 +457,14 @@ impl ProtocolServer {
                 CandidateKind::Family => CompletionItemKind::KEYWORD,
                 CandidateKind::Directory => CompletionItemKind::FOLDER,
                 CandidateKind::Anchor => CompletionItemKind::REFERENCE,
+                CandidateKind::Attribute => CompletionItemKind::VARIABLE,
             }),
             detail: candidate.detail,
             sort_text: Some(candidate.sort_text),
             filter_text: Some(candidate.label.clone()),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 range,
-                new_text: candidate.label,
+                new_text: candidate.insert_text.unwrap_or(candidate.label),
             })),
             ..CompletionItem::default()
         })

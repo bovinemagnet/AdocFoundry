@@ -3,12 +3,12 @@
 //! Editor-agnostic: this operates on a URI and returns the artefact that was produced,
 //! leaving all `lsp-types` mapping to `protocol.rs`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use adoc_render::{RenderRequest, RenderSafeMode, Renderer};
 
 use crate::{
-    handlers::render_source::source_for_render,
+    handlers::{attributes::antora_attributes, render_source::source_for_render},
     preview::{scratch_directory, PreviewError, PreviewMode, PreviewSink},
     state::{document_path, ServerState},
 };
@@ -42,7 +42,9 @@ fn preview_request(
     let source = document_path(uri);
     let text = source_for_render(&open.document, &state.antora, &source, &scratch_directory());
     let mut request = RenderRequest::from_source(source.clone(), text);
-    request.attributes.extend(antora_attributes(state, &source));
+    request
+        .attributes
+        .extend(antora_attributes(&state.antora, &source));
     // Rewritten copies of included files sit in a scratch directory outside the
     // component, which any jailed safe mode refuses to read.
     request.safe_mode = RenderSafeMode::Unsafe;
@@ -65,70 +67,11 @@ pub fn refresh_preview(
     sink.refresh(&output, &source)
 }
 
-/// Antora page attributes for `source`, empty when the file is not in an Antora module.
-///
-/// `adoc-ls` knows the component and module; a bare Asciidoctor invocation would not.
-fn antora_attributes(
-    state: &ServerState,
-    source: &Path,
-) -> impl Iterator<Item = (String, String)> + use<> {
-    let context = state.antora.context_for_path(source);
-    let module_root = context.as_ref().and_then(|context| {
-        state
-            .antora
-            .module(
-                &context.component,
-                context.version.as_deref(),
-                &context.module,
-            )
-            .map(|module| module.root.clone())
-    });
-
-    // Antora sets these for every page; a document written against them fails under a
-    // stock Asciidoctor otherwise. Absolute, so a preview rendered elsewhere still finds
-    // partials, examples, and images.
-    let families = module_root.into_iter().flat_map(|root| {
-        let moduledir = ("moduledir".to_owned(), root.display().to_string());
-        [
-            ("pagesdir", "pages"),
-            ("partialsdir", "partials"),
-            ("examplesdir", "examples"),
-            ("attachmentsdir", "attachments"),
-            ("imagesdir", "images"),
-        ]
-        .into_iter()
-        .map(move |(attribute, family)| {
-            // Trailing separator so both `{partialsdir}note.adoc` and
-            // `{partialsdir}/note.adoc` resolve. Antora sets these to a family prefix
-            // rather than a path, so both spellings work there and both appear in the
-            // wild; a doubled separator is harmless.
-            (
-                attribute.to_owned(),
-                format!("{}/", root.join(family).display()),
-            )
-        })
-        .chain(std::iter::once(moduledir))
-    });
-
-    let page = context.into_iter().flat_map(|context| {
-        let mut attributes = vec![
-            ("page-component-name".to_owned(), context.component),
-            ("page-module".to_owned(), context.module),
-        ];
-        if let Some(version) = context.version {
-            attributes.push(("page-component-version".to_owned(), version));
-        }
-        attributes
-    });
-
-    page.chain(families)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use adoc_render::MockRenderer;
-    use std::sync::Mutex;
+    use std::{path::Path, sync::Mutex};
 
     #[derive(Default)]
     struct RecordingSink {
