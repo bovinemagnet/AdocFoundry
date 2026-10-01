@@ -59,6 +59,24 @@ pub const BUILT_IN_ATTRIBUTES: &[(&str, &str)] = &[
     ("asciidoctor-version", "Asciidoctor version"),
 ];
 
+/// The `asciidoc.attributes` of the component `source` belongs to, empty when the file is not
+/// in an Antora module.
+pub fn component_attributes<'a>(
+    antora: &'a AntoraCatalog,
+    source: &Path,
+) -> impl Iterator<Item = (&'a str, &'a str)> {
+    antora
+        .context_for_path(source)
+        .and_then(|context| antora.component(&context.component, context.version.as_deref()))
+        .into_iter()
+        .flat_map(|component| {
+            component
+                .asciidoc_attributes
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+        })
+}
+
 /// Antora page attributes for `source`, empty when the file is not in an Antora module.
 ///
 /// `adoc-ls` knows the component and module; a bare Asciidoctor invocation would not.

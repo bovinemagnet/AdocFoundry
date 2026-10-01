@@ -8,7 +8,10 @@ use std::path::PathBuf;
 use adoc_render::{RenderRequest, RenderSafeMode, Renderer};
 
 use crate::{
-    handlers::{attributes::antora_attributes, render_source::source_for_render},
+    handlers::{
+        attributes::{antora_attributes, component_attributes},
+        render_source::source_for_render,
+    },
     preview::{scratch_directory, PreviewError, PreviewMode, PreviewSink},
     state::{document_path, ServerState},
 };
@@ -42,6 +45,12 @@ fn preview_request(
     let source = document_path(uri);
     let text = source_for_render(&open.document, &state.antora, &source, &scratch_directory());
     let mut request = RenderRequest::from_source(source.clone(), text);
+    // Component attributes first, so the page and family attributes Antora computes itself
+    // win should `antora.yml` name one of them.
+    request.attributes.extend(
+        component_attributes(&state.antora, &source)
+            .map(|(name, value)| (name.to_owned(), value.to_owned())),
+    );
     request
         .attributes
         .extend(antora_attributes(&state.antora, &source));
@@ -216,6 +225,35 @@ mod tests {
             attributes.get("page-component-version").map(String::as_str),
             Some("latest")
         );
+    }
+
+    #[test]
+    fn merges_the_component_s_asciidoc_attributes_into_the_request() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let page = root.join("modules/ROOT/pages/index.adoc");
+        let uri = format!("file://{}", page.display());
+
+        let mut state = ServerState::default();
+        state.index_workspace(vec![root]).expect("index fixture");
+        state.open(&uri, "= Home\n", 1);
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        let attributes = renderer.last_request().expect("a request").attributes;
+        assert_eq!(
+            attributes.get("source-highlighter").map(String::as_str),
+            Some("highlight.js")
+        );
+        assert_eq!(attributes.get("sectanchors").map(String::as_str), Some(""));
     }
 
     #[test]

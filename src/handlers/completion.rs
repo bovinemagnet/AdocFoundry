@@ -7,7 +7,7 @@ use adoc_index::{list_directory, normalize_path, WorkspaceIndex};
 use adoc_parser::{completion_context, CompletionKind};
 
 use crate::handlers::{
-    attributes::{antora_attributes, BUILT_IN_ATTRIBUTES},
+    attributes::{antora_attributes, component_attributes, BUILT_IN_ATTRIBUTES},
     definition::reference_target_path,
     includes::composed_files,
 };
@@ -233,13 +233,8 @@ fn attribute_candidates(
         }
     }
 
-    if let Some(component) = antora_context
-        .as_ref()
-        .and_then(|context| antora.component(&context.component, context.version.as_deref()))
-    {
-        for (name, value) in &component.asciidoc_attributes {
-            offer(name, Some(value), 1);
-        }
+    for (name, value) in component_attributes(antora, current_path) {
+        offer(name, Some(value), 1);
     }
     for (name, value) in antora_attributes(antora, current_path) {
         offer(&name, Some(&value), 1);
