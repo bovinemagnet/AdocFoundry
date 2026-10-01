@@ -61,7 +61,7 @@ pub fn parse_component_descriptor(
             asciidoc
                 .attributes
                 .into_iter()
-                .map(|(name, value)| (name, value.into_string()))
+                .filter_map(|(name, value)| Some((name, value.into_attribute_value()?)))
                 .collect()
         })
         .unwrap_or_default();
@@ -132,6 +132,16 @@ impl ScalarValue {
         }
     }
 
+    /// Antora's reading of an `asciidoc.attributes` value: `true` sets the attribute with an
+    /// empty value, `false` and `~` unset it, and anything else is the value itself.
+    fn into_attribute_value(self) -> Option<String> {
+        match self {
+            Self::Boolean(true) => Some(String::new()),
+            Self::Boolean(false) | Self::Null => None,
+            value => Some(value.into_string()),
+        }
+    }
+
     fn into_string(self) -> String {
         match self {
             Self::String(value) => value,
@@ -161,7 +171,32 @@ mod tests {
         assert_eq!(descriptor.name, "demo");
         assert_eq!(descriptor.version.as_deref(), Some("3.1"));
         assert_eq!(descriptor.nav, ["modules/ROOT/nav.adoc"]);
-        assert_eq!(descriptor.asciidoc_attributes["experimental"], "true");
+        assert_eq!(descriptor.asciidoc_attributes["experimental"], "");
+    }
+
+    #[test]
+    fn reads_attribute_values_the_way_antora_does() {
+        let descriptor = parse_component_descriptor(
+            Path::new("docs"),
+            "name: demo\nasciidoc:\n  attributes:\n    toc: true\n    sectids: false\n    hide-uri-scheme: ~\n    product: Widget@\n    release: 2\n",
+        )
+        .unwrap();
+        let attributes = &descriptor.asciidoc_attributes;
+
+        // `true` sets the attribute with an empty value.
+        assert_eq!(attributes.get("toc").map(String::as_str), Some(""));
+        // `false` and `~` unset it, so nothing is passed on.
+        assert!(!attributes.contains_key("sectids"), "{attributes:?}");
+        assert!(
+            !attributes.contains_key("hide-uri-scheme"),
+            "{attributes:?}"
+        );
+        // A trailing `@` soft-sets; Asciidoctor reads that suffix itself.
+        assert_eq!(
+            attributes.get("product").map(String::as_str),
+            Some("Widget@")
+        );
+        assert_eq!(attributes.get("release").map(String::as_str), Some("2"));
     }
 
     #[test]
