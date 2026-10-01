@@ -3,6 +3,7 @@ mod component;
 mod descriptor;
 mod discovery;
 mod module;
+mod nav;
 mod resource;
 mod resource_id;
 
@@ -13,6 +14,7 @@ pub use descriptor::{
 };
 pub use discovery::{discover_antora_workspace, DiscoveryResult};
 pub use module::Module;
+pub use nav::{parse_nav, NavEntry};
 pub use resource::{AntoraCoordinate, AntoraResource, ResourceFamily};
 pub use resource_id::{
     parse_resource_id, AntoraContext, AntoraResolver, AntoraResourceId, ResolutionError,

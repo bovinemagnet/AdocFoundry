@@ -180,6 +180,22 @@ impl AntoraCatalog {
         })
     }
 
+    /// Whether `path` is a navigation file: a module's `nav.adoc`, or a file the component's
+    /// `antora.yml` lists under `nav`.
+    #[must_use]
+    pub fn is_nav_file(&self, path: &Path) -> bool {
+        let path = normalize_path(path);
+        self.modules
+            .values()
+            .any(|module| module.nav.as_deref() == Some(path.as_path()))
+            || self.components.values().any(|component| {
+                component
+                    .nav
+                    .iter()
+                    .any(|entry| normalize_path(&component.root.join(entry)) == path)
+            })
+    }
+
     pub fn remove_source(&mut self, source_path: &Path) {
         let source_path = normalize_path(source_path);
         self.resources
@@ -455,5 +471,23 @@ mod tests {
             .collect();
 
         assert_eq!(names, vec!["ROOT".to_owned(), "security".to_owned()]);
+    }
+
+    #[test]
+    fn recognises_module_and_descriptor_navigation_files() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let mut catalog = crate::discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+
+        assert!(catalog.is_nav_file(&root.join("modules/ROOT/nav.adoc")));
+        assert!(!catalog.is_nav_file(&root.join("modules/ROOT/pages/index.adoc")));
+
+        // A file listed under `nav` counts even where it is not a module's `nav.adoc`.
+        let mut component = catalog.components().next().unwrap().clone();
+        component.nav = vec!["modules/security/menu.adoc".to_owned()];
+        catalog.insert_component(component);
+        assert!(catalog.is_nav_file(&root.join("modules/security/menu.adoc")));
     }
 }
