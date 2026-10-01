@@ -67,6 +67,25 @@ pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnos
         }
     }
 
+    // Images resolve against the top-level document, so a file composed into another cannot
+    // judge its own.
+    if index.includers(path).next().is_none() {
+        for image in &document.images {
+            let Some(target_path) = resolve_image_target(document, path, &image.target) else {
+                continue;
+            };
+            if !target_path.exists() && index.file(&target_path).is_none() {
+                push_unique(
+                    &mut diagnostics,
+                    &mut seen,
+                    DiagnosticCode::UnresolvedImage,
+                    format!("Unresolved AsciiDoc image target: {}", image.target),
+                    image.range,
+                );
+            }
+        }
+    }
+
     diagnostics.sort_by_key(|diagnostic| (diagnostic.range, diagnostic.code));
     diagnostics
 }
@@ -83,6 +102,43 @@ pub fn resolve_include_target(
     let target = substitute_attributes(document, target)?;
     let parent = current_path.parent().unwrap_or_else(|| Path::new(""));
     Some(normalize_path(&parent.join(target)))
+}
+
+/// The file a block image names in a plain workspace, or `None` when the index cannot judge
+/// the target: a URL, a `data:` URI, an Antora resource ID, or an attribute the document does
+/// not declare.
+///
+/// Asciidoctor resolves images against `imagesdir`, which defaults to the document's
+/// directory, so a declared `imagesdir` is joined in front of the target.
+#[must_use]
+pub fn resolve_image_target(
+    document: &Document,
+    current_path: &Path,
+    target: &str,
+) -> Option<PathBuf> {
+    // A colon covers `://`, `data:` and Antora coordinates alike.
+    if target.contains(':') || target.contains('$') {
+        return None;
+    }
+    let target = substitute_attributes(document, target)?;
+    let parent = current_path.parent().unwrap_or_else(|| Path::new(""));
+    let base = match document
+        .attributes
+        .iter()
+        .rev()
+        .find(|attribute| attribute.name == "imagesdir")
+    {
+        Some(attribute) => {
+            let directory =
+                substitute_attributes(document, attribute.value.as_deref().unwrap_or(""))?;
+            if directory.contains(':') {
+                return None;
+            }
+            parent.join(directory)
+        }
+        None => parent.to_path_buf(),
+    };
+    Some(normalize_path(&base.join(target)))
 }
 
 fn diagnose_xref(
@@ -192,11 +248,11 @@ fn push_unique(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use adoc_core::DiagnosticCode;
 
-    use crate::{workspace_diagnostics, WorkspaceIndex};
+    use crate::{resolve_image_target, workspace_diagnostics, WorkspaceIndex};
 
     #[test]
     fn reports_definitely_missing_local_targets() {
@@ -278,5 +334,74 @@ mod tests {
         );
 
         assert!(workspace_diagnostics(&index, &index_path).is_empty());
+    }
+
+    #[test]
+    fn resolves_image_targets_against_the_document_and_its_imagesdir() {
+        let path = Path::new("docs/guide.adoc");
+        let plain = adoc_parser::parse("file:///docs/guide.adoc", "= Guide\n").document;
+        let with_dir = adoc_parser::parse(
+            "file:///docs/guide.adoc",
+            ":base: assets\n:imagesdir: {base}/img\n",
+        )
+        .document;
+
+        assert_eq!(
+            resolve_image_target(&plain, path, "a.png"),
+            Some(PathBuf::from("docs/a.png"))
+        );
+        assert_eq!(
+            resolve_image_target(&plain, path, "/abs/a.png"),
+            Some(PathBuf::from("/abs/a.png"))
+        );
+        assert_eq!(
+            resolve_image_target(&with_dir, path, "a.png"),
+            Some(PathBuf::from("docs/assets/img/a.png"))
+        );
+    }
+
+    #[test]
+    fn leaves_image_targets_it_cannot_judge_unresolved() {
+        let path = Path::new("docs/guide.adoc");
+        let document = adoc_parser::parse("file:///docs/guide.adoc", "= Guide\n").document;
+        let remote_dir = adoc_parser::parse(
+            "file:///docs/guide.adoc",
+            ":imagesdir: https://cdn.example\n",
+        )
+        .document;
+
+        for target in [
+            "https://example.com/a.png",
+            "data:image/png;base64,AAAA",
+            "{undeclared}/a.png",
+            "ROOT:a.png",
+            "image$a.png",
+        ] {
+            assert_eq!(
+                resolve_image_target(&document, path, target),
+                None,
+                "{target}"
+            );
+        }
+        assert_eq!(resolve_image_target(&remote_dir, path, "a.png"), None);
+    }
+
+    #[test]
+    fn reports_a_missing_image_only_in_files_nothing_includes() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/images");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+
+        let guide: Vec<_> = workspace_diagnostics(&index, &root.join("guide.adoc"))
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code == DiagnosticCode::UnresolvedImage)
+            .collect();
+        assert_eq!(guide.len(), 1, "{guide:?}");
+        assert!(guide[0].message.contains("missing.svg"));
+
+        assert!(
+            workspace_diagnostics(&index, &root.join("chapters/setup.adoc")).is_empty(),
+            "an included file's images resolve against its includer"
+        );
     }
 }

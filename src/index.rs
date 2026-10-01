@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::DefaultHasher, BTreeMap},
+    collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet},
     fs,
     hash::{Hash, Hasher},
     io,
@@ -9,7 +9,10 @@ use std::{
 use adoc_core::{alphanumeric_id, canonical_id, Document, Reference, SourceRange};
 use adoc_parser::parse;
 
-use crate::workspace::{collect_asciidoc_files, normalize_path};
+use crate::{
+    diagnostics::resolve_include_target,
+    workspace::{collect_asciidoc_files, normalize_path},
+};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct AnchorKey {
@@ -42,6 +45,9 @@ pub struct WorkspaceIndex {
     files: BTreeMap<PathBuf, FileEntry>,
     anchors: BTreeMap<AnchorKey, Vec<AnchorLocation>>,
     references: Vec<ReferenceLocation>,
+    /// Include target → the files that include it. Only targets the index can resolve on its
+    /// own are recorded: relative paths and attributes the including document declares.
+    includers: BTreeMap<PathBuf, BTreeSet<PathBuf>>,
 }
 
 impl WorkspaceIndex {
@@ -100,6 +106,13 @@ impl WorkspaceIndex {
                     }),
             );
 
+        for target in include_targets(&path, &document) {
+            self.includers
+                .entry(target)
+                .or_default()
+                .insert(path.clone());
+        }
+
         let uri = document.uri.clone();
         let content_hash = hash_text(&document.text);
         self.files.entry(path.clone()).or_insert(FileEntry {
@@ -114,7 +127,18 @@ impl WorkspaceIndex {
         let path = normalize_path(path);
         self.anchors.retain(|key, _| key.path != path);
         self.references.retain(|reference| reference.path != path);
-        self.files.remove(&path)
+        let removed = self.files.remove(&path)?;
+        // Resolution is a pure function of the text and path, so this yields exactly the
+        // targets `replace` recorded.
+        for target in include_targets(&path, &removed.document) {
+            if let Some(includers) = self.includers.get_mut(&target) {
+                includers.remove(&path);
+                if includers.is_empty() {
+                    self.includers.remove(&target);
+                }
+            }
+        }
+        Some(removed)
     }
 
     pub fn index_roots(&mut self, roots: &[PathBuf]) -> io::Result<usize> {
@@ -146,6 +170,15 @@ impl WorkspaceIndex {
         &self.references
     }
 
+    /// The files that include `path`, as far as the index can resolve their includes.
+    pub fn includers(&self, path: &Path) -> impl Iterator<Item = &Path> {
+        self.includers
+            .get(&normalize_path(path))
+            .into_iter()
+            .flatten()
+            .map(PathBuf::as_path)
+    }
+
     #[must_use]
     pub fn resolve_anchor(&self, path: &Path, id: &str) -> Option<&AnchorLocation> {
         let path = normalize_path(path);
@@ -168,6 +201,16 @@ impl WorkspaceIndex {
             })
             .and_then(|locations| locations.first())
     }
+}
+
+fn include_targets<'a>(
+    path: &'a Path,
+    document: &'a Document,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    document
+        .includes
+        .iter()
+        .filter_map(move |include| resolve_include_target(document, path, &include.target))
 }
 
 fn path_to_uri(path: &Path) -> String {
@@ -212,5 +255,61 @@ mod tests {
 
         assert_eq!(count, 1);
         assert_eq!(index.files().count(), 1);
+    }
+
+    #[test]
+    fn records_the_files_that_include_a_document() {
+        let guide = PathBuf::from("docs/guide.adoc");
+        let setup = PathBuf::from("docs/chapters/setup.adoc");
+        let mut index = WorkspaceIndex::new();
+        // Indexed before its includer: the map is keyed by target, so order is irrelevant.
+        index.index_source(&setup, "== Setup\n");
+        index.index_source(&guide, "= Guide\n\ninclude::chapters/setup.adoc[]\n");
+
+        let includers: Vec<_> = index.includers(&setup).collect();
+
+        assert_eq!(includers, vec![guide.as_path()]);
+        assert_eq!(index.includers(&guide).count(), 0);
+    }
+
+    #[test]
+    fn records_an_include_written_with_a_declared_attribute() {
+        let guide = PathBuf::from("docs/guide.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            &guide,
+            ":chapters: chapters\n\ninclude::{chapters}/setup.adoc[]\n",
+        );
+
+        assert_eq!(
+            index
+                .includers(Path::new("docs/chapters/setup.adoc"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn forgets_an_include_the_includer_drops() {
+        let guide = PathBuf::from("docs/guide.adoc");
+        let setup = Path::new("docs/chapters/setup.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(&guide, "include::chapters/setup.adoc[]\n");
+
+        index.index_source(&guide, "= Guide\n");
+
+        assert_eq!(index.includers(setup).count(), 0);
+    }
+
+    #[test]
+    fn forgets_the_includes_of_a_removed_file() {
+        let guide = PathBuf::from("docs/guide.adoc");
+        let setup = Path::new("docs/chapters/setup.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(&guide, "include::chapters/setup.adoc[]\n");
+
+        index.remove(&guide);
+
+        assert_eq!(index.includers(setup).count(), 0);
     }
 }
