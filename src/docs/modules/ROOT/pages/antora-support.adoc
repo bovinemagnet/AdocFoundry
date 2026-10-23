@@ -13,6 +13,9 @@ Opening a folder discovers every `antora.yml` beneath it, so one workspace can h
 Each descriptor defines a component version.
 Its modules are the directories under `modules/`, and each module's families are `pages`, `partials`, `examples`, `images` and `attachments`.
 
+Images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories, which Antora still reads.
+When both the standard directory and the older one hold a file with the same name, the standard directory wins.
+
 A folder with no `antora.yml` is treated as plain AsciiDoc, and links resolve by relative path only.
 
 The workspace-level `antora-playbook.yml`, if one is found at a workspace root, supplies site-wide attributes (see <<playbook-attributes>>).
@@ -60,6 +63,9 @@ Includes use `partial$` and `example$`, and images use `image$`.
 |`partial$note.adoc`
 |A partial in the current module.
 |===
+
+An `include::` target may also be qualified with a module or a component, such as `include::developer:example$flow.mmd[]` or `include::other:partial$x.adoc[]`.
+These resolve through the catalog like any other resource id, in the editor and in the xref:preview.adoc[preview].
 
 === Rules
 

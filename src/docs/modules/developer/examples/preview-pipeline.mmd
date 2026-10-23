@@ -1,0 +1,12 @@
+flowchart TD
+    edit["Edit to the page, or to a file it includes"] --> sched["Schedule the render<br/>(PREVIEW_SETTLE, 100 ms)"]
+    sched -->|"another edit"| sched
+    sched -->|"settled"| snap["Snapshot: open buffers,<br/>attributes, include map"]
+    snap --> worker["Worker thread:<br/>DocumentParser::parse to a Dom"]
+    worker --> check{"Newer job started,<br/>or a source changed?"}
+    check -->|yes| drop["Drop the result"]
+    check -->|no| view["build_view: Dom to ViewTree<br/>(links, images, includes resolved)"]
+    view --> publish["Publish the preview<br/>EngineEvent::PreviewReady"]
+    view -->|"diagram not cached"| diag["Diagram worker<br/>(Mermaid, or an external tool)"]
+    diag -->|"finished"| view
+    publish --> ui["Views re-render from rendered_preview(id)"]

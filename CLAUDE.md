@@ -10,7 +10,7 @@ The architecture and phase plan live in `docs/design/DESIGN-AdocFoundry_Architec
 
 Phases, in order: (1) source editor with Antora support and link following; (2) native rendered preview; (3) WYSIWYG editing; (4) PDF export with themes. Do not start a later phase's features unless the current phase's spec says so or you are asked.
 
-**Current state:** Phase 1 is implemented (work packages 1.1–1.9). Where the implementation departs from the spec, §20 "Implementation Notes" of the Phase 1 spec records it; read it before changing those areas. The manual checks that automated tests cannot cover (IME, frame timing, macOS and Windows runs, packages) are listed in `docs/qa/phase1.md`, and the GPUI spike's findings are in `docs/qa/spike-gpui.md`.
+**Current state:** Phases 1 and 2 are implemented (work packages 1.1–1.9 and 2.1–2.8). Where the implementation departs from a spec, its "Implementation Notes" section records it (§20 of the Phase 1 spec, §12 of the Phase 2 spec); read them before changing those areas. The manual checks that automated tests cannot cover are listed in `docs/qa/phase1.md` (IME, frame timing, macOS and Windows runs, packages) and `docs/qa/phase2.md` (the preview in the app), and the GPUI spike's findings are in `docs/qa/spike-gpui.md`.
 
 ## Commands
 
@@ -47,23 +47,27 @@ The workspace is a layered crate ladder. A crate may depend only on crates in th
 ```
 L4  adocfoundry (GPUI app)   adocfoundry-cli (headless)   adoc-ls (LSP, stdio)
 L3  adoc-engine     sessions, documents, command registry, undo, watcher, settings, events
-L2  adoc-render     adoc-diagrams     adoc-model     adoc-pdf          (adoc-render is migrated in Phase 1 but unused by the app; the rest arrive later)
+L2  adoc-render     adoc-diagrams     adoc-model     adoc-pdf          (adoc-model arrives in Phase 3, adoc-pdf in Phase 4)
 L1  adoc-parser     adoc-dom     adoc-antora     adoc-index     adoc-lang
 L0  adoc-core       domain types only; no internal deps; no editor, LSP or UI types
 ```
 
 - **`adoc-core`** — `Document`, `LineIndex`, `SourceRange` (byte offsets), `Section`, `Anchor`, `Reference`, `IncludeDirective`, `ImageDirective`, `Diagnostic`/`DiagnosticCode`. Diagnostic codes are stable strings (`adoc.unresolved-xref-file`, `adoc.antora.unknown-module`). Never add dependencies here.
 - **`adoc-parser`** — line-oriented semantic parser (`parse(uri, text) -> ParseResult`), deliberately *not* tree-sitter and *not* a full AST. It extracts titles, sections, attributes, anchors, xrefs, includes and images from half-typed input without panicking. Keep it fast; it runs on every keystroke-debounce.
-- **`adoc-dom`** (Phase 2) — the full AST behind `trait DocumentParser`. External parser crates are only ever referenced inside this crate.
+- **`adoc-dom`** — the full AST behind `trait DocumentParser`, with spans that map through includes. `AcdcParser` (acdc-parser) is the one the engine uses; `AsciidocParser` (asciidoc-parser) exists for comparison. External parser crates are only ever referenced inside this crate.
+- **`adoc-render`** — the framework-free view tree (`build_view`, references, images and diagrams resolved through a `ViewResolver`), `block_at` for scroll sync, and the HTML backend (`to_html`). The GPUI preview, the CLI and the fidelity harness all render from the same tree.
+- **`adoc-diagrams`** — Mermaid in process (merman), Graphviz, PlantUML and D2 through optional tools on `PATH`, and a checksum cache in `<workspace>/.cache/adocfoundry/diagrams`.
 - **`adoc-antora`** — `antora.yml` parsing (`serde-saphyr`), `AntoraCatalog`, `parse_resource_id` for `version@component:module:family$path`, `AntoraResolver`. Resolution follows Antora 3.2 rules; the docs for those rules are linked from the design doc, not re-derived.
 - **`adoc-index`** — `WorkspaceIndex` with replacement-based updates and direct map lookups. Never add a feature that scans every document. `normalize_path` is lexical and never canonicalises, so unsaved files work.
 - **`adoc-lang`** — editor-agnostic language features operating on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, attribute resolution. This is the former `adoc-ls/src/handlers` and the non-LSP parts of its `state.rs`. Both `adoc-ls` and `adoc-engine` call it; neither re-implements it.
 - **`adoc-engine`** — the only entry point front ends use. Owns the workspace (roots, catalog, index), open documents, the command registry, undo history, settings and the file watcher, and publishes `EngineEvent`s. Every user-visible action is a `Command` with a stable `CommandId`; the UI, CLI and future MCP server invoke commands, never engine internals.
 - **`adoc-ls`** — the only crate that knows about LSP. `protocol.rs` maps `adoc-lang` results to `lsp-types`; nothing below it may import `lsp-types` or `lsp-server`. The one listed exception (`LSP_ALLOWED` in `xtask/src/layers.rs`) is `adocfoundry` using `lsp-types` in `editor/providers.rs`, because gpui-component's editor provider traits are typed with it; keep it to that module.
-- **`adocfoundry`** — the only crate that imports `gpui`, `gpui-component` or any other UI framework. Views are thin: they render engine state and dispatch commands. Logic that could live in `adoc-engine` must live there. The editor widget reports only that its text changed, so `editor/sync.rs` recovers each edit as one replacement and sends it as `edit.insert_text`/`edit.replace_range`; engine-side changes are applied back the same way. Undo, redo and definition are bound in the editor key context after gpui-component's bindings so they reach the engine. Tabs follow the engine's active document (`EngineEvent::NavigationChanged`). App tests in `src/ui_tests.rs` run on GPUI's test platform and need no display.
-- **`adocfoundry-cli`** — headless binary over `adoc-engine`. Phase 1 subcommands: `check <root> [--format text|json] [--fail-on warning|error]`, `symbols <root> <query>`, `follow <file> <byte-offset>`; `render` and `pdf` come in later phases. Used in CI and for dogfooding.
+- **`adocfoundry`** — the only crate that imports `gpui`, `gpui-component` or any other UI framework. Views are thin: they render engine state and dispatch commands. Logic that could live in `adoc-engine` must live there. The editor widget reports only that its text changed, so `editor/sync.rs` recovers each edit as one replacement and sends it as `edit.insert_text`/`edit.replace_range`; engine-side changes are applied back the same way. Undo, redo and definition are bound in the editor key context after gpui-component's bindings so they reach the engine. Tabs follow the engine's active document (`EngineEvent::NavigationChanged`). The preview (`src/preview/`) draws the engine's view tree natively, docked or in a `WindowKind::Preview` window; pin, scroll sync and detach are engine state (`PreviewLayout`), and clicks go back through `navigate.go_to` and `navigate.reveal`. App tests in `src/ui_tests.rs` run on GPUI's test platform and need no display.
+- **`adocfoundry-cli`** — headless binary over `adoc-engine`. Subcommands: `check <root> [--format text|json] [--fail-on warning|error]`, `symbols <root> <query>`, `follow <file> <byte-offset>`, `render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]`; `pdf` comes in Phase 4. Used in CI and for dogfooding.
 
 Request flow: a keystroke edits the editor buffer → `Engine::apply_edit` updates the document, runs `adoc-parser`, replaces the index entry, publishes `EngineEvent::DocumentChanged` → views re-render from engine state. Nothing in the UI holds its own copy of document semantics.
+
+Preview flow: while the preview is visible the engine requests its target (the pinned document, else the active one) → `PREVIEW_SETTLE` (100 ms) after the last change to the page or any file it includes, a worker parses a snapshot through `adoc-dom` → `pump` builds the view tree on the engine thread (resolution needs the catalog and index) → diagrams come from the cache or render on a worker → `EngineEvent::PreviewReady` → views read `rendered_preview(id)`. A result is dropped when a newer job started or an input changed after it began.
 
 ### Grammars and assets
 
@@ -80,7 +84,7 @@ Request flow: a keystroke edits the editor buffer → `Engine::apply_edit` updat
 - Edition 2021 (matching the migrated crates); the toolchain is pinned in `rust-toolchain.toml`. Crates take dependency versions from `[workspace.dependencies]`, never their own.
 - All external dependencies are pinned exactly (`=1.0.229` style) and new ones must pass `cargo deny` (MIT, Apache-2.0, BSD-2/3, MPL-2.0, Unlicense, Zlib, OFL-1.1 for fonts; GPL and LGPL are denied).
 - If the GPUI spike (WP 1.1) fails, the UI is rebuilt on egui/eframe. Keep that a one-crate swap: nothing below `adocfoundry` may know which framework is in use.
-- Phase 2 hooks (`open_secondary_window`, the `Renderer` trait, the engine event stream) exist but stay empty in Phase 1. **Never** depend on Zed's `editor`, `text`, `rope`, `multi_buffer`, `language` or `project` crates: they are GPL-3.0. The permitted GPUI crates are `gpui`/`gpui-pre`, `gpui-component`, `gpui-base` and their platform crates (Apache-2.0).
+- **Never** depend on Zed's `editor`, `text`, `rope`, `multi_buffer`, `language` or `project` crates: they are GPL-3.0. The permitted GPUI crates are `gpui`/`gpui-pre`, `gpui-component`, `gpui-base` and their platform crates (Apache-2.0).
 - No Node.js, no JVM, no Ruby required at runtime. External tools (`asciidoctor`, `dot`, `plantuml`, `mmdc`) are optional and discovered, never assumed.
 - Use `Path`/`PathBuf` for filesystem work and `adoc_index::normalize_path`; do not canonicalise paths that may not exist. Antora resource IDs always use `/`.
 - Do not clone remote Antora repositories or execute project scripts.

@@ -11,6 +11,7 @@ It needs no display, which makes it suitable for continuous integration.
 adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
+adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 adocfoundry-cli --version
 ----
 
@@ -100,6 +101,36 @@ If the offset is not on a followable reference, or the target does not resolve, 
 
 By default the workspace root is the parent of the nearest `antora.yml`, so that sibling components resolve.
 Use `--root <dir>` to choose another.
+
+[[render]]
+== render
+
+`render` writes a page as a standalone HTML file, as the xref:preview.adoc[preview] renders it.
+Without `--output` the HTML goes to standard output.
+It waits for diagrams to finish before writing.
+
+[source,sh]
+----
+adocfoundry-cli render docs/modules/ROOT/pages/index.adoc --output index.html
+adocfoundry-cli render docs/modules/ROOT/pages/index.adoc --root docs > index.html
+----
+
+[cols="2,4"]
+|===
+|Option |Meaning
+
+|`--root <dir>`
+|The workspace root, so that includes, xrefs and images resolve across components. Without it, the root is the parent of the nearest Antora component (the directory above the one holding `antora.yml`), or the file's own directory outside Antora. `.` is accepted.
+
+|`--output <file.html>`
+|Write to this file instead of standard output.
+
+|`--parser acdc\|asciidoc-parser`
+|Choose the document parser. The default is `acdc`. `asciidoc-parser` is a development comparison, and the application always uses `acdc`.
+|===
+
+Images and diagrams are written as absolute `file://` URLs, so the file shows them wherever it is opened on the same machine.
+A usage or runtime error exits with 2, as for the other subcommands.
 
 == Using it in CI
 

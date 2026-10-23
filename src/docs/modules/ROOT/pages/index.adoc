@@ -25,7 +25,7 @@ The project is built in four phases, each of which ships a usable tool.
 
 |2
 |A native rendered preview inside the application.
-|Not started
+|Implemented
 
 |3
 |WYSIWYG editing.
@@ -35,6 +35,18 @@ The project is built in four phases, each of which ships a usable tool.
 |PDF export with themes.
 |Not started
 |===
+
+== Phase 2 status
+
+Phase 2 is implemented.
+It adds xref:preview.adoc[the preview]:
+
+* A native rendered preview docked beside the editor, or detached into its own window, that follows the active page or stays pinned to one.
+* Scroll sync in both directions, and click-to-source, including into partials.
+* Clickable xrefs that record back and forward history, with unresolved references marked.
+* Includes, images and attachments resolved through the Antora catalog.
+* Highlighted source blocks, and diagrams: Mermaid in process, and Graphviz, PlantUML and D2 through their tools when found on the `PATH`.
+* `adocfoundry-cli render`, which writes a page as HTML as the preview renders it.
 
 == Phase 1 status
 
@@ -50,7 +62,9 @@ It provides:
 
 The following are not implemented yet:
 
-* A rendered preview inside the application, WYSIWYG editing and PDF export (Phases 2 to 4).
+* WYSIWYG editing (Phase 3) and PDF export (Phase 4).
+* Settings for the paths of the Graphviz, PlantUML and D2 tools, which are found on the `PATH` only.
+* Typeset STEM in the preview, which shows styled maths source until Phase 4.
 * Editing included content in place, spell checking, Git integration and plugins.
 * XML and Dockerfile highlighting inside source blocks, because the editor component has no grammar for them yet.
 * Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
@@ -63,6 +77,7 @@ See xref:developer:testing.adoc#manual-qa[the manual QA record] for the checklis
 
 * xref:getting-started.adoc[Getting started] -- install a package or build from source.
 * xref:using-the-editor.adoc[Using the editor] -- the workspace, link following, search and rename.
+* xref:preview.adoc[The preview] -- the rendered page beside the editor.
 * xref:keyboard-shortcuts.adoc[Keyboard shortcuts] -- every default binding.
 * xref:settings.adoc[Settings] -- the TOML user and workspace files.
 * xref:antora-support.adoc[Antora support] -- how components, versions and resource IDs resolve.

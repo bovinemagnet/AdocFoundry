@@ -18,6 +18,7 @@ Shared fixtures are in `tests/fixtures/`, grouped by scenario:
 * `antora-single-component/`, `antora-multi-component/`, `antora-versions/`
 * `antora-nested-pages/`, `antora-nested-includes/`, `antora-invalid-descriptor/`
 * `broken-references/` and `antora-broken-references/`
+* `render/`, the preview corpus described below
 
 Reach them with `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/...")`, never with absolute paths.
 Keep fixtures small and readable, and add one alongside every behaviour change.
@@ -33,6 +34,21 @@ Add a test here rather than in the application crate whenever the behaviour can 
 `crates/adocfoundry-cli/tests/cli.rs` runs the binary through `CARGO_BIN_EXE_adocfoundry-cli`.
 It checks each Antora fixture and compares the output with `insta` snapshots.
 It also follows a link in `tests/fixtures/xrefs/`.
+
+== Preview and render tests
+
+[[render-tests]]
+The render corpus is `tests/fixtures/render/`: `blocks.adoc`, `inline.adoc` and `tables.adoc`, with a `partials/` directory for includes.
+`crates/adoc-dom/tests/` checks each parser over the corpus, and `crates/adoc-render/tests/view.rs` checks the view tree.
+`crates/adoc-engine/tests/preview.rs` drives the preview service headlessly: the settle time, included-file changes, stale results, diagram completion, following and pinning, history for `navigate.go_to` and `navigate.reveal`, and `render_blocking`.
+
+The fidelity harness, `crates/adocfoundry-cli/tests/fidelity.rs`, renders every corpus page with `adocfoundry-cli render` and with `asciidoctor`.
+It normalises both to their block structure and paragraph text.
+Block structure must match, and text differences are reported.
+The harness is skipped, with a message, when `asciidoctor --version` does not succeed, because a broken installation is as unusable as a missing one.
+It treats a rendered diagram as the listing block Asciidoctor writes without its diagram extension.
+
+Application tests for the preview are in `ui_tests.rs`: rendering the active document, the detached preview following edits, click-to-source (including into a partial) and scroll sync in both directions.
 
 == Language server tests
 
@@ -53,6 +69,7 @@ They cover:
 * engine edits reaching the widget;
 * following a link opening a tab and recording history;
 * the second window mirroring the active document;
+* the preview rendering the active document, and following edits when detached;
 * the search panel showing workspace results;
 * composed input committing the composed text.
 
