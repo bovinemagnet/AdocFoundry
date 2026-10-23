@@ -206,3 +206,45 @@ fn head_content_and_remote_url() {
         .is_err());
     assert_eq!(repo.remote_url("origin").unwrap(), None);
 }
+
+#[test]
+fn branches_and_files_at_a_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("docs/antora.yml", "name: product\nversion: ~\n");
+    test.commit_all("main");
+    test.switch_branch("v1.0");
+    test.write("docs/antora.yml", "name: product\nversion: '1.0'\n");
+    test.commit_all("version 1.0");
+    test.checkout("main");
+
+    let repo = repo_in(dir.path());
+    let names: Vec<String> = repo
+        .branches()
+        .unwrap()
+        .into_iter()
+        .map(|branch| branch.name)
+        .collect();
+    assert_eq!(names, ["main", "v1.0"]);
+    assert_eq!(
+        repo.file_at("v1.0", Path::new("docs/antora.yml"))
+            .unwrap()
+            .as_deref(),
+        Some("name: product\nversion: '1.0'\n")
+    );
+    assert_eq!(
+        repo.file_at("main", Path::new("docs/antora.yml"))
+            .unwrap()
+            .as_deref(),
+        Some("name: product\nversion: ~\n")
+    );
+    assert_eq!(repo.file_at("v1.0", Path::new("absent.yml")).unwrap(), None);
+    assert!(repo
+        .file_at("no-such-branch", Path::new("docs/antora.yml"))
+        .is_err());
+    // The checkout put main's files back in the working tree.
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("docs/antora.yml")).unwrap(),
+        "name: product\nversion: ~\n"
+    );
+}

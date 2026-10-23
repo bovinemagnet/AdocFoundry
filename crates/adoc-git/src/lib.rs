@@ -40,6 +40,15 @@ impl std::fmt::Display for Head {
     }
 }
 
+/// A branch of the repository: local, or tracking one on a remote.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Branch {
+    /// The remote a remote-tracking branch is on; `None` for a local branch.
+    pub remote: Option<String>,
+    /// The branch's own name (`main`, `v1.0`), without `refs/heads/` or the remote's name.
+    pub name: String,
+}
+
 /// The state of one file in the index (against `HEAD`) and in the working tree (against the
 /// index), as `git status` reports it.
 #[derive(Clone, Debug, Eq, PartialEq)]

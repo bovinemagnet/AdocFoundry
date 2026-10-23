@@ -160,6 +160,48 @@ impl TestRepo {
         .expect("write HEAD");
     }
 
+    /// Checks out branch `name`, as `git checkout` would with nothing uncommitted: the working
+    /// tree and index become the branch's tree, and `HEAD` points at it.
+    ///
+    /// # Panics
+    /// When the branch does not exist or the files cannot be written.
+    pub fn checkout(&self, name: &str) {
+        let mut reference = self
+            .repo
+            .find_reference(format!("refs/heads/{name}").as_str())
+            .expect("the branch to check out");
+        let tree = reference
+            .peel_to_commit()
+            .expect("a commit")
+            .tree()
+            .expect("its tree");
+        let mut current = Vec::new();
+        collect_files(&self.dir, &self.dir, &mut current);
+        for (path, _) in current {
+            fs::remove_file(self.dir.join(&path)).expect("remove a file");
+        }
+        let mut recorder = gix::traverse::tree::Recorder::default();
+        tree.traverse()
+            .breadthfirst(&mut recorder)
+            .expect("walk the tree");
+        for entry in recorder.records {
+            if !entry.mode.is_blob() {
+                continue;
+            }
+            let object = self.repo.find_object(entry.oid).expect("a blob");
+            let path = entry.filepath.to_string();
+            let file = self.dir.join(&path);
+            fs::create_dir_all(file.parent().expect("a parent")).expect("create directories");
+            fs::write(file, &object.data).expect("write a file");
+        }
+        self.write_index(tree.id);
+        fs::write(
+            self.repo.git_dir().join("HEAD"),
+            format!("ref: refs/heads/{name}\n"),
+        )
+        .expect("write HEAD");
+    }
+
     fn write_index(&self, tree: gix::ObjectId) {
         let mut index = self.repo.index_from_tree(&tree).expect("an index");
         index.write(Default::default()).expect("write the index");
