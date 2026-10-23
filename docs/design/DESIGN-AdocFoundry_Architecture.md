@@ -23,7 +23,7 @@ The two things that do not exist anywhere yet are the GPUI shell and `adoc-dom`;
 
 ## Goals and scope
 
-AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out the Antora way, delivered in four phases that each ship a usable tool on macOS, Linux and Windows.
+AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out the Antora way, delivered in phases that each ship a usable tool on macOS, Linux and Windows. Phases 1 to 4 build the editor; Phase 5 makes it releasable and opens it to other tools.
 
 | Phase | Deliverable | Must have | Explicitly later |
 | --- | --- | --- | --- |
@@ -31,6 +31,7 @@ AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out
 | 2 | Rendered preview | Side-by-side pane; detachable preview window; follow-active-page mode; Mermaid and other diagrams rendered; scroll sync | Editing in the preview |
 | 3 | WYSIWYG editing | Edit the rendered view and write clean AsciiDoc back; source and WYSIWYG modes on the same document; lossless round-trip of what the editor does not understand | Full fidelity for every AsciiDoc construct |
 | 4 | PDF export | Paginated PDF from one page or a whole component/book; YAML themes in the spirit of asciidoctor-pdf; TOC, running headers and footers | Index generation, PDF/A |
+| 5 | Release, STEM and integrations | CI on three platforms; signed packages; fixes from the tracker; typeset STEM in PDF, preview and HTML; `adoc-ls` on the engine; an MCP server | Inline STEM in the preview's text flow, an HTTP transport for MCP, auto-update |
 
 Non-goals for now: a web or mobile build, collaborative editing, hosting or publishing the site (Antora itself does that), and bit-for-bit output parity with Asciidoctor. The editor targets the Asciidoctor dialect of AsciiDoc that Antora consumes, so Antora-built sites and AdocFoundry agree on what a document means.
 
@@ -401,6 +402,15 @@ PDF export compiles Typst generated from the AST, in process, with a theme loade
 
 **Done when** the `default` theme produces a PDF of a reference document that a reader cannot tell apart from asciidoctor-pdf's at reading distance, and a custom theme file used with asciidoctor-pdf loads without edits.
 
+## Phase 5 — Release, STEM, the language server and MCP
+
+Phase 5 turns the four phases into a release and opens the engine to other tools. It is specified in [`docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`](../prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md).
+
+- **Release:** CI runs on Linux, macOS and Windows, with the asciidoctor-pdf comparison and PDF validation. Packages are signed where credentials allow, and each phase's manual QA is recorded on each platform.
+- **STEM:** AsciiMath and LaTeX are converted to Typst maths by a new `adoc-math` crate and checked to hold no code. They are typeset natively in PDFs, and as SVG in the preview and the HTML backend, through the diagram cache.
+- **`adoc-ls`:** it moves onto `adoc-engine`, so LSP clients get the app's diagnostics, references, page rename with link updates and PDF export.
+- **`adoc-mcp`:** a stdio MCP server over the engine's commands, read-only unless started with `--allow-write`.
+
 ## Risks, open questions and spikes
 
 The biggest risks are supply-chain ones: every pure-Rust AsciiDoc parser and the GPUI snapshot crates are single-maintainer, pre-1.0 projects. The design answers that with traits and a fixture corpus rather than with a bet on any one of them.
@@ -422,8 +432,8 @@ The biggest risks are supply-chain ones: every pure-Rust AsciiDoc parser and the
 - [x] Repository strategy: move the five `adoc-*` crates into AdocFoundry and make zed-asciidoc depend on them, or keep them in zed-asciidoc and consume by git dependency? **Decided: moved.** The crates and fixtures were imported with their history in Phase 1, `adoc-lang` was extracted from `adoc-ls`, and zed-asciidoc is now the extension alone, installing `adoc-ls` from AdocFoundry.
 - [x] Licence for AdocFoundry: Apache-2.0 like zed-asciidoc, or MIT OR Apache-2.0 like the ArtCraft apps and most of the dependency graph? **Decided: Apache-2.0**, matching zed-asciidoc and tree-sitter-asciidoc; `deny.toml` enforces a permissive-only dependency licence list.
 - [ ] Where generated diagram images live: committed under `images/` (Antora-friendly) or in a workspace cache?
-- [ ] Should `adoc-ls` gain the engine's command layer so Zed users get rename and preview commands for free, or stay minimal?
-- [ ] STEM rendering route for preview and PDF (Typst math in both is the simplest consistent answer).
+- [x] Should `adoc-ls` gain the engine's command layer so Zed users get rename and preview commands for free, or stay minimal? **Decided: it moves onto `adoc-engine` in Phase 5** (WP 5.6).
+- [x] STEM rendering route for preview and PDF (Typst math in both is the simplest consistent answer). **Decided: Typst maths in both**, native in PDFs and as SVG in the preview and HTML (Phase 5, WP 5.4–5.5).
 - [ ] Whether to keep the Asciidoctor.js-in-QuickJS renderer at all once the fidelity corpus is stable.
 
 **Spikes before committing, two weeks each**
