@@ -104,6 +104,10 @@
 #let block-bottom = pick("block_margin_bottom", default: 12pt)
 #let prose-bottom = pick("prose_margin_bottom", default: block-bottom)
 
+// A heading styled by its caller (the document title, the title page's title): still a level 1
+// heading in the PDF's structure, as PDF/UA asks of the first one.
+#let plain-heading(body) = [#heading(level: 1, outlined: false, bookmarked: false, body) <adoc-plain-heading>]
+
 // --- inlines ----------------------------------------------------------------------------------
 
 #let adoc-codespan(body) = {
@@ -225,7 +229,7 @@
   let size = resolve-size(pick("heading_h1_font_size", default: 24pt), base-size)
   set par(leading: leading(size, pick("heading_h1_line_height", "heading_line_height", default: 1.15)), justify: false)
   block(width: 100%, align(alignment(pick("heading_h1_text_align", default: "center"), default: center),
-    styled(("heading_h1", "heading"), body)))
+    styled(("heading_h1", "heading"), plain-heading(body))))
   v(pick("heading_h1_margin_bottom", "heading_margin_bottom", default: 12pt))
 }
 
@@ -234,6 +238,7 @@
 #show outline.entry: set block(above: 0pt, below: 0pt)
 
 #show heading: it => {
+  if it.at("label", default: none) == <adoc-plain-heading> { return it.body }
   let level = it.level
   let prefixes = ("heading_h" + str(level), "heading")
   let size = resolve-size(pick("heading_h" + str(level) + "_font_size", "heading_font_size", default: base-size), base-size)
@@ -485,6 +490,59 @@
   })
 }
 
+// The index: every term the document marks, grouped by first letter, each with the body pages
+// it is on as links, in `index_column_count` columns, as asciidoctor-pdf lays it out.
+#let adoc-index() = context {
+  let entries = query(<adoc-index-term>).map(marker => (
+    terms: marker.value,
+    page: counter(page).at(marker.location()).first(),
+    location: marker.location(),
+  ))
+  if entries.len() == 0 { return }
+  let indent = pick("index_term_indent", "list_indent", default: 18pt)
+  let entry(level, name, pages) = {
+    set par(hanging-indent: indent, justify: false)
+    pad(left: indent * level, par({
+      name
+      if pages.len() > 0 {
+        [, ]
+        pages.map(((number, location)) => link(location, str(number))).join([, ])
+      }
+    }))
+  }
+  // The terms beneath `prefix` at `level`, sorted, each followed by its own subterms.
+  let terms-at(level, prefix) = {
+    let beneath = entries.filter(e => e.terms.len() > level and e.terms.slice(0, level) == prefix)
+    let names = beneath.map(e => e.terms.at(level)).dedup().sorted(key: name => lower(name))
+    for name in names {
+      let own = beneath.filter(e => e.terms.at(level) == name and e.terms.len() == level + 1)
+      let pages = ()
+      for e in own.sorted(key: e => e.page) {
+        if pages.len() == 0 or pages.last().at(0) != e.page { pages.push((e.page, e.location)) }
+      }
+      entry(level, name, pages)
+      terms-at(level + 1, prefix + (name,))
+    }
+  }
+  let letters = entries.map(e => upper(e.terms.first().first())).dedup().sorted()
+  columns(pick("index_column_count", default: 2), gutter: pick("index_column_gap", default: 12pt), {
+    for letter in letters {
+      block(sticky: true, above: prose-bottom, below: list-gap, styled(("index_category", "heading_h4", "heading"), strong(letter)))
+      let beneath = entries.filter(e => upper(e.terms.first().first()) == letter)
+      let names = beneath.map(e => e.terms.first()).dedup().sorted(key: name => lower(name))
+      for name in names {
+        let own = beneath.filter(e => e.terms.first() == name and e.terms.len() == 1)
+        let pages = ()
+        for e in own.sorted(key: e => e.page) {
+          if pages.len() == 0 or pages.last().at(0) != e.page { pages.push((e.page, e.location)) }
+        }
+        entry(0, name, pages)
+        terms-at(1, (name,))
+      }
+    }
+  })
+}
+
 // A part of a book: its title alone at the top of a new page, as asciidoctor-pdf sets it; the
 // chapter that follows starts the next page.
 #let adoc-part(title) = {
@@ -555,7 +613,7 @@
           block(width: width, align(if la == "center" { center } else if la == "right" { right } else { left }, logo)))
       }
       place(top + left, dy: from-top(pick("title_page_title_top", default: 40%)) - margin.top, block(width: width, {
-        if pick("title_page_title_display") != "none" { part("title_page_title", title) }
+        if pick("title_page_title_display") != "none" { part("title_page_title", plain-heading(title)) }
         if subtitle != none and pick("title_page_subtitle_display") != "none" { part("title_page_subtitle", subtitle) }
         if authors != none and pick("title_page_authors_display") != "none" { part("title_page_authors", authors) }
         if revision != none and pick("title_page_revision_display") != "none" { part("title_page_revision", revision) }
@@ -653,6 +711,7 @@
     bottom-edge: "descender",
     hyphenate: doc.hyphenate,
     lang: doc.lang,
+    region: doc.region,
   )
   let justify = pick("base_text_align", default: "left") == "justify"
   // Lines fill greedily and spaces only stretch, as Prawn justifies.

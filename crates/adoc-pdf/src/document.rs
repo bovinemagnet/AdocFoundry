@@ -321,7 +321,7 @@ fn doc_dictionary(
         .to_owned();
     let _ = writeln!(
         out,
-        "#let doc = (\n  line-gaps: ({}),\n  lang: {},\n  hyphenate: {},\n  fallbacks: ({}),\n  page: (width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})),\n  toc-title: {},\n  toc-levels: {},\n  running: {},\n  running-from: {},\n)",
+        "#let doc = (\n  line-gaps: ({}),\n  lang: {},\n  region: {},\n  hyphenate: {},\n  fallbacks: ({}),\n  page: (width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})),\n  toc-title: {},\n  toc-levels: {},\n  running: {},\n  running-from: {},\n)",
         if gaps.is_empty() {
             ":".to_owned()
         } else {
@@ -329,7 +329,10 @@ fn doc_dictionary(
                 .map(|(family, gap)| format!("{}: {}, ", string(&family.to_lowercase()), typst::number(*gap)))
                 .collect::<String>()
         },
-        string(facts.attribute("lang").unwrap_or("en")),
+        string(&language(facts.attribute("lang")).0),
+        language(facts.attribute("lang"))
+            .1
+            .map_or_else(|| "none".to_owned(), |region| string(&region)),
         facts.has("hyphens"),
         fallbacks.iter().map(|name| format!("{name}, ")).collect::<String>(),
         typst::points(page.width),
@@ -462,6 +465,23 @@ pub(crate) fn sides(value: Option<&ThemeValue>, default: f64) -> [f64; 4] {
         },
         _ => [default; 4],
     }
+}
+
+/// A `lang` attribute (`en`, `en-GB`, `pt_BR`) as Typst's language and region; a value
+/// Typst would reject falls back to English.
+fn language(lang: Option<&str>) -> (String, Option<String>) {
+    let lang = lang.unwrap_or("en").trim();
+    let (language, region) = lang
+        .split_once(['-', '_'])
+        .map_or((lang, None), |(language, region)| (language, Some(region)));
+    let language = language.to_ascii_lowercase();
+    if !(2..=3).contains(&language.len()) || !language.chars().all(|c| c.is_ascii_alphabetic()) {
+        return ("en".to_owned(), None);
+    }
+    let region = region
+        .map(str::to_ascii_uppercase)
+        .filter(|region| region.len() == 2 && region.chars().all(|c| c.is_ascii_alphabetic()));
+    (language, region)
 }
 
 /// The deepest section level a running title names: `header_sectlevels` or

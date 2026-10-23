@@ -730,6 +730,8 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
             let _ = write!(out, "{open}{}{close}", escape(source));
         }
         ViewInline::Raw(text) => out.push_str(text),
+        // Asciidoctor's HTML shows a flow term's text and nothing else.
+        ViewInline::IndexTerm { content, .. } => out.push_str(&inlines(content)),
     }
 }
 

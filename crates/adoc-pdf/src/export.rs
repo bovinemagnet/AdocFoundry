@@ -18,6 +18,16 @@ use crate::{
     world::PdfWorld,
 };
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn days_become_dates() {
+        assert_eq!(super::civil_from_days(0), (1970, 1, 1));
+        assert_eq!(super::civil_from_days(20_385), (2025, 10, 24));
+        assert_eq!(super::civil_from_days(11_016), (2000, 2, 29));
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PdfSeverity {
     Error,
@@ -127,9 +137,12 @@ pub fn compile(
             source: None,
         }])
     })?;
-    let today = options
+    // A standard needs a date; an ordinary PDF has none unless one is given, so that the same
+    // input gives the same bytes.
+    let date = options
         .date
-        .and_then(|(year, month, day)| Datetime::from_ymd(year, month, day));
+        .or_else(|| (!options.standards.is_empty()).then(today_utc));
+    let today = date.and_then(|(year, month, day)| Datetime::from_ymd(year, month, day));
     let pdf_options = typst_pdf::PdfOptions {
         ident: Smart::Auto,
         creator: Smart::Custom(Some(format!("AdocFoundry {}", env!("CARGO_PKG_VERSION")))),
@@ -274,6 +287,37 @@ fn typeset(
     diagnostics.extend(map(&warnings));
     let document = output.map_err(|errors| PdfError::Compile(map(&errors)))?;
     Ok((document, diagnostics, world))
+}
+
+/// Today's date in UTC, from the system clock.
+fn today_utc() -> (i32, u8, u8) {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() / 86_400);
+    civil_from_days(i64::try_from(days).unwrap_or(0))
+}
+
+/// The proleptic Gregorian date `days` after 1970-01-01 (Howard Hinnant's algorithm).
+fn civil_from_days(days: i64) -> (i32, u8, u8) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    (
+        i32::try_from(year).unwrap_or(1970),
+        u8::try_from(month).unwrap_or(1),
+        u8::try_from(day).unwrap_or(1),
+    )
 }
 
 fn diagnostic_of(world: &PdfWorld, typst: &Typst, diagnostic: &SourceDiagnostic) -> PdfDiagnostic {

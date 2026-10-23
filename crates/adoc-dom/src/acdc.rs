@@ -919,10 +919,19 @@ impl Converter<'_> {
                 source: stem.content.to_owned(),
             },
             acdc::InlineMacro::IndexTerm(term) => {
-                if !term.is_visible() {
-                    return Vec::new();
+                let primary = self.inlines(term.term());
+                let mut terms = vec![Inline::plain_text(&primary)];
+                for level in [term.secondary(), term.tertiary()].into_iter().flatten() {
+                    terms.push(Inline::plain_text(&self.inlines(level)));
                 }
-                return self.inlines(term.term());
+                Inline::IndexTerm {
+                    terms,
+                    visible: if term.is_visible() {
+                        primary
+                    } else {
+                        Vec::new()
+                    },
+                }
             }
             _ => return Vec::new(),
         }]

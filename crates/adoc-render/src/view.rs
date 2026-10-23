@@ -240,6 +240,12 @@ pub enum ViewInline {
         source: String,
     },
     Raw(String),
+    /// An index term: its terms, primary first, and what the text shows (nothing for a
+    /// concealed term).
+    IndexTerm {
+        terms: Vec<String>,
+        content: Vec<ViewInline>,
+    },
 }
 
 impl ViewInline {
@@ -265,7 +271,8 @@ impl ViewInline {
             | Self::Subscript(content)
             | Self::Span { content, .. }
             | Self::Link { content, .. }
-            | Self::Xref { content, .. } => {
+            | Self::Xref { content, .. }
+            | Self::IndexTerm { content, .. } => {
                 for inline in content {
                     inline.push_text(out);
                 }
@@ -748,6 +755,10 @@ impl Builder<'_> {
                 source: source.clone(),
             },
             Inline::Passthrough(text) => ViewInline::Raw(text.clone()),
+            Inline::IndexTerm { terms, visible } => ViewInline::IndexTerm {
+                terms: terms.clone(),
+                content: self.inlines(visible),
+            },
         }
     }
 

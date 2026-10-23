@@ -342,7 +342,12 @@ impl<'a> Emitter<'a> {
                     "#heading(level: {}, outlined: {outlined}, bookmarked: true)[{heading}]{label}\n",
                     u32::from(level) + 1
                 );
-                self.blocks(blocks, Gaps::Flow);
+                if block.style.as_deref() == Some("index") {
+                    // An `[index]` section is the index, generated from the document's terms.
+                    self.push("#adoc-index()\n\n");
+                } else {
+                    self.blocks(blocks, Gaps::Flow);
+                }
             }
             ViewKind::Heading { level, title } => {
                 let heading = self.inlines(title);
@@ -617,7 +622,7 @@ impl<'a> Emitter<'a> {
             self.out,
             "#adoc-image(image({}, alt: {}{width}))\n",
             string(&path),
-            string(&image.alt)
+            string(&alt_text(image))
         );
     }
 
@@ -829,7 +834,7 @@ impl<'a> Emitter<'a> {
                         out,
                         "#box(image({}, alt: {}{size}))",
                         string(&path),
-                        string(&image.alt)
+                        string(&alt_text(image))
                     );
                 }
                 None => out.push_str(&text(&format!("[{}]", image.alt))),
@@ -862,6 +867,16 @@ impl<'a> Emitter<'a> {
             }
             ViewInline::Stem { source, .. } => {
                 let _ = write!(out, "#adoc-codespan[{}]", text(source));
+            }
+            ViewInline::IndexTerm { terms, content } => {
+                let inner = self.inlines(content);
+                let terms: Vec<String> = terms.iter().map(|term| string(term)).collect();
+                // The marker the index finds the term and its page by.
+                let _ = write!(
+                    out,
+                    "{inner}#metadata(({},))<adoc-index-term>",
+                    terms.join(", ")
+                );
             }
         }
     }
@@ -989,6 +1004,21 @@ fn collect_labels(key: &str, blocks: &[ViewBlock], labels: &mut HashSet<String>)
             _ => {}
         }
     }
+}
+
+/// An image's alt text, or, as Asciidoctor defaults it, its file name without the extension
+/// and with `-` and `_` as spaces, so every image carries a text alternative.
+fn alt_text(image: &ViewImage) -> String {
+    if !image.alt.trim().is_empty() {
+        return image.alt.clone();
+    }
+    let name = image
+        .target
+        .rsplit(['/', '$', ':'])
+        .next()
+        .unwrap_or(&image.target);
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    stem.replace(['-', '_'], " ")
 }
 
 /// Flowing text as Prawn sets it: line breaks become spaces and runs of spaces collapse.

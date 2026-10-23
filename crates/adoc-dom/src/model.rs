@@ -317,6 +317,14 @@ pub enum Inline {
         source: String,
     },
     Passthrough(String),
+    /// An index term: `((term))` is shown and indexed, `(((primary, secondary)))` and
+    /// `indexterm:[…]` only indexed.
+    IndexTerm {
+        /// The primary term, then the secondary and tertiary ones, as plain text.
+        terms: Vec<String>,
+        /// What the text shows: the term of a flow term, nothing for a concealed one.
+        visible: Vec<Inline>,
+    },
 }
 
 impl Inline {
@@ -341,7 +349,10 @@ impl Inline {
             | Self::Subscript(content)
             | Self::Span { content, .. }
             | Self::Link { text: content, .. }
-            | Self::Xref { text: content, .. } => {
+            | Self::Xref { text: content, .. }
+            | Self::IndexTerm {
+                visible: content, ..
+            } => {
                 for inline in content {
                     inline.push_text(out);
                 }
