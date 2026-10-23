@@ -138,7 +138,10 @@ pub fn text_runs(
         if length == 0 {
             return;
         }
-        let mut font = if marks.contains(Mark::Code) || matches!(atom, Some(Atom::Macro { .. })) {
+        let mut font = if block.context == TextContext::Verbatim
+            || marks.contains(Mark::Code)
+            || matches!(atom, Some(Atom::Macro { .. }))
+        {
             gpui::Font {
                 family: style.mono_family.clone(),
                 ..style.font.clone()
@@ -370,4 +373,74 @@ pub fn caret_point(
 #[must_use]
 pub fn bounds_of(layouts: &Layouts, path: &[usize]) -> Option<Bounds<Pixels>> {
     layouts.borrow().get(path).map(TextLayout::bounds)
+}
+
+#[cfg(test)]
+mod tests {
+    use adoc_core::SourceRange;
+    use adoc_engine::{Atom, Piece, TextBlock, TextContext};
+    use gpui::{font, hsla};
+
+    use super::*;
+
+    fn style() -> InlineStyle {
+        InlineStyle {
+            font: font("Sans"),
+            mono_family: "Mono".into(),
+            color: hsla(0., 0., 0., 1.),
+            muted: hsla(0., 0., 0.5, 1.),
+            link: hsla(0.6, 1., 0.5, 1.),
+            unresolved: hsla(0., 1., 0.5, 1.),
+            mark: hsla(0.15, 1., 0.5, 1.),
+            code_background: hsla(0., 0., 0.9, 1.),
+        }
+    }
+
+    #[test]
+    fn code_is_drawn_in_the_monospace_font_with_its_lines() {
+        let block = TextBlock {
+            range: SourceRange::new(0, 9),
+            pieces: vec![Piece::Text {
+                range: SourceRange::new(0, 9),
+            }],
+            plain: true,
+            display: "a = 1\nb()".to_owned(),
+            context: TextContext::Verbatim,
+        };
+        let shown = shown(&block, None);
+        assert_eq!(shown.text, "a = 1\nb()");
+        let runs = text_runs(&block, &shown, &style(), false);
+        assert!(runs.iter().all(|run| run.font.family.as_ref() == "Mono"));
+    }
+
+    #[test]
+    fn a_hard_line_break_breaks_at_the_source_line_break() {
+        // `line +\nnext`: text, the ` +` atom, then the newline starting the next line.
+        let block = TextBlock {
+            range: SourceRange::new(0, 11),
+            pieces: vec![
+                Piece::Text {
+                    range: SourceRange::new(0, 4),
+                },
+                Piece::Atom {
+                    atom: Atom::LineBreak,
+                    range: SourceRange::new(4, 6),
+                    shown: "\n".to_owned(),
+                },
+                Piece::Text {
+                    range: SourceRange::new(6, 11),
+                },
+            ],
+            plain: false,
+            display: "line\n\nnext".to_owned(),
+            context: TextContext::Flow,
+        };
+        let shown = shown(&block, None);
+        assert_eq!(shown.text, "line \nnext", "no space starts the second line");
+        assert_eq!(
+            shown.text.len(),
+            block.display.len(),
+            "byte offsets are kept"
+        );
+    }
 }
