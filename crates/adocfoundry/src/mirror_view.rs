@@ -37,6 +37,11 @@ impl MirrorView {
         view
     }
 
+    #[cfg(test)]
+    pub fn editor(&self) -> Option<&Entity<SourceEditorView>> {
+        self.editor.as_ref()
+    }
+
     fn follow_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let active: Option<DocumentId> = self.app.read(cx).engine.active();
         let current = self

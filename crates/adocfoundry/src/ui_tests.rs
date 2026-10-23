@@ -165,3 +165,45 @@ fn following_a_link_opens_a_tab_and_records_history(cx: &mut TestAppContext) {
     assert!(active_path.ends_with("beta/modules/ROOT/pages/index.adoc"));
     assert!(cx.update(|_, cx| app.read(cx).engine.can_go_back()));
 }
+
+#[gpui::test]
+fn a_second_window_mirrors_the_active_document(cx: &mut TestAppContext) {
+    init(cx);
+    let mut engine = Engine::new(Settings::default());
+    let document = engine.open_untitled();
+    let app = app_with(engine, cx);
+    let (_editor, main_window) = editor_window(&app, document, cx);
+
+    let mut mirror = None;
+    let mirror_window = cx.open_window(size(px(600.), px(400.)), |window, cx| {
+        let view = cx.new(|cx| crate::mirror_view::MirrorView::new(app.clone(), window, cx));
+        mirror = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let mirror = mirror.unwrap();
+    let mut main = VisualTestContext::from_window(main_window.into(), cx);
+    main.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id: document,
+                    range: SourceRange::new(0, 0),
+                    text: "Shared text\n".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    main.run_until_parked();
+
+    let mut second = VisualTestContext::from_window(mirror_window.into(), cx);
+    let mirrored = second.update(|_, cx| {
+        mirror
+            .read(cx)
+            .editor()
+            .map(|editor| editor.read(cx).widget_text(cx))
+    });
+    assert_eq!(mirrored.as_deref(), Some("Shared text\n"));
+}

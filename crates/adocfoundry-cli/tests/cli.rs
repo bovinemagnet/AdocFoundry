@@ -76,6 +76,16 @@ fn check_antora_versions() {
 }
 
 #[test]
+fn check_antora_broken_references() {
+    insta::assert_snapshot!(check_json("antora-broken-references"));
+}
+
+#[test]
+fn check_broken_references() {
+    insta::assert_snapshot!(check_json("broken-references"));
+}
+
+#[test]
 fn check_text_format_and_fail_on() {
     let output = cli(&["check", "tests/fixtures/antora-invalid-descriptor"]);
     assert_eq!(

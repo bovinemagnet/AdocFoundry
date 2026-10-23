@@ -1,0 +1,66 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+expression: "check_json(\"antora-broken-references\")"
+---
+[
+  {
+    "path": "modules/ROOT/pages/index.adoc",
+    "range": {
+      "start": 32,
+      "end": 74
+    },
+    "line": 3,
+    "column": 5,
+    "severity": "warning",
+    "code": "adoc.antora.unknown-module",
+    "message": "Unknown Antora module: nomodule"
+  },
+  {
+    "path": "modules/ROOT/pages/index.adoc",
+    "range": {
+      "start": 76,
+      "end": 115
+    },
+    "line": 3,
+    "column": 49,
+    "severity": "warning",
+    "code": "adoc.unresolved-xref-file",
+    "message": "Unresolved AsciiDoc xref target: missing-page.adoc"
+  },
+  {
+    "path": "modules/ROOT/pages/index.adoc",
+    "range": {
+      "start": 120,
+      "end": 162
+    },
+    "line": 4,
+    "column": 5,
+    "severity": "warning",
+    "code": "adoc.antora.invalid-family",
+    "message": "Invalid Antora resource ID `partials$note.adoc`: unknown Antora resource family `partials`"
+  },
+  {
+    "path": "modules/ROOT/pages/index.adoc",
+    "range": {
+      "start": 165,
+      "end": 195
+    },
+    "line": 6,
+    "column": 1,
+    "severity": "warning",
+    "code": "adoc.antora.unknown-resource",
+    "message": "Unknown Antora resource: partial$absent.adoc"
+  },
+  {
+    "path": "modules/ROOT/pages/index.adoc",
+    "range": {
+      "start": 230,
+      "end": 249
+    },
+    "line": 10,
+    "column": 1,
+    "severity": "warning",
+    "code": "adoc.unresolved-image",
+    "message": "Unresolved AsciiDoc image target: absent.png"
+  }
+]

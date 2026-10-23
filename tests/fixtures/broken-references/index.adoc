@@ -1,0 +1,13 @@
+= Broken References
+
+[[duplicate]]
+== One
+
+[[duplicate]]
+== Two
+
+See xref:missing.adoc[a missing page], xref:other.adoc#nowhere[a missing anchor] and <<absent>>.
+
+include::partials/missing.adoc[]
+
+image::missing.png[]

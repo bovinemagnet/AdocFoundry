@@ -428,7 +428,7 @@ Undo: `UndoStack` per document of `UndoEntry { group: UndoGroup, inverse: Vec<Te
 
 ### 10.5 File watcher
 
-`notify` 6.x with a 250 ms debounce. Events: `.adoc`/`.asciidoc`/`.ad` created/modified/removed → re-index that file (if not open and dirty; a dirty open document is never overwritten; the UI shows a "changed on disk" banner); `antora.yml` modified → `reload_component`; directory create/remove under a module → re-index the root. All watcher work goes through `pump()`.
+`notify` 8.2 (the version gpui-component already brings into the tree) with a 250 ms debounce. Events: `.adoc`/`.asciidoc`/`.ad` created/modified/removed → re-index that file (if not open and dirty; a dirty open document is never overwritten; the UI shows a "changed on disk" banner); `antora.yml` modified → `reload_component`; directory create/remove under a module → re-index the root. All watcher work goes through `pump()`.
 
 ### 10.6 Settings
 
@@ -619,3 +619,26 @@ Order of merge: 1.1 → 1.2 → 1.5a → 1.3 → 1.5b → 1.7 → 1.4 → 1.6 �
 - Never modify the migrated crates in WP 1.2 beyond what compilation in the new workspace requires.
 - Never add a dependency from the GPL list; never add a dependency without an exact pin and a `cargo deny` pass.
 - When the spike or a package reveals that the spec is wrong, update the spec in the same PR and say so in the description.
+
+---
+
+## 20. Implementation Notes
+
+Where building Phase 1 showed the specification above to be wrong or incomplete, the implementation made the smallest change that works. Each is recorded here.
+
+| Area | Specification | Implementation | Why |
+|---|---|---|---|
+| Order | 1.1 before 1.2 | 1.2 (workspace bring-up) first, then the spike | Spike item 2 calls `adoc_lang::definition_at_offset` in-process, which needs the migrated crates and `adoc-lang`. |
+| GPUI crates | `gpui-pre` and `gpui-component` | Also `gpui-pre-platform` (the platform layer, with `x11`, `wayland`, `font-kit`) and `gpui-kit-assets` (icons) | gpui-pre 0.3.9 moved the platform code into its own crate; gpui-component 0.8 depends on `gpui-pre` under the name `gpui`, so the workspace does the same. Both are confined to `adocfoundry` by `cargo xtask layers`. |
+| LSP types | `lsp-types` only in `adoc-ls` | `adocfoundry` may depend on `lsp-types`, as one listed exception in `xtask/src/layers.rs` | gpui-component's editor offers definition, hover and completion only through provider traits typed with `lsp-types`. `crates/adocfoundry/src/editor/providers.rs` translates engine results into those types and is the only module that uses them; `lsp-server` stays confined to `adoc-ls`. |
+| Grammar build | `cc` in the app's `build.rs` | The submodule's own binding crates (`tree-sitter-asciidoc`, `tree-sitter-asciidoc-inline`) as path dependencies, built with `cc` | Converting the C entry point into a `tree_sitter::Language` needs `unsafe`, which is forbidden workspace-wide; the binding crates keep it outside the workspace. |
+| `Location` | defined in `adoc-lang` | defined in `adoc-core`, re-exported by `adoc-lang` and `adoc-engine` | `NavItem` in `adoc-antora` needs it, and `adoc-antora` cannot depend on `adoc-lang`. |
+| `NavTree` | `component`, `version`, `items` | adds `path` (the nav file) and `diagnostics` | The `adoc.antora.nav-unresolved` diagnostics need somewhere to live, and a component may list several nav files. |
+| `UnknownVersion` | new resolution error | added; diagnostics treat it like `UnknownComponent` (not reported) | A version of a known component that is absent from the workspace is usually published from another branch or repository; reporting it would be a false positive. |
+| Engine API | as in §10.3 | adds `with_clock` (injectable clock for undo-coalescing tests), `wait_for_workers` and `has_pending` (CLI and front-end pumping), `document_for_path`, `workspace_diagnostics`, `nav_trees`, `outline`, `search`, `replace_preview`, `rename_preview`, `apply_preview` | The command implementations and front ends need them; every mutation still goes through a command. |
+| Events | as in §10.2 | adds `DocumentMoved` and `DocumentChangedOnDisk` | Rename moves an open document's file; the watcher must tell the UI when a dirty buffer's file changed on disk. |
+| Folding | `folds.scm` | `folds.scm` is written and checked against the grammar, but gpui-component 0.8 derives folds from multi-line syntax nodes itself and does not read a folds query | Library behaviour. |
+| Injections | Rust, Java, JS/TS, Python, Go, JSON, YAML, TOML, Shell, SQL, XML/HTML, Dockerfile | all of these except XML and Dockerfile | gpui-component 0.8 ships no XML or Dockerfile grammar; HTML is injected. |
+| CLI | `follow <file> <byte-offset>` | adds `--root <dir>`; by default the parent of the nearest `antora.yml`, so sibling components resolve | Following a cross-component xref needs the other components indexed. |
+| Editor sync | widget edits sent as edits | the widget reports only that its text changed, so the app recovers the edit as the single replacement between the common prefix and suffix of widget and engine text | gpui-component 0.8 does not expose edit ranges. Typing still arrives as single-character inserts, so undo coalescing works. |
+

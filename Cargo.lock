@@ -154,6 +154,7 @@ name = "adoc-ls"
 version = "0.1.0"
 dependencies = [
  "adoc-core",
+ "adoc-engine",
  "adoc-index",
  "adoc-lang",
  "adoc-parser",
