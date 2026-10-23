@@ -1098,3 +1098,23 @@ fn down_keeps_to_the_column_in_a_table(cx: &mut TestAppContext) {
         one + 1
     );
 }
+
+#[gpui::test]
+fn home_and_end_work_on_the_line(cx: &mut TestAppContext) {
+    let text = "= Page\n\n----\nfirst = 1\nsecond = 2\n----\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("first").unwrap() + 2, &mut cx);
+    cx.simulate_keystrokes("end");
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(
+        selection.head,
+        text.find("first = 1").unwrap() + "first = 1".len()
+    );
+    cx.simulate_keystrokes("down home x");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\n----\nfirst = 1\nxsecond = 2\n----\n"
+    );
+}

@@ -439,13 +439,30 @@ impl VisualView {
         }
     }
 
-    /// The caret moved to the start or end of its text block.
+    /// The caret moved to the start or end of its line as drawn (a line of code, or a
+    /// wrapped line of a paragraph), or of its block when the block was not drawn.
     fn edge(&self, end: bool) -> Option<usize> {
-        let (_, text) = self.block_at(self.selection.head)?;
+        let (path, block) = self.block_at(self.selection.head)?;
+        let display = block.display_offset(self.selection.head)?;
+        let composing = self.composing.as_deref().map(|text| (display, text));
+        let shown = text::shown(&block, composing);
+        let drawn = text::caret_point(&self.layouts, &path, &shown, display)
+            .zip(text::bounds_of(&self.layouts, &path));
+        if let Some(((point, line_height), bounds)) = drawn {
+            let y = point.y + line_height / 2.;
+            let x = if end {
+                bounds.right() + px(10_000.)
+            } else {
+                bounds.left() - px(1.)
+            };
+            if let Some(index) = text::hit(&self.layouts, &path, gpui::point(x, y), &shown) {
+                return block.source_offset(index, block.marks_at(index));
+            }
+        }
         Some(if end {
-            text.range.end
+            block.range.end
         } else {
-            text.range.start
+            block.range.start
         })
     }
 
