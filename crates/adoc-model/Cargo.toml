@@ -1,0 +1,13 @@
+[package]
+name = "adoc-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-core.workspace = true
+adoc-dom.workspace = true
+
+[lints]
+workspace = true

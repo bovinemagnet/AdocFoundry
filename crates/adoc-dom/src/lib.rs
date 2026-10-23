@@ -18,6 +18,7 @@ use std::{
 pub use acdc::AcdcParser;
 pub use asciidoc::AsciidocParser;
 pub use model::*;
+pub use replacements::{replacement_spans, Replacement};
 
 /// Supplies included files: open buffers, files on disk, and Antora resources.
 pub trait IncludeResolver: Send + Sync {

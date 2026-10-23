@@ -227,6 +227,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "adoc-model"
+version = "0.1.0"
+dependencies = [
+ "adoc-core",
+ "adoc-dom",
+]
+
+[[package]]
 name = "adoc-parser"
 version = "0.1.0"
 dependencies = [
