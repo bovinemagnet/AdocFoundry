@@ -14,6 +14,7 @@ mod event;
 mod language;
 mod navigation;
 mod preview;
+mod search;
 mod settings;
 mod undo;
 mod workspace;

@@ -15,7 +15,8 @@ impl SearchId {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
 pub struct SearchRequest {
     pub query: String,
     pub regex: bool,

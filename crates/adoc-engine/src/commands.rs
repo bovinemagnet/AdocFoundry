@@ -55,7 +55,47 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 17] = [
+    let builtin: [(CommandSpec, Run); 21] = [
+        (
+            spec(
+                ids::WORKSPACE_SEARCH,
+                "Find in Workspace",
+                Workspace,
+                Some("cmd-shift-f"),
+                Always,
+            ),
+            workspace_search,
+        ),
+        (
+            spec(
+                ids::WORKSPACE_REPLACE,
+                "Replace in Workspace",
+                Workspace,
+                Some("cmd-shift-h"),
+                Always,
+            ),
+            workspace_replace,
+        ),
+        (
+            spec(
+                ids::WORKSPACE_APPLY_PREVIEW,
+                "Apply Preview",
+                Workspace,
+                None,
+                Always,
+            ),
+            workspace_apply_preview,
+        ),
+        (
+            spec(
+                ids::PAGE_RENAME,
+                "Rename Page",
+                Workspace,
+                Some("f2"),
+                ActiveDocument,
+            ),
+            page_rename,
+        ),
         (
             spec(
                 ids::NAVIGATE_FOLLOW_LINK,
@@ -397,4 +437,78 @@ fn navigate_peek_include(
         return Err(invalid(ids::NAVIGATE_PEEK_INCLUDE, "a document and offset"));
     };
     engine.peek_include(id, offset)
+}
+
+fn workspace_search(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Search(request) = args else {
+        return Err(invalid(ids::WORKSPACE_SEARCH, "a search request"));
+    };
+    engine.search(request).map(|_| CommandOutcome::Done)
+}
+
+#[derive(serde::Deserialize)]
+struct ReplaceArgs {
+    request: crate::SearchRequest,
+    replacement: String,
+    /// Only these matches; every match when absent.
+    matches: Option<Vec<SelectedMatch>>,
+}
+
+#[derive(serde::Deserialize)]
+struct SelectedMatch {
+    path: std::path::PathBuf,
+    start: usize,
+    end: usize,
+}
+
+/// `Custom { request, replacement, matches? }` → a preview to apply with
+/// `workspace.apply_preview`.
+fn workspace_replace(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    const EXPECTED: &str = "`{ request, replacement, matches? }`";
+    let CommandArgs::Custom(value) = args else {
+        return Err(invalid(ids::WORKSPACE_REPLACE, EXPECTED));
+    };
+    let args: ReplaceArgs =
+        serde_json::from_value(value).map_err(|_| invalid(ids::WORKSPACE_REPLACE, EXPECTED))?;
+    let selected: Option<Vec<_>> = args.matches.map(|matches| {
+        matches
+            .into_iter()
+            .map(|selected| {
+                (
+                    selected.path,
+                    adoc_core::SourceRange::new(selected.start, selected.end),
+                )
+            })
+            .collect()
+    });
+    engine
+        .replace_preview(&args.request, &args.replacement, selected.as_deref())
+        .map(CommandOutcome::Preview)
+}
+
+/// `Custom { preview_id }`.
+fn workspace_apply_preview(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let id = match args {
+        CommandArgs::Custom(value) => value.get("preview_id").and_then(serde_json::Value::as_u64),
+        _ => None,
+    }
+    .ok_or_else(|| invalid(ids::WORKSPACE_APPLY_PREVIEW, "`{ preview_id }`"))?;
+    engine
+        .apply_preview(crate::PreviewId::from_raw(id))
+        .map(|_| CommandOutcome::Done)
+}
+
+fn page_rename(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Rename { id, new_path } = args else {
+        return Err(invalid(ids::PAGE_RENAME, "a document and new path"));
+    };
+    engine
+        .rename_preview(id, &new_path)
+        .map(CommandOutcome::Preview)
 }

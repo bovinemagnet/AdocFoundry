@@ -46,6 +46,10 @@ pub struct Engine {
     pub(crate) workers_running: usize,
     pub(crate) watcher: Option<FileWatcher>,
     pub(crate) history: crate::navigation::History,
+    pub(crate) previews: BTreeMap<crate::PreviewId, crate::EditPreview>,
+    pub(crate) next_preview: u64,
+    pub(crate) next_search: u64,
+    pub(crate) group_moves: BTreeMap<UndoGroup, Vec<crate::FileMove>>,
 }
 
 /// How an edit is recorded in undo history.
@@ -88,6 +92,10 @@ impl Engine {
             workers_running: 0,
             watcher: None,
             history: crate::navigation::History::default(),
+            previews: BTreeMap::new(),
+            next_preview: 1,
+            next_search: 1,
+            group_moves: BTreeMap::new(),
         }
     }
 
@@ -307,6 +315,7 @@ impl Engine {
                 }
             }
         }
+        self.replay_moves(group, true);
         true
     }
 
@@ -333,6 +342,7 @@ impl Engine {
                 }
             }
         }
+        self.replay_moves(group, false);
         true
     }
 

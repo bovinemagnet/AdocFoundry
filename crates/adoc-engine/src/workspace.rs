@@ -31,6 +31,10 @@ pub(crate) enum WorkerMessage {
     IndexFailed {
         error: String,
     },
+    Search {
+        id: crate::SearchId,
+        results: Vec<crate::SearchMatch>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -182,6 +186,7 @@ impl Engine {
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
             }
+            WorkerMessage::Search { id, results } => self.search_finished(id, results),
             WorkerMessage::IndexFailed { error } => {
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,

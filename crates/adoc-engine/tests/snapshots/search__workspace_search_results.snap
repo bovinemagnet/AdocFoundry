@@ -1,0 +1,7 @@
+---
+source: crates/adoc-engine/tests/search.rs
+expression: "lines.join(\"\\n\")"
+---
+alpha/modules/ROOT/nav.adoc:6 106..117 * xref:beta::index.adoc[Beta home]
+alpha/modules/ROOT/pages/index.adoc:3 13..24 See xref:beta::index.adoc[Beta] and xref:beta:api:reference.adoc[the API reference].
+beta/modules/ROOT/pages/index.adoc:3 16..32 Back to xref:1.0@alpha::index.adoc[Alpha].

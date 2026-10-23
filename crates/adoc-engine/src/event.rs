@@ -17,6 +17,12 @@ pub enum EngineEvent {
     },
     DocumentSaved(DocumentId),
     DocumentClosed(DocumentId),
+    /// The file behind an open document was moved, by a rename or its undo.
+    DocumentMoved {
+        id: DocumentId,
+        from: PathBuf,
+        to: PathBuf,
+    },
     /// The file behind an open document changed on disk while it had unsaved edits.
     DocumentChangedOnDisk(DocumentId),
     DiagnosticsUpdated {

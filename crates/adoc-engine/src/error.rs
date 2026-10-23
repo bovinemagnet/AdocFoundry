@@ -15,6 +15,7 @@ pub enum EngineError {
         expected: &'static str,
     },
     InvalidEdit(String),
+    InvalidRequest(String),
     NotFound(String),
     Settings(String),
 }
@@ -38,6 +39,7 @@ impl fmt::Display for EngineError {
                 write!(formatter, "`{command}` expects {expected}")
             }
             Self::InvalidEdit(message) => write!(formatter, "invalid edit: {message}"),
+            Self::InvalidRequest(message) => formatter.write_str(message),
             Self::NotFound(message) => formatter.write_str(message),
             Self::Settings(message) => write!(formatter, "settings: {message}"),
         }
