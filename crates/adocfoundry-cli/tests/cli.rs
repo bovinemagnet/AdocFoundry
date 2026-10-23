@@ -13,8 +13,13 @@ fn repository_root() -> PathBuf {
 }
 
 fn cli(arguments: &[&str]) -> Output {
+    cli_in("", arguments)
+}
+
+/// Runs the binary from `directory`, relative to the repository root.
+fn cli_in(directory: &str, arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
-        .current_dir(repository_root())
+        .current_dir(repository_root().join(directory))
         .args(arguments)
         .output()
         .unwrap()
@@ -142,4 +147,102 @@ fn symbols_finds_headings_by_word() {
 fn rejects_unknown_commands() {
     assert_eq!(cli(&["frobnicate"]).status.code(), Some(2));
     assert_eq!(cli(&[]).status.code(), Some(2));
+}
+
+#[test]
+fn render_writes_html() {
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("blocks.html");
+    let output = cli(&[
+        "render",
+        "tests/fixtures/render/blocks.adoc",
+        "--output",
+        output_path.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let html = std::fs::read_to_string(&output_path).unwrap();
+    assert!(html.starts_with("<!DOCTYPE html>"), "{html}");
+    assert!(html.contains("<title>Every Block Kind</title>"));
+    assert!(html.contains("<div class=\"sect1\">"));
+    assert!(
+        html.contains("A paragraph from a partial."),
+        "includes are followed"
+    );
+
+    // Without --output, the page goes to standard output.
+    let output = cli(&["render", "tests/fixtures/simple/guide.adoc"]);
+    assert!(output.status.success());
+    assert!(stdout(&output).contains("<div id=\"content\">"));
+
+    let output = cli(&[
+        "render",
+        "tests/fixtures/simple/guide.adoc",
+        "--parser",
+        "nope",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn check_accepts_the_current_directory_as_root() {
+    let fixture = "tests/fixtures/antora-broken-references";
+    let output = cli_in(fixture, &["check", ".", "--format", "json"]);
+    assert_eq!(
+        stdout(&output),
+        check_json("antora-broken-references"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn render_resolves_antora_resources_from_the_current_directory() {
+    let fixture = "tests/fixtures/antora-single-component";
+    for root in [&["--root", "."][..], &[]] {
+        let page = |path: &str| {
+            let output = cli_in(fixture, &[&["render", path][..], root].concat());
+            assert!(
+                output.status.success(),
+                "{root:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            stdout(&output)
+        };
+        let index = page("modules/ROOT/pages/index.adoc");
+        assert!(
+            index.contains("<a href=\"security:authentication.html\">Authentication</a>"),
+            "{root:?}: {index}"
+        );
+        assert!(!index.contains("class=\"unresolved\""), "{root:?}: {index}");
+        let authentication = page("modules/security/pages/authentication.adoc");
+        assert!(
+            authentication.contains("Authentication tokens must be protected."),
+            "{root:?}: {authentication}"
+        );
+    }
+}
+
+#[test]
+fn follow_accepts_the_current_directory_as_root() {
+    let fixture = "tests/fixtures/antora-single-component";
+    let page = "modules/ROOT/pages/index.adoc";
+    let text = std::fs::read_to_string(repository_root().join(fixture).join(page)).unwrap();
+    let offset = text.find("xref:").unwrap() + 6;
+    let output = cli_in(
+        fixture,
+        &["follow", page, &offset.to_string(), "--root", "."],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        stdout(&output).trim(),
+        "modules/security/pages/authentication.adoc:1:1"
+    );
 }

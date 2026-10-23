@@ -25,12 +25,18 @@ pub mod ids {
     pub const NAVIGATE_BACK: CommandId = CommandId::new("navigate.back");
     pub const NAVIGATE_FORWARD: CommandId = CommandId::new("navigate.forward");
     pub const NAVIGATE_PEEK_INCLUDE: CommandId = CommandId::new("navigate.peek_include");
+    pub const NAVIGATE_GO_TO: CommandId = CommandId::new("navigate.go_to");
+    pub const NAVIGATE_REVEAL: CommandId = CommandId::new("navigate.reveal");
     pub const WORKSPACE_SEARCH: CommandId = CommandId::new("workspace.search");
     pub const WORKSPACE_REPLACE: CommandId = CommandId::new("workspace.replace");
     pub const WORKSPACE_APPLY_PREVIEW: CommandId = CommandId::new("workspace.apply_preview");
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
+    pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
+    pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
+    pub const VIEW_TOGGLE_SCROLL_SYNC: CommandId = CommandId::new("view.toggle_scroll_sync");
+    pub const PREVIEW_PIN: CommandId = CommandId::new("preview.pin");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;
@@ -55,7 +61,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 21] = [
+    let builtin: [(CommandSpec, Run); 27] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -254,6 +260,60 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
             spec(ids::SETTINGS_RELOAD, "Reload Settings", View, None, Always),
             settings_reload,
         ),
+        (
+            spec(
+                ids::VIEW_TOGGLE_PREVIEW,
+                "Toggle Preview",
+                View,
+                Some("cmd-k v"),
+                Always,
+            ),
+            view_toggle_preview,
+        ),
+        (
+            spec(
+                ids::VIEW_DETACH_PREVIEW,
+                "Detach Preview",
+                View,
+                None,
+                Always,
+            ),
+            view_detach_preview,
+        ),
+        (
+            spec(
+                ids::VIEW_TOGGLE_SCROLL_SYNC,
+                "Toggle Preview Scroll Sync",
+                View,
+                None,
+                Always,
+            ),
+            view_toggle_scroll_sync,
+        ),
+        (
+            spec(ids::PREVIEW_PIN, "Pin Preview", View, None, Always),
+            preview_pin,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_GO_TO,
+                "Go to Location",
+                Navigate,
+                None,
+                Always,
+            ),
+            navigate_go_to,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_REVEAL,
+                "Reveal in Editor",
+                Navigate,
+                None,
+                Always,
+            ),
+            navigate_reveal,
+        ),
     ];
     for (spec, run) in builtin {
         register(registry, spec, run);
@@ -370,6 +430,54 @@ fn workspace_open_folder(
         .map(|()| CommandOutcome::Done)
 }
 
+fn view_toggle_preview(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    layout.visible = !layout.visible;
+    engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
+}
+
+/// Moves the preview into its own window, or back beside the editor.
+fn view_detach_preview(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    layout.detached = !layout.detached || !layout.visible;
+    layout.visible = true;
+    engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
+}
+
+fn view_toggle_scroll_sync(
+    engine: &mut Engine,
+    _: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    layout.scroll_sync = !layout.scroll_sync;
+    engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
+}
+
+/// Pins the preview to the given document, or the active one; unpins when already pinned.
+fn preview_pin(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    if layout.pinned.is_some() {
+        layout.pinned = None;
+    } else {
+        let id = match args {
+            CommandArgs::Document(id) => id,
+            _ => engine
+                .active()
+                .ok_or_else(|| EngineError::NotFound("no document to pin".to_owned()))?,
+        };
+        if engine.document(id).is_none() {
+            return Err(EngineError::UnknownDocument(id));
+        }
+        layout.pinned = Some(id);
+        layout.visible = true;
+    }
+    engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
+}
+
 fn workspace_reindex(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
     engine.reindex();
     Ok(CommandOutcome::Done)
@@ -419,6 +527,22 @@ fn navigate_follow_link(
         return Err(invalid(ids::NAVIGATE_FOLLOW_LINK, "a document and offset"));
     };
     engine.follow_link(id, offset)
+}
+
+/// Opens a location, keeping where the user was in the back history: a link in the preview.
+fn navigate_go_to(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Position(position) = args else {
+        return Err(invalid(ids::NAVIGATE_GO_TO, "a position"));
+    };
+    engine.go_to(position, true)
+}
+
+/// Opens a location without recording history: the source of a block clicked in the preview.
+fn navigate_reveal(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Position(position) = args else {
+        return Err(invalid(ids::NAVIGATE_REVEAL, "a position"));
+    };
+    engine.go_to(position, false)
 }
 
 fn navigate_back(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {

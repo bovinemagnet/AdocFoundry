@@ -1,0 +1,403 @@
+//! The rendered preview: the engine's view tree of the preview target, drawn natively. It
+//! follows the active document unless pinned, and remembers each page's scroll position.
+
+mod blocks;
+mod inlines;
+mod sync;
+
+use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
+
+use adoc_engine::{
+    commands::ids, CommandArgs, DocumentId, EngineEvent, NavigationPosition, RenderedPreview,
+};
+use gpui::{
+    div, prelude::FluentBuilder as _, px, App, Context, Entity, HighlightStyle,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+};
+use gpui_component::{
+    button::{Button, ButtonVariants as _},
+    h_flex,
+    highlighter::SyntaxHighlighter,
+    v_flex, ActiveTheme as _, Sizable as _, TitleBar, WindowExt as _,
+};
+
+use crate::app::AppState;
+
+pub use inlines::Link;
+
+/// Highlighted code, by theme brightness, language and text.
+type HighlightCache = HashMap<(bool, String, String), Vec<(Range<usize>, HighlightStyle)>>;
+
+/// What the preview tells the window around it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PreviewEvent {
+    /// The user scrolled the preview; this block is now at its top.
+    ScrolledTo(adoc_render::SourceSpan),
+}
+
+pub struct PreviewView {
+    app: Entity<AppState>,
+    extents: sync::Extents,
+    /// In its own window, which then needs a title bar.
+    standalone: bool,
+    shown: Option<Arc<RenderedPreview>>,
+    scroll: ScrollHandle,
+    positions: HashMap<DocumentId, Point<Pixels>>,
+    highlights: Rc<RefCell<HighlightCache>>,
+    _subscription: Subscription,
+}
+
+impl PreviewView {
+    pub fn new(
+        app: Entity<AppState>,
+        standalone: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let subscription = cx.subscribe_in(&app, window, |this, _, event, _, cx| {
+            let relevant = match event {
+                EngineEvent::PreviewReady { id, .. } => {
+                    this.app.read(cx).engine.preview_target() == Some(*id)
+                }
+                EngineEvent::PreviewLayoutChanged
+                | EngineEvent::NavigationChanged
+                | EngineEvent::DocumentClosed(_) => true,
+                _ => false,
+            };
+            if relevant {
+                this.refresh(cx);
+            }
+        });
+        let mut view = Self {
+            app,
+            extents: sync::Extents::default(),
+            standalone,
+            shown: None,
+            scroll: ScrollHandle::new(),
+            positions: HashMap::new(),
+            highlights: Rc::default(),
+            _subscription: subscription,
+        };
+        view.refresh(cx);
+        view
+    }
+
+    /// The preview on screen.
+    #[cfg(test)]
+    pub fn shown(&self) -> Option<&Arc<RenderedPreview>> {
+        self.shown.as_ref()
+    }
+
+    /// Shows the engine's latest preview of its target, keeping each page's scroll position.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let latest = {
+            let engine = &self.app.read(cx).engine;
+            engine
+                .preview_target()
+                .and_then(|id| engine.rendered_preview(id))
+        };
+        let before = self.shown.as_ref().map(|shown| shown.document);
+        let after = latest.as_ref().map(|shown| shown.document);
+        if before != after {
+            if let Some(before) = before {
+                self.positions.insert(before, self.scroll.offset());
+            }
+            let offset = after
+                .and_then(|after| self.positions.get(&after).copied())
+                .unwrap_or_default();
+            self.scroll.set_offset(offset);
+        }
+        self.shown = latest;
+        cx.notify();
+    }
+
+    /// Scrolls so the innermost block containing `offset` in `path` is at the top, keeping the
+    /// preview level with the caret.
+    pub fn reveal_source(&mut self, path: &std::path::Path, offset: usize, cx: &mut Context<Self>) {
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        let Some(trail) = adoc_render::block_at(&shown.view, path, offset) else {
+            return;
+        };
+        let Some(extent) = self.extents.borrow().get(&trail).copied() else {
+            return;
+        };
+        let top = (extent.top - px(8.)).max(px(0.));
+        self.scroll.set_offset(gpui::point(px(0.), -top));
+        cx.notify();
+    }
+
+    /// Reports the block now at the top after the user scrolled.
+    fn scrolled(&mut self, cx: &mut Context<Self>) {
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        let top = -self.scroll.offset().y;
+        let Some(trail) = sync::block_at_y(&self.extents.borrow(), top) else {
+            return;
+        };
+        if let Some(block) = adoc_render::block_by_trail(&shown.view, &trail) {
+            cx.emit(PreviewEvent::ScrolledTo(block.span.clone()));
+        }
+    }
+
+    /// Where the block at `trail` is drawn, for tests that click it.
+    #[cfg(test)]
+    pub fn block_position(&self, trail: &[usize]) -> Option<gpui::Point<Pixels>> {
+        let extent = *self.extents.borrow().get(trail)?;
+        let container = self.scroll.bounds();
+        let y = container.origin.y + self.scroll.offset().y + extent.top + px(2.);
+        Some(gpui::point(container.origin.x + px(24.), y))
+    }
+
+    /// Simulates the user scrolling the preview to content position `top`.
+    #[cfg(test)]
+    pub fn scroll_for_test(&mut self, top: Pixels, cx: &mut Context<Self>) {
+        self.scroll.set_offset(gpui::point(px(0.), -top));
+        self.scrolled(cx);
+    }
+
+    /// The content position at the top of the preview.
+    #[cfg(test)]
+    pub fn scroll_top(&self) -> Pixels {
+        -self.scroll.offset().y
+    }
+
+    /// The extent of the block at `trail`, once laid out.
+    #[cfg(test)]
+    pub fn extent(&self, trail: &[usize]) -> Option<sync::Extent> {
+        self.extents.borrow().get(trail).copied()
+    }
+
+    fn invoke(
+        &self,
+        command: adoc_engine::CommandId,
+        args: CommandArgs,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let result = self.app.update(cx, |app, cx| app.invoke(command, args, cx));
+        if let Err(error) = result {
+            window.push_notification(error.to_string(), cx);
+        }
+    }
+
+    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (title, layout) = {
+            let engine = &self.app.read(cx).engine;
+            let title = self
+                .shown
+                .as_ref()
+                .and_then(|shown| shown.path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Preview".to_owned());
+            (title, engine.preview_layout())
+        };
+        let command = |command: adoc_engine::CommandId| {
+            cx.listener(move |this: &mut Self, _, window, cx| {
+                this.invoke(command, CommandArgs::None, window, cx);
+            })
+        };
+        h_flex()
+            .px_2()
+            .py_1()
+            .gap_1()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                div()
+                    .flex_1()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(title),
+            )
+            .child(
+                Button::new("preview-pin")
+                    .ghost()
+                    .xsmall()
+                    .label(if layout.pinned.is_some() {
+                        "Unpin"
+                    } else {
+                        "Pin"
+                    })
+                    .on_click(command(ids::PREVIEW_PIN)),
+            )
+            .child(
+                Button::new("preview-sync")
+                    .ghost()
+                    .xsmall()
+                    .label(if layout.scroll_sync {
+                        "Sync on"
+                    } else {
+                        "Sync off"
+                    })
+                    .on_click(command(ids::VIEW_TOGGLE_SCROLL_SYNC)),
+            )
+            .child(
+                Button::new("preview-detach")
+                    .ghost()
+                    .xsmall()
+                    .label(if layout.detached { "Dock" } else { "Detach" })
+                    .on_click(command(ids::VIEW_DETACH_PREVIEW)),
+            )
+    }
+
+    fn context<'a>(
+        &self,
+        highlight: blocks::Highlighter<'a>,
+        window: &Window,
+        cx: &App,
+    ) -> blocks::BlockContext<'a> {
+        let theme = cx.theme();
+        let app = self.app.clone();
+        let on_link: inlines::LinkHandler = Rc::new(move |link, window, cx| match link {
+            Link::Url(url) => cx.open_url(url),
+            Link::File(path) => cx.open_with_system(path),
+            Link::Xref { link, .. } => match &link.target {
+                Some(target) => {
+                    let position = NavigationPosition {
+                        path: target.path.clone(),
+                        offset: target.range.start,
+                    };
+                    let result = app.update(cx, |app, cx| {
+                        app.invoke(ids::NAVIGATE_GO_TO, CommandArgs::Position(position), cx)
+                    });
+                    if let Err(error) = result {
+                        window.push_notification(error.to_string(), cx);
+                    }
+                }
+                None => window.push_notification("This reference does not resolve.", cx),
+            },
+        });
+        let app = self.app.clone();
+        let on_block: blocks::BlockHandler = Rc::new(move |span, window, cx| {
+            let position = NavigationPosition {
+                path: span.path.clone(),
+                offset: span.range.start,
+            };
+            let result = app.update(cx, |app, cx| {
+                app.invoke(ids::NAVIGATE_REVEAL, CommandArgs::Position(position), cx)
+            });
+            if let Err(error) = result {
+                window.push_notification(error.to_string(), cx);
+            }
+        });
+        blocks::BlockContext {
+            extents: self.extents.clone(),
+            scroll: self.scroll.clone(),
+            inline: inlines::InlineStyle {
+                font: window.text_style().font(),
+                mono_family: theme.mono_font_family.clone(),
+                color: theme.foreground,
+                muted: theme.muted_foreground,
+                link: theme.link,
+                unresolved: theme.danger,
+                mark: theme.yellow_light,
+                code_background: theme.muted,
+            },
+            palette: blocks::Palette {
+                border: theme.border,
+                surface: theme.muted,
+                muted: theme.muted_foreground,
+                note: theme.info,
+                tip: theme.success,
+                important: theme.primary,
+                warning: theme.warning,
+                caution: theme.danger,
+                danger: theme.danger,
+            },
+            radius: theme.radius,
+            on_link,
+            on_block,
+            highlight,
+        }
+    }
+}
+
+/// Highlights `text` as `language` with the editor's tree-sitter grammars, cached.
+fn highlight(
+    cache: &RefCell<HighlightCache>,
+    dark: bool,
+    theme: &gpui_component::highlighter::HighlightTheme,
+    language: &str,
+    text: &str,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let key = (dark, language.to_owned(), text.to_owned());
+    if let Some(styles) = cache.borrow().get(&key) {
+        return styles.clone();
+    }
+    let mut highlighter = SyntaxHighlighter::new(language);
+    let rope = ropey::Rope::from_str(text);
+    highlighter.update(None, &rope, None);
+    let styles = highlighter.styles(&(0..text.len()), theme);
+    cache.borrow_mut().insert(key, styles.clone());
+    styles
+}
+
+impl gpui::EventEmitter<PreviewEvent> for PreviewView {}
+
+impl Render for PreviewView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Repopulated as this frame's blocks are laid out.
+        self.extents.borrow_mut().clear();
+        let header = self.header(cx);
+        let waiting = self.shown.is_none() && self.app.read(cx).engine.preview_target().is_some();
+        let body = self.shown.clone().map(|shown| {
+            let cache = self.highlights.clone();
+            let dark = cx.theme().mode.is_dark();
+            let theme = cx.theme().highlight_theme.clone();
+            let highlight =
+                move |language: &str, text: &str| highlight(&cache, dark, &theme, language, text);
+            let context = self.context(&highlight, window, cx);
+            blocks::document(&shown.view, &context)
+        });
+        let window_title = self.standalone.then(|| {
+            let name = self
+                .shown
+                .as_ref()
+                .and_then(|shown| shown.path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            TitleBar::new().child(format!("Preview — {name}"))
+        });
+        v_flex()
+            .size_full()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .children(window_title)
+            .child(header)
+            .child(
+                div()
+                    .id("preview-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+                        // After the scroll itself has been applied.
+                        cx.defer_in(window, |this, _, cx| this.scrolled(cx));
+                    }))
+                    .child(
+                        v_flex()
+                            .p_4()
+                            .gap_3()
+                            .max_w(px(900.))
+                            .when_some(body, |content, body| content.children(body))
+                            .when(self.shown.is_none(), |content| {
+                                content.child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(SharedString::from(if waiting {
+                                            "Rendering…"
+                                        } else {
+                                            "Open a page to preview it."
+                                        })),
+                                )
+                            }),
+                    ),
+            )
+    }
+}

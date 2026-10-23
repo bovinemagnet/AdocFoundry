@@ -35,6 +35,17 @@ pub(crate) enum WorkerMessage {
         id: crate::SearchId,
         results: Vec<crate::SearchMatch>,
     },
+    PreviewParsed {
+        id: crate::DocumentId,
+        generation: u64,
+        version: u64,
+        dom: Box<adoc_dom::Dom>,
+        sources: std::collections::BTreeSet<PathBuf>,
+    },
+    DiagramRendered {
+        checksum: String,
+        result: Result<PathBuf, String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,6 +142,7 @@ impl Engine {
     pub fn has_pending(&self) -> bool {
         self.workers_running > 0
             || !self.pending_index.is_empty()
+            || self.rendered.has_scheduled()
             || self
                 .watcher
                 .as_ref()
@@ -146,7 +158,10 @@ impl Engine {
             applied += 1;
         }
         let due = self.clock.now();
-        applied + self.index_pending(Some(due)) + self.apply_file_changes(Instant::now())
+        applied
+            + self.index_pending(Some(due))
+            + self.apply_file_changes(Instant::now())
+            + self.start_due_previews()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the
@@ -187,8 +202,19 @@ impl Engine {
                 }
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
+                self.preview_workspace_changed();
             }
             WorkerMessage::Search { id, results } => self.search_finished(id, results),
+            WorkerMessage::PreviewParsed {
+                id,
+                generation,
+                version,
+                dom,
+                sources,
+            } => self.preview_parsed(id, generation, version, *dom, sources),
+            WorkerMessage::DiagramRendered { checksum, result } => {
+                self.diagram_rendered(&checksum, result);
+            }
             WorkerMessage::IndexFailed { error } => {
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,
@@ -260,6 +286,7 @@ impl Engine {
             descriptor: descriptor.to_path_buf(),
         });
         self.refresh_open_diagnostics(None);
+        self.preview_workspace_changed();
     }
 
     fn file_changed_on_disk(&mut self, path: &Path) {
@@ -298,6 +325,7 @@ impl Engine {
             }
             None => self.workspace.remove_document(path),
         }
+        self.preview_source_changed(path);
         self.emit(EngineEvent::DiagnosticsUpdated {
             path: path.to_path_buf(),
         });

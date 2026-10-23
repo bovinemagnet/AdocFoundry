@@ -107,6 +107,27 @@ impl Engine {
         self.arrive(target)
     }
 
+    /// Opens and activates the file at `position` and reveals it there. With `record`, the
+    /// active position is kept in the back history, as following a link keeps it.
+    pub(crate) fn go_to(
+        &mut self,
+        position: NavigationPosition,
+        record: bool,
+    ) -> Result<CommandOutcome, EngineError> {
+        if record {
+            let active = self.active_position();
+            let from = match (self.history.current.clone(), active) {
+                (Some(current), Some(active)) if current.path == active.path => Some(current),
+                (_, active) => active,
+            };
+            if let Some(from) = from {
+                self.history.back.push(from);
+                self.history.forward.clear();
+            }
+        }
+        self.arrive(position)
+    }
+
     fn arrive(&mut self, position: NavigationPosition) -> Result<CommandOutcome, EngineError> {
         let id = self.open(&position.path)?;
         self.set_active(id);

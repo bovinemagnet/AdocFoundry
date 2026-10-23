@@ -65,6 +65,12 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 |`navigate.definition`, `navigate.follow_link`, `navigate.back`, `navigate.forward`, `navigate.peek_include`
 |Link following and history.
 
+|`navigate.go_to`, `navigate.reveal`
+|Move to a position, taking `CommandArgs::Position`. `go_to` is recorded in back and forward history and is used when an xref is clicked in the preview. `reveal` is not recorded and is used for click-to-source, because the source of a block may be an unopened partial.
+
+|`view.toggle_preview`, `view.detach_preview`, `view.toggle_scroll_sync`, `preview.pin`
+|The preview's layout: shown or hidden, docked or detached, scroll sync, and pinned to a document.
+
 |`workspace.search`, `workspace.replace`, `workspace.apply_preview`, `page.rename`
 |Search, replace and rename.
 
@@ -123,7 +129,60 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 
 |`SettingsChanged`
 |Settings were reloaded.
+
+|`PreviewReady`
+|A rendered preview was published for a document, with the version it was rendered from.
+
+|`PreviewLayoutChanged`
+|The preview was shown, hidden, detached, docked, pinned or unpinned, or scroll sync was toggled.
 |===
+
+== The preview service
+
+The engine renders the previews that front ends ask for.
+It never draws anything: it publishes a framework-free view tree, and each front end paints it.
+
+[cols="2,4"]
+|===
+|Item |Purpose
+
+|`request_preview(id)` and `release_preview(id)`
+|Ask for a document to be rendered and kept up to date, and release it again.
+
+|`rendered_preview(id)`
+|The latest published `RenderedPreview` (document, version, path and `ViewTree`). It is named so because `Engine::preview(PreviewId)` already returns Phase 1's multi-file edit previews.
+
+|`PreviewLayout`
+|Whether the preview is `visible`, `detached`, has `scroll_sync` and is `pinned` to a document. The `view.*` and `preview.*` commands change it.
+
+|`preview_target()`
+|The document the preview shows: the pinned document, or else the active one, while the preview is visible. The engine requests and releases that target itself, so following the active page and pinning are engine state, testable headlessly, and the docked and detached views render the same target.
+
+|`PREVIEW_SETTLE`
+|100 ms. A render starts this long after the last edit to the document or to any file it includes.
+
+|`render_blocking(id, timeout)`
+|Renders a document once and waits for its diagrams. The command-line `render` uses it because it has no event loop to pump.
+
+|`set_document_parser(parser)`
+|Chooses the `DocumentParser`. `acdc` is the default.
+|===
+
+.From edit to published preview
+[mermaid]
+----
+include::example$preview-pipeline.mmd[]
+----
+
+The parse runs on a worker thread against a snapshot of the open buffers, so unsaved edits show.
+The worker reports back over the same channel as indexing, and `pump()` applies it.
+A result is dropped when a newer job has started for the document, or when the document or a file it includes changed after the job started.
+An edit during a render therefore never flashes the old text; the replacement job follows after the settle time.
+
+The view is built from the cached parse on the engine thread by `adoc_render::build_view`, with an engine resolver that answers xrefs, includes and images through the Antora catalog and the index.
+Each diagram block the view needs becomes a job on its own worker.
+When one finishes, the preview is built again from the cached parse and republished, so a slow diagram never delays the page.
+Diagrams are cached on disk by checksum under the first workspace root, in `.cache/adocfoundry/diagrams/`.
 
 == The pump and worker indexing
 

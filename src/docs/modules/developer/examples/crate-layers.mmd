@@ -9,9 +9,11 @@ flowchart TD
     end
     subgraph L2["L2"]
         render["adoc-render"]
+        diagrams["adoc-diagrams"]
     end
     subgraph L1["L1: language crates"]
         parser["adoc-parser"]
+        dom["adoc-dom<br/>(only parser-crate importer)"]
         antora["adoc-antora"]
         index["adoc-index"]
         lang["adoc-lang"]
@@ -21,8 +23,11 @@ flowchart TD
     end
     app --> engine
     app --> index
+    app --> render
     cli --> engine
     cli --> index
+    cli --> render
+    cli --> dom
     ls --> lang
     ls --> index
     ls --> parser
@@ -31,6 +36,10 @@ flowchart TD
     engine --> index
     engine --> antora
     engine --> parser
+    engine --> dom
+    engine --> render
+    engine --> diagrams
+    render --> dom
     lang --> index
     lang --> antora
     lang --> parser
@@ -39,3 +48,5 @@ flowchart TD
     antora --> core
     index --> core
     lang --> core
+    dom --> core
+    render --> core

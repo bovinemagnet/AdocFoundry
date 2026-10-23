@@ -28,6 +28,10 @@ actions!(
         CommandPalette,
         ToggleTheme,
         OpenMirrorWindow,
+        TogglePreview,
+        DetachPreview,
+        TogglePreviewScrollSync,
+        PinPreview,
     ]
 );
 
@@ -82,6 +86,10 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::WORKSPACE_REINDEX => KeyBinding::new(keys, Reindex, workspace),
         ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
         ids::SETTINGS_RELOAD => KeyBinding::new(keys, ReloadSettings, workspace),
+        ids::VIEW_TOGGLE_PREVIEW => KeyBinding::new(keys, TogglePreview, workspace),
+        ids::VIEW_DETACH_PREVIEW => KeyBinding::new(keys, DetachPreview, workspace),
+        ids::VIEW_TOGGLE_SCROLL_SYNC => KeyBinding::new(keys, TogglePreviewScrollSync, workspace),
+        ids::PREVIEW_PIN => KeyBinding::new(keys, PinPreview, workspace),
         _ => return None,
     })
 }
@@ -107,6 +115,10 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::WORKSPACE_REINDEX => Box::new(Reindex),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
+        ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),
+        ids::VIEW_DETACH_PREVIEW => Box::new(DetachPreview),
+        ids::VIEW_TOGGLE_SCROLL_SYNC => Box::new(TogglePreviewScrollSync),
+        ids::PREVIEW_PIN => Box::new(PinPreview),
         _ => return None,
     })
 }

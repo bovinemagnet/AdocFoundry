@@ -76,6 +76,8 @@ pub enum CommandArgs {
         text: String,
     },
     Path(PathBuf),
+    /// A place in a file, which need not be open.
+    Position(crate::NavigationPosition),
     Search(SearchRequest),
     Rename {
         id: DocumentId,

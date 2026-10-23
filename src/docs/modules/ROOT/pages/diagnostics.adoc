@@ -26,7 +26,7 @@ Codes are stable strings, so you can filter on them in scripts.
 
 |`adoc.unresolved-xref-file`
 |Warning
-|An `xref:` or `<<...>>` names a page that does not exist.
+|An `xref:` or `+<<...>>+` names a page that does not exist.
 
 |`adoc.unresolved-anchor`
 |Warning

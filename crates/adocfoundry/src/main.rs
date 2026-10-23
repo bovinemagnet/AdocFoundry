@@ -5,6 +5,7 @@
 mod app;
 mod editor;
 mod mirror_view;
+mod preview;
 mod search_view;
 mod sidebar;
 mod typing_bench;

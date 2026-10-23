@@ -1,0 +1,7 @@
+= Assets
+
+image::legacy.svg[Legacy]
+
+image::modern.svg[Modern]
+
+xref:attachment$guide.txt[The guide]

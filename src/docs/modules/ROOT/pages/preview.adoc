@@ -1,0 +1,152 @@
+= The preview
+Paul Snow
+:revnumber: 0.0.0
+:description: The native rendered preview: following the page, scroll sync, click-to-source, links, includes, diagrams and its current limits.
+
+The preview shows the page you are editing as it will read, without leaving the application.
+It is drawn natively and needs no browser, Node.js, Ruby or Java.
+Every action described here is an engine command, so it also appears in the command palette.
+See xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the bindings.
+
+== Showing and hiding the preview
+
+Toggle Preview (`view.toggle_preview`) shows or hides the preview.
+It is bound to kbd:[Cmd+K] then kbd:[V] on macOS and kbd:[Ctrl+K] then kbd:[V] on Linux and Windows.
+This is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
+
+The preview is a pane docked to the right of the editor.
+Its toolbar shows the title of the page being previewed and three buttons:
+
+[cols="1,4"]
+|===
+|Button |What it does
+
+|Pin or Unpin
+|Keeps the preview on its current page, or lets it follow the active page again.
+
+|Sync on or Sync off
+|Turns scroll sync on or off.
+
+|Detach or Dock
+|Moves the preview into its own window, or back beside the editor.
+|===
+
+== Following the active page
+
+By default the preview follows the active page: open another tab, follow a link or go back, and the preview shows that page.
+Each page's scroll position is remembered, so returning to a page puts you back where you were.
+
+Pin Preview (`preview.pin`) keeps the preview on one page while you edit others.
+This is useful for watching a page that includes the file you are editing.
+Pin again to unpin.
+
+== Detaching the preview
+
+Detach Preview (`view.detach_preview`) opens the preview in its own window, which you can put on a second screen.
+Closing that window docks the preview again.
+The docked and detached views always show the same page.
+
+== Scroll sync
+
+Scroll sync works in both directions.
+
+* Moving the caret in the source scrolls the preview to the block that contains it.
+* Scrolling the preview moves the source to the topmost visible block.
+
+Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) turns both directions off and on.
+
+== Click to source
+
+Clicking a block in the preview places the caret at that block's source.
+When the content came from a partial, the partial opens in a tab at the right line, so you edit the file that holds the text.
+
+== Links
+
+Clicking a link in the preview does the following.
+
+[cols="2,4"]
+|===
+|Link |Result
+
+|An `xref:` that resolves
+|Navigates to the target page. The move is recorded in back and forward history.
+
+|An `xref:` that does not resolve
+|It is drawn with a wavy underline in the danger colour. Clicking it shows "This reference does not resolve."
+
+|An external link
+|Opens in the browser.
+
+|A link to a file
+|Opens in the system's default application.
+|===
+
+A missing image shows a placeholder that reads "Missing image: " followed by its target.
+
+== When it updates
+
+The preview re-renders 100 ms after the last edit to the page or to any file it includes.
+It reads open buffers, so unsaved edits show immediately.
+A render that a later edit has overtaken is discarded, so old text never flashes back.
+
+Includes resolve through the Antora catalog.
+That covers `partial$` and `example$` targets, and qualified ids such as `include::developer:example$flow.mmd[]` and `include::other:partial$x.adoc[]`.
+Images and attachments are found in a module's `images` and `attachments` directories, and also in the older `assets/images` and `assets/attachments`.
+When both hold a file with the same name, the standard directory wins.
+See xref:antora-support.adoc[Antora support].
+
+== Source blocks
+
+A source block with a language is highlighted with the same tree-sitter grammars as the editor.
+The languages are those listed in xref:using-the-editor.adoc#the-editor[the editor description].
+
+== Diagrams
+
+Diagram blocks are rendered in the preview.
+
+[cols="2,2,3"]
+|===
+|Block style |Renderer |Needs
+
+|`mermaid`
+|In process
+|Nothing. There is no browser, Node.js or Java.
+
+|`graphviz`, `dot`
+|`dot -Tsvg`
+|Graphviz on the `PATH`.
+
+|`plantuml`, `uml`
+|`plantuml`
+|PlantUML on the `PATH`.
+
+|`d2`
+|`d2`
+|D2 on the `PATH`.
+|===
+
+While a diagram renders, the preview shows its source.
+If the tool is missing or fails, the source stays and the reason is shown with it.
+The preview updates when a diagram finishes, so the page never waits on one.
+
+Rendered diagrams are cached by a checksum of their source and options in `<workspace>/.cache/adocfoundry/diagrams/`.
+The `.cache` folder is skipped by workspace discovery by default.
+
+NOTE: Tool paths for Graphviz, PlantUML and D2 cannot be set yet.
+They are found on the `PATH` only.
+
+== Known limits
+
+* STEM is shown as styled maths source.
+Typesetting arrives with PDF export in Phase 4.
+* The preview is read-only.
+Editing in the rendered view is Phase 3.
+* The preview has no settings of its own.
+It follows the editor theme.
+* The preview is a native approximation of Asciidoctor's output, not a copy of it.
+The project's fidelity harness compares the two over a corpus of pages; see xref:developer:testing.adoc#render-tests[Testing].
+
+== Rendering from the command line
+
+`adocfoundry-cli render` writes a page as the preview renders it.
+See xref:command-line.adoc#render[Command line].

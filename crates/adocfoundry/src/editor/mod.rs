@@ -57,9 +57,17 @@ pub fn sync_widget_to_engine(
     }
 }
 
+/// What the editor tells the window around it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceEditorEvent {
+    /// The caret moved to this byte offset.
+    CaretMoved(usize),
+}
+
 pub struct SourceEditorView {
     app: Entity<AppState>,
     document: DocumentId,
+    caret: Option<usize>,
     state: Entity<EditorState>,
     _diagnostics: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -147,9 +155,18 @@ impl SourceEditorView {
             },
         ));
 
+        subscriptions.push(cx.observe(&state, |this: &mut Self, state, cx| {
+            let caret = state.read(cx).cursor();
+            if this.caret != Some(caret) {
+                this.caret = Some(caret);
+                cx.emit(SourceEditorEvent::CaretMoved(caret));
+            }
+        }));
+
         let mut view = Self {
             app,
             document,
+            caret: None,
             state,
             _diagnostics: None,
             _subscriptions: subscriptions,
@@ -199,6 +216,29 @@ impl SourceEditorView {
             state.set_selected_range(range.start.min(len)..range.end.min(len), cx);
             state.focus(window, cx);
         });
+    }
+
+    /// Scrolls so the line holding `offset` is at the top, leaving the caret where it is.
+    pub fn scroll_to_offset(&self, offset: usize, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            let Some(line_height) = state.line_height() else {
+                return;
+            };
+            let text = state.text().clone();
+            let line = text.offset_to_position(offset.min(text.len())).line as usize;
+            let row = state.display_map().buffer_line_to_display_row(line);
+            let x = state.scroll_offset().x;
+            state.set_scroll_offset(gpui::point(x, -(line_height * row as f32)), cx);
+        });
+    }
+
+    /// The first source line shown, for tests of scroll sync.
+    #[cfg(test)]
+    pub fn top_line(&self, cx: &gpui::App) -> Option<usize> {
+        let state = self.state.read(cx);
+        let line_height = state.line_height()?;
+        let row = (-state.scroll_offset().y / line_height).round() as usize;
+        Some(state.display_map().display_row_to_buffer_line(row))
     }
 
     /// Applies the engine's text to the widget when they differ, as one replacement.
@@ -272,6 +312,8 @@ impl SourceEditorView {
         });
     }
 }
+
+impl gpui::EventEmitter<SourceEditorEvent> for SourceEditorView {}
 
 impl Focusable for SourceEditorView {
     fn focus_handle(&self, cx: &gpui::App) -> FocusHandle {

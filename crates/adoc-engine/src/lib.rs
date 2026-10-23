@@ -14,6 +14,7 @@ mod event;
 mod language;
 mod navigation;
 mod preview;
+mod rendered;
 mod search;
 mod settings;
 mod undo;
@@ -33,6 +34,7 @@ pub use navigation::NavigationPosition;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };
+pub use rendered::{PreviewLayout, RenderedPreview, PREVIEW_SETTLE};
 pub use settings::{
     EditorSettings, Settings, ThemePreference, ToolSettings, WorkspaceSettings, USER_SETTINGS_FILE,
     WORKSPACE_SETTINGS_FILE,

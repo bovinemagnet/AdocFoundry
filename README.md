@@ -4,7 +4,7 @@ Forge your documentation in real time.
 
 AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way, written in Rust for macOS, Linux and Windows. It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
 
-The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes. **Phase 1 is implemented.** The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and the Phase 1 scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md).
+The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes. **Phases 1 and 2 are implemented.** The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md).
 
 ## What works
 
@@ -35,6 +35,18 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Cmd-click (Ctrl-click on Linux and Windows) or F12 on an `xref:`, `include::` or `{attribute}` opens the target and places the caret there; images and attachments open in the system's default application.
 - Back and forward through the places you have followed links to.
 - Alt-F12 on an `include::` shows the included file read-only.
+
+**Preview**
+
+- A native rendered preview beside the editor (Cmd/Ctrl-K V), drawn by the app itself: no browser, Asciidoctor, Node.js or Java. It re-renders 100 ms after you stop typing in the page or in any file it includes, unsaved edits included.
+- It follows the active page; Pin keeps it on one page. Each page's scroll position is remembered.
+- Detach moves it into its own window; closing that window docks it again.
+- Scroll sync both ways: moving the caret scrolls the preview to that block, and scrolling the preview moves the source to the topmost visible block. Sync can be switched off.
+- Clicking a block places the caret on its source, opening the partial it came from when there is one. Clicking an xref follows it, recorded in back and forward history; external links open the browser and attachments the default application.
+- Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
+- Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
+- Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render when `dot`, `plantuml` or `d2` is on `PATH`, and otherwise show their source with the reason. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
+- STEM blocks show their maths as styled source.
 
 **Find, replace and rename**
 
@@ -77,11 +89,14 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Follow link | Cmd-click, F12, Cmd-Enter | Ctrl-click, F12, Ctrl-Enter |
 | Back / Forward | Ctrl-minus / Ctrl-Shift-minus | Ctrl-minus / Ctrl-Shift-minus |
 | Peek include | Alt-F12 | Alt-F12 |
+| Toggle preview | Cmd-K V | Ctrl-K V |
 | Find / Replace in workspace | Cmd-Shift-F / Cmd-Shift-H | Ctrl-Shift-F / Ctrl-Shift-H |
 | Rename page | F2 | F2 |
 | Settings | Cmd-, | Ctrl-, |
 | Toggle theme | Cmd-K Cmd-T | Ctrl-K Ctrl-T |
 | Read-only second window | Cmd-K Cmd-N | Ctrl-K Ctrl-N |
+
+Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the preview's toolbar and commands in the palette.
 
 ## Settings
 
@@ -102,15 +117,20 @@ ignore = ["node_modules", ".git", "build", "target", ".cache"]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
 ```
 
+`tools.asciidoctor` is used only by `adoc-ls`'s HTML preview; the app's preview needs no external tool. Diagram tools are found on `PATH` and cannot be set here yet.
+
 ## Command line
 
 ```text
 adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
+adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 ```
 
 `check` prints the workspace's diagnostics (text: `path:line:col: severity code message`) and exits with 1 when any meets `--fail-on` (default `error`), which suits CI. It reports exactly what the editor and `adoc-ls` report.
+
+`render` writes a page as a standalone HTML file, as the preview renders it, waiting for its diagrams; without `--output` it writes to standard output. Without `--root`, the workspace is the folder above the page's Antora component, or the page's own folder outside Antora. `--parser asciidoc-parser` renders with the second document parser, for comparison; the app always uses `acdc`.
 
 ## Language server
 
@@ -122,11 +142,13 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
 
 ## Not implemented yet
 
-- A rendered preview inside the app (Phase 2), WYSIWYG editing (Phase 3) and PDF export (Phase 4).
+- WYSIWYG editing (Phase 3) and PDF export (Phase 4).
+- Typeset STEM: the preview shows the maths source until Phase 4.
+- Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
 - Editing included content in place, spell checking, Git integration, plugins.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
 - Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
-- Verified IME composition and frame timing on every platform, and the packages on macOS and Windows: see [`docs/qa/phase1.md`](docs/qa/phase1.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
+- Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 
 ## Developing
 
@@ -143,11 +165,13 @@ The workspace is a ladder of crates, each depending only on those below it:
 
 ```text
 adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)
-adoc-engine              documents, commands, undo, workspace, watcher, settings, search
-adoc-render
-adoc-parser   adoc-antora   adoc-index   adoc-lang
+adoc-engine              documents, commands, undo, workspace, watcher, settings, search, preview
+adoc-render   adoc-diagrams                view tree and HTML; Mermaid and diagram tools
+adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang
 adoc-core
 ```
+
+`adoc-dom` holds the full document tree behind the `DocumentParser` trait and is the only crate that names a parser crate (acdc-parser, and asciidoc-parser for comparison). The fidelity harness (`cargo test -p adocfoundry-cli --test fidelity`) compares `render` with Asciidoctor over `tests/fixtures/render/`, and skips itself when `asciidoctor --version` fails.
 
 ## Licence
 

@@ -31,4 +31,5 @@ rustc-ice-*.txt
 /build
 /node_modules
 /package-lock.json
-/.cache
+# Diagram caches, written beside any workspace opened in the app
+.cache/

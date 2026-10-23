@@ -3,7 +3,8 @@ Paul Snow
 :revnumber: 0.0.0
 :description: The workspace, sidebar, editor, link following, search and replace, and page rename.
 
-This page describes the Phase 1 application.
+This page describes the source editor and the workspace around it.
+The rendered preview has its own page, xref:preview.adoc[The preview].
 Every action described here is an engine command with a stable id, so it also appears in the command palette (kbd:[Cmd+Shift+P] or kbd:[Ctrl+Shift+P]).
 See xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the bindings.
 
@@ -45,9 +46,11 @@ Outline::
 The sections of the active document.
 For a navigation file, the outline is its navigation tree.
 
+[[the-editor]]
 == The editor
 
-The editor is a source editor, not a preview.
+The editor is a source editor.
+The rendered page is shown beside it by the preview; see xref:preview.adoc[The preview].
 It provides:
 
 * Syntax highlighting from the AsciiDoc tree-sitter grammars.
@@ -123,7 +126,7 @@ Toggle Light/Dark Theme (`Cmd-K Cmd-T` or `Ctrl-K Ctrl-T`) switches immediately,
 == The read-only second window
 
 Open Read-Only Window (`Cmd-K Cmd-N` or `Ctrl-K Ctrl-N`) opens a second window that shows the active document read-only and follows it as you edit.
-It exists to prove the multi-window path that Phase 2's detachable preview will use.
+It uses the same multi-window path as the detachable preview; see xref:preview.adoc[The preview].
 
 == Settings and the palette
 

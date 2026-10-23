@@ -1,0 +1,3 @@
+A paragraph from a partial.
+
+* An item from a partial

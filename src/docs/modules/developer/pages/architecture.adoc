@@ -29,6 +29,10 @@ include::example$crate-layers.mmd[]
 |A line-oriented semantic parser, deliberately not tree-sitter and not a full AST. It extracts titles, sections, attributes, anchors, xrefs, includes and images from half-typed input without panicking, and runs on every keystroke.
 
 |L1
+|`adoc-dom`
+|The full AST behind the `DocumentParser` trait, with `acdc-parser` as the parser and `asciidoc-parser` as a second implementation for comparison. It is the only crate that names a parser crate, so the parser stays swappable, and it applies typographic replacements to plain text.
+
+|L1
 |`adoc-antora`
 |`antora.yml` and playbook parsing, `AntoraCatalog`, resource-ID parsing for `version@component:module:family$path`, the resolver, page aliases, descriptor reload and navigation trees.
 
@@ -42,7 +46,11 @@ include::example$crate-layers.mmd[]
 
 |L2
 |`adoc-render`
-|The optional external Asciidoctor renderer, used by the language server's preview.
+|A framework-free view tree (`ViewTree`, built from a `Dom` by `build_view` through a `ViewResolver`), a standalone HTML backend, and the optional external Asciidoctor renderer used by the language server's preview. The engine and the application use the view tree; the command-line `render` uses the HTML backend.
+
+|L2
+|`adoc-diagrams`
+|Diagram rendering for the preview. Mermaid is rendered in process through `merman`, other kinds (Graphviz, PlantUML, D2) through external tools discovered on the `PATH`, and every result is cached on disk by checksum.
 
 |L3
 |`adoc-engine`
@@ -61,7 +69,7 @@ include::example$crate-layers.mmd[]
 |The language server. The only crate that speaks the Language Server Protocol.
 |===
 
-Later phases add `adoc-dom` (the full AST behind a parser trait), `adoc-diagrams`, `adoc-model` and `adoc-pdf`.
+Later phases add `adoc-model` and `adoc-pdf`.
 Their layers are already reserved in the layering check.
 
 == Layering rules
@@ -73,9 +81,10 @@ Their layers are already reserved in the layering check.
 * `adoc-core` has any dependency;
 * a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
 * an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;
+* a parser crate (`acdc-parser`, `asciidoc-parser`) appears outside `adoc-dom`;
 * `adoc-lang` depends on `url`, or its sources mention `lsp_types`, `lsp_server` or `url::`.
 
-Adding a crate means adding a line to the ladder in `CLAUDE.md` and to the layer table.
+Adding a crate means adding a line to the layer table in `xtask/src/layers.rs` and to the ladder in the repository's contributor guidance.
 
 === The one `lsp-types` exception
 

@@ -103,6 +103,10 @@ pub fn normalize_path(path: &Path) -> PathBuf {
             }
         }
     }
+    // `.` and `docs/..` name the current directory; an empty path names nothing.
+    if normalized.as_os_str().is_empty() && !path.as_os_str().is_empty() {
+        normalized.push(Component::CurDir.as_os_str());
+    }
     normalized
 }
 
@@ -126,6 +130,14 @@ mod tests {
             normalize_path(Path::new("docs/./pages/../index.adoc")),
             Path::new("docs/index.adoc")
         );
+    }
+
+    #[test]
+    fn keeps_the_current_directory() {
+        for path in [".", "./", "docs/..", "./docs/./.."] {
+            assert_eq!(normalize_path(Path::new(path)), Path::new("."), "{path}");
+        }
+        assert_eq!(normalize_path(Path::new("")), Path::new(""));
     }
 
     #[test]

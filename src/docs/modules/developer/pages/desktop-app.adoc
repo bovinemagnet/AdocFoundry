@@ -66,8 +66,42 @@ The palette lists every command with its title from the registry.
 == Windows
 
 Window creation lives in `app.rs`.
-`open_secondary_window` takes a `WindowKind`, and the only kind in Phase 1 is `Mirror`, a read-only view of the active document that follows its edits.
-Phase 2 adds a preview kind without touching the main window.
+`open_secondary_window` takes a `WindowKind`.
+`Mirror` is a read-only view of the active document that follows its edits.
+`Preview` is the rendered preview detached from the workspace window, and closing it docks the preview again.
+
+== The preview
+
+`crates/adocfoundry/src/preview/` paints the engine's `ViewTree`.
+It owns no document semantics: the engine decides what is previewed, and the view renders `rendered_preview(id)` each time `PreviewReady` arrives.
+
+[cols="1,4"]
+|===
+|Module |Responsibility
+
+|`mod.rs`
+|The preview view and its toolbar (title, Pin, Sync and Detach buttons), scroll positions remembered per page, and syntax highlighting of source blocks with the editor's tree-sitter grammars.
+
+|`blocks.rs`
+|Painting block elements: sections, lists, tables, admonitions, code, images and diagrams. A missing image gets a placeholder, and a diagram that is still rendering or has failed shows its source.
+
+|`inlines.rs`
+|Painting inline content and its links. An unresolved xref gets a wavy underline in the danger colour.
+
+|`sync.rs`
+|Scroll sync in both directions, between the caret and the topmost visible block.
+|===
+
+The docked pane and the detached window are two views of the same engine state.
+Detaching sets the layout through `view.detach_preview` and opens a `Preview` window; closing that window docks the preview again.
+
+Clicks become commands.
+A click on a block invokes `navigate.reveal` with the position of its source, which may be in a partial that is opened in a tab.
+A click on a resolved xref invokes `navigate.go_to`, so it is recorded in history.
+External links open in the browser and file links in the system's default application.
+Block lookups use `adoc_render::block_at` and `block_by_trail`, which map between source offsets and a block's index trail.
+
+The application depends on `adoc-render` for the view types only; `adoc-dom` and the parser crates stay behind the engine.
 
 == Tabs and the sidebar
 

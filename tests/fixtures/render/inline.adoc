@@ -1,0 +1,35 @@
+= Inline Content
+:experimental:
+
+== Formatting
+
+Constrained *strong*, _emphasis_ and `code`; unconstrained **str**ong, __em__phasis and ``co``de.
+
+Replacements: (C) (R) (TM) -- and ... and the arrows -> <- => <=.
+
+Press kbd:[Ctrl+S] to save, click btn:[OK], then menu:File[Save As].
+
+A line ending in a plus +
+continues on the next.
+
+== Lists in depth
+
+. First
+.. Nested ordered
+... Deeper
+. Second
++
+A continued paragraph.
+
+CPU:: The brain.
+RAM:: The memory.
+Disk::
+The storage.
+
+[qanda]
+What is it?::
+  A question list.
+
+== Footnotes
+
+One.footnote:[First note.] Two.footnote:second[Second note.] Again.footnote:second[]

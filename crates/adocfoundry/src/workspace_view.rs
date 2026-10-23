@@ -31,7 +31,8 @@ use gpui_component::{
 
 use crate::{
     app::{open_secondary_window, AppState, WindowKind},
-    editor::{bindings::*, language, SourceEditorView},
+    editor::{bindings::*, language, SourceEditorEvent, SourceEditorView},
+    preview::{PreviewEvent, PreviewView},
     search_view::SearchView,
     sidebar,
 };
@@ -91,6 +92,12 @@ pub struct WorkspaceView {
     search: Entity<SearchView>,
     show_search: bool,
     palette: Entity<CommandState>,
+    preview: Entity<PreviewView>,
+    /// The preview's own window while it is detached.
+    detached: Option<(
+        gpui::WindowHandle<gpui_component::Root>,
+        Entity<PreviewView>,
+    )>,
     revealed: Option<NavigationPosition>,
     _subscriptions: Vec<Subscription>,
 }
@@ -103,7 +110,11 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = vec![cx.subscribe_in(&app, window, Self::on_engine_event)];
+        let preview = cx.new(|cx| PreviewView::new(app.clone(), false, window, cx));
+        let subscriptions = vec![
+            cx.subscribe_in(&app, window, Self::on_engine_event),
+            cx.subscribe(&preview, Self::on_preview_event),
+        ];
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace, window, cx));
         let mut view = Self {
@@ -123,6 +134,8 @@ impl WorkspaceView {
             search,
             show_search: false,
             palette: cx.new(|cx| CommandState::new(window, cx)),
+            preview,
+            detached: None,
             revealed: None,
             app,
             _subscriptions: subscriptions,
@@ -187,9 +200,100 @@ impl WorkspaceView {
             EngineEvent::CommandFailed { command, error } => {
                 window.push_notification(format!("{command}: {error}"), cx);
             }
+            EngineEvent::PreviewLayoutChanged => self.place_preview(cx),
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Opens the preview's own window when it is detached, and closes it when it docks or hides.
+    fn place_preview(&mut self, cx: &mut Context<Self>) {
+        let layout = self.app.read(cx).engine.preview_layout();
+        let wants_window = layout.visible && layout.detached;
+        match (&self.detached, wants_window) {
+            (None, true) => {
+                self.detached = open_secondary_window(self.app.clone(), WindowKind::Preview, cx)
+                    .and_then(|(handle, view)| {
+                        view.downcast::<PreviewView>()
+                            .ok()
+                            .map(|view| (handle, view))
+                    });
+                if let Some((_, view)) = &self.detached {
+                    self._subscriptions
+                        .push(cx.subscribe(view, Self::on_preview_event));
+                }
+            }
+            (Some(_), false) => {
+                if let Some((handle, _)) = self.detached.take() {
+                    // Fails harmlessly when the window is already closing itself.
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Keeps the preview level with the caret of the active editor.
+    fn on_editor_event(
+        &mut self,
+        editor: Entity<SourceEditorView>,
+        event: &SourceEditorEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let SourceEditorEvent::CaretMoved(offset) = *event;
+        if self.active_editor() != Some(&editor) {
+            return;
+        }
+        let path = {
+            let engine = &self.app.read(cx).engine;
+            if !engine.preview_layout().scroll_sync {
+                return;
+            }
+            let Some(document) = engine.document(editor.read(cx).document()) else {
+                return;
+            };
+            document.path.clone()
+        };
+        let previews = std::iter::once(self.preview.clone())
+            .chain(self.detached.as_ref().map(|(_, view)| view.clone()));
+        for preview in previews {
+            preview.update(cx, |preview, cx| preview.reveal_source(&path, offset, cx));
+        }
+    }
+
+    /// Scrolls the active editor to the block the user scrolled the preview to.
+    fn on_preview_event(
+        &mut self,
+        _: Entity<PreviewView>,
+        event: &PreviewEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let PreviewEvent::ScrolledTo(span) = event;
+        let Some(editor) = self.active_editor().cloned() else {
+            return;
+        };
+        let same_file = {
+            let engine = &self.app.read(cx).engine;
+            engine.preview_layout().scroll_sync
+                && engine
+                    .document(editor.read(cx).document())
+                    .is_some_and(|document| document.path == span.path)
+        };
+        if same_file {
+            editor.update(cx, |editor, cx| {
+                editor.scroll_to_offset(span.range.start, cx)
+            });
+        }
+    }
+
+    #[cfg(test)]
+    pub fn active_editor_for_test(&self) -> Option<&Entity<SourceEditorView>> {
+        self.active_editor()
+    }
+
+    #[cfg(test)]
+    pub fn detached_preview(&self) -> Option<&Entity<PreviewView>> {
+        self.detached.as_ref().map(|(_, view)| view)
     }
 
     fn rebuild_catalog_trees(&mut self, cx: &mut Context<Self>) {
@@ -258,6 +362,8 @@ impl WorkspaceView {
             None => {
                 let app = self.app.clone();
                 let editor = cx.new(|cx| SourceEditorView::new(app, active, false, window, cx));
+                self._subscriptions
+                    .push(cx.subscribe(&editor, Self::on_editor_event));
                 self.tabs.push(editor);
                 self.tabs.len() - 1
             }
@@ -286,6 +392,11 @@ impl WorkspaceView {
     #[cfg(test)]
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
+    }
+
+    #[cfg(test)]
+    pub fn preview(&self) -> &Entity<PreviewView> {
+        &self.preview
     }
 
     fn active_editor(&self) -> Option<&Entity<SourceEditorView>> {
@@ -759,6 +870,37 @@ impl WorkspaceView {
         open_secondary_window(self.app.clone(), WindowKind::Mirror, cx);
     }
 
+    fn on_toggle_preview(
+        &mut self,
+        _: &TogglePreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None, window, cx);
+    }
+
+    fn on_detach_preview(
+        &mut self,
+        _: &DetachPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_DETACH_PREVIEW, CommandArgs::None, window, cx);
+    }
+
+    fn on_toggle_preview_sync(
+        &mut self,
+        _: &TogglePreviewScrollSync,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_TOGGLE_SCROLL_SYNC, CommandArgs::None, window, cx);
+    }
+
+    fn on_pin_preview(&mut self, _: &PinPreview, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::PREVIEW_PIN, CommandArgs::None, window, cx);
+    }
+
     fn on_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
         let mut items: Vec<CommandItem> = self
             .app
@@ -980,6 +1122,39 @@ impl Render for WorkspaceView {
         let editor = self.active_editor().cloned();
         let has_tabs = !self.tabs.is_empty();
         let show_search = self.show_search;
+        let layout = self.app.read(cx).engine.preview_layout();
+        let docked_preview = (layout.visible && !layout.detached).then(|| self.preview.clone());
+        let center = v_flex()
+            .size_full()
+            .when(has_tabs, |center| center.child(self.render_tabs(cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .children(editor)
+                    .when(!has_tabs, |empty| {
+                        empty.child(
+                            v_flex()
+                                .size_full()
+                                .items_center()
+                                .justify_center()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Open a folder or a page from the sidebar")
+                                .child(
+                                    Button::new("open-folder")
+                                        .primary()
+                                        .label("Open Folder…")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.on_open_folder(&OpenFolder, window, cx);
+                                        })),
+                                ),
+                        )
+                    }),
+            )
+            .when(show_search, |center| {
+                center.child(div().h(px(280.)).child(self.search.clone()))
+            })
+            .into_any_element();
 
         v_flex()
             .id("workspace")
@@ -1009,6 +1184,10 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_mirror))
             .on_action(cx.listener(Self::on_palette))
+            .on_action(cx.listener(Self::on_toggle_preview))
+            .on_action(cx.listener(Self::on_detach_preview))
+            .on_action(cx.listener(Self::on_toggle_preview_sync))
+            .on_action(cx.listener(Self::on_pin_preview))
             .child(
                 TitleBar::new().child(
                     h_flex()
@@ -1056,43 +1235,13 @@ impl Render for WorkspaceView {
                                 .child(self.render_sidebar(cx)),
                         )
                         .child(
-                            resizable_panel().child(
-                                v_flex()
-                                    .size_full()
-                                    .when(has_tabs, |center| center.child(self.render_tabs(cx)))
-                                    .child(div().flex_1().min_h_0().children(editor).when(
-                                        !has_tabs,
-                                        |empty| {
-                                            empty.child(
-                                                v_flex()
-                                                    .size_full()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(
-                                                        "Open a folder or a page from the sidebar",
-                                                    )
-                                                    .child(
-                                                        Button::new("open-folder")
-                                                            .primary()
-                                                            .label("Open Folder…")
-                                                            .on_click(cx.listener(
-                                                                |this, _, window, cx| {
-                                                                    this.on_open_folder(
-                                                                        &OpenFolder,
-                                                                        window,
-                                                                        cx,
-                                                                    );
-                                                                },
-                                                            )),
-                                                    ),
-                                            )
-                                        },
-                                    ))
-                                    .when(show_search, |center| {
-                                        center.child(div().h(px(280.)).child(self.search.clone()))
-                                    }),
-                            ),
+                            resizable_panel().child(match docked_preview {
+                                Some(preview) => h_resizable("editor-preview")
+                                    .child(resizable_panel().child(center))
+                                    .child(resizable_panel().size(px(520.)).child(preview))
+                                    .into_any_element(),
+                                None => center,
+                            }),
                         )
                         .child(
                             resizable_panel().size(px(240.)).child(

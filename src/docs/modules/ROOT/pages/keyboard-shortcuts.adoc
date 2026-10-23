@@ -107,9 +107,18 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Cmd-K Cmd-N
 |Ctrl-K Ctrl-N
 |UI only
+
+|Toggle preview
+|Cmd-K V
+|Ctrl-K V
+|`view.toggle_preview`
 |===
 
 Two commands have no default binding and are available from the palette: Re-index Workspace (`workspace.reindex`) and Reload Settings (`settings.reload`).
+Three preview commands also have no default binding and are available from the palette: Detach Preview (`view.detach_preview`), Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) and Pin Preview (`preview.pin`).
+Toggle Preview is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
+See xref:preview.adoc[The preview].
+Go to Location (`navigate.go_to`) and Reveal in Editor (`navigate.reveal`) take a position and are driven by clicks in the preview rather than bound to keys.
 Apply Preview (`workspace.apply_preview`), Insert Text (`edit.insert_text`) and Replace Range (`edit.replace_range`) are driven by the user interface rather than bound to keys.
 
 Undo, redo, go to definition, follow link and peek include are bound in the editor's key context after the editor widget's own bindings, so they take precedence and go through the engine.
