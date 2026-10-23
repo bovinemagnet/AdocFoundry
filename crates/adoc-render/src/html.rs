@@ -591,9 +591,11 @@ fn code_with_callouts(text: &str, callouts: &[adoc_dom::Callout]) -> String {
 }
 
 fn file_url(path: &std::path::Path) -> String {
-    // A relative path after `file://` would be read as a host name.
+    // A relative path after `file://` would be read as a host name; `from_file_path`
+    // percent-encodes each segment and writes Windows drives as `/C:/`.
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    format!("file://{}", absolute.display())
+    url::Url::from_file_path(&absolute)
+        .map_or_else(|()| format!("file://{}", absolute.display()), String::from)
 }
 
 fn img(image: &ViewImage) -> String {

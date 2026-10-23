@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 adoc-core.workspace = true
 adoc-dom.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 adoc-antora.workspace = true

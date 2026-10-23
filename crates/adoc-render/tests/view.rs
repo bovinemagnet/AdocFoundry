@@ -514,3 +514,42 @@ fn file_urls_are_absolute_for_relative_paths() {
         assert!(html.contains(&expected), "{path}: {html}");
     }
 }
+
+/// Renders a page whose one image resolves to `path`, and returns the image's `src`.
+fn image_src(path: &str) -> String {
+    struct At(PathBuf);
+    impl ViewResolver for At {
+        fn xref(&self, from: &Path, target: &str) -> ResolvedLink {
+            LocalResolver.xref(from, target)
+        }
+        fn image(&self, _: &Path, _: &str, _: Option<&str>) -> Option<PathBuf> {
+            Some(self.0.clone())
+        }
+        fn diagram(&self, _: &str, _: &str, _: &BTreeMap<String, String>) -> DiagramView {
+            DiagramView::Svg(self.0.clone())
+        }
+    }
+    let view = view_of(
+        Path::new("/page.adoc"),
+        "= Page\n\nimage::a.png[A]\n",
+        &At(PathBuf::from(path)),
+    );
+    let html = to_html(&view, &HtmlOptions::default());
+    let start = html.find("<img src=\"").unwrap() + "<img src=\"".len();
+    html[start..start + html[start..].find('"').unwrap()].to_owned()
+}
+
+#[cfg(unix)]
+#[test]
+fn file_urls_percent_encode_reserved_characters() {
+    assert_eq!(
+        image_src("/my docs/50%/a#b?.png"),
+        "file:///my%20docs/50%25/a%23b%3F.png"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn file_urls_name_windows_drives() {
+    assert_eq!(image_src(r"C:\my docs\a.png"), "file:///C:/my%20docs/a.png");
+}
