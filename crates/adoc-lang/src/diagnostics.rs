@@ -72,12 +72,22 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
                     }
                 }
             }
+            // A version of a known component that is not checked out here is published from
+            // another branch. When the playbook and repository say which, and it is not this
+            // one, the link cannot be checked locally: say so.
+            Err(ResolutionError::UnknownVersion { component, version }) => {
+                resolved.insert(reference.range);
+                if let Some(message) = version_elsewhere(antora, &component, &version) {
+                    pending.push((
+                        DiagnosticCode::AntoraVersionNotOnBranch,
+                        message,
+                        reference.range,
+                    ));
+                }
+            }
             // A component missing from the workspace is normally published from another
             // repository in the playbook, so its absence here says nothing about the xref.
-            // The same holds for a version of a known component that is not checked out here.
-            Err(
-                ResolutionError::UnknownComponent { .. } | ResolutionError::UnknownVersion { .. },
-            ) => {
+            Err(ResolutionError::UnknownComponent { .. }) => {
                 resolved.insert(reference.range);
             }
             // Only explicit resource IDs are reported as Antora failures. A bare path that the
@@ -312,6 +322,27 @@ fn declares_anchor(
         .any(|composed| index.resolve_anchor(composed, anchor).is_some())
 }
 
+/// Why an xref to `version` of `component`, absent from the workspace, cannot be checked: the
+/// branches that publish it, when that is known and is not the current branch.
+fn version_elsewhere(antora: &AntoraCatalog, component: &str, version: &str) -> Option<String> {
+    let known = antora.branch_versions()?;
+    let version_key = (version != "~").then_some(version);
+    let branches = known.published.branches_for_version(component, version_key);
+    if branches.is_empty() || branches.contains(&known.current) {
+        return None;
+    }
+    let names = branches.join(", ");
+    let noun = if branches.len() == 1 {
+        "branch"
+    } else {
+        "branches"
+    };
+    Some(format!(
+        "version {version} is published from {noun} {names}, not {}",
+        known.current
+    ))
+}
+
 fn resolution_diagnostic(
     error: &ResolutionError,
     target: &str,
@@ -379,6 +410,70 @@ mod tests {
     use adoc_index::WorkspaceIndex;
 
     use super::{descriptor_diagnostics, diagnostics};
+
+    /// The `main` root of the versions fixture (and `also`, when given), indexed, with a page
+    /// linking to version 1.0.
+    fn version_workspace(
+        also: Option<&str>,
+    ) -> (
+        WorkspaceIndex,
+        adoc_antora::AntoraCatalog,
+        std::path::PathBuf,
+    ) {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-versions");
+        let mut roots = vec![fixture.join("main")];
+        roots.extend(also.map(|root| fixture.join(root)));
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(&roots).unwrap();
+        let antora = discover_antora_workspace(&roots).unwrap().catalog;
+        let page = adoc_index::normalize_path(&roots[0].join("modules/ROOT/pages/index.adoc"));
+        index.index_source(
+            &page,
+            "= Home\n\nSee xref:1.0@product::index.adoc[the 1.0 home].\n",
+        );
+        (index, antora, page)
+    }
+
+    fn published_from_branches() -> adoc_antora::BranchVersions {
+        let mut published = adoc_antora::PublishedVersions::default();
+        published.record("product", None, "main");
+        published.record("product", Some("1.0"), "v1.0");
+        published.record("product", Some("2.0"), "v2.0");
+        adoc_antora::BranchVersions {
+            current: "main".to_owned(),
+            published,
+        }
+    }
+
+    #[test]
+    fn xref_to_version_on_other_branch_warns() {
+        let (index, mut antora, page) = version_workspace(None);
+        antora.set_branch_versions(Some(published_from_branches()));
+        let found = diagnostics(&index, &antora, &page);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, DiagnosticCode::AntoraVersionNotOnBranch);
+        assert_eq!(found[0].code.as_str(), "adoc.antora.version-not-on-branch");
+        assert_eq!(found[0].severity, adoc_core::DiagnosticSeverity::Warning);
+        assert_eq!(
+            found[0].message,
+            "version 1.0 is published from branch v1.0, not main"
+        );
+    }
+
+    #[test]
+    fn xref_to_version_present_in_workspace_is_silent() {
+        let (index, mut antora, page) = version_workspace(Some("v1"));
+        antora.set_branch_versions(Some(published_from_branches()));
+        assert!(diagnostics(&index, &antora, &page).is_empty());
+    }
+
+    #[test]
+    fn no_playbook_no_version_diagnostic() {
+        let (index, antora, page) = version_workspace(None);
+        assert!(antora.branch_versions().is_none());
+        assert!(diagnostics(&index, &antora, &page).is_empty());
+    }
 
     #[test]
     fn reports_xrefs_resolved_through_a_page_alias_as_information() {

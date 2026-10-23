@@ -97,6 +97,14 @@ impl PublishedVersions {
     }
 }
 
+/// The branch the workspace is on and the branches that publish each component version, known
+/// only when the workspace has both a playbook and a repository.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BranchVersions {
+    pub current: String,
+    pub published: PublishedVersions,
+}
+
 /// Matches a branch name against an Antora (picomatch) glob: `*`, `?`, `{a,b}` and numeric
 /// ranges `{0..9}`, which `globset` has no syntax for and are expanded first.
 fn glob_matches(pattern: &str, name: &str) -> bool {

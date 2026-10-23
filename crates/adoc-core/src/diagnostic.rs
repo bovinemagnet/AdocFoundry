@@ -14,6 +14,7 @@ pub enum DiagnosticCode {
     AntoraInvalidDescriptor,
     AntoraResolvedViaAlias,
     AntoraNavUnresolved,
+    AntoraVersionNotOnBranch,
 }
 
 impl DiagnosticCode {
@@ -32,6 +33,7 @@ impl DiagnosticCode {
             Self::AntoraInvalidDescriptor => "adoc.antora.invalid-descriptor",
             Self::AntoraResolvedViaAlias => "adoc.antora.resolved-via-alias",
             Self::AntoraNavUnresolved => "adoc.antora.nav-unresolved",
+            Self::AntoraVersionNotOnBranch => "adoc.antora.version-not-on-branch",
         }
     }
 }
