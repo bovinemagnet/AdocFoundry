@@ -68,6 +68,10 @@ pub mod ids {
     pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
     pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
     pub const GIT_REFRESH: CommandId = CommandId::new("git.refresh");
+    pub const GIT_REVERT_HUNK: CommandId = CommandId::new("git.revert_hunk");
+    pub const GIT_NEXT_CHANGE: CommandId = CommandId::new("git.next_change");
+    pub const GIT_PREVIOUS_CHANGE: CommandId = CommandId::new("git.previous_change");
+    pub const GIT_SHOW_CHANGES: CommandId = CommandId::new("git.show_changes");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;

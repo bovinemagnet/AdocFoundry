@@ -218,3 +218,120 @@ fn git_disabled_setting_skips_discovery() {
     assert!(engine.wait_for_workers(Duration::from_secs(10)));
     assert_eq!(engine.git().repositories().len(), 1);
 }
+
+/// A repository with a page of ten numbered lines, open in an engine over it.
+fn ten_lines(dir: &Path) -> (TestRepo, Engine, adoc_engine::DocumentId, String) {
+    let test = TestRepo::init(dir);
+    let text: String = (1..=10).map(|number| format!("line {number}\n")).collect();
+    test.write("page.adoc", &text);
+    test.commit_all("first");
+    let mut engine = engine();
+    engine.open_workspace(vec![dir.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&dir.join("page.adoc")).unwrap();
+    (test, engine, id, text)
+}
+
+fn replace(engine: &mut Engine, id: adoc_engine::DocumentId, find: &str, with: &str) {
+    let text = engine.document(id).unwrap().text.to_string();
+    let start = text.find(find).unwrap();
+    engine
+        .invoke(
+            ids::EDIT_REPLACE_RANGE,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(start, start + find.len()),
+                text: with.to_owned(),
+            },
+        )
+        .unwrap();
+}
+
+fn text_of(engine: &Engine, id: adoc_engine::DocumentId) -> String {
+    engine.document(id).unwrap().text.to_string()
+}
+
+#[test]
+fn revert_hunk_restores_head_text_as_one_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_test, mut engine, id, original) = ten_lines(dir.path());
+    replace(&mut engine, id, "line 3\n", "line three\nand more\n");
+    replace(&mut engine, id, "line 8\n", "");
+    let edited = text_of(&engine, id);
+
+    // Any offset inside the first change reverts it, and only it.
+    let inside = edited.find("and more").unwrap();
+    engine
+        .invoke(
+            ids::GIT_REVERT_HUNK,
+            CommandArgs::Offset { id, offset: inside },
+        )
+        .unwrap();
+    let reverted = text_of(&engine, id);
+    assert_eq!(reverted, original.replace("line 8\n", ""));
+
+    // The deletion reverts from the line after it.
+    let after = reverted.find("line 9").unwrap();
+    engine
+        .invoke(
+            ids::GIT_REVERT_HUNK,
+            CommandArgs::Offset { id, offset: after },
+        )
+        .unwrap();
+    assert_eq!(text_of(&engine, id), original);
+
+    // Each revert is one undo step.
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(text_of(&engine, id), reverted);
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(text_of(&engine, id), edited);
+
+    // Outside any change there is nothing to revert.
+    assert!(engine
+        .invoke(ids::GIT_REVERT_HUNK, CommandArgs::Offset { id, offset: 0 })
+        .is_err());
+}
+
+#[test]
+fn next_change_wraps_around() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_test, mut engine, id, _) = ten_lines(dir.path());
+    replace(&mut engine, id, "line 2\n", "line two\n");
+    replace(&mut engine, id, "line 7\n", "line seven\n");
+    let text = text_of(&engine, id);
+    let two = text.find("line two").unwrap();
+    let seven = text.find("line seven").unwrap();
+
+    let go = |engine: &mut Engine, command, offset| match engine
+        .invoke(command, CommandArgs::Offset { id, offset })
+        .unwrap()
+    {
+        adoc_engine::CommandOutcome::Location(location) => location.range.start,
+        other => panic!("expected a location, got {other:?}"),
+    };
+    assert_eq!(go(&mut engine, ids::GIT_NEXT_CHANGE, 0), two);
+    assert_eq!(go(&mut engine, ids::GIT_NEXT_CHANGE, two), seven);
+    assert_eq!(
+        go(&mut engine, ids::GIT_NEXT_CHANGE, seven),
+        two,
+        "wraps to the first"
+    );
+    assert_eq!(go(&mut engine, ids::GIT_PREVIOUS_CHANGE, seven), two);
+    assert_eq!(
+        go(&mut engine, ids::GIT_PREVIOUS_CHANGE, two),
+        seven,
+        "wraps to the last"
+    );
+    assert_eq!(go(&mut engine, ids::GIT_PREVIOUS_CHANGE, text.len()), seven);
+
+    // A document without changes has nowhere to go.
+    replace(&mut engine, id, "line two\n", "line 2\n");
+    replace(&mut engine, id, "line seven\n", "line 7\n");
+    assert!(engine
+        .invoke(ids::GIT_NEXT_CHANGE, CommandArgs::Document(id))
+        .is_err());
+}

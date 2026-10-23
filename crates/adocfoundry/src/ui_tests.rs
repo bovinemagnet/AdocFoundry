@@ -754,6 +754,187 @@ fn status_bar_shows_no_branch_outside_git(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("status-branch-main").is_none());
 }
 
+/// Drains the engine until its workers and timers are done, as the app's pump would.
+fn settle_engine(app: &Entity<AppState>, cx: &mut VisualTestContext) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        let pending = cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.drain(cx);
+                app.engine.has_pending()
+            })
+        });
+        if !pending {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    cx.run_until_parked();
+}
+
+/// A repository whose `page.adoc` has ten numbered lines, open in a workspace window.
+fn ten_line_repository(
+    dir: &Path,
+    cx: &mut TestAppContext,
+) -> (Entity<AppState>, Entity<WorkspaceView>, VisualTestContext) {
+    init(cx);
+    let test = adoc_git::testing::TestRepo::init(dir);
+    let text: String = (1..=10).map(|number| format!("line {number}\n")).collect();
+    test.write("page.adoc", &text);
+    test.commit_all("first");
+    let mut engine = Engine::new(Settings::default());
+    engine.open_workspace(vec![dir.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![dir.join("page.adoc")], cx);
+    settle_engine(&app, &mut cx);
+    (app, workspace, cx)
+}
+
+fn replace_in(app: &Entity<AppState>, find: &str, with: &str, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            let text = app.engine.document(id).unwrap().text.to_string();
+            let start = text.find(find).unwrap();
+            app.invoke(
+                ids::EDIT_REPLACE_RANGE,
+                adoc_engine::CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(start, start + find.len()),
+                    text: with.to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+}
+
+#[gpui::test]
+fn gutter_marks_follow_hunks(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, workspace, mut cx) = ten_line_repository(dir.path(), cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    assert!(cx
+        .update(|_, cx| editor.read(cx).marks_for_test())
+        .is_empty());
+
+    replace_in(&app, "line 2\n", "line two\n", &mut cx);
+    replace_in(&app, "line 5\n", "line 5\nnew line\n", &mut cx);
+    replace_in(&app, "line 9\n", "", &mut cx);
+    settle_engine(&app, &mut cx);
+
+    let marks = cx.update(|_, cx| editor.read(cx).marks_for_test());
+    let kinds: Vec<_> = marks.iter().map(|mark| mark.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            adoc_engine::HunkKind::Modified,
+            adoc_engine::HunkKind::Added,
+            adoc_engine::HunkKind::Deleted
+        ]
+    );
+    // Each mark sits on its lines: the modified line is the second, one line high.
+    let line_height = marks[0].bounds.size.height;
+    assert!(line_height > gpui::px(0.));
+    assert!(marks[1].bounds.top() > marks[0].bounds.bottom());
+    assert_eq!(marks[1].bounds.size.height, line_height, "one added line");
+    assert!(marks[2].bounds.top() > marks[1].bounds.bottom());
+
+    // Undoing the edits clears the marks.
+    for _ in 0..3 {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                let id = app.engine.active().unwrap();
+                app.invoke(ids::EDIT_UNDO, adoc_engine::CommandArgs::Document(id), cx)
+                    .unwrap();
+            })
+        });
+    }
+    settle_engine(&app, &mut cx);
+    assert!(cx
+        .update(|_, cx| editor.read(cx).marks_for_test())
+        .is_empty());
+}
+
+#[gpui::test]
+fn clicking_a_mark_shows_head_text_and_reverts(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, workspace, mut cx) = ten_line_repository(dir.path(), cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    replace_in(&app, "line 4\n", "line four\n", &mut cx);
+    settle_engine(&app, &mut cx);
+    let mark = cx.update(|_, cx| editor.read(cx).marks_for_test())[0].clone();
+
+    cx.simulate_click(mark.bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| editor.read(cx).open_change_for_test()),
+        Some("line 4\n".to_owned())
+    );
+    let revert = cx
+        .debug_bounds("change-card")
+        .expect("the change card is open");
+    assert!(revert.size.width > gpui::px(0.));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.revert_open_change(window, cx));
+    });
+    settle_engine(&app, &mut cx);
+    let text = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .text
+            .to_string()
+    });
+    assert!(text.contains("line 4\n") && !text.contains("four"));
+    assert!(cx
+        .update(|_, cx| editor.read(cx).marks_for_test())
+        .is_empty());
+}
+
+#[gpui::test]
+fn visual_blocks_marked_when_range_intersects_hunk(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write(
+        "page.adoc",
+        "= Page\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n",
+    );
+    test.commit_all("first");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (_, mut cx) = workspace_window(&app, vec![dir.path().join("page.adoc")], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    settle_engine(&app, &mut cx);
+    assert!(
+        cx.debug_bounds("visual-change-2").is_none(),
+        "nothing changed yet"
+    );
+
+    replace_in(
+        &app,
+        "Second paragraph.",
+        "Second paragraph, edited.",
+        &mut cx,
+    );
+    settle_engine(&app, &mut cx);
+    // Blocks: the title (0), the first (1), second (2) and third (3) paragraphs.
+    assert!(
+        cx.debug_bounds("visual-change-2").is_some(),
+        "the edited paragraph is marked"
+    );
+    assert!(cx.debug_bounds("visual-change-1").is_none());
+    assert!(cx.debug_bounds("visual-change-3").is_none());
+}
+
 // --- visual editor ---------------------------------------------------------------------------
 
 /// A workspace showing `text` as its only page in the visual editor.

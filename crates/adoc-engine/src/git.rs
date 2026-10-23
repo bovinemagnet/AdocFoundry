@@ -448,18 +448,183 @@ fn snapshot(repo: &Repository) -> Result<(Head, Vec<FileStatus>), String> {
     Ok((head, status))
 }
 
+impl Engine {
+    /// The line changes of open document `id` against `HEAD` now, computed on this thread from
+    /// its current text, for commands that must not act on hunks a few keystrokes old.
+    pub fn hunks_now(&self, id: DocumentId) -> Result<Vec<Hunk>, EngineError> {
+        let document = self
+            .documents
+            .get(&id)
+            .ok_or(EngineError::UnknownDocument(id))?;
+        let repo = self.repository_of(&document.path)?;
+        repo.line_diff(&document.path, Some(&document.text.to_string()))
+            .map_err(|error| EngineError::InvalidRequest(error.to_string()))
+    }
+
+    /// The text in `HEAD` of the lines `hunk` replaces in open document `id`.
+    pub fn head_text(&self, id: DocumentId, hunk: &Hunk) -> Result<String, EngineError> {
+        let document = self
+            .documents
+            .get(&id)
+            .ok_or(EngineError::UnknownDocument(id))?;
+        let repo = self.repository_of(&document.path)?;
+        let head = repo
+            .head_content(&document.path)
+            .map_err(|error| EngineError::InvalidRequest(error.to_string()))?
+            .unwrap_or_default();
+        let lines = adoc_core::LineIndex::new(&head);
+        let start = |line: usize| lines.offset(line, 0).unwrap_or(head.len());
+        Ok(head[start(hunk.head_lines.start)..start(hunk.head_lines.end)].to_owned())
+    }
+
+    fn repository_of(&self, path: &Path) -> Result<Repository, EngineError> {
+        let not_in_git =
+            || EngineError::NotFound(format!("{} is not in a Git repository", path.display()));
+        let workdir = &self
+            .git
+            .repository_for(path)
+            .ok_or_else(not_in_git)?
+            .workdir;
+        Repository::discover(workdir)
+            .map_err(|error| EngineError::InvalidRequest(error.to_string()))?
+            .ok_or_else(not_in_git)
+    }
+}
+
+/// The hunk at `offset`: the one whose lines hold it, or the deletion just before it.
+fn hunk_at(hunks: &[Hunk], offset: usize) -> Option<&Hunk> {
+    hunks
+        .iter()
+        .find(|hunk| hunk.range.start <= offset && offset < hunk.range.end)
+        .or_else(|| hunks.iter().find(|hunk| hunk.range.start == offset))
+}
+
 pub(crate) fn register_git(registry: &mut CommandRegistry) {
-    register(
-        registry,
-        spec(
-            ids::GIT_REFRESH,
-            "Refresh Git Status",
-            CommandCategory::Workspace,
-            None,
-            CommandContext::Always,
+    use CommandCategory::{Edit, Navigate, View, Workspace};
+    use CommandContext::{ActiveDocument, Always};
+    let commands: [(crate::CommandSpec, Run); 5] = [
+        (
+            spec(
+                ids::GIT_REFRESH,
+                "Refresh Git Status",
+                Workspace,
+                None,
+                Always,
+            ),
+            git_refresh,
         ),
-        git_refresh,
-    );
+        (
+            spec(
+                ids::GIT_REVERT_HUNK,
+                "Revert Change",
+                Edit,
+                None,
+                ActiveDocument,
+            ),
+            git_revert_hunk,
+        ),
+        (
+            spec(
+                ids::GIT_NEXT_CHANGE,
+                "Go to Next Change",
+                Navigate,
+                Some("alt-down"),
+                ActiveDocument,
+            ),
+            |engine, args| go_to_change(engine, args, true),
+        ),
+        (
+            spec(
+                ids::GIT_PREVIOUS_CHANGE,
+                "Go to Previous Change",
+                Navigate,
+                Some("alt-up"),
+                ActiveDocument,
+            ),
+            |engine, args| go_to_change(engine, args, false),
+        ),
+        (
+            spec(ids::GIT_SHOW_CHANGES, "Show Changes", View, None, Always),
+            // The front end shows its Changes panel; the engine has nothing to do.
+            |_, _| Ok(CommandOutcome::Done),
+        ),
+    ];
+    for (spec, run) in commands {
+        register(registry, spec, run);
+    }
+}
+
+type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;
+
+/// The document and caret offset of a command's arguments; `Document` is the start.
+fn document_offset(
+    command: crate::CommandId,
+    args: CommandArgs,
+) -> Result<(DocumentId, Option<usize>), EngineError> {
+    match args {
+        CommandArgs::Offset { id, offset } => Ok((id, Some(offset))),
+        CommandArgs::Document(id) => Ok((id, None)),
+        _ => Err(EngineError::InvalidArguments {
+            command,
+            expected: "a document and an offset",
+        }),
+    }
+}
+
+/// Replaces the change at the offset with its text in `HEAD`, as one undo step.
+fn git_revert_hunk(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let (id, offset) = document_offset(ids::GIT_REVERT_HUNK, args)?;
+    let hunks = engine.hunks_now(id)?;
+    let hunk = hunk_at(&hunks, offset.unwrap_or(0))
+        .ok_or_else(|| EngineError::NotFound("there is no change here".to_owned()))?
+        .clone();
+    let head = engine.head_text(id, &hunk)?;
+    let group = engine.new_group();
+    engine.apply_edits(
+        id,
+        vec![crate::TextEdit::new(hunk.range, head)],
+        crate::engine::UndoMode::Group(group),
+    )?;
+    Ok(CommandOutcome::Done)
+}
+
+/// The next change after the offset (or the previous one before it), wrapping round.
+fn go_to_change(
+    engine: &mut Engine,
+    args: CommandArgs,
+    forward: bool,
+) -> Result<CommandOutcome, EngineError> {
+    let command = if forward {
+        ids::GIT_NEXT_CHANGE
+    } else {
+        ids::GIT_PREVIOUS_CHANGE
+    };
+    let (id, offset) = document_offset(command, args)?;
+    let hunks = engine.hunks_now(id)?;
+    let target = if forward {
+        let after = offset.map_or(0, |offset| offset + 1);
+        hunks
+            .iter()
+            .find(|hunk| hunk.range.start >= after)
+            .or(hunks.first())
+    } else {
+        let offset = offset.unwrap_or(usize::MAX);
+        hunks
+            .iter()
+            .rev()
+            .find(|hunk| hunk.range.start < offset && !(offset < hunk.range.end))
+            .or(hunks.last())
+    }
+    .ok_or_else(|| EngineError::NotFound("there are no changes".to_owned()))?;
+    let path = engine
+        .document(id)
+        .ok_or(EngineError::UnknownDocument(id))?
+        .path
+        .clone();
+    Ok(CommandOutcome::Location(crate::Location {
+        path,
+        range: adoc_core::SourceRange::new(target.range.start, target.range.start),
+    }))
 }
 
 fn git_refresh(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
