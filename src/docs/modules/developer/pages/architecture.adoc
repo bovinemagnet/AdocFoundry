@@ -52,9 +52,13 @@ include::example$crate-layers.mmd[]
 |`adoc-diagrams`
 |Diagram rendering for the preview. Mermaid is rendered in process through `merman`, other kinds (Graphviz, PlantUML, D2) through external tools discovered on the `PATH`, and every result is cached on disk by checksum.
 
+|L2
+|`adoc-model`
+|The editable model behind the visual editor. It depends on `adoc-core` and `adoc-dom`, and the engine depends on it. A `Model` is typed blocks whose text is scanned losslessly into pieces (text, marks and atoms) that each know their exact source bytes, checked against the DOM. A `Step` on the model yields minimal `SourceEdit` values, an inverse, and a position `Mapping`. The source stays the truth; see xref:engine.adoc#the-visual-model-service[the engine].
+
 |L3
 |`adoc-engine`
-|Documents, commands, undo, workspace, file watcher, settings, search and rename, and the `EngineEvent` stream. The only entry point front ends use.
+|Documents, commands, undo, workspace, file watcher, settings, search and rename, the preview and visual model services, and the `EngineEvent` stream. The only entry point front ends use.
 
 |L4
 |`adocfoundry`
@@ -69,8 +73,9 @@ include::example$crate-layers.mmd[]
 |The language server. The only crate that speaks the Language Server Protocol.
 |===
 
-Later phases add `adoc-model` and `adoc-pdf`.
-Their layers are already reserved in the layering check.
+Phase 4 adds `adoc-pdf`.
+Its layer is already reserved in the layering check.
+The application sees `adoc-model` types only through the engine's re-exports.
 
 == Layering rules
 

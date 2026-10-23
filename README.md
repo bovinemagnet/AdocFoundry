@@ -4,7 +4,7 @@ Forge your documentation in real time.
 
 AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way, written in Rust for macOS, Linux and Windows. It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
 
-The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes. **Phases 1 and 2 are implemented.** The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md).
+The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes. **Phases 1 to 3 are implemented.** The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md).
 
 ## What works
 
@@ -48,6 +48,17 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render when `dot`, `plantuml` or `d2` is on `PATH`, and otherwise show their source with the reason. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
 - STEM blocks show their maths as styled source.
 
+**Visual editing**
+
+- Each tab shows its page as Source, Visual or both side by side (Split): buttons beside the tabs, or Cmd/Ctrl-K S, W and D. The visual editor shows the page rendered and edits it in place.
+- The source stays the truth. Every visual edit becomes the smallest change to the source that makes it, so the Git diff touches only the lines you edited; text the editor does not understand is never rewritten.
+- Typing, deleting, selecting with the mouse and keyboard, and IME composition. A character that would otherwise become markup (a `*` that would make text bold, `{name}`, a URL) is escaped where it is typed, and only then.
+- Bold, Italic and Code (Cmd/Ctrl-B, -I, -E) and Highlight toggle on the selection, or with nothing selected on what you type next; marks keep the delimiters they were written with. Insert Link (Cmd/Ctrl-Shift-L) links the selection to a URL, page or anchor, or changes the link at the caret.
+- Enter splits a paragraph, heading or list item, and at the end of one starts another; Backspace at a block's start joins or lifts it. A block-type picker turns paragraphs into headings, admonitions, code blocks and quotes; lists are made, changed and indented (Tab, Shift-Tab) from the toolbar or the keyboard, and checkboxes toggle on click.
+- Table cells are edited in place; rows and columns are inserted and deleted from the Table menu (tables without spans). Images are inserted, and clicking one edits its target and alt text.
+- Undo and redo are shared with the source editor: one history whichever editor made the change. In Split mode each side follows the other's caret.
+- Included content, diagrams, STEM, passthroughs, attribute entries, conditionals and anything the editor and the parser read differently are shown read-only; clicking them shows their source.
+
 **Find, replace and rename**
 
 - Find in the workspace, with regular expression, case and whole-word options.
@@ -90,13 +101,18 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Back / Forward | Ctrl-minus / Ctrl-Shift-minus | Ctrl-minus / Ctrl-Shift-minus |
 | Peek include | Alt-F12 | Alt-F12 |
 | Toggle preview | Cmd-K V | Ctrl-K V |
+| Show source / visual / split | Cmd-K S / Cmd-K W / Cmd-K D | Ctrl-K S / Ctrl-K W / Ctrl-K D |
+| Bold / Italic / Code (visual) | Cmd-B / Cmd-I / Cmd-E | Ctrl-B / Ctrl-I / Ctrl-E |
+| Insert link (visual) | Cmd-Shift-L | Ctrl-Shift-L |
+| Bulleted / numbered / checklist (visual) | Cmd-Shift-8 / -7 / -9 | Ctrl-Shift-8 / -7 / -9 |
+| Indent / outdent list item (visual) | Tab / Shift-Tab | Tab / Shift-Tab |
 | Find / Replace in workspace | Cmd-Shift-F / Cmd-Shift-H | Ctrl-Shift-F / Ctrl-Shift-H |
 | Rename page | F2 | F2 |
 | Settings | Cmd-, | Ctrl-, |
 | Toggle theme | Cmd-K Cmd-T | Ctrl-K Ctrl-T |
 | Read-only second window | Cmd-K Cmd-N | Ctrl-K Ctrl-N |
 
-Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the preview's toolbar and commands in the palette.
+Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the preview's toolbar and commands in the palette. The visual editor's toolbar holds the block-type picker, the marks, Link, the lists, an Insert menu (image, table, code block, admonition) and, in a table cell, the Table menu; every one of them is also in the palette.
 
 ## Settings
 
@@ -142,13 +158,14 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
 
 ## Not implemented yet
 
-- WYSIWYG editing (Phase 3) and PDF export (Phase 4).
+- PDF export (Phase 4).
+- In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
 - Typeset STEM: the preview shows the maths source until Phase 4.
 - Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
 - Editing included content in place, spell checking, Git integration, plugins.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
 - Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
-- Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
+- Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 
 ## Developing
 
@@ -165,13 +182,13 @@ The workspace is a ladder of crates, each depending only on those below it:
 
 ```text
 adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)
-adoc-engine              documents, commands, undo, workspace, watcher, settings, search, preview
-adoc-render   adoc-diagrams                view tree and HTML; Mermaid and diagram tools
+adoc-engine              documents, commands, undo, workspace, watcher, settings, search, preview, visual model
+adoc-render   adoc-diagrams   adoc-model   view tree and HTML; Mermaid and diagram tools; the editable model
 adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang
 adoc-core
 ```
 
-`adoc-dom` holds the full document tree behind the `DocumentParser` trait and is the only crate that names a parser crate (acdc-parser, and asciidoc-parser for comparison). The fidelity harness (`cargo test -p adocfoundry-cli --test fidelity`) compares `render` with Asciidoctor over `tests/fixtures/render/`, and skips itself when `asciidoctor --version` fails.
+`adoc-dom` holds the full document tree behind the `DocumentParser` trait and is the only crate that names a parser crate (acdc-parser, and asciidoc-parser for comparison). `adoc-model` is the visual editor's model: it reads each text block of a page losslessly (every source byte is text, a mark delimiter or part of an atom), checks its reading against the parser's, and turns edits into the smallest source edits; its property tests (`cargo test -p adoc-model --test roundtrip`) check that building and writing back is the identity on every fixture and documentation page and that a long random editing session changes only the lines it edited. The fidelity harness (`cargo test -p adocfoundry-cli --test fidelity`) compares `render` with Asciidoctor over `tests/fixtures/render/`, and skips itself when `asciidoctor --version` fails.
 
 ## Licence
 

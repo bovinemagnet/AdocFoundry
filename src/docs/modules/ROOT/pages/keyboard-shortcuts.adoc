@@ -112,6 +112,21 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Cmd-K V
 |Ctrl-K V
 |`view.toggle_preview`
+
+|Show source
+|Cmd-K S
+|Ctrl-K S
+|`view.show_source`
+
+|Show visual editor
+|Cmd-K W
+|Ctrl-K W
+|`view.show_visual`
+
+|Show source and visual editor
+|Cmd-K D
+|Ctrl-K D
+|`view.show_split`
 |===
 
 Two commands have no default binding and are available from the palette: Re-index Workspace (`workspace.reindex`) and Reload Settings (`settings.reload`).
@@ -122,5 +137,98 @@ Go to Location (`navigate.go_to`) and Reveal in Editor (`navigate.reveal`) take 
 Apply Preview (`workspace.apply_preview`), Insert Text (`edit.insert_text`) and Replace Range (`edit.replace_range`) are driven by the user interface rather than bound to keys.
 
 Undo, redo, go to definition, follow link and peek include are bound in the editor's key context after the editor widget's own bindings, so they take precedence and go through the engine.
+
+[[visual-editor]]
+== Visual editor
+
+These bindings apply while the visual editor has focus.
+Undo and redo are the commands above, and are shared with the source editor.
+See xref:visual-editing.adoc[Visual editing].
+
+[cols="3,2,2,3"]
+|===
+|Command |macOS |Linux and Windows |Command id
+
+|Bold
+|Cmd-B
+|Ctrl-B
+|`edit.toggle_strong`
+
+|Italic
+|Cmd-I
+|Ctrl-I
+|`edit.toggle_emphasis`
+
+|Code
+|Cmd-E
+|Ctrl-E
+|`edit.toggle_code`
+
+|Insert link
+|Cmd-Shift-L
+|Ctrl-Shift-L
+|`edit.insert_link`
+
+|Bulleted list
+|Cmd-Shift-8
+|Ctrl-Shift-8
+|`edit.toggle_bullet_list`
+
+|Numbered list
+|Cmd-Shift-7
+|Ctrl-Shift-7
+|`edit.toggle_numbered_list`
+
+|Checklist
+|Cmd-Shift-9
+|Ctrl-Shift-9
+|`edit.toggle_checklist`
+
+|Indent list item
+|Tab
+|Tab
+|`edit.indent_list_item`
+
+|Outdent list item
+|Shift-Tab
+|Shift-Tab
+|`edit.outdent_list_item`
+
+|New paragraph (split the block)
+|Enter
+|Enter
+|`visual.split_block`
+
+|Delete backward, or change the block at its start
+|Backspace
+|Backspace
+|`visual.delete_backward`
+
+|Delete forward
+|Delete
+|Delete
+|`visual.delete_forward`
+
+|Move the caret
+|Arrow keys, Home, End
+|Arrow keys, Home, End
+|UI only
+
+|Extend the selection
+|Shift with the above
+|Shift with the above
+|UI only
+
+|Select all, copy, cut, paste
+|Cmd-A, Cmd-C, Cmd-X, Cmd-V
+|Ctrl-A, Ctrl-C, Ctrl-X, Ctrl-V
+|UI only
+|===
+
+Some visual commands have no default binding and are available from the palette or the toolbar: Highlight (`edit.toggle_highlight`), Set Block Type (`edit.set_block_type`), Remove Link (`edit.remove_link`), Check or Uncheck (`edit.toggle_checked`), Insert Image (`edit.insert_image`), Edit Image (`edit.edit_image`), Insert Table (`edit.insert_table`), Insert Table Row, Delete Table Row, Insert Table Column and Delete Table Column (`edit.insert_table_row`, `edit.delete_table_row`, `edit.insert_table_column`, `edit.delete_table_column`), Insert Code Block (`edit.insert_code_block`) and Insert Admonition (`edit.insert_admonition`).
+Type (`visual.insert_text`) and Insert Block (`visual.insert_block`) are driven by typing and by Enter rather than bound to keys.
+Highlight has no binding because Cmd-Shift-H and Ctrl-Shift-H are Replace in Workspace.
+
+The Source, Visual and Split commands are chords like Toggle Preview: hold the modifier for kbd:[K] only, release it, then press the letter on its own.
 
 NOTE: User-defined key bindings are not implemented.

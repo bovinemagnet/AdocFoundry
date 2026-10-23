@@ -50,6 +50,60 @@ It treats a rendered diagram as the listing block Asciidoctor writes without its
 
 Application tests for the preview are in `ui_tests.rs`: rendering the active document, the detached preview following edits, click-to-source (including into a partial) and scroll sync in both directions.
 
+== Visual editing tests
+
+The visual editor's tests follow the layers of the code, with as much as possible below the application.
+
+`crates/adoc-model/tests/` tests the model without an engine or a window.
+
+[cols="1,4"]
+|===
+|File |Covers
+
+|`build.rs`
+|`builds_every_block_kind`, `pieces_tile_every_text_block`, `scanner_agrees_with_the_dom`, `disagreeing_blocks_are_read_only`, `included_content_is_read_only`, `conditionals_and_attribute_entries_are_read_only` and `half_typed_input_does_not_panic`.
+
+|`steps.rs`
+|Inline steps: `typed_markup_is_escaped`, `toggle_mark_keeps_delimiter_form`, `steps_invert_exactly`, links, deletion, cells and titles, and refusal on read-only text.
+
+|`blocks.rs`
+|Block steps: Enter, Backspace, block types, lists and new blocks, including `structural_steps_rebuild_the_model`.
+
+|`tables.rs`
+|Rows, columns and `cols`, irregular tables that must keep their structure, and image edits.
+
+|`roundtrip.rs`
+|The round-trip properties, described below.
+|===
+
+[[round-trip-tests]]
+=== Round-trip property tests
+
+`roundtrip.rs` is the phase's Definition of Done in test form: a documentation page edited visually produces a Git diff that touches only the lines the writer changed.
+The corpus is every fixture under `tests/fixtures/` and every page of `src/docs`, so the documentation site itself is a test input.
+
+`serialise_is_identity_on_the_corpus`::
+Builds a model of every page in the corpus and checks that serialising it gives the page back byte for byte, and that each text block serialises to its own source.
+
+`edits_stay_inside_the_touched_block`::
+Applies random steps at random caret stops over the corpus, with a fixed seed, and checks that every source edit lies inside the block the step touched, and that a locally updated model serialises to the edited text.
+
+`a_long_editing_session_touches_only_edited_lines`::
+Applies a scripted session of several hundred steps (more than 500 must apply) over real pages, in the documentation and the render fixtures.
+It then takes a line diff against the original and checks that every line that differs is one a step touched.
+
+`the_session_model_matches_a_rebuild`::
+Checks that what a locally updated model shows (the text and marks of each block) matches a rebuild from the resulting text in at least 95% of local steps.
+The rebuild after `MODEL_SETTLE` corrects the rest.
+
+These tests read the documentation pages, so editing a page can change what they exercise.
+
+`crates/adoc-engine/tests/visual.rs` drives the model service headlessly through commands, with a manual clock: `editor_mode_requests_a_model`, `visual_typing_edits_the_source`, `visual_typing_is_one_undo_step`, `undo_restores_source_and_model`, `source_edits_rebuild_the_model_after_settle`, `stale_model_refuses_visual_edits`, `read_only_text_refuses_visual_edits`, `included_files_rebuild_the_model`, `marks_and_links_are_one_undo_step_each`, `structural_steps_rebuild_the_model` and `tables_and_images_are_edited_through_commands`.
+
+The application tests for the visual editor are the last in `ui_tests.rs`, on GPUI's test platform: `visual_mode_renders_the_document`, `typing_in_visual_mode_edits_the_source`, `clicking_text_places_the_caret`, `ime_composition_commits_once`, `keyboard_formatting_marks_the_selection_or_what_is_typed`, `enter_splits_the_paragraph`, `typing_in_a_table_cell_edits_only_the_cell`, `source_edits_update_the_visual_editor`, `undo_is_shared_between_editors`, `toolbar_bold_toggles_strong` and `included_content_is_not_editable`.
+None of them needs a display.
+As with the other application tests, `ime_composition_commits_once` is not evidence that a real input method works.
+
 == Language server tests
 
 `crates/adoc-ls/tests/stdio.rs` starts the real `adoc-ls` binary and speaks LSP to it: initialise and shutdown, completion, hover, the preview commands and command routing.

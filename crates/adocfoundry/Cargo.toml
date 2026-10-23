@@ -36,7 +36,8 @@ copyright = "2026, Paul Snow"
 license-file = ["../../LICENSE", "0"]
 extended-description = """\
 A desktop editor for AsciiDoc documentation laid out the Antora way: navigation, \
-cross-component link following, diagnostics, workspace search and page rename. \
+cross-component link following, diagnostics, a native preview, visual editing, \
+workspace search and page rename. \
 Includes adocfoundry-cli and the adoc-ls language server."""
 section = "editors"
 priority = "optional"

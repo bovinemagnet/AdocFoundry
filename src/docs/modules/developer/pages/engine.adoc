@@ -71,6 +71,21 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 |`view.toggle_preview`, `view.detach_preview`, `view.toggle_scroll_sync`, `preview.pin`
 |The preview's layout: shown or hidden, docked or detached, scroll sync, and pinned to a document.
 
+|`view.show_source`, `view.show_visual`, `view.show_split`
+|A document's editor mode.
+
+|`visual.insert_text`, `visual.delete_backward`, `visual.delete_forward`, `visual.split_block`, `visual.insert_block`
+|Typing, deleting, Enter, and writing the pending block. See <<the-visual-model-service>>.
+
+|`edit.toggle_strong`, `edit.toggle_emphasis`, `edit.toggle_code`, `edit.toggle_highlight`, `edit.insert_link`, `edit.remove_link`
+|Marks and links in the visual editor.
+
+|`edit.set_block_type`, `edit.toggle_bullet_list`, `edit.toggle_numbered_list`, `edit.toggle_checklist`, `edit.toggle_checked`, `edit.indent_list_item`, `edit.outdent_list_item`, `edit.insert_code_block`, `edit.insert_admonition`
+|Block and list editing in the visual editor.
+
+|`edit.insert_table`, `edit.insert_table_row`, `edit.delete_table_row`, `edit.insert_table_column`, `edit.delete_table_column`, `edit.insert_image`, `edit.edit_image`
+|Tables and images in the visual editor.
+
 |`workspace.search`, `workspace.replace`, `workspace.apply_preview`, `page.rename`
 |Search, replace and rename.
 
@@ -135,6 +150,12 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 
 |`PreviewLayoutChanged`
 |The preview was shown, hidden, detached, docked, pinned or unpinned, or scroll sync was toggled.
+
+|`EditorModeChanged`
+|A document's editor mode changed between source, visual and split.
+
+|`ModelChanged`
+|A document's visual model was built or updated, with the document version it describes.
 |===
 
 == The preview service
@@ -183,6 +204,119 @@ The view is built from the cached parse on the engine thread by `adoc_render::bu
 Each diagram block the view needs becomes a job on its own worker.
 When one finishes, the preview is built again from the cached parse and republished, so a slow diagram never delays the page.
 Diagrams are cached on disk by checksum under the first workspace root, in `.cache/adocfoundry/diagrams/`.
+
+== The visual model service
+
+The engine keeps an editable model of each document that is shown visually, and runs the commands that edit it.
+Like the preview service, it draws nothing: front ends read the model and render it.
+The model itself, `adoc_model::Model`, is described in xref:architecture.adoc[Architecture].
+
+.The path of a visual keystroke
+[mermaid]
+----
+include::example$visual-keystroke.mmd[]
+----
+
+=== Editor modes and the model
+
+[cols="2,4"]
+|===
+|Item |Purpose
+
+|`EditorMode`
+|`Source`, `Visual` or `Split`, per document. It is engine state, changed by `view.show_source`, `view.show_visual` and `view.show_split`, and announced by `EditorModeChanged`. Source is the default.
+
+|`editor_mode(id)`
+|The document's mode.
+
+|`VisualDocument`
+|The document, the version it describes, its `Model`, and a `ViewTree` built from the same parse. The view tree draws what the model keeps read-only (images, diagrams, included content) exactly as the preview does; each read-only node's `origin` trail indexes into it.
+
+|`visual(id)`
+|The current `Arc<VisualDocument>`, or `None` while the document is in source mode or none is built yet.
+
+|`refresh_visual(id)`
+|Rebuilds the model now if it is stale.
+
+|`MODEL_SETTLE`
+|100 ms. How long edits must pause before the model is rebuilt from a fresh parse.
+|===
+
+A model exists only while its document is in visual or split mode.
+Showing the source again drops it.
+
+=== Keeping the model current
+
+The text is the truth, so the model is rebuilt from a parse whenever it could differ from it.
+
+* A typed source edit marks the model stale and schedules a rebuild after `MODEL_SETTLE`.
+`pump` performs it.
+* Any other command rebuilds a stale model before it returns, so undo, replace, rename, a reload from disk and an edit to an included file are never seen through an old model.
+* A visual command checks the version first.
+A command whose `VisualArgs::version` is older than the document's is refused, because its selection may point at different text.
+A model that is merely stale is rebuilt first.
+* A step that changes no structure (typing, deleting and mark changes inside a text block) is *local*.
+The model is updated in place by rescanning that block, so typing stays immediate on long pages, and the model is reconciled with a fresh parse once edits pause for `MODEL_SETTLE`.
+* Any other step is *structural*.
+The model is rebuilt from a fresh parse before the command returns, so structure is always exactly what the parser sees.
+* While a visual command edits a document, the change does not mark that document's own model stale.
+
+When a diagram finishes rendering, the models whose views were waiting for it rebuild their view tree and publish `ModelChanged` again.
+
+=== Visual commands
+
+A visual command takes `CommandArgs::Visual(VisualArgs)`: the document, the version the selection is in, the selection as source offsets, the `MarkSet` that typed text carries, and a `VisualValue` (text, a link, a block type, a new block, an admonition kind, a table size, or an image).
+It returns `CommandOutcome::Selection`, the selection to use afterwards.
+
+The command asks the model for the step's result, which is source edits in pre-step coordinates, the selection after, and the updated model for a local step.
+The edits are applied to the document as one edit, recorded in undo history, and `DocumentChanged` and `ModelChanged` are published.
+A step that cannot be expressed without changing the meaning of other text is reported as `EngineError::Refused` with the step's message and changes nothing.
+A join that is not possible, such as Backspace at the start of a paragraph after a heading, does nothing rather than report an error.
+
+[cols="2,3"]
+|===
+|Command ids |Step
+
+|`visual.insert_text`
+|`InsertText`: escapes characters that would become markup and adds missing marks.
+
+|`visual.delete_backward`, `visual.delete_forward`
+|`Delete`, or `JoinBackward` at the start of a block. Deleting across blocks is refused.
+
+|`visual.split_block`
+|`SplitBlock`: Enter.
+
+|`visual.insert_block`
+|Writes the block begun with Enter once it has its first character.
+
+|`edit.toggle_strong`, `edit.toggle_emphasis`, `edit.toggle_code`, `edit.toggle_highlight`
+|`ToggleMark`.
+
+|`edit.insert_link`, `edit.remove_link`
+|`SetLink`, `RemoveLink`.
+
+|`edit.set_block_type`
+|`SetBlockType`.
+
+|`edit.toggle_bullet_list`, `edit.toggle_numbered_list`, `edit.toggle_checklist`, `edit.toggle_checked`, `edit.indent_list_item`, `edit.outdent_list_item`
+|`ToggleList`, `ToggleChecked`, `IndentListItem`, `OutdentListItem`.
+
+|`edit.insert_code_block`, `edit.insert_admonition`, `edit.insert_table`, `edit.insert_image`
+|`InsertBlock`, after the block at the caret.
+
+|`edit.edit_image`
+|`SetImage`.
+
+|`edit.insert_table_row`, `edit.delete_table_row`, `edit.insert_table_column`, `edit.delete_table_column`
+|The table steps.
+|===
+
+=== One undo history
+
+A visual edit is a source edit, so there is no second history.
+A run of visual typing coalesces like source typing, and every other visual command is its own undo group.
+Undo and redo apply to the document whichever editor invoked them, and the model is rebuilt before they return.
+The inverse of a step is the source edits that restore the text before it.
 
 == The pump and worker indexing
 

@@ -3,6 +3,7 @@
 * xref:getting-started.adoc[Getting started]
 * xref:using-the-editor.adoc[Using the editor]
 ** xref:preview.adoc[The preview]
+** xref:visual-editing.adoc[Visual editing]
 ** xref:keyboard-shortcuts.adoc[Keyboard shortcuts]
 ** xref:settings.adoc[Settings]
 * xref:antora-support.adoc[Antora support]
