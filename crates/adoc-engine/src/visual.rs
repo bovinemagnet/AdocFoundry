@@ -534,7 +534,7 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
                 ids::EDIT_TOGGLE_BULLET_LIST,
                 "Bulleted List",
                 Edit,
-                Some("cmd-shift-8"),
+                Some("cmd-shift-u"),
                 Selection,
             ),
             |engine, args| {
@@ -551,7 +551,7 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
                 ids::EDIT_TOGGLE_NUMBERED_LIST,
                 "Numbered List",
                 Edit,
-                Some("cmd-shift-7"),
+                Some("cmd-shift-n"),
                 Selection,
             ),
             |engine, args| {
@@ -568,7 +568,7 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
                 ids::EDIT_TOGGLE_CHECKLIST,
                 "Checklist",
                 Edit,
-                Some("cmd-shift-9"),
+                Some("cmd-shift-x"),
                 Selection,
             ),
             |engine, args| {

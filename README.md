@@ -104,7 +104,7 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Show source / visual / split | Cmd-K S / Cmd-K W / Cmd-K D | Ctrl-K S / Ctrl-K W / Ctrl-K D |
 | Bold / Italic / Code (visual) | Cmd-B / Cmd-I / Cmd-E | Ctrl-B / Ctrl-I / Ctrl-E |
 | Insert link (visual) | Cmd-Shift-L | Ctrl-Shift-L |
-| Bulleted / numbered / checklist (visual) | Cmd-Shift-8 / -7 / -9 | Ctrl-Shift-8 / -7 / -9 |
+| Bulleted / numbered / checklist (visual) | Cmd-Shift-U / -N / -X | Ctrl-Shift-U / -N / -X |
 | Indent / outdent list item (visual) | Tab / Shift-Tab | Tab / Shift-Tab |
 | Find / Replace in workspace | Cmd-Shift-F / Cmd-Shift-H | Ctrl-Shift-F / Ctrl-Shift-H |
 | Rename page | F2 | F2 |

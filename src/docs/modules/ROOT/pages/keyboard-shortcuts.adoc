@@ -170,18 +170,18 @@ See xref:visual-editing.adoc[Visual editing].
 |`edit.insert_link`
 
 |Bulleted list
-|Cmd-Shift-8
-|Ctrl-Shift-8
+|Cmd-Shift-U
+|Ctrl-Shift-U
 |`edit.toggle_bullet_list`
 
 |Numbered list
-|Cmd-Shift-7
-|Ctrl-Shift-7
+|Cmd-Shift-N
+|Ctrl-Shift-N
 |`edit.toggle_numbered_list`
 
 |Checklist
-|Cmd-Shift-9
-|Ctrl-Shift-9
+|Cmd-Shift-X
+|Ctrl-Shift-X
 |`edit.toggle_checklist`
 
 |Indent list item

@@ -197,15 +197,15 @@ Set Block Type (`edit.set_block_type`) is the command behind it.
 |Action |Binding |Command id
 
 |Bulleted list
-|kbd:[Cmd+Shift+8] or kbd:[Ctrl+Shift+8]
+|kbd:[Cmd+Shift+U] or kbd:[Ctrl+Shift+U]
 |`edit.toggle_bullet_list`
 
 |Numbered list
-|kbd:[Cmd+Shift+7] or kbd:[Ctrl+Shift+7]
+|kbd:[Cmd+Shift+N] or kbd:[Ctrl+Shift+N]
 |`edit.toggle_numbered_list`
 
 |Checklist
-|kbd:[Cmd+Shift+9] or kbd:[Ctrl+Shift+9]
+|kbd:[Cmd+Shift+X] or kbd:[Ctrl+Shift+X]
 |`edit.toggle_checklist`
 
 |Indent item

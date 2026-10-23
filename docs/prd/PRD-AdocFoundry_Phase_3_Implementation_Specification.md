@@ -203,7 +203,7 @@ Commands:
 | `visual.split_block` | New Paragraph | `enter` |
 | `edit.toggle_strong`, `edit.toggle_emphasis`, `edit.toggle_code`, `edit.toggle_highlight` | Bold, Italic, Code, Highlight | `cmd-b`, `cmd-i`, `cmd-e`, `cmd-shift-h` |
 | `edit.set_block_type` | Set Block Type | — (block picker) |
-| `edit.toggle_bullet_list`, `edit.toggle_numbered_list`, `edit.toggle_checklist` | Lists | `cmd-shift-8`, `cmd-shift-7`, `cmd-shift-9` |
+| `edit.toggle_bullet_list`, `edit.toggle_numbered_list`, `edit.toggle_checklist` | Lists | `cmd-shift-u`, `cmd-shift-n`, `cmd-shift-x` (see §11) |
 | `edit.indent_list_item`, `edit.outdent_list_item` | Indent, Outdent | `tab`, `shift-tab` |
 | `edit.insert_link`, `edit.remove_link` | Insert Link, Remove Link | `cmd-shift-l` |
 | `edit.insert_image`, `edit.edit_image` | Insert Image, Edit Image | — |
@@ -281,7 +281,9 @@ Deviations found while implementing are recorded here, as in Phase 2 §12.
 | Split | — | the whitespace at the split point is dropped from both halves | Otherwise the left half keeps a trailing space, which breaks a constrained mark around it. |
 | Tables | `InsertTableRow`, `InsertTableColumn` | rows go below the caret's (below the header, before the first body row, so an implicit header stays one) and columns after it; a table without `cols` takes its column count from its first row; widths written with `*` are left to the source editor | Inserting directly after an implicit header row would turn the header into a body row. |
 | Highlight binding | `cmd-shift-h` | none | `cmd-shift-h` is Replace in Workspace. Highlight is on the toolbar and in the palette. |
+| Palette | every command in the palette | the visual editor's commands run from the palette by closing it, which returns focus to the editor, and dispatching from there | The palette dispatches from its own search field, where only workspace actions are handled; found in the hour-long editing session. |
 | Typing marks | — | with nothing selected, Bold, Italic, Code and Highlight toggle the marks the next typed text carries, held by the view; they reset when the caret moves | There is nothing in the source to change until text is typed. |
 | Split mode | source and visual side by side | each follows the other's caret: the source scrolls to the visual caret, and the visual editor brings the source caret's block into view | Keeps both halves on the same text without moving the caret the user is not using. |
 | Images | a dialog for target and alt text | clicking an editable block image opens it; the image is drawn from the file it resolves to | A click on read-only content (diagrams, included blocks) shows its source instead. |
 | Bold in the release build on Linux | — | with the system's IBM Plex Sans installed as a variable font, GPUI draws its default weight, so bold text and headings show at regular weight in the preview and the visual editor alike | A font loading limit outside the editor; recorded in `docs/qa/phase3.md`. |
+| List bindings | `cmd-shift-8`, `-7`, `-9` | `cmd-shift-u`, `cmd-shift-n`, `cmd-shift-x` | On Linux GPUI reports Shift with a digit as the shifted symbol with Shift dropped (Ctrl+Shift+8 arrives as Ctrl+`*`, and the symbol depends on the layout), so the digit bindings never matched. Found in the hour-long editing session. |
