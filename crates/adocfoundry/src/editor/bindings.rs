@@ -57,6 +57,7 @@ actions!(
         DeleteTableColumn,
         InsertImage,
         EditImage,
+        RefreshGit,
     ]
 );
 
@@ -110,6 +111,7 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::WORKSPACE_REPLACE => KeyBinding::new(keys, ReplaceInWorkspace, workspace),
         ids::PAGE_RENAME => KeyBinding::new(keys, RenamePage, workspace),
         ids::WORKSPACE_REINDEX => KeyBinding::new(keys, Reindex, workspace),
+        ids::GIT_REFRESH => KeyBinding::new(keys, RefreshGit, workspace),
         ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
         ids::SETTINGS_RELOAD => KeyBinding::new(keys, ReloadSettings, workspace),
         ids::VIEW_TOGGLE_PREVIEW => KeyBinding::new(keys, TogglePreview, workspace),
@@ -154,6 +156,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::WORKSPACE_REPLACE => Box::new(ReplaceInWorkspace),
         ids::PAGE_RENAME => Box::new(RenamePage),
         ids::WORKSPACE_REINDEX => Box::new(Reindex),
+        ids::GIT_REFRESH => Box::new(RefreshGit),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
         ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),
@@ -272,7 +275,9 @@ pub fn bind(engine: &Engine, cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::platform_binding;
+    use adoc_engine::Settings;
+
+    use super::*;
 
     #[test]
     fn maps_cmd_to_the_platform_modifier() {
@@ -281,5 +286,30 @@ mod tests {
         assert_eq!(platform_binding("cmd-k cmd-t"), "secondary-k secondary-t");
         assert_eq!(platform_binding("f12"), "f12");
         assert_eq!(platform_binding("ctrl--"), "ctrl--");
+    }
+
+    #[test]
+    fn every_command_is_in_the_palette() {
+        // Driven by typing, clicks and dialogs rather than chosen by name.
+        let driven = [
+            ids::EDIT_INSERT_TEXT,
+            ids::EDIT_REPLACE_RANGE,
+            ids::NAVIGATE_GO_TO,
+            ids::NAVIGATE_REVEAL,
+            ids::WORKSPACE_APPLY_PREVIEW,
+            ids::VISUAL_INSERT_TEXT,
+            ids::VISUAL_INSERT_BLOCK,
+            ids::VISUAL_DELETE_BACKWARD,
+            ids::VISUAL_DELETE_FORWARD,
+            ids::EDIT_SET_BLOCK_TYPE,
+        ];
+        let engine = Engine::new(Settings::default());
+        let missing: Vec<&str> = engine
+            .commands()
+            .all()
+            .filter(|spec| !driven.contains(&spec.id) && action_for(spec.id).is_none())
+            .map(|spec| spec.id.as_str())
+            .collect();
+        assert!(missing.is_empty(), "no action for {missing:?}");
     }
 }

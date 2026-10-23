@@ -931,6 +931,10 @@ impl WorkspaceView {
         self.invoke(ids::WORKSPACE_REINDEX, CommandArgs::None, window, cx);
     }
 
+    fn on_refresh_git(&mut self, _: &RefreshGit, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::GIT_REFRESH, CommandArgs::None, window, cx);
+    }
+
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::External(path)) =
             self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
@@ -1387,6 +1391,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_replace))
             .on_action(cx.listener(Self::on_rename))
             .on_action(cx.listener(Self::on_reindex))
+            .on_action(cx.listener(Self::on_refresh_git))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))
