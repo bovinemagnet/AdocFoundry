@@ -1,7 +1,7 @@
 = Implementation notes
 Paul Snow
 :revnumber: 0.0.0
-:description: Where building Phases 1, 2 and 3 departed from their specifications, and why.
+:description: Where building Phases 1, 2, 3 and 4 departed from their specifications, and why.
 
 Where building a phase showed its specification to be wrong or incomplete, the implementation made the smallest change that works.
 This page summarises the departures that each phase specification records.
@@ -335,6 +335,113 @@ It was not adopted, and its design (steps with inverses, step maps, marks on tex
 |A font loading limit outside the editor.
 |===
 
+[[phase-4]]
+== Phase 4
+
+This section summarises section 11 of `docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`.
+Where it differs from the earlier sections of that specification, section 11 wins.
+Not in Phase 4, by decision: typeset STEM, a live Typst preview, PDF/A-1 and PDF/UA-2, cover images beyond a full-page image, and asciidoctor-pdf's Ruby extensions.
+
+[cols="1,2,3,3"]
+|===
+|Area |Specification |Implementation |Why
+
+|Layout of assets
+|`themes/` and `fonts/` at the repository root
+|`crates/adoc-pdf/themes` and `crates/adoc-pdf/fonts`, embedded with `include_str!` and `include_bytes!`
+|The crate stays self-contained when packaged, and nothing is read from disk.
+
+|Bundled themes
+|`base`, `default`, `default-sans` and `default-for-print`
+|As specified. The `*-with-font-fallbacks` names load as the theme they extend, with a warning.
+|The fallback fonts (M+ 1p and Noto Emoji) add 1.9 MB, and a theme that extends them still loads without edits.
+
+|Typed `Theme`
+|A struct of the keys the converter reads
+|The flattened keys are passed to the template as a Typst dictionary under asciidoctor-pdf's own names, with typed values. Fallbacks are resolved in the template.
+|One name for each setting from the YAML to the template.
+
+|Unknown keys
+|A warning per unknown key
+|A warning per unknown top-level category, with the keys kept for variables
+|Themes keep their own variables in categories of their own, and a warning per key would be noise.
+
+|Spacing
+|Typst's block spacing
+|Prawn's model: zero block spacing with each bottom margin written as `#v(...)`, weak heading tops, half-leading around paragraphs, line heights with the font's line gap, and Typst's heading styles switched off
+|Typst collapses adjacent spacing to the larger value. With this model the reference article lands within 1.7 pt of asciidoctor-pdf on every line.
+
+|Keeping blocks together
+|Not specified
+|Admonitions, code, quotes, sidebars, examples and captioned blocks are unbreakable when they fit, and `heading_min_height_after` moves a heading with too little room below it. The width is measured from the page's content width.
+|asciidoctor-pdf decides page breaks this way. `layout()` would measure exactly, but links inside it lose their place in a tagged PDF.
+
+|Line breaking and spaces
+|Not specified
+|Greedy breaking, spaces that only stretch, and runs of spaces collapsed
+|Prawn fills lines first-fit and never shrinks spaces.
+
+|Footnotes
+|Typst footnotes
+|Collected at the bottom of the last page of the article or chapter
+|Where asciidoctor-pdf puts them.
+
+|Running content
+|`+{page-number}+` from Typst's page counter
+|Counted from the page holding the body's start marker. Substitutions are limited to attribute references, constrained `*`, `_` and `` ` ``, character references and a lone `image:` macro.
+|A counter update at the start of a page comes after that page's background is laid out. Nothing from a theme is written as Typst code; a security review found an image width written as raw text, and it was fixed.
+
+|Titles
+|Not specified
+|The article's title and the title page's title are level 1 headings in the PDF structure
+|PDF/UA-1 requires the first heading to be level 1.
+
+|Source highlighting
+|tree-sitter
+|Typst's highlighter, only when `source-highlighter` is set
+|The tree-sitter highlighter is in the application crate. asciidoctor-pdf also highlights only then.
+
+|PDF/A date
+|Not specified
+|A date is written when a standard is requested: the given one, else today's in UTC
+|PDF/A requires it. An ordinary export stays undated so the same input gives the same bytes.
+
+|`lang`
+|Not specified
+|Split into Typst's language and region
+|Typst rejects a region in `lang`.
+
+|Image alt text
+|Not specified
+|An image without alt text gets its file name
+|Every image needs a text alternative for PDF/UA.
+
+|CLI
+|`--component <name>[@<version>]`
+|`--component [<version>@]<name>`, and also `--fonts-dir`
+|It matches Antora coordinates, and real projects pass a fonts directory.
+
+|App
+|The palette and the File menu
+|The palette only
+|The application has no menu bar.
+
+|Advisories
+|Not specified
+|`deny.toml` ignores RUSTSEC-2026-0194 and RUSTSEC-2026-0195
+|They reach quick-xml 0.38 only through Typst's `bibliography()`, which generated Typst never calls. citationberg 0.7.0, the latest, still needs it.
+
+|Visual regression
+|Books within one page
+|Books are not compared. The mean grey difference is at most 0.02, and ink edges are within 6 pt.
+|asciidoctor-pdf cannot assemble an Antora component, so the book is covered by the engine's structural tests. The thresholds sit above the first run's worst page (0.0085 and 1.8 pt).
+
+|Index
+|`index_*` keys
+|Letters as headings, terms and subterms with their pages, in `index_column_count` columns
+|It is built with `query` over `metadata` markers, as no Typst package is reachable.
+|===
+
 == Git
 
 === Branch-aware Antora versions
@@ -391,4 +498,5 @@ It was not adopted, and its design (steps with inverses, step maps, marks on tex
 * xref:testing.adoc[Testing], for what remains unverified
 * xref:engine.adoc#the-preview-service[The engine], for the preview service
 * xref:engine.adoc#the-visual-model-service[The engine], for the visual model service
+* xref:pdf.adoc[PDF export], for the design of `adoc-pdf`
 * xref:architecture.adoc[Architecture], for `adoc-model`

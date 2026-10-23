@@ -1,7 +1,7 @@
 = Command line
 Paul Snow
 :revnumber: 0.0.0
-:description: Using adocfoundry-cli to check, search and follow links headlessly, including in CI.
+:description: Using adocfoundry-cli to check, search, follow links, render and export to PDF headlessly, including in CI.
 
 `adocfoundry-cli` is a headless front end over the same engine as the desktop application.
 It needs no display, which makes it suitable for continuous integration.
@@ -12,6 +12,9 @@ adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+    [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
+    [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli --version
 ----
@@ -132,6 +135,56 @@ adocfoundry-cli render docs/modules/ROOT/pages/index.adoc --root docs > index.ht
 
 Images and diagrams are written as absolute `file://` URLs, so the file shows them wherever it is opened on the same machine.
 A usage or runtime error exits with 2, as for the other subcommands.
+
+[[pdf]]
+== pdf
+
+`pdf` exports a page, or a whole component version, as a PDF.
+See xref:pdf-export.adoc[Exporting to PDF] for themes, fonts and what the output contains.
+
+[source,sh]
+----
+adocfoundry-cli pdf docs/modules/ROOT/pages/index.adoc
+adocfoundry-cli pdf docs --output docs.pdf --theme acme-theme.yml
+adocfoundry-cli pdf docs --root . --component 2.0@guide --standard pdf-a-2a --standard pdf-ua-1
+----
+
+A file argument exports that page as an article.
+By default the PDF is written beside the page with a `.pdf` extension.
+
+A directory that holds an `antora.yml`, or `--component`, exports the component version as a book in navigation order.
+By default the PDF is `<name>.pdf` in the current directory.
+Without a version, `--component` uses the latest version of the component.
+
+[cols="2,4"]
+|===
+|Option |Meaning
+
+|`--root <dir>`
+|The workspace root, so that includes, xrefs and images resolve across components. Without it, the root is the parent of the component directory, or the parent of the nearest Antora component for a page.
+
+|`--component [<version>@]<name>`
+|Export this component version as a book, with coordinates written as Antora writes them.
+
+|`--theme <name\|file.yml>`
+|A bundled theme, a theme found as `<name>-theme.yml` in the themes directory, or a theme file. It overrides the page's `pdf-theme` and `[pdf] theme`.
+
+|`--fonts-dir <dir>`
+|The directory of the theme's fonts, in place of the page's `pdf-fontsdir` and `[pdf] fonts_dir`. The bundled fonts remain available.
+
+|`--output <file.pdf>`
+|Where to write the PDF.
+
+|`--standard pdf-a-2a\|pdf-ua-1`
+|Make the PDF conform to a standard. Repeat the option to ask for both. Standards in `[pdf] standards` also apply.
+
+|`--typst <file.typ>`
+|Also write the generated Typst source, for inspection.
+|===
+
+The command waits for diagrams to render, then prints `<output> (<n> pages)` on standard output.
+Warnings, such as an unknown theme key or a missing image, print on standard error as `path:line: warning: message`.
+An export that fails exits with 1, and a usage error exits with 2.
 
 [[git-status]]
 == git-status

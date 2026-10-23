@@ -60,9 +60,13 @@ include::example$crate-layers.mmd[]
 |`adoc-git`
 |Git repository discovery, head, status line diffs against HEAD, and branches and file contents at a branch, over `gix` (gitoxide) with no network transports. Nothing runs the `git` executable. The `test-support` feature provides `adoc_git::testing::TestRepo` for tests. The engine depends on it.
 
+|L2
+|`adoc-pdf`
+|PDF export. A theme loader for asciidoctor-pdf's YAML themes, an emitter from the view tree to Typst, a Typst `World` with bundled fonts, in-process compilation with errors mapped back to AsciiDoc lines, book assembly, the index, and PDF/A-2a and PDF/UA-1. It depends on `adoc-core`, `adoc-render` and Typst. See xref:pdf.adoc[PDF export].
+
 |L3
 |`adoc-engine`
-|Documents, commands, undo, workspace, file watcher, settings, Git state, search and rename, the preview and visual model services, and the `EngineEvent` stream. The only entry point front ends use.
+|Documents, commands, undo, workspace, file watcher, settings, Git state, search and rename, the preview, visual model and export services, and the `EngineEvent` stream. The only entry point front ends use.
 
 |L4
 |`adocfoundry`
@@ -70,15 +74,13 @@ include::example$crate-layers.mmd[]
 
 |L4
 |`adocfoundry-cli`
-|The headless binary: `check`, `symbols`, `follow`, `render` and `git-status`.
+|The headless binary: `check`, `symbols`, `follow`, `render`, `pdf` and `git-status`.
 
 |L4
 |`adoc-ls`
 |The language server. The only crate that speaks the Language Server Protocol.
 |===
 
-Phase 4 adds `adoc-pdf`.
-Its layer is already reserved in the layering check.
 The application sees `adoc-model` types only through the engine's re-exports.
 
 == Layering rules
@@ -86,7 +88,7 @@ The application sees `adoc-model` types only through the engine's re-exports.
 `cargo xtask layers` reads the `Cargo.toml` of every crate under `crates/` and fails the build if:
 
 * a crate is not listed in the layer table in `xtask/src/layers.rs`;
-* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, and `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`;
+* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`, and `adoc-pdf` to `adoc-render`;
 * `adoc-core` has any dependency;
 * a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
 * an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;

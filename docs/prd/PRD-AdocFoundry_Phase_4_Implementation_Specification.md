@@ -5,7 +5,7 @@
 | Author | Paul Snow |
 | Version | 0.0.0 |
 | Date | 2026-10-24 |
-| Status | Proposed |
+| Status | Implemented |
 | Scope | Phase 4: PDF export with themes |
 | Depends on | `docs/design/DESIGN-AdocFoundry_Architecture.md` (Phase 4 section), Phases 1 to 3 and the Git work as merged |
 
@@ -164,7 +164,7 @@ Commands: `export.pdf_page` (Export Page to PDF…), `export.pdf_component` (Exp
 
 Acceptance tests (engine): `exports_one_page`, `exports_a_component_in_nav_order`, `nav_depth_shifts_section_levels`, `xrefs_between_book_pages_are_internal`, `xrefs_out_of_the_book_use_the_site_url`, `diagrams_render_before_compiling`, `export_runs_off_the_engine_thread`, `unsaved_buffers_are_exported`, `theme_setting_selects_the_theme`.
 
-CLI: `adocfoundry-cli pdf <file|component-root> [--root <dir>] [--component <name>[@<version>]] [--theme <name|file.yml>] [--output <file.pdf>] [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]`. A file exports that page; `--component` exports the book; `--typst` also writes the generated Typst for inspection. Diagnostics print as `path:line: message`; the exit code is 1 when the export fails. Tests in `tests/cli.rs`: `pdf_exports_a_page`, `pdf_exports_a_component`, `pdf_reports_theme_errors`.
+CLI: `adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>] [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>] [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]`. A file exports that page; `--component` exports the book; `--typst` also writes the generated Typst for inspection. Diagnostics print as `path:line: message`; the exit code is 1 when the export fails. Tests in `tests/cli.rs`: `pdf_exports_a_page`, `pdf_exports_a_component`, `pdf_reports_theme_errors`.
 
 App: both commands in the palette and the File menu, a save dialog for the output path (suggested from the page or component name), the status bar showing "Exporting PDF…" while the job runs, and a notification with the result and an "Open" action. App test: `export_command_writes_a_pdf`.
 
@@ -193,6 +193,31 @@ Deviations found while implementing are recorded here, as in Phase 3 §11.
 
 | Area | Specification | Implementation | Why |
 |---|---|---|---|
+| Layout of assets | `themes/` and `fonts/` at the repository root (design) | `crates/adoc-pdf/themes` and `crates/adoc-pdf/fonts`, embedded with `include_str!`/`include_bytes!` | The crate stays self-contained when packaged; nothing reads them from disk. |
+| Bundled themes | `base`, `default`, `default-sans`, `default-for-print` | as specified; asciidoctor-pdf's `*-with-font-fallbacks` names load as the theme they extend, with a warning that the fallback fonts are not bundled | The M+ 1p fallback and Noto Emoji add 1.9 MB; a theme that extends them still loads without edits. |
+| Typed `Theme` | a struct of the keys the converter reads | the flattened keys are passed to the template as a Typst dictionary under asciidoctor-pdf's own names, with values typed (lengths in points, colours as colours); fallbacks are resolved in the template with `pick` | One name for each setting from the YAML to the template; a key asciidoctor-pdf reads is a key the template can read. |
+| Unknown keys | a warning per unknown key | a warning per unknown top-level category (`brand`, `mystery`), the keys kept for variables | Themes commonly keep their own variables in categories of their own; a warning per key would be noise. |
+| Spacing | Typst's block spacing | Prawn's model, reproduced: block spacing is zero and the body writes each block's bottom margin after it as `#v(...)`; heading tops are weak spacing (dropped at the top of a page); every paragraph gets half its leading above and below; line heights add the font's `hhea.lineGap`; superscripts and subscripts are zero-height boxes; Typst's own heading size, weight, spacing and stickiness are switched off | Typst collapses adjacent spacing to the larger value and spaces lines differently; with this model the reference article lands within 1.7 pt of asciidoctor-pdf on every line, and negative theme margins work. |
+| Keeping blocks together | — | admonitions, code, quotes, sidebars, examples and captioned blocks are unbreakable when they fit on a page, measured at the page's content width; `heading_min_height_after` moves a heading that has too little room below it | asciidoctor-pdf's `arrange_block` and `arrange_heading`, which decide where pages break. `layout()` would measure the exact width, but links laid out inside it lose their place in a tagged PDF (a typst-pdf internal error). |
+| Paragraph half-leading | — | spacing around the paragraph in its show rule, not a block | Wrapping a paragraph in a block from its own show rule also cut its links off from the tag tree. |
+| Line breaking | — | greedy (`linebreaks: "simple"`) and spaces only stretch (`justification-limits`) | Prawn fills lines first-fit and never shrinks spaces. |
+| Flowing text | — | runs of spaces collapse to one | Prawn normalises them; Typst string literals keep them. |
+| Lead paragraph | — | the first paragraph of an article's preamble gets the `lead` role, styled only when the theme sets `role_lead_font_size` | As asciidoctor-pdf's `convert_preamble`. |
+| Footnotes | Typst footnotes | collected and placed at the bottom of the last page of the article or chapter, `[n]` references | Where asciidoctor-pdf puts them. |
+| Running content | `{page-number}` from Typst's page counter | counted from the page holding the body's start marker | A counter update at the start of a page comes after that page's background is laid out. |
+| Running content markup | substitutions as Asciidoctor applies them | attribute references (unknown ones drop the line), constrained `*`, `_`, `` ` ``, character references and a lone `image:` macro; widths are parsed numbers | The forms themes use; nothing from a theme or document is written as Typst code (a security review found an image width written as raw text, fixed). |
+| Titles | — | the article's title and the title page's title are level 1 headings in the PDF's structure, styled by their callers | PDF/UA-1 requires the first heading to be level 1. |
+| Image alt text | — | an image without alt text gets its file name, as Asciidoctor does | Every image carries a text alternative for PDF/UA. |
+| Source highlighting | tree-sitter | Typst's highlighter, only when `source-highlighter` is set | As asciidoctor-pdf, which highlights only then; the tree-sitter highlighter lives in the app crate. |
+| PDF/A | — | a document date is written when a standard is requested: the given one, else today's (UTC) | PDF/A requires it; an ordinary export stays undated so the same input gives the same bytes. |
+| `lang` | — | split into Typst's language and region (`en-GB` → `en`, `GB`) | Typst rejects a region in `lang`. |
+| Book plan | parts from nav files or titled lists when there are several | as specified; an untargeted nav entry is a heading at its depth; each page appears once; the start page leads as a preface unless the nav lists it | — |
+| CLI | `--component <name>[@<version>]` | `--component [<version>@]<name>`, as Antora writes coordinates; also `--fonts-dir`, the counterpart of `-a pdf-fontsdir` | Matches resource ids; real projects (the user's documentation among them) pass a fonts directory. |
+| App | the palette and the File menu | the palette | The app has no menu bar. |
+| Advisories | — | `deny.toml` ignores RUSTSEC-2026-0194 and -0195 (quick-xml 0.38 through typst-library → hayagriva → citationberg) | Reached only by Typst's `bibliography()`, which generated Typst never calls; citationberg 0.7.0, the latest, still needs quick-xml 0.38. |
+| Visual regression | books within one page | books are not compared | asciidoctor-pdf cannot assemble an Antora component; the book is covered by the engine's structural tests. |
+| Visual regression thresholds | set from the first passing run | mean grey difference at most 0.02 (the first run's worst page: 0.0085) and ink edges within 6 pt (first run: 1.8 pt, one pixel at 40 dpi) | — |
+| Index | `index_*` keys | letters as category headings, terms and subterms with their pages, in `index_column_count` columns | The index is built with `query` over `metadata` markers, as no Typst package is reachable. |
 
 ## 12. Implementation Sequence
 

@@ -92,6 +92,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 
 |`settings.open`, `settings.reload`
 |Settings.
+
+|`export.pdf_page`, `export.pdf_component`
+|Export the active page, or a component version, to PDF.
 |===
 
 There is no public way to change document text except through commands.
@@ -169,6 +172,9 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 
 |`GitPushed`
 |A push finished, with a `message` that reports the result or the error Git gave.
+
+|`ExportFinished`
+|A PDF export finished, with the output path and either an `ExportSummary` or the error.
 |===
 
 == The preview service
@@ -217,6 +223,20 @@ The view is built from the cached parse on the engine thread by `adoc_render::bu
 Each diagram block the view needs becomes a job on its own worker.
 When one finishes, the preview is built again from the cached parse and republished, so a slow diagram never delays the page.
 Diagrams are cached on disk by checksum under the first workspace root, in `.cache/adocfoundry/diagrams/`.
+
+[[the-export-service]]
+== The export service
+
+The engine exports a page, or a component version in navigation order, to PDF.
+`export.pdf_page` and `export.pdf_component` take `CommandArgs::Export(ExportArgs)`, with an `ExportTarget`, the output path, an optional theme, the standards, a fonts directory and an optional path for the generated Typst.
+
+The pages are parsed on a worker from their open buffers or files, their views are built on the engine thread, and their diagrams are rendered.
+Once no diagram is pending, a worker typesets with `adoc-pdf`, writes the file and reports.
+The result arrives as `EngineEvent::ExportFinished`, with an `ExportSummary` (the page count and diagnostics) or the error.
+
+`Engine::export_blocking(args, timeout)` runs the same job and waits, for the command-line `pdf`, and `Engine::is_exporting()` is true while a job is in flight.
+The settings' `[pdf]` table supplies the default theme, the themes and fonts directories, the site address and the standards.
+See xref:pdf.adoc[PDF export] for the flow and the crate.
 
 == The visual model service
 

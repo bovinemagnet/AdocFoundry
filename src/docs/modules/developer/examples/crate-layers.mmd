@@ -12,6 +12,7 @@ flowchart TD
         diagrams["adoc-diagrams"]
         model["adoc-model"]
         git["adoc-git"]
+        pdf["adoc-pdf"]
     end
     subgraph L1["L1: language crates"]
         parser["adoc-parser"]
@@ -43,6 +44,8 @@ flowchart TD
     engine --> diagrams
     engine --> model
     engine --> git
+    engine --> pdf
+    pdf --> render
     render --> dom
     model --> dom
     lang --> index
@@ -56,3 +59,4 @@ flowchart TD
     dom --> core
     render --> core
     model --> core
+    pdf --> core

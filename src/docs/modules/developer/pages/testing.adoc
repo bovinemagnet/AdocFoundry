@@ -104,6 +104,70 @@ The application tests for the visual editor are the last in `ui_tests.rs`, on GP
 None of them needs a display.
 As with the other application tests, `ime_composition_commits_once` is not evidence that a real input method works.
 
+[[pdf-tests]]
+== PDF export tests
+
+`crates/adoc-pdf/tests/` tests the crate without an engine.
+
+[cols="1,4"]
+|===
+|File |Covers
+
+|`themes.rs`
+|The loader: `loads_every_bundled_theme`, `default_theme_values_match_asciidoctor_pdf`, `extends_applies_in_order`, `variables_and_arithmetic_evaluate`, `units_normalise_to_points`, `colours_normalise`, `font_catalogue_merges_and_resolves`, `unknown_keys_warn_and_load`, `custom_theme_loads_without_edits` and `malformed_theme_reports_an_error`.
+
+|`emit.rs`
+|The emitter: `emits_every_block_kind`, `emits_every_inline_kind`, `escapes_typst_markup`, `text_round_trips_through_compilation`, `labels_are_namespaced_per_page` and `passthrough_is_text`.
+
+|`compile.rs`
+|The world and compilation: `compiles_with_bundled_fonts_only`, `world_reaches_only_listed_files`, `errors_map_to_asciidoc_lines`, `missing_image_is_a_diagnostic_not_a_failure` and `compile_is_deterministic`.
+
+|`running.rs`
+|`header_and_footer_follow_parity`, `running_content_starts_where_the_theme_says`, `title_page_shows_title_authors_and_revision`, `toc_lists_sections_to_toclevels`, `page_size_and_margins_follow_the_theme` and `attribute_references_in_running_content_resolve`.
+
+|`standards.rs`
+|The index and the standards: `index_terms_reach_the_dom`, `index_lists_terms_with_pages`, `pdf_a_2a_export_is_conformant`, `pdf_ua_1_requires_alt_text` and `metadata_comes_from_attributes`.
+|===
+
+`crates/adoc-engine/tests/export.rs` drives the export service headlessly: `exports_one_page`, `exports_a_component_in_nav_order`, `nav_depth_shifts_section_levels`, `xrefs_between_book_pages_are_internal`, `xrefs_out_of_the_book_use_the_site_url`, `diagrams_render_before_compiling`, `export_runs_off_the_engine_thread`, `unsaved_buffers_are_exported` and `theme_setting_selects_the_theme`.
+`crates/adocfoundry-cli/tests/cli.rs` adds `pdf_exports_a_page`, `pdf_exports_a_component` and `pdf_reports_theme_errors`.
+
+The fixtures are in `tests/fixtures/pdf/`: `reference/`, `book/` and `themes/`.
+
+=== Visual regression
+
+`crates/adocfoundry-cli/tests/pdf_regression.rs` renders each reference document with `asciidoctor-pdf` and with `adocfoundry-cli pdf`, rasterises both at 40 dpi with `hayro`, and compares them.
+Page counts must be equal.
+After blurring, the mean absolute grey difference of each page must be at most 0.02, and the bounding boxes of the ink must agree to within 6 pt.
+Books are not compared, because asciidoctor-pdf cannot assemble an Antora component.
+Failing pages are written as PNG pairs under `target/pdf-regression/`.
+The test is skipped, with a message, when `asciidoctor-pdf` is not on the `PATH`.
+
+=== Corpus checks
+
+Three checks are ignored by default and are driven by environment variables.
+
+[cols="2,4"]
+|===
+|Variable |Effect
+
+|`ADOC_PDF_CORPUS`
+|A directory. The `compile.rs` test exports every page under it as an article, and none may fail to typeset.
+
+|`ADOC_PDF_THEME_CORPUS`
+|`<themes dir>:<expected dir>`. The `themes.rs` test loads each theme and compares its keys with asciidoctor-pdf's key map, `<name>.json` in the expected directory. The format is described in `tests/fixtures/pdf/themes/expected/README.md`.
+
+|`ADOC_PDF_OUT`
+|A directory. The `reference.rs` tests write reference PDFs there for inspection.
+|===
+
+[source,sh]
+----
+ADOC_PDF_CORPUS=/path/to/docs cargo test -p adoc-pdf --test compile -- --ignored
+ADOC_PDF_THEME_CORPUS=/path/to/themes:/path/to/expected cargo test -p adoc-pdf --test themes -- --ignored
+ADOC_PDF_OUT=/tmp/pdf cargo test -p adoc-pdf --test reference -- --ignored
+----
+
 == Git tests
 
 Tests that need a repository build one with `adoc_git::testing::TestRepo`, available through the `test-support` feature of `adoc-git`.

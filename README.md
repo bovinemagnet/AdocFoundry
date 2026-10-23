@@ -4,7 +4,7 @@ Forge your documentation in real time.
 
 AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way, written in Rust for macOS, Linux and Windows. It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
 
-The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes. **Phases 1 to 3 are implemented.** The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md).
+The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes. **All four phases are implemented.** The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md).
 
 ## What works
 
@@ -69,6 +69,13 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Toggle Blame shows who last changed each line beside the editor (`abc1234 Paul Snow, 3 days ago`, or `Not committed`), and with `blame_on_hover` resting on the gutter shows the commit's summary too. Open on Remote and Copy Remote Link give the caret's line on GitHub, GitLab, Bitbucket or Azure DevOps (self-hosted sites named under `[git.hosts]`).
 - Staging and committing from the Changes panel: a box per file stages it, Stage All stages them all, and Commit… opens a message dialog (Commit, or Commit and Push). Save and Commit saves the page, stages it and starts the message as `docs: update <title>`. The status bar shows `↑n` for commits not yet pushed. Pushing runs your `git` (so credential helpers and SSH keys work), never forces and never sets an upstream; everything else goes through `gix`. No merge, rebase or history: use a Git client for those (epic [#2](https://github.com/bovinemagnet/AdocFoundry/issues/2)).
 
+**PDF export**
+
+- Export Page to PDF… writes the active page as an article; Export Component to PDF… writes its Antora component version as a book in navigation order: a title page, a table of contents, a part for each navigation file (or titled list) when there are several, a chapter for each top-level entry and sections beneath, with cross references between its pages as links inside the PDF. Both are in the command palette and in `adocfoundry-cli pdf`.
+- Typeset in process by Typst, with no Asciidoctor, Ruby, Java or network; unsaved edits are exported, diagrams are rendered first, and Typst's errors point at the AsciiDoc line that caused them.
+- Styled by asciidoctor-pdf themes, loaded as asciidoctor-pdf loads them (`extends`, `$variables`, arithmetic, units, colours, the font catalogue), so an existing theme works without edits. The bundled `default`, `default-sans`, `default-for-print` and `base` themes use the same Noto and M+ fonts asciidoctor-pdf ships; on the reference article, every line lands within 2 pt of asciidoctor-pdf's.
+- Headers and footers with recto and verso columns, page numbers and section titles; a title page with logo, authors and revision; dot leaders in the table of contents; an index from `((terms))` in an `[index]` section; PDF/A-2a and PDF/UA-1 on request.
+
 **Find, replace and rename**
 
 - Find in the workspace, with regular expression, case and whole-word options.
@@ -127,7 +134,7 @@ Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the pr
 
 ## Settings
 
-Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*` and `workspace.ignore` in `.adocfoundry.toml` at its root. Saving either file applies it. Unknown keys produce a warning, never an error.
+Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*`, `workspace.ignore` and `pdf.*` in `.adocfoundry.toml` at its root. Saving either file applies it. Unknown keys produce a warning, never an error.
 
 ```toml
 [editor]
@@ -152,7 +159,16 @@ remote = "origin"                # the remote that links to the hosting site use
 
 [git.hosts]                      # self-hosted sites: github | gitlab | bitbucket | azure
 # "git.example.com" = "gitlab"
+
+[pdf]
+theme = "default"                # a bundled theme, a name in themes_dir, or a .yml file
+# themes_dir = "resources/themes"  # relative to the workspace root, like -a pdf-themesdir
+# fonts_dir = "resources/fonts"    # like -a pdf-fontsdir; the bundled fonts are searched after it
+# site_url = "https://docs.example.com"  # where references out of an exported book lead
+standards = []                   # "pdf-a-2a", "pdf-ua-1"
 ```
+
+A page's `pdf-theme`, `pdf-themesdir` and `pdf-fontsdir` attributes win over it, as they do for asciidoctor-pdf.
 
 `tools.asciidoctor` is used only by `adoc-ls`'s HTML preview; the app's preview needs no external tool. Diagram tools are found on `PATH` and cannot be set here yet.
 
@@ -163,12 +179,17 @@ adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+    [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
+    [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
 ```
 
 `check` prints the workspace's diagnostics (text: `path:line:col: severity code message`) and exits with 1 when any meets `--fail-on` (default `error`), which suits CI. It reports exactly what the editor and `adoc-ls` report.
 
 `render` writes a page as a standalone HTML file, as the preview renders it, waiting for its diagrams; without `--output` it writes to standard output. Without `--root`, the workspace is the folder above the page's Antora component, or the page's own folder outside Antora. `--parser asciidoc-parser` renders with the second document parser, for comparison; the app always uses `acdc`.
+
+`pdf` exports a page to `<page>.pdf` beside it, or a component directory (or `--component`) as a book to `<name>.pdf`, and prints the file and its page count. Warnings print as `path:line: warning: message`; the exit code is 1 when the export fails. `--typst` also writes the generated Typst, for inspection.
 
 `git-status` prints the branch of the repository holding the root and its changed AsciiDoc files as `git status --short` does, with the number of changed line runs against `HEAD` in each (`branch main`, ` M docs/page.adoc (2 changed)`); `--format json` gives the same as an object. The other commands do not look at Git.
 
@@ -182,15 +203,15 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
 
 ## Not implemented yet
 
-- PDF export (Phase 4).
+- In PDF export: typeset STEM (it shows as its source), source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
-- Typeset STEM: the preview shows the maths source until Phase 4.
+- Typeset STEM: the preview and PDF export show the maths source.
 - Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
 - Editing included content in place, spell checking, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
 - Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
-- Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
+- Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 
 ## Developing
 
@@ -208,12 +229,14 @@ The workspace is a ladder of crates, each depending only on those below it:
 ```text
 adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)
 adoc-engine              documents, commands, undo, workspace, watcher, settings, search, preview, visual model
-adoc-render   adoc-diagrams   adoc-model   adoc-git   view tree and HTML; diagrams; the editable model; Git
+adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   view tree and HTML; diagrams; the editable model; Git; PDF
 adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang
 adoc-core
 ```
 
 `adoc-dom` holds the full document tree behind the `DocumentParser` trait and is the only crate that names a parser crate (acdc-parser, and asciidoc-parser for comparison). `adoc-model` is the visual editor's model: it reads each text block of a page losslessly (every source byte is text, a mark delimiter or part of an atom), checks its reading against the parser's, and turns edits into the smallest source edits; its property tests (`cargo test -p adoc-model --test roundtrip`) check that building and writing back is the identity on every fixture and documentation page and that a long random editing session changes only the lines it edited. The fidelity harness (`cargo test -p adocfoundry-cli --test fidelity`) compares `render` with Asciidoctor over `tests/fixtures/render/`, and skips itself when `asciidoctor --version` fails.
+
+`adoc-pdf` loads asciidoctor-pdf themes (checked key by key against asciidoctor-pdf's own loader in `tests/fixtures/pdf/themes/expected/`), writes the view tree as Typst with every document string a Typst string literal, and compiles it in process with bundled fonts. The visual regression harness (`cargo test -p adocfoundry-cli --test pdf_regression`) renders reference documents with `asciidoctor-pdf` and with `adocfoundry-cli pdf`, rasterises both with `hayro` and compares every page; it skips itself without `asciidoctor-pdf` and writes failing pages to `target/pdf-regression/`.
 
 ## Licence
 

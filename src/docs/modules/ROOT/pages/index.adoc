@@ -33,8 +33,20 @@ The project is built in four phases, each of which ships a usable tool.
 
 |4
 |PDF export with themes.
-|Not started
+|Implemented
 |===
+
+== Phase 4 status
+
+Phase 4 is implemented.
+It adds xref:pdf-export.adoc[PDF export]:
+
+* Export of the active page as an article, or of a component version as a book in navigation order, with a title page, a table of contents, parts and chapters.
+* Typesetting in process by Typst, with no Ruby, Node.js or network.
+* asciidoctor-pdf themes, loaded without edits, with the `default`, `default-sans`, `default-for-print` and `base` themes bundled, along with their fonts.
+* Running headers and footers with recto and verso columns, and an index built from index terms.
+* PDF/A-2a and PDF/UA-1 on request.
+* `adocfoundry-cli pdf`, and Export Page to PDF and Export Component to PDF in the command palette.
 
 == Phase 3 status
 
@@ -75,9 +87,8 @@ It provides:
 
 The following are not implemented yet:
 
-* PDF export (Phase 4).
 * Settings for the paths of the Graphviz, PlantUML and D2 tools, which are found on the `PATH` only.
-* Typeset STEM in the preview, which shows styled maths source until Phase 4.
+* Typeset STEM in the preview and in PDF, which show the maths source.
 * Editing included content in place, deleting a selection across blocks in the visual editor, spell checking, Git integration and plugins.
 * XML and Dockerfile highlighting inside source blocks, because the editor component has no grammar for them yet.
 * Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
@@ -92,6 +103,7 @@ See xref:developer:testing.adoc#manual-qa[the manual QA record] for the checklis
 * xref:using-the-editor.adoc[Using the editor] -- the workspace, link following, search and rename.
 * xref:preview.adoc[The preview] -- the rendered page beside the editor.
 * xref:visual-editing.adoc[Visual editing] -- editing the rendered page in place.
+* xref:pdf-export.adoc[Exporting to PDF] -- pages and whole components as PDF.
 * xref:keyboard-shortcuts.adoc[Keyboard shortcuts] -- every default binding.
 * xref:settings.adoc[Settings] -- the TOML user and workspace files.
 * xref:antora-support.adoc[Antora support] -- how components, versions and resource IDs resolve.
