@@ -119,31 +119,29 @@ pub fn open_secondary_window(
         ..WindowOptions::default()
     };
     let mut view: Option<AnyView> = None;
-    let opened = cx.open_window(options, |window, cx| {
-        match kind {
-            WindowKind::Mirror => {
-                let mirror = cx.new(|cx| MirrorView::new(app.clone(), window, cx));
-                view = Some(mirror.clone().into());
-                cx.new(|cx| Root::new(mirror, window, cx))
-            }
-            WindowKind::Preview => {
-                let preview = cx.new(|cx| PreviewView::new(app.clone(), true, window, cx));
-                let docking = app.clone();
-                window.on_window_should_close(cx, move |_, cx| {
-                    docking.update(cx, |app, cx| {
-                        if app.engine.preview_layout().detached {
-                            let _ = app.invoke(
-                                adoc_engine::commands::ids::VIEW_DETACH_PREVIEW,
-                                CommandArgs::None,
-                                cx,
-                            );
-                        }
-                    });
-                    true
+    let opened = cx.open_window(options, |window, cx| match kind {
+        WindowKind::Mirror => {
+            let mirror = cx.new(|cx| MirrorView::new(app.clone(), window, cx));
+            view = Some(mirror.clone().into());
+            cx.new(|cx| Root::new(mirror, window, cx))
+        }
+        WindowKind::Preview => {
+            let preview = cx.new(|cx| PreviewView::new(app.clone(), true, window, cx));
+            let docking = app.clone();
+            window.on_window_should_close(cx, move |_, cx| {
+                docking.update(cx, |app, cx| {
+                    if app.engine.preview_layout().detached {
+                        let _ = app.invoke(
+                            adoc_engine::commands::ids::VIEW_DETACH_PREVIEW,
+                            CommandArgs::None,
+                            cx,
+                        );
+                    }
                 });
-                view = Some(preview.clone().into());
-                cx.new(|cx| Root::new(preview, window, cx))
-            }
+                true
+            });
+            view = Some(preview.clone().into());
+            cx.new(|cx| Root::new(preview, window, cx))
         }
     });
     match opened {

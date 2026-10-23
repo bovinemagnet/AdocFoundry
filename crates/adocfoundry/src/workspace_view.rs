@@ -31,8 +31,8 @@ use gpui_component::{
 
 use crate::{
     app::{open_secondary_window, AppState, WindowKind},
-    editor::{bindings::*, language, SourceEditorView},
-    preview::PreviewView,
+    editor::{bindings::*, language, SourceEditorEvent, SourceEditorView},
+    preview::{PreviewEvent, PreviewView},
     search_view::SearchView,
     sidebar,
 };
@@ -110,7 +110,11 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = vec![cx.subscribe_in(&app, window, Self::on_engine_event)];
+        let preview = cx.new(|cx| PreviewView::new(app.clone(), false, window, cx));
+        let subscriptions = vec![
+            cx.subscribe_in(&app, window, Self::on_engine_event),
+            cx.subscribe(&preview, Self::on_preview_event),
+        ];
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace, window, cx));
         let mut view = Self {
@@ -130,7 +134,7 @@ impl WorkspaceView {
             search,
             show_search: false,
             palette: cx.new(|cx| CommandState::new(window, cx)),
-            preview: cx.new(|cx| PreviewView::new(app.clone(), false, window, cx)),
+            preview,
             detached: None,
             revealed: None,
             app,
@@ -214,6 +218,10 @@ impl WorkspaceView {
                             .ok()
                             .map(|view| (handle, view))
                     });
+                if let Some((_, view)) = &self.detached {
+                    self._subscriptions
+                        .push(cx.subscribe(view, Self::on_preview_event));
+                }
             }
             (Some(_), false) => {
                 if let Some((handle, _)) = self.detached.take() {
@@ -223,6 +231,64 @@ impl WorkspaceView {
             }
             _ => {}
         }
+    }
+
+    /// Keeps the preview level with the caret of the active editor.
+    fn on_editor_event(
+        &mut self,
+        editor: Entity<SourceEditorView>,
+        event: &SourceEditorEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let SourceEditorEvent::CaretMoved(offset) = *event;
+        if self.active_editor() != Some(&editor) {
+            return;
+        }
+        let path = {
+            let engine = &self.app.read(cx).engine;
+            if !engine.preview_layout().scroll_sync {
+                return;
+            }
+            let Some(document) = engine.document(editor.read(cx).document()) else {
+                return;
+            };
+            document.path.clone()
+        };
+        let previews = std::iter::once(self.preview.clone())
+            .chain(self.detached.as_ref().map(|(_, view)| view.clone()));
+        for preview in previews {
+            preview.update(cx, |preview, cx| preview.reveal_source(&path, offset, cx));
+        }
+    }
+
+    /// Scrolls the active editor to the block the user scrolled the preview to.
+    fn on_preview_event(
+        &mut self,
+        _: Entity<PreviewView>,
+        event: &PreviewEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let PreviewEvent::ScrolledTo(span) = event;
+        let Some(editor) = self.active_editor().cloned() else {
+            return;
+        };
+        let same_file = {
+            let engine = &self.app.read(cx).engine;
+            engine.preview_layout().scroll_sync
+                && engine
+                    .document(editor.read(cx).document())
+                    .is_some_and(|document| document.path == span.path)
+        };
+        if same_file {
+            editor.update(cx, |editor, cx| {
+                editor.scroll_to_offset(span.range.start, cx)
+            });
+        }
+    }
+
+    #[cfg(test)]
+    pub fn active_editor_for_test(&self) -> Option<&Entity<SourceEditorView>> {
+        self.active_editor()
     }
 
     #[cfg(test)]
@@ -296,6 +362,8 @@ impl WorkspaceView {
             None => {
                 let app = self.app.clone();
                 let editor = cx.new(|cx| SourceEditorView::new(app, active, false, window, cx));
+                self._subscriptions
+                    .push(cx.subscribe(&editor, Self::on_editor_event));
                 self.tabs.push(editor);
                 self.tabs.len() - 1
             }

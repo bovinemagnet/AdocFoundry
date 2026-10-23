@@ -35,6 +35,8 @@ pub struct Palette {
 
 pub struct BlockContext<'a> {
     pub inline: InlineStyle,
+    pub extents: super::sync::Extents,
+    pub scroll: gpui::ScrollHandle,
     pub palette: Palette,
     pub radius: Pixels,
     pub on_link: LinkHandler,
@@ -464,8 +466,14 @@ fn block_element(
     let on_block = context.on_block.clone();
     div()
         .id(block_id(trail))
+        .relative()
         .w_full()
         .child(body)
+        .child(super::sync::recorder(
+            trail.to_vec(),
+            &context.extents,
+            &context.scroll,
+        ))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             on_block(&span, window, cx);

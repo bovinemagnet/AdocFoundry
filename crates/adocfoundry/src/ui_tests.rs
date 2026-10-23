@@ -481,3 +481,174 @@ fn detached_preview_follows_edits(cx: &mut TestAppContext) {
         shown_paragraphs(&workspace, cx) == ["After."]
     }));
 }
+
+/// Opens `files` in a workspace window with the docked preview showing and rendered.
+fn previewing(
+    files: Vec<PathBuf>,
+    cx: &mut TestAppContext,
+) -> (Entity<AppState>, Entity<WorkspaceView>, VisualTestContext) {
+    init(cx);
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, files, cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None, cx)
+                .unwrap();
+        });
+    });
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| workspace.read(cx).preview().read(cx).extent(&[0]).is_some())
+    }));
+    (app, workspace, cx)
+}
+
+/// The trail and span of the innermost preview block at `needle` in `path`.
+fn block_for(
+    workspace: &Entity<WorkspaceView>,
+    path: &std::path::Path,
+    text: &str,
+    needle: &str,
+    cx: &mut VisualTestContext,
+) -> (Vec<usize>, adoc_render::SourceSpan) {
+    let offset = text.find(needle).unwrap();
+    cx.update(|_, cx| {
+        let preview = workspace.read(cx).preview().read(cx);
+        let view = &preview.shown().unwrap().view;
+        let trail = adoc_render::block_at(view, path, offset).unwrap();
+        let span = adoc_render::block_by_trail(view, &trail)
+            .unwrap()
+            .span
+            .clone();
+        (trail, span)
+    })
+}
+
+fn caret(workspace: &Entity<WorkspaceView>, cx: &mut VisualTestContext) -> usize {
+    cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .active_editor_for_test()
+            .unwrap()
+            .read(cx)
+            .cursor(cx)
+    })
+}
+
+fn click_block(workspace: &Entity<WorkspaceView>, trail: &[usize], cx: &mut VisualTestContext) {
+    let position = cx
+        .update(|_, cx| workspace.read(cx).preview().read(cx).block_position(trail))
+        .expect("the block is laid out");
+    cx.simulate_click(position, gpui::Modifiers::none());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn clicking_a_block_moves_the_caret(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let text = "= Page\n\nFirst paragraph.\n\n* An item\n* Another item\n\nLast paragraph.\n";
+    std::fs::write(&page, text).unwrap();
+    let (_app, workspace, mut cx) = previewing(vec![page.clone()], cx);
+    assert_eq!(caret(&workspace, &mut cx), 0);
+
+    let (trail, span) = block_for(&workspace, &page, text, "Last paragraph", &mut cx);
+    click_block(&workspace, &trail, &mut cx);
+    assert_eq!(caret(&workspace, &mut cx), span.range.start);
+    assert_eq!(span.range.start, text.find("Last paragraph").unwrap());
+
+    let (trail, span) = block_for(&workspace, &page, text, "First paragraph", &mut cx);
+    click_block(&workspace, &trail, &mut cx);
+    assert_eq!(caret(&workspace, &mut cx), span.range.start);
+}
+
+#[gpui::test]
+fn clicking_partial_content_opens_the_partial(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let partial = adoc_index::normalize_path(&directory.path().join("partials/note.adoc"));
+    std::fs::create_dir_all(partial.parent().unwrap()).unwrap();
+    let page_text = "= Page\n\nOn the page.\n\ninclude::partials/note.adoc[]\n";
+    let partial_text = "// A partial.\n\nFrom the partial.\n";
+    std::fs::write(&page, page_text).unwrap();
+    std::fs::write(&partial, partial_text).unwrap();
+    let (app, workspace, mut cx) = previewing(vec![page.clone()], cx);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 1);
+
+    let (trail, span) = block_for(
+        &workspace,
+        &partial,
+        partial_text,
+        "From the partial",
+        &mut cx,
+    );
+    assert_eq!(span.path, partial);
+    click_block(&workspace, &trail, &mut cx);
+
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 2);
+    let active = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .path
+            .clone()
+    });
+    assert_eq!(active, partial);
+    assert_eq!(
+        caret(&workspace, &mut cx),
+        partial_text.find("From the partial").unwrap()
+    );
+}
+
+#[gpui::test]
+fn scroll_sync_works_both_ways(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("long.adoc"));
+    let mut text = String::from("= Long\n");
+    for number in 1..=80 {
+        text.push_str(&format!("\nParagraph {number}.\n"));
+    }
+    std::fs::write(&page, &text).unwrap();
+    let (_app, workspace, mut cx) = previewing(vec![page.clone()], cx);
+    let preview = cx.update(|_, cx| workspace.read(cx).preview().clone());
+    assert_eq!(
+        cx.update(|_, cx| preview.read(cx).scroll_top()),
+        gpui::px(0.)
+    );
+
+    // Caret to preview: the preview scrolls to the caret's block.
+    let (trail, _) = block_for(&workspace, &page, &text, "Paragraph 60.", &mut cx);
+    let offset = text.find("Paragraph 60.").unwrap();
+    cx.update(|window, cx| {
+        let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(offset, offset), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    let top = cx.update(|_, cx| preview.read(cx).scroll_top());
+    let extent = cx.update(|_, cx| preview.read(cx).extent(&trail)).unwrap();
+    assert!(top > gpui::px(0.), "the preview scrolled");
+    assert!((extent.top - top) <= gpui::px(10.), "{extent:?} at {top:?}");
+
+    // Preview to source: the editor scrolls to the block at the preview's top, caret unmoved.
+    let (trail, _) = block_for(&workspace, &page, &text, "Paragraph 20.", &mut cx);
+    let extent = cx.update(|_, cx| preview.read(cx).extent(&trail)).unwrap();
+    cx.update(|_, cx| {
+        preview.update(cx, |preview, cx| preview.scroll_for_test(extent.top, cx));
+    });
+    cx.run_until_parked();
+    let line = text[..text.find("Paragraph 20.").unwrap()]
+        .matches('\n')
+        .count();
+    let top_line = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .active_editor_for_test()
+            .unwrap()
+            .read(cx)
+            .top_line(cx)
+    });
+    assert_eq!(top_line, Some(line));
+    assert_eq!(caret(&workspace, &mut cx), offset, "the caret stays put");
+}

@@ -3,6 +3,7 @@
 
 mod blocks;
 mod inlines;
+mod sync;
 
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 
@@ -28,8 +29,16 @@ pub use inlines::Link;
 /// Highlighted code, by theme brightness, language and text.
 type HighlightCache = HashMap<(bool, String, String), Vec<(Range<usize>, HighlightStyle)>>;
 
+/// What the preview tells the window around it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PreviewEvent {
+    /// The user scrolled the preview; this block is now at its top.
+    ScrolledTo(adoc_render::SourceSpan),
+}
+
 pub struct PreviewView {
     app: Entity<AppState>,
+    extents: sync::Extents,
     /// In its own window, which then needs a title bar.
     standalone: bool,
     shown: Option<Arc<RenderedPreview>>,
@@ -62,6 +71,7 @@ impl PreviewView {
         });
         let mut view = Self {
             app,
+            extents: sync::Extents::default(),
             standalone,
             shown: None,
             scroll: ScrollHandle::new(),
@@ -100,6 +110,65 @@ impl PreviewView {
         }
         self.shown = latest;
         cx.notify();
+    }
+
+    /// Scrolls so the innermost block containing `offset` in `path` is at the top, keeping the
+    /// preview level with the caret.
+    pub fn reveal_source(&mut self, path: &std::path::Path, offset: usize, cx: &mut Context<Self>) {
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        let Some(trail) = adoc_render::block_at(&shown.view, path, offset) else {
+            return;
+        };
+        let Some(extent) = self.extents.borrow().get(&trail).copied() else {
+            return;
+        };
+        let top = (extent.top - px(8.)).max(px(0.));
+        self.scroll.set_offset(gpui::point(px(0.), -top));
+        cx.notify();
+    }
+
+    /// Reports the block now at the top after the user scrolled.
+    fn scrolled(&mut self, cx: &mut Context<Self>) {
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        let top = -self.scroll.offset().y;
+        let Some(trail) = sync::block_at_y(&self.extents.borrow(), top) else {
+            return;
+        };
+        if let Some(block) = adoc_render::block_by_trail(&shown.view, &trail) {
+            cx.emit(PreviewEvent::ScrolledTo(block.span.clone()));
+        }
+    }
+
+    /// Where the block at `trail` is drawn, for tests that click it.
+    #[cfg(test)]
+    pub fn block_position(&self, trail: &[usize]) -> Option<gpui::Point<Pixels>> {
+        let extent = *self.extents.borrow().get(trail)?;
+        let container = self.scroll.bounds();
+        let y = container.origin.y + self.scroll.offset().y + extent.top + px(2.);
+        Some(gpui::point(container.origin.x + px(24.), y))
+    }
+
+    /// Simulates the user scrolling the preview to content position `top`.
+    #[cfg(test)]
+    pub fn scroll_for_test(&mut self, top: Pixels, cx: &mut Context<Self>) {
+        self.scroll.set_offset(gpui::point(px(0.), -top));
+        self.scrolled(cx);
+    }
+
+    /// The content position at the top of the preview.
+    #[cfg(test)]
+    pub fn scroll_top(&self) -> Pixels {
+        -self.scroll.offset().y
+    }
+
+    /// The extent of the block at `trail`, once laid out.
+    #[cfg(test)]
+    pub fn extent(&self, trail: &[usize]) -> Option<sync::Extent> {
+        self.extents.borrow().get(trail).copied()
     }
 
     fn invoke(
@@ -216,6 +285,8 @@ impl PreviewView {
             }
         });
         blocks::BlockContext {
+            extents: self.extents.clone(),
+            scroll: self.scroll.clone(),
             inline: inlines::InlineStyle {
                 font: window.text_style().font(),
                 mono_family: theme.mono_font_family.clone(),
@@ -265,8 +336,12 @@ fn highlight(
     styles
 }
 
+impl gpui::EventEmitter<PreviewEvent> for PreviewView {}
+
 impl Render for PreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Repopulated as this frame's blocks are laid out.
+        self.extents.borrow_mut().clear();
         let header = self.header(cx);
         let waiting = self.shown.is_none() && self.app.read(cx).engine.preview_target().is_some();
         let body = self.shown.clone().map(|shown| {
@@ -300,6 +375,10 @@ impl Render for PreviewView {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+                        // After the scroll itself has been applied.
+                        cx.defer_in(window, |this, _, cx| this.scrolled(cx));
+                    }))
                     .child(
                         v_flex()
                             .p_4()
