@@ -243,6 +243,24 @@ fn unknown_variables_warn_and_load() {
 }
 
 #[test]
+fn unknown_keys_warn_and_load() {
+    let theme = load_theme(&ThemeSource::File(fixtures().join("acme-theme.yml"))).unwrap();
+    let unknown: Vec<&str> = theme
+        .warnings
+        .iter()
+        .filter(|warning| warning.message.contains("is not used by the converter"))
+        .map(|warning| warning.message.as_str())
+        .collect();
+    assert_eq!(unknown.len(), 2, "{unknown:?}");
+    assert!(unknown[0].contains("`brand`") && unknown[1].contains("`mystery`"));
+    // The keys are kept, so variables can still refer to them.
+    assert_eq!(
+        theme.keys.get("mystery_key"),
+        Some(&ThemeValue::Number(1.0))
+    );
+}
+
+#[test]
 fn malformed_theme_reports_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("bad-theme.yml");

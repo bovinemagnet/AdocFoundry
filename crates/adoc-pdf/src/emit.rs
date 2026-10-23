@@ -91,6 +91,17 @@ pub(crate) struct Emitter<'a> {
     olist_depth: usize,
 }
 
+/// What follows each block of a run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Gaps {
+    /// The page's flow: every block's bottom margin, the last one's too.
+    Flow,
+    /// Inside a container: no margin after the last block.
+    Inside,
+    /// Inside a list item: the item spacing between blocks.
+    Items,
+}
+
 /// The label of `id` on page `key`; the page's own label when `id` is empty.
 pub(crate) fn label_name(key: &str, id: &str) -> String {
     if id.is_empty() {
@@ -171,14 +182,12 @@ impl<'a> Emitter<'a> {
             && view.blocks.first().is_some_and(|block| {
                 matches!(block.kind, ViewKind::Paragraph(_)) && block.roles.is_empty()
             });
-        for (index, block) in view.blocks.iter().enumerate() {
-            if index == 0 && lead {
-                let mut block = block.clone();
-                block.roles.push("lead".to_owned());
-                self.block(&block);
-            } else {
-                self.block(block);
-            }
+        if lead {
+            let mut blocks = view.blocks.clone();
+            blocks[0].roles.push("lead".to_owned());
+            self.blocks(&blocks, Gaps::Flow);
+        } else {
+            self.blocks(&view.blocks, Gaps::Flow);
         }
     }
 
@@ -200,17 +209,55 @@ impl<'a> Emitter<'a> {
         self.push("))\n\n");
     }
 
-    pub(crate) fn blocks(&mut self, blocks: &[ViewBlock]) {
-        for block in blocks {
+    /// `blocks` with each one's bottom margin after it, as Prawn spaces blocks.
+    pub(crate) fn blocks(&mut self, blocks: &[ViewBlock], gaps: Gaps) {
+        for (index, block) in blocks.iter().enumerate() {
             self.block(block);
+            let last = index + 1 == blocks.len();
+            if last && gaps != Gaps::Flow {
+                continue;
+            }
+            let gap = match (&block.kind, gaps) {
+                (ViewKind::Section { .. } | ViewKind::Heading { .. } | ViewKind::PageBreak, _) => {
+                    continue;
+                }
+                (_, Gaps::Items) => "list-gap",
+                (ViewKind::Paragraph(_), _) => "prose-bottom",
+                _ => "block-bottom",
+            };
+            let _ = writeln!(self.out, "#v({gap})\n");
         }
     }
 
+    /// Blocks inside a container: no margin after the last.
     fn content(&mut self, blocks: &[ViewBlock]) -> String {
         let start = self.out.len();
-        self.blocks(blocks);
+        self.blocks(blocks, Gaps::Inside);
         let body = self.out.split_off(start);
         format!("[{body}]")
+    }
+
+    /// An item's text, then its blocks, the item spacing apart.
+    fn item_body(&mut self, content: &[ViewInline], blocks: &[ViewBlock], gaps: Gaps) -> String {
+        // The trailing break makes the text a paragraph, spaced as Prawn spaces lines.
+        let mut body = self.inlines(content);
+        if blocks.is_empty() && !body.is_empty() {
+            body.push_str("\n\n");
+        }
+        if !blocks.is_empty() {
+            let gap = if gaps == Gaps::Items {
+                "list-gap"
+            } else {
+                "prose-bottom"
+            };
+            if !body.is_empty() {
+                let _ = write!(body, "\n\n#v({gap})\n\n");
+            }
+            let start = self.out.len();
+            self.blocks(blocks, gaps);
+            body.push_str(&self.out.split_off(start));
+        }
+        body
     }
 
     fn record<F: FnOnce(&mut Self)>(&mut self, span: &SourceSpan, emit: F) {
@@ -293,7 +340,7 @@ impl<'a> Emitter<'a> {
                     "#heading(level: {}, outlined: {outlined}, bookmarked: true)[{heading}]{label}\n",
                     u32::from(level) + 1
                 );
-                self.blocks(blocks);
+                self.blocks(blocks, Gaps::Flow);
             }
             ViewKind::Heading { level, title } => {
                 let heading = self.inlines(title);
@@ -346,13 +393,7 @@ impl<'a> Emitter<'a> {
                 let _ = depth;
                 let mut bodies = Vec::new();
                 for item in items {
-                    let mut body = self.inlines(&item.content);
-                    if !item.blocks.is_empty() {
-                        body.push_str("\n\n");
-                        let start = self.out.len();
-                        self.blocks(&item.blocks);
-                        body.push_str(&self.out.split_off(start));
-                    }
+                    let body = self.item_body(&item.content, &item.blocks, Gaps::Items);
                     bodies.push(format!("[{body}]"));
                 }
                 match kind {
@@ -361,10 +402,9 @@ impl<'a> Emitter<'a> {
                 }
                 let markers: Vec<String> =
                     markers.iter().map(|marker| format!("[{marker}]")).collect();
-                let nested = self.ulist_depth + self.olist_depth > 0;
                 let _ = writeln!(
                     self.out,
-                    "#adoc-list(({},), ({},), nested: {nested})\n",
+                    "#adoc-list(({},), ({},))\n",
                     markers.join(", "),
                     bodies.join(", ")
                 );
@@ -374,13 +414,7 @@ impl<'a> Emitter<'a> {
                 let mut entries = Vec::new();
                 for item in items {
                     let term = self.inlines(&item.term);
-                    let mut description = self.inlines(&item.content);
-                    if !item.blocks.is_empty() {
-                        description.push_str("\n\n");
-                        let start = self.out.len();
-                        self.blocks(&item.blocks);
-                        description.push_str(&self.out.split_off(start));
-                    }
+                    let description = self.item_body(&item.content, &item.blocks, Gaps::Inside);
                     let description = if description.trim().is_empty() {
                         "none".to_owned()
                     } else {
@@ -399,7 +433,7 @@ impl<'a> Emitter<'a> {
                                 let description = if description == "none" {
                                     String::new()
                                 } else {
-                                    format!("\n\n#{description}")
+                                    format!("\n\n#v(list-gap)\n\n#{description}")
                                 };
                                 format!("[#emph[{term}]{description}]")
                             })
@@ -421,7 +455,7 @@ impl<'a> Emitter<'a> {
                     _ => {
                         let entries: Vec<String> = entries
                             .iter()
-                            .map(|(term, description)| format!("([{term}], {description})"))
+                            .map(|(term, description)| format!("([{term}\n\n], {description})"))
                             .collect();
                         let _ = writeln!(self.out, "#adoc-dlist(({},))\n", entries.join(", "));
                     }
@@ -430,13 +464,7 @@ impl<'a> Emitter<'a> {
             ViewKind::CalloutList(items) => {
                 let mut entries = Vec::new();
                 for item in items {
-                    let mut body = self.inlines(&item.content);
-                    if !item.blocks.is_empty() {
-                        body.push_str("\n\n");
-                        let start = self.out.len();
-                        self.blocks(&item.blocks);
-                        body.push_str(&self.out.split_off(start));
-                    }
+                    let body = self.item_body(&item.content, &item.blocks, Gaps::Items);
                     entries.push(format!("({}, [{body}])", item.number));
                 }
                 let _ = writeln!(self.out, "#adoc-callouts(({},))\n", entries.join(", "));
@@ -445,7 +473,9 @@ impl<'a> Emitter<'a> {
                 let body = self.content(blocks);
                 let title = self.caption_text(block);
                 let body = match title {
-                    Some(title) => format!("[#block(sticky: true, strong[{title}])\n\n#{body}]"),
+                    Some(title) => format!(
+                        "[#block(sticky: true, strong[{title}])\n\n#v(prose-bottom)\n\n#{body}]"
+                    ),
                     None => body,
                 };
                 let _ = writeln!(
@@ -642,7 +672,7 @@ impl<'a> Emitter<'a> {
     fn cell(&mut self, cell: &ViewCell, header: bool) -> String {
         let body = if cell.style == CellStyle::AsciiDoc {
             let start = self.out.len();
-            self.blocks(&cell.blocks);
+            self.blocks(&cell.blocks, Gaps::Inside);
             self.out.split_off(start)
         } else {
             let mut parts = Vec::new();
@@ -671,7 +701,9 @@ impl<'a> Emitter<'a> {
                     }
                 }
             }
-            parts.join("\n\n")
+            let mut body = parts.join("\n\n#v(prose-bottom)\n\n");
+            body.push_str("\n\n");
+            body
         };
         let align = match cell.align {
             Align::Start => "left",
@@ -686,7 +718,7 @@ impl<'a> Emitter<'a> {
     }
 
     /// The virtual path a file is served at; the same file always gets the same path.
-    fn file(&mut self, path: &Path) -> String {
+    pub(crate) fn file(&mut self, path: &Path) -> String {
         if let Some(existing) = self.file_paths.get(path) {
             return existing.clone();
         }
@@ -733,11 +765,11 @@ impl<'a> Emitter<'a> {
             }
             ViewInline::Superscript(content) => {
                 let inner = self.inlines(content);
-                let _ = write!(out, "#super[{inner}]");
+                let _ = write!(out, "#adoc-super[{inner}]");
             }
             ViewInline::Subscript(content) => {
                 let inner = self.inlines(content);
-                let _ = write!(out, "#sub[{inner}]");
+                let _ = write!(out, "#adoc-sub[{inner}]");
             }
             ViewInline::Span { roles, content } => {
                 let mut inner = self.inlines(content);

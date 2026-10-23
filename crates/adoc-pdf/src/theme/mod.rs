@@ -15,6 +15,11 @@ use std::{
 use regex::Regex;
 
 use value::{evaluate_math, to_color};
+
+/// The leading number in `text`, as Ruby's `String#to_f` reads it.
+pub(crate) fn value_number(text: &str) -> f64 {
+    value::ruby_to_f(text)
+}
 pub use value::{to_pt, Color, ThemeValue};
 use yaml::Yaml;
 
@@ -241,6 +246,15 @@ pub fn load_theme(source: &ThemeSource) -> Result<LoadedTheme, ThemeError> {
             keys.insert_default("sidebar_title_font_family", heading);
         }
     }
+    let unknown: Vec<String> = unknown_categories(&loader.keys);
+    for category in unknown {
+        loader.warnings.push(ThemeWarning {
+            path: None,
+            message: format!(
+                "theme category `{category}` is not used by the converter (its keys can still be referred to as variables)"
+            ),
+        });
+    }
     Ok(LoadedTheme {
         keys: loader.keys,
         fonts: loader.fonts,
@@ -265,6 +279,68 @@ struct Loader {
     loaded: HashSet<ThemeFile>,
     /// The file being read, for warnings.
     current: Option<PathBuf>,
+}
+
+/// The theme categories asciidoctor-pdf's converter reads.
+const KNOWN_CATEGORIES: &[&str] = &[
+    "abstract",
+    "admonition",
+    "base",
+    "block",
+    "button",
+    "callout_list",
+    "caption",
+    "code",
+    "codespan",
+    "conum",
+    "cover",
+    "description_list",
+    "example",
+    "footer",
+    "footnotes",
+    "header",
+    "heading",
+    "horizontal_rhythm",
+    "image",
+    "index",
+    "kbd",
+    "link",
+    "list",
+    "mark",
+    "menu",
+    "olist",
+    "page",
+    "page_numbering",
+    "prose",
+    "quote",
+    "role",
+    "running_content",
+    "sidebar",
+    "svg",
+    "table",
+    "thematic_break",
+    "title_page",
+    "toc",
+    "ulist",
+    "verse",
+    "vertical_rhythm",
+];
+
+/// The categories of `keys` the converter does not read, each once, in order.
+fn unknown_categories(keys: &ThemeKeys) -> Vec<String> {
+    let mut unknown: Vec<String> = Vec::new();
+    for (key, _) in keys.iter() {
+        let known = KNOWN_CATEGORIES
+            .iter()
+            .any(|category| key == *category || key.starts_with(&format!("{category}_")));
+        if !known {
+            let category = key.split('_').next().unwrap_or(key).to_owned();
+            if !unknown.contains(&category) {
+                unknown.push(category);
+            }
+        }
+    }
+    unknown
 }
 
 /// Categories asciidoctor-pdf renamed, with their new names.

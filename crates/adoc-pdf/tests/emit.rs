@@ -17,13 +17,21 @@ fn typst_of(text: &str) -> adoc_pdf::Typst {
     )
 }
 
-/// The laid-out text, with all whitespace removed so line breaks do not matter.
+/// The laid-out body text, with all whitespace removed so line and page breaks do not matter.
 fn compiled_text(typst: &adoc_pdf::Typst) -> String {
-    let pages = typeset_text(typst, &common::default_theme(), &PdfOptions::default())
+    let pages = adoc_pdf::typeset_pages(typst, &common::default_theme(), &PdfOptions::default())
         .unwrap_or_else(|error| panic!("{error}\n{}", typst.source));
+    // The body only: running content in the margins would land between a page's last line
+    // and the next page's first.
     pages
-        .concat()
-        .chars()
+        .iter()
+        .flat_map(|page| {
+            let height = page.height;
+            page.runs
+                .iter()
+                .filter(move |run| run.y > 36.0 && run.y < height - 48.0)
+        })
+        .flat_map(|run| run.text.chars())
         .filter(|c| !c.is_whitespace())
         .collect()
 }
@@ -86,8 +94,8 @@ fn emits_every_inline_kind() {
         "#emph[",
         "#adoc-codespan[",
         "#adoc-mark[",
-        "#super[",
-        "#sub[",
+        "#adoc-super[",
+        "#adoc-sub[",
         "#adoc-role(\"underline\"",
         "#adoc-link(\"https://example.com\"",
         "#adoc-link(label(\"p0#anchor\")",

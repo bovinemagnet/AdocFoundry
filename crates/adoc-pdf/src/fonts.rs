@@ -224,6 +224,50 @@ pub(crate) fn font_set(theme: &LoadedTheme, dirs: &[PathBuf]) -> (FontSet, Vec<S
     (set, warnings)
 }
 
+/// Each catalogue family's line gap (`hhea.lineGap`) as a fraction of the font size, from its
+/// normal face. Prawn's line height includes it; Typst's does not, so the template adds it.
+pub(crate) fn line_gaps(theme: &LoadedTheme, dirs: &[PathBuf]) -> Vec<(String, f64)> {
+    let mut gaps = Vec::new();
+    for (family, faces) in &theme.fonts {
+        let Some(file) = faces.normal.as_ref().or(faces.bold.as_ref()) else {
+            continue;
+        };
+        let gap = load(file, dirs, theme.dir.as_deref())
+            .and_then(|font| line_gap(font.data()))
+            .unwrap_or(0.0);
+        if gap > 0.0 {
+            gaps.push((family.clone(), gap));
+        }
+    }
+    gaps
+}
+
+/// `hhea.lineGap / head.unitsPerEm` of the first font in `data`.
+fn line_gap(data: &[u8]) -> Option<f64> {
+    let u16_at = |offset: usize| -> Option<u16> {
+        Some(u16::from_be_bytes([
+            *data.get(offset)?,
+            *data.get(offset + 1)?,
+        ]))
+    };
+    let u32_at = |offset: usize| -> Option<u32> {
+        Some(u32::from_be_bytes(
+            data.get(offset..offset + 4)?.try_into().ok()?,
+        ))
+    };
+    let table = |tag: &[u8; 4]| -> Option<usize> {
+        let count = usize::from(u16_at(4)?);
+        (0..count).find_map(|index| {
+            let record = 12 + 16 * index;
+            (data.get(record..record + 4)? == tag)
+                .then(|| u32_at(record + 8).map(|offset| offset as usize))?
+        })
+    };
+    let units = u16_at(table(b"head")? + 18)?;
+    let gap = u16_at(table(b"hhea")? + 8)? as i16;
+    (units > 0).then(|| f64::from(gap) / f64::from(units))
+}
+
 fn load(file: &FontFile, dirs: &[PathBuf], theme_dir: Option<&Path>) -> Option<Font> {
     match file {
         FontFile::Bundled(name) => bundled(name),

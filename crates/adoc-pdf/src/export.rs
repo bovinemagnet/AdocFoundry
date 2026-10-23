@@ -147,21 +147,56 @@ pub fn compile(
     })
 }
 
-/// The text of each page as Typst laid it out, one string per page with a space between runs:
-/// for checking what a document says without reading the PDF back.
-pub fn typeset_text(
+/// A page as Typst laid it out: its size and its runs of text, in points from the top left.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypesetPage {
+    pub width: f64,
+    pub height: f64,
+    pub runs: Vec<TextRun>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextRun {
+    pub x: f64,
+    pub y: f64,
+    pub text: String,
+}
+
+impl TypesetPage {
+    /// The page's text, a space between runs.
+    #[must_use]
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        for run in &self.runs {
+            out.push_str(&run.text);
+            out.push(' ');
+        }
+        out
+    }
+}
+
+/// The pages as Typst laid them out, for checking what a document says and where, without
+/// reading the PDF back.
+pub fn typeset_pages(
     typst: &Typst,
     theme: &LoadedTheme,
     options: &PdfOptions,
-) -> Result<Vec<String>, PdfError> {
-    fn collect(frame: &typst::layout::Frame, out: &mut String) {
-        for (_, item) in frame.items() {
+) -> Result<Vec<TypesetPage>, PdfError> {
+    fn collect(frame: &typst::layout::Frame, x: f64, y: f64, out: &mut Vec<TextRun>) {
+        for (point, item) in frame.items() {
+            let (px, py) = (x + point.x.to_pt(), y + point.y.to_pt());
             match item {
-                typst::layout::FrameItem::Group(group) => collect(&group.frame, out),
-                typst::layout::FrameItem::Text(text) => {
-                    out.push_str(&text.text);
-                    out.push(' ');
-                }
+                typst::layout::FrameItem::Group(group) => collect(
+                    &group.frame,
+                    px + group.transform.tx.to_pt(),
+                    py + group.transform.ty.to_pt(),
+                    out,
+                ),
+                typst::layout::FrameItem::Text(text) => out.push(TextRun {
+                    x: px,
+                    y: py,
+                    text: text.text.to_string(),
+                }),
                 _ => {}
             }
         }
@@ -171,10 +206,26 @@ pub fn typeset_text(
         .pages()
         .iter()
         .map(|page| {
-            let mut text = String::new();
-            collect(&page.frame, &mut text);
-            text
+            let mut runs = Vec::new();
+            collect(&page.frame, 0.0, 0.0, &mut runs);
+            TypesetPage {
+                width: page.frame.width().to_pt(),
+                height: page.frame.height().to_pt(),
+                runs,
+            }
         })
+        .collect())
+}
+
+/// The text of each page as Typst laid it out, one string per page.
+pub fn typeset_text(
+    typst: &Typst,
+    theme: &LoadedTheme,
+    options: &PdfOptions,
+) -> Result<Vec<String>, PdfError> {
+    Ok(typeset_pages(typst, theme, options)?
+        .iter()
+        .map(TypesetPage::text)
         .collect())
 }
 
