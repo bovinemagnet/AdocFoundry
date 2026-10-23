@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="windows-1252"?>
+<!--
+  The AdocFoundry MSI, built by `cargo wix -p adocfoundry`. Installs the editor, the command-line
+  checker and the language server, and adds the install directory to PATH.
+-->
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+      Id="*"
+      Name="AdocFoundry"
+      UpgradeCode="6B1D7C52-6E31-4C1E-9F0B-3D7A2C1E5A40"
+      Manufacturer="Paul Snow"
+      Language="1033"
+      Codepage="1252"
+      Version="$(var.Version)">
+
+    <Package Id="*" Keywords="Installer" Description="AdocFoundry installer"
+             Manufacturer="Paul Snow" InstallerVersion="450" Languages="1033"
+             Compressed="yes" InstallScope="perMachine" SummaryCodepage="1252"/>
+
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed."/>
+    <Media Id="1" Cabinet="media1.cab" EmbedCab="yes" DiskPrompt="CD-ROM #1"/>
+    <Property Id="DiskPrompt" Value="AdocFoundry Installation"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">
+        <Directory Id="APPLICATIONFOLDER" Name="AdocFoundry">
+          <Component Id="License" Guid="*">
+            <File Id="LicenseFile" Name="LICENSE.txt" DiskId="1" Source="..\..\LICENSE" KeyPath="yes"/>
+          </Component>
+          <Directory Id="Bin" Name="bin">
+            <Component Id="Path" Guid="0F4D3B1A-6C57-4E7E-A1C9-28B6E3D2C9F1" KeyPath="yes">
+              <Environment Id="PATH" Name="PATH" Value="[Bin]" Permanent="no" Part="last"
+                           Action="set" System="yes"/>
+            </Component>
+            <Component Id="binary0" Guid="*">
+              <File Id="exe0" Name="adocfoundry.exe" DiskId="1" KeyPath="yes"
+                    Source="$(var.CargoTargetBinDir)\adocfoundry.exe">
+                <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="AdocFoundry"
+                          WorkingDirectory="Bin" Advertise="yes"/>
+              </File>
+            </Component>
+            <Component Id="binary1" Guid="*">
+              <File Id="exe1" Name="adocfoundry-cli.exe" DiskId="1" KeyPath="yes"
+                    Source="$(var.CargoTargetBinDir)\adocfoundry-cli.exe"/>
+            </Component>
+            <Component Id="binary2" Guid="*">
+              <File Id="exe2" Name="adoc-ls.exe" DiskId="1" KeyPath="yes"
+                    Source="$(var.CargoTargetBinDir)\adoc-ls.exe"/>
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder"/>
+    </Directory>
+
+    <Feature Id="Binaries" Title="Application" Description="AdocFoundry and its tools."
+             Level="1" ConfigurableDirectory="APPLICATIONFOLDER" AllowAdvertise="no"
+             Display="expand" Absent="disallow">
+      <ComponentRef Id="License"/>
+      <ComponentRef Id="binary0"/>
+      <ComponentRef Id="binary1"/>
+      <ComponentRef Id="binary2"/>
+      <Feature Id="Environment" Title="PATH Environment Variable"
+               Description="Add the install location of the command-line tools to PATH."
+               Level="1" Absent="allow">
+        <ComponentRef Id="Path"/>
+      </Feature>
+    </Feature>
+
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[APPLICATIONFOLDER]" After="CostFinalize"/>
+    <Property Id="ARPHELPLINK" Value="https://github.com/bovinemagnet/AdocFoundry"/>
+    <UI>
+      <UIRef Id="WixUI_FeatureTree"/>
+    </UI>
+    <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf"/>
+  </Product>
+</Wix>

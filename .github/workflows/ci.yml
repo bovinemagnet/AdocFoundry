@@ -41,3 +41,22 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
       - run: cargo test --workspace --exclude adocfoundry
       - run: cargo build -p adocfoundry
+
+  grammar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install tree-sitter-cli --locked
+      - name: Grammar corpus tests
+        run: |
+          for grammar in tree-sitter-asciidoc tree-sitter-asciidoc_inline; do
+            (cd "grammars/tree-sitter-asciidoc/$grammar" && tree-sitter test)
+          done
+      - name: Queries compile against the grammars
+        run: |
+          sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+          cargo test -p adocfoundry queries_compile
+

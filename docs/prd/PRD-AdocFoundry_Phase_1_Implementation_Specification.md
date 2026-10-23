@@ -641,4 +641,6 @@ Where building Phase 1 showed the specification above to be wrong or incomplete,
 | Injections | Rust, Java, JS/TS, Python, Go, JSON, YAML, TOML, Shell, SQL, XML/HTML, Dockerfile | all of these except XML and Dockerfile | gpui-component 0.8 ships no XML or Dockerfile grammar; HTML is injected. |
 | CLI | `follow <file> <byte-offset>` | adds `--root <dir>`; by default the parent of the nearest `antora.yml`, so sibling components resolve | Following a cross-component xref needs the other components indexed. |
 | Editor sync | widget edits sent as edits | the widget reports only that its text changed, so the app recovers the edit as the single replacement between the common prefix and suffix of widget and engine text | gpui-component 0.8 does not expose edit ranges. Typing still arrives as single-character inserts, so undo coalescing works. |
+| Packaging | Linux aarch64 cross-built with `cross` | built natively on GitHub's `ubuntu-22.04-arm` runners | GPUI links against system Wayland, X11 and Vulkan libraries, which a native runner provides without a cross sysroot. |
+| `xtask` | `layers`, `fixtures`, `package` | `layers` and `package` | The fixtures are hand-written and checked in; nothing needs generating. |
 

@@ -1,4 +1,154 @@
 # AdocFoundry
- Forge your documentation in real time.
 
-A high-performance, WYSIWYG AsciiDoc editor written from the ground up in Rust. Designed to mold raw text markup into beautiful, structured documents instantly.
+Forge your documentation in real time.
+
+AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way, written in Rust for macOS, Linux and Windows. It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
+
+The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes. **Phase 1 is implemented.** The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and the Phase 1 scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md).
+
+## What works
+
+**Workspace and Antora**
+
+- Opens a folder and discovers every `antora.yml` beneath it, so several components and versions live in one workspace. Plain AsciiDoc folders work too, with relative-path resolution.
+- Resolves Antora resource IDs in all five coordinates (`version@component:module:family$path`) following Antora 3.2: a component without a version means its latest version (the versionless `~` version first, then released versions above `prerelease` ones); a component without a module means its `ROOT` module.
+- Honours `:page-aliases:`: an xref to an alias resolves to the page and carries an information diagnostic suggesting the current id.
+- Re-reads `antora.yml` when it changes, and re-indexes files changed on disk. A buffer with unsaved edits is never overwritten; you are told the file changed.
+
+**Sidebar**
+
+- *Navigation*: each component version's navigation as its `nav.adoc` files list it, or its pages by module when it declares none.
+- *Modules*: every module with its families (pages, partials, examples, images, attachments) and their resources.
+- *Problems*: workspace diagnostics grouped by file; click one to go to it.
+- *Outline* of the active document; for a navigation file, its navigation tree.
+
+**Editor**
+
+- Syntax highlighting from the AsciiDoc tree-sitter grammars, with the inline grammar injected into paragraphs, titles, table cells and macro targets, and source blocks highlighted for Rust, Java, JavaScript, TypeScript, Python, Go, JSON, YAML, TOML, shell, SQL and HTML.
+- Folding of sections, delimited blocks and lists; line numbers; soft wrap.
+- Diagnostics as you type for unresolved xrefs, anchors, includes and images, duplicate anchors, unknown Antora modules and resources, invalid resource IDs and invalid component descriptors. Diagnostics are conservative: warnings rather than errors, and nothing for dynamic constructs such as `include::{attr}/x.adoc[]`.
+- Hover and completion for xref, include and image targets, anchors and `{attributes}`.
+- Undo and redo that treat a run of typing as one step.
+
+**Link following**
+
+- Cmd-click (Ctrl-click on Linux and Windows) or F12 on an `xref:`, `include::` or `{attribute}` opens the target and places the caret there; images and attachments open in the system's default application.
+- Back and forward through the places you have followed links to.
+- Alt-F12 on an `include::` shows the included file read-only.
+
+**Find, replace and rename**
+
+- Find in the workspace, with regular expression, case and whole-word options.
+- Replace across the workspace shows every change first; applying it is one undo step.
+- Rename Page moves the file and rewrites every xref that leads to it, shown as a preview first; one undo moves the page back and restores every xref.
+
+**Also**
+
+- A command palette listing every command, light and dark themes, a read-only second window that follows the active document, and TOML settings.
+
+## Installing
+
+Release packages are built for macOS (universal DMG), Windows (MSI and portable zip, x64 and ARM64) and Linux (AppImage, deb and rpm, x86_64 and aarch64), plus a Flatpak manifest in `packaging/flatpak/`. Nothing else is needed at run time: no Ruby, Node.js or Java.
+
+To build from source you need Rust (stable, via rustup) and, on Linux, the libraries GPUI uses:
+
+```sh
+# Debian and Ubuntu
+sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
+  libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+
+git clone --recurse-submodules https://github.com/bovinemagnet/AdocFoundry.git
+cd AdocFoundry
+cargo run --release -p adocfoundry -- path/to/docs
+```
+
+If you cloned without `--recurse-submodules`, run `git submodule update --init` first: the grammars live in `grammars/tree-sitter-asciidoc`.
+
+## Using it
+
+`adocfoundry [folder [file…]]` opens a folder as the workspace and any files in tabs. Open Folder (Cmd/Ctrl-Shift-O) does the same from inside the app.
+
+| Command | macOS | Linux and Windows |
+|---|---|---|
+| Command palette | Cmd-Shift-P | Ctrl-Shift-P |
+| Open folder / file | Cmd-Shift-O / Cmd-O | Ctrl-Shift-O / Ctrl-O |
+| Save / Save all / Close | Cmd-S / Cmd-Alt-S / Cmd-W | Ctrl-S / Ctrl-Alt-S / Ctrl-W |
+| Undo / Redo | Cmd-Z / Cmd-Shift-Z | Ctrl-Z / Ctrl-Shift-Z |
+| Follow link | Cmd-click, F12, Cmd-Enter | Ctrl-click, F12, Ctrl-Enter |
+| Back / Forward | Ctrl-minus / Ctrl-Shift-minus | Ctrl-minus / Ctrl-Shift-minus |
+| Peek include | Alt-F12 | Alt-F12 |
+| Find / Replace in workspace | Cmd-Shift-F / Cmd-Shift-H | Ctrl-Shift-F / Ctrl-Shift-H |
+| Rename page | F2 | F2 |
+| Settings | Cmd-, | Ctrl-, |
+| Toggle theme | Cmd-K Cmd-T | Ctrl-K Ctrl-T |
+| Read-only second window | Cmd-K Cmd-N | Ctrl-K Ctrl-N |
+
+## Settings
+
+Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*` and `workspace.ignore` in `.adocfoundry.toml` at its root. Saving either file applies it. Unknown keys produce a warning, never an error.
+
+```toml
+[editor]
+font_family = "JetBrains Mono"   # falls back to the platform monospace
+font_size = 13
+soft_wrap = true
+tab_width = 2
+theme = "auto"                   # auto | light | dark
+
+[workspace]
+ignore = ["node_modules", ".git", "build", "target", ".cache"]
+
+[tools]
+asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
+```
+
+## Command line
+
+```text
+adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
+adocfoundry-cli symbols <root> <query>
+adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
+```
+
+`check` prints the workspace's diagnostics (text: `path:line:col: severity code message`) and exits with 1 when any meets `--fail-on` (default `error`), which suits CI. It reports exactly what the editor and `adoc-ls` report.
+
+## Language server
+
+`adoc-ls --stdio` serves the same diagnostics, definition, hover, completion, document and workspace symbols, and an HTML preview through Asciidoctor, to any LSP editor. The Zed extension [zed-asciidoc](https://github.com/bovinemagnet/zed-asciidoc) starts it from `PATH`:
+
+```sh
+cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
+```
+
+## Not implemented yet
+
+- A rendered preview inside the app (Phase 2), WYSIWYG editing (Phase 3) and PDF export (Phase 4).
+- Editing included content in place, spell checking, Git integration, plugins.
+- XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
+- Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
+- Verified IME composition and frame timing on every platform, and the packages on macOS and Windows: see [`docs/qa/phase1.md`](docs/qa/phase1.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
+
+## Developing
+
+```sh
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo deny check
+cargo xtask layers      # the crate dependency ladder
+cargo xtask package     # release build and archive for this platform in dist/
+```
+
+The workspace is a ladder of crates, each depending only on those below it:
+
+```text
+adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)
+adoc-engine              documents, commands, undo, workspace, watcher, settings, search
+adoc-render
+adoc-parser   adoc-antora   adoc-index   adoc-lang
+adoc-core
+```
+
+## Licence
+
+Apache-2.0. See [LICENSE](LICENSE).

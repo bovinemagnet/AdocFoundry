@@ -78,6 +78,20 @@ impl SearchView {
         }
     }
 
+    /// Sets the query and runs the search, as pressing Enter in the query box does.
+    #[cfg(test)]
+    pub fn run_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.query.update(cx, |input, cx| {
+            input.set_value(query.to_owned(), window, cx)
+        });
+        self.search(window, cx);
+    }
+
+    #[cfg(test)]
+    pub fn result_count(&self) -> Option<usize> {
+        self.pending.is_none().then_some(self.results.len())
+    }
+
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.query.update(cx, |query, cx| query.focus(window, cx));
     }
@@ -109,20 +123,29 @@ impl SearchView {
     }
 
     fn replace_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.replace(None, window, cx);
+    }
+
+    /// Previews replacing every match, or only the result at `only`.
+    fn replace(&mut self, only: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         let request = self.request(cx);
         if request.query.is_empty() {
             return;
         }
         let replacement = self.replacement.read(cx).value().to_string();
+        let mut args = serde_json::json!({
+            "request": request,
+            "replacement": replacement,
+        });
+        if let Some(found) = only.and_then(|index| self.results.get(index)) {
+            args["matches"] = serde_json::json!([{
+                "path": found.path,
+                "start": found.range.start,
+                "end": found.range.end,
+            }]);
+        }
         let outcome = self.app.update(cx, |app, cx| {
-            app.invoke(
-                ids::WORKSPACE_REPLACE,
-                CommandArgs::Custom(serde_json::json!({
-                    "request": request,
-                    "replacement": replacement,
-                })),
-                cx,
-            )
+            app.invoke(ids::WORKSPACE_REPLACE, CommandArgs::Custom(args), cx)
         });
         match outcome {
             Ok(CommandOutcome::Preview(preview)) => {
@@ -246,14 +269,25 @@ impl Render for SearchView {
                                 found.line + 1,
                                 found.line_text.trim()
                             );
-                            div()
+                            h_flex()
                                 .id(("search-result", index))
                                 .px_1()
+                                .gap_2()
                                 .text_sm()
                                 .cursor_pointer()
                                 .hover(|style| style.bg(cx.theme().accent))
                                 .when(index % 2 == 1, |row| row.bg(cx.theme().muted))
-                                .child(label)
+                                .child(div().flex_1().child(label))
+                                .child(
+                                    Button::new(("replace-one", index))
+                                        .xsmall()
+                                        .ghost()
+                                        .label("Replace")
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            cx.stop_propagation();
+                                            this.replace(Some(index), window, cx);
+                                        })),
+                                )
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open_result(index, window, cx);
                                 }))

@@ -10,6 +10,7 @@ use crate::{
 };
 
 const IGNORED_DIRECTORIES: &[&str] = &[
+    ".cache",
     ".git",
     ".zed",
     ".idea",
@@ -34,6 +35,17 @@ pub fn discover_antora_workspace(roots: &[PathBuf]) -> io::Result<DiscoveryResul
     component_roots.dedup();
 
     let mut result = DiscoveryResult::default();
+    // The first root with a playbook supplies the site-wide attributes.
+    for root in roots {
+        let path = root.join(crate::PLAYBOOK_FILE);
+        if path.is_file() {
+            match crate::read_playbook(&normalize_path(&path)) {
+                Ok(playbook) => result.catalog.set_playbook(Some(playbook)),
+                Err(error) => result.issues.push(error),
+            }
+            break;
+        }
+    }
     for root in component_roots {
         match read_component_descriptor(&root) {
             Ok(descriptor) => discover_component(&mut result.catalog, descriptor)?,

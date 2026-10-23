@@ -207,3 +207,44 @@ fn a_second_window_mirrors_the_active_document(cx: &mut TestAppContext) {
     });
     assert_eq!(mirrored.as_deref(), Some("Shared text\n"));
 }
+
+#[gpui::test]
+fn the_search_panel_shows_workspace_results(cx: &mut TestAppContext) {
+    init(cx);
+    let root = fixture("antora-multi-component");
+    let mut engine = Engine::new(Settings::default());
+    engine.open_workspace(vec![root]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+
+    let mut search = None;
+    let window = cx.open_window(size(px(800.), px(400.)), |window, cx| {
+        let view = cx.new(|cx| {
+            crate::search_view::SearchView::new(
+                app.clone(),
+                gpui::WeakEntity::new_invalid(),
+                window,
+                cx,
+            )
+        });
+        search = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let search = search.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| {
+        search.update(cx, |search, cx| search.run_query("xref:", window, cx));
+    });
+    // Results arrive from a worker thread through the engine's event pump.
+    let mut count = None;
+    for _ in 0..200 {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
+        cx.run_until_parked();
+        count = cx.update(|_, cx| search.read(cx).result_count());
+        if count.is_some() {
+            break;
+        }
+    }
+    assert_eq!(count, Some(9), "every xref: in the fixture is found");
+}

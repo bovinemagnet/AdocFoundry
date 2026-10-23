@@ -234,6 +234,12 @@ impl Engine {
                 reindex = true;
             } else if path.file_name().is_some_and(|name| name == "antora.yml") {
                 self.reload_descriptor(path);
+            } else if path
+                .file_name()
+                .is_some_and(|name| name == adoc_antora::PLAYBOOK_FILE)
+            {
+                // Playbook attributes apply to every page: index everything again.
+                reindex = true;
             } else if is_asciidoc_path(path) {
                 self.file_changed_on_disk(path);
             }

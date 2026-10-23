@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=AdocFoundry
+GenericName=AsciiDoc Editor
+Comment=Edit AsciiDoc documentation laid out the Antora way
+Exec=adocfoundry %F
+Icon=io.github.bovinemagnet.AdocFoundry
+Terminal=false
+Categories=Development;TextEditor;Documentation;
+MimeType=text/asciidoc;text/x-asciidoc;inode/directory;
+StartupWMClass=adocfoundry

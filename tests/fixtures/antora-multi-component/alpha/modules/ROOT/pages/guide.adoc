@@ -5,3 +5,5 @@
 == Setup
 
 Set it up.
+
+Built by {company} for {release-name}.

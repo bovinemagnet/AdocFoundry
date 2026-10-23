@@ -18,6 +18,8 @@ pub enum AttributeSource {
     Included(PathBuf),
     /// The component's `antora.yml`.
     Component,
+    /// The site's `antora-playbook.yml`.
+    Playbook,
     /// The page and family attributes Antora computes for every page.
     Antora,
     BuiltIn,
@@ -34,7 +36,8 @@ pub struct AttributeDefinition {
 /// Every attribute the document can reference, first definition winning.
 ///
 /// The document's own declarations come first, then those of the files it includes, then
-/// what Antora supplies, then Asciidoctor's built-ins. An attribute the document unsets
+/// what Antora supplies — the playbook's hard-set attributes, the component's, the playbook's
+/// soft-set (`@`) ones, the page's — then Asciidoctor's built-ins. An attribute the document unsets
 /// (`:name!:`) is not offered from any source.
 #[must_use]
 pub fn attribute_definitions(
@@ -86,8 +89,22 @@ pub fn attribute_definitions(
         }
     }
 
+    // Playbook attributes apply to Antora pages only.
+    let playbook = antora_context.as_ref().and(antora.playbook());
+    for (name, value) in playbook
+        .into_iter()
+        .flat_map(|playbook| playbook.hard_attributes())
+    {
+        define(name, Some(value), AttributeSource::Playbook);
+    }
     for (name, value) in component_attributes(antora, current_path) {
         define(name, Some(value), AttributeSource::Component);
+    }
+    for (name, value) in playbook
+        .into_iter()
+        .flat_map(|playbook| playbook.soft_attributes())
+    {
+        define(name, Some(value), AttributeSource::Playbook);
     }
     for (name, value) in antora_attributes(antora, current_path) {
         define(&name, Some(&value), AttributeSource::Antora);

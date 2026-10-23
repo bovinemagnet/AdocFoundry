@@ -138,6 +138,7 @@ fn attribute_hover(
             format!("Declared in `{}`", display_path(path, current_path))
         }
         AttributeSource::Component => "Set in the component's `antora.yml`".to_owned(),
+        AttributeSource::Playbook => "Set in the site's `antora-playbook.yml`".to_owned(),
         AttributeSource::Antora => "Set by Antora for this page".to_owned(),
         AttributeSource::BuiltIn => "Asciidoctor built-in".to_owned(),
     };

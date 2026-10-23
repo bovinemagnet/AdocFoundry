@@ -3,13 +3,29 @@
 use std::{path::PathBuf, process::ExitCode};
 
 mod layers;
+mod package;
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
     match task.as_deref() {
         Some("layers") => run_layers(),
+        Some("package") => {
+            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+            match package::run_package(&root) {
+                Ok(archive) => {
+                    println!("package: {}", archive.display());
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("package: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         _ => {
-            eprintln!("usage: cargo xtask <task>\n\ntasks:\n  layers    check the crate dependency ladder");
+            eprintln!(
+                "usage: cargo xtask <task>\n\ntasks:\n  layers     check the crate dependency ladder\n  package    release build and archive for this platform in dist/"
+            );
             ExitCode::FAILURE
         }
     }

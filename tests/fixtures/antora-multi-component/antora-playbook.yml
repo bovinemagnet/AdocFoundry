@@ -1,0 +1,10 @@
+site:
+  title: Multi-component fixture
+content:
+  sources:
+  - url: .
+    start_paths: [alpha, beta]
+asciidoc:
+  attributes:
+    company: Foundry Ltd
+    release-name: Phase One@

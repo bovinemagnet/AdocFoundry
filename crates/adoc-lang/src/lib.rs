@@ -128,17 +128,29 @@ fn attribute_definition(
             }
         }
     }
-    let context = context?;
-    let component = ws
-        .antora
-        .component(&context.component, context.version.as_deref())?;
-    component
-        .asciidoc_attributes
-        .contains_key(name)
-        .then(|| Location {
-            path: component.root.join("antora.yml"),
+    context.as_ref()?;
+    // The same precedence `attributes::attribute_definitions` applies.
+    match attributes::attribute_definitions(&ws.index, &ws.antora, path, document)
+        .into_iter()
+        .find(|definition| definition.name == name)?
+        .source
+    {
+        attributes::AttributeSource::Playbook => ws.antora.playbook().map(|playbook| Location {
+            path: playbook.path.clone(),
             range: SourceRange::new(0, 0),
-        })
+        }),
+        attributes::AttributeSource::Component => {
+            let context = context?;
+            let component = ws
+                .antora
+                .component(&context.component, context.version.as_deref())?;
+            Some(Location {
+                path: component.root.join("antora.yml"),
+                range: SourceRange::new(0, 0),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn contains(range: SourceRange, offset: usize) -> bool {
@@ -324,6 +336,36 @@ mod tests {
             definition_at_offset(&ws, &path, text, 6),
             Some(DefinitionTarget::Location(_))
         ));
+    }
+
+    #[test]
+    fn playbook_attributes_are_offered_and_followed() {
+        let ws = workspace("antora-multi-component");
+        let path = fixture("antora-multi-component/alpha/modules/ROOT/pages/guide.adoc");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let file = ws.index.file(&path).unwrap();
+        let definitions =
+            attributes::attribute_definitions(&ws.index, &ws.antora, &path, &file.document);
+        let soft = definitions
+            .iter()
+            .find(|definition| definition.name == "release-name")
+            .unwrap();
+        assert_eq!(soft.value.as_deref(), Some("Phase One"));
+        assert_eq!(soft.source, attributes::AttributeSource::Playbook);
+
+        let offset = text.find("{company}").unwrap() + 2;
+        let Some(DefinitionTarget::Location(location)) =
+            definition_at_offset(&ws, &path, &text, offset)
+        else {
+            panic!("a playbook attribute leads to the playbook");
+        };
+        assert!(location
+            .path
+            .ends_with("antora-multi-component/antora-playbook.yml"));
+        assert!(hover_at_offset(&ws, &path, &text, offset)
+            .unwrap()
+            .markdown
+            .contains("antora-playbook.yml"));
     }
 
     #[test]

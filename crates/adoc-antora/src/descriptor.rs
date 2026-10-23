@@ -99,9 +99,9 @@ struct RawDescriptor {
 }
 
 #[derive(Debug, Deserialize)]
-struct RawAsciidoc {
+pub(crate) struct RawAsciidoc {
     #[serde(default)]
-    attributes: BTreeMap<String, ScalarValue>,
+    pub(crate) attributes: BTreeMap<String, ScalarValue>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,7 +122,7 @@ impl OneOrMany {
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum ScalarValue {
+pub(crate) enum ScalarValue {
     String(String),
     Signed(i64),
     Unsigned(u64),
@@ -141,7 +141,7 @@ impl ScalarValue {
 
     /// Antora's reading of an `asciidoc.attributes` value: `true` sets the attribute with an
     /// empty value, `false` and `~` unset it, and anything else is the value itself.
-    fn into_attribute_value(self) -> Option<String> {
+    pub(crate) fn into_attribute_value(self) -> Option<String> {
         match self {
             Self::Boolean(true) => Some(String::new()),
             Self::Boolean(false) | Self::Null => None,

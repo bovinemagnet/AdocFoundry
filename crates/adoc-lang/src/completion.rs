@@ -195,7 +195,9 @@ fn attribute_candidates(
         .map(|definition| {
             let rank = match definition.source {
                 AttributeSource::Document | AttributeSource::Included(_) => 0,
-                AttributeSource::Component | AttributeSource::Antora => 1,
+                AttributeSource::Component
+                | AttributeSource::Playbook
+                | AttributeSource::Antora => 1,
                 AttributeSource::BuiltIn => 2,
             };
             Candidate {

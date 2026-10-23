@@ -4,6 +4,7 @@ use std::{
 };
 
 pub const DEFAULT_IGNORED_DIRECTORIES: &[&str] = &[
+    ".cache",
     ".git",
     ".zed",
     "node_modules",
