@@ -601,6 +601,64 @@ fn clicking_partial_content_opens_the_partial(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn clicking_a_link_in_the_preview_navigates(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let other = adoc_index::normalize_path(&directory.path().join("other.adoc"));
+    let text = "= Page\n\nxref:other.adoc[Other page]\n";
+    std::fs::write(&page, text).unwrap();
+    std::fs::write(&other, "= Other\n\nThe other page.\n").unwrap();
+    let (app, workspace, mut cx) = previewing(vec![page.clone()], cx);
+
+    // The paragraph is only the link, so its first character is link text.
+    let (trail, _) = block_for(&workspace, &page, text, "xref:other", &mut cx);
+    click_block(&workspace, &trail, &mut cx);
+
+    // The block under the link must not take the click back to the page's own source.
+    let active = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .path
+            .clone()
+    });
+    assert_eq!(active, other);
+}
+
+#[gpui::test]
+fn moving_the_caret_to_the_title_scrolls_the_preview_to_the_top(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("long.adoc"));
+    let mut text = String::from("= Long\n:description: A long page.\n");
+    for number in 1..=80 {
+        text.push_str(&format!("\nParagraph {number}.\n"));
+    }
+    std::fs::write(&page, &text).unwrap();
+    let (_app, workspace, mut cx) = previewing(vec![page.clone()], cx);
+    let preview = cx.update(|_, cx| workspace.read(cx).preview().clone());
+    let reveal = |offset: usize, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+            editor.update(cx, |editor, cx| {
+                editor.reveal(SourceRange::new(offset, offset), window, cx);
+            });
+        });
+        cx.run_until_parked();
+    };
+
+    reveal(text.find("Paragraph 60.").unwrap(), &mut cx);
+    assert!(cx.update(|_, cx| preview.read(cx).scroll_top()) > gpui::px(0.));
+
+    // The title and header are not blocks, so no block contains the caret there.
+    reveal(text.find("Long").unwrap(), &mut cx);
+    assert_eq!(
+        cx.update(|_, cx| preview.read(cx).scroll_top()),
+        gpui::px(0.)
+    );
+}
+
+#[gpui::test]
 fn scroll_sync_works_both_ways(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let page = adoc_index::normalize_path(&directory.path().join("long.adoc"));
