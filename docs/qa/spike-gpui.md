@@ -42,11 +42,15 @@ Needs manual testing with Japanese input on macOS and Windows and ibus on Linux;
 - **Unfocused X11 windows repaint lazily.** A screenshot of an unfocused window under XWayland showed a stale frame until the window received input. This affects screenshot tooling, not users.
 - **Folding comes from the syntax tree.** gpui-component folds multi-line nodes itself and does not read `folds.scm`.
 
+## Real-world check
+
+The release build was run on a real five-module Antora component (`pg-console/docs`). Its navigation tree matched the `nav.adoc` files entry for entry, every target resolved, the outline nested by section, and highlighting covered the header, attributes, inline formatting, tables and xrefs. `adocfoundry-cli check` over 25 local Antora components found no false positives once two parser rules were corrected to match Asciidoctor (includes only as whole-line directives; block images only at the start of a line or table cell); the remaining warnings were genuinely missing images and anchors.
+
 ## Platform status
 
 | Platform | Builds | Runs | Notes |
 |---|---|---|---|
 | Linux x86_64, Wayland | yes | yes | Verified by hand: navigation tree, editor, highlighting, diagnostics, outline |
 | Linux x86_64, X11 | yes | yes | Through XWayland |
-| macOS (Apple Silicon, Intel) | CI | not yet | |
+| macOS (Apple Silicon, Intel) | CI | not yet | The engine, CLI and language server cross-check for `aarch64-apple-darwin` from Linux; the app's C build scripts (tree-sitter, the grammars) need the Apple SDK, so CI builds it |
 | Windows x64 | CI | not yet | |
