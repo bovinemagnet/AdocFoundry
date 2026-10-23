@@ -53,6 +53,7 @@ It knows nothing of the engine, the workspace or a UI framework: it is given a `
 
 The public entry points are `load_theme`, `to_typst` (for inspection), `compile` and `export`, which does both.
 Every compile, for a PDF or for text, empties Typst's process-wide memoisation cache (`typst::comemo::evict(0)`) once layout is done, because after a 2,000-page book it held about 11 GB that the app would otherwise keep.
+comemo keeps the capacity of the tables it empties, so a long-running process keeps its peak memory (6 to 8 MB a PDF page), which the next export reuses.
 
 .From command to PDF
 [mermaid]
@@ -134,6 +135,9 @@ Header and footer text is parsed in `running.rs`: attribute references, constrai
 Image widths are parsed as numbers before they are written.
 
 The article's title and the title page's title are level 1 headings in the PDF structure, because PDF/UA-1 requires the first heading to be level 1.
+
+Lists are drawn with Typst's `enum`, each item's marker given as its number, so that a tagged PDF marks them as lists (`L`, `LI`, `Lbl`, `LBody`) for screen readers.
+Description lists are drawn as blocks.
 
 == The world, fonts and errors
 

@@ -444,7 +444,12 @@ Not in Phase 4, by decision: typeset STEM, a live Typst preview, PDF/A-1 and PDF
 |Typst's cache
 |Not specified
 |Emptied after each compile
-|Typst memoises layout in a process-wide cache that nothing else empties. After a 2,000-page book it held about 11 GB, which the app would keep.
+|Typst memoises layout in a process-wide cache that nothing else empties. After a 2,000-page book it held about 11 GB, which the app would keep. comemo 0.5 keeps the capacity of the tables it empties (call-tree slabs, edge maps and per-call constraint tables). A long-running process therefore keeps its peak, 6 to 8 MB a PDF page, which the next export reuses. Freeing it needs typesetting in a child process or a change to comemo.
+
+|Lists
+|Not specified
+|Typst's `enum`, with each item's marker given as its number in a box as wide as the indent
+|A `grid` is tagged `Div`. The enum is tagged `L`, `LI`, `Lbl` and `LBody`, so a screen reader announces a list, with no line moved. Description lists are still blocks, tagged `Div`.
 
 |CLI
 |`--component <name>[@<version>]`

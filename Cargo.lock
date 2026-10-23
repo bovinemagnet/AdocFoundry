@@ -261,6 +261,7 @@ version = "0.1.0"
 dependencies = [
  "adoc-dom",
  "adoc-render",
+ "hayro-syntax",
  "regex",
  "serde",
  "serde-saphyr 1.3.0",

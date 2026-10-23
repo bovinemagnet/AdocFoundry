@@ -270,23 +270,23 @@
   if bottom < 0pt { v(bottom) }
 }
 
-// A list: markers in a column as wide as the indent, so the text of every item lines up.
+// A list: markers in a column as wide as the indent, so the text of every item lines up. It is
+// Typst's enum with each item's own marker as its number, so the PDF tags it as a list.
 #let adoc-list(markers, items) = context {
   let indent = pick("list_indent", default: 30pt)
   // asciidoctor-pdf leaves the width of an "x" between a marker and its text.
   let gap = measure(text("x")).width
   let marker-color = pick("list_marker_font_color")
-  grid(
-    columns: (indent, 1fr),
-    row-gutter: list-gap,
-    ..items.zip(markers).map(((item, marker)) => (
-      // A paragraph, like the item's text, so the two share a baseline.
-      align(right, par({
-        if marker-color != none { text(fill: marker-color, marker) } else { marker }
-        h(gap)
-      })),
-      item,
-    )).flatten(),
+  enum(
+    numbering: number => box(width: indent - gap, align(right, {
+      let marker = markers.at(number - 1)
+      if marker-color != none { text(fill: marker-color, marker) } else { marker }
+    })),
+    full: false,
+    indent: 0pt,
+    body-indent: gap,
+    spacing: list-gap,
+    ..items.enumerate().map(((index, item)) => enum.item(index + 1, item)),
   )
 }
 

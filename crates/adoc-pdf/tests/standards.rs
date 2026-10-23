@@ -155,3 +155,94 @@ fn metadata_comes_from_attributes() {
         );
     }
 }
+
+/// The structure tree in reading order: each element's depth, type and title or alt text.
+fn tag_tree(bytes: &[u8]) -> Vec<(usize, String, String)> {
+    use hayro_syntax::object::{Dict, Name, Object, String as PdfString};
+
+    fn text(bytes: &[u8]) -> String {
+        match bytes.strip_prefix(&[0xfe, 0xff]) {
+            Some(utf16) => String::from_utf16_lossy(
+                &utf16
+                    .chunks(2)
+                    .map(|pair| u16::from_be_bytes([pair[0], *pair.get(1).unwrap_or(&0)]))
+                    .collect::<Vec<_>>(),
+            ),
+            None => String::from_utf8_lossy(bytes).into_owned(),
+        }
+    }
+    fn walk(object: Object<'_>, depth: usize, out: &mut Vec<(usize, String, String)>) {
+        match object {
+            Object::Array(kids) => kids.iter::<Object>().for_each(|kid| walk(kid, depth, out)),
+            Object::Dict(element) => {
+                // Marked-content and object references have no structure type.
+                let Some(kind) = element.get::<Name>(b"S") else {
+                    return;
+                };
+                let label = [&b"T"[..], b"Alt"]
+                    .iter()
+                    .find_map(|key| element.get::<PdfString>(*key))
+                    .map_or_else(String::new, |label| text(label.as_bytes()));
+                out.push((depth, kind.as_str().to_owned(), label));
+                if let Some(kids) = element.get::<Object>(b"K") {
+                    walk(kids, depth + 1, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).unwrap();
+    let catalog: Dict = pdf.xref().get(pdf.xref().root_id()).unwrap();
+    let root: Dict = catalog.get(b"StructTreeRoot").expect("a structure tree");
+    let mut out = Vec::new();
+    walk(root.get::<Object>(b"K").unwrap(), 0, &mut out);
+    out
+}
+
+#[test]
+fn the_tag_tree_reads_in_order() {
+    // What a screen reader announces: headings in order, lists as lists with their labels,
+    // tables with header cells, and images by their alternative text.
+    let path = common::fixtures().join("pdf/reference/article.adoc");
+    let document = common::article(common::view_of(&path));
+    let output = export(
+        &document,
+        &common::default_theme(),
+        &options(&[PdfStandard::Ua1]),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let tree = tag_tree(&output.bytes);
+    let headings: Vec<&str> = tree
+        .iter()
+        .filter(|(_, kind, _)| kind.starts_with('H') && kind.len() == 2)
+        .map(|(_, _, title)| title.as_str())
+        .collect();
+    assert_eq!(headings[0], "Exporting Documentation to PDF");
+    assert!(headings.contains(&"2. Lists") && headings.contains(&"6. Tables"));
+    let kinds: Vec<&str> = tree.iter().map(|(_, kind, _)| kind.as_str()).collect();
+    let lists = kinds.iter().filter(|kind| **kind == "L").count();
+    assert!(lists >= 4, "{lists} lists: {kinds:?}");
+    for (index, (depth, kind, _)) in tree.iter().enumerate() {
+        if kind == "LI" {
+            let children: Vec<&str> = tree[index + 1..]
+                .iter()
+                .take_while(|(inner, _, _)| inner > depth)
+                .filter(|(inner, _, _)| *inner == depth + 1)
+                .map(|(_, kind, _)| kind.as_str())
+                .collect();
+            assert_eq!(children, ["Lbl", "LBody"], "list item {index}");
+        }
+    }
+    assert!(kinds.contains(&"Table") && kinds.contains(&"TH") && kinds.contains(&"TD"));
+    assert!(tree
+        .iter()
+        .any(|(_, kind, alt)| kind == "Figure" && alt == "Pipeline"));
+    // The order: lists come under their heading, before the tables.
+    let position = |wanted: &str| {
+        tree.iter()
+            .position(|(_, _, title)| title == wanted)
+            .unwrap()
+    };
+    let first_list = kinds.iter().position(|kind| *kind == "L").unwrap();
+    assert!(position("2. Lists") < first_list && first_list < position("6. Tables"));
+}

@@ -107,6 +107,29 @@ pub struct WorkspaceView {
     _subscriptions: Vec<Subscription>,
 }
 
+/// What the notification says about a finished export: the file and its pages with the first
+/// warning, or the error, which names the file and line it comes from.
+pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, String>) -> String {
+    match result {
+        Ok(summary) => {
+            let warnings = summary.diagnostics.len();
+            let name = output
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            let mut message = format!("Exported {name} ({} pages)", summary.pages);
+            if warnings > 0 {
+                message.push_str(&format!(
+                    "; {warnings} warning{}: {}",
+                    if warnings == 1 { "" } else { "s" },
+                    summary.diagnostics[0]
+                ));
+            }
+            message
+        }
+        Err(error) => format!("PDF export failed: {error}"),
+    }
+}
+
 impl WorkspaceView {
     pub fn new(
         app: Entity<AppState>,
@@ -1494,20 +1517,9 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let message = export_message(output, result);
         match result {
-            Ok(summary) => {
-                let warnings = summary.diagnostics.len();
-                let name = output
-                    .file_name()
-                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-                let mut message = format!("Exported {name} ({} pages)", summary.pages);
-                if warnings > 0 {
-                    message.push_str(&format!(
-                        "; {warnings} warning{}: {}",
-                        if warnings == 1 { "" } else { "s" },
-                        summary.diagnostics[0]
-                    ));
-                }
+            Ok(_) => {
                 let path = output.to_path_buf();
                 window.push_notification(
                     Notification::new().message(message).action(move |_, _, _| {
@@ -1519,7 +1531,7 @@ impl WorkspaceView {
                     cx,
                 );
             }
-            Err(error) => window.push_notification(format!("PDF export failed: {error}"), cx),
+            Err(_) => window.push_notification(message, cx),
         }
     }
 

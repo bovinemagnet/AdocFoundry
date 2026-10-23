@@ -658,6 +658,33 @@ fn moving_the_caret_to_the_title_scrolls_the_preview_to_the_top(cx: &mut TestApp
     );
 }
 
+/// Answers the export's save dialog with `output` and returns how the export finished.
+fn finish_export(
+    app: &Entity<AppState>,
+    events: &std::sync::mpsc::Receiver<adoc_engine::EngineEvent>,
+    output: &Path,
+    cx: &mut VisualTestContext,
+) -> Result<adoc_engine::ExportSummary, String> {
+    cx.run_until_parked();
+    assert!(cx.did_prompt_for_new_path());
+    let chosen = output.to_path_buf();
+    cx.simulate_new_path_selection(move |_| Some(chosen));
+    cx.run_until_parked();
+    // The status bar shows "Exporting PDF…" while this holds.
+    assert!(cx.update(|_, cx| app.read(cx).engine.is_exporting()));
+    let mut finished = None;
+    assert!(drain_until(app, cx, |_| {
+        finished = finished.take().or_else(|| {
+            events.try_iter().find_map(|event| match event {
+                adoc_engine::EngineEvent::ExportFinished { result, .. } => Some(result),
+                _ => None,
+            })
+        });
+        finished.is_some()
+    }));
+    finished.unwrap()
+}
+
 #[gpui::test]
 fn export_command_writes_a_pdf(cx: &mut TestAppContext) {
     init(cx);
@@ -665,19 +692,144 @@ fn export_command_writes_a_pdf(cx: &mut TestAppContext) {
     let page = directory.path().join("page.adoc");
     std::fs::write(&page, "= A Page\n\nExported from the app.\n").unwrap();
     let output = directory.path().join("exported.pdf");
-    let app = app_with(Engine::new(Settings::default()), cx);
+    let mut engine = Engine::new(Settings::default());
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
     let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
 
     // The command asks where to write the PDF; the test answers the save dialog.
     cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
-    cx.run_until_parked();
-    assert!(cx.did_prompt_for_new_path());
-    let chosen = output.clone();
-    cx.simulate_new_path_selection(move |_| Some(chosen));
-    assert!(drain_until(&app, &mut cx, |cx| {
-        output.is_file() && !cx.update(|_, cx| app.read(cx).engine.is_exporting())
-    }));
+    let result = finish_export(&app, &events, &output, &mut cx);
     assert!(std::fs::read(&output).unwrap().starts_with(b"%PDF-"));
+    assert_eq!(
+        crate::workspace_view::export_message(&output, &result),
+        "Exported exported.pdf (1 pages)"
+    );
+}
+
+#[gpui::test]
+fn export_component_exports_the_active_page_s_component_with_unsaved_edits(
+    cx: &mut TestAppContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("book"));
+    copy_dir(&fixture("pdf/book"), &root);
+    let page = root.join("guide/modules/ROOT/pages/use.adoc");
+    let mut settings = Settings::default();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| app.read(cx).engine.active().is_some())
+    }));
+
+    cx.dispatch_action(crate::editor::bindings::ExportComponentPdf);
+    let saved = finish_export(&app, &events, &directory.path().join("saved.pdf"), &mut cx)
+        .unwrap_or_else(|error| panic!("{error}"));
+    // The page belongs to `guide`, which exports as a book, not as the page alone.
+    assert!(saved.pages >= 8, "{} pages", saved.pages);
+
+    // Unsaved paragraphs lengthen the book, and the file on disk is untouched.
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            let id = app.engine.active().unwrap();
+            let end = app.engine.document(id).unwrap().text.to_string().len();
+            let text =
+                "\nAn unsaved paragraph that is long enough to fill a line or two of the page.\n"
+                    .repeat(150);
+            app.engine
+                .invoke(
+                    ids::EDIT_INSERT_TEXT,
+                    CommandArgs::Text {
+                        id,
+                        range: SourceRange::new(end, end),
+                        text,
+                    },
+                )
+                .unwrap();
+        });
+    });
+    cx.dispatch_action(crate::editor::bindings::ExportComponentPdf);
+    let edited = finish_export(&app, &events, &directory.path().join("edited.pdf"), &mut cx)
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(edited.pages > saved.pages, "{} pages", edited.pages);
+    assert!(!std::fs::read_to_string(&page).unwrap().contains("unsaved"));
+}
+
+#[gpui::test]
+fn export_errors_name_the_file_and_line(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let dir = adoc_index::normalize_path(directory.path());
+    std::fs::write(dir.join("broken-theme.yml"), "base: [unclosed\nfoo: bar\n").unwrap();
+    let themed = dir.join("themed.adoc");
+    std::fs::write(
+        &themed,
+        "= Themed\n:pdf-theme: broken\n:pdf-themesdir: .\n\nText.\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("bad.png"), "not a png").unwrap();
+    let imaged = dir.join("imaged.adoc");
+    std::fs::write(&imaged, "= Imaged\n\nText.\n\nimage::bad.png[Bad]\n").unwrap();
+    let mut engine = Engine::new(Settings::default());
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![themed.clone(), imaged.clone()], cx);
+
+    for (page, expected) in [
+        (
+            &themed,
+            format!("{}: error: line 2", dir.join("broken-theme.yml").display()),
+        ),
+        (
+            &imaged,
+            format!("{}:5: failed to decode image", imaged.display()),
+        ),
+    ] {
+        cx.update(|_, cx| {
+            app.update(cx, |app, _| {
+                let id = app.engine.open(page).unwrap();
+                app.engine.set_active(id);
+            });
+        });
+        cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
+        let output = page.with_extension("pdf");
+        let result = finish_export(&app, &events, &output, &mut cx);
+        let message = crate::workspace_view::export_message(&output, &result);
+        assert!(message.starts_with("PDF export failed: "), "{message}");
+        assert!(message.contains(&expected), "{message}");
+        assert!(!output.exists());
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
 }
 
 #[gpui::test]
