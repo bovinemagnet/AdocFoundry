@@ -1062,6 +1062,66 @@ fn blame_column_toggles_and_hover_shows_the_commit(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("blame-column").is_none());
 }
 
+#[gpui::test]
+fn save_and_commit_commits_the_page_and_counts_it_unpushed(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.set_identity("Ada Writer", "ada@example.com");
+    test.write("page.adoc", "= The Page\n\nText.\n");
+    test.commit_all("first");
+    test.add_remote("origin", "git@github.com:org/docs.git");
+    test.track_remote("origin");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![dir.path().join("page.adoc")], cx);
+    settle_engine(&app, &mut cx);
+    assert!(cx.debug_bounds("status-branch-main").is_some());
+
+    replace_in(&app, "Text.", "Text, edited.", &mut cx);
+    let (message, paths) = cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            match app
+                .invoke(
+                    ids::GIT_SAVE_AND_COMMIT,
+                    adoc_engine::CommandArgs::Document(id),
+                    cx,
+                )
+                .unwrap()
+            {
+                adoc_engine::CommandOutcome::CommitDraft { message, paths } => (message, paths),
+                other => panic!("expected a draft, got {other:?}"),
+            }
+        })
+    });
+    assert_eq!(message, "docs: update The Page");
+    settle_engine(&app, &mut cx);
+    let labels =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.changes_for_test(cx)));
+    assert_eq!(
+        labels,
+        ["M  page.adoc (1)"],
+        "staged; still one change from HEAD"
+    );
+
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.commit(message, &paths, false, window, cx)
+        });
+    });
+    settle_engine(&app, &mut cx);
+    let labels =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.changes_for_test(cx)));
+    assert!(labels.is_empty(), "committed: {labels:?}");
+    let ahead = cx.update(|_, cx| app.read(cx).engine.git().repositories()[0].ahead);
+    assert_eq!(ahead, Some(1), "one commit not pushed");
+}
+
 // --- visual editor ---------------------------------------------------------------------------
 
 /// A workspace showing `text` as its only page in the visual editor.

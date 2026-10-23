@@ -55,7 +55,7 @@ pub(crate) enum WorkerMessage {
         generation: u64,
         workdir: PathBuf,
         refresh: u64,
-        result: Result<(adoc_git::Head, Vec<adoc_git::FileStatus>), String>,
+        result: Result<crate::git::Snapshot, String>,
     },
     GitHunks {
         id: crate::DocumentId,
@@ -70,6 +70,10 @@ pub(crate) enum WorkerMessage {
         id: crate::DocumentId,
         generation: u64,
         blame: Result<Vec<adoc_git::BlameLine>, String>,
+    },
+    Pushed {
+        workdir: PathBuf,
+        result: Result<String, String>,
     },
 }
 
@@ -293,6 +297,7 @@ impl Engine {
                 generation,
                 blame,
             } => self.git_blamed(id, generation, blame),
+            WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
             WorkerMessage::IndexFailed { error } => {
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,

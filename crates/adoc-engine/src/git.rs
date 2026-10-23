@@ -34,6 +34,9 @@ pub struct GitRepository {
     pub head: Head,
     /// The workspace roots inside it.
     pub roots: Vec<PathBuf>,
+    /// Commits on the current branch that `[git] remote` does not have; `None` when the branch
+    /// has no remote-tracking branch there.
+    pub ahead: Option<usize>,
 }
 
 /// What the engine knows about the workspace's repositories.
@@ -163,6 +166,7 @@ impl Engine {
         }
         let roots = self.roots.clone();
         let generation = self.git.generation;
+        let remote = self.settings.git.remote.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         thread::spawn(move || {
@@ -178,13 +182,18 @@ impl Engine {
                 }
                 match Repository::discover(&root) {
                     Ok(None) => {}
-                    Ok(Some(repo)) => match snapshot(&repo) {
-                        Ok((head, status)) => found.push((
+                    Ok(Some(repo)) => match snapshot(&repo, &remote) {
+                        Ok(Snapshot {
+                            head,
+                            status,
+                            ahead,
+                        }) => found.push((
                             GitRepository {
                                 workdir: normalize_path(repo.workdir()),
                                 git_dir: normalize_path(repo.git_dir()),
                                 head,
                                 roots: vec![root],
+                                ahead,
                             },
                             status,
                         )),
@@ -242,16 +251,17 @@ impl Engine {
     }
 
     /// Re-reads the head and status of the repository at `workdir` on a worker thread.
-    fn refresh_git(&mut self, workdir: PathBuf) {
+    pub(crate) fn refresh_git(&mut self, workdir: PathBuf) {
         self.git.next_refresh += 1;
         let refresh = self.git.next_refresh;
         self.git.refreshes.insert(workdir.clone(), refresh);
         let generation = self.git.generation;
+        let remote = self.settings.git.remote.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         thread::spawn(move || {
             let result = match Repository::discover(&workdir) {
-                Ok(Some(repo)) => snapshot(&repo),
+                Ok(Some(repo)) => snapshot(&repo, &remote),
                 Ok(None) => Err(format!("{} is no longer a repository", workdir.display())),
                 Err(error) => Err(error.to_string()),
             };
@@ -269,12 +279,16 @@ impl Engine {
         generation: u64,
         workdir: &Path,
         refresh: u64,
-        result: Result<(Head, Vec<FileStatus>), String>,
+        result: Result<Snapshot, String>,
     ) {
         if generation != self.git.generation || self.git.refreshes.get(workdir) != Some(&refresh) {
             return;
         }
-        let (head, status) = match result {
+        let Snapshot {
+            head,
+            status,
+            ahead,
+        } = match result {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 self.emit(EngineEvent::CommandFailed {
@@ -293,6 +307,7 @@ impl Engine {
             return;
         };
         let roots = self.git.repositories[index].roots.clone();
+        self.git.repositories[index].ahead = ahead;
         if self.git.repositories[index].head != head {
             self.git.repositories[index].head = head.clone();
             for root in &roots {
@@ -600,11 +615,26 @@ impl Engine {
     }
 }
 
-/// The head and status of `repo`, with errors as text for the engine thread.
-fn snapshot(repo: &Repository) -> Result<(Head, Vec<FileStatus>), String> {
+/// What a refresh reads from a repository.
+pub(crate) struct Snapshot {
+    head: Head,
+    status: Vec<FileStatus>,
+    ahead: Option<usize>,
+}
+
+/// The head, status and unpushed commits of `repo`, with errors as text for the engine thread.
+fn snapshot(repo: &Repository, remote: &str) -> Result<Snapshot, String> {
     let head = repo.head().map_err(|error| error.to_string())?;
     let status = repo.status().map_err(|error| error.to_string())?;
-    Ok((head, status))
+    let ahead = match &head {
+        Head::Branch(branch) => repo.unpushed(remote, branch).ok().flatten(),
+        _ => None,
+    };
+    Ok(Snapshot {
+        head,
+        status,
+        ahead,
+    })
 }
 
 impl Engine {
