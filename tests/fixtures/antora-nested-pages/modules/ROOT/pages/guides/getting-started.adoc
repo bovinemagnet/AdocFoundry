@@ -1,0 +1,5 @@
+= Getting Started
+
+xref:reference/api.adoc[API Reference]
+xref:index.adoc[Home]
+xref:reference/api.adoc#endpoints[Endpoints]

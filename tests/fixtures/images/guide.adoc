@@ -1,0 +1,7 @@
+= Guide
+:imagesdir: media
+
+image::present.svg[]
+image::missing.svg[]
+
+include::chapters/setup.adoc[]
