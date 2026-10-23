@@ -40,14 +40,21 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
 pub const UI_CRATES: &[&str] = &[
     "gpui",
     "gpui-pre",
+    "gpui-pre-platform",
     "gpui-component",
     "gpui-base",
+    "gpui-kit-assets",
     "egui",
     "eframe",
 ];
 
 /// LSP crates, permitted only in `adoc-ls`.
 pub const LSP_CRATES: &[&str] = &["lsp-types", "lsp-server"];
+
+/// Exceptions to the LSP confinement, as `(crate, dependency)`. gpui-component's editor exposes
+/// definition, hover and completion only through provider traits typed with `lsp-types`, so the
+/// app uses those types in one translation module; it never speaks the protocol.
+pub const LSP_ALLOWED: &[(&str, &str)] = &[("adocfoundry", "lsp-types")];
 
 /// Source-level imports forbidden in `adoc-lang`.
 const ADOC_LANG_FORBIDDEN_PATHS: &[&str] = &["lsp_types", "lsp_server", "url::"];
@@ -129,7 +136,10 @@ pub fn check_manifest(manifest: &Manifest) -> Vec<String> {
                 "{name} depends on UI crate {dependency}; only adocfoundry may"
             ));
         }
-        if LSP_CRATES.contains(&dependency) && name != "adoc-ls" {
+        if LSP_CRATES.contains(&dependency)
+            && name != "adoc-ls"
+            && !LSP_ALLOWED.contains(&(name, dependency))
+        {
             violations.push(format!(
                 "{name} depends on LSP crate {dependency}; only adoc-ls may"
             ));
@@ -278,6 +288,15 @@ libc = "=0.2.0"
             1
         );
         assert!(check_manifest(&manifest("adoc-ls", &["lsp-types", "lsp-server"])).is_empty());
+        assert!(check_manifest(&manifest("adocfoundry", &["lsp-types"])).is_empty());
+        assert_eq!(
+            check_manifest(&manifest("adocfoundry", &["lsp-server"])).len(),
+            1
+        );
+        assert_eq!(
+            check_manifest(&manifest("adoc-engine", &["gpui-pre-platform"])).len(),
+            1
+        );
     }
 
     #[test]
