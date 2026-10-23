@@ -1,0 +1,887 @@
+//! The acdc-parser implementation of [`DocumentParser`].
+
+use std::{
+    collections::HashMap,
+    io::Cursor,
+    panic::{catch_unwind, AssertUnwindSafe},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
+
+use acdc_parser as acdc;
+use adoc_core::SourceRange;
+
+use crate::{model::*, DocumentParser, IncludeResolver, ParseInput};
+
+/// Block styles that name a diagram for `adoc-diagrams`, as Asciidoctor Diagram does.
+pub const DIAGRAM_STYLES: &[&str] = &[
+    "mermaid",
+    "plantuml",
+    "graphviz",
+    "dot",
+    "ditaa",
+    "d2",
+    "svgbob",
+    "nomnoml",
+    "pikchr",
+    "vega",
+    "vegalite",
+    "wavedrom",
+    "bytefield",
+    "erd",
+    "blockdiag",
+    "seqdiag",
+    "actdiag",
+    "nwdiag",
+    "structurizr",
+    "bpmn",
+    "tikz",
+    "a2s",
+];
+
+pub struct AcdcParser;
+
+impl DocumentParser for AcdcParser {
+    fn name(&self) -> &'static str {
+        "acdc"
+    }
+
+    fn parse(&self, input: &ParseInput<'_>) -> Dom {
+        let page = input.path.to_path_buf();
+        catch_unwind(AssertUnwindSafe(|| parse(input))).unwrap_or_else(|_| Dom {
+            blocks: vec![unsupported_page(&page, input.text)],
+            warnings: vec![DomWarning {
+                message: "the parser failed on this document".to_owned(),
+                span: None,
+            }],
+            ..Dom::default()
+        })
+    }
+}
+
+fn unsupported_page(page: &Path, text: &str) -> Block {
+    Block {
+        meta: BlockMeta {
+            span: SourceSpan {
+                path: page.to_path_buf(),
+                range: SourceRange::new(0, text.len()),
+                line: 1,
+                include_chain: Vec::new(),
+            },
+            ..BlockMeta::default()
+        },
+        kind: BlockKind::Unsupported {
+            name: "document".to_owned(),
+            source: text.to_owned(),
+        },
+    }
+}
+
+/// Requested include path → the file the resolver actually read, so spans name real files.
+type ResolvedIncludes = Arc<Mutex<HashMap<PathBuf, PathBuf>>>;
+
+fn parse(input: &ParseInput<'_>) -> Dom {
+    let page = input.path.to_path_buf();
+    let resolved: ResolvedIncludes = Arc::default();
+    let loader = {
+        let resolver: Arc<dyn IncludeResolver> = input.includes.clone();
+        let resolved = resolved.clone();
+        acdc::IncludeLoader::custom(move |target: &acdc::IncludeSourceTarget| {
+            let acdc::IncludeSourceTarget::File(requested) = target else {
+                return Err(acdc::IncludeSourceError::new(
+                    acdc::IncludeSourceErrorKind::NotFound,
+                    "remote includes are not read",
+                ));
+            };
+            match resolver.read(requested) {
+                Some((path, text)) => {
+                    if let Ok(mut map) = resolved.lock() {
+                        map.insert(requested.clone(), path);
+                    }
+                    Ok(acdc::IncludeSource::from_reader(Cursor::new(
+                        text.into_bytes(),
+                    )))
+                }
+                None => Err(acdc::IncludeSourceError::new(
+                    acdc::IncludeSourceErrorKind::NotFound,
+                    "include target not found",
+                )),
+            }
+        })
+    };
+    let base = page.parent().map_or_else(PathBuf::new, Path::to_path_buf);
+    let options = acdc::Options::builder()
+        .with_safe_mode(acdc::SafeMode::Unsafe)
+        .with_base_dir(&base)
+        .with_include_loader(loader)
+        .with_attributes(
+            input
+                .attributes
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone())),
+        )
+        .build();
+    let options = match options {
+        Ok(options) => options,
+        Err(error) => return failed(&page, input.text, &error.to_string()),
+    };
+    let parsed = match acdc::parse(input.text, &options) {
+        Ok(parsed) => parsed,
+        Err(error) => return failed(&page, input.text, &error.to_string()),
+    };
+    let resolved = resolved.lock().map(|map| map.clone()).unwrap_or_default();
+    let converter = Converter {
+        parsed: &parsed,
+        page,
+        resolved,
+    };
+    converter.document()
+}
+
+fn failed(page: &Path, text: &str, message: &str) -> Dom {
+    Dom {
+        blocks: vec![unsupported_page(page, text)],
+        warnings: vec![DomWarning {
+            message: message.to_owned(),
+            span: None,
+        }],
+        ..Dom::default()
+    }
+}
+
+struct Converter<'p> {
+    parsed: &'p acdc::ParseResult,
+    page: PathBuf,
+    resolved: HashMap<PathBuf, PathBuf>,
+}
+
+impl Converter<'_> {
+    fn document(&self) -> Dom {
+        let document = self.parsed.document();
+        let title = document
+            .header
+            .as_ref()
+            .filter(|header| !header.title.is_empty())
+            .map(|header| self.inlines(&header.title));
+        let attributes = document
+            .attributes
+            .iter()
+            .filter_map(|(name, value)| Some((name.to_owned(), value.text()?.to_owned())))
+            .collect();
+        let warnings = self
+            .parsed
+            .warnings()
+            .iter()
+            .map(|warning| DomWarning {
+                message: warning.kind.to_string(),
+                span: warning
+                    .location
+                    .as_ref()
+                    .map(|location| self.span_of_source_location(location)),
+            })
+            .collect();
+        Dom {
+            title,
+            attributes,
+            blocks: self.blocks(&document.blocks),
+            warnings,
+        }
+    }
+
+    // --- spans -----------------------------------------------------------------------------
+
+    fn real_path(&self, file: Option<PathBuf>) -> PathBuf {
+        match file {
+            None => self.page.clone(),
+            Some(file) => self.resolved.get(&file).cloned().unwrap_or(file),
+        }
+    }
+
+    fn span(&self, location: &acdc::Location) -> SourceSpan {
+        let source = self.parsed.source_location(location);
+        self.span_of_source_location(&source)
+    }
+
+    fn span_of_source_location(&self, source: &acdc::SourceLocation) -> SourceSpan {
+        let location = &source.location;
+        SourceSpan {
+            path: self.real_path(source.file.clone()),
+            range: SourceRange::new(
+                location.absolute_start,
+                location.absolute_end.max(location.absolute_start),
+            ),
+            line: location.start.line,
+            include_chain: location
+                .start
+                .file
+                .as_ref()
+                .map(|chain| chain.as_ref().clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    fn meta(
+        &self,
+        location: &acdc::Location,
+        metadata: Option<&acdc::BlockMetadata<'_>>,
+        title: &[acdc::InlineNode<'_>],
+    ) -> BlockMeta {
+        let mut meta = BlockMeta {
+            span: self.span(location),
+            title: self.inlines(title),
+            ..BlockMeta::default()
+        };
+        if let Some(metadata) = metadata {
+            meta.id = metadata.id.as_ref().map(|anchor| anchor.id.to_owned());
+            meta.roles = metadata
+                .roles
+                .iter()
+                .map(|role| (*role).to_owned())
+                .collect();
+            meta.style = metadata.style.map(str::to_owned);
+            meta.attributes = metadata
+                .attributes
+                .iter()
+                .filter_map(|(name, value)| match value {
+                    acdc::AttributeValue::String(value) => {
+                        Some((name.to_string(), value.to_string()))
+                    }
+                    acdc::AttributeValue::Bool(true) => Some((name.to_string(), String::new())),
+                    _ => None,
+                })
+                .collect();
+        }
+        meta
+    }
+
+    /// The page text a location covers, when it lies in the page itself.
+    fn source_text(&self, location: &acdc::Location) -> String {
+        let source = self.parsed.source_location(location);
+        if source.file.is_some() {
+            return String::new();
+        }
+        self.parsed
+            .source()
+            .get(location.absolute_start..location.absolute_end)
+            .unwrap_or("")
+            .to_owned()
+    }
+
+    // --- blocks ----------------------------------------------------------------------------
+
+    fn blocks(&self, blocks: &[acdc::Block<'_>]) -> Vec<Block> {
+        blocks
+            .iter()
+            .filter_map(|block| self.block(block))
+            .collect()
+    }
+
+    fn block(&self, block: &acdc::Block<'_>) -> Option<Block> {
+        Some(match block {
+            acdc::Block::Section(section) => {
+                let mut meta = self.meta(&section.location, Some(&section.metadata), &[]);
+                meta.id = Some(section.id().into_owned());
+                Block {
+                    meta,
+                    kind: BlockKind::Section {
+                        level: section.level,
+                        title: self.inlines(&section.title),
+                        blocks: self.blocks(&section.content),
+                    },
+                }
+            }
+            acdc::Block::DiscreteHeader(heading) => Block {
+                meta: self.meta(&heading.location, Some(&heading.metadata), &[]),
+                kind: BlockKind::Heading {
+                    level: heading.level,
+                    title: self.inlines(&heading.title),
+                },
+            },
+            acdc::Block::Paragraph(paragraph) => self.paragraph(paragraph),
+            acdc::Block::Admonition(admonition) => Block {
+                meta: self.meta(
+                    &admonition.location,
+                    Some(&admonition.metadata),
+                    &admonition.title,
+                ),
+                kind: BlockKind::Admonition {
+                    kind: match admonition.variant {
+                        acdc::AdmonitionVariant::Note => AdmonitionKind::Note,
+                        acdc::AdmonitionVariant::Tip => AdmonitionKind::Tip,
+                        acdc::AdmonitionVariant::Important => AdmonitionKind::Important,
+                        acdc::AdmonitionVariant::Caution => AdmonitionKind::Caution,
+                        acdc::AdmonitionVariant::Warning => AdmonitionKind::Warning,
+                    },
+                    blocks: self.blocks(&admonition.blocks),
+                },
+            },
+            acdc::Block::UnorderedList(list) => {
+                let checklist = list.items.iter().any(|item| item.checked.is_some());
+                Block {
+                    meta: self.meta(&list.location, Some(&list.metadata), &list.title),
+                    kind: BlockKind::List {
+                        kind: if checklist {
+                            ListKind::Checklist
+                        } else {
+                            ListKind::Unordered
+                        },
+                        items: self.list_items(&list.items),
+                    },
+                }
+            }
+            acdc::Block::OrderedList(list) => Block {
+                meta: self.meta(&list.location, Some(&list.metadata), &list.title),
+                kind: BlockKind::List {
+                    kind: ListKind::Ordered,
+                    items: self.list_items(&list.items),
+                },
+            },
+            acdc::Block::DescriptionList(list) => Block {
+                meta: self.meta(&list.location, Some(&list.metadata), &list.title),
+                kind: BlockKind::DescriptionList {
+                    items: list
+                        .items
+                        .iter()
+                        .map(|item| DescriptionItem {
+                            span: self.span(&item.location),
+                            term: self.inlines(&item.term),
+                            content: self.inlines(&item.principal_text),
+                            blocks: self.blocks(&item.description),
+                        })
+                        .collect(),
+                },
+            },
+            acdc::Block::CalloutList(list) => Block {
+                meta: self.meta(&list.location, Some(&list.metadata), &list.title),
+                kind: BlockKind::CalloutList {
+                    items: list
+                        .items
+                        .iter()
+                        .map(|item| CalloutItem {
+                            span: self.span(&item.location),
+                            number: item.callout.number,
+                            content: self.inlines(&item.principal),
+                            blocks: self.blocks(&item.blocks),
+                        })
+                        .collect(),
+                },
+            },
+            acdc::Block::DelimitedBlock(delimited)
+                if matches!(
+                    delimited.inner,
+                    acdc::DelimitedBlockType::DelimitedComment(_)
+                ) =>
+            {
+                return None;
+            }
+            acdc::Block::DelimitedBlock(delimited) => self.delimited(delimited),
+            acdc::Block::Image(image) => Block {
+                meta: self.meta(&image.location, Some(&image.metadata), &image.title),
+                kind: image_kind(&image.source, &image.metadata),
+            },
+            acdc::Block::Audio(audio) => Block {
+                meta: self.meta(&audio.location, Some(&audio.metadata), &audio.title),
+                kind: BlockKind::Media {
+                    kind: MediaKind::Audio,
+                    targets: vec![audio.source.to_string()],
+                },
+            },
+            acdc::Block::Video(video) => Block {
+                meta: self.meta(&video.location, Some(&video.metadata), &video.title),
+                kind: BlockKind::Media {
+                    kind: MediaKind::Video,
+                    targets: video.sources.iter().map(ToString::to_string).collect(),
+                },
+            },
+            acdc::Block::ThematicBreak(rule) => Block {
+                meta: self.meta(&rule.location, None, &rule.title),
+                kind: BlockKind::ThematicBreak,
+            },
+            acdc::Block::PageBreak(page_break) => Block {
+                meta: self.meta(
+                    &page_break.location,
+                    Some(&page_break.metadata),
+                    &page_break.title,
+                ),
+                kind: BlockKind::PageBreak,
+            },
+            acdc::Block::TableOfContents(toc) => Block {
+                meta: self.meta(&toc.location, Some(&toc.metadata), &[]),
+                kind: BlockKind::Toc,
+            },
+            // Attribute entries and comments produce no output.
+            acdc::Block::DocumentAttribute(_) | acdc::Block::Comment(_) => return None,
+            other => Block {
+                meta: self.meta(other.location(), None, &[]),
+                kind: BlockKind::Unsupported {
+                    name: "block".to_owned(),
+                    source: self.source_text(other.location()),
+                },
+            },
+        })
+    }
+
+    fn list_items(&self, items: &[acdc::ListItem<'_>]) -> Vec<ListItem> {
+        items
+            .iter()
+            .map(|item| ListItem {
+                span: self.span(&item.location),
+                checked: item
+                    .checked
+                    .as_ref()
+                    .map(|checked| matches!(checked, acdc::ListItemCheckedStatus::Checked)),
+                content: self.inlines(&item.principal),
+                blocks: self.blocks(&item.blocks),
+            })
+            .collect()
+    }
+
+    /// A paragraph, or the block its style makes it: `[NOTE]`, `[source]`, `[quote]`, ….
+    fn paragraph(&self, paragraph: &acdc::Paragraph<'_>) -> Block {
+        let meta = self.meta(
+            &paragraph.location,
+            Some(&paragraph.metadata),
+            &paragraph.title,
+        );
+        let style = paragraph.metadata.style.unwrap_or("");
+        let kind = if let Some(kind) = AdmonitionKind::from_style(style) {
+            BlockKind::Admonition {
+                kind,
+                blocks: vec![Block {
+                    meta: BlockMeta {
+                        span: meta.span.clone(),
+                        ..BlockMeta::default()
+                    },
+                    kind: BlockKind::Paragraph {
+                        inlines: self.inlines(&paragraph.content),
+                    },
+                }],
+            }
+        } else if style == "source" || style == "listing" {
+            let (text, callouts) = self.verbatim_text(&paragraph.content);
+            BlockKind::Listing {
+                language: source_language(&paragraph.metadata),
+                text,
+                callouts,
+            }
+        } else if style == "literal" {
+            BlockKind::Literal {
+                text: self.verbatim_text(&paragraph.content).0,
+            }
+        } else if style == "verse" {
+            BlockKind::Verse {
+                attribution: attribution(&paragraph.metadata),
+                citation: citation(&paragraph.metadata),
+                text: self.verbatim_text(&paragraph.content).0,
+            }
+        } else if style == "quote" {
+            BlockKind::Quote {
+                attribution: attribution(&paragraph.metadata),
+                citation: citation(&paragraph.metadata),
+                blocks: vec![Block {
+                    meta: BlockMeta {
+                        span: meta.span.clone(),
+                        ..BlockMeta::default()
+                    },
+                    kind: BlockKind::Paragraph {
+                        inlines: self.inlines(&paragraph.content),
+                    },
+                }],
+            }
+        } else if DIAGRAM_STYLES.contains(&style) {
+            BlockKind::Diagram {
+                kind: style.to_owned(),
+                source: self.verbatim_text(&paragraph.content).0,
+            }
+        } else if style == "stem" || style == "latexmath" || style == "asciimath" {
+            BlockKind::Stem {
+                latex: style == "latexmath",
+                source: self.verbatim_text(&paragraph.content).0,
+            }
+        } else if style == "pass" {
+            BlockKind::Passthrough {
+                content: self.verbatim_text(&paragraph.content).0,
+            }
+        } else {
+            BlockKind::Paragraph {
+                inlines: self.inlines(&paragraph.content),
+            }
+        };
+        Block { meta, kind }
+    }
+
+    fn delimited(&self, delimited: &acdc::DelimitedBlock<'_>) -> Block {
+        let meta = self.meta(
+            &delimited.location,
+            Some(&delimited.metadata),
+            &delimited.title,
+        );
+        let style = delimited.metadata.style.unwrap_or("");
+        let kind = match &delimited.inner {
+            acdc::DelimitedBlockType::DelimitedListing(content)
+            | acdc::DelimitedBlockType::DelimitedLiteral(content)
+                if DIAGRAM_STYLES.contains(&style) =>
+            {
+                BlockKind::Diagram {
+                    kind: style.to_owned(),
+                    source: self.verbatim_text(content).0,
+                }
+            }
+            acdc::DelimitedBlockType::DelimitedListing(content) => {
+                let (text, callouts) = self.verbatim_text(content);
+                BlockKind::Listing {
+                    language: source_language(&delimited.metadata),
+                    text,
+                    callouts,
+                }
+            }
+            acdc::DelimitedBlockType::DelimitedLiteral(content) => BlockKind::Literal {
+                text: self.verbatim_text(content).0,
+            },
+            acdc::DelimitedBlockType::DelimitedExample(blocks) => {
+                match AdmonitionKind::from_style(style) {
+                    Some(kind) => BlockKind::Admonition {
+                        kind,
+                        blocks: self.blocks(blocks),
+                    },
+                    None => BlockKind::Example {
+                        blocks: self.blocks(blocks),
+                    },
+                }
+            }
+            acdc::DelimitedBlockType::DelimitedOpen(blocks) => {
+                match AdmonitionKind::from_style(style) {
+                    Some(kind) => BlockKind::Admonition {
+                        kind,
+                        blocks: self.blocks(blocks),
+                    },
+                    None => BlockKind::Open {
+                        blocks: self.blocks(blocks),
+                    },
+                }
+            }
+            acdc::DelimitedBlockType::DelimitedSidebar(blocks) => BlockKind::Sidebar {
+                blocks: self.blocks(blocks),
+            },
+            acdc::DelimitedBlockType::DelimitedQuote(blocks) => BlockKind::Quote {
+                attribution: attribution(&delimited.metadata),
+                citation: citation(&delimited.metadata),
+                blocks: self.blocks(blocks),
+            },
+            acdc::DelimitedBlockType::DelimitedVerse(content) => BlockKind::Verse {
+                attribution: attribution(&delimited.metadata),
+                citation: citation(&delimited.metadata),
+                text: self.verbatim_text(content).0,
+            },
+            acdc::DelimitedBlockType::DelimitedPass(content) => BlockKind::Passthrough {
+                content: self.verbatim_text(content).0,
+            },
+            acdc::DelimitedBlockType::DelimitedStem(stem) => BlockKind::Stem {
+                latex: matches!(stem.notation, acdc::StemNotation::Latexmath),
+                source: stem.content.to_owned(),
+            },
+            acdc::DelimitedBlockType::DelimitedTable(table) => self.table(table),
+            _ => BlockKind::Unsupported {
+                name: delimited.delimiter.to_owned(),
+                source: self.source_text(&delimited.location),
+            },
+        };
+        Block { meta, kind }
+    }
+
+    fn table(&self, table: &acdc::Table<'_>) -> BlockKind {
+        let row = |row: &acdc::TableRow<'_>| Row {
+            cells: row
+                .columns
+                .iter()
+                .map(|cell| Cell {
+                    blocks: self.blocks(&cell.content),
+                    colspan: cell.colspan.max(1),
+                    rowspan: cell.rowspan.max(1),
+                    align: cell.halign.as_ref().map(align),
+                    style: cell.style.as_ref().map(cell_style),
+                })
+                .collect(),
+        };
+        BlockKind::Table {
+            columns: table
+                .columns
+                .iter()
+                .map(|column| Column {
+                    width: match column.width {
+                        acdc::ColumnWidth::Proportional(width) => ColumnWidth::Proportional(width),
+                        acdc::ColumnWidth::Percentage(width) => ColumnWidth::Percentage(width),
+                        _ => ColumnWidth::Auto,
+                    },
+                    align: align(&column.halign),
+                    style: cell_style(&column.style),
+                })
+                .collect(),
+            header: table.header.as_ref().map(row),
+            rows: table.rows.iter().map(row).collect(),
+            footer: table.footer.as_ref().map(row),
+        }
+    }
+
+    /// The text of a verbatim block, and its callout markers by line.
+    fn verbatim_text(&self, nodes: &[acdc::InlineNode<'_>]) -> (String, Vec<Callout>) {
+        let mut text = String::new();
+        let mut callouts = Vec::new();
+        for node in nodes {
+            if let acdc::InlineNode::CalloutRef(callout) = node {
+                // The marker ends its line; drop the space written before it.
+                while text.ends_with(' ') {
+                    text.pop();
+                }
+                callouts.push(Callout {
+                    line: text.matches('\n').count(),
+                    number: callout.number,
+                });
+            } else {
+                text.push_str(&Inline::plain_text(&self.inline(node)));
+            }
+        }
+        (text, callouts)
+    }
+
+    // --- inlines ---------------------------------------------------------------------------
+
+    fn inlines(&self, nodes: &[acdc::InlineNode<'_>]) -> Vec<Inline> {
+        let mut out: Vec<Inline> = Vec::new();
+        for node in nodes {
+            for inline in self.inline(node) {
+                // Adjacent text runs merge, so renderers see words, not fragments.
+                if let (Inline::Text(next), Some(Inline::Text(previous))) =
+                    (&inline, out.last_mut())
+                {
+                    previous.push_str(next);
+                } else {
+                    out.push(inline);
+                }
+            }
+        }
+        out
+    }
+
+    fn inline(&self, node: &acdc::InlineNode<'_>) -> Vec<Inline> {
+        let wrap = |roles: Option<&str>, content: Vec<Inline>, make: fn(Vec<Inline>) -> Inline| {
+            let inner = make(content);
+            match roles {
+                Some(role) if !role.is_empty() => vec![Inline::Span {
+                    roles: role
+                        .split('.')
+                        .filter(|r| !r.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                    content: vec![inner],
+                }],
+                _ => vec![inner],
+            }
+        };
+        match node {
+            acdc::InlineNode::PlainText(text) => vec![Inline::Text(text.content.to_owned())],
+            acdc::InlineNode::RawText(text) => vec![Inline::Text(text.content.to_owned())],
+            acdc::InlineNode::VerbatimText(text) => vec![Inline::Text(text.content.to_owned())],
+            acdc::InlineNode::BoldText(bold) => {
+                wrap(bold.role, self.inlines(&bold.content), Inline::Bold)
+            }
+            acdc::InlineNode::ItalicText(italic) => {
+                wrap(italic.role, self.inlines(&italic.content), Inline::Italic)
+            }
+            acdc::InlineNode::MonospaceText(mono) => {
+                wrap(mono.role, self.inlines(&mono.content), Inline::Monospace)
+            }
+            acdc::InlineNode::HighlightText(highlight) => match highlight.role {
+                // `[.role]#text#` is a span carrying the role, not a mark.
+                Some(role) if !role.is_empty() => vec![Inline::Span {
+                    roles: role
+                        .split('.')
+                        .filter(|r| !r.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                    content: self.inlines(&highlight.content),
+                }],
+                _ => vec![Inline::Highlight(self.inlines(&highlight.content))],
+            },
+            acdc::InlineNode::SubscriptText(sub) => {
+                wrap(sub.role, self.inlines(&sub.content), Inline::Subscript)
+            }
+            acdc::InlineNode::SuperscriptText(sup) => {
+                wrap(sup.role, self.inlines(&sup.content), Inline::Superscript)
+            }
+            acdc::InlineNode::CurvedQuotationText(quoted) => {
+                let mut out = vec![Inline::Text("\u{201c}".to_owned())];
+                out.extend(self.inlines(&quoted.content));
+                out.push(Inline::Text("\u{201d}".to_owned()));
+                out
+            }
+            acdc::InlineNode::CurvedApostropheText(quoted) => {
+                let mut out = vec![Inline::Text("\u{2018}".to_owned())];
+                out.extend(self.inlines(&quoted.content));
+                out.push(Inline::Text("\u{2019}".to_owned()));
+                out
+            }
+            acdc::InlineNode::StandaloneCurvedApostrophe(_) => {
+                vec![Inline::Text("\u{2019}".to_owned())]
+            }
+            acdc::InlineNode::LineBreak(_) => vec![Inline::LineBreak],
+            acdc::InlineNode::InlineAnchor(anchor) => vec![Inline::Anchor {
+                id: anchor.id.to_owned(),
+            }],
+            acdc::InlineNode::CalloutRef(callout) => {
+                vec![Inline::Text(format!("({})", callout.number))]
+            }
+            acdc::InlineNode::Macro(inline_macro) => self.inline_macro(inline_macro),
+            _ => Vec::new(),
+        }
+    }
+
+    fn inline_macro(&self, inline_macro: &acdc::InlineMacro<'_>) -> Vec<Inline> {
+        vec![match inline_macro {
+            acdc::InlineMacro::Footnote(footnote) => Inline::Footnote {
+                id: footnote.id.map(str::to_owned),
+                number: footnote.number,
+                content: self.inlines(&footnote.content),
+            },
+            acdc::InlineMacro::Icon(icon) => Inline::Icon {
+                name: icon.target.to_string(),
+            },
+            acdc::InlineMacro::Image(image) => Inline::Image {
+                target: image.source.to_string(),
+                alt: image
+                    .metadata
+                    .attributes
+                    .get_string("alt")
+                    .map(|alt| alt.into_owned())
+                    .or_else(|| image.metadata.positional_attribute(0).map(str::to_owned))
+                    .unwrap_or_default(),
+            },
+            acdc::InlineMacro::Keyboard(keyboard) => {
+                Inline::Keyboard(keyboard.keys.iter().map(|key| (*key).to_owned()).collect())
+            }
+            acdc::InlineMacro::Button(button) => Inline::Button(button.label.to_owned()),
+            acdc::InlineMacro::Menu(menu) => Inline::Menu(
+                std::iter::once(menu.target)
+                    .chain(menu.items.iter().copied())
+                    .map(str::to_owned)
+                    .collect(),
+            ),
+            acdc::InlineMacro::Url(url) => Inline::Link {
+                target: url.target.to_string(),
+                text: self.inlines(&url.text),
+            },
+            acdc::InlineMacro::Link(link) => Inline::Link {
+                target: link.target.to_string(),
+                text: self.inlines(&link.text),
+            },
+            acdc::InlineMacro::Mailto(mailto) => Inline::Link {
+                target: format!("mailto:{}", mailto.target),
+                text: self.inlines(&mailto.text),
+            },
+            acdc::InlineMacro::Autolink(autolink) => Inline::Link {
+                target: autolink.url.to_string(),
+                text: Vec::new(),
+            },
+            acdc::InlineMacro::CrossReference(xref) => Inline::Xref {
+                target: xref.target.to_owned(),
+                text: self.inlines(&xref.text),
+                span: self.span(&xref.location),
+            },
+            acdc::InlineMacro::Pass(pass) => {
+                Inline::Passthrough(pass.text.unwrap_or("").to_owned())
+            }
+            acdc::InlineMacro::Stem(stem) => Inline::Stem {
+                latex: matches!(stem.notation, acdc::StemNotation::Latexmath),
+                source: stem.content.to_owned(),
+            },
+            acdc::InlineMacro::IndexTerm(term) => {
+                if !term.is_visible() {
+                    return Vec::new();
+                }
+                return self.inlines(term.term());
+            }
+            _ => return Vec::new(),
+        }]
+    }
+}
+
+fn image_kind(source: &acdc::Source<'_>, metadata: &acdc::BlockMetadata<'_>) -> BlockKind {
+    let named = |name: &str| {
+        metadata
+            .attributes
+            .get_string(name)
+            .map(|value| value.into_owned())
+    };
+    BlockKind::Image {
+        target: source.to_string(),
+        alt: named("alt")
+            .or_else(|| metadata.positional_attribute(0).map(str::to_owned))
+            .unwrap_or_default(),
+        width: named("width").or_else(|| metadata.positional_attribute(1).map(str::to_owned)),
+        height: named("height").or_else(|| metadata.positional_attribute(2).map(str::to_owned)),
+    }
+}
+
+fn source_language(metadata: &acdc::BlockMetadata<'_>) -> Option<String> {
+    metadata
+        .attributes
+        .get_string("language")
+        .map(|language| language.into_owned())
+        .or_else(|| {
+            // `[source,rust]`: the language is the second positional attribute.
+            (metadata.style == Some("source"))
+                .then(|| metadata.positional_attribute(1))
+                .flatten()
+                .map(str::to_owned)
+        })
+        .filter(|language| !language.is_empty())
+}
+
+fn inline_text(nodes: &[acdc::InlineNode<'_>]) -> String {
+    nodes
+        .iter()
+        .map(|node| match node {
+            acdc::InlineNode::PlainText(text) => text.content,
+            acdc::InlineNode::RawText(text) => text.content,
+            acdc::InlineNode::VerbatimText(text) => text.content,
+            _ => "",
+        })
+        .collect()
+}
+
+fn attribution(metadata: &acdc::BlockMetadata<'_>) -> Option<String> {
+    metadata
+        .attribution
+        .as_ref()
+        .map(|attribution| inline_text(attribution))
+        .filter(|text| !text.is_empty())
+}
+
+fn citation(metadata: &acdc::BlockMetadata<'_>) -> Option<String> {
+    metadata
+        .citetitle
+        .as_ref()
+        .map(|cite| inline_text(cite))
+        .filter(|text| !text.is_empty())
+}
+
+fn align(halign: &acdc::HorizontalAlignment) -> Align {
+    match halign {
+        acdc::HorizontalAlignment::Left => Align::Start,
+        acdc::HorizontalAlignment::Center => Align::Centre,
+        acdc::HorizontalAlignment::Right => Align::End,
+    }
+}
+
+fn cell_style(style: &acdc::ColumnStyle) -> CellStyle {
+    match style {
+        acdc::ColumnStyle::AsciiDoc => CellStyle::AsciiDoc,
+        acdc::ColumnStyle::Default => CellStyle::Default,
+        acdc::ColumnStyle::Emphasis => CellStyle::Emphasis,
+        acdc::ColumnStyle::Header => CellStyle::Header,
+        acdc::ColumnStyle::Literal => CellStyle::Literal,
+        acdc::ColumnStyle::Monospace => CellStyle::Monospace,
+        acdc::ColumnStyle::Strong => CellStyle::Strong,
+        _ => CellStyle::Default,
+    }
+}

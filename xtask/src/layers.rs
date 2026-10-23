@@ -56,6 +56,9 @@ pub const LSP_CRATES: &[&str] = &["lsp-types", "lsp-server"];
 /// app uses those types in one translation module; it never speaks the protocol.
 pub const LSP_ALLOWED: &[(&str, &str)] = &[("adocfoundry", "lsp-types")];
 
+/// External AsciiDoc parser crates, permitted only in `adoc-dom` so the parser stays swappable.
+pub const PARSER_CRATES: &[&str] = &["acdc-parser", "asciidoc-parser"];
+
 /// Source-level imports forbidden in `adoc-lang`.
 const ADOC_LANG_FORBIDDEN_PATHS: &[&str] = &["lsp_types", "lsp_server", "url::"];
 
@@ -142,6 +145,14 @@ pub fn check_manifest(manifest: &Manifest) -> Vec<String> {
         {
             violations.push(format!(
                 "{name} depends on LSP crate {dependency}; only adoc-ls may"
+            ));
+        }
+    }
+
+    for dependency in &manifest.dependencies {
+        if PARSER_CRATES.contains(&dependency.as_str()) && name != "adoc-dom" {
+            violations.push(format!(
+                "{name} depends on parser crate {dependency}; only adoc-dom may"
             ));
         }
     }

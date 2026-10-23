@@ -225,3 +225,9 @@ Acceptance tests: `render_writes_html`, `fidelity_block_structure_matches_asciid
 ## 12. Implementation Notes
 
 Deviations found while implementing are recorded here, as in Phase 1 §20.
+
+| Area | Specification | Implementation | Why |
+|---|---|---|---|
+| acdc-parser licence | acdc-parser 0.11 (MIT OR Apache-2.0) | used, with its `evalexpr` dependency replaced by AdocFoundry's own `vendor/evalexpr` through `[patch.crates-io]` | acdc-parser depends on `evalexpr = "13"`, which is AGPL-3.0-only. acdc uses only `eval_float` and `eval_int` (for `ifeval` operands); the stand-in implements those two in-house under Apache-2.0. See `vendor/README.md`. |
+| `IncludeResolver` | `resolve(from, target)` | `read(requested_path)`: the parser hands over the path it computed from the including file's directory and the target as written | acdc's include provider receives that path, not the pair. A resolver recognises Antora ids such as `partial$x.adoc` inside it. |
+| DOM shape | a variant per block, each carrying span, id, roles and title | `Block { meta: BlockMeta, kind: BlockKind }`, plus `Heading` (discrete headings) and `Media` (audio and video) kinds | One place for the common fields; the extra kinds exist in AsciiDoc and must not fall back to raw source. |

@@ -1,0 +1,119 @@
+= Every Block Kind
+:toc:
+:product: Foundry
+
+== Sections and paragraphs
+
+A paragraph with *bold*, _italic_, `mono`, #marked#, [.underline]#role#, ^sup^ and ~sub~ text about {product}.
+See xref:other.adoc#details[the other page], <<lists>>, https://example.com[a link] and a footnote.footnote:[The note.]
+
+[discrete]
+=== A discrete heading
+
+[[lists]]
+== Lists
+
+* One
+** Nested
+* Two
+
+//
+
+. First
+. Second
+
+//
+
+* [x] Done
+* [ ] Not done
+
+//
+
+Term:: Its definition.
+
+== Admonitions
+
+NOTE: A note paragraph.
+
+[WARNING]
+====
+A warning block.
+====
+
+== Verbatim
+
+[source,rust]
+----
+fn main() {
+    println!("hi"); // <1>
+}
+----
+<1> Prints a greeting.
+
+....
+Literal text.
+....
+
+== Quotes and containers
+
+[quote,Ada Lovelace,Notes]
+____
+A quote.
+____
+
+[verse,A Poet]
+____
+Line one
+Line two
+____
+
+.A sidebar
+****
+Sidebar text.
+****
+
+.An example
+====
+Example text.
+====
+
+--
+Open block text.
+--
+
+== Tables and media
+
+[cols="1,2"]
+|===
+|Head A |Head B
+
+|1 |2
+|3 |4
+|===
+
+image::diagram.png[A diagram,200,100]
+
+== Diagrams and maths
+
+[mermaid]
+----
+graph TD
+  A --> B
+----
+
+[stem]
+++++
+sqrt(4) = 2
+++++
+
+++++
+<b>raw</b>
+++++
+
+'''
+
+<<<
+
+== Included
+
+include::partials/included.adoc[]

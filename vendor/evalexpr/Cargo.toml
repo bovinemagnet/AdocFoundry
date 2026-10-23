@@ -1,0 +1,11 @@
+[package]
+name = "evalexpr"
+# Satisfies acdc-parser's `evalexpr = "13"` requirement through `[patch.crates-io]`.
+version = "13.255.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "AdocFoundry's arithmetic evaluator for acdc-parser's ifeval, standing in for the AGPL-licensed evalexpr crate"
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"

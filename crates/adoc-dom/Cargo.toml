@@ -1,0 +1,13 @@
+[package]
+name = "adoc-dom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+acdc-parser.workspace = true
+adoc-core.workspace = true
+
+[lints]
+workspace = true

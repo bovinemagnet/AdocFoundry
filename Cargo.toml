@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/*", "xtask"]
 # The grammar submodule carries its own binding crates, used as path dependencies.
-exclude = ["grammars"]
+exclude = ["grammars", "vendor"]
 default-members = ["crates/adocfoundry"]
 resolver = "2"
 
@@ -18,6 +18,8 @@ unsafe_code = "forbid"
 # Internal crates
 adoc-antora = { path = "crates/adoc-antora" }
 adoc-core = { path = "crates/adoc-core" }
+adoc-diagrams = { path = "crates/adoc-diagrams" }
+adoc-dom = { path = "crates/adoc-dom" }
 adoc-engine = { path = "crates/adoc-engine" }
 adoc-index = { path = "crates/adoc-index" }
 adoc-lang = { path = "crates/adoc-lang" }
@@ -25,6 +27,8 @@ adoc-parser = { path = "crates/adoc-parser" }
 adoc-render = { path = "crates/adoc-render" }
 
 # External crates: every entry pinned exactly; crates reference these, never their own versions
+acdc-parser = "=0.11.0"
+asciidoc-parser = "=0.31.2"
 dirs = "=6.0.0"
 gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-component = { version = "=0.8.0", features = [
@@ -61,3 +65,8 @@ tempfile = "=3.27.0"
 toml = "=1.1.8"
 tree-sitter = "=0.26.13"
 url = "=2.5.8"
+
+[patch.crates-io]
+# acdc-parser depends on evalexpr 13, which is AGPL-3.0-only; see vendor/README.md.
+evalexpr = { path = "vendor/evalexpr" }
+
