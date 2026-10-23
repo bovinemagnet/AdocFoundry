@@ -1063,6 +1063,10 @@ impl WorkspaceView {
     }
 
     fn on_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
+        // The palette dispatches an item's action from its own field, where only workspace
+        // actions are handled; the visual editor's run once the palette has closed and handed
+        // focus back, from `on_confirm`.
+        let mut visual_actions: Vec<Option<Box<dyn gpui::Action>>> = Vec::new();
         let mut items: Vec<CommandItem> = self
             .app
             .read(cx)
@@ -1071,19 +1075,22 @@ impl WorkspaceView {
             .all()
             .filter_map(|spec| {
                 let action = action_for(spec.id)?;
-                Some(
-                    CommandItem::new()
-                        .label(spec.title)
-                        .keywords([spec.id.as_str()])
-                        .action(action),
-                )
+                let item = CommandItem::new()
+                    .label(spec.title)
+                    .keywords([spec.id.as_str()]);
+                Some(if in_visual_editor(spec.id) {
+                    visual_actions.push(Some(action));
+                    item
+                } else {
+                    visual_actions.push(None);
+                    item.action(action)
+                })
             })
             .collect();
-        items.extend(
-            UI_ACTIONS.iter().enumerate().map(|(index, (title, _))| {
-                CommandItem::new().label(*title).action(ui_action(index))
-            }),
-        );
+        items.extend(UI_ACTIONS.iter().enumerate().map(|(index, (title, _))| {
+            visual_actions.push(None);
+            CommandItem::new().label(*title).action(ui_action(index))
+        }));
         let palette = self.palette.clone();
         palette.update(cx, |palette, cx| palette.set_query("", window, cx));
         let focus = palette.read(cx).focus_handle(cx);
@@ -1094,7 +1101,21 @@ impl WorkspaceView {
                     .bordered(false)
                     .placeholder("Run a command…")
                     .max_h(px(420.))
-                    .items(items.clone()),
+                    .items(items.clone())
+                    .on_confirm({
+                        let visual_actions: Vec<Option<Box<dyn gpui::Action>>> = visual_actions
+                            .iter()
+                            .map(|action| action.as_ref().map(|action| action.boxed_clone()))
+                            .collect();
+                        move |index, window, cx| {
+                            let Some(Some(action)) = visual_actions.get(index.row) else {
+                                return;
+                            };
+                            let action = action.boxed_clone();
+                            window.close_dialog(cx);
+                            window.defer(cx, move |window, cx| window.dispatch_action(action, cx));
+                        }
+                    }),
             )
         });
     }

@@ -189,6 +189,35 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
     })
 }
 
+/// Whether command `id` is handled by the visual editor, and so must be dispatched from it.
+pub fn in_visual_editor(id: CommandId) -> bool {
+    matches!(
+        id,
+        ids::EDIT_TOGGLE_STRONG
+            | ids::EDIT_TOGGLE_EMPHASIS
+            | ids::EDIT_TOGGLE_CODE
+            | ids::EDIT_TOGGLE_HIGHLIGHT
+            | ids::EDIT_INSERT_LINK
+            | ids::EDIT_REMOVE_LINK
+            | ids::VISUAL_SPLIT_BLOCK
+            | ids::EDIT_INDENT_LIST_ITEM
+            | ids::EDIT_OUTDENT_LIST_ITEM
+            | ids::EDIT_TOGGLE_BULLET_LIST
+            | ids::EDIT_TOGGLE_NUMBERED_LIST
+            | ids::EDIT_TOGGLE_CHECKLIST
+            | ids::EDIT_TOGGLE_CHECKED
+            | ids::EDIT_INSERT_CODE_BLOCK
+            | ids::EDIT_INSERT_ADMONITION
+            | ids::EDIT_INSERT_TABLE
+            | ids::EDIT_INSERT_TABLE_ROW
+            | ids::EDIT_DELETE_TABLE_ROW
+            | ids::EDIT_INSERT_TABLE_COLUMN
+            | ids::EDIT_DELETE_TABLE_COLUMN
+            | ids::EDIT_INSERT_IMAGE
+            | ids::EDIT_EDIT_IMAGE
+    )
+}
+
 /// The UI-only action at `index` of [`UI_ACTIONS`].
 pub fn ui_action(index: usize) -> Box<dyn gpui::Action> {
     match index {

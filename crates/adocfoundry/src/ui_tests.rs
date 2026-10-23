@@ -1118,3 +1118,23 @@ fn home_and_end_work_on_the_line(cx: &mut TestAppContext) {
         "= Page\n\n----\nfirst = 1\nxsecond = 2\n----\n"
     );
 }
+
+#[gpui::test]
+fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("plain").unwrap();
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, start + 5, cx)));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.run_until_parked();
+    cx.simulate_input("Bold");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n"
+    );
+}
