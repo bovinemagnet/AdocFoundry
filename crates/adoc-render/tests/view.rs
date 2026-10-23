@@ -248,7 +248,9 @@ impl ViewResolver for AntoraImages {
 #[test]
 fn resolves_antora_images() {
     let root = fixtures().join("antora-single-component");
-    let catalog = discover_antora_workspace(std::slice::from_ref(&root)).unwrap().catalog;
+    let catalog = discover_antora_workspace(std::slice::from_ref(&root))
+        .unwrap()
+        .catalog;
     let page = root.join("modules/security/pages/authentication.adoc");
     let text = "= Auth\n\nimage::architecture.svg[]\n\nimage::ROOT:image$architecture.svg[Architecture]\n\nimage::missing.png[Gone]\n\nInline image:ROOT:architecture.svg[icon] too.\n";
     let view = view_of(&page, text, &AntoraImages(catalog));
