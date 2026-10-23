@@ -1,0 +1,58 @@
+= Developer guide
+Paul Snow
+:revnumber: 0.0.0
+:description: An introduction to AdocFoundry's internals for contributors.
+
+This guide is for people working on AdocFoundry itself.
+For using the editor, see the xref:ROOT:index.adoc[user guide].
+
+AdocFoundry is a Rust workspace.
+A GPUI desktop application, a command-line checker and a language server are all thin front ends over one headless engine.
+The main ideas are:
+
+* One engine owns all document text and semantics.
+Views mirror it and never keep their own copy.
+* Every user-visible action is a command with a stable id, and every document change is a command recorded in undo history.
+* Crates form a ladder, and a crate may depend only on crates below it.
+The ladder is checked in CI.
+* Positions are byte offsets everywhere, converted to lines and columns only at the edges.
+* Diagnostics are conservative, and parsers never panic on half-typed input.
+
+== Contents
+
+* xref:architecture.adoc[Architecture] -- the crate ladder and its rules.
+* xref:engine.adoc[The engine] -- documents, commands, undo, events, workers and the watcher.
+* xref:desktop-app.adoc[The desktop app] -- GPUI, synchronisation and the keymap.
+* xref:testing.adoc[Testing] -- the test layers and the manual QA record.
+* xref:building-and-releasing.adoc[Building and releasing] -- commands, CI and packaging.
+* xref:documentation-site.adoc[This documentation site] -- how it is built.
+* xref:implementation-notes.adoc[Implementation notes] -- where the build departed from the specification.
+
+== Source documents
+
+The repository keeps its design records beside the code.
+
+[cols="2,4"]
+|===
+|Path |Purpose
+
+|`docs/design/DESIGN-AdocFoundry_Architecture.md`
+|The architecture and technology decisions, and the four-phase plan.
+
+|`docs/prd/`
+|One implementation specification per phase. The specification of the phase in progress is the source of truth for scope.
+
+|`docs/qa/`
+|Manual QA records, including the GPUI spike.
+
+|`CLAUDE.md` and `AGENTS.md`
+|Repository conventions for contributors and tools.
+|===
+
+== Working rules
+
+* Work one work package at a time, in the order the phase specification gives.
+* Do not start a later phase's features unless the current specification says so.
+* Pin every external dependency exactly and check it with `cargo deny`.
+* Never depend on Zed's GPL-3.0 editor crates (`editor`, `text`, `rope`, `multi_buffer`, `language`, `project`).
+* Keep `unsafe_code` forbidden, and use typed errors in libraries and `anyhow` only in binaries.

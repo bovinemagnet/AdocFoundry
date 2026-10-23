@@ -1,0 +1,140 @@
+= Antora support
+Paul Snow
+:revnumber: 0.0.0
+:description: How AdocFoundry discovers components and resolves Antora resource IDs, versions, aliases and attributes.
+
+AdocFoundry understands Antora's content model directly.
+It does not run Antora, Node.js or Asciidoctor to do so.
+Resolution follows the rules of Antora 3.2.
+
+== Discovery
+
+Opening a folder discovers every `antora.yml` beneath it, so one workspace can hold several components and several versions of the same component.
+Each descriptor defines a component version.
+Its modules are the directories under `modules/`, and each module's families are `pages`, `partials`, `examples`, `images` and `attachments`.
+
+A folder with no `antora.yml` is treated as plain AsciiDoc, and links resolve by relative path only.
+
+The workspace-level `antora-playbook.yml`, if one is found at a workspace root, supplies site-wide attributes (see <<playbook-attributes>>).
+Remote repositories are never cloned and no project scripts are executed.
+
+=== Descriptor reload
+
+`antora.yml` is re-read when it changes.
+Only that component version's modules and resources are replaced, and diagnostics are re-run for the files affected by resources that appeared or disappeared.
+The sidebar updates without a restart.
+A descriptor that cannot be read produces an `adoc.antora.invalid-descriptor` diagnostic.
+
+== Resource IDs
+
+A resource ID has up to five coordinates.
+
+[source,text]
+----
+version@component:module:family$path
+----
+
+Every coordinate except the path is optional.
+Pages are the default family in an `xref:`.
+Includes use `partial$` and `example$`, and images use `image$`.
+
+[cols="2,3"]
+|===
+|Written as |Meaning
+
+|`page.adoc`
+|A page in the current module.
+
+|`module:page.adoc`
+|A page in another module of the current component version.
+
+|`component::page.adoc`
+|The `ROOT` module of the latest version of another component.
+
+|`component:module:page.adoc`
+|That module of the latest version of that component.
+
+|`2.0@component:module:page.adoc`
+|Exactly that version.
+
+|`partial$note.adoc`
+|A partial in the current module.
+|===
+
+=== Rules
+
+* With no version and no component, the target is in the current component version.
+* A component without a version means the _latest_ version of that component that is present in the workspace.
+* A component without a module means its `ROOT` module.
+* A component and version both given resolve to exactly that version.
+
+.How an xref is resolved
+[mermaid]
+----
+include::developer:example$antora-resolution.mmd[]
+----
+
+=== Which version is the latest
+
+When a component has several versions, the latest is chosen like this:
+
+. Released versions rank above versions whose descriptor sets `prerelease`.
+. The versionless version (`version: ~`) ranks above numbered versions.
+. Numbered versions are compared as dotted integers, so `10.0` is later than `9.5`.
+. Anything non-numeric is compared lexically.
+
+A reference to a version of a known component that is not in the workspace is not reported.
+It is usually published from another branch or repository, and reporting it would be a false positive.
+
+== Page aliases
+
+A page may declare the old ids it used to have.
+
+[source,asciidoc]
+----
+= New name
+:page-aliases: old-name.adoc, other-module:legacy.adoc
+----
+
+Each alias is resolved relative to the page's own coordinates.
+An xref to an alias resolves to the page.
+It also carries an information diagnostic, `adoc.antora.resolved-via-alias`, suggesting the current id, so that old links can be tidied.
+
+[[playbook-attributes]]
+== Playbook attributes
+
+Attributes that you reference as `+{name}+` can come from several places.
+When the same name is defined more than once, the first definition below wins.
+
+. The document's own header and body.
+. Files the document includes.
+. Playbook attributes that are _hard-set_, with no trailing `@`.
+. The component's `asciidoc.attributes` in `antora.yml`.
+. Playbook attributes that are _soft-set_, with a trailing `@` on the value.
+. The attributes Antora computes for every page.
+. Asciidoctor's built-in attributes.
+
+An attribute that the document unsets (`:name!:`) is not offered from any source.
+
+Playbook attributes apply to pages that belong to an Antora module only.
+In the playbook, `true` sets an empty value and `false` or `~` unsets, as Antora reads them.
+
+The attributes Antora computes are `page-component-name`, `page-module`, `page-component-version` (when the component has a version), the family prefixes `pagesdir`, `partialsdir`, `examplesdir`, `attachmentsdir` and `imagesdir`, and `moduledir`.
+The family and module values are absolute paths ending in a separator, so both `{partialsdir}note.adoc` and `{partialsdir}/note.adoc` resolve.
+
+TIP: Dynamic targets such as `+include::{attr}/x.adoc[]+` are never reported as unresolved.
+
+== Navigation trees
+
+The sidebar builds each component version's navigation from the `nav` list in its `antora.yml`.
+Each navigation file is parsed into a nested list of xrefs, nested by list depth.
+A component with no `nav` shows its pages by module.
+
+An entry that cannot be resolved is kept in the tree and reported with `adoc.antora.nav-unresolved`.
+For a navigation file open in the editor, the outline shows the same tree.
+
+== See also
+
+* xref:diagnostics.adoc[Diagnostics]
+* xref:command-line.adoc[Command line], to check resolution in CI
+* xref:developer:architecture.adoc[Architecture], for where this logic lives

@@ -1,0 +1,18 @@
+flowchart TD
+    push["Push or pull request"] --> ci
+    subgraph ci["CI workflow"]
+        lint["lint: cargo fmt, clippy -D warnings,<br/>cargo deny, cargo xtask layers"]
+        test["test matrix: ubuntu, macos-14, windows<br/>cargo test --workspace --exclude adocfoundry,<br/>then cargo build -p adocfoundry"]
+        grammar["grammar: tree-sitter corpus tests<br/>and queries compile"]
+    end
+    tag["Tag v*"] --> rel
+    subgraph rel["Release workflow"]
+        mac["macOS universal DMG<br/>lipo, packaging/macos/bundle.sh,<br/>sign and notarise when secrets exist"]
+        win["Windows MSI (cargo-wix) and zip<br/>x64, arm64"]
+        lin["Linux AppImage, deb, rpm<br/>x86_64, aarch64 on native runners"]
+        tools["adoc-ls and adocfoundry-cli tarballs"]
+    end
+    mac --> gh["GitHub release"]
+    win --> gh
+    lin --> gh
+    tools --> gh

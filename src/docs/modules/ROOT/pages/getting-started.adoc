@@ -1,0 +1,78 @@
+= Getting started
+Paul Snow
+:revnumber: 0.0.0
+:description: Installing AdocFoundry from a release package or building it from source.
+
+This page covers installing AdocFoundry and opening your first workspace.
+
+== Install a package
+
+Release packages are built for:
+
+* macOS: a universal DMG.
+* Windows: an MSI and a portable zip, for x64 and ARM64.
+* Linux: an AppImage, a deb and an rpm, for x86_64 and aarch64.
+* Linux: a Flatpak manifest in `packaging/flatpak/` in the repository.
+
+The `adoc-ls` language server and `adocfoundry-cli` are also attached to each release as separate archives for every target.
+
+NOTE: The macOS and Windows packages are built by continuous integration but have not yet been installed and run by hand.
+The Linux x86_64 build has been run on Wayland and, through XWayland, on X11.
+See xref:developer:testing.adoc#platform-status[platform status].
+
+== Build from source
+
+You need Rust (stable, installed with `rustup`).
+On Linux you also need the libraries GPUI uses.
+
+[source,sh]
+----
+# Debian and Ubuntu
+sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
+  libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+----
+
+Clone the repository with its submodules, because the tree-sitter grammars live in `grammars/tree-sitter-asciidoc`.
+
+[source,sh]
+----
+git clone --recurse-submodules https://github.com/bovinemagnet/AdocFoundry.git
+cd AdocFoundry
+cargo run --release -p adocfoundry -- path/to/docs
+----
+
+If you cloned without `--recurse-submodules`, fetch the grammars first.
+
+[source,sh]
+----
+git submodule update --init
+----
+
+TIP: The repository's default workspace member is the application crate only.
+Pass `--workspace` or `-p <crate>` when you build or test anything else.
+
+== Open a workspace
+
+[source,sh]
+----
+adocfoundry [folder [file...]]
+----
+
+`adocfoundry` opens a folder as the workspace and any files you list in tabs.
+Open Folder (kbd:[Cmd+Shift+O] or kbd:[Ctrl+Shift+O]) does the same from inside the application.
+
+The fixtures in the repository make a good first workspace.
+
+[source,sh]
+----
+cargo run --release -p adocfoundry -- tests/fixtures/antora-multi-component
+----
+
+The folder can be a repository root, a directory holding several components, or a plain folder of `.adoc` files.
+See xref:antora-support.adoc[Antora support] for how components are found.
+
+== Next steps
+
+* xref:using-the-editor.adoc[Using the editor]
+* xref:settings.adoc[Settings]
+* xref:command-line.adoc[Command line], to check the same workspace in CI

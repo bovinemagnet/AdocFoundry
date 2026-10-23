@@ -1,0 +1,109 @@
+= Architecture
+Paul Snow
+:revnumber: 0.0.0
+:description: The crate ladder, each crate's responsibilities and the layering rules that CI enforces.
+
+AdocFoundry is a layered workspace of crates.
+A crate may depend only on crates in the layers below it.
+
+Every crate also depends on `adoc-core`; the diagram shows that edge only for the language crates.
+
+.The crate layers
+[mermaid]
+----
+include::example$crate-layers.mmd[]
+----
+
+== The crates
+
+[cols="1,2,5"]
+|===
+|Layer |Crate |Responsibility
+
+|L0
+|`adoc-core`
+|Domain types only: `Document`, `LineIndex`, `SourceRange` (byte offsets), `Section`, `Anchor`, `Reference`, `IncludeDirective`, `ImageDirective`, `Location`, and `Diagnostic` with its `DiagnosticCode`. It has no dependencies at all.
+
+|L1
+|`adoc-parser`
+|A line-oriented semantic parser, deliberately not tree-sitter and not a full AST. It extracts titles, sections, attributes, anchors, xrefs, includes and images from half-typed input without panicking, and runs on every keystroke.
+
+|L1
+|`adoc-antora`
+|`antora.yml` and playbook parsing, `AntoraCatalog`, resource-ID parsing for `version@component:module:family$path`, the resolver, page aliases, descriptor reload and navigation trees.
+
+|L1
+|`adoc-index`
+|`WorkspaceIndex`, with replacement-based updates and direct map lookups. It never scans every document. Path normalisation is lexical and never canonicalises, so unsaved files work.
+
+|L1
+|`adoc-lang`
+|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it.
+
+|L2
+|`adoc-render`
+|The optional external Asciidoctor renderer, used by the language server's preview.
+
+|L3
+|`adoc-engine`
+|Documents, commands, undo, workspace, file watcher, settings, search and rename, and the `EngineEvent` stream. The only entry point front ends use.
+
+|L4
+|`adocfoundry`
+|The GPUI desktop application. The only crate that imports a UI framework.
+
+|L4
+|`adocfoundry-cli`
+|The headless binary: `check`, `symbols` and `follow`.
+
+|L4
+|`adoc-ls`
+|The language server. The only crate that speaks the Language Server Protocol.
+|===
+
+Later phases add `adoc-dom` (the full AST behind a parser trait), `adoc-diagrams`, `adoc-model` and `adoc-pdf`.
+Their layers are already reserved in the layering check.
+
+== Layering rules
+
+`cargo xtask layers` reads the `Cargo.toml` of every crate under `crates/` and fails the build if:
+
+* a crate is not listed in the layer table in `xtask/src/layers.rs`;
+* a crate depends on a crate in a higher or equal layer, except for the explicit same-layer pairs `adoc-index` to `adoc-parser`, and `adoc-lang` to `adoc-parser`, `adoc-index` and `adoc-antora`;
+* `adoc-core` has any dependency;
+* a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
+* an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;
+* `adoc-lang` depends on `url`, or its sources mention `lsp_types`, `lsp_server` or `url::`.
+
+Adding a crate means adding a line to the ladder in `CLAUDE.md` and to the layer table.
+
+=== The one `lsp-types` exception
+
+The editor widget in gpui-component offers definition, hover and completion only through provider traits typed with `lsp-types`.
+Rewriting those widgets would cost far more than a translation module, so `adocfoundry` is permitted to depend on `lsp-types`.
+The exception is listed in `LSP_ALLOWED` in `xtask/src/layers.rs`.
+Only `crates/adocfoundry/src/editor/providers.rs` uses those types, translating engine results into them.
+`lsp-server` stays confined to `adoc-ls`.
+
+== Antora resolution
+
+`adoc-antora` resolves resource IDs with the rules in xref:ROOT:antora-support.adoc[Antora support].
+
+.Resolving a resource ID
+[mermaid]
+----
+include::example$antora-resolution.mmd[]
+----
+
+== Design rules to preserve
+
+. The engine is the only owner of document text and semantics.
+. All mutations are commands with stable ids and undo groups, with no exceptions for small edits.
+. Language behaviour lives in `adoc-lang`; `adoc-ls` and the engine are thin over it.
+. Byte offsets are used below the front ends, and `LineIndex` converts at the edge.
+. UI framework imports stay in `crates/adocfoundry`, so a different UI toolkit would be a one-crate swap.
+. tree-sitter is for syntax only: highlighting, folding, outline hints and injections. Attribute evaluation, include expansion, Antora coordinates and cross-file references never use it.
+. Dependencies are pinned exactly and pass `cargo deny` (permitted licences are MIT, Apache-2.0, BSD, MPL-2.0, Unlicense and OFL for fonts).
+. No Node.js, JVM or Ruby is required at run time. External tools are optional and discovered.
+
+See also xref:engine.adoc[the engine] and xref:desktop-app.adoc[the desktop app].

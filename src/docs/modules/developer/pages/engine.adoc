@@ -1,0 +1,178 @@
+= The engine
+Paul Snow
+:revnumber: 0.0.0
+:description: How adoc-engine owns documents, runs commands, records undo, publishes events and indexes in the background.
+
+`adoc-engine` is the only entry point that front ends use.
+The desktop app, the command-line checker and any future integration invoke commands on an `Engine`; none of them reach into engine internals.
+
+== Threading model
+
+The engine is single-threaded by design.
+One `Engine` is owned by the front end and mutated through `&mut self` on the thread that owns it.
+Long work, such as the initial indexing of a workspace, runs on a `std::thread` worker.
+The worker sends its result back over a channel, and the front end applies it by calling `Engine::pump()`.
+This keeps the engine testable without an async runtime.
+
+== Documents
+
+An open document (`OpenDocument`) holds:
+
+* its `DocumentId` and path, which need not exist on disk for an untitled document;
+* the text, as a `ropey::Rope` indexed by bytes;
+* a version counter and a dirty flag;
+* the parsed `Document` and its diagnostics.
+
+The rope in the engine is the truth.
+Front ends mirror it, they do not own it.
+
+A text mutation is a list of `TextEdit` values, each a byte range in the pre-edit text and a replacement.
+Applying edits updates the rope, bumps the version, re-parses with `adoc-parser`, replaces the index entry and recomputes diagnostics for the open documents.
+It then publishes `DocumentChanged` and `DiagnosticsUpdated`.
+
+Re-parsing is synchronous on every edit, so the text and outline are always exact.
+A typed character is the one exception for the rest: re-indexing the document and refreshing diagnostics wait until typing pauses for `INDEX_SETTLE` (150 ms), when `pump` applies them.
+On a 5,000-line document that work takes several milliseconds, too long to repeat on every keystroke.
+Every other command brings the index up to date before it runs, so search, rename, save and replace never see a stale index.
+
+== Commands
+
+A `Command` has a `CommandSpec` and a `run` function.
+
+* `id` is a stable `CommandId` such as `document.save`.
+* `title` is the English title shown in the palette.
+* `category` is Document, Edit, Navigate, Workspace or View.
+* `default_binding` is a `cmd-s` style string that the front end maps to its platform.
+* `when` is the context in which the command applies: `Always` or `ActiveDocument`.
+
+Commands are registered once in a `CommandRegistry`, and registering a duplicate id is an error.
+They are invoked with `Engine::invoke(id, args)`, where `CommandArgs` carries a document, an offset, a text edit, a path or a request.
+They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External` or `Preview`.
+
+[cols="2,3"]
+|===
+|Command ids |Purpose
+
+|`workspace.open_folder`, `workspace.reindex`
+|Open a workspace and rebuild its index.
+
+|`document.open`, `document.save`, `document.save_all`, `document.close`
+|Document lifecycle.
+
+|`edit.insert_text`, `edit.replace_range`, `edit.undo`, `edit.redo`
+|Editing and undo.
+
+|`navigate.definition`, `navigate.follow_link`, `navigate.back`, `navigate.forward`, `navigate.peek_include`
+|Link following and history.
+
+|`workspace.search`, `workspace.replace`, `workspace.apply_preview`, `page.rename`
+|Search, replace and rename.
+
+|`settings.open`, `settings.reload`
+|Settings.
+|===
+
+There is no public way to change document text except through commands.
+
+== Undo groups and typing coalescing
+
+Each document has an undo stack of entries holding an undo group, the forward and inverse edits and the versions before and after.
+
+* A single-character `edit.insert_text` is recorded in typing mode.
+Consecutive typing within 500 ms coalesces into one entry, so a burst of typing undoes as one step.
+* Any other insert, and every `edit.replace_range`, gets its own group.
+* Multi-file operations share one group across documents.
+`edit.undo` on any document in the group undoes the whole group, including file moves, and reports which documents changed.
+
+The engine takes an injectable clock so that coalescing is tested without sleeping.
+
+== Events
+
+The engine publishes `EngineEvent` values to subscribers through `std::sync::mpsc`.
+
+[cols="2,4"]
+|===
+|Event |Meaning
+
+|`WorkspaceIndexed`
+|Indexing finished for the roots, with the number of files.
+
+|`DocumentOpened`, `DocumentChanged`, `DocumentSaved`, `DocumentClosed`
+|Document lifecycle. `DocumentChanged` carries the version and the edits.
+
+|`DocumentMoved`
+|A rename, or its undo, moved the file behind an open document.
+
+|`DocumentChangedOnDisk`
+|The file behind a document with unsaved edits changed on disk.
+
+|`DiagnosticsUpdated`
+|Diagnostics for a path were recomputed.
+
+|`CatalogChanged`
+|An `antora.yml` was reloaded.
+
+|`NavigationChanged`
+|The active document or back and forward availability changed.
+
+|`SearchResults`
+|A batch of search matches, with a `done` flag.
+
+|`CommandFailed`
+|A command returned an error.
+
+|`SettingsChanged`
+|Settings were reloaded.
+|===
+
+== The pump and worker indexing
+
+`open_workspace` starts indexing on a worker thread and starts watching the roots.
+The worker returns a finished `WorkspaceState`, which is applied by `pump()`.
+Open documents are newer than the files the worker read, so they are kept.
+If a newer workspace has replaced the one a worker indexed, its result is discarded.
+
+.The event pump
+[mermaid]
+----
+include::example$event-pump.mmd[]
+----
+
+`pump()` applies worker results and debounced file-system changes and returns the number of events applied.
+`has_pending()` tells a front end whether it should keep pumping, and `wait_for_workers(timeout)` blocks until workers finish, which the command-line checker uses.
+
+== The file watcher
+
+A `notify` watcher, with a 250 ms debounce, feeds the pump.
+
+* A created, modified or removed AsciiDoc file is re-indexed.
+* A document with unsaved edits is never overwritten; the engine emits `DocumentChangedOnDisk` instead.
+* A modified `antora.yml` reloads that component version, and diagnostics are re-run for affected files.
+* A directory created or removed under a module re-indexes the root.
+
+== Settings
+
+`Settings` loads the user and workspace TOML layers described in xref:ROOT:settings.adoc[Settings].
+The UI never reads the settings file itself.
+
+== Search, replace and rename previews
+
+Multi-file changes are computed first as an `EditPreview`: a list of file moves and per-file edits.
+Nothing is changed until `workspace.apply_preview` is invoked with the preview's id.
+
+Applying a preview creates one undo group that spans every document it touches, including file moves.
+One undo therefore restores every xref and moves a renamed page back.
+
+`workspace.search` returns immediately and delivers matches as `SearchResults` events.
+`workspace.replace` and `page.rename` return a `Preview` outcome.
+Rename finds every xref that resolves to the page using the index and the resolver.
+
+== Language features
+
+The engine delegates definition, hover, completion and diagnostics to `adoc-lang`.
+That is why the editor, the command-line checker and the language server give identical answers.
+
+== Navigation history
+
+Back and forward history is engine state, so every front end and the command-line tests share it.
+`navigate.follow_link` opens and activates the target and records the position that was left.

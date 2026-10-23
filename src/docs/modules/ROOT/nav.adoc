@@ -1,0 +1,10 @@
+.User guide
+* xref:index.adoc[Home]
+* xref:getting-started.adoc[Getting started]
+* xref:using-the-editor.adoc[Using the editor]
+** xref:keyboard-shortcuts.adoc[Keyboard shortcuts]
+** xref:settings.adoc[Settings]
+* xref:antora-support.adoc[Antora support]
+** xref:diagnostics.adoc[Diagnostics]
+* xref:command-line.adoc[Command line]
+* xref:language-server.adoc[Language server]

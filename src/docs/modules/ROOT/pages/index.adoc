@@ -1,0 +1,72 @@
+= AdocFoundry
+Paul Snow
+:revnumber: 0.0.0
+:description: A native desktop editor for AsciiDoc documentation laid out the Antora way.
+
+Forge your documentation in real time.
+
+AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way.
+It is written in Rust for macOS, Linux and Windows.
+It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
+
+Nothing else is needed at run time: no Ruby, Node.js or Java.
+
+== Phases
+
+The project is built in four phases, each of which ships a usable tool.
+
+[cols="1,3,2"]
+|===
+|Phase |Scope |Status
+
+|1
+|A source editor with Antora support and link following.
+|Implemented
+
+|2
+|A native rendered preview inside the application.
+|Not started
+
+|3
+|WYSIWYG editing.
+|Not started
+
+|4
+|PDF export with themes.
+|Not started
+|===
+
+== Phase 1 status
+
+Phase 1 is implemented.
+It provides:
+
+* A workspace that discovers every `antora.yml` beneath a folder, so several components and versions live side by side.
+* A sidebar with the Antora navigation, a module and family browser, workspace problems and an outline.
+* A source editor with syntax highlighting, folding, diagnostics as you type, hover and completion.
+* Link following for `xref:`, `include::` and `+{attribute}+` references, with back and forward history and a read-only peek at includes.
+* Workspace find and replace, and page rename that rewrites every xref, both with a preview and a single undo step.
+* A command palette, light and dark themes, a read-only second window and TOML settings.
+
+The following are not implemented yet:
+
+* A rendered preview inside the application, WYSIWYG editing and PDF export (Phases 2 to 4).
+* Editing included content in place, spell checking, Git integration and plugins.
+* XML and Dockerfile highlighting inside source blocks, because the editor component has no grammar for them yet.
+* Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
+
+Some things are unverified.
+Frame timing and input-method (IME) composition have not been verified on every platform, and the macOS and Windows builds are produced by continuous integration but have not yet been run by hand.
+See xref:developer:testing.adoc#manual-qa[the manual QA record] for the checklist.
+
+== Where to go next
+
+* xref:getting-started.adoc[Getting started] -- install a package or build from source.
+* xref:using-the-editor.adoc[Using the editor] -- the workspace, link following, search and rename.
+* xref:keyboard-shortcuts.adoc[Keyboard shortcuts] -- every default binding.
+* xref:settings.adoc[Settings] -- the TOML user and workspace files.
+* xref:antora-support.adoc[Antora support] -- how components, versions and resource IDs resolve.
+* xref:diagnostics.adoc[Diagnostics] -- every diagnostic code and what it means.
+* xref:command-line.adoc[Command line] -- `adocfoundry-cli` for scripts and CI.
+* xref:language-server.adoc[Language server] -- `adoc-ls` for Zed and other editors.
+* xref:developer:index.adoc[Developer guide] -- architecture, testing and releasing.

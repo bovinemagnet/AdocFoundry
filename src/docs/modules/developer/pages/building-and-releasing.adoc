@@ -1,0 +1,100 @@
+= Building and releasing
+Paul Snow
+:revnumber: 0.0.0
+:description: Build commands, the CI jobs, the release workflow and local packaging with cargo xtask.
+
+== Commands
+
+[source,sh]
+----
+cargo check --workspace
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings   # CI treats warnings as errors
+cargo test --workspace
+cargo run -p adocfoundry                                 # launch the desktop app
+cargo run -p adocfoundry-cli -- check tests/fixtures/antora-single-component
+cargo run -p adoc-ls -- --version                        # smoke-test the language server
+cargo deny check                                         # licences and advisories
+cargo xtask layers                                       # the crate dependency ladder
+cargo xtask package                                      # release build and archive in dist/
+----
+
+Targeted runs:
+
+[source,sh]
+----
+cargo test -p adoc-engine
+cargo test -p adoc-antora resolves_cross_component
+cargo test -p adocfoundry-cli --test cli
+----
+
+`default-members` is the application crate, so a bare `cargo test` or `cargo check` covers only that.
+Always pass `--workspace`, or `-p <crate>`, for the engine and language crates.
+
+Building the application on Linux needs the system libraries listed in xref:ROOT:getting-started.adoc[Getting started], and the grammar submodule must be present.
+
+== Continuous integration
+
+`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`.
+
+[cols="1,4"]
+|===
+|Job |What it does
+
+|`lint`
+|On Ubuntu: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny` and `cargo xtask layers`.
+
+|`test`
+|On Ubuntu, macOS 14 and Windows: `cargo test --workspace --exclude adocfoundry`, then `cargo build -p adocfoundry`. Building needs no display.
+
+|`grammar`
+|Builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
+|===
+
+== Release workflow
+
+`.github/workflows/release.yml` runs when a tag matching `v*` is pushed, or on demand.
+Each platform job builds `adocfoundry`, `adocfoundry-cli` and `adoc-ls` in release mode.
+
+.The release pipeline
+[mermaid]
+----
+include::example$release-pipeline.mmd[]
+----
+
+[cols="1,4"]
+|===
+|Job |Output
+
+|`macos`
+|Builds `aarch64-apple-darwin` and `x86_64-apple-darwin`, joins them with `lipo` into universal binaries, and runs `packaging/macos/bundle.sh` to make the `.app` and the DMG. Signing and notarisation use the `APPLE_*` secrets when they are set. The `adoc-ls` and `adocfoundry-cli` binaries are archived separately.
+
+|`windows`
+|For x64 and ARM64: an MSI from `cargo wix`, and a portable zip with the three executables, the licence and the README.
+
+|`linux`
+|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy`, and archives of `adoc-ls` and `adocfoundry-cli`.
+
+|`publish`
+|On a tag, downloads every artefact and attaches it to a GitHub release with generated release notes.
+|===
+
+A Flatpak manifest is kept in `packaging/flatpak/`.
+It is not built by the workflow.
+
+The packages for macOS and Windows have not been installed and run by hand yet; see xref:testing.adoc#platform-status[platform status].
+
+== cargo xtask package
+
+`cargo xtask package` is a local dry run for the host platform.
+It builds the three binaries in release mode, stages them in `dist/` with the licence and README (and, on Linux, the desktop entry and icon), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
+The version is read from `workspace.package.version` in the root `Cargo.toml`.
+The installers themselves come from the release workflow.
+
+== Conventions for contributions
+
+* Commit messages are short and imperative, for example `Add cross-component resolution to adoc-antora`.
+* One work package per pull request, titled `WP 1.x: <package name>`.
+The description lists the specification section, the tests added and the commands run.
+* Update `README.md` when setup or visible behaviour changes.
+* When the work shows that the specification is wrong, update the specification in the same pull request and say so.

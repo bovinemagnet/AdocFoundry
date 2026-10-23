@@ -1,0 +1,92 @@
+= The desktop app
+Paul Snow
+:revnumber: 0.0.0
+:description: How the GPUI application renders engine state, stays in sync with the editor widget and binds keys.
+
+`adocfoundry` is the desktop application.
+It is the only crate that imports GPUI, gpui-component or any other UI framework.
+Views are thin: they render engine state and dispatch commands.
+Logic that could live in `adoc-engine` lives there.
+
+== GPUI and gpui-component
+
+The application is built on GPUI through the `gpui-pre` snapshot crates and `gpui-component` (all Apache-2.0), with `gpui-pre-platform` for the platform layer and `gpui-kit-assets` for icons.
+The choice was confirmed by a spike, recorded in `docs/qa/spike-gpui.md` and summarised in xref:testing.adoc#platform-status[Testing].
+
+== AppState and the pump
+
+`AppState` is the single owner of the `Engine`.
+Views hold an `Entity<AppState>`, invoke commands through it and subscribe to the engine events it re-emits.
+
+A background task pumps the engine every 16 ms while work is pending, such as indexing or a search, and every 100 ms when idle.
+Each pump applies worker and watcher results and then re-emits every engine event to the views.
+`AppState::invoke` also drains events before it returns, so the effect of a command is visible immediately.
+
+== Keystroke flow
+
+.From keystroke to re-render
+[mermaid]
+----
+include::example$keystroke-flow.mmd[]
+----
+
+== Editor synchronisation
+
+The editor widget owns a display buffer for speed, and the engine rope is the truth.
+
+The widget reports that its text changed but not the edit range.
+The application therefore recovers each edit as the single replacement between the common prefix and suffix of the widget text and the engine text, in `editor/sync.rs`.
+That is exact for typing, deletion and paste, and still correct, if wider, for anything else.
+Typing arrives at the engine one character at a time, so undo coalescing works.
+
+In the other direction, a change that originates elsewhere (undo, replace, rename or a reload from disk) arrives as an engine event and is applied back to the widget.
+
+Undo, redo, go to definition, follow link and peek include are bound in the editor's key context after gpui-component's own bindings.
+They therefore take precedence and go through the engine instead of the widget's own history.
+
+== Engine-backed providers
+
+gpui-component's definition, hover and completion hooks take and return `lsp-types` values.
+`editor/providers.rs` translates the engine's answers into those types.
+Every answer comes from the engine, and so from `adoc-lang`, exactly as `adoc-ls` gives it.
+This module is the only place the app uses `lsp-types`; see xref:architecture.adoc[Architecture].
+
+Link detection under the pointer and modifier-click handling live in the editor module.
+Opening a target activates its tab, and an external target such as an image opens in the system's default application.
+
+== Keymap
+
+`editor/bindings.rs` binds the `default_binding` of every command's `CommandSpec` to a GPUI action.
+The engine writes bindings as `cmd-s`; the application maps `cmd` to GPUI's `secondary` modifier, which is Command on macOS and Control elsewhere.
+A command has an action only when the application defines one for its id.
+
+Three actions have no engine command and are bound in the application: the command palette, the theme toggle and the read-only second window.
+The palette lists every command with its title from the registry.
+
+== Windows
+
+Window creation lives in `app.rs`.
+`open_secondary_window` takes a `WindowKind`, and the only kind in Phase 1 is `Mirror`, a read-only view of the active document that follows its edits.
+Phase 2 adds a preview kind without touching the main window.
+
+== Tabs and the sidebar
+
+Opening a tab follows the engine's active document.
+Link following, back and forward and palette commands therefore all arrive the same way, and the views do not hold a second record of which page is open.
+
+The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
+Every leaf's id encodes where clicking it leads, so one handler serves all of them.
+
+== Tree-sitter grammars
+
+`grammars/tree-sitter-asciidoc` is a git submodule pinned to the `zed` branch of `bovinemagnet/tree-sitter-asciidoc`.
+The application depends on its binding crates, `tree-sitter-asciidoc` and `tree-sitter-asciidoc-inline`, as path dependencies.
+They are built with `cc` there because turning the C entry point into a `tree_sitter::Language` needs `unsafe`, which the workspace forbids.
+
+`editor/language.rs` registers both grammars with gpui-component.
+The queries live in `crates/adocfoundry/languages/`.
+The inline grammar is injected into paragraphs, titles, table cells and macro targets, and source blocks are injected by their language.
+tree-sitter is for highlighting, folding and injections only; every semantic question goes to the engine.
+
+gpui-component derives folds from multi-line syntax nodes and does not read `folds.scm`.
+The query is still kept and checked against the grammar.

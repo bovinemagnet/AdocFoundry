@@ -1,0 +1,23 @@
+sequenceDiagram
+    actor User
+    participant Editor as Editor widget
+    participant DP as DefinitionProvider
+    participant Eng as Engine
+    participant Lang as adoc_lang
+    participant WV as Workspace view
+    User->>Editor: Ctrl/Cmd-click an xref
+    Editor->>DP: Request definition
+    DP->>Eng: Engine::definition
+    Eng->>Lang: definition_at_offset (Antora resolver)
+    Lang-->>Eng: Target location
+    Eng-->>DP: Target
+    DP-->>Editor: Link highlighted
+    alt Page or section target
+        User->>Eng: Click: navigate.follow_link
+        Eng->>Eng: Open target, push back-history, set active
+        Eng-->>WV: NavigationChanged event
+        WV->>WV: Open or activate tab
+        WV->>Editor: Place caret at target
+    else Image or attachment
+        Eng-->>User: External, opens in OS default app
+    end

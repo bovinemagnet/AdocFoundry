@@ -1,0 +1,87 @@
+= Diagnostics
+Paul Snow
+:revnumber: 0.0.0
+:description: Every diagnostic code AdocFoundry reports, its severity and what it means.
+
+The editor, `adocfoundry-cli check` and the `adoc-ls` language server all report the same diagnostics, because they call the same code.
+A test runs the command-line checker and the language server over the same fixtures and asserts that they agree.
+
+== Policy
+
+Diagnostics are deliberately conservative.
+
+* Prefer no diagnostic to a false positive.
+* Unresolved references are warnings, not errors.
+* Dynamic constructs such as `+include::{attr}/x.adoc[]+` produce no diagnostic at all.
+* A reference to a version of a known component that is not in the workspace produces none either.
+* Includes are recognised only as whole-line directives, and block images only at the start of a line or table cell, matching Asciidoctor.
+
+Codes are stable strings, so you can filter on them in scripts.
+
+== Codes
+
+[cols="3,1,5"]
+|===
+|Code |Severity |Meaning
+
+|`adoc.unresolved-xref-file`
+|Warning
+|An `xref:` or `<<...>>` names a page that does not exist.
+
+|`adoc.unresolved-anchor`
+|Warning
+|The page exists but has no anchor or section with the given id.
+
+|`adoc.unresolved-include`
+|Warning
+|An `include::` names a file that does not exist.
+
+|`adoc.unresolved-image`
+|Warning
+|An `image::` or `image:` names a file that does not exist.
+
+|`adoc.duplicate-anchor`
+|Warning
+|The same anchor id is defined more than once in a document.
+
+|`adoc.antora.unknown-module`
+|Warning
+|A resource ID names a module that the component version does not have.
+
+|`adoc.antora.unknown-resource`
+|Warning
+|The module exists but has no resource at that path and family.
+
+|`adoc.antora.invalid-family`
+|Warning
+|A resource ID uses a family other than `page`, `partial`, `example`, `image` or `attachment`.
+
+|`adoc.antora.invalid-coordinate`
+|Warning
+|A resource ID is malformed, for example an invalid version or component coordinate.
+
+|`adoc.antora.invalid-descriptor`
+|Warning
+|An `antora.yml` cannot be read or is invalid.
+
+|`adoc.antora.resolved-via-alias`
+|Information
+|An xref resolves only because the target page lists the id in `page-aliases`. The message suggests the current id.
+
+|`adoc.antora.nav-unresolved`
+|Warning
+|A navigation file lists an xref that does not resolve.
+|===
+
+The engine currently reports warnings and information only.
+With the default `--fail-on error`, `adocfoundry-cli check` therefore exits successfully for every code above, so use `--fail-on warning` in CI to make problems fail the build.
+See xref:command-line.adoc[Command line].
+
+== Where diagnostics appear
+
+* In the editor, as you type, for the open document and the documents that include it.
+* In the Problems tab of the sidebar, for the whole workspace.
+* In the output of `adocfoundry-cli check`.
+* In any editor using xref:language-server.adoc[the language server].
+
+Diagnostics inside `antora.yml` itself are not implemented beyond reporting that it cannot be read.

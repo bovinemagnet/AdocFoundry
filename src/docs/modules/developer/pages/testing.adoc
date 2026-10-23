@@ -1,0 +1,125 @@
+= Testing
+Paul Snow
+:revnumber: 0.0.0
+:description: The layers of automated tests, the performance probe and the manual QA record.
+
+A change is done when `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo deny check` and `cargo xtask layers` all pass.
+Always pass `--workspace` or `-p <crate>`: the default workspace member is the application crate only.
+
+== Unit tests
+
+Unit tests live in `#[cfg(test)] mod tests` beside the code.
+Add a test with every parser, resolver, engine, command or language-feature change.
+Add a regression test for every panic fixed, because incomplete AsciiDoc is normal input.
+
+Shared fixtures are in `tests/fixtures/`, grouped by scenario:
+
+* `simple/`, `includes/`, `xrefs/`, `images/`, `attributes/`
+* `antora-single-component/`, `antora-multi-component/`, `antora-versions/`
+* `antora-nested-pages/`, `antora-nested-includes/`, `antora-invalid-descriptor/`
+* `broken-references/` and `antora-broken-references/`
+
+Reach them with `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/...")`, never with absolute paths.
+Keep fixtures small and readable, and add one alongside every behaviour change.
+
+== Engine tests
+
+`crates/adoc-engine/tests/` drives the engine headlessly through commands: documents, language features, navigation, search and replace, settings and workspace indexing.
+No window is involved.
+Add a test here rather than in the application crate whenever the behaviour can be reached through the engine.
+
+== CLI snapshot tests
+
+`crates/adocfoundry-cli/tests/cli.rs` runs the binary through `CARGO_BIN_EXE_adocfoundry-cli`.
+It checks each Antora fixture and compares the output with `insta` snapshots.
+It also follows a link in `tests/fixtures/xrefs/`.
+
+== Language server tests
+
+`crates/adoc-ls/tests/stdio.rs` starts the real `adoc-ls` binary and speaks LSP to it: initialise and shutdown, completion, hover, the preview commands and command routing.
+
+`crates/adoc-ls/tests/parity.rs` runs the command-line checker and the language server over the fixtures and asserts that they report the same diagnostics.
+
+Tests that spawn a real process must take the crate-private `spawn_guard()` mutex in `adoc-render`, which works around `ETXTBSY`.
+Do not remove the guard or add an unguarded spawning test.
+
+== Application tests
+
+Application tests are in `crates/adocfoundry/src/ui_tests.rs`.
+They run on GPUI's test platform and need no display.
+They cover:
+
+* typing reaching the engine, and undo going through it;
+* engine edits reaching the widget;
+* following a link opening a tab and recording history;
+* the second window mirroring the active document;
+* the search panel showing workspace results;
+* composed input committing the composed text.
+
+The last one exercises the widget's input handler on the test platform.
+It is not evidence that a real input method works.
+
+Never add a test to `crates/adocfoundry` that needs a display when the behaviour can be tested in `adoc-engine`.
+In CI the application crate is built, and its tests are run only where the platform allows.
+
+== Performance probe
+
+The engine's work per keystroke is measured by a release-mode probe on a synthetic 5,008-line document.
+
+[source,sh]
+----
+cargo test --release -p adoc-engine --test perf -- --ignored --nocapture
+----
+
+The budget is 5 ms.
+The recorded result is a median of 0.76 ms and a worst case of 3.8 ms over 200 keystrokes, and workspace diagnostics for 501 files take 2.3 ms.
+That leaves most of each 16 ms frame to the widget.
+
+[[manual-qa]]
+== Manual QA
+
+`docs/qa/phase1.md` is a checklist for what automated tests cannot cover.
+It is run on macOS 13+, Windows 10+ (x64 and ARM64) and Ubuntu 22.04+ (AppImage) before a release, and covers the sidebar, the editor, link following, search and rename, themes, settings, the second window and the packages.
+Its results table is currently empty.
+
+[[platform-status]]
+== Platform status
+
+[cols="2,1,1,4"]
+|===
+|Platform |Builds |Runs |Notes
+
+|Linux x86_64, Wayland
+|yes
+|yes
+|Verified by hand: navigation tree, editor, highlighting, diagnostics and outline.
+
+|Linux x86_64, X11
+|yes
+|yes
+|Through XWayland.
+
+|macOS, Apple Silicon and Intel
+|CI
+|not yet
+|The engine, CLI and language server cross-check for `aarch64-apple-darwin` from Linux. The application's C build scripts need the Apple SDK, so CI builds it.
+
+|Windows x64
+|CI
+|not yet
+|
+
+|Windows ARM64
+|release workflow
+|not yet
+|
+|===
+
+Two items remain unverified, and nothing here should be read as a claim that they work:
+
+* IME composition on macOS, Windows and Linux (ibus).
+* A frame-time capture of a 10-second typing burst on each platform.
+
+A real-world check ran the release build on a five-module Antora component.
+Its navigation matched the `nav.adoc` files entry for entry, every target resolved and the outline nested by section.
+`adocfoundry-cli check` over 25 local Antora components found no false positives once two parser rules were corrected to match Asciidoctor.

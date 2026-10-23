@@ -1,0 +1,21 @@
+flowchart TD
+    open["User opens a folder"] --> ow["Engine open_workspace"]
+    ow --> worker["Worker thread"]
+    subgraph indexing["Background indexing"]
+        worker --> idx["Index every .adoc file<br/>(WorkspaceIndex)"]
+        worker --> cat["Discover each antora.yml<br/>(AntoraCatalog)"]
+        worker --> pb["Read antora-playbook.yml<br/>at the root"]
+        cat --> items["Components, versions, modules,<br/>resources and page aliases"]
+    end
+    idx --> result["Indexing result"]
+    items --> result
+    pb --> result
+    result --> pump["Engine::pump applies result<br/>on the UI thread"]
+    pump --> evt["WorkspaceIndexed event"]
+    evt --> nav["Navigation tree"]
+    evt --> mod["Modules tree"]
+    evt --> prob["Problems tree"]
+    subgraph watch["File watching"]
+        watcher["notify file watcher<br/>(250 ms debounce)"] --> reidx["Re-index changed files<br/>and reload antora.yml"]
+    end
+    reidx --> pump

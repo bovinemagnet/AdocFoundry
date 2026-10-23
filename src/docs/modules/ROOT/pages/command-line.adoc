@@ -1,0 +1,114 @@
+= Command line
+Paul Snow
+:revnumber: 0.0.0
+:description: Using adocfoundry-cli to check, search and follow links headlessly, including in CI.
+
+`adocfoundry-cli` is a headless front end over the same engine as the desktop application.
+It needs no display, which makes it suitable for continuous integration.
+
+[source,text]
+----
+adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
+adocfoundry-cli symbols <root> <query>
+adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
+adocfoundry-cli --version
+----
+
+== check
+
+`check` opens the workspace at `<root>`, waits for indexing to finish and prints every diagnostic, sorted by path.
+
+[source,sh]
+----
+adocfoundry-cli check docs
+adocfoundry-cli check docs --format json
+adocfoundry-cli check docs --fail-on warning
+----
+
+=== Formats
+
+The default `text` format prints one line per diagnostic, with paths relative to the root and `/` separators.
+
+[source,text]
+----
+path:line:col: severity code message
+----
+
+Lines and columns are one-based, and the column counts bytes.
+`severity` is `info`, `warning` or `error`.
+
+`--format json` prints an array of objects.
+
+[source,json]
+----
+[
+  {
+    "path": "modules/ROOT/pages/index.adoc",
+    "range": { "start": 120, "end": 138 },
+    "line": 7,
+    "column": 3,
+    "severity": "warning",
+    "code": "adoc.unresolved-xref-file",
+    "message": "..."
+  }
+]
+----
+
+`range` holds byte offsets into the file.
+
+=== Exit codes
+
+[cols="1,4"]
+|===
+|Code |Meaning
+
+|0
+|Success: no diagnostic met `--fail-on`.
+
+|1
+|At least one diagnostic met `--fail-on`. The default threshold is `error`.
+
+|2
+|Usage or runtime error, such as an unknown option, a bad format or a workspace that could not be indexed in time.
+|===
+
+The thresholds are `warning` (fails on warnings and errors) and `error`.
+Information diagnostics never fail the check.
+
+== symbols
+
+`symbols` lists workspace symbols that match `<query>`, one per line, as kind, name and `path:line:col`.
+
+[source,sh]
+----
+adocfoundry-cli symbols docs installation
+----
+
+== follow
+
+`follow` resolves the reference at a byte offset in a file and prints where it leads.
+It is used by tests and for scripting.
+
+[source,sh]
+----
+adocfoundry-cli follow tests/fixtures/xrefs/index.adoc 42
+----
+
+For an `xref:`, `include::` or attribute it prints `path:line:col`.
+For an image or attachment it prints `external <path>`.
+If the offset is not on a followable reference, or the target does not resolve, it prints the reason on standard error and exits with 1.
+
+By default the workspace root is the parent of the nearest `antora.yml`, so that sibling components resolve.
+Use `--root <dir>` to choose another.
+
+== Using it in CI
+
+[source,yaml]
+----
+- name: Check the documentation
+  run: adocfoundry-cli check docs --fail-on warning
+----
+
+The archives attached to each release contain the binary for Linux, macOS and Windows, so no toolchain is needed.
+Because the checker shares its code with the editor, it reports exactly what an author sees.
+See xref:diagnostics.adoc[Diagnostics] for the codes.
