@@ -35,8 +35,7 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 == Continuous integration
 
-`packaging/ci/ci.yml` is written to run on pull requests and on pushes to `main`.
-It is not active yet: the workflows are kept out of `.github/workflows/` until macOS and Windows have been verified by hand, and moving them there enables them.
+`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`.
 
 [cols="1,4"]
 |===
@@ -47,6 +46,11 @@ It is not active yet: the workflows are kept out of `.github/workflows/` until m
 
 |`test`
 |On Ubuntu, macOS 14 and Windows: `cargo test --workspace --exclude adocfoundry`, then `cargo build -p adocfoundry`. Building needs no display.
+On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15, so the fidelity test and `pdf_regression` run instead of skipping. These tools are needed only by CI, never at runtime.
+On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
+
+|`pdf-standards`
+|On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both standards too. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
 
 |`grammar`
 |Builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
@@ -54,7 +58,7 @@ It is not active yet: the workflows are kept out of `.github/workflows/` until m
 
 == Release workflow
 
-`packaging/ci/release.yml` is written to run when a tag matching `v*` is pushed, or on demand. Like the CI workflow, it is not active yet.
+`.github/workflows/release.yml` runs when a tag matching `v*` is pushed, or on demand.
 Each platform job builds `adocfoundry`, `adocfoundry-cli` and `adoc-ls` in release mode.
 
 .The release pipeline
@@ -79,6 +83,9 @@ include::example$release-pipeline.mmd[]
 |`publish`
 |On a tag, downloads every artefact and attaches it to a GitHub release with generated release notes.
 |===
+
+Code signing is planned for Phase 6: a macOS Developer ID with notarisation, and a Windows certificate.
+The first release is unsigned: the macOS app is ad-hoc signed and the Windows installer has no signature.
 
 A Flatpak manifest is kept in `packaging/flatpak/`.
 It is not built by the workflow.

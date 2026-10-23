@@ -92,10 +92,17 @@ The application sees `adoc-model` types only through the engine's re-exports.
 * `adoc-core` has any dependency;
 * a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
 * an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;
+* an HTTP client crate (`reqwest` and its GPUI fork, `ureq`, `hyper`, `isahc`, `curl`, `attohttpc`, `surf`) is reachable from any crate except `adocfoundry`, directly or through its normal or build dependencies;
 * a parser crate (`acdc-parser`, `asciidoc-parser`) appears outside `adoc-dom`;
 * `adoc-lang` depends on `url`, or its sources mention `lsp_types`, `lsp_server` or `url::`.
 
 Adding a crate means adding a line to the layer table in `xtask/src/layers.rs` and to the ladder in the repository's contributor guidance.
+
+=== The network rule
+
+The network rule is checked against the resolved graph from `cargo metadata`, so a transitive dependency counts.
+The application reaches an HTTP client only through `gpui-kit-assets`.
+Everything below the application, including diagram rendering and PDF export, works locally and never contacts a server.
 
 === The one `lsp-types` exception
 

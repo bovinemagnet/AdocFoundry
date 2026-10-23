@@ -103,6 +103,9 @@ The languages are those listed in xref:using-the-editor.adoc#the-editor[the edit
 == Diagrams
 
 Diagram blocks are rendered in the preview.
+Every diagram renders on your computer.
+Mermaid runs inside AdocFoundry, and Graphviz, PlantUML and D2 use the tools installed on your `PATH`.
+Nothing is sent to an online rendering service.
 
 [cols="2,2,3"]
 |===

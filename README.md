@@ -88,7 +88,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 ## Installing
 
-There are no published releases yet. The release workflow in `packaging/ci/` (not active until macOS and Windows have been tested by hand) builds a macOS universal DMG, Windows MSI and portable zip (x64 and ARM64) and Linux AppImage, deb and rpm (x86_64 and aarch64); there is also a Flatpak manifest in `packaging/flatpak/`. On Linux, `cargo xtask package`, `cargo deb -p adocfoundry` and `cargo generate-rpm -p crates/adocfoundry` build the same packages locally. Nothing else is needed at run time: no Ruby, Node.js or Java.
+There are no published releases yet. The release workflow (`.github/workflows/release.yml`, run on `v*` tags) builds a macOS universal DMG, Windows MSI and portable zip (x64 and ARM64) and Linux AppImage, deb and rpm (x86_64 and aarch64); there is also a Flatpak manifest in `packaging/flatpak/`. On Linux, `cargo xtask package`, `cargo deb -p adocfoundry` and `cargo generate-rpm -p crates/adocfoundry` build the same packages locally. Nothing else is needed at run time: no Ruby, Node.js or Java.
 
 To build from source you need Rust (stable, via rustup) and, on Linux, the libraries GPUI uses:
 

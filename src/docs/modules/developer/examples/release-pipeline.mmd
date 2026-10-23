@@ -7,7 +7,7 @@ flowchart TD
     end
     tag["Tag v*"] --> rel
     subgraph rel["Release workflow"]
-        mac["macOS universal DMG<br/>lipo, packaging/macos/bundle.sh,<br/>sign and notarise when secrets exist"]
+        mac["macOS universal DMG<br/>lipo, packaging/macos/bundle.sh,<br/>ad-hoc signed (Developer ID in Phase 6)"]
         win["Windows MSI (cargo-wix) and zip<br/>x64, arm64"]
         lin["Linux AppImage, deb, rpm<br/>x86_64, aarch64 on native runners"]
         tools["adoc-ls and adocfoundry-cli tarballs"]

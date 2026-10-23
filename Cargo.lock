@@ -11888,6 +11888,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "toml 1.1.8+spec-1.1.0",
 ]
 

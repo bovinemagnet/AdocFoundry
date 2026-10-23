@@ -20,7 +20,7 @@ Phase 5 must provide:
 - **Typeset STEM:** AsciiMath and LaTeX converted to Typst maths, typeset natively in PDFs and as SVG in the preview and the HTML backend.
 - **`adoc-ls` on `adoc-engine`:** Zed and other LSP clients get the app's diagnostics, page rename with link updates, references, typeset previews and PDF export.
 - **`adoc-mcp`:** a stdio MCP server over the engine, so assistants and tools can read, check, search, render and (when allowed) edit an Antora workspace through the engine's commands.
-- **A first release:** signed packages for the three platforms, and the manual QA of Phases 1 to 5 recorded.
+- **A first release:** packages for the three platforms, and the manual QA of Phases 1 to 5 recorded. Code signing waits for Phase 6.
 
 ## 2. Decisions
 
@@ -39,7 +39,7 @@ Phase 5 must provide:
 | MCP | a new L4 crate and binary, `adoc-mcp`, on `rmcp` 3.7.0 (Apache-2.0) with only its server and stdio transport features, on a current-thread tokio runtime (tokio is already in the tree) | No HTTP transport is compiled in; the network confinement rule checks it. |
 | MCP writes | read-only by default; `--allow-write` enables tools that edit, rename or export, each going through engine commands | An assistant cannot change a workspace unless the user started the server to allow it, and every change is an ordinary command. |
 | Network | a confinement rule in `cargo xtask layers`: HTTP clients (`reqwest` and its forks, `ureq`, `hyper`, `isahc`, `curl`) may appear only in `adocfoundry`'s tree, where `gpui-kit-assets` brings one | Closes #3: diagrams, STEM and everything below the app render locally. |
-| Release signing | macOS: Developer ID signing and notarisation in `release.yml`, from repository secrets. Windows: unsigned for the first release, with the SmartScreen step documented | Needs the user's Apple credentials (§12). A Windows certificate can come later without changing the packages. |
+| Release signing | none in Phase 5: macOS is ad-hoc signed (as `bundle.sh` does without an identity), Windows is unsigned; the README documents the Gatekeeper and SmartScreen steps. Developer ID signing and notarisation, and a Windows certificate, are Phase 6 | No credentials are needed to release. Signing can be added later without changing the packages' contents. |
 | First version | tagged from the workspace version, `0.1.0`, unless decided otherwise before WP 5.8 | `xtask package` and `release.yml` already read the workspace version. |
 
 ## 3. Architecture
@@ -243,7 +243,7 @@ Documentation: a user page on running `adoc-mcp` with MCP clients, in the client
 ## 11. Release (WP 5.8)
 
 - **Packages from `release.yml` on a `v*` tag:**
-  - macOS: a universal DMG, signed and notarised;
+  - macOS: a universal DMG, ad-hoc signed (Developer ID signing and notarisation are Phase 6);
   - Windows: an MSI and a zip, x64 and ARM64;
   - Linux: an AppImage, a deb and an rpm, x64 and arm64.
 
@@ -266,13 +266,12 @@ Out of scope:
 - Typesetting inline STEM in the preview's text flow, which needs inline boxes in the preview's layout.
 - Editing STEM visually.
 - An HTTP transport for MCP.
-- A Windows code-signing certificate.
+- Code signing: macOS Developer ID signing and notarisation, and a Windows certificate (Phase 6).
 - Auto-update.
 - Publishing to package managers (Homebrew, winget, Flathub).
 
 Open questions, to settle before the package that needs them:
 
-- [ ] **WP 5.8:** Apple Developer ID and notarisation credentials, stored as repository secrets.
 - [ ] **WP 5.8:** the first version number. `0.1.0` unless decided otherwise.
 - [ ] **WP 5.7:** whether `export_pdf` counts as a write, as decided here, or may run read-only when `output` is outside the roots.
 - [ ] **WP 5.3:** whether to keep the `adoc-dom` workarounds for #32 and #33 after acdc-parser releases fixes, or drop them on upgrade.
@@ -291,7 +290,7 @@ Implementation notes: none yet. Departures are recorded here as each package lan
 | 5.5 | Typeset STEM in PDF, preview and HTML | 5.4 |
 | 5.6 | `adoc-ls` on the engine: diagnostics, references, rename, commands, with today's command ids, Asciidoctor preview and a lean default build kept | 5.5 |
 | 5.7 | `adoc-mcp` | 5.5 |
-| 5.8 | Release: packages, signing, smoke tests, the QA backlog (#30), changelog | 5.2, 5.3, 5.6, 5.7 |
+| 5.8 | Release: packages (unsigned; signing is Phase 6), smoke tests, the QA backlog (#30), changelog | 5.2, 5.3, 5.6, 5.7 |
 
 ## 14. Definition of Done for Phase 5
 

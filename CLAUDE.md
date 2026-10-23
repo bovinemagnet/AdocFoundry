@@ -49,7 +49,7 @@ The CLI and engine integration tests use `insta` snapshots (`tests/snapshots/`);
 
 The user and developer documentation is an Antora site in `src/docs` (modules `ROOT` and `developer`). Gradle exists only to build it: `gradle25w antora` builds the site to `build/site` and reports errors. Nothing in Gradle is needed to build or run the app.
 
-The CI and release workflows are written but kept in `packaging/ci/`, not `.github/workflows/`, so they do not run yet; macOS and Windows are verified by hand first. The app crate needs a GPU-capable environment; CI is set up to run `cargo test --workspace --exclude adocfoundry` and then only builds the app crate (`cargo build -p adocfoundry`). Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
+CI (`.github/workflows/ci.yml`) runs on pull requests and pushes to `main`: lint, `cargo deny` and `cargo xtask layers` on Ubuntu; `cargo test --workspace --exclude adocfoundry` on Ubuntu, macOS and Windows (Ubuntu with asciidoctor and asciidoctor-pdf, so `fidelity` and `pdf_regression` run); the app crate's tests on macOS, where GPUI's test platform needs no display; and veraPDF over the reference PDFs. `release.yml` builds the packages on `v*` tags; nothing is code-signed until Phase 6. Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
 
 ## Architecture
 
@@ -89,7 +89,7 @@ Preview flow: while the preview is visible the engine requests its target (the p
 
 ## Conventions that must be preserved
 
-- Layering is absolute: no upward dependencies, no UI types below `adocfoundry`, no LSP types below `adoc-ls`, no external parser crates outside `adoc-dom`.
+- Layering is absolute: no upward dependencies, no UI types below `adocfoundry`, no LSP types below `adoc-ls`, no external parser crates outside `adoc-dom`, and no HTTP client reachable from any crate but `adocfoundry` (checked over the resolved graph by `cargo xtask layers`).
 - Byte offsets everywhere (`SourceRange`). Line/column conversion happens at the edge (`adoc-ls` for LSP, the editor view for the caret) using `LineIndex`.
 - Diagnostics stay conservative: prefer no diagnostic over a false positive, warnings over errors for unresolved references, and no diagnostics at all for dynamic constructs (`include::{attr}/x.adoc[]`).
 - Incomplete AsciiDoc is normal input. Parsers, resolvers and handlers must not panic on half-typed syntax; add a regression test for every panic fixed.
