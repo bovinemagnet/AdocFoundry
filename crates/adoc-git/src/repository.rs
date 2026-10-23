@@ -6,7 +6,10 @@ use std::{
 
 use gix::bstr::{BStr, ByteSlice};
 
-use crate::{diff::line_hunks, Branch, Change, FileStatus, GitError, Head, Hunk};
+use crate::{
+    blame::blame_through, diff::line_hunks, BlameLine, Branch, Change, FileStatus, GitError, Head,
+    Hunk,
+};
 
 /// A Git repository with a working tree.
 pub struct Repository {
@@ -241,6 +244,83 @@ impl Repository {
         }
         let object = entry.object().map_err(GitError::git)?;
         Ok(object.data.to_str().ok().map(str::to_owned))
+    }
+
+    /// Who last changed each line of `path`: of `current` when given (lines not in `HEAD` are
+    /// not committed), else of the file on disk.
+    pub fn blame(&self, path: &Path, current: Option<&str>) -> Result<Vec<BlameLine>, GitError> {
+        let head = self.head_blame(path)?;
+        let head_text = self.head_content(path)?.unwrap_or_default();
+        let on_disk;
+        let current = match current {
+            Some(text) => text,
+            None => {
+                let file = self.workdir.join(self.relative(path)?);
+                on_disk = fs::read_to_string(&file).unwrap_or_default();
+                &on_disk
+            }
+        };
+        let hunks = line_hunks(&head_text, current);
+        Ok(blame_through(&head, &hunks, current.lines().count()))
+    }
+
+    /// Who last changed each line of `path` as it is in `HEAD`; empty when it is not there.
+    pub fn head_blame(&self, path: &Path) -> Result<Vec<BlameLine>, GitError> {
+        let relative = self.relative(path)?;
+        if self.head_content(&relative)?.is_none() {
+            return Ok(Vec::new());
+        }
+        let head = self.repo.head_id().map_err(GitError::git)?.detach();
+        let unix: gix::bstr::BString = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/")
+            .into();
+        let outcome = self
+            .repo
+            .blame_file(unix.as_ref(), head, Default::default())
+            .map_err(GitError::git)?;
+        let mut commits: BTreeMap<gix::ObjectId, (String, i64, String)> = BTreeMap::new();
+        let mut lines = Vec::new();
+        for entry in &outcome.entries {
+            let id = entry.commit_id;
+            if let std::collections::btree_map::Entry::Vacant(vacant) = commits.entry(id) {
+                let commit = self.repo.find_commit(id).map_err(GitError::git)?;
+                let author = commit.author().map_err(GitError::git)?;
+                let name = author.name.to_str_lossy().into_owned();
+                let time = author.time().map_or(0, |time| time.seconds);
+                let summary = commit
+                    .message()
+                    .map(|message| message.summary().to_str_lossy().into_owned())
+                    .unwrap_or_default();
+                vacant.insert((name, time, summary));
+            }
+            let (author, time, summary) = &commits[&id];
+            let short = id.to_hex_with_len(7).to_string();
+            let start = entry.start_in_blamed_file as usize;
+            for line in start..start + entry.len.get() as usize {
+                lines.push(BlameLine {
+                    line,
+                    commit: Some(short.clone()),
+                    author: author.clone(),
+                    time: *time,
+                    summary: summary.clone(),
+                });
+            }
+        }
+        lines.sort_by_key(|line| line.line);
+        Ok(lines)
+    }
+
+    /// Whether branch `branch` has been pushed to `remote`: `refs/remotes/<remote>/<branch>`
+    /// exists. The local branch may still be ahead.
+    pub fn is_pushed(&self, remote: &str, branch: &str) -> Result<bool, GitError> {
+        Ok(self
+            .repo
+            .try_find_reference(format!("refs/remotes/{remote}/{branch}").as_str())
+            .map_err(GitError::git)?
+            .is_some())
     }
 
     /// The fetch URL of remote `name`, as configured.
