@@ -659,6 +659,28 @@ fn moving_the_caret_to_the_title_scrolls_the_preview_to_the_top(cx: &mut TestApp
 }
 
 #[gpui::test]
+fn export_command_writes_a_pdf(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n\nExported from the app.\n").unwrap();
+    let output = directory.path().join("exported.pdf");
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+
+    // The command asks where to write the PDF; the test answers the save dialog.
+    cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
+    cx.run_until_parked();
+    assert!(cx.did_prompt_for_new_path());
+    let chosen = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(chosen));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        output.is_file() && !cx.update(|_, cx| app.read(cx).engine.is_exporting())
+    }));
+    assert!(std::fs::read(&output).unwrap().starts_with(b"%PDF-"));
+}
+
+#[gpui::test]
 fn scroll_sync_works_both_ways(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let page = adoc_index::normalize_path(&directory.path().join("long.adoc"));

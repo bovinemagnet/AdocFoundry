@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use adoc_dom::{AcdcParser, DocumentParser as _, ParseInput};
-use adoc_pdf::{load_theme, LoadedTheme, PageView, ThemeSource};
+use adoc_pdf::{load_theme, Document, LoadedTheme, PageView, ThemeSource};
 use adoc_render::{build_view, LocalResolver, ViewTree};
 
 pub fn fixtures() -> PathBuf {
@@ -23,12 +23,12 @@ pub fn view_of(path: &Path) -> ViewTree {
     view_of_text(path, &text)
 }
 
-pub fn article(view: ViewTree) -> Vec<PageView> {
-    vec![PageView {
+pub fn article(view: ViewTree) -> Document {
+    Document::Article(PageView {
         key: "p0".to_owned(),
         view,
         depth: 0,
-    }]
+    })
 }
 
 pub fn default_theme() -> LoadedTheme {

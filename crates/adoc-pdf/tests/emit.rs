@@ -244,8 +244,15 @@ fn labels_are_namespaced_per_page() {
         ),
         depth: 1,
     };
-    let pages = vec![page("p0", "/doc/a.adoc"), page("p1", "/doc/b.adoc")];
-    let typst = to_typst(&pages, &common::default_theme(), &PdfOptions::default());
+    let book = adoc_pdf::Document::Book(adoc_pdf::Book {
+        title: "Two pages".to_owned(),
+        items: vec![
+            adoc_pdf::BookItem::Page(page("p0", "/doc/a.adoc")),
+            adoc_pdf::BookItem::Page(page("p1", "/doc/b.adoc")),
+        ],
+        ..adoc_pdf::Book::default()
+    });
+    let typst = to_typst(&book, &common::default_theme(), &PdfOptions::default());
     assert!(typst.source.contains("label(\"p0#_install\")"));
     assert!(typst.source.contains("label(\"p1#_install\")"));
     // Each page's reference leads to its own section, so the labels never clash.

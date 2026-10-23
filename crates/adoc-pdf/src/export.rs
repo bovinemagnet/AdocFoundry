@@ -12,8 +12,7 @@ use typst::{
 use typst_layout::PagedDocument;
 
 use crate::{
-    document::{to_typst, PdfOptions, PdfStandard, Typst},
-    emit::PageView,
+    document::{to_typst, Document, PdfOptions, PdfStandard, Typst},
     fonts::font_set,
     theme::LoadedTheme,
     world::PdfWorld,
@@ -90,13 +89,13 @@ impl fmt::Display for PdfError {
 
 impl std::error::Error for PdfError {}
 
-/// Exports `pages` as a PDF styled by `theme`.
+/// Exports `document` as a PDF styled by `theme`.
 pub fn export(
-    pages: &[PageView],
+    document: &Document,
     theme: &LoadedTheme,
     options: &PdfOptions,
 ) -> Result<PdfOutput, PdfError> {
-    let typst = to_typst(pages, theme, options);
+    let typst = to_typst(document, theme, options);
     compile(&typst, theme, options)
 }
 

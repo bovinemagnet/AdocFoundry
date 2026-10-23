@@ -209,8 +209,8 @@
 #let adoc-paragraph(roles, body) = {
   let body = body
   for role in roles { body = adoc-role(role, body) }
-  if roles.contains("lead") {
-    let size = resolve-size(pick("role_lead_font_size", default: base-size * 1.25), base-size)
+  if roles.contains("lead") and pick("role_lead_font_size") != none {
+    let size = resolve-size(pick("role_lead_font_size"), base-size)
     set par(leading: leading(size, base-line-height))
     text(size: size, body)
   } else if roles.contains("text-center") {
@@ -483,6 +483,13 @@
     set par(justify: false)
     stack(spacing: pick("footnotes_item_spacing", default: 3pt), ..items.map(((number, dest, body)) => [#adoc-link(dest, [\[#number\]]) #body]))
   })
+}
+
+// A part of a book: its title alone at the top of a new page, as asciidoctor-pdf sets it; the
+// chapter that follows starts the next page.
+#let adoc-part(title) = {
+  pagebreak(weak: true)
+  heading(level: 1, outlined: true, bookmarked: true, title)
 }
 
 // The table of contents: the title as a level 2 heading, then an entry per outlined heading

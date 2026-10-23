@@ -82,6 +82,8 @@ pub mod ids {
     pub const GIT_COMMIT: CommandId = CommandId::new("git.commit");
     pub const GIT_PUSH: CommandId = CommandId::new("git.push");
     pub const GIT_SAVE_AND_COMMIT: CommandId = CommandId::new("git.save_and_commit");
+    pub const EXPORT_PDF_PAGE: CommandId = CommandId::new("export.pdf_page");
+    pub const EXPORT_PDF_COMPONENT: CommandId = CommandId::new("export.pdf_component");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;
@@ -367,6 +369,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::git::register_git(registry);
     crate::versions::register_versions(registry);
     crate::commit::register_commit(registry);
+    crate::export::register_export(registry);
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry, spec: CommandSpec, run: Run) {

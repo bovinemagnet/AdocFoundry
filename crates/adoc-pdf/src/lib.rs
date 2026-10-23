@@ -10,7 +10,7 @@ pub mod theme;
 mod typst;
 mod world;
 
-pub use document::{to_typst, PdfOptions, PdfStandard, Typst};
+pub use document::{to_typst, Book, BookItem, Document, PdfOptions, PdfStandard, Typst};
 pub use emit::{EmitOptions, PageView, SourceMap};
 pub use export::{
     compile, export, typeset_pages, typeset_text, PdfDiagnostic, PdfError, PdfOutput, PdfSeverity,

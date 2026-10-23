@@ -1,0 +1,3 @@
+= Use
+
+Start the product and open a document. See xref:install.adoc[Install] if it is not there yet.

@@ -72,6 +72,8 @@ actions!(
         CommitChanges,
         Push,
         SaveAndCommit,
+        ExportPagePdf,
+        ExportComponentPdf,
     ]
 );
 
@@ -140,6 +142,8 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::GIT_COMMIT => KeyBinding::new(keys, CommitChanges, workspace),
         ids::GIT_PUSH => KeyBinding::new(keys, Push, workspace),
         ids::GIT_SAVE_AND_COMMIT => KeyBinding::new(keys, SaveAndCommit, workspace),
+        ids::EXPORT_PDF_PAGE => KeyBinding::new(keys, ExportPagePdf, workspace),
+        ids::EXPORT_PDF_COMPONENT => KeyBinding::new(keys, ExportComponentPdf, workspace),
         ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
         ids::SETTINGS_RELOAD => KeyBinding::new(keys, ReloadSettings, workspace),
         ids::VIEW_TOGGLE_PREVIEW => KeyBinding::new(keys, TogglePreview, workspace),
@@ -199,6 +203,8 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::GIT_COMMIT => Box::new(CommitChanges),
         ids::GIT_PUSH => Box::new(Push),
         ids::GIT_SAVE_AND_COMMIT => Box::new(SaveAndCommit),
+        ids::EXPORT_PDF_PAGE => Box::new(ExportPagePdf),
+        ids::EXPORT_PDF_COMPONENT => Box::new(ExportComponentPdf),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
         ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),

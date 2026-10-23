@@ -12,6 +12,7 @@ mod edit;
 mod engine;
 mod error;
 mod event;
+mod export;
 mod git;
 mod language;
 mod navigation;
@@ -34,6 +35,7 @@ pub use edit::TextEdit;
 pub use engine::{Engine, INDEX_SETTLE};
 pub use error::EngineError;
 pub use event::EngineEvent;
+pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
 pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use navigation::NavigationPosition;
 pub use preview::{
@@ -41,9 +43,11 @@ pub use preview::{
 };
 pub use rendered::{PreviewLayout, RenderedPreview, PREVIEW_SETTLE};
 pub use settings::{
-    EditorSettings, GitSettings, Settings, ThemePreference, ToolSettings, WorkspaceSettings,
-    USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    pdf_standard, EditorSettings, GitSettings, PdfSettings, Settings, ThemePreference,
+    ToolSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
+
+pub use adoc_pdf::PdfStandard;
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
 pub use visual::{EditorMode, VisualArgs, VisualDocument, VisualValue, MODEL_SETTLE};
 pub use workspace::WATCH_DEBOUNCE;

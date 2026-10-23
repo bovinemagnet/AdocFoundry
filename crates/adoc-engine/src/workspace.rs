@@ -75,6 +75,14 @@ pub(crate) enum WorkerMessage {
         workdir: PathBuf,
         result: Result<String, String>,
     },
+    ExportParsed {
+        job: u64,
+        doms: Vec<(PathBuf, adoc_dom::Dom)>,
+    },
+    ExportFinished {
+        job: u64,
+        result: Result<crate::ExportSummary, String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -298,6 +306,8 @@ impl Engine {
                 blame,
             } => self.git_blamed(id, generation, blame),
             WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
+            WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),
+            WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
             WorkerMessage::IndexFailed { error } => {
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,

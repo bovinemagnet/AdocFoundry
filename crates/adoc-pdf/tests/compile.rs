@@ -7,7 +7,7 @@ use std::path::Path;
 
 use adoc_pdf::{compile, export, to_typst, PdfError, PdfOptions, PdfSeverity, Typst};
 
-fn reference() -> Vec<adoc_pdf::PageView> {
+fn reference() -> adoc_pdf::Document {
     let path = common::fixtures().join("pdf/reference/article.adoc");
     common::article(common::view_of(&path))
 }

@@ -290,3 +290,112 @@ fn git_status_lists_changed_pages_with_hunk_counts() {
         assert!(!output.status.success());
     }
 }
+
+#[test]
+fn pdf_exports_a_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let pdf = directory.path().join("article.pdf");
+    let typst = directory.path().join("article.typ");
+    let output = cli(&[
+        "pdf",
+        "tests/fixtures/pdf/reference/article.adoc",
+        "--output",
+        pdf.to_str().unwrap(),
+        "--typst",
+        typst.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(std::fs::read(&pdf).unwrap().starts_with(b"%PDF-"));
+    assert!(stdout(&output).contains("(4 pages)"), "{}", stdout(&output));
+    assert!(std::fs::read_to_string(&typst)
+        .unwrap()
+        .contains("#adoc-doctitle[#\"Exporting Documentation to PDF\"]"));
+}
+
+#[test]
+fn pdf_exports_a_component() {
+    // Copied, so the diagram cache is written outside the repository.
+    let directory = tempfile::tempdir().unwrap();
+    copy_tree(
+        &repository_root().join("tests/fixtures/pdf/book"),
+        &directory.path().join("book"),
+    );
+    let run = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(directory.path())
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+    // A component directory exports its book, named after the component.
+    let output = run(&["pdf", "book/guide"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(directory.path().join("guide.pdf").is_file());
+    // So does `--component`, with an Antora version.
+    let output = run(&[
+        "pdf",
+        "book",
+        "--component",
+        "1.0@guide",
+        "--output",
+        "named.pdf",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout(&output).starts_with("named.pdf ("),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn pdf_reports_theme_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let theme = directory.path().join("broken-theme.yml");
+    std::fs::write(&theme, "base: [unclosed\n").unwrap();
+    let output = cli(&[
+        "pdf",
+        "tests/fixtures/pdf/reference/article.adoc",
+        "--theme",
+        theme.to_str().unwrap(),
+        "--output",
+        directory.path().join("x.pdf").to_str().unwrap(),
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("broken-theme.yml"), "{stderr}");
+    assert!(!directory.path().join("x.pdf").exists());
+    // An unknown standard is a usage error.
+    let output = cli(&[
+        "pdf",
+        "tests/fixtures/pdf/reference/article.adoc",
+        "--standard",
+        "pdf-x",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}

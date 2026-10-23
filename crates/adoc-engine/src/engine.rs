@@ -56,6 +56,7 @@ pub struct Engine {
     pub(crate) rendered: crate::rendered::PreviewState,
     pub(crate) visual: crate::visual::VisualState,
     pub(crate) git: crate::git::GitState,
+    pub(crate) export: crate::export::ExportState,
 }
 
 /// Typed characters re-parse their document at once but re-index it, and refresh diagnostics,
@@ -110,6 +111,7 @@ impl Engine {
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
             git: crate::git::GitState::default(),
+            export: crate::export::ExportState::default(),
         }
     }
 

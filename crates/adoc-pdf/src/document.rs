@@ -1,15 +1,19 @@
 //! The whole Typst document: the theme's keys, the document's facts, the template, the front
-//! matter and the body.
+//! matter and the body, for an article or a book.
 
-use std::{fmt::Write as _, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Write as _,
+    path::PathBuf,
+};
 
-use adoc_render::{ViewInline, ViewTree};
+use adoc_render::ViewInline;
 
 use crate::{
     emit::{EmitOptions, Emitted, Emitter, PageView, SourceMap},
     running,
     theme::{LoadedTheme, ThemeValue},
-    typst::{self, string},
+    typst::{self, string, text},
 };
 
 /// The template the generated body is typeset with.
@@ -36,9 +40,55 @@ pub struct PdfOptions {
     pub fonts_dirs: Vec<PathBuf>,
     /// The site cross references out of a book link to.
     pub site_url: Option<String>,
+    /// The address of each page outside the document a reference may lead to, for a book;
+    /// references to any other page are left as text.
+    pub page_urls: HashMap<PathBuf, String>,
     /// The date written into the PDF (year, month, day), for reproducible output; none by
     /// default.
     pub date: Option<(i32, u8, u8)>,
+}
+
+/// What is exported: one page as an article, or pages in order as a book.
+#[derive(Clone, Debug)]
+pub enum Document {
+    Article(PageView),
+    Book(Book),
+}
+
+/// A book: a title page, a table of contents, then parts, chapters and sections in order.
+#[derive(Clone, Debug, Default)]
+pub struct Book {
+    pub title: String,
+    pub subtitle: Option<String>,
+    /// The book's attributes, as a document header would set them (`revnumber`, `toc`, …).
+    pub attributes: BTreeMap<String, String>,
+    pub items: Vec<BookItem>,
+}
+
+#[derive(Clone, Debug)]
+pub enum BookItem {
+    /// A part title, on a page of its own.
+    Part(String),
+    /// A heading with no page of its own, at a depth (1 for a chapter).
+    Heading { title: String, depth: u8 },
+    /// A page; its title becomes a heading at the page's depth, its sections move down by it.
+    Page(PageView),
+}
+
+impl Document {
+    fn pages(&self) -> Vec<PageView> {
+        match self {
+            Self::Article(page) => vec![page.clone()],
+            Self::Book(book) => book
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    BookItem::Page(page) => Some(page.clone()),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The generated Typst for a document, with the files it uses.
@@ -52,18 +102,20 @@ pub struct Typst {
     pub missing: Vec<(String, adoc_render::SourceSpan)>,
 }
 
-/// The document's facts the template reads, from the first page's attributes.
+/// The document's facts the template reads: an article's attributes, or a book's.
 struct Facts<'a> {
-    view: &'a ViewTree,
+    attributes: &'a BTreeMap<String, String>,
+    title: Option<String>,
+    book: bool,
 }
 
 impl Facts<'_> {
     fn attribute(&self, name: &str) -> Option<&str> {
-        self.view.attributes.get(name).map(String::as_str)
+        self.attributes.get(name).map(String::as_str)
     }
 
     fn has(&self, name: &str) -> bool {
-        self.view.attributes.contains_key(name)
+        self.attributes.contains_key(name)
     }
 
     fn toc_levels(&self) -> u8 {
@@ -74,8 +126,8 @@ impl Facts<'_> {
 
     /// A book, or an article that asks for one, opens with a title page.
     fn title_as_page(&self) -> bool {
-        self.view.title.is_some()
-            && (self.attribute("doctype") == Some("book") || self.has("title-page"))
+        self.title.is_some()
+            && (self.book || self.attribute("doctype") == Some("book") || self.has("title-page"))
             && !self.has("notitle")
     }
 
@@ -87,69 +139,111 @@ impl Facts<'_> {
     }
 }
 
-/// Writes `pages` as one Typst document styled by `theme`.
+/// Writes `document` as one Typst document styled by `theme`.
 #[must_use]
-pub fn to_typst(pages: &[PageView], theme: &LoadedTheme, options: &PdfOptions) -> Typst {
-    let Some(first) = pages.first() else {
-        return Typst::default();
+pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) -> Typst {
+    let pages = document.pages();
+    let (attributes, title) = match document {
+        Document::Article(page) => (
+            page.view.attributes.clone(),
+            page.view
+                .title
+                .as_ref()
+                .map(|title| ViewInline::plain_text(title)),
+        ),
+        Document::Book(book) => (book.attributes.clone(), Some(book.title.clone())),
     };
-    let facts = Facts { view: &first.view };
+    let book = matches!(document, Document::Book(_));
+    let facts = Facts {
+        attributes: &attributes,
+        title: title.clone(),
+        book,
+    };
     let emit_options = EmitOptions {
         highlight: facts.has("source-highlighter"),
         site_url: options.site_url.clone(),
+        page_urls: options.page_urls.clone(),
         toc_levels: facts.toc_levels(),
     };
-    let mut emitter = Emitter::new(pages, &emit_options);
-    let title_as_page = facts.title_as_page();
-    for page in pages {
-        emitter.begin_page(page);
-        let anchor = emitter.label("");
-        if page.depth == 0 {
-            let title = page
-                .view
-                .title
-                .as_ref()
-                .map(|title| ViewInline::plain_text(title));
-            if title_as_page {
-                if let Some(title) = &title {
-                    let (main, subtitle) = running::partition_title(title);
-                    let title_page = running::TitlePage {
-                        title: main,
-                        subtitle,
-                        attributes: &page.view.attributes,
-                    };
-                    let markup = title_page.markup(theme, &mut |path| emitter.file(path));
-                    emitter.push(&markup);
-                }
-                if facts.toc_at_top() {
-                    emitter.push("#adoc-toc()\n\n#pagebreak(weak: true)\n\n");
-                }
-                emitter.push(RUNNING_START);
-                emitter.push(&format!("#metadata(none)#{anchor}\n\n"));
-            } else {
-                emitter.push(RUNNING_START);
-                emitter.push(&format!("#metadata(none)#{anchor}\n\n"));
-                if let Some(title) = &page.view.title {
-                    if !facts.has("notitle") {
-                        let title = emitter.inlines(title);
-                        emitter.push(&format!("#adoc-doctitle[{title}]\n\n"));
+    let mut emitter = Emitter::new(&pages, &emit_options);
+
+    // Front matter.
+    if facts.title_as_page() {
+        if let Some(title) = &title {
+            let (main, subtitle) = match document {
+                Document::Book(book) => (book.title.clone(), book.subtitle.clone()),
+                Document::Article(_) => running::partition_title(title),
+            };
+            let title_page = running::TitlePage {
+                title: main,
+                subtitle,
+                attributes: &attributes,
+            };
+            let markup = title_page.markup(theme, &mut |path| emitter.file(path));
+            emitter.push(&markup);
+        }
+        if facts.toc_at_top() {
+            let min_level = if book && has_parts(document) { 1 } else { 2 };
+            emitter.push(&format!(
+                "#adoc-toc(min-level: {min_level})\n\n#pagebreak(weak: true)\n\n"
+            ));
+        }
+        emitter.push(RUNNING_START);
+    } else {
+        emitter.push(RUNNING_START);
+        if let (Document::Article(page), false) = (document, facts.has("notitle")) {
+            if let Some(title) = &page.view.title {
+                emitter.begin_page(page);
+                let title = emitter.inlines(title);
+                emitter.push(&format!("#adoc-doctitle[{title}]\n\n"));
+            }
+        }
+        if facts.toc_at_top() {
+            emitter.push("#adoc-toc()\n\n#v(block-bottom)\n\n");
+        }
+    }
+
+    // The body.
+    match document {
+        Document::Article(page) => {
+            emitter.begin_page(page);
+            let anchor = emitter.label("");
+            emitter.push(&format!("#metadata(none)#{anchor}\n\n"));
+            emitter.page_body(&page.view);
+            emitter.footnotes(&page.view);
+        }
+        Document::Book(book) => {
+            for item in &book.items {
+                match item {
+                    BookItem::Part(title) => {
+                        emitter.push(&format!("#adoc-part[{}]\n\n", text(title)));
+                    }
+                    BookItem::Heading { title, depth } => {
+                        heading(&mut emitter, *depth, &text(title), None);
+                    }
+                    BookItem::Page(page) => {
+                        emitter.begin_page(page);
+                        let anchor = emitter.label("");
+                        let title = page
+                            .view
+                            .title
+                            .as_ref()
+                            .map(|title| emitter.inlines(title))
+                            .unwrap_or_default();
+                        heading(&mut emitter, page.depth.max(1), &title, Some(&anchor));
+                        emitter.page_body(&page.view);
+                        emitter.footnotes(&page.view);
                     }
                 }
-                if facts.toc_at_top() {
-                    emitter.push("#adoc-toc()\n\n#v(block-bottom)\n\n");
-                }
             }
-        } else {
-            emitter.push(&format!("#metadata(none)#{anchor}\n\n"));
         }
-        emitter.page_body(&page.view);
-        emitter.footnotes(&page.view);
     }
-    let mut attributes = first.view.attributes.clone();
-    if let Some(title) = &first.view.title {
+
+    let mut attributes = attributes.clone();
+    if let Some(title) = &title {
         attributes
             .entry("doctitle".to_owned())
-            .or_insert_with(|| ViewInline::plain_text(title));
+            .or_insert_with(|| title.clone());
     }
     let running = running::running_dictionary(theme, &attributes, &mut |path| emitter.file(path));
     let Emitted {
@@ -184,6 +278,22 @@ pub fn to_typst(pages: &[PageView], theme: &LoadedTheme, options: &PdfOptions) -
     }
 }
 
+/// A book heading at `depth`: a chapter (depth 1) starts a new page.
+fn heading(emitter: &mut Emitter<'_>, depth: u8, title: &str, label: Option<&str>) {
+    if depth <= 1 {
+        emitter.push("#pagebreak(weak: true)\n\n");
+    }
+    let label = label.map(|label| format!("#{label}")).unwrap_or_default();
+    emitter.push(&format!(
+        "#heading(level: {}, outlined: true, bookmarked: true)[{title}]{label}\n\n",
+        u32::from(depth) + 1
+    ));
+}
+
+fn has_parts(document: &Document) -> bool {
+    matches!(document, Document::Book(book) if book.items.iter().any(|item| matches!(item, BookItem::Part(_))))
+}
+
 fn theme_dictionary(out: &mut String, theme: &LoadedTheme) {
     out.push_str("#let t = (\n");
     for (key, value) in theme.keys.iter() {
@@ -211,7 +321,7 @@ fn doc_dictionary(
         .to_owned();
     let _ = writeln!(
         out,
-        "#let doc = (\n  line-gaps: ({}),\n  lang: {},\n  hyphenate: {},\n  fallbacks: ({}),\n  page: (width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})),\n  toc-title: {},\n  toc-levels: {},\n  running: (part: none, chapter: none, section: (2, {})),\n  running-from: {},\n)",
+        "#let doc = (\n  line-gaps: ({}),\n  lang: {},\n  hyphenate: {},\n  fallbacks: ({}),\n  page: (width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})),\n  toc-title: {},\n  toc-levels: {},\n  running: {},\n  running-from: {},\n)",
         if gaps.is_empty() {
             ":".to_owned()
         } else {
@@ -230,17 +340,17 @@ fn doc_dictionary(
         typst::points(page.margin[3]),
         string(&toc_title),
         facts.toc_levels(),
-        section_levels(theme) + 1,
+        if facts.book {
+            format!("(part: (1, 1), chapter: (2, 2), section: (3, {}))", section_levels(theme) + 1)
+        } else {
+            format!("(part: none, chapter: none, section: (2, {}))", section_levels(theme) + 1)
+        },
         running_from(theme),
     );
 }
 
 fn document_metadata(out: &mut String, facts: &Facts<'_>) {
-    let title = facts
-        .view
-        .title
-        .as_ref()
-        .map(|title| ViewInline::plain_text(title));
+    let title = facts.title.clone();
     let mut fields = Vec::new();
     if let Some(title) = &title {
         fields.push(format!("title: {}", string(title)));

@@ -94,12 +94,53 @@ impl Default for GitSettings {
     }
 }
 
+/// The `[pdf]` table: how PDF export finds its theme and fonts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfSettings {
+    /// A bundled theme (`default`, `default-sans`, `default-for-print`, `base`), a theme name
+    /// found as `<name>-theme.yml` in `themes_dir`, or a theme file. A page's `pdf-theme`
+    /// attribute wins over it.
+    pub theme: String,
+    /// Where named themes are found, relative to the first workspace root.
+    pub themes_dir: Option<String>,
+    /// Where a theme's fonts are found, relative to the first workspace root; the bundled
+    /// fonts are always searched after it.
+    pub fonts_dir: Option<String>,
+    /// The site cross references out of an exported book link to.
+    pub site_url: Option<String>,
+    /// Standards every export conforms to: `pdf-a-2a`, `pdf-ua-1`.
+    pub standards: Vec<adoc_pdf::PdfStandard>,
+}
+
+impl Default for PdfSettings {
+    fn default() -> Self {
+        Self {
+            theme: "default".to_owned(),
+            themes_dir: None,
+            fonts_dir: None,
+            site_url: None,
+            standards: Vec::new(),
+        }
+    }
+}
+
+/// A PDF standard by its settings and command-line name.
+#[must_use]
+pub fn pdf_standard(name: &str) -> Option<adoc_pdf::PdfStandard> {
+    match name {
+        "pdf-a-2a" | "a-2a" => Some(adoc_pdf::PdfStandard::A2a),
+        "pdf-ua-1" | "ua-1" => Some(adoc_pdf::PdfStandard::Ua1),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Settings {
     pub editor: EditorSettings,
     pub workspace: WorkspaceSettings,
     pub tools: ToolSettings,
     pub git: GitSettings,
+    pub pdf: PdfSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -181,6 +222,7 @@ impl Settings {
                 let name = format!("{section}.{key}");
                 let allowed_here = layer == Layer::User
                     || section == "editor"
+                    || section == "pdf"
                     || (section == "workspace" && key == "ignore");
                 if !allowed_here && is_known(section, key) {
                     self.warn(&source, &name, "can only be set in the user settings file");
@@ -233,6 +275,18 @@ impl Settings {
                 }
                 self.git.hosts = hosts;
             }
+            ("pdf", "theme") => self.pdf.theme = string(value)?,
+            ("pdf", "themes_dir") => self.pdf.themes_dir = Some(string(value)?),
+            ("pdf", "fonts_dir") => self.pdf.fonts_dir = Some(string(value)?),
+            ("pdf", "site_url") => self.pdf.site_url = Some(string(value)?),
+            ("pdf", "standards") => {
+                let items = value.as_array().ok_or("expected an array of strings")?;
+                self.pdf.standards = items
+                    .iter()
+                    .map(|item| item.as_str().and_then(pdf_standard))
+                    .collect::<Option<_>>()
+                    .ok_or("expected \"pdf-a-2a\" or \"pdf-ua-1\"")?;
+            }
             _ => return Err("unknown setting"),
         }
         Ok(())
@@ -254,6 +308,10 @@ fn is_known(section: &str, key: &str) -> bool {
             | (
                 "git",
                 "enabled" | "show_markers" | "blame_on_hover" | "remote" | "hosts"
+            )
+            | (
+                "pdf",
+                "theme" | "themes_dir" | "fonts_dir" | "site_url" | "standards"
             )
     )
 }
@@ -360,6 +418,23 @@ mod tests {
         fs::write(&user, "[git.hosts]\n\"Git.Example.com\" = \"gitlab\"\n").unwrap();
         let settings = Settings::load(Some(&user), None).unwrap();
         assert_eq!(settings.git.hosts["git.example.com"], "gitlab");
+    }
+
+    #[test]
+    fn pdf_settings_load_in_either_layer() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.pdf.theme, "default");
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[pdf]\ntheme = \"acme\"\nthemes_dir = \"resources/themes\"\nstandards = [\"pdf-a-2a\"]\n",
+        )
+        .unwrap();
+        let settings = Settings::load(None, Some(directory.path())).unwrap();
+        assert_eq!(settings.pdf.theme, "acme");
+        assert_eq!(settings.pdf.themes_dir.as_deref(), Some("resources/themes"));
+        assert_eq!(settings.pdf.standards, vec![adoc_pdf::PdfStandard::A2a]);
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
     }
 
     #[test]

@@ -1,0 +1,8 @@
+= Install
+
+((Installation)) takes a few minutes.
+
+== Requirements
+
+You need a supported operating system.(((system requirements)))
+When it is installed, see xref:configure.adoc#_options[the options] and the xref:other::index.adoc[other component].

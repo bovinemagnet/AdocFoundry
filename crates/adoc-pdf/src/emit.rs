@@ -71,6 +71,8 @@ pub struct EmitOptions {
     pub site_url: Option<String>,
     /// `toclevels`: sections deeper than this are left out of the outline.
     pub toc_levels: u8,
+    /// Addresses of pages outside the document, for references to them.
+    pub page_urls: HashMap<PathBuf, String>,
 }
 
 pub(crate) struct Emitter<'a> {
@@ -329,7 +331,7 @@ impl<'a> Emitter<'a> {
                     heading.push_str(&text(&format!("{number} ")));
                 }
                 heading.push_str(&self.inlines(title));
-                let outlined = section_level <= self.options.toc_levels;
+                let outlined = section_level + self.depth <= self.options.toc_levels;
                 let label = block
                     .id
                     .as_deref()
@@ -745,7 +747,7 @@ impl<'a> Emitter<'a> {
     fn inline(&mut self, out: &mut String, inline: &ViewInline) {
         match inline {
             ViewInline::Text(value) | ViewInline::Raw(value) => {
-                out.push_str(&text(&value.replace('\n', " ")));
+                out.push_str(&text(&flowing(value)));
             }
             ViewInline::Strong(content) => {
                 let inner = self.inlines(content);
@@ -890,6 +892,18 @@ impl<'a> Emitter<'a> {
             }
             return None;
         }
+        if let Some(url) = link
+            .target
+            .as_ref()
+            .and_then(|location| self.options.page_urls.get(&location.path))
+        {
+            let mut url = url.clone();
+            if let Some(fragment) = &fragment {
+                url.push('#');
+                url.push_str(fragment);
+            }
+            return Some(string(&url));
+        }
         let site = self.options.site_url.as_deref()?;
         let file = target.split('#').next().unwrap_or(target);
         let file = file
@@ -975,6 +989,24 @@ fn collect_labels(key: &str, blocks: &[ViewBlock], labels: &mut HashSet<String>)
             _ => {}
         }
     }
+}
+
+/// Flowing text as Prawn sets it: line breaks become spaces and runs of spaces collapse.
+fn flowing(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut space = false;
+    for character in value.chars() {
+        if character == ' ' || character == '\n' || character == '\t' {
+            if !space {
+                out.push(' ');
+            }
+            space = true;
+        } else {
+            out.push(character);
+            space = false;
+        }
+    }
+    out
 }
 
 fn footnote_id(number: u32) -> String {
@@ -1156,6 +1188,12 @@ mod tests {
             with_callouts("a; \nb;", &callouts),
             "a; \u{2460}\nb; \u{2461}"
         );
+    }
+
+    #[test]
+    fn flowing_text_collapses_spaces() {
+        assert_eq!(super::flowing("a.  b\nc \n d"), "a. b c d");
+        assert_eq!(super::flowing("\u{a0}\u{a0}kept"), "\u{a0}\u{a0}kept");
     }
 
     #[test]

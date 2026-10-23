@@ -1,0 +1,11 @@
+= Configure
+
+== Options
+
+Each option has a default.
+
+[mermaid]
+....
+graph LR
+  Install --> Configure --> Use
+....
