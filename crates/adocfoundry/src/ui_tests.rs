@@ -740,6 +740,19 @@ fn status_bar_shows_the_branch(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn status_bar_shows_the_version_and_branch(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("docs/antora.yml", "name: product\nversion: '2.0'\n");
+    test.write("docs/modules/ROOT/pages/index.adoc", "= Home\n");
+    test.commit_all("first");
+    let page = dir.path().join("docs/modules/ROOT/pages/index.adoc");
+    let mut cx = git_workspace(dir.path(), &page, cx);
+    assert!(cx.debug_bounds("status-version-product@2.0").is_some());
+    assert!(cx.debug_bounds("status-branch-main").is_some());
+}
+
+#[gpui::test]
 fn status_bar_shows_no_branch_outside_git(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     if dir

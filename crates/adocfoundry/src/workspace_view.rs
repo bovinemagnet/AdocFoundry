@@ -461,6 +461,82 @@ impl WorkspaceView {
         labels
     }
 
+    /// The component version and branch of the active page, above the navigation tree.
+    fn version_header(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let engine = &self.app.read(cx).engine;
+        let path = engine
+            .active()
+            .and_then(|id| engine.document(id))
+            .map(|document| document.path.clone())?;
+        let badge = engine.version_badge(&path)?;
+        let label = match engine.git().head_for(&path) {
+            Some(head) => format!("{badge} · {head}"),
+            None => badge,
+        };
+        Some(
+            div()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(label)
+                .into_any_element(),
+        )
+    }
+
+    /// Offers the active page's other versions in the workspace, and opens the one chosen.
+    fn on_open_in_version(
+        &mut self,
+        _: &OpenInVersion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        let Some(id) = engine.active() else {
+            return;
+        };
+        let others = engine.other_versions(id);
+        if others.is_empty() {
+            window.push_notification(
+                "No other version of this page is in the workspace: check out its branch in \
+                 another folder and add the folder to the workspace.",
+                cx,
+            );
+            return;
+        }
+        let component = engine
+            .document(id)
+            .and_then(|document| engine.version_badge(&document.path))
+            .and_then(|badge| badge.split_once('@').map(|(name, _)| name.to_owned()))
+            .unwrap_or_default();
+        let workspace = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let buttons = others.iter().enumerate().map(|(index, (version, _))| {
+                let version = version.clone();
+                let label = format!("{component}@{}", version.as_deref().unwrap_or("latest"));
+                let workspace = workspace.clone();
+                Button::new(("version", index))
+                    .label(label)
+                    .ghost()
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        let args = CommandArgs::Custom(serde_json::json!({
+                            "document": id.get(),
+                            "version": version,
+                        }));
+                        if let Some(workspace) = workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.invoke(ids::NAVIGATE_OPEN_IN_VERSION, args, window, cx);
+                            });
+                        }
+                    })
+            });
+            dialog
+                .title("Open in Another Version")
+                .child(v_flex().gap_1().children(buttons))
+        });
+    }
+
     /// Whether the sidebar offers the Changes panel: when a root is in a repository.
     fn has_changes_panel(&self, cx: &App) -> bool {
         !self.app.read(cx).engine.git().repositories().is_empty()
@@ -1332,9 +1408,18 @@ impl WorkspaceView {
             .position(|(tab, _)| *tab == self.sidebar_tab)
             .unwrap_or(0);
         let content = match self.sidebar_tab {
-            SidebarTab::Navigation => self
-                .render_tree(&self.navigation.clone(), "nav", cx)
-                .into_any_element(),
+            SidebarTab::Navigation => {
+                let header = self.version_header(cx);
+                v_flex()
+                    .size_full()
+                    .children(header)
+                    .child(div().flex_1().min_h_0().child(self.render_tree(
+                        &self.navigation.clone(),
+                        "nav",
+                        cx,
+                    )))
+                    .into_any_element()
+            }
             SidebarTab::Families => self
                 .render_tree(&self.families.clone(), "families", cx)
                 .into_any_element(),
@@ -1431,6 +1516,8 @@ impl WorkspaceView {
             .or(roots.first().map(std::path::PathBuf::as_path))
             .and_then(|path| engine.git().head_for(path))
             .map(ToString::to_string);
+        // The component version of the active page: `product@2.0 · main`.
+        let badge = file.as_deref().and_then(|path| engine.version_badge(path));
         let indexing = engine.has_pending();
         StatusBar::new()
             .left(
@@ -1438,13 +1525,27 @@ impl WorkspaceView {
                     .text_xs()
                     .child(path.unwrap_or_else(|| "No document".to_owned())),
             )
-            .when_some(branch, |bar, branch| {
-                let selector = format!("status-branch-{branch}");
+            .when_some(badge.clone(), |bar, badge| {
+                let selector = format!("status-version-{badge}");
                 bar.left(
                     div()
                         .debug_selector(move || selector)
                         .text_xs()
-                        .child(format!("⎇ {branch}")),
+                        .child(badge),
+                )
+            })
+            .when_some(branch, |bar, branch| {
+                let selector = format!("status-branch-{branch}");
+                let label = if badge.is_some() {
+                    format!("· {branch}")
+                } else {
+                    format!("⎇ {branch}")
+                };
+                bar.left(
+                    div()
+                        .debug_selector(move || selector)
+                        .text_xs()
+                        .child(label),
                 )
             })
             .when(indexing, |bar| bar.left(div().text_xs().child("Indexing…")))
@@ -1548,6 +1649,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_next_change))
             .on_action(cx.listener(Self::on_previous_change))
             .on_action(cx.listener(Self::on_show_changes))
+            .on_action(cx.listener(Self::on_open_in_version))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))
