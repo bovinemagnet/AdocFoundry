@@ -196,7 +196,7 @@ impl VisualView {
                             .text_color(colour)
                             .child(kind.label()),
                     )
-                    .child(v_flex().flex_1().gap_2().children(self.children(
+                    .child(v_flex().flex_1().min_w_0().gap_2().children(self.children(
                         path,
                         &node.children,
                         draw,
@@ -309,6 +309,7 @@ impl VisualView {
             .child(
                 v_flex()
                     .flex_1()
+                    .min_w_0()
                     .gap_1()
                     .child(self.text(path, item, draw, cx))
                     .children(self.children(path, &item.children, draw, cx)),
@@ -344,6 +345,7 @@ impl VisualView {
                 cells.push(
                     div()
                         .flex_1()
+                        .min_w_0()
                         .p_1()
                         .border_1()
                         .border_color(palette.border)

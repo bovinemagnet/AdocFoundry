@@ -597,6 +597,10 @@ impl WorkspaceView {
         if let Some(editor) = self.active_editor().cloned() {
             editor.update(cx, |editor, cx| editor.reveal(range, window, cx));
         }
+        if let Some(visual) = self.visuals.get(&id).cloned() {
+            visual.update(cx, |visual, cx| visual.place_caret(range.start, cx));
+            self.focus_active_editor(window, cx);
+        }
     }
 
     /// Shows a multi-file change for confirmation; applying it is one undo step.

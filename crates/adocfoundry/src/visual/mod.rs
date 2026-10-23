@@ -266,8 +266,18 @@ impl VisualView {
     }
 
     /// Places the caret at source offset `offset`, for tests and navigation.
+    /// An offset outside every text block (a heading's `==`, a blank line) goes to the start
+    /// of the next text block.
     pub fn place_caret(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.goal_x = None;
+        let offset = if self.block_at(offset).is_some() {
+            offset
+        } else {
+            self.text_blocks()
+                .into_iter()
+                .find(|(_, _, block)| block.range.start >= offset)
+                .map_or(offset, |(_, _, block)| block.range.start)
+        };
         self.set_selection(Selection::caret(offset), cx);
     }
 
@@ -458,25 +468,62 @@ impl VisualView {
             let index = text::hit(&self.layouts, &path, gpui::point(x, target_y), &shown)?;
             return block.source_offset(index, block.marks_at(index));
         }
-        // The nearest block above or below that was drawn.
-        let blocks = self.text_blocks();
-        let index = blocks.iter().position(|(other, _, _)| *other == path)?;
-        let candidates: Vec<&(BlockPath, bool, TextBlock)> = if down {
-            blocks[index + 1..].iter().collect()
-        } else {
-            blocks[..index].iter().rev().collect()
-        };
-        for (other, _, other_block) in candidates {
-            let Some(other_bounds) = text::bounds_of(&self.layouts, other) else {
+        // The nearest drawn block above or below, preferring one under the caret: in a table,
+        // the cell in the same column rather than the next in reading order.
+        let mut best: Option<(
+            gpui::Pixels,
+            gpui::Pixels,
+            BlockPath,
+            TextBlock,
+            gpui::Pixels,
+        )> = None;
+        for (other, _, other_block) in self.text_blocks() {
+            if other == path {
+                continue;
+            }
+            let Some(other_bounds) = text::bounds_of(&self.layouts, &other) else {
                 continue;
             };
-            let y = if down {
-                other_bounds.top() + px(1.)
+            let (beyond, distance, y) = if down {
+                (
+                    other_bounds.top() >= bounds.bottom() - px(1.),
+                    other_bounds.top() - bounds.bottom(),
+                    other_bounds.top() + px(1.),
+                )
             } else {
-                other_bounds.bottom() - px(1.)
+                (
+                    other_bounds.bottom() <= bounds.top() + px(1.),
+                    bounds.top() - other_bounds.bottom(),
+                    other_bounds.bottom() - px(1.),
+                )
             };
-            let other_shown = text::shown(other_block, None);
-            let index = text::hit(&self.layouts, other, gpui::point(x, y), &other_shown)?;
+            if !beyond {
+                continue;
+            }
+            let across = if x < other_bounds.left() {
+                other_bounds.left() - x
+            } else if x > other_bounds.right() {
+                x - other_bounds.right()
+            } else {
+                px(0.)
+            };
+            let better = best
+                .as_ref()
+                .is_none_or(|(best_distance, best_across, ..)| {
+                    // Blocks on one row (within a line) compete on horizontal distance.
+                    if (distance - *best_distance).abs() < line_height {
+                        across < *best_across
+                    } else {
+                        distance < *best_distance
+                    }
+                });
+            if better {
+                best = Some((distance, across, other, other_block, y));
+            }
+        }
+        if let Some((_, _, other, other_block, y)) = best {
+            let other_shown = text::shown(&other_block, None);
+            let index = text::hit(&self.layouts, &other, gpui::point(x, y), &other_shown)?;
             return other_block.source_offset(index, other_block.marks_at(index));
         }
         Some(if down {

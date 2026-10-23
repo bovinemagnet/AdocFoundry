@@ -1061,3 +1061,40 @@ fn included_content_is_not_editable(cx: &mut TestAppContext) {
         "nothing is typed into the include"
     );
 }
+
+#[gpui::test]
+fn sidebar_navigation_moves_the_visual_caret(cx: &mut TestAppContext) {
+    let text = "= Page\n\nIntro.\n\n== Later\n\nMore text.\n";
+    let (app, workspace, visual, id, mut cx) = visual_workspace(text, cx);
+    let path = cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().path.clone());
+    let heading = text.find("== Later").unwrap();
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_at(&path, SourceRange::new(heading, heading), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(
+        selection.head,
+        text.find("Later").unwrap(),
+        "the caret lands in the heading's text"
+    );
+}
+
+#[gpui::test]
+fn down_keeps_to_the_column_in_a_table(cx: &mut TestAppContext) {
+    let text = "= Page\n\n|===\n|Name |Value\n\n|a |1\n|===\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("Value").unwrap() + 2, &mut cx);
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    let one = text.find("|1").unwrap() + 1;
+    assert!(
+        (one..=one + 1).contains(&selection.head),
+        "the caret goes to the cell below, not the next cell: {} not in {one}..={}",
+        selection.head,
+        one + 1
+    );
+}
