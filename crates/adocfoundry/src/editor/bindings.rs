@@ -41,6 +41,15 @@ actions!(
         ToggleHighlight,
         InsertLink,
         RemoveLink,
+        NewParagraph,
+        IndentListItem,
+        OutdentListItem,
+        ToggleBulletList,
+        ToggleNumberedList,
+        ToggleChecklist,
+        ToggleChecked,
+        InsertCodeBlock,
+        InsertAdmonition,
     ]
 );
 
@@ -109,6 +118,12 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::EDIT_TOGGLE_HIGHLIGHT => KeyBinding::new(keys, ToggleHighlight, visual),
         ids::EDIT_INSERT_LINK => KeyBinding::new(keys, InsertLink, visual),
         ids::EDIT_REMOVE_LINK => KeyBinding::new(keys, RemoveLink, visual),
+        ids::VISUAL_SPLIT_BLOCK => KeyBinding::new(keys, NewParagraph, visual),
+        ids::EDIT_INDENT_LIST_ITEM => KeyBinding::new(keys, IndentListItem, visual),
+        ids::EDIT_OUTDENT_LIST_ITEM => KeyBinding::new(keys, OutdentListItem, visual),
+        ids::EDIT_TOGGLE_BULLET_LIST => KeyBinding::new(keys, ToggleBulletList, visual),
+        ids::EDIT_TOGGLE_NUMBERED_LIST => KeyBinding::new(keys, ToggleNumberedList, visual),
+        ids::EDIT_TOGGLE_CHECKLIST => KeyBinding::new(keys, ToggleChecklist, visual),
         _ => return None,
     })
 }
@@ -147,6 +162,15 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::EDIT_TOGGLE_HIGHLIGHT => Box::new(ToggleHighlight),
         ids::EDIT_INSERT_LINK => Box::new(InsertLink),
         ids::EDIT_REMOVE_LINK => Box::new(RemoveLink),
+        ids::VISUAL_SPLIT_BLOCK => Box::new(NewParagraph),
+        ids::EDIT_INDENT_LIST_ITEM => Box::new(IndentListItem),
+        ids::EDIT_OUTDENT_LIST_ITEM => Box::new(OutdentListItem),
+        ids::EDIT_TOGGLE_BULLET_LIST => Box::new(ToggleBulletList),
+        ids::EDIT_TOGGLE_NUMBERED_LIST => Box::new(ToggleNumberedList),
+        ids::EDIT_TOGGLE_CHECKLIST => Box::new(ToggleChecklist),
+        ids::EDIT_TOGGLE_CHECKED => Box::new(ToggleChecked),
+        ids::EDIT_INSERT_CODE_BLOCK => Box::new(InsertCodeBlock),
+        ids::EDIT_INSERT_ADMONITION => Box::new(InsertAdmonition),
         _ => return None,
     })
 }

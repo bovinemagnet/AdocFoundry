@@ -65,6 +65,13 @@ impl Selection {
     }
 }
 
+/// A new block waiting for its first character, after the caret's block.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Pending {
+    /// Another item of the caret's list, rather than a paragraph.
+    pub list_item: bool,
+}
+
 /// What the visual editor tells the window around it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VisualEvent {
@@ -84,6 +91,9 @@ pub struct VisualView {
     marks: MarkSet,
     /// IME text being composed at the caret, not yet in the document.
     composing: Option<String>,
+    /// A block begun with Enter at the end of another and not yet typed into: AsciiDoc has
+    /// no empty paragraph, so it exists only here until its first character.
+    pending: Option<Pending>,
     /// The horizontal position kept while moving up and down.
     goal_x: Option<gpui::Pixels>,
     dragging: bool,
@@ -119,6 +129,7 @@ impl VisualView {
             version,
             marks: MarkSet::EMPTY,
             composing: None,
+            pending: None,
             goal_x: None,
             dragging: false,
             scroll: ScrollHandle::new(),
@@ -217,6 +228,7 @@ impl VisualView {
     fn set_selection(&mut self, selection: Selection, cx: &mut Context<Self>) {
         self.selection = selection;
         self.composing = None;
+        self.pending = None;
         if let Some((_, text)) = self.block_at(selection.head) {
             let display = text.display_offset(selection.head).unwrap_or(0);
             self.marks = text.marks_at(display);
@@ -290,9 +302,27 @@ impl VisualView {
         }
     }
 
-    /// Types `text` over the selection.
+    /// Types `text` over the selection, or as the first text of a pending block.
     pub fn type_text(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         if text.is_empty() {
+            return;
+        }
+        if let Some(pending) = self.pending.take() {
+            let block = if pending.list_item {
+                adoc_engine::NewBlock::ListItem {
+                    text: text.to_owned(),
+                }
+            } else {
+                adoc_engine::NewBlock::Paragraph {
+                    text: text.to_owned(),
+                }
+            };
+            self.run(
+                ids::VISUAL_INSERT_BLOCK,
+                VisualValue::NewBlock(block),
+                window,
+                cx,
+            );
             return;
         }
         self.run(
@@ -301,6 +331,44 @@ impl VisualView {
             window,
             cx,
         );
+    }
+
+    /// Enter: a new line in code, a split in the middle of a block, and at the end of one a
+    /// pending block (a second Enter on a pending list item leaves the list).
+    fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending) = &mut self.pending {
+            pending.list_item = false;
+            cx.notify();
+            return;
+        }
+        let Some((path, block)) = self.block_at(self.selection.head) else {
+            return;
+        };
+        if block.plain {
+            self.type_text("\n", window, cx);
+            return;
+        }
+        let display = block.display_offset(self.selection.head).unwrap_or(0);
+        let kind = self
+            .shown
+            .as_ref()
+            .and_then(|shown| shown.model.node(&path))
+            .map(|node| node.kind.clone());
+        if self.selection.is_empty() && display >= block.display.len() {
+            let list_item = matches!(kind, Some(adoc_engine::NodeKind::ListItem { .. }));
+            if !matches!(
+                kind,
+                Some(adoc_engine::NodeKind::Cell | adoc_engine::NodeKind::Term)
+            ) {
+                self.pending = Some(Pending { list_item });
+                cx.notify();
+            }
+            return;
+        }
+        if self.selection.is_empty() && display == 0 {
+            return;
+        }
+        self.run(ids::VISUAL_SPLIT_BLOCK, VisualValue::None, window, cx);
     }
 
     // --- caret movement ----------------------------------------------------------------------

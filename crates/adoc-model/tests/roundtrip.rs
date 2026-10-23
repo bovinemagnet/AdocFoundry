@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use adoc_core::SourceRange;
-use adoc_dom::{AcdcParser, DocumentParser, ParseInput};
-use adoc_model::{apply_edits, Mark, MarkSet, Model, Step};
+use adoc_dom::{AcdcParser, AdmonitionKind, DocumentParser, ListKind, ParseInput};
+use adoc_model::{apply_edits, BlockType, Mark, MarkSet, Model, Step};
 
 fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -98,8 +98,68 @@ fn random_step(model: &Model, random: &mut Random) -> Option<(Step, SourceRange)
     if blocks.is_empty() {
         return None;
     }
-    let (_, _, text) = blocks[random.below(blocks.len())];
+    let pick = random.below(blocks.len());
+    let (path, node, text) = &blocks[pick];
+    let (node, text) = (*node, *text);
+    // Changing a list's kind changes every item of the list.
+    let list = path
+        .split_last()
+        .and_then(|(_, parent)| model.node(parent))
+        .filter(|parent| matches!(parent.kind, adoc_model::NodeKind::List { .. }))
+        .map_or(node.range, |list| list.range);
     let display_length = text.display.len();
+    // One step in five changes structure, within the node (and, joining, the block before).
+    if random.below(5) == 0 {
+        let at = text.range.start;
+        let previous_start = model
+            .text_blocks()
+            .take_while(|(_, _, other)| other.range.start < text.range.start)
+            .last()
+            .map_or(node.range.start, |(_, _, other)| other.range.start);
+        let middle = text
+            .display
+            .char_indices()
+            .map(|(index, _)| index)
+            .nth(text.display.chars().count() / 2);
+        let (step, start) = match random.below(6) {
+            0 => (
+                Step::SplitBlock {
+                    at: text.source_offset(middle?, text.marks_at(middle?))?,
+                },
+                node.range.start,
+            ),
+            1 => (Step::JoinBackward { at }, previous_start),
+            2 => (
+                Step::SetBlockType {
+                    at,
+                    kind: [
+                        BlockType::Heading(2),
+                        BlockType::Paragraph,
+                        BlockType::Admonition(AdmonitionKind::Tip),
+                    ][random.below(3)],
+                },
+                node.range.start,
+            ),
+            3 => {
+                let step = Step::ToggleList {
+                    at,
+                    kind: [ListKind::Unordered, ListKind::Ordered, ListKind::Checklist]
+                        [random.below(3)],
+                };
+                return Some((step, list));
+            }
+            4 => (Step::IndentListItem { at }, node.range.start),
+            _ => (Step::OutdentListItem { at }, node.range.start),
+        };
+        let start = model.source[..start]
+            .rfind('\n')
+            .map_or(0, |index| index + 1)
+            .min(start);
+        return Some((
+            step,
+            SourceRange::new(start.min(node.range.start), node.range.end),
+        ));
+    }
     let char_offset = |random: &mut Random| {
         let boundaries: Vec<usize> = text
             .display

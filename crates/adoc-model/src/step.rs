@@ -22,9 +22,14 @@ pub enum Step {
         marks: MarkSet,
     },
     /// Deletes the text in `range`; atoms it touches go whole.
-    Delete { range: SourceRange },
+    Delete {
+        range: SourceRange,
+    },
     /// Adds `mark` where any of `range` lacks it, or else removes it.
-    ToggleMark { range: SourceRange, mark: Mark },
+    ToggleMark {
+        range: SourceRange,
+        mark: Mark,
+    },
     /// Makes `range` a link to `target` (a URL, a page or an anchor id), or changes the link
     /// it is inside; `text` replaces the link's text when given.
     SetLink {
@@ -33,9 +38,46 @@ pub enum Step {
         text: Option<String>,
     },
     /// Replaces the link at `at` with its text.
-    RemoveLink { at: usize },
+    RemoveLink {
+        at: usize,
+    },
+    /// Enter: splits the block at `at` in two.
+    SplitBlock {
+        at: usize,
+    },
+    /// Backspace at the start of a block: joins it to the block before, or lifts a list item
+    /// out of its list.
+    JoinBackward {
+        at: usize,
+    },
+    /// Adds a block after the block holding `at`.
+    InsertBlock {
+        at: usize,
+        block: crate::NewBlock,
+    },
+    SetBlockType {
+        at: usize,
+        kind: crate::BlockType,
+    },
+    /// Makes a paragraph a list item of `kind`, changes the kind of the list, or lifts the item
+    /// out of a list of that kind.
+    ToggleList {
+        at: usize,
+        kind: adoc_dom::ListKind,
+    },
+    IndentListItem {
+        at: usize,
+    },
+    OutdentListItem {
+        at: usize,
+    },
+    ToggleChecked {
+        at: usize,
+    },
     /// Raw source edits: the form an inverse takes.
-    Replace { edits: Vec<SourceEdit> },
+    Replace {
+        edits: Vec<SourceEdit>,
+    },
 }
 
 /// What a step does to the source.
@@ -99,6 +141,14 @@ impl Model {
                 text,
             } => self.set_link(*range, target, text.as_deref()),
             Step::RemoveLink { at } => self.remove_link(*at),
+            Step::SplitBlock { at } => self.split_block(*at),
+            Step::JoinBackward { at } => self.join_backward(*at),
+            Step::InsertBlock { at, block } => self.insert_block(*at, block),
+            Step::SetBlockType { at, kind } => self.set_block_type(*at, *kind),
+            Step::ToggleList { at, kind } => self.toggle_list(*at, *kind),
+            Step::IndentListItem { at } => self.indent(*at),
+            Step::OutdentListItem { at } => self.outdent(*at),
+            Step::ToggleChecked { at } => self.toggle_checked(*at),
             Step::Replace { edits } => self.replace(edits),
         }
     }
@@ -838,7 +888,11 @@ fn split_at_source(flat: &Flat, at: usize) -> Result<Split, StepError> {
 /// The units split so that display offsets `start` and `end` fall between units (atoms
 /// widen the range to take them whole), with the indices of the first unit inside and the
 /// first unit after.
-fn split_display(units: Vec<Unit>, start: usize, end: usize) -> (Vec<Unit>, usize, usize) {
+pub(crate) fn split_display(
+    units: Vec<Unit>,
+    start: usize,
+    end: usize,
+) -> (Vec<Unit>, usize, usize) {
     let mut out = Vec::with_capacity(units.len() + 2);
     let mut at = 0;
     let mut first = None;

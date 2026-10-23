@@ -425,3 +425,75 @@ fn marks_and_links_are_one_undo_step_each() {
         assert_eq!(text(&engine, id), expected);
     }
 }
+
+#[test]
+fn structural_steps_rebuild_the_model() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = page(directory.path(), "page.adoc", "First part second part.\n");
+    let (mut engine, _) = engine_with_clock();
+    let id = engine.open(&path).unwrap();
+    show_visual(&mut engine, id);
+    let at = text(&engine, id).find("second").unwrap();
+    let caret = visual(
+        &mut engine,
+        ids::VISUAL_SPLIT_BLOCK,
+        id,
+        SourceRange::new(at, at),
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "First part\n\nsecond part.\n");
+    assert_eq!(shown(&engine, id), ["First part", "second part."]);
+    assert_eq!(caret.start, text(&engine, id).find("second").unwrap());
+
+    // Backspace at the start of the second paragraph joins them again, leaving its line.
+    visual(
+        &mut engine,
+        ids::VISUAL_DELETE_BACKWARD,
+        id,
+        caret,
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "First part\nsecond part.\n");
+    assert_eq!(shown(&engine, id), ["First part\nsecond part."]);
+
+    let start = SourceRange::new(0, 0);
+    visual(
+        &mut engine,
+        ids::EDIT_TOGGLE_BULLET_LIST,
+        id,
+        start,
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "* First part\nsecond part.\n");
+    visual(
+        &mut engine,
+        ids::EDIT_SET_BLOCK_TYPE,
+        id,
+        SourceRange::new(2, 2),
+        VisualValue::BlockType(adoc_engine::BlockType::Paragraph),
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "First part\nsecond part.\n");
+
+    // A paragraph typed after the last block.
+    let end = text(&engine, id).trim_end().len();
+    visual(
+        &mut engine,
+        ids::VISUAL_INSERT_BLOCK,
+        id,
+        SourceRange::new(end, end),
+        VisualValue::NewBlock(adoc_engine::NewBlock::Paragraph {
+            text: "T".to_owned(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "First part\nsecond part.\n\nT\n");
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(text(&engine, id), "First part\nsecond part.\n");
+    assert_eq!(engine.visual(id).unwrap().version, version(&engine, id));
+}

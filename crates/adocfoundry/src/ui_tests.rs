@@ -876,3 +876,37 @@ fn keyboard_formatting_marks_the_selection_or_what_is_typed(cx: &mut TestAppCont
         "= Page\n\nSome *plain* words _new_.\n"
     );
 }
+
+#[gpui::test]
+fn enter_splits_the_paragraph(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst half second half.\n\n* one\n* two\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("second").unwrap(), &mut cx);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let after = "= Page\n\nFirst half\n\nsecond half.\n\n* one\n* two\n";
+    assert_eq!(text_of(&app, id, &mut cx), after);
+    assert_eq!(
+        shown_blocks(&visual, &mut cx),
+        ["Page", "First half", "second half.", "one", "two"]
+    );
+
+    // At the end of a paragraph, Enter begins a paragraph that exists once typed into.
+    place_caret(&visual, after.find("half.").unwrap() + 5, &mut cx);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), after, "nothing is written yet");
+    cx.simulate_keystrokes("N e w");
+    cx.run_until_parked();
+    let after = "= Page\n\nFirst half\n\nsecond half.\n\nNew\n\n* one\n* two\n";
+    assert_eq!(text_of(&app, id, &mut cx), after);
+
+    // At the end of a list item, another item; Tab indents it.
+    place_caret(&visual, after.find("two").unwrap() + 3, &mut cx);
+    cx.simulate_keystrokes("enter t h r e e tab");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nFirst half\n\nsecond half.\n\nNew\n\n* one\n* two\n** three\n"
+    );
+}

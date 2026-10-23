@@ -49,6 +49,17 @@ pub mod ids {
     pub const EDIT_TOGGLE_HIGHLIGHT: CommandId = CommandId::new("edit.toggle_highlight");
     pub const EDIT_INSERT_LINK: CommandId = CommandId::new("edit.insert_link");
     pub const EDIT_REMOVE_LINK: CommandId = CommandId::new("edit.remove_link");
+    pub const VISUAL_SPLIT_BLOCK: CommandId = CommandId::new("visual.split_block");
+    pub const VISUAL_INSERT_BLOCK: CommandId = CommandId::new("visual.insert_block");
+    pub const EDIT_SET_BLOCK_TYPE: CommandId = CommandId::new("edit.set_block_type");
+    pub const EDIT_TOGGLE_BULLET_LIST: CommandId = CommandId::new("edit.toggle_bullet_list");
+    pub const EDIT_TOGGLE_NUMBERED_LIST: CommandId = CommandId::new("edit.toggle_numbered_list");
+    pub const EDIT_TOGGLE_CHECKLIST: CommandId = CommandId::new("edit.toggle_checklist");
+    pub const EDIT_TOGGLE_CHECKED: CommandId = CommandId::new("edit.toggle_checked");
+    pub const EDIT_INDENT_LIST_ITEM: CommandId = CommandId::new("edit.indent_list_item");
+    pub const EDIT_OUTDENT_LIST_ITEM: CommandId = CommandId::new("edit.outdent_list_item");
+    pub const EDIT_INSERT_CODE_BLOCK: CommandId = CommandId::new("edit.insert_code_block");
+    pub const EDIT_INSERT_ADMONITION: CommandId = CommandId::new("edit.insert_admonition");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;

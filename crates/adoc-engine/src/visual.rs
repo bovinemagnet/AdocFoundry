@@ -15,7 +15,10 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_dom::Dom;
-use adoc_model::{apply_edits, Mark, MarkSet, Model, Step, StepResult};
+use adoc_dom::{AdmonitionKind, ListKind};
+use adoc_model::{
+    apply_edits, BlockType, Mark, MarkSet, Model, NewBlock, Step, StepError, StepResult,
+};
 use adoc_render::ViewTree;
 
 use crate::{
@@ -73,6 +76,9 @@ pub enum VisualValue {
         target: String,
         text: Option<String>,
     },
+    BlockType(BlockType),
+    NewBlock(NewBlock),
+    Admonition(AdmonitionKind),
 }
 
 struct Session {
@@ -375,7 +381,7 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
     use CommandCategory::{Edit, View};
     use CommandContext::{ActiveDocument, Selection};
 
-    let commands: [(crate::CommandSpec, Run); 12] = [
+    let commands: [(crate::CommandSpec, Run); 23] = [
         (
             spec(
                 ids::VIEW_SHOW_SOURCE,
@@ -483,6 +489,156 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
         (
             spec(ids::EDIT_REMOVE_LINK, "Remove Link", Edit, None, Selection),
             remove_link,
+        ),
+        (
+            spec(
+                ids::VISUAL_SPLIT_BLOCK,
+                "New Paragraph",
+                Edit,
+                Some("enter"),
+                Selection,
+            ),
+            split_block,
+        ),
+        (
+            spec(
+                ids::VISUAL_INSERT_BLOCK,
+                "Insert Block",
+                Edit,
+                None,
+                Selection,
+            ),
+            insert_block,
+        ),
+        (
+            spec(
+                ids::EDIT_SET_BLOCK_TYPE,
+                "Set Block Type",
+                Edit,
+                None,
+                Selection,
+            ),
+            set_block_type,
+        ),
+        (
+            spec(
+                ids::EDIT_TOGGLE_BULLET_LIST,
+                "Bulleted List",
+                Edit,
+                Some("cmd-shift-8"),
+                Selection,
+            ),
+            |engine, args| {
+                toggle_list(
+                    engine,
+                    args,
+                    ids::EDIT_TOGGLE_BULLET_LIST,
+                    ListKind::Unordered,
+                )
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_TOGGLE_NUMBERED_LIST,
+                "Numbered List",
+                Edit,
+                Some("cmd-shift-7"),
+                Selection,
+            ),
+            |engine, args| {
+                toggle_list(
+                    engine,
+                    args,
+                    ids::EDIT_TOGGLE_NUMBERED_LIST,
+                    ListKind::Ordered,
+                )
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_TOGGLE_CHECKLIST,
+                "Checklist",
+                Edit,
+                Some("cmd-shift-9"),
+                Selection,
+            ),
+            |engine, args| {
+                toggle_list(
+                    engine,
+                    args,
+                    ids::EDIT_TOGGLE_CHECKLIST,
+                    ListKind::Checklist,
+                )
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_TOGGLE_CHECKED,
+                "Check or Uncheck",
+                Edit,
+                None,
+                Selection,
+            ),
+            |engine, args| {
+                caret_step(engine, args, ids::EDIT_TOGGLE_CHECKED, |at| {
+                    Step::ToggleChecked { at }
+                })
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_INDENT_LIST_ITEM,
+                "Indent",
+                Edit,
+                Some("tab"),
+                Selection,
+            ),
+            |engine, args| {
+                caret_step(engine, args, ids::EDIT_INDENT_LIST_ITEM, |at| {
+                    Step::IndentListItem { at }
+                })
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_OUTDENT_LIST_ITEM,
+                "Outdent",
+                Edit,
+                Some("shift-tab"),
+                Selection,
+            ),
+            |engine, args| {
+                caret_step(engine, args, ids::EDIT_OUTDENT_LIST_ITEM, |at| {
+                    Step::OutdentListItem { at }
+                })
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_INSERT_CODE_BLOCK,
+                "Insert Code Block",
+                Edit,
+                None,
+                Selection,
+            ),
+            |engine, args| {
+                caret_step(engine, args, ids::EDIT_INSERT_CODE_BLOCK, |at| {
+                    Step::InsertBlock {
+                        at,
+                        block: NewBlock::Code,
+                    }
+                })
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_INSERT_ADMONITION,
+                "Insert Admonition",
+                Edit,
+                None,
+                Selection,
+            ),
+            insert_admonition,
         ),
     ];
     for (spec, run) in commands {
@@ -624,8 +780,29 @@ fn visual_delete(
                 .map(|character| display - character.len_utf8())
         };
         let Some(next) = next else {
-            // At the edge of the block: joining blocks comes with block editing.
-            return Ok(CommandOutcome::Selection(args.selection));
+            // At the edge of the block: Backspace joins this block to the one before, Delete
+            // the next one to this. A join that is not possible does nothing.
+            let at = if forward {
+                let following = model
+                    .text_blocks()
+                    .find(|(_, _, other)| other.range.start > text.range.end)
+                    .map(|(_, _, other)| other.range.start);
+                match following {
+                    Some(at) => at,
+                    None => return Ok(CommandOutcome::Selection(args.selection)),
+                }
+            } else {
+                range.start
+            };
+            return match model.apply(&Step::JoinBackward { at }) {
+                Ok(result) => {
+                    let source = model.source.clone();
+                    let group = engine.new_group();
+                    engine.apply_visual(args.id, &source, result, UndoMode::Group(group))
+                }
+                Err(StepError::Unsupported(_)) => Ok(CommandOutcome::Selection(args.selection)),
+                Err(error) => Err(refused(error)),
+            };
         };
         let stop = |display: usize| text.caret_stops(display).first().map(|(at, _)| *at);
         let (from, to) = if forward {
@@ -695,4 +872,105 @@ fn remove_link(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
     let args = visual_args(ids::EDIT_REMOVE_LINK, args)?;
     let at = args.selection.end;
     visual_step(engine, &args, Step::RemoveLink { at })
+}
+
+/// Runs a step at the caret (the selection's head).
+fn caret_step(
+    engine: &mut Engine,
+    args: CommandArgs,
+    command: crate::CommandId,
+    step: fn(usize) -> Step,
+) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(command, args)?;
+    let at = args.selection.end;
+    visual_step(engine, &args, step(at))
+}
+
+/// Enter: splits the caret's block, after deleting the selection.
+fn split_block(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(ids::VISUAL_SPLIT_BLOCK, args)?;
+    let visual = engine.visual_for(&args)?;
+    let model = &visual.model;
+    let range = ordered(args.selection);
+    let deleted;
+    let (base, at) = if range.is_empty() {
+        (model, range.start)
+    } else {
+        let result = model.apply(&Step::Delete { range }).map_err(refused)?;
+        let at = result.selection.start;
+        deleted = result.model.ok_or_else(|| {
+            EngineError::Refused("select text inside one block to replace it".to_owned())
+        })?;
+        (&deleted, at)
+    };
+    let split = base.apply(&Step::SplitBlock { at }).map_err(refused)?;
+    let after = apply_edits(&base.source, &split.edits);
+    let edits = whole_edit(&model.source, &after)
+        .map(|edit| vec![adoc_model::SourceEdit::new(edit.range, edit.replacement)])
+        .unwrap_or_default();
+    let result = StepResult {
+        edits,
+        selection: split.selection,
+        model: None,
+    };
+    let source = model.source.clone();
+    let group = engine.new_group();
+    engine.apply_visual(args.id, &source, result, UndoMode::Group(group))
+}
+
+/// Adds a block after the caret's: a paragraph or list item typed at the end of one, a code
+/// block or admonition.
+fn insert_block(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(ids::VISUAL_INSERT_BLOCK, args)?;
+    let VisualValue::NewBlock(block) = args.value.clone() else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::VISUAL_INSERT_BLOCK,
+            expected: "a new block",
+        });
+    };
+    let at = args.selection.end;
+    visual_step(engine, &args, Step::InsertBlock { at, block })
+}
+
+fn insert_admonition(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(ids::EDIT_INSERT_ADMONITION, args)?;
+    let kind = match args.value {
+        VisualValue::Admonition(kind) => kind,
+        _ => AdmonitionKind::Note,
+    };
+    let at = args.selection.end;
+    visual_step(
+        engine,
+        &args,
+        Step::InsertBlock {
+            at,
+            block: NewBlock::Admonition(kind),
+        },
+    )
+}
+
+fn set_block_type(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(ids::EDIT_SET_BLOCK_TYPE, args)?;
+    let VisualValue::BlockType(kind) = args.value else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EDIT_SET_BLOCK_TYPE,
+            expected: "a block type",
+        });
+    };
+    let at = args.selection.end;
+    visual_step(engine, &args, Step::SetBlockType { at, kind })
+}
+
+fn toggle_list(
+    engine: &mut Engine,
+    args: CommandArgs,
+    command: crate::CommandId,
+    kind: ListKind,
+) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(command, args)?;
+    let at = args.selection.end;
+    visual_step(engine, &args, Step::ToggleList { at, kind })
 }

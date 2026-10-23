@@ -63,7 +63,9 @@ pub fn bind(cx: &mut App) {
 /// The view's action handlers.
 pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> Stateful<gpui::Div> {
     use crate::editor::bindings::{
-        InsertLink, RemoveLink, ToggleCode, ToggleEmphasis, ToggleHighlight, ToggleStrong,
+        IndentListItem, InsertAdmonition, InsertCodeBlock, InsertLink, NewParagraph,
+        OutdentListItem, RemoveLink, ToggleBulletList, ToggleChecked, ToggleChecklist, ToggleCode,
+        ToggleEmphasis, ToggleHighlight, ToggleNumberedList, ToggleStrong,
     };
     use adoc_engine::Mark;
     view.on_action(cx.listener(|this, _: &ToggleStrong, window, cx| {
@@ -82,7 +84,41 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
     .on_action(cx.listener(|this, _: &RemoveLink, window, cx| {
         this.run(ids::EDIT_REMOVE_LINK, VisualValue::None, window, cx);
     }))
+    .on_action(cx.listener(|this, _: &NewParagraph, window, cx| this.enter(window, cx)))
+    .on_action(cx.listener(|this, _: &IndentListItem, window, cx| {
+        this.run(ids::EDIT_INDENT_LIST_ITEM, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &OutdentListItem, window, cx| {
+        this.run(ids::EDIT_OUTDENT_LIST_ITEM, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &ToggleBulletList, window, cx| {
+        this.run(ids::EDIT_TOGGLE_BULLET_LIST, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &ToggleNumberedList, window, cx| {
+        this.run(
+            ids::EDIT_TOGGLE_NUMBERED_LIST,
+            VisualValue::None,
+            window,
+            cx,
+        );
+    }))
+    .on_action(cx.listener(|this, _: &ToggleChecklist, window, cx| {
+        this.run(ids::EDIT_TOGGLE_CHECKLIST, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &ToggleChecked, window, cx| {
+        this.run(ids::EDIT_TOGGLE_CHECKED, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &InsertCodeBlock, window, cx| {
+        this.run(ids::EDIT_INSERT_CODE_BLOCK, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &InsertAdmonition, window, cx| {
+        this.run(ids::EDIT_INSERT_ADMONITION, VisualValue::None, window, cx);
+    }))
     .on_action(cx.listener(|this, _: &Backspace, window, cx| {
+        if this.pending.take().is_some() {
+            cx.notify();
+            return;
+        }
         this.run(ids::VISUAL_DELETE_BACKWARD, VisualValue::None, window, cx);
     }))
     .on_action(cx.listener(|this, _: &Delete, window, cx| {

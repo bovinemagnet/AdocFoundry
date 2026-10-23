@@ -277,10 +277,32 @@ impl VisualView {
             (ListKind::Ordered, None) => format!("{}.", index + 1),
             _ => "•".to_owned(),
         };
+        let checkbox = checked
+            .is_some()
+            .then(|| item.text.as_ref().map(|text| text.range.start))
+            .flatten();
+        let marker = div()
+            .min_w(px(18.))
+            .child(marker)
+            .when_some(checkbox, |marker, at| {
+                marker.cursor_pointer().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.place_caret(at, cx);
+                        this.run(
+                            ids::EDIT_TOGGLE_CHECKED,
+                            adoc_engine::VisualValue::None,
+                            window,
+                            cx,
+                        );
+                    }),
+                )
+            });
         h_flex()
             .items_start()
             .gap_2()
-            .child(div().min_w(px(18.)).child(marker))
+            .child(marker)
             .child(
                 v_flex()
                     .flex_1()
@@ -434,8 +456,9 @@ impl VisualView {
         let composing = caret_display.zip(self.composing.as_deref());
         let shown = text::shown(block, composing);
         let runs = text::text_runs(block, &shown, &draw.inline);
+        let pending = self.pending.filter(|_| caret_here);
         let caret = caret_display
-            .filter(|_| draw.focused && self.selection.is_empty())
+            .filter(|_| draw.focused && self.selection.is_empty() && pending.is_none())
             .map(|display| shown.index(display));
         let selection = selected_range(block, self.selection.start(), self.selection.end())
             .map(|range| shown.index(range.start)..shown.index(range.end));
@@ -459,6 +482,9 @@ impl VisualView {
                     .pl_1()
             })
             .child(element)
+            .when_some(pending, |text, pending| {
+                text.child(pending_block(pending, draw))
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
@@ -477,6 +503,20 @@ impl VisualView {
             }))
             .into_any_element()
     }
+}
+
+/// The block begun with Enter and not yet typed into: an empty line (with a marker for a
+/// list item) holding the caret.
+fn pending_block(pending: super::Pending, draw: &Draw<'_>) -> AnyElement {
+    let caret = div().w(px(2.)).h(px(18.)).bg(draw.caret);
+    h_flex()
+        .pt_3()
+        .gap_2()
+        .when(pending.list_item, |line| {
+            line.child(div().min_w(px(18.)).child("•"))
+        })
+        .child(caret)
+        .into_any_element()
 }
 
 /// The display range of `block` the source range `start..end` selects, when it selects some.
