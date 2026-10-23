@@ -6,7 +6,7 @@ use std::{
 
 use gix::bstr::{BStr, ByteSlice};
 
-use crate::{diff::line_hunks, Change, FileStatus, GitError, Head, Hunk};
+use crate::{diff::line_hunks, Branch, Change, FileStatus, GitError, Head, Hunk};
 
 /// A Git repository with a working tree.
 pub struct Repository {
@@ -185,6 +185,62 @@ impl Repository {
             }
         };
         Ok(line_hunks(&head, current))
+    }
+
+    /// The local branches, then the remote-tracking ones, each in name order.
+    pub fn branches(&self) -> Result<Vec<Branch>, GitError> {
+        let references = self.repo.references().map_err(GitError::git)?;
+        let mut branches = Vec::new();
+        for reference in references.local_branches().map_err(GitError::git)? {
+            let reference = reference.map_err(GitError::git)?;
+            branches.push(Branch {
+                remote: None,
+                name: reference.name().shorten().to_string(),
+            });
+        }
+        for reference in references.remote_branches().map_err(GitError::git)? {
+            let reference = reference.map_err(GitError::git)?;
+            let short = reference.name().shorten().to_string();
+            let Some((remote, name)) = short.split_once('/') else {
+                continue;
+            };
+            if name != "HEAD" {
+                branches.push(Branch {
+                    remote: Some(remote.to_owned()),
+                    name: name.to_owned(),
+                });
+            }
+        }
+        branches.sort();
+        Ok(branches)
+    }
+
+    /// The text of `path` (relative to the working tree) at the tip of branch `branch`, a local
+    /// one or `remote/name`; `None` when the file is not there or is not UTF-8. The working tree
+    /// is not touched.
+    pub fn file_at(&self, branch: &str, path: &Path) -> Result<Option<String>, GitError> {
+        let reference = self
+            .repo
+            .try_find_reference(format!("refs/heads/{branch}").as_str())
+            .map_err(GitError::git)?;
+        let reference = match reference {
+            Some(reference) => reference,
+            None => self
+                .repo
+                .find_reference(format!("refs/remotes/{branch}").as_str())
+                .map_err(GitError::git)?,
+        };
+        let mut reference = reference;
+        let commit = reference.peel_to_commit().map_err(GitError::git)?;
+        let tree = commit.tree().map_err(GitError::git)?;
+        let Some(entry) = tree.lookup_entry_by_path(path).map_err(GitError::git)? else {
+            return Ok(None);
+        };
+        if !entry.mode().is_blob() {
+            return Ok(None);
+        }
+        let object = entry.object().map_err(GitError::git)?;
+        Ok(object.data.to_str().ok().map(str::to_owned))
     }
 
     /// The fetch URL of remote `name`, as configured.
