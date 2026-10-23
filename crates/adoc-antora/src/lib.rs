@@ -21,7 +21,8 @@ pub use module::Module;
 pub use nav::{parse_nav, NavEntry};
 pub use nav_tree::{nav_tree, NavError, NavItem, NavTree};
 pub use playbook::{
-    parse_playbook, read_playbook, ContentSource, Playbook, PublishedVersions, PLAYBOOK_FILE,
+    parse_playbook, read_playbook, BranchVersions, ContentSource, Playbook, PublishedVersions,
+    PLAYBOOK_FILE,
 };
 pub use resource::{AntoraCoordinate, AntoraResource, ResourceFamily};
 pub use resource_id::{
