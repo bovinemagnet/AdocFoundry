@@ -202,6 +202,18 @@ impl TestRepo {
         .expect("write HEAD");
     }
 
+    /// Writes `user.name` and `user.email` to the repository's own configuration, which the
+    /// user's global configuration cannot then override.
+    ///
+    /// # Panics
+    /// When the configuration cannot be written.
+    pub fn set_identity(&self, name: &str, email: &str) {
+        let config = self.repo.git_dir().join("config");
+        let mut text = fs::read_to_string(&config).unwrap_or_default();
+        text.push_str(&format!("[user]\n\tname = {name}\n\temail = {email}\n"));
+        fs::write(config, text).expect("write the configuration");
+    }
+
     /// Adds remote `name` with fetch URL `url` to the repository's configuration.
     ///
     /// # Panics
