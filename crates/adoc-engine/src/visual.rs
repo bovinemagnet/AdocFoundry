@@ -79,6 +79,15 @@ pub enum VisualValue {
     BlockType(BlockType),
     NewBlock(NewBlock),
     Admonition(AdmonitionKind),
+    /// A new table's size.
+    Table {
+        columns: usize,
+        rows: usize,
+    },
+    Image {
+        target: String,
+        alt: String,
+    },
 }
 
 struct Session {
@@ -381,7 +390,7 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
     use CommandCategory::{Edit, View};
     use CommandContext::{ActiveDocument, Selection};
 
-    let commands: [(crate::CommandSpec, Run); 23] = [
+    let commands: [(crate::CommandSpec, Run); 30] = [
         (
             spec(
                 ids::VIEW_SHOW_SOURCE,
@@ -639,6 +648,86 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
                 Selection,
             ),
             insert_admonition,
+        ),
+        (
+            spec(
+                ids::EDIT_INSERT_TABLE,
+                "Insert Table",
+                Edit,
+                None,
+                Selection,
+            ),
+            insert_table,
+        ),
+        (
+            spec(
+                ids::EDIT_INSERT_TABLE_ROW,
+                "Insert Table Row",
+                Edit,
+                None,
+                Selection,
+            ),
+            |engine, args| {
+                caret_step(engine, args, ids::EDIT_INSERT_TABLE_ROW, |at| {
+                    Step::InsertTableRow { at }
+                })
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_DELETE_TABLE_ROW,
+                "Delete Table Row",
+                Edit,
+                None,
+                Selection,
+            ),
+            |engine, args| {
+                caret_step(engine, args, ids::EDIT_DELETE_TABLE_ROW, |at| {
+                    Step::DeleteTableRow { at }
+                })
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_INSERT_TABLE_COLUMN,
+                "Insert Table Column",
+                Edit,
+                None,
+                Selection,
+            ),
+            |engine, args| {
+                caret_step(engine, args, ids::EDIT_INSERT_TABLE_COLUMN, |at| {
+                    Step::InsertTableColumn { at }
+                })
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_DELETE_TABLE_COLUMN,
+                "Delete Table Column",
+                Edit,
+                None,
+                Selection,
+            ),
+            |engine, args| {
+                caret_step(engine, args, ids::EDIT_DELETE_TABLE_COLUMN, |at| {
+                    Step::DeleteTableColumn { at }
+                })
+            },
+        ),
+        (
+            spec(
+                ids::EDIT_INSERT_IMAGE,
+                "Insert Image",
+                Edit,
+                None,
+                Selection,
+            ),
+            |engine, args| image(engine, args, false),
+        ),
+        (
+            spec(ids::EDIT_EDIT_IMAGE, "Edit Image", Edit, None, Selection),
+            |engine, args| image(engine, args, true),
         ),
     ];
     for (spec, run) in commands {
@@ -973,4 +1062,51 @@ fn toggle_list(
     let args = visual_args(command, args)?;
     let at = args.selection.end;
     visual_step(engine, &args, Step::ToggleList { at, kind })
+}
+
+fn insert_table(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(ids::EDIT_INSERT_TABLE, args)?;
+    let (columns, rows) = match args.value {
+        VisualValue::Table { columns, rows } => (columns, rows),
+        _ => (2, 2),
+    };
+    let at = args.selection.end;
+    visual_step(
+        engine,
+        &args,
+        Step::InsertBlock {
+            at,
+            block: NewBlock::Table { columns, rows },
+        },
+    )
+}
+
+/// Inserts an image after the caret's block, or changes the image at the caret.
+fn image(
+    engine: &mut Engine,
+    args: CommandArgs,
+    existing: bool,
+) -> Result<CommandOutcome, EngineError> {
+    let command = if existing {
+        ids::EDIT_EDIT_IMAGE
+    } else {
+        ids::EDIT_INSERT_IMAGE
+    };
+    let args = visual_args(command, args)?;
+    let VisualValue::Image { target, alt } = args.value.clone() else {
+        return Err(EngineError::InvalidArguments {
+            command,
+            expected: "an image target and alt text",
+        });
+    };
+    let at = args.selection.end;
+    let step = if existing {
+        Step::SetImage { at, target, alt }
+    } else {
+        Step::InsertBlock {
+            at,
+            block: NewBlock::Image { target, alt },
+        }
+    };
+    visual_step(engine, &args, step)
 }

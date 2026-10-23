@@ -255,6 +255,9 @@ impl VisualView {
                 .rounded(draw.context.radius)
                 .child(format!("{directive} … (conditional; shown in the source)"))
                 .into_any_element(),
+            NodeKind::Image { target, .. } if node.is_editable() => {
+                self.image(node, target, draw, cx)
+            }
             NodeKind::Image { .. } | NodeKind::Verbatim { .. } => self.read_only(node, draw),
         }
     }
@@ -403,6 +406,48 @@ impl VisualView {
             .border_color(palette.border)
             .child(header)
             .children(children)
+            .into_any_element()
+    }
+
+    /// A block image, drawn from the file it resolves to; clicking it edits it.
+    fn image(
+        &self,
+        node: &Node,
+        target: &str,
+        draw: &Draw<'_>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let resolved = node
+            .origin
+            .as_deref()
+            .and_then(|origin| adoc_render::block_by_trail(&draw.document.view, origin))
+            .and_then(|block| match &block.kind {
+                adoc_render::ViewKind::Image(image) => image.path.clone(),
+                _ => None,
+            });
+        let at = node.range.start;
+        let picture = match resolved {
+            Some(path) => gpui::img(path).max_w_full().into_any_element(),
+            None => div()
+                .p_3()
+                .border_1()
+                .border_dashed()
+                .border_color(draw.context.palette.border)
+                .text_sm()
+                .text_color(draw.context.palette.muted)
+                .child(format!("Missing image: {target}"))
+                .into_any_element(),
+        };
+        div()
+            .cursor_pointer()
+            .child(picture)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.image_dialog(Some(at), window, cx);
+                }),
+            )
             .into_any_element()
     }
 

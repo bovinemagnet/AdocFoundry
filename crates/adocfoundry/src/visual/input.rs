@@ -63,6 +63,10 @@ pub fn bind(cx: &mut App) {
 /// The view's action handlers.
 pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> Stateful<gpui::Div> {
     use crate::editor::bindings::{
+        DeleteTableColumn, DeleteTableRow, EditImage, InsertImage, InsertTable, InsertTableColumn,
+        InsertTableRow,
+    };
+    use crate::editor::bindings::{
         IndentListItem, InsertAdmonition, InsertCodeBlock, InsertLink, NewParagraph,
         OutdentListItem, RemoveLink, ToggleBulletList, ToggleChecked, ToggleChecklist, ToggleCode,
         ToggleEmphasis, ToggleHighlight, ToggleNumberedList, ToggleStrong,
@@ -85,6 +89,34 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
         this.run(ids::EDIT_REMOVE_LINK, VisualValue::None, window, cx);
     }))
     .on_action(cx.listener(|this, _: &NewParagraph, window, cx| this.enter(window, cx)))
+    .on_action(cx.listener(|this, _: &InsertTable, window, cx| {
+        this.run(
+            ids::EDIT_INSERT_TABLE,
+            VisualValue::Table {
+                columns: 2,
+                rows: 2,
+            },
+            window,
+            cx,
+        );
+    }))
+    .on_action(cx.listener(|this, _: &InsertTableRow, window, cx| {
+        this.run(ids::EDIT_INSERT_TABLE_ROW, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &DeleteTableRow, window, cx| {
+        this.run(ids::EDIT_DELETE_TABLE_ROW, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &InsertTableColumn, window, cx| {
+        this.run(ids::EDIT_INSERT_TABLE_COLUMN, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &DeleteTableColumn, window, cx| {
+        this.run(ids::EDIT_DELETE_TABLE_COLUMN, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &InsertImage, window, cx| this.image_dialog(None, window, cx)))
+    .on_action(cx.listener(|this, _: &EditImage, window, cx| {
+        let at = this.selection.head;
+        this.image_dialog(Some(at), window, cx);
+    }))
     .on_action(cx.listener(|this, _: &IndentListItem, window, cx| {
         this.run(ids::EDIT_INDENT_LIST_ITEM, VisualValue::None, window, cx);
     }))

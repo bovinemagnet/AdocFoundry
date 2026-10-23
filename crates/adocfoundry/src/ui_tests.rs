@@ -910,3 +910,16 @@ fn enter_splits_the_paragraph(cx: &mut TestAppContext) {
         "= Page\n\nFirst half\n\nsecond half.\n\nNew\n\n* one\n* two\n** three\n"
     );
 }
+
+#[gpui::test]
+fn typing_in_a_table_cell_edits_only_the_cell(cx: &mut TestAppContext) {
+    let text = "= Page\n\n|===\n|Name |Value\n\n|a |1\n|===\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("a |").unwrap() + 1, &mut cx);
+    cx.simulate_keystrokes("space | space b");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\n|===\n|Name |Value\n\n|a \\| b |1\n|===\n"
+    );
+}

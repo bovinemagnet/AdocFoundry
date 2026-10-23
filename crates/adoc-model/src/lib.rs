@@ -12,6 +12,7 @@ mod mapping;
 mod scan;
 mod serialise;
 mod step;
+mod table;
 mod text;
 mod tree;
 

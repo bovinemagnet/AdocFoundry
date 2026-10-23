@@ -102,4 +102,79 @@ impl VisualView {
                 })
         });
     }
+
+    /// Asks for an image's target and alt text, then inserts it after the caret's block, or
+    /// (with `existing`, the image's offset) changes that image.
+    pub(crate) fn image_dialog(
+        &mut self,
+        existing: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = existing.and_then(|at| {
+            self.shown.as_ref().and_then(|shown| {
+                shown
+                    .model
+                    .walk()
+                    .into_iter()
+                    .find_map(|(_, node)| match &node.kind {
+                        adoc_engine::NodeKind::Image { target, alt }
+                            if node.range.start <= at && at <= node.range.end =>
+                        {
+                            Some((target.clone(), alt.clone()))
+                        }
+                        _ => None,
+                    })
+            })
+        });
+        let (target, alt) = current.unwrap_or_default();
+        let target_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("diagram.png, or image$diagram.png in Antora")
+                .default_value(target)
+        });
+        let alt_input = cx.new(|cx| InputState::new(window, cx).default_value(alt));
+        let view = cx.weak_entity();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let (target_input, alt_input, view) =
+                (target_input.clone(), alt_input.clone(), view.clone());
+            dialog
+                .title(if existing.is_some() {
+                    "Edit Image"
+                } else {
+                    "Insert Image"
+                })
+                .width(px(560.))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child("Image")
+                        .child(Input::new(&target_input))
+                        .child("Alt text")
+                        .child(Input::new(&alt_input)),
+                )
+                .confirm()
+                .ok_text("Apply")
+                .on_ok(move |_, window, cx| {
+                    let target = target_input.read(cx).value().trim().to_owned();
+                    let alt = alt_input.read(cx).value().to_string();
+                    if target.is_empty() {
+                        return true;
+                    }
+                    if let Some(view) = view.upgrade() {
+                        view.update(cx, |view, cx| {
+                            let command = match existing {
+                                Some(at) => {
+                                    view.place_caret(at, cx);
+                                    ids::EDIT_EDIT_IMAGE
+                                }
+                                None => ids::EDIT_INSERT_IMAGE,
+                            };
+                            view.run(command, VisualValue::Image { target, alt }, window, cx);
+                        });
+                    }
+                    true
+                })
+        });
+    }
 }

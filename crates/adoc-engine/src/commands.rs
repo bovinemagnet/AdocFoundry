@@ -60,6 +60,13 @@ pub mod ids {
     pub const EDIT_OUTDENT_LIST_ITEM: CommandId = CommandId::new("edit.outdent_list_item");
     pub const EDIT_INSERT_CODE_BLOCK: CommandId = CommandId::new("edit.insert_code_block");
     pub const EDIT_INSERT_ADMONITION: CommandId = CommandId::new("edit.insert_admonition");
+    pub const EDIT_INSERT_TABLE: CommandId = CommandId::new("edit.insert_table");
+    pub const EDIT_INSERT_TABLE_ROW: CommandId = CommandId::new("edit.insert_table_row");
+    pub const EDIT_DELETE_TABLE_ROW: CommandId = CommandId::new("edit.delete_table_row");
+    pub const EDIT_INSERT_TABLE_COLUMN: CommandId = CommandId::new("edit.insert_table_column");
+    pub const EDIT_DELETE_TABLE_COLUMN: CommandId = CommandId::new("edit.delete_table_column");
+    pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
+    pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;

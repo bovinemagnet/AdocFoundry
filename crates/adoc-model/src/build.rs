@@ -858,6 +858,12 @@ impl<'a> Builder<'a> {
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
+        // Without `cols`, the first row says how many columns there are.
+        let columns = if columns == 0 {
+            dom_rows.first().map_or(0, |(_, row)| row.cells.len())
+        } else {
+            columns
+        };
         let regular = columns > 0
             && cells.iter().all(|cell| cell.spec.is_empty())
             && dom_rows.iter().all(|(_, row)| {

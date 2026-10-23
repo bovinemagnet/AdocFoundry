@@ -50,6 +50,13 @@ actions!(
         ToggleChecked,
         InsertCodeBlock,
         InsertAdmonition,
+        InsertTable,
+        InsertTableRow,
+        DeleteTableRow,
+        InsertTableColumn,
+        DeleteTableColumn,
+        InsertImage,
+        EditImage,
     ]
 );
 
@@ -171,6 +178,13 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::EDIT_TOGGLE_CHECKED => Box::new(ToggleChecked),
         ids::EDIT_INSERT_CODE_BLOCK => Box::new(InsertCodeBlock),
         ids::EDIT_INSERT_ADMONITION => Box::new(InsertAdmonition),
+        ids::EDIT_INSERT_TABLE => Box::new(InsertTable),
+        ids::EDIT_INSERT_TABLE_ROW => Box::new(InsertTableRow),
+        ids::EDIT_DELETE_TABLE_ROW => Box::new(DeleteTableRow),
+        ids::EDIT_INSERT_TABLE_COLUMN => Box::new(InsertTableColumn),
+        ids::EDIT_DELETE_TABLE_COLUMN => Box::new(DeleteTableColumn),
+        ids::EDIT_INSERT_IMAGE => Box::new(InsertImage),
+        ids::EDIT_EDIT_IMAGE => Box::new(EditImage),
         _ => return None,
     })
 }

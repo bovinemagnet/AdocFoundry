@@ -42,6 +42,15 @@ pub enum NewBlock {
     Code,
     /// An admonition paragraph with its label selected, ready to be typed over.
     Admonition(AdmonitionKind),
+    /// A table with a header row and empty body rows, the first heading selected.
+    Table {
+        columns: usize,
+        rows: usize,
+    },
+    Image {
+        target: String,
+        alt: String,
+    },
 }
 
 fn unsupported(why: &'static str) -> StepError {
@@ -193,7 +202,11 @@ impl Model {
                 let caret = node.range.end + inserted.len();
                 self.structural(vec![SourceEdit::insert(node.range.end, inserted)], caret)
             }
-            NewBlock::Paragraph { .. } | NewBlock::Code | NewBlock::Admonition(_) => {
+            NewBlock::Paragraph { .. }
+            | NewBlock::Code
+            | NewBlock::Admonition(_)
+            | NewBlock::Table { .. }
+            | NewBlock::Image { .. } => {
                 let (body, select) = match new {
                     NewBlock::Paragraph { text } => {
                         let guard = if starts_block(text.lines().next().unwrap_or(""), true) {
@@ -214,6 +227,28 @@ impl Model {
                             format!("{label}: {placeholder}"),
                             start..start + placeholder.len(),
                         )
+                    }
+                    NewBlock::Table { columns, rows } => {
+                        let columns = (*columns).clamp(1, 20);
+                        let header: Vec<String> = (1..=columns)
+                            .map(|column| format!("|Column {column}"))
+                            .collect();
+                        let mut body = format!("|===\n{}\n", header.join(" "));
+                        for _ in 0..(*rows).max(1) {
+                            body.push('\n');
+                            body.push_str(&Self::empty_row(columns));
+                        }
+                        body.push_str("\n|===");
+                        (body, 6..6 + "Column 1".len())
+                    }
+                    NewBlock::Image { target, alt } => {
+                        let target = target.trim();
+                        if target.is_empty() || target.contains(char::is_whitespace) {
+                            return Err(unsupported("an image target has no spaces"));
+                        }
+                        let body = format!("image::{target}[{}]", alt.replace(']', "\\]"));
+                        let length = body.len();
+                        (body, length..length)
                     }
                     NewBlock::ListItem { .. } => unreachable!("handled above"),
                 };

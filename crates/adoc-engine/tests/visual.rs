@@ -497,3 +497,74 @@ fn structural_steps_rebuild_the_model() {
     assert_eq!(text(&engine, id), "First part\nsecond part.\n");
     assert_eq!(engine.visual(id).unwrap().version, version(&engine, id));
 }
+
+#[test]
+fn tables_and_images_are_edited_through_commands() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = page(directory.path(), "page.adoc", "Intro.\n");
+    let (mut engine, _) = engine_with_clock();
+    let id = engine.open(&path).unwrap();
+    show_visual(&mut engine, id);
+    let selection = visual(
+        &mut engine,
+        ids::EDIT_INSERT_TABLE,
+        id,
+        SourceRange::new(2, 2),
+        VisualValue::Table {
+            columns: 2,
+            rows: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        text(&engine, id),
+        "Intro.\n\n|===\n|Column 1 |Column 2\n\n| |\n|===\n"
+    );
+    // Typing replaces the selected heading.
+    visual(
+        &mut engine,
+        ids::VISUAL_INSERT_TEXT,
+        id,
+        selection,
+        VisualValue::Text("Name".to_owned()),
+    )
+    .unwrap();
+    let cell = text(&engine, id).find("Name").unwrap();
+    visual(
+        &mut engine,
+        ids::EDIT_INSERT_TABLE_COLUMN,
+        id,
+        SourceRange::new(cell, cell),
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(
+        text(&engine, id),
+        "Intro.\n\n|===\n|Name | |Column 2\n\n| | |\n|===\n"
+    );
+
+    visual(
+        &mut engine,
+        ids::EDIT_INSERT_IMAGE,
+        id,
+        SourceRange::new(2, 2),
+        VisualValue::Image {
+            target: "a.png".to_owned(),
+            alt: "A".to_owned(),
+        },
+    )
+    .unwrap();
+    let image = text(&engine, id).find("image::").unwrap();
+    visual(
+        &mut engine,
+        ids::EDIT_EDIT_IMAGE,
+        id,
+        SourceRange::new(image, image),
+        VisualValue::Image {
+            target: "b.png".to_owned(),
+            alt: "B".to_owned(),
+        },
+    )
+    .unwrap();
+    assert!(text(&engine, id).starts_with("Intro.\n\nimage::b.png[B]\n\n|===\n"));
+}

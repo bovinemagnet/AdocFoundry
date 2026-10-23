@@ -74,6 +74,26 @@ pub enum Step {
     ToggleChecked {
         at: usize,
     },
+    /// Adds an empty row below the caret's.
+    InsertTableRow {
+        at: usize,
+    },
+    DeleteTableRow {
+        at: usize,
+    },
+    /// Adds an empty column after the caret's.
+    InsertTableColumn {
+        at: usize,
+    },
+    DeleteTableColumn {
+        at: usize,
+    },
+    /// Changes the target and alt text of the block image at `at`.
+    SetImage {
+        at: usize,
+        target: String,
+        alt: String,
+    },
     /// Raw source edits: the form an inverse takes.
     Replace {
         edits: Vec<SourceEdit>,
@@ -149,6 +169,11 @@ impl Model {
             Step::IndentListItem { at } => self.indent(*at),
             Step::OutdentListItem { at } => self.outdent(*at),
             Step::ToggleChecked { at } => self.toggle_checked(*at),
+            Step::InsertTableRow { at } => self.insert_table_row(*at),
+            Step::DeleteTableRow { at } => self.delete_table_row(*at),
+            Step::InsertTableColumn { at } => self.insert_table_column(*at),
+            Step::DeleteTableColumn { at } => self.delete_table_column(*at),
+            Step::SetImage { at, target, alt } => self.set_image(*at, target, alt),
             Step::Replace { edits } => self.replace(edits),
         }
     }
