@@ -29,9 +29,11 @@ impl Engine {
         self.git
             .statuses()
             .filter(|(path, status)| {
-                self.roots.iter().any(|root| path.starts_with(root))
-                    && status.worktree != Change::Ignored
-                    && is_writer_file(path)
+                status.worktree != Change::Ignored
+                    && self
+                        .roots
+                        .iter()
+                        .any(|root| path.strip_prefix(root).is_ok_and(is_writer_file))
             })
             .map(|(path, status)| (path.to_path_buf(), status.clone()))
             .collect()
@@ -100,6 +102,7 @@ fn git_error(error: adoc_git::GitError) -> EngineError {
     EngineError::Refused(error.to_string())
 }
 
+/// Whether `path`, relative to its workspace root, is a page or in a resource family.
 fn is_writer_file(path: &Path) -> bool {
     is_asciidoc_path(path)
         || path.components().any(|component| {

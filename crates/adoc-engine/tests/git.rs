@@ -653,6 +653,25 @@ fn stage_all_stages_the_changed_writer_files() {
 }
 
 #[test]
+fn stage_all_ignores_family_names_above_the_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    // A workspace that itself sits in a folder named like an Antora family.
+    let root = dir.path().join("examples");
+    let (test, mut engine, _) = committing_repository(&root);
+    test.write("README.md", "readme, changed\n");
+    engine.invoke(ids::GIT_REFRESH, CommandArgs::None).unwrap();
+    assert!(pump_until(&mut engine, |engine| engine
+        .git()
+        .status_for(&root.join("README.md"))
+        .is_some()));
+    assert!(
+        engine.changed_writer_files().is_empty(),
+        "{:?}",
+        engine.changed_writer_files()
+    );
+}
+
+#[test]
 fn push_disabled_without_git_executable() {
     let dir = tempfile::tempdir().unwrap();
     let test = TestRepo::init(dir.path());
