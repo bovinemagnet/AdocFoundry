@@ -10,6 +10,7 @@ mod blocks;
 mod format;
 mod input;
 mod text;
+mod toolbar;
 
 use std::{cell::Cell, rc::Rc, sync::Arc};
 
@@ -624,6 +625,7 @@ impl Render for VisualView {
                 cx.listener(|this, _, _, _| this.dragging = false),
             )
             .map(|view| input::actions(view, cx))
+            .map(|view| toolbar::actions(view, cx))
             .child(
                 canvas(
                     |_, _, _| {},
@@ -634,6 +636,7 @@ impl Render for VisualView {
                 .absolute()
                 .size_full(),
             )
+            .child(self.toolbar(cx))
             .child(
                 div()
                     .id("visual-scroll")

@@ -994,3 +994,70 @@ fn undo_is_shared_between_editors(cx: &mut TestAppContext) {
     assert_eq!(widget_text(&editor, &mut cx), text);
     assert_eq!(shown_blocks(&visual, &mut cx), ["Page", "Text."]);
 }
+
+#[gpui::test]
+fn toolbar_bold_toggles_strong(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n\n* An item\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("plain").unwrap();
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, start + 5, cx)));
+    cx.run_until_parked();
+    let bold = cx
+        .debug_bounds("toolbar-bold")
+        .expect("the toolbar is drawn");
+    cx.simulate_click(bold.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n\n* An item\n"
+    );
+
+    // The list buttons act on the caret's block.
+    let item = text_of(&app, id, &mut cx).find("An item").unwrap();
+    place_caret(&visual, item, &mut cx);
+    let numbers = cx
+        .debug_bounds("toolbar-numbers")
+        .expect("the list buttons are drawn");
+    cx.simulate_click(numbers.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n\n. An item\n"
+    );
+}
+
+#[gpui::test]
+fn included_content_is_not_editable(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap().keep();
+    std::fs::write(directory.join("partial.adoc"), "From the partial.\n").unwrap();
+    let text = "= Page\n\nBefore.\n\ninclude::partial.adoc[]\n";
+    let page = adoc_index::normalize_path(&directory.join("page.adoc"));
+    std::fs::write(&page, text).unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .unwrap();
+    let included = cx.update(|_, cx| {
+        let shown = visual.read(cx).shown().cloned().unwrap();
+        shown
+            .model
+            .walk()
+            .into_iter()
+            .any(|(_, node)| matches!(node.kind, adoc_engine::NodeKind::Include { .. }))
+    });
+    assert!(included, "the include is a node of its own");
+    place_caret(&visual, text.find("partial.adoc").unwrap(), &mut cx);
+    cx.simulate_keystrokes("x");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        text,
+        "nothing is typed into the include"
+    );
+}
