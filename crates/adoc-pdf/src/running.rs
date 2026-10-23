@@ -145,13 +145,7 @@ pub(crate) fn content_markup(
             let width = captures[2]
                 .split(',')
                 .find_map(|attribute| attribute.trim().strip_prefix("width="))
-                .and_then(|width| {
-                    let width = width.trim_matches('"');
-                    width
-                        .strip_suffix('%')
-                        .map(|percent| format!("{percent}%"))
-                        .or_else(|| width.parse::<f64>().ok().map(|px| typst::points(px * 0.75)))
-                })
+                .and_then(image_width)
                 .map(|width| format!(", width: {width}"))
                 .unwrap_or_default();
             return format!("#image({}{width})", string(&files(&path)));
@@ -164,6 +158,23 @@ pub(crate) fn content_markup(
         }
     }
     lines.join("#linebreak()")
+}
+
+/// An image macro's `width` as a Typst length: a percentage, or pixels at 96 dpi. Only a
+/// number parsed from the value is written, never the value itself, so an attribute cannot
+/// inject Typst code.
+fn image_width(value: &str) -> Option<String> {
+    let value = value.trim().trim_matches('"').trim();
+    match value.strip_suffix('%') {
+        Some(percent) => {
+            let percent: f64 = percent.trim().parse().ok()?;
+            (percent.is_finite() && percent > 0.0).then(|| format!("{}%", typst::number(percent)))
+        }
+        None => {
+            let pixels: f64 = value.trim_end_matches("px").parse().ok()?;
+            (pixels.is_finite() && pixels > 0.0).then(|| typst::points(pixels * 0.75))
+        }
+    }
 }
 
 /// Static attribute references replaced; unknown ones left as they are.
@@ -394,9 +405,7 @@ impl TitlePage<'_> {
                     let width = attributes
                         .split(',')
                         .find_map(|attribute| attribute.trim().strip_prefix("width="))
-                        .and_then(|width| {
-                            width.strip_suffix('%').map(|percent| format!("{percent}%"))
-                        })
+                        .and_then(image_width)
                         .map(|width| format!(", width: {width}"))
                         .unwrap_or_default();
                     format!("image({}{width})", string(&files(&path)))
@@ -452,6 +461,14 @@ mod tests {
         assert_eq!(places[1], (0.4, 0.2, "center"));
         assert_eq!(places[2].2, "right");
         assert_eq!(column_places(None)[0], (0.0, 1.0, "left"));
+    }
+
+    #[test]
+    fn image_widths_are_numbers_only() {
+        assert_eq!(super::image_width("40%").as_deref(), Some("40.0%"));
+        assert_eq!(super::image_width("200").as_deref(), Some("150pt"));
+        assert_eq!(super::image_width("1) #read(\"/etc/passwd\") (%"), None);
+        assert_eq!(super::image_width("-5%"), None);
     }
 
     #[test]
