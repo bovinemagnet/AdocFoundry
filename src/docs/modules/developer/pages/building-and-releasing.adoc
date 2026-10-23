@@ -35,7 +35,8 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 == Continuous integration
 
-`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`.
+`packaging/ci/ci.yml` is written to run on pull requests and on pushes to `main`.
+It is not active yet: the workflows are kept out of `.github/workflows/` until macOS and Windows have been verified by hand, and moving them there enables them.
 
 [cols="1,4"]
 |===
@@ -53,7 +54,7 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 == Release workflow
 
-`.github/workflows/release.yml` runs when a tag matching `v*` is pushed, or on demand.
+`packaging/ci/release.yml` is written to run when a tag matching `v*` is pushed, or on demand. Like the CI workflow, it is not active yet.
 Each platform job builds `adocfoundry`, `adocfoundry-cli` and `adoc-ls` in release mode.
 
 .The release pipeline

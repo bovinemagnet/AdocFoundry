@@ -38,7 +38,7 @@ cargo test -p adoc-antora resolves_cross_component # single test by name substri
 cargo test -p adocfoundry-cli --test cli           # one integration test file
 ```
 
-The app crate needs a GPU-capable environment; CI runs `cargo test --workspace --exclude adocfoundry` and then only builds the app crate (`cargo build -p adocfoundry`). Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
+The CI and release workflows are written but kept in `packaging/ci/`, not `.github/workflows/`, so they do not run yet; macOS and Windows are verified by hand first. The app crate needs a GPU-capable environment; CI is set up to run `cargo test --workspace --exclude adocfoundry` and then only builds the app crate (`cargo build -p adocfoundry`). Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
 
 ## Architecture
 

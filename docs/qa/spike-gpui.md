@@ -6,7 +6,7 @@
 | Date | 2026-10-23 |
 | Snapshot | `gpui-pre` 0.3.9 (zed@93d7456), `gpui-pre-platform` 0.3.9, `gpui-component` 0.8.0, `gpui-kit-assets` 0.8.0 |
 | Verified on | Linux x86_64, KDE Plasma 6 on Wayland, and the X11 backend through XWayland |
-| Decision | **Go**: continue on GPUI. Not yet verified on macOS and Windows (built by the CI matrix) |
+| Decision | **Go**: continue on GPUI. Not yet verified on macOS and Windows; they are to be tested by hand |
 
 The spike was folded into the application crate rather than built as a throwaway: `crates/adocfoundry` is the spike, and the items below point at the code and tests that demonstrate each criterion.
 
@@ -52,5 +52,5 @@ The release build was run on a real five-module Antora component (`pg-console/do
 |---|---|---|---|
 | Linux x86_64, Wayland | yes | yes | Verified by hand: navigation tree, editor, highlighting, diagnostics, outline |
 | Linux x86_64, X11 | yes | yes | Through XWayland |
-| macOS (Apple Silicon, Intel) | CI | not yet | The engine, CLI and language server cross-check for `aarch64-apple-darwin` from Linux; the app's C build scripts (tree-sitter, the grammars) need the Apple SDK, so CI builds it |
-| Windows x64 | CI | not yet | |
+| macOS (Apple Silicon, Intel) | not yet | not yet | The engine, CLI and language server cross-check for `aarch64-apple-darwin` from Linux; the app's C build scripts (tree-sitter, the grammars) need the Apple SDK, so it is built on a Mac |
+| Windows x64 | not yet | not yet | |
