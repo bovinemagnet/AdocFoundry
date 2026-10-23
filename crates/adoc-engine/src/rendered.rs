@@ -106,9 +106,46 @@ struct Snapshot {
     includes: SnapshotIncludes,
 }
 
+/// A parse's input, owned so it can move to a worker.
+pub(crate) struct OwnedInput {
+    pub(crate) version: u64,
+    pub(crate) path: PathBuf,
+    pub(crate) text: String,
+    pub(crate) attributes: Vec<(String, String)>,
+    pub(crate) includes: SnapshotIncludes,
+}
+
+impl OwnedInput {
+    /// Parses the input, returning the DOM and every file the page was assembled from.
+    pub(crate) fn parse(self, parser: &dyn DocumentParser) -> (Dom, BTreeSet<PathBuf>) {
+        let OwnedInput {
+            path,
+            text,
+            attributes,
+            includes,
+            ..
+        } = self;
+        let includes = Arc::new(includes);
+        let dom = parser.parse(&ParseInput {
+            path: &path,
+            text: &text,
+            attributes,
+            includes: includes.clone(),
+        });
+        let mut sources = includes
+            .read
+            .lock()
+            .map(|read| read.clone())
+            .unwrap_or_default();
+        sources.extend(includes.map.values().cloned());
+        sources.insert(path);
+        (dom, sources)
+    }
+}
+
 /// Includes as the workspace resolves them: Antora ids through the catalog, open documents
 /// from their buffers, anything else from disk.
-struct SnapshotIncludes {
+pub(crate) struct SnapshotIncludes {
     map: BTreeMap<PathBuf, PathBuf>,
     buffers: HashMap<PathBuf, String>,
     read: Mutex<BTreeSet<PathBuf>>,
@@ -292,6 +329,33 @@ impl Engine {
     }
 
     fn preview_snapshot(&mut self, id: DocumentId) -> Option<Snapshot> {
+        let input = self.parse_input(id)?;
+        self.rendered.next_generation += 1;
+        let generation = self.rendered.next_generation;
+        self.rendered.latest.insert(id, generation);
+        Some(Snapshot {
+            parser: self.document_parser(),
+            id,
+            generation,
+            version: input.version,
+            path: input.path,
+            text: input.text,
+            attributes: input.attributes,
+            includes: input.includes,
+        })
+    }
+
+    /// The parser documents are read with: acdc unless set otherwise.
+    pub(crate) fn document_parser(&self) -> Arc<dyn DocumentParser> {
+        self.rendered
+            .parser
+            .clone()
+            .unwrap_or_else(|| Arc::new(AcdcParser))
+    }
+
+    /// Everything a parse of `id` reads, copied: its text, the Antora attributes, and the
+    /// workspace's includes with open buffers.
+    pub(crate) fn parse_input(&self, id: DocumentId) -> Option<OwnedInput> {
         let document = self.documents.get(&id)?;
         let antora = &self.workspace.antora;
         let mut attributes: Vec<(String, String)> = antora
@@ -325,17 +389,7 @@ impl Engine {
             .filter(|open| open.id != id)
             .map(|open| (open.path.clone(), open.text.to_string()))
             .collect();
-        self.rendered.next_generation += 1;
-        let generation = self.rendered.next_generation;
-        self.rendered.latest.insert(id, generation);
-        Some(Snapshot {
-            parser: self
-                .rendered
-                .parser
-                .clone()
-                .unwrap_or_else(|| Arc::new(AcdcParser)),
-            id,
-            generation,
+        Some(OwnedInput {
             version: document.version,
             path: document.path.clone(),
             text: document.text.to_string(),
@@ -362,20 +416,14 @@ impl Engine {
                 attributes,
                 includes,
             } = snapshot;
-            let includes = Arc::new(includes);
-            let dom = parser.parse(&ParseInput {
-                path: &path,
-                text: &text,
+            let input = OwnedInput {
+                version,
+                path,
+                text,
                 attributes,
-                includes: includes.clone(),
-            });
-            let mut sources = includes
-                .read
-                .lock()
-                .map(|read| read.clone())
-                .unwrap_or_default();
-            sources.extend(includes.map.values().cloned());
-            sources.insert(path);
+                includes,
+            };
+            let (dom, sources) = input.parse(parser.as_ref());
             let _ = sender.send(WorkerMessage::PreviewParsed {
                 id,
                 generation,
@@ -420,20 +468,33 @@ impl Engine {
         self.publish_preview(id);
     }
 
-    /// Builds the view from the cached parse, starts any diagram it is missing, and publishes.
-    fn publish_preview(&mut self, id: DocumentId) {
+    /// The view of `dom`, with the diagrams it still needs, which are started.
+    pub(crate) fn view_of(&mut self, path: &Path, dom: &Dom) -> (ViewTree, Vec<DiagramRequest>) {
         let diagrams = self.diagrams();
-        let Some(parsed) = self.rendered.parsed.get(&id) else {
-            return;
-        };
         let resolver = EngineResolver {
             workspace: &self.workspace,
             diagrams: &diagrams,
             failed: &self.rendered.failed,
             wanted: RefCell::default(),
         };
-        let view = build_view(&parsed.path, &parsed.dom, &resolver);
+        let view = build_view(path, dom, &resolver);
         let wanted = resolver.wanted.into_inner();
+        for request in &wanted {
+            self.spawn_diagram(&diagrams, request.clone());
+        }
+        (view, wanted)
+    }
+
+    /// Builds the view from the cached parse, starts any diagram it is missing, and publishes.
+    fn publish_preview(&mut self, id: DocumentId) {
+        let Some(parsed) = self.rendered.parsed.get(&id) else {
+            return;
+        };
+        let (path, dom) = (parsed.path.clone(), parsed.dom.clone());
+        let (view, wanted) = self.view_of(&path, &dom);
+        let Some(parsed) = self.rendered.parsed.get(&id) else {
+            return;
+        };
         let preview = Arc::new(RenderedPreview {
             document: id,
             version: parsed.version,
@@ -442,9 +503,6 @@ impl Engine {
         });
         if let Some(parsed) = self.rendered.parsed.get_mut(&id) {
             parsed.waiting = wanted.iter().map(DiagramRequest::checksum).collect();
-        }
-        for request in wanted {
-            self.spawn_diagram(&diagrams, request);
         }
         let version = preview.version;
         self.rendered.published.insert(id, preview);
@@ -505,6 +563,7 @@ impl Engine {
         for id in waiting {
             self.publish_preview(id);
         }
+        self.visual_diagram_rendered(checksum);
     }
 }
 

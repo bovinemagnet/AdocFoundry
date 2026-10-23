@@ -198,7 +198,19 @@ impl Model {
         let realised = self
             .context(block)
             .realise(units, &touched, (caret, caret))?;
-        self.finish(&path, block, &realised.text, realised.selection)
+        let mut result = self.finish(&path, block, &realised.text, realised.selection)?;
+        // Typed text written as it was typed is reported as an insertion at the caret, which a
+        // diff cannot tell apart from one beside it when the text repeats its neighbour.
+        let relative = at - block.range.start;
+        let old = &self.source[block.range.start..block.range.end];
+        if realised.text.len() == old.len() + text.len()
+            && realised.text.starts_with(&old[..relative])
+            && realised.text[relative..].starts_with(text.as_str())
+            && realised.text.ends_with(&old[relative..])
+        {
+            result.edits = vec![SourceEdit::insert(at, text.clone())];
+        }
+        Ok(result)
     }
 
     fn delete(&self, range: SourceRange) -> Result<StepResult, StepError> {

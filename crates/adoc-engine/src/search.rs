@@ -285,6 +285,7 @@ impl Engine {
                 from: from.clone(),
                 to: to.clone(),
             });
+            self.visual_source_changed(&to);
         } else if let Ok(text) = fs::read_to_string(&to) {
             self.workspace.index.index_source(&to, &text);
         }

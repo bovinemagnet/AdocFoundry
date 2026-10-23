@@ -178,6 +178,7 @@ dependencies = [
  "adoc-dom",
  "adoc-index",
  "adoc-lang",
+ "adoc-model",
  "adoc-parser",
  "adoc-render",
  "dirs 6.0.0",

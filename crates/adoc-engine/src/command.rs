@@ -83,6 +83,8 @@ pub enum CommandArgs {
         id: DocumentId,
         new_path: PathBuf,
     },
+    /// A visual editor command: a selection in a document's visual model.
+    Visual(crate::VisualArgs),
     Custom(serde_json::Value),
 }
 
@@ -93,6 +95,8 @@ pub enum CommandOutcome {
     Location(Location),
     External(PathBuf),
     Preview(EditPreview),
+    /// The selection after a visual command, as source offsets.
+    Selection(SourceRange),
     Cancelled,
 }
 

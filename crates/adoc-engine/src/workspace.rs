@@ -143,6 +143,7 @@ impl Engine {
         self.workers_running > 0
             || !self.pending_index.is_empty()
             || self.rendered.has_scheduled()
+            || self.visual.has_due()
             || self
                 .watcher
                 .as_ref()
@@ -162,6 +163,7 @@ impl Engine {
             + self.index_pending(Some(due))
             + self.apply_file_changes(Instant::now())
             + self.start_due_previews()
+            + self.rebuild_due_visuals()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the
@@ -203,6 +205,7 @@ impl Engine {
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
                 self.preview_workspace_changed();
+                self.visual_workspace_changed();
             }
             WorkerMessage::Search { id, results } => self.search_finished(id, results),
             WorkerMessage::PreviewParsed {
@@ -287,6 +290,7 @@ impl Engine {
         });
         self.refresh_open_diagnostics(None);
         self.preview_workspace_changed();
+        self.visual_workspace_changed();
     }
 
     fn file_changed_on_disk(&mut self, path: &Path) {
@@ -326,6 +330,7 @@ impl Engine {
             None => self.workspace.remove_document(path),
         }
         self.preview_source_changed(path);
+        self.visual_source_changed(path);
         self.emit(EngineEvent::DiagnosticsUpdated {
             path: path.to_path_buf(),
         });

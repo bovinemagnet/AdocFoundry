@@ -54,6 +54,7 @@ pub struct Engine {
     /// which `pump` indexes them.
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
     pub(crate) rendered: crate::rendered::PreviewState,
+    pub(crate) visual: crate::visual::VisualState,
 }
 
 /// Typed characters re-parse their document at once but re-index it, and refresh diagnostics,
@@ -106,6 +107,7 @@ impl Engine {
             group_moves: BTreeMap::new(),
             pending_index: BTreeMap::new(),
             rendered: crate::rendered::PreviewState::default(),
+            visual: crate::visual::VisualState::default(),
         }
     }
 
@@ -204,6 +206,7 @@ impl Engine {
         self.states.remove(&id);
         self.pending_index.remove(&id);
         self.forget_preview(id);
+        self.forget_visual(id);
         if self.rendered.layout.pinned == Some(id) {
             self.rendered.layout.pinned = None;
             self.emit(EngineEvent::PreviewLayoutChanged);
@@ -285,6 +288,15 @@ impl Engine {
             self.flush_index();
         }
         let result = handler.run(self, args);
+        // Source typing rebuilds visual models once it pauses; anything else, now.
+        let typing = [
+            commands::ids::EDIT_INSERT_TEXT,
+            commands::ids::EDIT_REPLACE_RANGE,
+        ]
+        .contains(&command);
+        if !typing {
+            self.refresh_stale_visuals();
+        }
         if let Err(error) = &result {
             self.emit(EngineEvent::CommandFailed {
                 command,
@@ -477,6 +489,7 @@ impl Engine {
             edits: forward.clone(),
         });
         self.preview_source_changed(&path);
+        self.visual_source_changed(&path);
         if untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
         } else if !defer_index {
