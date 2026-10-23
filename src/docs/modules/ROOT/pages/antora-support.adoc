@@ -91,6 +91,7 @@ When a component has several versions, the latest is chosen like this:
 
 A reference to a version of a known component that is not in the workspace is not reported.
 It is usually published from another branch or repository, and reporting it would be a false positive.
+The one exception is a version that the playbook and the repository say is published from another branch; see <<versions-and-branches>>.
 
 == Page aliases
 
@@ -105,6 +106,62 @@ A page may declare the old ids it used to have.
 Each alias is resolved relative to the page's own coordinates.
 An xref to an alias resolves to the page.
 It also carries an information diagnostic, `adoc.antora.resolved-via-alias`, suggesting the current id, so that old links can be tidied.
+
+[[versions-and-branches]]
+== Versions and branches
+
+Antora publishes a component version from a branch (or a tag) of a repository, so which branch you have checked out decides which version you are editing.
+AdocFoundry reads the playbook's `content.sources` to know which branches are published.
+
+Each source can set these keys.
+
+[cols="1,4"]
+|===
+|Key |Meaning
+
+|`url`
+|The repository.
+A source is this repository when its `url` is a local path (such as `.`) that leads to the same working tree, or a remote URL that names the same repository as the configured remote (`[git] remote`, default `origin`), whatever its scheme or `.git` suffix.
+
+|`branches`
+|A list or a comma-separated string of branch patterns.
+Patterns are globs with `*`, `?` and `{a,b}`, numeric ranges such as `{0..9}`, `!` to exclude, and `HEAD` for the checked-out branch.
+When not given, the default is Antora's `[HEAD, v{0..9}*]`, or `content.branches` when that is set.
+
+|`tags`
+|The tag patterns are read with the source.
+Versions published from tags are not mapped yet: only branches are read for their `antora.yml`, so an xref to a version that only a tag publishes gets no warning.
+
+|`start_path` or `start_paths`
+|Where the component's `antora.yml` is, relative to the repository root.
+The default is the repository root.
+|===
+
+For every branch of this repository, local and remote-tracking, that a source takes, the editor reads `<start_path>/antora.yml` straight from the repository.
+It checks nothing out and fetches nothing.
+The editor therefore knows which branch publishes which component version.
+
+The status bar and the head of the Navigation panel show the active page's component version and branch, such as `product@2.0 · main`.
+An unversioned component (`version: ~`) shows `product@latest`.
+A page outside any Antora component shows only the branch, as in `⎇ main`.
+
+An xref with an explicit version, such as `+xref:1.0@product::index.adoc[]+`, is reported with `adoc.antora.version-not-on-branch` when that version is not in the workspace and the playbook and repository say it is published from another branch than the current one.
+The message is `version 1.0 is published from branch v1.0, not main`, or `branches a, b` when several publish it.
+The link resolves on the published site only if Antora builds that branch, and that cannot be checked locally.
+Nothing is reported without a playbook, without a repository, on a detached HEAD, or when the version is in the workspace, in which case the xref is checked as usual.
+
+Switching branch in the same folder, for example with `git checkout v1.0`, is picked up from `.git` without a restart.
+The workspace is indexed again (descriptors and pages), the badge changes, the table of versions per branch is recomputed and diagnostics are refreshed.
+
+=== Open in Another Version
+
+Open in Another Version (`navigate.open_in_version`, Navigate category) opens the same page in another version of its component.
+It has no default binding and is available from the command palette.
+It lists the other versions of the active page's component that have the same page in the workspace, latest first as Antora orders them: unversioned, then released versions, then prereleases.
+Choosing one opens that page.
+
+This works across workspace roots, each a checkout of a version branch, which is what Antora recommends for editing several versions.
+With no other version to offer, the command says to check out the branch in another folder and add the folder to the workspace.
 
 [[playbook-attributes]]
 == Playbook attributes

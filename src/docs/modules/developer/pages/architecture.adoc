@@ -34,7 +34,7 @@ include::example$crate-layers.mmd[]
 
 |L1
 |`adoc-antora`
-|`antora.yml` and playbook parsing, `AntoraCatalog`, resource-ID parsing for `version@component:module:family$path`, the resolver, page aliases, descriptor reload and navigation trees.
+|`antora.yml` and playbook parsing, `AntoraCatalog`, resource-ID parsing for `version@component:module:family$path`, the resolver, page aliases, descriptor reload, navigation trees, and the playbook's content sources (`ContentSource`) with the table of versions per branch (`PublishedVersions`).
 
 |L1
 |`adoc-index`
@@ -58,7 +58,7 @@ include::example$crate-layers.mmd[]
 
 |L2
 |`adoc-git`
-|Git repository discovery, head, status and line diffs against HEAD, over `gix` (gitoxide) with no network transports. Nothing runs the `git` executable. The `test-support` feature provides `adoc_git::testing::TestRepo` for tests. The engine depends on it.
+|Git repository discovery, head, status line diffs against HEAD, and branches and file contents at a branch, over `gix` (gitoxide) with no network transports. Nothing runs the `git` executable. The `test-support` feature provides `adoc_git::testing::TestRepo` for tests. The engine depends on it.
 
 |L3
 |`adoc-engine`

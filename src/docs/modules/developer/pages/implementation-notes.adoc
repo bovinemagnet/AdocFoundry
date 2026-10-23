@@ -335,6 +335,25 @@ It was not adopted, and its design (steps with inverses, step maps, marks on tex
 |A font loading limit outside the editor.
 |===
 
+== Git
+
+=== Branch-aware Antora versions
+
+[cols="1,2,3,3"]
+|===
+|Area |Issue |Implementation |Why
+
+|Versions to branches
+|`Playbook::branches_for_version` in `adoc-antora`, using the catalog
+|`adoc-antora` parses the sources and matches branch patterns (`ContentSource`, `PublishedVersions`). The engine builds the table on a worker (`src/versions.rs`) from each branch's `antora.yml`, read through `adoc-git`, and sets it on the catalog.
+|The playbook names branches, not versions, and the catalog only knows checked-out versions. Mapping versions to branches needs each branch's `antora.yml`, which only the engine can read.
+
+|Branch patterns
+|Not specified
+|Matching uses `globset` 0.4.20, with numeric ranges such as `{0..9}` expanded first.
+|`globset` has no numeric ranges.
+|===
+
 == Related
 
 * xref:architecture.adoc[Architecture], for the layering exception
