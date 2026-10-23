@@ -75,6 +75,8 @@ pub struct GitSettings {
     pub blame_on_hover: bool,
     /// The remote that links to the hosting site and pushes use.
     pub remote: String,
+    /// Self-hosted sites by host name: `github`, `gitlab`, `bitbucket` or `azure`.
+    pub hosts: std::collections::BTreeMap<String, String>,
 }
 
 impl Default for GitSettings {
@@ -84,6 +86,7 @@ impl Default for GitSettings {
             show_markers: true,
             blame_on_hover: false,
             remote: "origin".to_owned(),
+            hosts: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -212,6 +215,20 @@ impl Settings {
             ("git", "show_markers") => self.git.show_markers = boolean(value)?,
             ("git", "blame_on_hover") => self.git.blame_on_hover = boolean(value)?,
             ("git", "remote") => self.git.remote = string(value)?,
+            ("git", "hosts") => {
+                let table = value
+                    .as_table()
+                    .ok_or("expected a table of host names and site kinds")?;
+                let mut hosts = std::collections::BTreeMap::new();
+                for (host, kind) in table {
+                    let kind = kind
+                        .as_str()
+                        .filter(|kind| adoc_git::HostKind::from_name(kind).is_some())
+                        .ok_or("expected \"github\", \"gitlab\", \"bitbucket\" or \"azure\"")?;
+                    hosts.insert(host.to_lowercase(), kind.to_owned());
+                }
+                self.git.hosts = hosts;
+            }
             _ => return Err("unknown setting"),
         }
         Ok(())
@@ -232,7 +249,7 @@ fn is_known(section: &str, key: &str) -> bool {
             | ("tools", "asciidoctor")
             | (
                 "git",
-                "enabled" | "show_markers" | "blame_on_hover" | "remote"
+                "enabled" | "show_markers" | "blame_on_hover" | "remote" | "hosts"
             )
     )
 }
@@ -327,6 +344,18 @@ mod tests {
         assert!(!settings.git.enabled && settings.git.blame_on_hover);
         assert_eq!(settings.git.remote, "upstream");
         assert_eq!(settings.warnings.len(), 1, "an unknown key warns");
+
+        fs::write(
+            &user,
+            "[git.hosts]\n\"Git.Example.com\" = \"gitlab\"\n\"bad.example.com\" = \"svn\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.git.hosts.len(), 0, "a bad kind rejects the table");
+        assert_eq!(settings.warnings.len(), 1);
+        fs::write(&user, "[git.hosts]\n\"Git.Example.com\" = \"gitlab\"\n").unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.git.hosts["git.example.com"], "gitlab");
     }
 
     #[test]

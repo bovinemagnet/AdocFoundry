@@ -252,6 +252,7 @@ impl Engine {
         }
         self.emit(EngineEvent::DocumentSaved(id));
         self.schedule_hunks(id, false);
+        self.forget_blame(id);
         Ok(())
     }
 

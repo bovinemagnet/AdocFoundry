@@ -73,6 +73,9 @@ pub mod ids {
     pub const GIT_PREVIOUS_CHANGE: CommandId = CommandId::new("git.previous_change");
     pub const GIT_SHOW_CHANGES: CommandId = CommandId::new("git.show_changes");
     pub const NAVIGATE_OPEN_IN_VERSION: CommandId = CommandId::new("navigate.open_in_version");
+    pub const GIT_SHOW_BLAME: CommandId = CommandId::new("git.show_blame");
+    pub const NAVIGATE_OPEN_ON_REMOTE: CommandId = CommandId::new("navigate.open_on_remote");
+    pub const NAVIGATE_COPY_REMOTE_LINK: CommandId = CommandId::new("navigate.copy_remote_link");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;

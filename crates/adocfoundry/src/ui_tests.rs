@@ -1005,6 +1005,63 @@ fn changes_panel_lists_changed_adoc_files_only(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+fn blame_column_toggles_and_hover_shows_the_commit(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("page.adoc", "= Page\n\nText.\n");
+    let first = test.commit_all("Write the page");
+    // Settings are read from their file again when the workspace opens.
+    let config = tempfile::tempdir().unwrap();
+    let user = config.path().join("adocfoundry.toml");
+    std::fs::write(&user, "[git]\nblame_on_hover = true\n").unwrap();
+    let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![dir.path().join("page.adoc")], cx);
+    settle_engine(&app, &mut cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+
+    assert!(cx.debug_bounds("blame-column").is_none());
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.toggle_blame(window, cx)));
+    settle_engine(&app, &mut cx);
+    assert!(cx.update(|_, cx| editor.read(cx).shows_blame()));
+    assert!(cx.debug_bounds("blame-column").is_some());
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let blame = cx
+        .update(|_, cx| app.read(cx).engine.blame_for(id))
+        .unwrap();
+    assert_eq!(blame[0].commit.as_deref(), Some(&first[..7]));
+
+    // Resting on the gutter beside the third line shows its commit.
+    let gutter = cx.update(|_, cx| {
+        let state = editor.read(cx).state_for_test().read(cx);
+        let line = state.range_to_bounds(&(8..8)).unwrap();
+        gpui::point(line.left() - px(6.), line.center().y)
+    });
+    cx.simulate_mouse_move(gutter, None, gpui::Modifiers::none());
+    settle_engine(&app, &mut cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
+    let tip = cx
+        .update(|_, cx| editor.read(cx).hover_tip_for_test())
+        .unwrap();
+    assert!(
+        tip.starts_with(&first[..7]) && tip.ends_with("Write the page"),
+        "{tip}"
+    );
+    assert!(cx.debug_bounds("blame-tip").is_some());
+
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.toggle_blame(window, cx)));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("blame-column").is_none());
+}
+
 // --- visual editor ---------------------------------------------------------------------------
 
 /// A workspace showing `text` as its only page in the visual editor.

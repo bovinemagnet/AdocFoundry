@@ -51,7 +51,7 @@ pub use adoc_antora::{
     compare_component_versions, AntoraCoordinate, AntoraResourceId, NavError, NavItem, NavTree,
     ResourceFamily,
 };
-pub use adoc_git::{Change as GitChange, FileStatus, Head, Hunk, HunkKind};
+pub use adoc_git::{BlameLine, Change as GitChange, FileStatus, Head, Hunk, HunkKind};
 pub use adoc_lang::{
     CompletionItem, CompletionItemKind, DefinitionTarget, DocumentSymbol, DocumentSymbolKind,
     Hover, Location, WorkspaceState, WorkspaceSymbol, WorkspaceSymbolKind,

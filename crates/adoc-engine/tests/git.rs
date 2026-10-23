@@ -447,3 +447,85 @@ fn open_in_version_resolves_same_resource_in_other_root() {
         )
         .is_err());
 }
+
+#[test]
+fn blame_is_lazy_and_invalidated_on_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\ntwo\nthree\n");
+    let first = test.commit_all("Write the page");
+    let mut engine = engine();
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&dir.path().join("page.adoc")).unwrap();
+    pump_until(&mut engine, |engine| !engine.has_pending());
+
+    assert!(
+        engine.blame_for(id).is_none(),
+        "nothing is computed until asked"
+    );
+    let events = engine.subscribe();
+    engine.request_blame(id);
+    assert!(pump_until(&mut engine, |engine| engine
+        .blame_for(id)
+        .is_some()));
+    assert!(events_of(&events).contains(&EngineEvent::GitBlameChanged(id)));
+    let blame = engine.blame_for(id).unwrap();
+    assert_eq!(blame.len(), 3);
+    assert!(blame
+        .iter()
+        .all(|line| line.commit.as_deref() == Some(&first[..7])));
+
+    // An edit is overlaid from the hunks, without computing blame again.
+    replace(&mut engine, id, "two\n", "two, edited\n");
+    assert!(pump_until(&mut engine, |engine| !engine
+        .git()
+        .hunks_for(id)
+        .is_empty()));
+    let blame = engine.blame_for(id).unwrap();
+    assert_eq!(blame[1].commit, None);
+    assert_eq!(blame[1].summary, "Not committed");
+    assert_eq!(blame[2].commit.as_deref(), Some(&first[..7]));
+
+    // Saving forgets it; the next request computes it again.
+    engine.save(id).unwrap();
+    assert!(engine.blame_for(id).is_none());
+}
+
+#[test]
+fn remote_links_need_a_known_host_and_a_pushed_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let (test, mut engine, id, text) = ten_lines(dir.path());
+    let offset = text.find("line 3").unwrap();
+    let link = |engine: &mut Engine| {
+        engine.invoke(
+            ids::NAVIGATE_OPEN_ON_REMOTE,
+            CommandArgs::Offset { id, offset },
+        )
+    };
+    assert!(link(&mut engine).is_err(), "no remote");
+
+    test.add_remote("origin", "git@github.com:bovinemagnet/AdocFoundry.git");
+    let error = link(&mut engine).unwrap_err().to_string();
+    assert!(error.contains("not pushed"), "{error}");
+
+    test.track_remote("origin");
+    let outcome = link(&mut engine).unwrap();
+    assert_eq!(
+        outcome,
+        adoc_engine::CommandOutcome::Url(
+            "https://github.com/bovinemagnet/AdocFoundry/blob/main/page.adoc?plain=1#L3".to_owned()
+        )
+    );
+    assert_eq!(
+        engine
+            .invoke(
+                ids::NAVIGATE_COPY_REMOTE_LINK,
+                CommandArgs::Offset { id, offset }
+            )
+            .unwrap(),
+        outcome
+    );
+}
