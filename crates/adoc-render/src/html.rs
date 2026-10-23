@@ -591,7 +591,9 @@ fn code_with_callouts(text: &str, callouts: &[adoc_dom::Callout]) -> String {
 }
 
 fn file_url(path: &std::path::Path) -> String {
-    format!("file://{}", path.display())
+    // A relative path after `file://` would be read as a host name.
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    format!("file://{}", absolute.display())
 }
 
 fn img(image: &ViewImage) -> String {

@@ -488,3 +488,29 @@ fn html_renders_list_styles_and_asciidoc_cells() {
     assert!(html.contains("<p class=\"tableblock\">Plain</p>"), "{html}");
     assert!(html.contains("File&#160;&#8250; Save"), "{html}");
 }
+
+#[test]
+fn file_urls_are_absolute_for_relative_paths() {
+    // A page opened by a relative path resolves images and diagrams relative to the working
+    // directory; `file://docs/...` would name a host called `docs`.
+    struct Relative;
+    impl ViewResolver for Relative {
+        fn xref(&self, from: &Path, target: &str) -> ResolvedLink {
+            LocalResolver.xref(from, target)
+        }
+        fn image(&self, _: &Path, _: &str, _: Option<&str>) -> Option<PathBuf> {
+            Some(PathBuf::from("docs/images/a.png"))
+        }
+        fn diagram(&self, _: &str, _: &str, _: &BTreeMap<String, String>) -> DiagramView {
+            DiagramView::Svg(PathBuf::from("cache/d.svg"))
+        }
+    }
+    let text = "= Page\n\nimage::a.png[A]\n\n[mermaid]\n----\ngraph TD\n  A --> B\n----\n";
+    let view = view_of(Path::new("docs/page.adoc"), text, &Relative);
+    let html = to_html(&view, &HtmlOptions::default());
+    for path in ["docs/images/a.png", "cache/d.svg"] {
+        let absolute = std::path::absolute(path).unwrap();
+        let expected = format!("<img src=\"file://{}\"", absolute.display());
+        assert!(html.contains(&expected), "{path}: {html}");
+    }
+}
