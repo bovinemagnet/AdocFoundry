@@ -561,12 +561,12 @@ fn includes_resolve_beside_a_page_above_the_working_directory() {
 #[test]
 fn document_title_keeps_its_subtitle() {
     // acdc splits `Main: Sub` into a title and a subtitle; the doctitle is the whole text.
-    let text = "= PLUS Suite: Data Architecture Overview\n\nBody.\n";
+    let text = "= Project Guide: Data Architecture Overview\n\nBody.\n";
     let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
     let title = dom.title.as_deref().map(Inline::plain_text);
     assert_eq!(
         title.as_deref(),
-        Some("PLUS Suite: Data Architecture Overview")
+        Some("Project Guide: Data Architecture Overview")
     );
 }
 

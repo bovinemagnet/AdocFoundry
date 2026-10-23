@@ -20,7 +20,7 @@ Automated coverage for reference: the theme loader against asciidoctor-pdf's own
 
 - [x] `adocfoundry-cli pdf tests/fixtures/pdf/reference/article.adoc` and `asciidoctor-pdf` of the same page, side by side: the same four pages, the same page breaks, and every line of body text within 1.7 pt of asciidoctor-pdf's (measured line by line on macOS), apart from the footnote at the foot of the last page (3.6 pt) and the text drawn inside the SVG image (3.0 pt, a different SVG renderer); at reading distance the two cannot be told apart. The visual regression test measures the same pages: a mean grey difference of at most 0.0085 per page and the ink within 1.8 pt.
 - [x] The same with `tests/fixtures/pdf/themes/acme-theme.yml` and `:title-page:`: title page with logo, header with the document title, footers with the section title and a bold page number on recto and verso; the same six pages (macOS).
-- [x] A real documentation page with the project's own asciidoctor-pdf theme and fonts (`--theme …/jdr-full-theme.yml --fonts-dir …/fonts`): header and footer images, `1 of 5` page numbers, Montserrat and JetBrains Mono, every line within 0.7 pt of asciidoctor-pdf's (macOS).
+- [x] A real documentation page with the project's own asciidoctor-pdf theme and fonts (`--theme …/project-theme.yml --fonts-dir …/fonts`): header and footer images, `1 of 5` page numbers, Montserrat and JetBrains Mono, every line within 0.7 pt of asciidoctor-pdf's (macOS).
 
 ## Themes
 
