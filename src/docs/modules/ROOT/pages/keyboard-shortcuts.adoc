@@ -68,6 +68,16 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Ctrl-minus
 |`navigate.back`
 
+|Go to next change
+|Option-Down
+|Alt-Down
+|`git.next_change`
+
+|Go to previous change
+|Option-Up
+|Alt-Up
+|`git.previous_change`
+
 |Go forward
 |Ctrl-Shift-minus
 |Ctrl-Shift-minus
@@ -129,7 +139,7 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |`view.show_split`
 |===
 
-Three commands have no default binding and are available from the palette: Re-index Workspace (`workspace.reindex`), Reload Settings (`settings.reload`) and Refresh Git Status (`git.refresh`).
+Five commands have no default binding and are available from the palette: Re-index Workspace (`workspace.reindex`), Reload Settings (`settings.reload`), Refresh Git Status (`git.refresh`), Revert Change (`git.revert_hunk`) and Show Changes (`git.show_changes`).
 Three preview commands also have no default binding and are available from the palette: Detach Preview (`view.detach_preview`), Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) and Pin Preview (`preview.pin`).
 Toggle Preview is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
 See xref:preview.adoc[The preview].

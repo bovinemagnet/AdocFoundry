@@ -146,6 +146,50 @@ Outside a repository nothing is shown.
 The branch updates after a commit or a branch switch.
 Refresh Git Status (`git.refresh`) in the palette discovers the repositories again, and the `git.enabled` setting turns this off; see xref:settings.adoc[Settings].
 
+[[change-markers]]
+== Change markers
+
+A 3-pixel bar at the left edge of the source editor, beside the line numbers, marks the lines changed against the last commit (`HEAD`).
+Unsaved edits are included.
+Green marks added lines and blue marks modified lines.
+A small red triangle between two lines marks where lines were deleted.
+The markers follow scrolling, soft wrap and folding, and never move the text.
+They update shortly after typing pauses.
+The visual editor marks changed blocks in the same colours; see xref:visual-editing.adoc#changed-blocks[Changed blocks].
+Setting `git.show_markers` to `false` hides the markers in both editors; see xref:settings.adoc[Settings].
+
+=== Reverting a change
+
+Clicking a marker opens a card showing the lines as they were in the last commit.
+Its heading reads "Before this change", "Added since the last commit" or "Deleted since the last commit".
+*Revert Change* puts those lines back as one undo step, and Undo brings the edit back.
+*Copy* copies the old lines.
+Clicking elsewhere closes the card.
+
+Revert Change (`git.revert_hunk`) is also in the palette and acts on the change at the caret.
+It reports "there is no change here" when the caret is not in a change.
+Go to Next Change (`Option-Down` or `Alt-Down`) and Go to Previous Change (`Option-Up` or `Alt-Up`) move the caret from change to change, wrapping round at the ends.
+They report "there are no changes" when the page has none.
+
+== The Changes panel
+
+The sidebar has a *Changes* tab when a workspace root is in a Git repository.
+A folder outside Git has no Changes tab, and a repository with no changes shows an empty panel.
+Show Changes (`git.show_changes`) in the palette switches the sidebar to it.
+
+The panel lists the changed files under the roots that are AsciiDoc pages (`.adoc`, `.asciidoc` or `.ad`) or lie in an Antora family directory (`images`, `attachments`, `examples` or `partials`).
+Ignored files are never listed.
+Each row has the status letters of `git status --short`, the path relative to the root and, for an open document, the number of changes in brackets:
+
+----
+ M modules/ROOT/pages/page.adoc (2)
+?? modules/ROOT/images/diagram.svg
+----
+
+With more than one repository, the files are grouped under each repository's folder name.
+Clicking a row opens the file with the caret on its first change.
+The row of a deleted file does nothing.
+
 == Known limits
 
 * Input-method (IME) composition has not been verified by hand on any platform.

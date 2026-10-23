@@ -62,7 +62,9 @@ The project is built in phases: (1) a source editor with Antora support and link
 **Git**
 
 - The status bar shows the branch of the active document's repository (or `detached @ 1a2b3c4`). Repositories are found and read in-process with `gix`; nothing runs `git`. A folder outside Git behaves as before.
-- The engine tracks the status of the repository's files and the changed lines of every open document against `HEAD`, including unsaved edits; a commit, a branch switch or staging is picked up from `.git` without a restart. Change markers, a Changes panel, branch-aware Antora versions, blame and committing build on this (epic [#2](https://github.com/bovinemagnet/AdocFoundry/issues/2)).
+- The engine tracks the status of the repository's files and the changed lines of every open document against `HEAD`, including unsaved edits; a commit, a branch switch or staging is picked up from `.git` without a restart.
+- Change markers beside the line numbers (green added, blue modified, a red triangle where lines were deleted) and beside changed blocks in the visual editor. Clicking a marker shows the lines as they were, with Revert Change (one undo step) and Copy. Alt-Down and Alt-Up go to the next and previous change.
+- A Changes panel in the sidebar lists the changed pages and Antora resource files under the roots; clicking one opens it at its first change. Branch-aware Antora versions, blame and committing come next (epic [#2](https://github.com/bovinemagnet/AdocFoundry/issues/2)).
 
 **Find, replace and rename**
 
@@ -113,6 +115,7 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Indent / outdent list item (visual) | Tab / Shift-Tab | Tab / Shift-Tab |
 | Find / Replace in workspace | Cmd-Shift-F / Cmd-Shift-H | Ctrl-Shift-F / Ctrl-Shift-H |
 | Rename page | F2 | F2 |
+| Next / previous change | Option-Down / Option-Up | Alt-Down / Alt-Up |
 | Settings | Cmd-, | Ctrl-, |
 | Toggle theme | Cmd-K Cmd-T | Ctrl-K Ctrl-T |
 | Read-only second window | Cmd-K Cmd-N | Ctrl-K Ctrl-N |
@@ -139,7 +142,7 @@ asciidoctor = ""                 # optional absolute path; discovered on PATH if
 
 [git]
 enabled = true                   # false: look for no repository
-show_markers = true              # reserved for change markers
+show_markers = true              # change markers in both editors
 blame_on_hover = false           # reserved for line blame
 remote = "origin"                # reserved for links to the hosting site
 ```
@@ -177,7 +180,7 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
 - Typeset STEM: the preview shows the maths source until Phase 4.
 - Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
 - Editing included content in place, spell checking, plugins.
-- Change markers, a Changes panel, branch-aware Antora versions, blame and committing: the rest of the Git epic.
+- Branch-aware Antora versions, blame and committing: the rest of the Git epic.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
 - Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).

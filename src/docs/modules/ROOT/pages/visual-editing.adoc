@@ -47,6 +47,13 @@ After an hour in the visual editor, the Git diff touches only the lines you chan
 
 Text the editor does not understand is left alone and shown read-only; see <<read-only-content>>.
 
+== Changed blocks
+
+A block whose source lines have changed since the last commit has a bar at its left edge, in the same colours as the source editor: green for added, blue for modified.
+The bars work at the level of a block: a paragraph, a heading, a list item's text, an image or a whole table.
+A section is marked only for its heading.
+The `git.show_markers` setting hides them; see xref:using-the-editor.adoc#change-markers[Change markers].
+
 == Typing, deleting and selecting
 
 Click to place the caret, and type.

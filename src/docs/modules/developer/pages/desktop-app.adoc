@@ -182,6 +182,20 @@ Link following, back and forward and palette commands therefore all arrive the s
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 
+== Change markers and the Changes panel
+
+`src/editor/changes.rs` paints the source editor's markers over the editor.
+It takes positions from the editor's own layout (`EditorState::range_to_bounds`) after the editor has laid out the frame, so the markers follow scrolling, soft wrap and folding.
+Clicking a marker opens the card, which reads the old lines through `Engine::head_text` and reverts through `git.revert_hunk`.
+`git.show_markers` is read each frame.
+
+The visual editor's bars are drawn in `visual/blocks.rs`: a block is marked when its source range intersects a hunk.
+
+The Changes panel is `sidebar::changes`.
+It is built from the engine's Git statuses and shown only when a root is in a repository.
+Clicking a row invokes `document.open`, asks the engine for the document's changes with `Engine::hunks_now`, and places the caret on the first one (`WorkspaceView::open_first_change`, then `open_at`).
+A deleted file's row does nothing.
+
 == Tree-sitter grammars
 
 `grammars/tree-sitter-asciidoc` is a git submodule pinned to the `zed` branch of `bovinemagnet/tree-sitter-asciidoc`.
