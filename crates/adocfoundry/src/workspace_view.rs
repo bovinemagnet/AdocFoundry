@@ -72,6 +72,7 @@ enum SidebarTab {
     Navigation,
     Families,
     Problems,
+    Changes,
 }
 
 pub struct WorkspaceView {
@@ -207,6 +208,7 @@ impl WorkspaceView {
                 window.push_notification(format!("{command}: {error}"), cx);
             }
             EngineEvent::PreviewLayoutChanged => self.place_preview(cx),
+            EngineEvent::GitPushed { message } => window.push_notification(message.clone(), cx),
             _ => {}
         }
         cx.notify();
@@ -416,6 +418,341 @@ impl WorkspaceView {
         self.problem_count = count;
         self.problems
             .update(cx, |tree, cx| tree.set_items(items, cx));
+    }
+
+    /// The labels of the Changes panel's rows, in order.
+    #[cfg(test)]
+    pub fn changes_for_test(&mut self, cx: &mut Context<Self>) -> Vec<String> {
+        sidebar::change_rows(&self.app.read(cx).engine)
+            .into_iter()
+            .flat_map(|(_, rows)| rows.into_iter().map(|row| row.label))
+            .collect()
+    }
+
+    /// The Changes panel: Stage All and Commit…, then a row per changed file with a box to
+    /// stage it; a click on its name opens it at its first change.
+    fn render_changes(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let groups = sidebar::change_rows(&self.app.read(cx).engine);
+        let any = groups.iter().any(|(_, rows)| !rows.is_empty());
+        let staged = groups
+            .iter()
+            .any(|(_, rows)| rows.iter().any(|row| row.staged));
+        let mut list = v_flex().gap_0p5().px_1();
+        for (group, rows) in groups {
+            if let Some(name) = group {
+                list = list.child(
+                    div()
+                        .px_1()
+                        .pt_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(name),
+                );
+            }
+            for (index, row) in rows.into_iter().enumerate() {
+                let stage_path = row.path.clone();
+                let open_path = row.path.clone();
+                let selector = format!("change-row-{}", row.label);
+                list = list.child(
+                    h_flex()
+                        .debug_selector(move || selector)
+                        .gap_1()
+                        .text_sm()
+                        .child(
+                            gpui_component::checkbox::Checkbox::new((
+                                gpui::SharedString::from(row.path.display().to_string()),
+                                index,
+                            ))
+                            .checked(row.staged)
+                            .on_click(cx.listener(
+                                move |this, checked: &bool, window, cx| {
+                                    let command = if *checked {
+                                        ids::GIT_STAGE
+                                    } else {
+                                        ids::GIT_UNSTAGE
+                                    };
+                                    this.invoke(
+                                        command,
+                                        CommandArgs::Path(stage_path.clone()),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )),
+                        )
+                        .child(
+                            div()
+                                .id(gpui::SharedString::from(format!(
+                                    "change-open-{}",
+                                    row.path.display()
+                                )))
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .cursor_pointer()
+                                .when(row.deleted, |label| {
+                                    label.text_color(cx.theme().muted_foreground).line_through()
+                                })
+                                .child(row.label)
+                                .when(!row.deleted, |label| {
+                                    label.on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_first_change(&open_path, window, cx);
+                                    }))
+                                }),
+                        ),
+                );
+            }
+        }
+        v_flex()
+            .size_full()
+            .gap_1()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .p_1()
+                    .child(
+                        Button::new("stage-all")
+                            .xsmall()
+                            .ghost()
+                            .label("Stage All")
+                            .disabled(!any)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.invoke(ids::GIT_STAGE_ALL_ADOC, CommandArgs::None, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("commit")
+                            .xsmall()
+                            .label("Commit…")
+                            .disabled(!staged)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_commit_dialog(String::new(), Vec::new(), window, cx);
+                            })),
+                    ),
+            )
+            .child(div().flex_1().min_h_0().child(list))
+            .into_any_element()
+    }
+
+    /// Asks for a commit message, listing what will be committed, and commits (and pushes).
+    /// `paths` are committed as they are saved; otherwise what is staged.
+    pub fn open_commit_dialog(
+        &mut self,
+        message: String,
+        paths: Vec<std::path::PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let files: Vec<String> = {
+            let engine = &self.app.read(cx).engine;
+            let roots = engine.roots();
+            engine
+                .changed_writer_files()
+                .into_iter()
+                .filter(|(path, status)| {
+                    paths.contains(path) || status.index != adoc_engine::GitChange::Unmodified
+                })
+                .map(|(path, _)| sidebar::display_path(&path, roots))
+                .collect()
+        };
+        let state = cx.new(|cx| {
+            let mut state = gpui_component::input::TextareaState::new(window, cx);
+            state.set_value(message, window, cx);
+            state
+        });
+        let workspace = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let summary = state
+                .read(cx)
+                .value()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .count();
+            let commit = |push: bool| {
+                let (state, workspace, paths) = (state.clone(), workspace.clone(), paths.clone());
+                move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+                    let message = state.read(cx).value().to_string();
+                    window.close_dialog(cx);
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.commit(message, &paths, push, window, cx);
+                        });
+                    }
+                }
+            };
+            dialog.title("Commit").width(px(560.)).child(
+                v_flex()
+                    .gap_2()
+                    .child(gpui_component::input::Textarea::new(&state).h(px(120.)))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(if summary > 72 {
+                                cx.theme().warning
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(format!("Summary: {summary} of 72 characters")),
+                    )
+                    .child(
+                        v_flex()
+                            .text_sm()
+                            .children(files.iter().map(|file| div().child(file.clone()))),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_end()
+                            .child(
+                                Button::new("commit-and-push")
+                                    .label("Commit and Push")
+                                    .on_click(commit(true)),
+                            )
+                            .child(
+                                Button::new("commit-only")
+                                    .primary()
+                                    .label("Commit")
+                                    .on_click(commit(false)),
+                            ),
+                    ),
+            )
+        });
+    }
+
+    /// Commits with `message`, saving and staging `paths` first, then pushes when asked.
+    pub fn commit(
+        &mut self,
+        message: String,
+        paths: &[std::path::PathBuf],
+        push: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths: Vec<String> = paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        let args = CommandArgs::Custom(serde_json::json!({ "message": message, "paths": paths }));
+        let Some(CommandOutcome::Committed { commit, saved }) =
+            self.invoke(ids::GIT_COMMIT, args, window, cx)
+        else {
+            return;
+        };
+        let short = &commit[..commit.len().min(7)];
+        let note = if saved.is_empty() {
+            format!("Committed {short}")
+        } else {
+            let files = if saved.len() == 1 { "file" } else { "files" };
+            format!("Saved {} {files} and committed {short}", saved.len())
+        };
+        window.push_notification(note, cx);
+        if push {
+            self.invoke(ids::GIT_PUSH, CommandArgs::None, window, cx);
+        }
+    }
+
+    /// The component version and branch of the active page, above the navigation tree.
+    fn version_header(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let engine = &self.app.read(cx).engine;
+        let path = engine
+            .active()
+            .and_then(|id| engine.document(id))
+            .map(|document| document.path.clone())?;
+        let badge = engine.version_badge(&path)?;
+        let label = match engine.git().head_for(&path) {
+            Some(head) => format!("{badge} · {head}"),
+            None => badge,
+        };
+        Some(
+            div()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(label)
+                .into_any_element(),
+        )
+    }
+
+    /// Offers the active page's other versions in the workspace, and opens the one chosen.
+    fn on_open_in_version(
+        &mut self,
+        _: &OpenInVersion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        let Some(id) = engine.active() else {
+            return;
+        };
+        let others = engine.other_versions(id);
+        if others.is_empty() {
+            window.push_notification(
+                "No other version of this page is in the workspace: check out its branch in \
+                 another folder and add the folder to the workspace.",
+                cx,
+            );
+            return;
+        }
+        let component = engine
+            .document(id)
+            .and_then(|document| engine.version_badge(&document.path))
+            .and_then(|badge| badge.split_once('@').map(|(name, _)| name.to_owned()))
+            .unwrap_or_default();
+        let workspace = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let buttons = others.iter().enumerate().map(|(index, (version, _))| {
+                let version = version.clone();
+                let label = format!("{component}@{}", version.as_deref().unwrap_or("latest"));
+                let workspace = workspace.clone();
+                Button::new(("version", index))
+                    .label(label)
+                    .ghost()
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        let args = CommandArgs::Custom(serde_json::json!({
+                            "document": id.get(),
+                            "version": version,
+                        }));
+                        if let Some(workspace) = workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.invoke(ids::NAVIGATE_OPEN_IN_VERSION, args, window, cx);
+                            });
+                        }
+                    })
+            });
+            dialog
+                .title("Open in Another Version")
+                .child(v_flex().gap_1().children(buttons))
+        });
+    }
+
+    /// Whether the sidebar offers the Changes panel: when a root is in a repository.
+    fn has_changes_panel(&self, cx: &App) -> bool {
+        !self.app.read(cx).engine.git().repositories().is_empty()
+    }
+
+    /// Opens `path` with the caret on its first change against `HEAD`.
+    pub fn open_first_change(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(CommandOutcome::Opened(id)) = self.invoke(
+            ids::DOCUMENT_OPEN,
+            CommandArgs::Path(path.to_path_buf()),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        let first = self
+            .app
+            .read(cx)
+            .engine
+            .hunks_now(id)
+            .ok()
+            .and_then(|hunks| hunks.first().map(|hunk| hunk.range.start))
+            .unwrap_or(0);
+        self.open_at(path, SourceRange::new(first, first), window, cx);
     }
 
     fn refresh_outline(&mut self, cx: &mut Context<Self>) {
@@ -935,6 +1272,158 @@ impl WorkspaceView {
         self.invoke(ids::GIT_REFRESH, CommandArgs::None, window, cx);
     }
 
+    /// The active document and the source caret, for commands that act at the caret.
+    fn caret(&self, cx: &App) -> Option<(DocumentId, usize)> {
+        let editor = self.active_editor()?.read(cx);
+        Some((editor.document(), editor.cursor(cx)))
+    }
+
+    fn on_revert_change(&mut self, _: &RevertChange, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((id, offset)) = self.caret(cx) else {
+            return;
+        };
+        self.invoke(
+            ids::GIT_REVERT_HUNK,
+            CommandArgs::Offset { id, offset },
+            window,
+            cx,
+        );
+    }
+
+    fn on_next_change(&mut self, _: &NextChange, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to_change(ids::GIT_NEXT_CHANGE, window, cx);
+    }
+
+    fn on_previous_change(
+        &mut self,
+        _: &PreviousChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_change(ids::GIT_PREVIOUS_CHANGE, window, cx);
+    }
+
+    fn go_to_change(
+        &mut self,
+        command: adoc_engine::CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((id, offset)) = self.caret(cx) else {
+            return;
+        };
+        if let Some(CommandOutcome::Location(location)) =
+            self.invoke(command, CommandArgs::Offset { id, offset }, window, cx)
+        {
+            self.open_at(&location.path, location.range, window, cx);
+        }
+    }
+
+    fn on_toggle_blame(&mut self, _: &ToggleBlame, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.active_editor().cloned() {
+            editor.update(cx, |editor, cx| editor.toggle_blame(window, cx));
+        }
+    }
+
+    fn on_open_on_remote(&mut self, _: &OpenOnRemote, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(url) = self.remote_link(ids::NAVIGATE_OPEN_ON_REMOTE, window, cx) {
+            cx.open_url(&url);
+        }
+    }
+
+    fn on_copy_remote_link(
+        &mut self,
+        _: &CopyRemoteLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(url) = self.remote_link(ids::NAVIGATE_COPY_REMOTE_LINK, window, cx) {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
+            window.push_notification(format!("Copied {url}"), cx);
+        }
+    }
+
+    /// The address of the caret's line on the hosting site, from `command`.
+    fn remote_link(
+        &mut self,
+        command: adoc_engine::CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let (id, offset) = self.caret(cx)?;
+        match self.invoke(command, CommandArgs::Offset { id, offset }, window, cx)? {
+            CommandOutcome::Url(url) => Some(url),
+            _ => None,
+        }
+    }
+
+    /// The active document's path, for commands that act on the file.
+    fn active_path(&self, cx: &App) -> Option<std::path::PathBuf> {
+        let engine = &self.app.read(cx).engine;
+        engine
+            .active()
+            .and_then(|id| engine.document(id))
+            .map(|document| document.path.clone())
+    }
+
+    fn on_stage_file(&mut self, _: &StageFile, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.active_path(cx) {
+            self.invoke(ids::GIT_STAGE, CommandArgs::Path(path), window, cx);
+        }
+    }
+
+    fn on_unstage_file(&mut self, _: &UnstageFile, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(path) = self.active_path(cx) {
+            self.invoke(ids::GIT_UNSTAGE, CommandArgs::Path(path), window, cx);
+        }
+    }
+
+    fn on_stage_all(&mut self, _: &StageAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::GIT_STAGE_ALL_ADOC, CommandArgs::None, window, cx);
+    }
+
+    fn on_commit_changes(
+        &mut self,
+        _: &CommitChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_commit_dialog(String::new(), Vec::new(), window, cx);
+    }
+
+    fn on_push(&mut self, _: &Push, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::GIT_PUSH, CommandArgs::None, window, cx);
+    }
+
+    fn on_save_and_commit(
+        &mut self,
+        _: &SaveAndCommit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.app.read(cx).engine.active() else {
+            return;
+        };
+        if let Some(CommandOutcome::CommitDraft { message, paths }) = self.invoke(
+            ids::GIT_SAVE_AND_COMMIT,
+            CommandArgs::Document(id),
+            window,
+            cx,
+        ) {
+            self.open_commit_dialog(message, paths, window, cx);
+        }
+    }
+
+    fn on_show_changes(&mut self, _: &ShowChanges, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.has_changes_panel(cx) {
+            window.push_notification("No workspace folder is in a Git repository.", cx);
+            return;
+        }
+        self.invoke(ids::GIT_SHOW_CHANGES, CommandArgs::None, window, cx);
+        self.sidebar_tab = SidebarTab::Changes;
+        cx.notify();
+    }
+
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::External(path)) =
             self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
@@ -1176,22 +1665,45 @@ impl WorkspaceView {
 
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_problems(cx);
-        let selected = match self.sidebar_tab {
-            SidebarTab::Navigation => 0,
-            SidebarTab::Families => 1,
-            SidebarTab::Problems => 2,
-        };
-        let problems = format!("Problems ({})", self.problem_count);
+        let git = self.has_changes_panel(cx);
+        if !git && self.sidebar_tab == SidebarTab::Changes {
+            self.sidebar_tab = SidebarTab::Navigation;
+        }
+        let mut panels = vec![
+            (SidebarTab::Navigation, "Navigation".to_owned()),
+            (SidebarTab::Families, "Modules".to_owned()),
+            (
+                SidebarTab::Problems,
+                format!("Problems ({})", self.problem_count),
+            ),
+        ];
+        if git {
+            panels.push((SidebarTab::Changes, "Changes".to_owned()));
+        }
+        let selected = panels
+            .iter()
+            .position(|(tab, _)| *tab == self.sidebar_tab)
+            .unwrap_or(0);
         let content = match self.sidebar_tab {
-            SidebarTab::Navigation => self
-                .render_tree(&self.navigation.clone(), "nav", cx)
-                .into_any_element(),
+            SidebarTab::Navigation => {
+                let header = self.version_header(cx);
+                v_flex()
+                    .size_full()
+                    .children(header)
+                    .child(div().flex_1().min_h_0().child(self.render_tree(
+                        &self.navigation.clone(),
+                        "nav",
+                        cx,
+                    )))
+                    .into_any_element()
+            }
             SidebarTab::Families => self
                 .render_tree(&self.families.clone(), "families", cx)
                 .into_any_element(),
             SidebarTab::Problems => self
                 .render_tree(&self.problems.clone(), "problems", cx)
                 .into_any_element(),
+            SidebarTab::Changes => self.render_changes(cx),
         };
         v_flex()
             .size_full()
@@ -1202,15 +1714,15 @@ impl WorkspaceView {
                     .underline()
                     .small()
                     .selected_index(selected)
-                    .child(Tab::new().label("Navigation"))
-                    .child(Tab::new().label("Modules"))
-                    .child(Tab::new().label(problems))
-                    .on_click(cx.listener(|this, index: &usize, _, cx| {
-                        this.sidebar_tab = match index {
-                            0 => SidebarTab::Navigation,
-                            1 => SidebarTab::Families,
-                            _ => SidebarTab::Problems,
-                        };
+                    .children(
+                        panels
+                            .iter()
+                            .map(|(_, label)| Tab::new().label(label.clone())),
+                    )
+                    .on_click(cx.listener(move |this, index: &usize, _, cx| {
+                        if let Some((tab, _)) = panels.get(*index) {
+                            this.sidebar_tab = *tab;
+                        }
                         cx.notify();
                     })),
             )
@@ -1274,11 +1786,18 @@ impl WorkspaceView {
             None => (None, None, None),
         };
         // The branch of the active document's repository, else of the first root's.
-        let branch = file
+        let repository = file
             .as_deref()
             .or(roots.first().map(std::path::PathBuf::as_path))
-            .and_then(|path| engine.git().head_for(path))
-            .map(ToString::to_string);
+            .and_then(|path| engine.git().repository_for(path));
+        let branch = repository.map(|repository| repository.head.to_string());
+        // Commits not yet pushed: `main ↑2`.
+        let ahead = repository
+            .and_then(|repository| repository.ahead)
+            .map(|ahead| format!(" ↑{ahead}"))
+            .unwrap_or_default();
+        // The component version of the active page: `product@2.0 · main`.
+        let badge = file.as_deref().and_then(|path| engine.version_badge(path));
         let indexing = engine.has_pending();
         StatusBar::new()
             .left(
@@ -1286,13 +1805,27 @@ impl WorkspaceView {
                     .text_xs()
                     .child(path.unwrap_or_else(|| "No document".to_owned())),
             )
-            .when_some(branch, |bar, branch| {
-                let selector = format!("status-branch-{branch}");
+            .when_some(badge.clone(), |bar, badge| {
+                let selector = format!("status-version-{badge}");
                 bar.left(
                     div()
                         .debug_selector(move || selector)
                         .text_xs()
-                        .child(format!("⎇ {branch}")),
+                        .child(badge),
+                )
+            })
+            .when_some(branch, |bar, branch| {
+                let selector = format!("status-branch-{branch}");
+                let label = if badge.is_some() {
+                    format!("· {branch}{ahead}")
+                } else {
+                    format!("⎇ {branch}{ahead}")
+                };
+                bar.left(
+                    div()
+                        .debug_selector(move || selector)
+                        .text_xs()
+                        .child(label),
                 )
             })
             .when(indexing, |bar| bar.left(div().text_xs().child("Indexing…")))
@@ -1392,6 +1925,20 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_rename))
             .on_action(cx.listener(Self::on_reindex))
             .on_action(cx.listener(Self::on_refresh_git))
+            .on_action(cx.listener(Self::on_revert_change))
+            .on_action(cx.listener(Self::on_next_change))
+            .on_action(cx.listener(Self::on_previous_change))
+            .on_action(cx.listener(Self::on_show_changes))
+            .on_action(cx.listener(Self::on_open_in_version))
+            .on_action(cx.listener(Self::on_toggle_blame))
+            .on_action(cx.listener(Self::on_open_on_remote))
+            .on_action(cx.listener(Self::on_copy_remote_link))
+            .on_action(cx.listener(Self::on_stage_file))
+            .on_action(cx.listener(Self::on_unstage_file))
+            .on_action(cx.listener(Self::on_stage_all))
+            .on_action(cx.listener(Self::on_commit_changes))
+            .on_action(cx.listener(Self::on_push))
+            .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))

@@ -55,12 +55,25 @@ pub(crate) enum WorkerMessage {
         generation: u64,
         workdir: PathBuf,
         refresh: u64,
-        result: Result<(adoc_git::Head, Vec<adoc_git::FileStatus>), String>,
+        result: Result<crate::git::Snapshot, String>,
     },
     GitHunks {
         id: crate::DocumentId,
         version: u64,
         hunks: Result<Vec<adoc_git::Hunk>, String>,
+    },
+    BranchVersions {
+        generation: u64,
+        versions: Option<adoc_antora::BranchVersions>,
+    },
+    GitBlame {
+        id: crate::DocumentId,
+        generation: u64,
+        blame: Result<Vec<adoc_git::BlameLine>, String>,
+    },
+    Pushed {
+        workdir: PathBuf,
+        result: Result<String, String>,
     },
 }
 
@@ -232,6 +245,7 @@ impl Engine {
                     return; // A newer workspace replaced the one this worker indexed.
                 }
                 self.workspace = *state;
+                self.restore_branch_versions();
                 // Open documents are newer than the files the worker read.
                 let open: Vec<_> = self
                     .documents
@@ -244,6 +258,10 @@ impl Engine {
                 }
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
+                // The playbook may have changed with the files.
+                if !self.git.repositories().is_empty() {
+                    self.refresh_branch_versions();
+                }
                 self.preview_workspace_changed();
                 self.visual_workspace_changed();
             }
@@ -270,6 +288,16 @@ impl Engine {
                 result,
             } => self.git_refreshed(generation, &workdir, refresh, result),
             WorkerMessage::GitHunks { id, version, hunks } => self.git_hunks(id, version, hunks),
+            WorkerMessage::BranchVersions {
+                generation,
+                versions,
+            } => self.branch_versions_found(generation, versions),
+            WorkerMessage::GitBlame {
+                id,
+                generation,
+                blame,
+            } => self.git_blamed(id, generation, blame),
+            WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
             WorkerMessage::IndexFailed { error } => {
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,

@@ -45,6 +45,8 @@ pub struct AntoraCatalog {
     /// Alias coordinate → the coordinate of the page that declares it.
     aliases: BTreeMap<AntoraCoordinate, AntoraCoordinate>,
     playbook: Option<crate::Playbook>,
+    /// Which branch publishes each version, when the workspace's repository is known.
+    branch_versions: Option<crate::BranchVersions>,
 }
 
 impl AntoraCatalog {
@@ -111,6 +113,15 @@ impl AntoraCatalog {
 
     pub fn set_playbook(&mut self, playbook: Option<crate::Playbook>) {
         self.playbook = playbook;
+    }
+
+    #[must_use]
+    pub fn branch_versions(&self) -> Option<&crate::BranchVersions> {
+        self.branch_versions.as_ref()
+    }
+
+    pub fn set_branch_versions(&mut self, branch_versions: Option<crate::BranchVersions>) {
+        self.branch_versions = branch_versions;
     }
 
     /// The resource at `coordinate`, falling back to a page that lists it in `page-aliases`.

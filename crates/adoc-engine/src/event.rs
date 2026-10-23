@@ -70,4 +70,10 @@ pub enum EngineEvent {
     },
     /// New line changes of an open document against `HEAD` are in `Engine::git`.
     GitHunksChanged(DocumentId),
+    /// The blame of an open document is ready from `Engine::blame_for`, or was forgotten.
+    GitBlameChanged(DocumentId),
+    /// A push finished; `message` says what was pushed where.
+    GitPushed {
+        message: String,
+    },
 }

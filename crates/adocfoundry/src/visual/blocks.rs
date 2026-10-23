@@ -32,6 +32,9 @@ struct Draw<'a> {
     caret: Hsla,
     selection: Hsla,
     focused: bool,
+    /// The document's changes against `HEAD`, when markers are shown.
+    changes: Vec<adoc_engine::Hunk>,
+    marks: crate::editor::changes::MarkColours,
 }
 
 /// The whole document: each top-level node.
@@ -70,6 +73,14 @@ pub fn document(
         window,
         cx,
     );
+    let changes = {
+        let engine = &view.app.read(cx).engine;
+        if engine.settings().git.show_markers {
+            engine.git().hunks_for(view.document).to_vec()
+        } else {
+            Vec::new()
+        }
+    };
     let draw = Draw {
         document,
         inline: context.inline.clone(),
@@ -77,6 +88,12 @@ pub fn document(
         caret: cx.theme().primary,
         selection: cx.theme().primary.opacity(0.25),
         focused: view.focus.is_focused(window),
+        changes,
+        marks: crate::editor::changes::MarkColours {
+            added: cx.theme().success,
+            modified: cx.theme().info,
+            deleted: cx.theme().danger,
+        },
     };
     let mut path = Vec::new();
     document
@@ -121,6 +138,16 @@ impl VisualView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let element = self.node_body(path, node, draw, cx);
+        // A block without text of its own (an image, a table, read-only content) is marked
+        // whole; text blocks are marked where their text is drawn.
+        let marked_whole = node.text.is_none()
+            && (node.children.is_empty() || matches!(node.kind, NodeKind::Table { .. }))
+            && !matches!(node.kind, NodeKind::Row { .. } | NodeKind::Cell);
+        let element = if marked_whole {
+            with_change_bar(element, node.range, path, draw)
+        } else {
+            element
+        };
         // A block's title (`.Title`) is shown above it and edited in the source. Sections and
         // headings are their titles; read-only blocks are drawn with theirs by the preview.
         let titled = !matches!(
@@ -607,7 +634,32 @@ impl VisualView {
     }
 
     /// The text block of `node`, drawn for editing, with the caret and selection over it.
+    /// The text block of `node`, with a change bar when its lines differ from `HEAD`. A cell's
+    /// changes are marked on its table.
     fn text(
+        &self,
+        path: &[usize],
+        node: &Node,
+        draw: &Draw<'_>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let element = self.text_inner(path, node, draw, cx);
+        let Some(block) = node.text.as_ref() else {
+            return element;
+        };
+        if matches!(node.kind, NodeKind::Cell) {
+            return element;
+        }
+        // A block with children (a section, a list item) is marked only for its own text.
+        let range = if node.children.is_empty() {
+            node.range
+        } else {
+            block.range
+        };
+        with_change_bar(element, range, path, draw)
+    }
+
+    fn text_inner(
         &self,
         path: &[usize],
         node: &Node,
@@ -716,4 +768,44 @@ fn joined(path: &[usize]) -> String {
         .map(usize::to_string)
         .collect::<Vec<_>>()
         .join("-")
+}
+
+/// `element` with a bar at its left in the colour of the changes its source `range` meets: added,
+/// modified or deleted lines; `element` unchanged when it meets none.
+fn with_change_bar(
+    element: AnyElement,
+    range: adoc_core::SourceRange,
+    path: &[usize],
+    draw: &Draw<'_>,
+) -> AnyElement {
+    use adoc_engine::HunkKind;
+    let kinds: Vec<HunkKind> = draw
+        .changes
+        .iter()
+        .filter(|hunk| {
+            if hunk.range.is_empty() {
+                range.start <= hunk.range.start && hunk.range.start < range.end
+            } else {
+                hunk.range.start < range.end && range.start < hunk.range.end
+            }
+        })
+        .map(|hunk| hunk.kind)
+        .collect();
+    let colour = if kinds.is_empty() {
+        return element;
+    } else if kinds.iter().all(|kind| *kind == HunkKind::Added) {
+        draw.marks.added
+    } else if kinds.iter().all(|kind| *kind == HunkKind::Deleted) {
+        draw.marks.deleted
+    } else {
+        draw.marks.modified
+    };
+    let selector = format!("visual-change-{}", joined(path));
+    h_flex()
+        .debug_selector(move || selector)
+        .items_stretch()
+        .gap_1()
+        .child(div().w(px(3.)).flex_none().bg(colour))
+        .child(div().flex_1().min_w_0().child(element))
+        .into_any_element()
 }

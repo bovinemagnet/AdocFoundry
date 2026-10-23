@@ -4,8 +4,10 @@
 //! Everything goes through `gix` in-process; nothing runs the `git` executable. The engine owns
 //! this crate and calls it from worker threads; no UI or engine type appears here.
 
+mod blame;
 mod diff;
 mod error;
+mod remote;
 mod repository;
 #[cfg(feature = "test-support")]
 pub mod testing;
@@ -14,8 +16,10 @@ use std::{ops::Range, path::PathBuf};
 
 use adoc_core::SourceRange;
 
+pub use blame::{blame_through, BlameLine};
 pub use diff::line_hunks;
 pub use error::GitError;
+pub use remote::{remote_link_for_line, HostKind};
 pub use repository::Repository;
 
 /// What `HEAD` points at.
@@ -38,6 +42,15 @@ impl std::fmt::Display for Head {
             Self::Unborn => formatter.write_str("no commits yet"),
         }
     }
+}
+
+/// A branch of the repository: local, or tracking one on a remote.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Branch {
+    /// The remote a remote-tracking branch is on; `None` for a local branch.
+    pub remote: Option<String>,
+    /// The branch's own name (`main`, `v1.0`), without `refs/heads/` or the remote's name.
+    pub name: String,
 }
 
 /// The state of one file in the index (against `HEAD`) and in the working tree (against the

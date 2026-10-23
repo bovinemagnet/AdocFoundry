@@ -68,6 +68,20 @@ pub mod ids {
     pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
     pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
     pub const GIT_REFRESH: CommandId = CommandId::new("git.refresh");
+    pub const GIT_REVERT_HUNK: CommandId = CommandId::new("git.revert_hunk");
+    pub const GIT_NEXT_CHANGE: CommandId = CommandId::new("git.next_change");
+    pub const GIT_PREVIOUS_CHANGE: CommandId = CommandId::new("git.previous_change");
+    pub const GIT_SHOW_CHANGES: CommandId = CommandId::new("git.show_changes");
+    pub const NAVIGATE_OPEN_IN_VERSION: CommandId = CommandId::new("navigate.open_in_version");
+    pub const GIT_SHOW_BLAME: CommandId = CommandId::new("git.show_blame");
+    pub const NAVIGATE_OPEN_ON_REMOTE: CommandId = CommandId::new("navigate.open_on_remote");
+    pub const NAVIGATE_COPY_REMOTE_LINK: CommandId = CommandId::new("navigate.copy_remote_link");
+    pub const GIT_STAGE: CommandId = CommandId::new("git.stage");
+    pub const GIT_UNSTAGE: CommandId = CommandId::new("git.unstage");
+    pub const GIT_STAGE_ALL_ADOC: CommandId = CommandId::new("git.stage_all_adoc");
+    pub const GIT_COMMIT: CommandId = CommandId::new("git.commit");
+    pub const GIT_PUSH: CommandId = CommandId::new("git.push");
+    pub const GIT_SAVE_AND_COMMIT: CommandId = CommandId::new("git.save_and_commit");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;
@@ -351,6 +365,8 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     }
     crate::visual::register_visual(registry);
     crate::git::register_git(registry);
+    crate::versions::register_versions(registry);
+    crate::commit::register_commit(registry);
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry, spec: CommandSpec, run: Run) {

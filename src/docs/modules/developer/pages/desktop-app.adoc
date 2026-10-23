@@ -182,6 +182,37 @@ Link following, back and forward and palette commands therefore all arrive the s
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 
+== Change markers and the Changes panel
+
+`src/editor/changes.rs` paints the source editor's markers over the editor.
+It takes positions from the editor's own layout (`EditorState::range_to_bounds`) after the editor has laid out the frame, so the markers follow scrolling, soft wrap and folding.
+Clicking a marker opens the card, which reads the old lines through `Engine::head_text` and reverts through `git.revert_hunk`.
+`git.show_markers` is read each frame.
+
+`src/editor/blame.rs` paints the blame column and watches the line-number gutter.
+It takes line positions from the editor's layout as the markers do, so the column follows scrolling, soft wrap and folding.
+It reads `Engine::blame_for` and asks for it with `Engine::request_blame`.
+With `git.blame_on_hover`, resting on the gutter for 400 ms shows the tooltip.
+`relative_time` and `describe` are unit-tested there.
+A `CommandOutcome::Url` from Open on Remote or Copy Remote Link is opened with `cx.open_url` or copied.
+
+The visual editor's bars are drawn in `visual/blocks.rs`: a block is marked when its source range intersects a hunk.
+
+The Changes panel is `sidebar::changes`.
+It is built from the engine's Git statuses and shown only when a root is in a repository.
+Clicking a row invokes `document.open`, asks the engine for the document's changes with `Engine::hunks_now`, and places the caret on the first one (`WorkspaceView::open_first_change`, then `open_at`).
+A deleted file's name is struck through and its row opens nothing.
+The rows come from `Engine::changed_writer_files`, the list that Stage All uses.
+Each row has a checkbox, ticked when the file has changes staged, and it invokes `git.stage` or `git.unstage`.
+*Stage All* invokes `git.stage_all_adoc` and is disabled when the list is empty, and *Commit…* is disabled when nothing is staged.
+
+The commit dialog is `commit_dialog`.
+It holds the message field, the summary count ("Summary: N of 72 characters", in the warning colour past 72) and the files to be committed.
+*Commit* invokes `git.commit` with the message and the paths, and *Commit and Push* then invokes `git.push`.
+It reports the outcome in a notification: `Committed abc1234`, or `Saved N file(s) and committed abc1234`.
+The `CommandOutcome::CommitDraft` from Save and Commit opens it with the message and paths filled in.
+The status bar adds `↑n` from `GitRepository::ahead`.
+
 == Tree-sitter grammars
 
 `grammars/tree-sitter-asciidoc` is a git submodule pinned to the `zed` branch of `bovinemagnet/tree-sitter-asciidoc`.

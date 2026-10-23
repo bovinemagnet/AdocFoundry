@@ -160,6 +160,95 @@ impl TestRepo {
         .expect("write HEAD");
     }
 
+    /// Checks out branch `name`, as `git checkout` would with nothing uncommitted: the working
+    /// tree and index become the branch's tree, and `HEAD` points at it.
+    ///
+    /// # Panics
+    /// When the branch does not exist or the files cannot be written.
+    pub fn checkout(&self, name: &str) {
+        let mut reference = self
+            .repo
+            .find_reference(format!("refs/heads/{name}").as_str())
+            .expect("the branch to check out");
+        let tree = reference
+            .peel_to_commit()
+            .expect("a commit")
+            .tree()
+            .expect("its tree");
+        let mut current = Vec::new();
+        collect_files(&self.dir, &self.dir, &mut current);
+        for (path, _) in current {
+            fs::remove_file(self.dir.join(&path)).expect("remove a file");
+        }
+        let mut recorder = gix::traverse::tree::Recorder::default();
+        tree.traverse()
+            .breadthfirst(&mut recorder)
+            .expect("walk the tree");
+        for entry in recorder.records {
+            if !entry.mode.is_blob() {
+                continue;
+            }
+            let object = self.repo.find_object(entry.oid).expect("a blob");
+            let path = entry.filepath.to_string();
+            let file = self.dir.join(&path);
+            fs::create_dir_all(file.parent().expect("a parent")).expect("create directories");
+            fs::write(file, &object.data).expect("write a file");
+        }
+        self.write_index(tree.id);
+        fs::write(
+            self.repo.git_dir().join("HEAD"),
+            format!("ref: refs/heads/{name}\n"),
+        )
+        .expect("write HEAD");
+    }
+
+    /// Writes `user.name` and `user.email` to the repository's own configuration, which the
+    /// user's global configuration cannot then override.
+    ///
+    /// # Panics
+    /// When the configuration cannot be written.
+    pub fn set_identity(&self, name: &str, email: &str) {
+        let config = self.repo.git_dir().join("config");
+        let mut text = fs::read_to_string(&config).unwrap_or_default();
+        text.push_str(&format!("[user]\n\tname = {name}\n\temail = {email}\n"));
+        fs::write(config, text).expect("write the configuration");
+    }
+
+    /// Adds remote `name` with fetch URL `url` to the repository's configuration.
+    ///
+    /// # Panics
+    /// When the configuration cannot be written.
+    pub fn add_remote(&self, name: &str, url: &str) {
+        let config = self.repo.git_dir().join("config");
+        let mut text = fs::read_to_string(&config).unwrap_or_default();
+        text.push_str(&format!(
+            "[remote \"{name}\"]\n\turl = {url}\n\tfetch = +refs/heads/*:refs/remotes/{name}/*\n"
+        ));
+        fs::write(config, text).expect("write the configuration");
+    }
+
+    /// Records the current branch as pushed to `remote`, as a push and fetch would: its
+    /// remote-tracking branch points at the current commit.
+    ///
+    /// # Panics
+    /// When `HEAD` is not on a branch with a commit.
+    pub fn track_remote(&self, remote: &str) {
+        let head = fs::read_to_string(self.repo.git_dir().join("HEAD")).expect("read HEAD");
+        let branch = head
+            .trim()
+            .strip_prefix("ref: refs/heads/")
+            .expect("HEAD on a branch");
+        let id = self.repo.head_id().expect("a commit").to_string();
+        let tracking = self
+            .repo
+            .git_dir()
+            .join("refs/remotes")
+            .join(remote)
+            .join(branch);
+        fs::create_dir_all(tracking.parent().expect("a parent")).expect("create directories");
+        fs::write(tracking, format!("{id}\n")).expect("write the remote-tracking branch");
+    }
+
     fn write_index(&self, tree: gix::ObjectId) {
         let mut index = self.repo.index_from_tree(&tree).expect("an index");
         index.write(Default::default()).expect("write the index");

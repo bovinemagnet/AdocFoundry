@@ -740,6 +740,19 @@ fn status_bar_shows_the_branch(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn status_bar_shows_the_version_and_branch(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("docs/antora.yml", "name: product\nversion: '2.0'\n");
+    test.write("docs/modules/ROOT/pages/index.adoc", "= Home\n");
+    test.commit_all("first");
+    let page = dir.path().join("docs/modules/ROOT/pages/index.adoc");
+    let mut cx = git_workspace(dir.path(), &page, cx);
+    assert!(cx.debug_bounds("status-version-product@2.0").is_some());
+    assert!(cx.debug_bounds("status-branch-main").is_some());
+}
+
+#[gpui::test]
 fn status_bar_shows_no_branch_outside_git(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     if dir
@@ -752,6 +765,361 @@ fn status_bar_shows_no_branch_outside_git(cx: &mut TestAppContext) {
     std::fs::write(dir.path().join("page.adoc"), "= Page\n").unwrap();
     let mut cx = git_workspace(dir.path(), &dir.path().join("page.adoc"), cx);
     assert!(cx.debug_bounds("status-branch-main").is_none());
+}
+
+/// Drains the engine until its workers and timers are done, as the app's pump would.
+fn settle_engine(app: &Entity<AppState>, cx: &mut VisualTestContext) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        let pending = cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.drain(cx);
+                app.engine.has_pending()
+            })
+        });
+        if !pending {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    cx.run_until_parked();
+}
+
+/// A repository whose `page.adoc` has ten numbered lines, open in a workspace window.
+fn ten_line_repository(
+    dir: &Path,
+    cx: &mut TestAppContext,
+) -> (Entity<AppState>, Entity<WorkspaceView>, VisualTestContext) {
+    init(cx);
+    let test = adoc_git::testing::TestRepo::init(dir);
+    let text: String = (1..=10).map(|number| format!("line {number}\n")).collect();
+    test.write("page.adoc", &text);
+    test.commit_all("first");
+    let mut engine = Engine::new(Settings::default());
+    engine.open_workspace(vec![dir.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![dir.join("page.adoc")], cx);
+    settle_engine(&app, &mut cx);
+    (app, workspace, cx)
+}
+
+fn replace_in(app: &Entity<AppState>, find: &str, with: &str, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            let text = app.engine.document(id).unwrap().text.to_string();
+            let start = text.find(find).unwrap();
+            app.invoke(
+                ids::EDIT_REPLACE_RANGE,
+                adoc_engine::CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(start, start + find.len()),
+                    text: with.to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+}
+
+#[gpui::test]
+fn gutter_marks_follow_hunks(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, workspace, mut cx) = ten_line_repository(dir.path(), cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    assert!(cx
+        .update(|_, cx| editor.read(cx).marks_for_test())
+        .is_empty());
+
+    replace_in(&app, "line 2\n", "line two\n", &mut cx);
+    replace_in(&app, "line 5\n", "line 5\nnew line\n", &mut cx);
+    replace_in(&app, "line 9\n", "", &mut cx);
+    settle_engine(&app, &mut cx);
+
+    let marks = cx.update(|_, cx| editor.read(cx).marks_for_test());
+    let kinds: Vec<_> = marks.iter().map(|mark| mark.kind).collect();
+    assert_eq!(
+        kinds,
+        [
+            adoc_engine::HunkKind::Modified,
+            adoc_engine::HunkKind::Added,
+            adoc_engine::HunkKind::Deleted
+        ]
+    );
+    // Each mark sits on its lines: the modified line is the second, one line high.
+    let line_height = marks[0].bounds.size.height;
+    assert!(line_height > gpui::px(0.));
+    assert!(marks[1].bounds.top() > marks[0].bounds.bottom());
+    assert_eq!(marks[1].bounds.size.height, line_height, "one added line");
+    assert!(marks[2].bounds.top() > marks[1].bounds.bottom());
+
+    // Undoing the edits clears the marks.
+    for _ in 0..3 {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                let id = app.engine.active().unwrap();
+                app.invoke(ids::EDIT_UNDO, adoc_engine::CommandArgs::Document(id), cx)
+                    .unwrap();
+            })
+        });
+    }
+    settle_engine(&app, &mut cx);
+    assert!(cx
+        .update(|_, cx| editor.read(cx).marks_for_test())
+        .is_empty());
+}
+
+#[gpui::test]
+fn clicking_a_mark_shows_head_text_and_reverts(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, workspace, mut cx) = ten_line_repository(dir.path(), cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    replace_in(&app, "line 4\n", "line four\n", &mut cx);
+    settle_engine(&app, &mut cx);
+    let mark = cx.update(|_, cx| editor.read(cx).marks_for_test())[0].clone();
+
+    cx.simulate_click(mark.bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| editor.read(cx).open_change_for_test()),
+        Some("line 4\n".to_owned())
+    );
+    let revert = cx
+        .debug_bounds("change-card")
+        .expect("the change card is open");
+    assert!(revert.size.width > gpui::px(0.));
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.revert_open_change(window, cx));
+    });
+    settle_engine(&app, &mut cx);
+    let text = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .text
+            .to_string()
+    });
+    assert!(text.contains("line 4\n") && !text.contains("four"));
+    assert!(cx
+        .update(|_, cx| editor.read(cx).marks_for_test())
+        .is_empty());
+}
+
+#[gpui::test]
+fn visual_blocks_marked_when_range_intersects_hunk(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write(
+        "page.adoc",
+        "= Page\n\nFirst paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n",
+    );
+    test.commit_all("first");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (_, mut cx) = workspace_window(&app, vec![dir.path().join("page.adoc")], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    settle_engine(&app, &mut cx);
+    assert!(
+        cx.debug_bounds("visual-change-2").is_none(),
+        "nothing changed yet"
+    );
+
+    replace_in(
+        &app,
+        "Second paragraph.",
+        "Second paragraph, edited.",
+        &mut cx,
+    );
+    settle_engine(&app, &mut cx);
+    // Blocks: the title (0), the first (1), second (2) and third (3) paragraphs.
+    assert!(
+        cx.debug_bounds("visual-change-2").is_some(),
+        "the edited paragraph is marked"
+    );
+    assert!(cx.debug_bounds("visual-change-1").is_none());
+    assert!(cx.debug_bounds("visual-change-3").is_none());
+}
+
+#[gpui::test]
+fn changes_panel_lists_changed_adoc_files_only(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("modules/ROOT/pages/page.adoc", "= Page\n\nText.\n");
+    test.write("modules/ROOT/pages/same.adoc", "= Same\n");
+    test.write("README.md", "readme\n");
+    test.write("notes.txt", "notes\n");
+    test.commit_all("first");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let page = dir.path().join("modules/ROOT/pages/page.adoc");
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    settle_engine(&app, &mut cx);
+    assert!(
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.changes_for_test(cx)))
+            .is_empty(),
+        "a repository with no changes has an empty panel"
+    );
+
+    test.write("modules/ROOT/pages/new.adoc", "= New\n");
+    test.write("modules/ROOT/images/diagram.svg", "<svg/>\n");
+    test.write("README.md", "readme, changed\n");
+    test.write("notes.txt", "notes, changed\n");
+    replace_in(&app, "Text.", "Text, edited.", &mut cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            app.invoke(
+                ids::DOCUMENT_SAVE,
+                adoc_engine::CommandArgs::Document(id),
+                cx,
+            )
+            .unwrap();
+            app.invoke(ids::GIT_REFRESH, adoc_engine::CommandArgs::None, cx)
+                .unwrap();
+        })
+    });
+    settle_engine(&app, &mut cx);
+
+    let labels =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.changes_for_test(cx)));
+    assert_eq!(
+        labels,
+        [
+            "?? modules/ROOT/images/diagram.svg",
+            "?? modules/ROOT/pages/new.adoc",
+            " M modules/ROOT/pages/page.adoc (1)",
+        ]
+    );
+}
+
+#[gpui::test]
+fn blame_column_toggles_and_hover_shows_the_commit(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("page.adoc", "= Page\n\nText.\n");
+    let first = test.commit_all("Write the page");
+    // Settings are read from their file again when the workspace opens.
+    let config = tempfile::tempdir().unwrap();
+    let user = config.path().join("adocfoundry.toml");
+    std::fs::write(&user, "[git]\nblame_on_hover = true\n").unwrap();
+    let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![dir.path().join("page.adoc")], cx);
+    settle_engine(&app, &mut cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+
+    assert!(cx.debug_bounds("blame-column").is_none());
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.toggle_blame(window, cx)));
+    settle_engine(&app, &mut cx);
+    assert!(cx.update(|_, cx| editor.read(cx).shows_blame()));
+    assert!(cx.debug_bounds("blame-column").is_some());
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let blame = cx
+        .update(|_, cx| app.read(cx).engine.blame_for(id))
+        .unwrap();
+    assert_eq!(blame[0].commit.as_deref(), Some(&first[..7]));
+
+    // Resting on the gutter beside the third line shows its commit.
+    let gutter = cx.update(|_, cx| {
+        let state = editor.read(cx).state_for_test().read(cx);
+        let line = state.range_to_bounds(&(8..8)).unwrap();
+        gpui::point(line.left() - px(6.), line.center().y)
+    });
+    cx.simulate_mouse_move(gutter, None, gpui::Modifiers::none());
+    settle_engine(&app, &mut cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(500));
+    cx.run_until_parked();
+    let tip = cx
+        .update(|_, cx| editor.read(cx).hover_tip_for_test())
+        .unwrap();
+    assert!(
+        tip.starts_with(&first[..7]) && tip.ends_with("Write the page"),
+        "{tip}"
+    );
+    assert!(cx.debug_bounds("blame-tip").is_some());
+
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.toggle_blame(window, cx)));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("blame-column").is_none());
+}
+
+#[gpui::test]
+fn save_and_commit_commits_the_page_and_counts_it_unpushed(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.set_identity("Ada Writer", "ada@example.com");
+    test.write("page.adoc", "= The Page\n\nText.\n");
+    test.commit_all("first");
+    test.add_remote("origin", "git@github.com:org/docs.git");
+    test.track_remote("origin");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![dir.path().join("page.adoc")], cx);
+    settle_engine(&app, &mut cx);
+    assert!(cx.debug_bounds("status-branch-main").is_some());
+
+    replace_in(&app, "Text.", "Text, edited.", &mut cx);
+    let (message, paths) = cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            match app
+                .invoke(
+                    ids::GIT_SAVE_AND_COMMIT,
+                    adoc_engine::CommandArgs::Document(id),
+                    cx,
+                )
+                .unwrap()
+            {
+                adoc_engine::CommandOutcome::CommitDraft { message, paths } => (message, paths),
+                other => panic!("expected a draft, got {other:?}"),
+            }
+        })
+    });
+    assert_eq!(message, "docs: update The Page");
+    settle_engine(&app, &mut cx);
+    let labels =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.changes_for_test(cx)));
+    assert_eq!(
+        labels,
+        ["M  page.adoc (1)"],
+        "staged; still one change from HEAD"
+    );
+
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.commit(message, &paths, false, window, cx)
+        });
+    });
+    settle_engine(&app, &mut cx);
+    let labels =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.changes_for_test(cx)));
+    assert!(labels.is_empty(), "committed: {labels:?}");
+    let ahead = cx.update(|_, cx| app.read(cx).engine.git().repositories()[0].ahead);
+    assert_eq!(ahead, Some(1), "one commit not pushed");
 }
 
 // --- visual editor ---------------------------------------------------------------------------

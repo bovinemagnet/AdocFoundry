@@ -1,12 +1,13 @@
 //! Sidebar trees built from engine state: the Antora navigation, the module and family browser,
-//! the workspace diagnostics, and the outline of the active document.
+//! the workspace diagnostics, the files changed since the last commit, and the outline of the
+//! active document.
 //!
 //! Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 
 use std::path::{Path, PathBuf};
 
 use adoc_core::{LineIndex, SourceRange};
-use adoc_engine::{DocumentId, DocumentSymbol, Engine, NavItem, WorkspaceState};
+use adoc_engine::{DocumentId, DocumentSymbol, Engine, GitChange, NavItem, WorkspaceState};
 use gpui_component::tree::TreeItem;
 
 /// Where a tree item leads when clicked.
@@ -267,6 +268,79 @@ pub fn problems(engine: &Engine, roots: &[PathBuf]) -> (Vec<TreeItem>, usize) {
         })
         .collect();
     (items, count)
+}
+
+/// One row of the Changes panel: a changed file a writer edits.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChangeRow {
+    pub path: PathBuf,
+    /// `git status --short` letters, the path from its root and, when open, the hunk count.
+    pub label: String,
+    /// Whether the file has changes staged for the next commit.
+    pub staged: bool,
+    /// A deleted file, which there is nothing to open of.
+    pub deleted: bool,
+}
+
+/// The Changes panel's rows, grouped by repository (named by its folder) when there are
+/// several.
+pub fn change_rows(engine: &Engine) -> Vec<(Option<String>, Vec<ChangeRow>)> {
+    let git = engine.git();
+    let roots = engine.roots();
+    let changed = engine.changed_writer_files();
+    let row = |(path, status): &(PathBuf, adoc_engine::FileStatus)| {
+        let hunks = engine
+            .document_for_path(path)
+            .map_or(0, |id| git.hunks_for(id).len());
+        let mut label = format!("{} {}", short_status(status), display_path(path, roots));
+        if hunks > 0 {
+            label.push_str(&format!(" ({hunks})"));
+        }
+        ChangeRow {
+            path: path.clone(),
+            label,
+            staged: status.index != GitChange::Unmodified,
+            deleted: matches!(status.worktree, GitChange::Deleted)
+                || matches!(status.index, GitChange::Deleted),
+        }
+    };
+    let repositories = git.repositories();
+    if repositories.len() <= 1 {
+        return vec![(None, changed.iter().map(row).collect())];
+    }
+    repositories
+        .iter()
+        .map(|repository| {
+            let name = repository.workdir.file_name().map_or_else(
+                || repository.workdir.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            let rows = changed
+                .iter()
+                .filter(|(path, _)| path.starts_with(&repository.workdir))
+                .map(row)
+                .collect();
+            (Some(name), rows)
+        })
+        .collect()
+}
+
+/// The two letters `git status --short` shows for a file.
+fn short_status(status: &adoc_engine::FileStatus) -> String {
+    let letter = |change: &GitChange| match change {
+        GitChange::Unmodified => ' ',
+        GitChange::Added => 'A',
+        GitChange::Modified => 'M',
+        GitChange::Deleted => 'D',
+        GitChange::Renamed(_) => 'R',
+        GitChange::Untracked => '?',
+        GitChange::Ignored => '!',
+        GitChange::Conflicted => 'U',
+    };
+    match status.worktree {
+        GitChange::Untracked => "??".to_owned(),
+        _ => format!("{}{}", letter(&status.index), letter(&status.worktree)),
+    }
 }
 
 /// The outline of document `id`.

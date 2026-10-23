@@ -33,6 +33,7 @@ The sidebar has three tabs and an outline.
 
 Navigation::
 Each component version's navigation, nested as its `nav.adoc` files list it.
+A line such as `product@2.0 · main` heads the panel, naming the active page's component version and branch.
 A component that declares no `nav` in `antora.yml` shows its pages by module instead.
 
 Modules::
@@ -143,8 +144,172 @@ Inside a Git repository the status bar shows the current branch, such as `⎇ ma
 It is the branch of the repository that holds the active document, or of the first root when no document is open.
 A detached HEAD shows `⎇ detached @ 1a2b3c4` and a repository with no commits shows `⎇ no commits yet`.
 Outside a repository nothing is shown.
-The branch updates after a commit or a branch switch.
+When the active page belongs to an Antora component, the bar shows its version and the branch together, such as `product@2.0 · main`, or `product@latest` for a component with `version: ~`.
+See xref:antora-support.adoc#versions-and-branches[Versions and branches].
+When the branch has a remote-tracking branch on the remote named by `git.remote`, the bar adds the number of commits the remote does not have, such as `⎇ main ↑2` or `product@2.0 · main ↑0`.
+Nothing is added while the branch has no remote-tracking branch yet.
+The branch and the count update after a commit, a push or a branch switch.
 Refresh Git Status (`git.refresh`) in the palette discovers the repositories again, and the `git.enabled` setting turns this off; see xref:settings.adoc[Settings].
+
+[[change-markers]]
+== Change markers
+
+A 3-pixel bar at the left edge of the source editor, beside the line numbers, marks the lines changed against the last commit (`HEAD`).
+Unsaved edits are included.
+Green marks added lines and blue marks modified lines.
+A small red triangle between two lines marks where lines were deleted.
+The markers follow scrolling, soft wrap and folding, and never move the text.
+They update shortly after typing pauses.
+The visual editor marks changed blocks in the same colours; see xref:visual-editing.adoc#changed-blocks[Changed blocks].
+Setting `git.show_markers` to `false` hides the markers in both editors; see xref:settings.adoc[Settings].
+
+=== Reverting a change
+
+Clicking a marker opens a card showing the lines as they were in the last commit.
+Its heading reads "Before this change", "Added since the last commit" or "Deleted since the last commit".
+*Revert Change* puts those lines back as one undo step, and Undo brings the edit back.
+*Copy* copies the old lines.
+Clicking elsewhere closes the card.
+
+Revert Change (`git.revert_hunk`) is also in the palette and acts on the change at the caret.
+It reports "there is no change here" when the caret is not in a change.
+Go to Next Change (`Option-Down` or `Alt-Down`) and Go to Previous Change (`Option-Up` or `Alt-Up`) move the caret from change to change, wrapping round at the ends.
+They report "there are no changes" when the page has none.
+
+== The Changes panel
+
+The sidebar has a *Changes* tab when a workspace root is in a Git repository.
+A folder outside Git has no Changes tab, and a repository with no changes shows an empty panel.
+Show Changes (`git.show_changes`) in the palette switches the sidebar to it.
+
+The panel lists the changed files under the roots that are AsciiDoc pages (`.adoc`, `.asciidoc` or `.ad`) or lie in an Antora family directory (`images`, `attachments`, `examples` or `partials`).
+Ignored files are never listed.
+Each row has the status letters of `git status --short`, the path relative to the root and, for an open document, the number of changes in brackets:
+
+----
+ M modules/ROOT/pages/page.adoc (2)
+?? modules/ROOT/images/diagram.svg
+----
+
+With more than one repository, the files are grouped under each repository's folder name.
+Clicking a row's name opens the file with the caret on its first change.
+The name of a deleted file is struck through and opens nothing.
+
+[[staging-and-committing]]
+=== Staging and committing
+
+Each row has a checkbox, ticked when the file has changes staged.
+Ticking it stages the file as it is in the working tree: new and changed files are added and a deleted file is staged as deleted.
+Unticking it unstages the file by putting the `HEAD` version back in the index.
+The working tree is not touched.
+
+Above the rows, *Stage All* stages every file the panel lists and is disabled when it lists none.
+*Commit…* opens the commit dialog and is disabled when nothing is staged.
+
+The commit dialog has:
+
+* a message field, whose first line is the summary, with a note under it such as "Summary: 41 of 72 characters", shown in the warning colour past 72;
+* the files that will be committed;
+* *Commit* and *Commit and Push* buttons.
+
+The dialog has no option to amend a commit or to create a branch.
+After committing, a notification reads `Committed abc1234`, or `Saved 2 files and committed abc1234` when open documents with unsaved edits were saved first.
+The change markers and the Changes panel clear, because `HEAD` has moved.
+
+Commit (`git.commit`) in the palette opens the same dialog.
+Stage (`git.stage`) and Unstage (`git.unstage`) in the palette act on the active file, and Stage All Changes (`git.stage_all_adoc`) does what *Stage All* does.
+
+Save and Commit (`git.save_and_commit`, in the Document category) saves the active page, stages it and opens the dialog with the message `docs: update <page title>`.
+The page title is the document title, or the file name when the page has none.
+
+A commit needs an author.
+The name and address come from `user.name` and `user.email` in the usual Git configuration scopes.
+Without them the commit is refused with a message that says how to set them:
+
+[source,sh]
+----
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+----
+
+A commit with nothing staged is refused with "nothing is staged to commit".
+When `commit.gpgsign` is `true`, the commit is made with the `git` executable so that it is signed with your key.
+
+[[pushing]]
+=== Pushing
+
+*Commit and Push* in the dialog, and Push (`git.push`) in the palette, push the current branch to the remote named by `git.remote`, `origin` by default.
+Pushing runs the `git` executable, so your credential helper, SSH agent and signing setup work unchanged.
+A notification reports the result, such as "Pushed main to origin", or shows the error Git gave.
+
+Push never forces and never sets an upstream.
+A branch with no upstream is refused with "branch X has no upstream: run `git push --set-upstream origin X` once".
+The executable is `tools.git` when set, else `git` on `PATH`.
+Without one, the command says "pushing needs the git executable: install Git or set [tools] git".
+Staging and committing do not need the executable, apart from signed commits.
+
+[[blame]]
+== Blame
+
+Toggle Blame (`git.show_blame`, in the View category) in the palette shows or hides a blame column at the left of the source editor for the active document.
+Each visible line shows the short commit id, the author and how long ago the line last changed, such as `abc1234 Paul Snow, 3 days ago`.
+A line changed since the last commit, including by unsaved edits, shows `Not committed`.
+The column follows scrolling, soft wrap and folding.
+
+With `git.blame_on_hover` set to `true`, resting the pointer on a line's number for 400 ms shows a tooltip such as `abc1234 · Paul Snow · 3 days ago · Fix the install steps`, or `Not committed`.
+The setting is `false` by default; see xref:settings.adoc[Settings].
+
+Blame is worked out once for the file as it is in the last commit, in the background, the first time it is asked for.
+It is not worked out again as you type: lines you change are shown as not committed.
+It is worked out again after a save, a commit or a branch switch.
+Times are shown relative to now, such as "just now", "5 minutes ago", "2 hours ago", "3 days ago", "2 months ago" and "1 year ago".
+
+[[remote-links]]
+== Links to a line on the hosting site
+
+Open on Remote (`navigate.open_on_remote`, in the Navigate category) opens the caret's line in the browser, on the site that hosts the repository's remote.
+Copy Remote Link (`navigate.copy_remote_link`) copies the address instead and says so.
+Both are in the palette and have no default binding.
+
+The remote is `git.remote`, `origin` by default.
+The link points at the current branch, or at the commit when HEAD is detached.
+Remote URLs in the forms `git@host:org/repo.git`, `ssh://git@host/org/repo.git` and `https://host/org/repo` (with or without `.git`) are all understood.
+
+[cols="1,3"]
+|===
+|Site |Link
+
+|GitHub
+|`\https://github.com/org/repo/blob/main/README.md?plain=1#L12`
+
+|GitLab
+|`\https://gitlab.com/group/repo/-/blob/main/page.adoc#L3`
+
+|Bitbucket Cloud
+|`\https://bitbucket.org/team/repo/src/main/page.adoc#lines-7`
+
+|Azure DevOps
+|`\https://dev.azure.com/org/project/_git/repo?path=/page.adoc&version=GBmain&line=7&...`
+|===
+
+The GitHub link carries `?plain=1`, which shows the source so that the line anchor works on rendered files such as AsciiDoc.
+Azure DevOps uses `GC` and the commit in place of `GB` and the branch when HEAD is detached.
+
+github.com, gitlab.com, bitbucket.org, dev.azure.com, ssh.dev.azure.com and `*.visualstudio.com` are recognised.
+A self-hosted site is named in the `[git.hosts]` table of the user settings file, host name to kind:
+
+[source,toml]
+----
+[git.hosts]
+"git.example.com" = "gitlab"   # github | gitlab | bitbucket | azure
+----
+
+The commands refuse, with a message, in three cases:
+
+* The repository has no such remote: "the repository has no remote named origin".
+* The branch has not been pushed, so `refs/remotes/origin/<branch>` does not exist: "branch main is not pushed to origin".
+A local branch that is ahead of its remote still gets a link.
+* The host is not recognised: the message asks you to name its kind under `[git.hosts]`.
 
 == Known limits
 

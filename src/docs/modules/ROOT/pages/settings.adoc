@@ -37,12 +37,16 @@ ignore = ["node_modules", ".git", "build", "target", ".cache"]
 
 [tools]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
+git = ""                         # optional absolute path; discovered on PATH if empty
 
 [git]
 enabled = true                   # false: no repository is discovered
 show_markers = true              # reserved for change markers
-blame_on_hover = false           # reserved for blame
-remote = "origin"                # reserved for remote links
+blame_on_hover = false           # tooltip on a line number
+remote = "origin"                # the remote used for links to a line
+
+[git.hosts]
+"git.example.com" = "gitlab"     # github | gitlab | bitbucket | azure
 ----
 
 == Keys
@@ -86,6 +90,11 @@ remote = "origin"                # reserved for remote links
 |`""`
 |An absolute path to `asciidoctor`. Discovered on `PATH` when empty. Used by the language server's preview only. The application's preview renders in process and does not use it.
 
+|`tools.git`
+|string
+|`""`
+|An absolute path to `git`. Discovered on `PATH` when empty. Used to push, and to make signed commits. Everything else in Git is done in process.
+
 |`git.enabled`
 |boolean
 |`true`
@@ -94,21 +103,23 @@ remote = "origin"                # reserved for remote links
 |`git.show_markers`
 |boolean
 |`true`
-|Show change markers in the editor. Read now and reserved for the change markers that follow; it has no effect yet.
+|Show change markers in the source and visual editors. When `false`, both hide them.
 
 |`git.blame_on_hover`
 |boolean
 |`false`
-|Show blame on hover. Read now and reserved for blame; it has no effect yet.
+|Show the commit that last changed a line in a tooltip when the pointer rests on its line number. See xref:using-the-editor.adoc#blame[Blame].
 
 |`git.remote`
 |string
 |`"origin"`
-|The remote used for links to the hosting service. Read now and reserved for remote links; it has no effect yet.
-|===
+|The remote used for links to a line on the hosting site.
 
-Of the `git` keys only `git.enabled` has an effect today.
-The others are read and kept for the change markers, blame and remote links that follow.
+|`git.hosts`
+|table of strings
+|empty
+|Names the kind of a self-hosted site, host name to `"github"`, `"gitlab"`, `"bitbucket"` or `"azure"`. Host names are matched without regard to case. A table with any other kind is ignored with a warning. See xref:using-the-editor.adoc#remote-links[Links to a line on the hosting site].
+|===
 
 == What a workspace file may set
 

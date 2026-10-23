@@ -5,17 +5,20 @@
 //! rename, a reload from disk) is applied back to the widget. The engine rope is the truth.
 
 pub mod bindings;
+pub mod blame;
+pub mod changes;
 pub mod language;
 mod providers;
 pub mod sync;
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use adoc_core::{DiagnosticSeverity, SourceRange};
 use adoc_engine::{commands::ids, CommandArgs, DocumentId, EngineEvent};
 use gpui::{
-    div, relative, AppContext as _, Context, Entity, FocusHandle, Focusable, IntoElement,
-    ParentElement as _, Render, Styled as _, Subscription, Window,
+    div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, Window,
 };
 use gpui_component::{
     highlighter::{Diagnostic, DiagnosticSeverity as WidgetSeverity},
@@ -69,6 +72,16 @@ pub struct SourceEditorView {
     document: DocumentId,
     caret: Option<usize>,
     state: Entity<EditorState>,
+    /// The change markers as last painted.
+    marks: Rc<RefCell<Vec<changes::GutterMark>>>,
+    /// The change whose card is open, with its text in `HEAD` and where it was clicked.
+    open_change: Option<(adoc_engine::Hunk, String, gpui::Point<gpui::Pixels>)>,
+    /// Whether the blame column is shown.
+    show_blame: bool,
+    /// The gutter line the pointer rests on, and the blame tooltip once it has rested long enough.
+    hover_line: Option<usize>,
+    hover_tip: Option<(String, gpui::Point<gpui::Pixels>)>,
+    _hover: Option<gpui::Task<()>>,
     _diagnostics: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -77,6 +90,8 @@ pub struct SourceEditorView {
 const DIAGNOSTICS_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 /// Lines left above a place navigated to, so it is read in context.
 const REVEAL_MARGIN: usize = 3;
+/// How long the pointer rests on the gutter before the line's blame shows.
+const HOVER_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
 impl SourceEditorView {
     pub fn new(
@@ -147,6 +162,12 @@ impl SourceEditorView {
                 EngineEvent::DocumentChanged { id, .. } if *id == this.document => {
                     this.reconcile(window, cx);
                 }
+                EngineEvent::GitHunksChanged(id) | EngineEvent::GitBlameChanged(id)
+                    if *id == this.document =>
+                {
+                    cx.notify();
+                }
+                EngineEvent::SettingsChanged => cx.notify(),
                 EngineEvent::DiagnosticsUpdated { path } if this.is_path(path, cx) => {
                     this._diagnostics = Some(cx.spawn(async move |this, cx| {
                         cx.background_executor().timer(DIAGNOSTICS_DELAY).await;
@@ -163,6 +184,8 @@ impl SourceEditorView {
                 this.caret = Some(caret);
                 cx.emit(SourceEditorEvent::CaretMoved(caret));
             }
+            // The change markers follow the editor's scrolling.
+            cx.notify();
         }));
 
         let mut view = Self {
@@ -170,6 +193,12 @@ impl SourceEditorView {
             document,
             caret: None,
             state,
+            marks: Rc::default(),
+            open_change: None,
+            show_blame: false,
+            hover_line: None,
+            hover_tip: None,
+            _hover: None,
             _diagnostics: None,
             _subscriptions: subscriptions,
         };
@@ -304,6 +333,127 @@ impl SourceEditorView {
         });
     }
 
+    /// Opens the card of the `index`th change, clicked at `position`.
+    pub fn open_change(
+        &mut self,
+        index: usize,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        let Some(hunk) = engine.git().hunks_for(self.document).get(index).cloned() else {
+            return;
+        };
+        let head = engine.head_text(self.document, &hunk).unwrap_or_default();
+        self.open_change = Some((hunk, head, position));
+        cx.notify();
+    }
+
+    fn close_change(&mut self, cx: &mut Context<Self>) {
+        if self.open_change.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Replaces the open change with its text in `HEAD`, as one undo step.
+    pub(crate) fn revert_open_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((hunk, _, _)) = self.open_change.take() else {
+            return;
+        };
+        let args = CommandArgs::Offset {
+            id: self.document,
+            offset: hunk.range.start,
+        };
+        let result = self
+            .app
+            .update(cx, |app, cx| app.invoke(ids::GIT_REVERT_HUNK, args, cx));
+        if let Err(error) = result {
+            gpui_component::WindowExt::push_notification(window, error.to_string(), cx);
+        }
+        cx.notify();
+    }
+
+    /// Shows or hides the blame column, asking the engine for the blame when shown.
+    pub fn toggle_blame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let document = self.document;
+        let result = self.app.update(cx, |app, cx| {
+            app.invoke(ids::GIT_SHOW_BLAME, CommandArgs::Document(document), cx)
+        });
+        match result {
+            Ok(_) => {
+                self.show_blame = !self.show_blame;
+                cx.notify();
+            }
+            Err(error) => {
+                gpui_component::WindowExt::push_notification(window, error.to_string(), cx)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn shows_blame(&self) -> bool {
+        self.show_blame
+    }
+
+    /// The pointer moved over gutter line `line` (or off the gutter): after a rest of 400 ms
+    /// there, when `[git] blame_on_hover` is set, the line's blame shows in a tooltip.
+    pub fn hover_gutter(
+        &mut self,
+        line: Option<usize>,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if line == self.hover_line {
+            return;
+        }
+        self.hover_line = line;
+        if self.hover_tip.take().is_some() {
+            cx.notify();
+        }
+        self._hover = None;
+        let Some(line) = line else {
+            return;
+        };
+        if !self.app.read(cx).engine.settings().git.blame_on_hover {
+            return;
+        }
+        let document = self.document;
+        self.app
+            .update(cx, |app, _| app.engine.request_blame(document));
+        self._hover = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(HOVER_DELAY).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.hover_line != Some(line) {
+                    return;
+                }
+                let blame = this.app.read(cx).engine.blame_for(document);
+                if let Some(blamed) = blame.and_then(|blame| blame.get(line).cloned()) {
+                    let text = blame::describe(&blamed, blame::now());
+                    this.hover_tip = Some((text, position));
+                    cx.notify();
+                }
+            });
+        }));
+    }
+
+    /// The blame tooltip's text, once shown.
+    #[cfg(test)]
+    pub fn hover_tip_for_test(&self) -> Option<String> {
+        self.hover_tip.as_ref().map(|(text, _)| text.clone())
+    }
+
+    /// The change markers as last painted: their kinds and bounds.
+    #[cfg(test)]
+    pub fn marks_for_test(&self) -> Vec<changes::GutterMark> {
+        self.marks.borrow().clone()
+    }
+
+    /// The text in `HEAD` shown by the open change card.
+    #[cfg(test)]
+    pub fn open_change_for_test(&self) -> Option<String> {
+        self.open_change.as_ref().map(|(_, head, _)| head.clone())
+    }
+
     /// Types `text` at the caret as a keystroke would, for the typing benchmark.
     pub fn type_for_benchmark(&self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.state
@@ -326,6 +476,113 @@ impl SourceEditorView {
     }
 }
 
+impl SourceEditorView {
+    /// The card of an open change: the lines it replaced in `HEAD`, with Revert and Copy.
+    fn change_card(
+        &self,
+        hunk: &adoc_engine::Hunk,
+        head: &str,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        use gpui::{
+            prelude::FluentBuilder as _, InteractiveElement as _, StatefulInteractiveElement as _,
+        };
+        use gpui_component::{
+            button::{Button, ButtonVariants as _},
+            h_flex, v_flex, Sizable as _,
+        };
+        let title = match hunk.kind {
+            adoc_engine::HunkKind::Added => "Added since the last commit",
+            adoc_engine::HunkKind::Modified => "Before this change",
+            adoc_engine::HunkKind::Deleted => "Deleted since the last commit",
+        };
+        let lines: Vec<String> = head.lines().map(str::to_owned).collect();
+        let copy = head.to_owned();
+        gpui::deferred(
+            gpui::anchored().position(position).snap_to_window().child(
+                v_flex()
+                    .id("change-card")
+                    .debug_selector(|| "change-card".to_owned())
+                    .occlude()
+                    .gap_2()
+                    .p_2()
+                    .max_w(gpui::px(560.))
+                    .bg(cx.theme().popover)
+                    .text_color(cx.theme().popover_foreground)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded(cx.theme().radius)
+                    .shadow_md()
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_change(cx)))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(title),
+                    )
+                    .when(!lines.is_empty(), |card| {
+                        card.child(
+                            v_flex()
+                                .id("change-head")
+                                .max_h(gpui::px(240.))
+                                .overflow_y_scroll()
+                                .p_1()
+                                .bg(cx.theme().muted)
+                                .rounded(cx.theme().radius)
+                                .font_family(
+                                    self.app
+                                        .read(cx)
+                                        .engine
+                                        .settings()
+                                        .editor
+                                        .font_family
+                                        .clone(),
+                                )
+                                .text_sm()
+                                .children(lines.into_iter().map(|line| {
+                                    div().child(if line.is_empty() {
+                                        " ".to_owned()
+                                    } else {
+                                        line
+                                    })
+                                })),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("revert-change")
+                                    .small()
+                                    .primary()
+                                    .label("Revert Change")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.revert_open_change(window, cx);
+                                    })),
+                            )
+                            .when(!copy.is_empty(), |row| {
+                                row.child(
+                                    Button::new("copy-change")
+                                        .small()
+                                        .ghost()
+                                        .label("Copy")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                copy.clone(),
+                                            ));
+                                            this.close_change(cx);
+                                        })),
+                                )
+                            }),
+                    ),
+            ),
+        )
+        .with_priority(1)
+        .into_any_element()
+    }
+}
+
 impl gpui::EventEmitter<SourceEditorEvent> for SourceEditorView {}
 
 impl Focusable for SourceEditorView {
@@ -345,13 +602,95 @@ impl Render for SourceEditorView {
             .font_family
             .clone();
         let font_size = self.app.read(cx).engine.settings().editor.font_size as f32;
-        div().size_full().child(
-            Editor::new(&self.state)
-                .bordered(false)
-                .h(relative(1.))
-                .font_family(font_family)
-                .text_size(gpui::px(font_size))
-                .text_color(cx.theme().foreground),
-        )
+        let engine = &self.app.read(cx).engine;
+        let hunks = if engine.settings().git.show_markers {
+            engine.git().hunks_for(self.document).to_vec()
+        } else {
+            Vec::new()
+        };
+        let colours = changes::MarkColours {
+            added: cx.theme().success,
+            modified: cx.theme().info,
+            deleted: cx.theme().danger,
+        };
+        let blame = self
+            .show_blame
+            .then(|| engine.blame_for(self.document))
+            .flatten();
+        let hover = engine.settings().git.blame_on_hover;
+        let card = self
+            .open_change
+            .as_ref()
+            .map(|(hunk, head, position)| self.change_card(hunk, head, *position, cx));
+        let tip = self.hover_tip.as_ref().map(|(text, position)| {
+            gpui::deferred(
+                gpui::anchored()
+                    .position(*position + gpui::point(gpui::px(12.), gpui::px(12.)))
+                    .snap_to_window()
+                    .child(
+                        div()
+                            .debug_selector(|| "blame-tip".to_owned())
+                            .px_2()
+                            .py_1()
+                            .text_xs()
+                            .bg(cx.theme().popover)
+                            .text_color(cx.theme().popover_foreground)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .rounded(cx.theme().radius)
+                            .child(text.clone()),
+                    ),
+            )
+            .with_priority(1)
+        });
+        let font = gpui::font(font_family.clone());
+        let editor = div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(
+                Editor::new(&self.state)
+                    .bordered(false)
+                    .h(relative(1.))
+                    .font_family(font_family)
+                    .text_size(gpui::px(font_size))
+                    .text_color(cx.theme().foreground),
+            )
+            .child(changes::overlay(
+                cx.weak_entity(),
+                self.state.clone(),
+                hunks,
+                self.marks.clone(),
+                colours,
+            ))
+            .when(hover, |editor| {
+                editor.child(blame::hover_watch(cx.weak_entity(), self.state.clone()))
+            })
+            .when_some(blame, |editor, blame| {
+                // Painted after the editor, into the space kept for it on the left.
+                editor.child(blame::column(
+                    self.state.clone(),
+                    blame,
+                    font,
+                    cx.theme().muted_foreground,
+                    -blame::COLUMN,
+                ))
+            });
+        gpui_component::h_flex()
+            .size_full()
+            .when(self.show_blame, |row| {
+                row.child(
+                    div()
+                        .debug_selector(|| "blame-column".to_owned())
+                        .flex_none()
+                        .h_full()
+                        .w(blame::COLUMN)
+                        .bg(cx.theme().muted),
+                )
+            })
+            .child(editor)
+            .children(card)
+            .children(tip)
     }
 }

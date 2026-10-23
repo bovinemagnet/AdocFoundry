@@ -20,7 +20,10 @@ pub use discovery::{discover_antora_workspace, DiscoveryResult};
 pub use module::Module;
 pub use nav::{parse_nav, NavEntry};
 pub use nav_tree::{nav_tree, NavError, NavItem, NavTree};
-pub use playbook::{parse_playbook, read_playbook, Playbook, PLAYBOOK_FILE};
+pub use playbook::{
+    parse_playbook, read_playbook, BranchVersions, ContentSource, Playbook, PublishedVersions,
+    PLAYBOOK_FILE,
+};
 pub use resource::{AntoraCoordinate, AntoraResource, ResourceFamily};
 pub use resource_id::{
     parse_resource_id, AntoraContext, AntoraResolver, AntoraResourceId, ResolutionError,
