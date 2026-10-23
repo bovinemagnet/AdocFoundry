@@ -5,11 +5,12 @@
 //! rename, a reload from disk) is applied back to the widget. The engine rope is the truth.
 
 pub mod bindings;
+pub mod changes;
 pub mod language;
 mod providers;
 pub mod sync;
 
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use adoc_core::{DiagnosticSeverity, SourceRange};
 use adoc_engine::{commands::ids, CommandArgs, DocumentId, EngineEvent};
@@ -69,6 +70,10 @@ pub struct SourceEditorView {
     document: DocumentId,
     caret: Option<usize>,
     state: Entity<EditorState>,
+    /// The change markers as last painted.
+    marks: Rc<RefCell<Vec<changes::GutterMark>>>,
+    /// The change whose card is open, with its text in `HEAD` and where it was clicked.
+    open_change: Option<(adoc_engine::Hunk, String, gpui::Point<gpui::Pixels>)>,
     _diagnostics: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -147,6 +152,8 @@ impl SourceEditorView {
                 EngineEvent::DocumentChanged { id, .. } if *id == this.document => {
                     this.reconcile(window, cx);
                 }
+                EngineEvent::GitHunksChanged(id) if *id == this.document => cx.notify(),
+                EngineEvent::SettingsChanged => cx.notify(),
                 EngineEvent::DiagnosticsUpdated { path } if this.is_path(path, cx) => {
                     this._diagnostics = Some(cx.spawn(async move |this, cx| {
                         cx.background_executor().timer(DIAGNOSTICS_DELAY).await;
@@ -163,6 +170,8 @@ impl SourceEditorView {
                 this.caret = Some(caret);
                 cx.emit(SourceEditorEvent::CaretMoved(caret));
             }
+            // The change markers follow the editor's scrolling.
+            cx.notify();
         }));
 
         let mut view = Self {
@@ -170,6 +179,8 @@ impl SourceEditorView {
             document,
             caret: None,
             state,
+            marks: Rc::default(),
+            open_change: None,
             _diagnostics: None,
             _subscriptions: subscriptions,
         };
@@ -304,6 +315,58 @@ impl SourceEditorView {
         });
     }
 
+    /// Opens the card of the `index`th change, clicked at `position`.
+    pub fn open_change(
+        &mut self,
+        index: usize,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        let Some(hunk) = engine.git().hunks_for(self.document).get(index).cloned() else {
+            return;
+        };
+        let head = engine.head_text(self.document, &hunk).unwrap_or_default();
+        self.open_change = Some((hunk, head, position));
+        cx.notify();
+    }
+
+    fn close_change(&mut self, cx: &mut Context<Self>) {
+        if self.open_change.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Replaces the open change with its text in `HEAD`, as one undo step.
+    pub(crate) fn revert_open_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((hunk, _, _)) = self.open_change.take() else {
+            return;
+        };
+        let args = CommandArgs::Offset {
+            id: self.document,
+            offset: hunk.range.start,
+        };
+        let result = self
+            .app
+            .update(cx, |app, cx| app.invoke(ids::GIT_REVERT_HUNK, args, cx));
+        if let Err(error) = result {
+            gpui_component::WindowExt::push_notification(window, error.to_string(), cx);
+        }
+        cx.notify();
+    }
+
+    /// The change markers as last painted: their kinds and bounds.
+    #[cfg(test)]
+    pub fn marks_for_test(&self) -> Vec<changes::GutterMark> {
+        self.marks.borrow().clone()
+    }
+
+    /// The text in `HEAD` shown by the open change card.
+    #[cfg(test)]
+    pub fn open_change_for_test(&self) -> Option<String> {
+        self.open_change.as_ref().map(|(_, head, _)| head.clone())
+    }
+
     /// Types `text` at the caret as a keystroke would, for the typing benchmark.
     pub fn type_for_benchmark(&self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.state
@@ -326,6 +389,113 @@ impl SourceEditorView {
     }
 }
 
+impl SourceEditorView {
+    /// The card of an open change: the lines it replaced in `HEAD`, with Revert and Copy.
+    fn change_card(
+        &self,
+        hunk: &adoc_engine::Hunk,
+        head: &str,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        use gpui::{
+            prelude::FluentBuilder as _, InteractiveElement as _, StatefulInteractiveElement as _,
+        };
+        use gpui_component::{
+            button::{Button, ButtonVariants as _},
+            h_flex, v_flex, Sizable as _,
+        };
+        let title = match hunk.kind {
+            adoc_engine::HunkKind::Added => "Added since the last commit",
+            adoc_engine::HunkKind::Modified => "Before this change",
+            adoc_engine::HunkKind::Deleted => "Deleted since the last commit",
+        };
+        let lines: Vec<String> = head.lines().map(str::to_owned).collect();
+        let copy = head.to_owned();
+        gpui::deferred(
+            gpui::anchored().position(position).snap_to_window().child(
+                v_flex()
+                    .id("change-card")
+                    .debug_selector(|| "change-card".to_owned())
+                    .occlude()
+                    .gap_2()
+                    .p_2()
+                    .max_w(gpui::px(560.))
+                    .bg(cx.theme().popover)
+                    .text_color(cx.theme().popover_foreground)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .rounded(cx.theme().radius)
+                    .shadow_md()
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_change(cx)))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(title),
+                    )
+                    .when(!lines.is_empty(), |card| {
+                        card.child(
+                            v_flex()
+                                .id("change-head")
+                                .max_h(gpui::px(240.))
+                                .overflow_y_scroll()
+                                .p_1()
+                                .bg(cx.theme().muted)
+                                .rounded(cx.theme().radius)
+                                .font_family(
+                                    self.app
+                                        .read(cx)
+                                        .engine
+                                        .settings()
+                                        .editor
+                                        .font_family
+                                        .clone(),
+                                )
+                                .text_sm()
+                                .children(lines.into_iter().map(|line| {
+                                    div().child(if line.is_empty() {
+                                        " ".to_owned()
+                                    } else {
+                                        line
+                                    })
+                                })),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("revert-change")
+                                    .small()
+                                    .primary()
+                                    .label("Revert Change")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.revert_open_change(window, cx);
+                                    })),
+                            )
+                            .when(!copy.is_empty(), |row| {
+                                row.child(
+                                    Button::new("copy-change")
+                                        .small()
+                                        .ghost()
+                                        .label("Copy")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                                copy.clone(),
+                                            ));
+                                            this.close_change(cx);
+                                        })),
+                                )
+                            }),
+                    ),
+            ),
+        )
+        .with_priority(1)
+        .into_any_element()
+    }
+}
+
 impl gpui::EventEmitter<SourceEditorEvent> for SourceEditorView {}
 
 impl Focusable for SourceEditorView {
@@ -345,13 +515,39 @@ impl Render for SourceEditorView {
             .font_family
             .clone();
         let font_size = self.app.read(cx).engine.settings().editor.font_size as f32;
-        div().size_full().child(
-            Editor::new(&self.state)
-                .bordered(false)
-                .h(relative(1.))
-                .font_family(font_family)
-                .text_size(gpui::px(font_size))
-                .text_color(cx.theme().foreground),
-        )
+        let engine = &self.app.read(cx).engine;
+        let hunks = if engine.settings().git.show_markers {
+            engine.git().hunks_for(self.document).to_vec()
+        } else {
+            Vec::new()
+        };
+        let colours = changes::MarkColours {
+            added: cx.theme().success,
+            modified: cx.theme().info,
+            deleted: cx.theme().danger,
+        };
+        let card = self
+            .open_change
+            .as_ref()
+            .map(|(hunk, head, position)| self.change_card(hunk, head, *position, cx));
+        div()
+            .relative()
+            .size_full()
+            .child(
+                Editor::new(&self.state)
+                    .bordered(false)
+                    .h(relative(1.))
+                    .font_family(font_family.clone())
+                    .text_size(gpui::px(font_size))
+                    .text_color(cx.theme().foreground),
+            )
+            .child(changes::overlay(
+                cx.weak_entity(),
+                self.state.clone(),
+                hunks,
+                self.marks.clone(),
+                colours,
+            ))
+            .children(card)
     }
 }

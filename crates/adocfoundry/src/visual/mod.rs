@@ -172,6 +172,8 @@ impl VisualView {
             EngineEvent::ModelChanged { id, .. } if *id == self.document => {
                 self.refresh(cx);
             }
+            EngineEvent::GitHunksChanged(id) if *id == self.document => cx.notify(),
+            EngineEvent::SettingsChanged => cx.notify(),
             // An edit from elsewhere moves the selection with the text.
             EngineEvent::DocumentChanged { id, version, edits }
                 if *id == self.document && *version > self.version =>
