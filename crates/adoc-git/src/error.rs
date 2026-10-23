@@ -10,6 +10,10 @@ pub enum GitError {
     },
     /// A path outside the repository's working tree.
     OutsideWorkdir(PathBuf),
+    /// Committing needs `user.name` and `user.email`, and the configuration lacks one.
+    NoIdentity,
+    /// The index holds nothing that `HEAD` does not.
+    NothingToCommit,
 }
 
 impl GitError {
@@ -28,6 +32,11 @@ impl fmt::Display for GitError {
                 "{} is not in the repository's working tree",
                 path.display()
             ),
+            Self::NoIdentity => formatter.write_str(
+                "set user.name and user.email in your Git configuration to commit \
+                 (git config --global user.name \"Your Name\"; git config --global user.email you@example.com)",
+            ),
+            Self::NothingToCommit => formatter.write_str("nothing is staged to commit"),
         }
     }
 }

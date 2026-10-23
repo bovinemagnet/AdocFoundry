@@ -63,6 +63,17 @@ impl Repository {
         }))
     }
 
+    /// As [`Repository::discover`], but reading only the repository's own configuration, not
+    /// the user's or the system's.
+    pub fn discover_isolated(path: &Path) -> Result<Option<Self>, GitError> {
+        let Some(found) = Self::discover(path)? else {
+            return Ok(None);
+        };
+        let repo = gix::open_opts(found.repo.git_dir(), gix::open::Options::isolated())
+            .map_err(GitError::git)?;
+        Ok(Some(Self { repo, ..found }))
+    }
+
     /// The root of the working tree.
     #[must_use]
     pub fn workdir(&self) -> &Path {
@@ -323,6 +334,178 @@ impl Repository {
             .is_some())
     }
 
+    /// Stages `paths` (absolute, or relative to the working tree) as they are in the working
+    /// tree, as `git add` would: new and changed files are added and missing ones removed.
+    pub fn stage(&self, paths: &[&Path]) -> Result<(), GitError> {
+        let mut index = self.index_file()?;
+        for path in paths {
+            let relative = self.relative(path)?;
+            let name = unix_path(&relative);
+            index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
+            let file = self.workdir.join(&relative);
+            let Ok(metadata) = gix::index::fs::Metadata::from_path_no_follow(&file) else {
+                continue; // Gone: staged as deleted.
+            };
+            let bytes = fs::read(&file).map_err(|source| GitError::Io {
+                path: file.clone(),
+                source,
+            })?;
+            let id = self.repo.write_blob(bytes).map_err(GitError::git)?.detach();
+            let stat = gix::index::entry::Stat::from_fs(&metadata).unwrap_or_default();
+            let mode = if metadata.is_executable() {
+                gix::index::entry::Mode::FILE_EXECUTABLE
+            } else {
+                gix::index::entry::Mode::FILE
+            };
+            index.dangerously_push_entry(
+                stat,
+                id,
+                gix::index::entry::Flags::empty(),
+                mode,
+                name.as_ref(),
+            );
+        }
+        index.sort_entries();
+        index.write(Default::default()).map_err(GitError::git)
+    }
+
+    /// Puts `paths` back in the index as they are in `HEAD`, leaving the working tree alone, as
+    /// `git restore --staged` would.
+    pub fn unstage(&self, paths: &[&Path]) -> Result<(), GitError> {
+        let mut index = self.index_file()?;
+        let head_tree = if self.repo.head().map_err(GitError::git)?.is_unborn() {
+            None
+        } else {
+            Some(self.repo.head_tree().map_err(GitError::git)?)
+        };
+        for path in paths {
+            let relative = self.relative(path)?;
+            let name = unix_path(&relative);
+            index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
+            let Some(tree) = &head_tree else {
+                continue;
+            };
+            let Some(entry) = tree
+                .lookup_entry_by_path(&relative)
+                .map_err(GitError::git)?
+            else {
+                continue;
+            };
+            let mode = if entry.mode().is_executable() {
+                gix::index::entry::Mode::FILE_EXECUTABLE
+            } else {
+                gix::index::entry::Mode::FILE
+            };
+            // A zeroed stat makes the next status compare the file's content.
+            index.dangerously_push_entry(
+                gix::index::entry::Stat::default(),
+                entry.object_id(),
+                gix::index::entry::Flags::empty(),
+                mode,
+                name.as_ref(),
+            );
+        }
+        index.sort_entries();
+        index.write(Default::default()).map_err(GitError::git)
+    }
+
+    /// The name and email commits are made with, from the usual configuration scopes.
+    pub fn identity(&self) -> Result<(String, String), GitError> {
+        let config = self.repo.config_snapshot();
+        let name = config.string("user.name").map(|name| name.to_string());
+        let email = config.string("user.email").map(|email| email.to_string());
+        match (name, email) {
+            (Some(name), Some(email)) if !name.is_empty() && !email.is_empty() => Ok((name, email)),
+            _ => Err(GitError::NoIdentity),
+        }
+    }
+
+    /// Whether the configuration asks for signed commits (`commit.gpgsign`), which this crate
+    /// cannot make.
+    #[must_use]
+    pub fn signs_commits(&self) -> bool {
+        self.repo
+            .config_snapshot()
+            .boolean("commit.gpgsign")
+            .unwrap_or(false)
+    }
+
+    /// Commits the index on the current branch with `message`, as `git commit` would. Refuses
+    /// without an identity or when nothing is staged. Returns the commit's id.
+    pub fn commit(&self, message: &str) -> Result<String, GitError> {
+        self.identity()?;
+        let index = self.index_file()?;
+        let mut editor = self
+            .repo
+            .edit_tree(gix::ObjectId::empty_tree(self.repo.object_hash()))
+            .map_err(GitError::git)?;
+        for entry in index.entries() {
+            use gix::index::entry::Mode;
+            use gix::object::tree::EntryKind;
+            let kind = match entry.mode {
+                Mode::FILE_EXECUTABLE => EntryKind::BlobExecutable,
+                Mode::SYMLINK => EntryKind::Link,
+                Mode::COMMIT => EntryKind::Commit,
+                Mode::FILE => EntryKind::Blob,
+                _ => continue,
+            };
+            let path = entry.path(&index).to_str_lossy().into_owned();
+            editor
+                .upsert(path.as_str(), kind, entry.id)
+                .map_err(GitError::git)?;
+        }
+        let tree = editor.write().map_err(GitError::git)?.detach();
+        let head = self.repo.head().map_err(GitError::git)?;
+        let parents: Vec<gix::ObjectId> = if head.is_unborn() {
+            Vec::new()
+        } else {
+            let head_tree = self.repo.head_tree_id().map_err(GitError::git)?.detach();
+            if head_tree == tree {
+                return Err(GitError::NothingToCommit);
+            }
+            vec![self.repo.head_id().map_err(GitError::git)?.detach()]
+        };
+        let id = self
+            .repo
+            .commit("HEAD", message, tree, parents)
+            .map_err(GitError::git)?;
+        Ok(id.to_string())
+    }
+
+    /// How many commits branch `branch` has that `remote` does not, by its remote-tracking
+    /// branch; `None` when there is none, as before a first push.
+    pub fn unpushed(&self, remote: &str, branch: &str) -> Result<Option<usize>, GitError> {
+        let Some(mut tracking) = self
+            .repo
+            .try_find_reference(format!("refs/remotes/{remote}/{branch}").as_str())
+            .map_err(GitError::git)?
+        else {
+            return Ok(None);
+        };
+        let pushed = tracking.peel_to_id().map_err(GitError::git)?.detach();
+        let head = self.repo.head_id().map_err(GitError::git)?.detach();
+        let walk = self
+            .repo
+            .rev_walk([head])
+            .with_hidden([pushed])
+            .all()
+            .map_err(GitError::git)?;
+        Ok(Some(walk.filter_map(Result::ok).count()))
+    }
+
+    /// The index as on disk, or an empty one in a repository that has none yet.
+    fn index_file(&self) -> Result<gix::index::File, GitError> {
+        let path = self.repo.index_path();
+        if path.exists() {
+            self.repo.open_index().map_err(GitError::git)
+        } else {
+            Ok(gix::index::File::from_state(
+                gix::index::State::new(self.repo.object_hash()),
+                path,
+            ))
+        }
+    }
+
     /// The fetch URL of remote `name`, as configured.
     pub fn remote_url(&self, name: &str) -> Result<Option<String>, GitError> {
         let names = self.repo.remote_names();
@@ -370,6 +553,15 @@ fn worktree_change(
         EntryStatus::IntentToAdd => Some(Change::Added),
         EntryStatus::NeedsUpdate(_) => None,
     }
+}
+
+/// A relative platform path as Git writes it, `/`-separated.
+fn unix_path(path: &Path) -> gix::bstr::BString {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+        .into()
 }
 
 /// A repository-relative path (`/`-separated) as a platform path.

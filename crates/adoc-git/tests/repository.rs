@@ -316,3 +316,136 @@ fn remote_tracking_and_pushed_branches() {
     test.track_remote("origin");
     assert!(repo_in(dir.path()).is_pushed("origin", "main").unwrap());
 }
+
+#[test]
+fn stage_and_unstage_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\n");
+    test.write("gone.adoc", "gone\n");
+    test.commit_all("first");
+    test.write("page.adoc", "one\ntwo\n");
+    test.write("new.adoc", "new\n");
+    test.remove("gone.adoc");
+
+    let repo = repo_in(dir.path());
+    let paths = [
+        dir.path().join("page.adoc"),
+        dir.path().join("new.adoc"),
+        dir.path().join("gone.adoc"),
+    ];
+    let paths: Vec<&Path> = paths.iter().map(|path| path.as_path()).collect();
+    repo.stage(&paths).unwrap();
+    let statuses = repo.status().unwrap();
+    assert_eq!(
+        status_of(&statuses, "page.adoc"),
+        (Change::Modified, Change::Unmodified)
+    );
+    assert_eq!(
+        status_of(&statuses, "new.adoc"),
+        (Change::Added, Change::Unmodified)
+    );
+    assert_eq!(
+        status_of(&statuses, "gone.adoc"),
+        (Change::Deleted, Change::Unmodified)
+    );
+
+    repo.unstage(&paths).unwrap();
+    let statuses = repo.status().unwrap();
+    assert_eq!(
+        status_of(&statuses, "page.adoc"),
+        (Change::Unmodified, Change::Modified)
+    );
+    assert_eq!(
+        status_of(&statuses, "new.adoc"),
+        (Change::Unmodified, Change::Untracked)
+    );
+    assert_eq!(
+        status_of(&statuses, "gone.adoc"),
+        (Change::Unmodified, Change::Deleted)
+    );
+}
+
+#[test]
+fn commit_uses_config_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.set_identity("Ada Writer", "ada@example.com");
+    test.write("page.adoc", "one\n");
+    test.commit_all("first");
+    test.write("page.adoc", "one\ntwo\n");
+
+    let repo = repo_in(dir.path());
+    repo.stage(&[dir.path().join("page.adoc").as_path()])
+        .unwrap();
+    let id = repo.commit("docs: add a second line").unwrap();
+    let blame = repo_in(dir.path())
+        .blame(Path::new("page.adoc"), None)
+        .unwrap();
+    assert_eq!(blame[1].commit.as_deref(), Some(&id[..7]));
+    assert_eq!(blame[1].author, "Ada Writer");
+    assert_eq!(blame[1].summary, "docs: add a second line");
+    assert!(
+        repo_in(dir.path()).status().unwrap().is_empty(),
+        "the committed change is no longer a change"
+    );
+}
+
+#[test]
+fn commit_refuses_without_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\n");
+    test.commit_all("first");
+    test.write("page.adoc", "two\n");
+    // Read only the repository's own configuration, which names no one.
+    let repo = Repository::discover_isolated(dir.path()).unwrap().unwrap();
+    repo.stage(&[dir.path().join("page.adoc").as_path()])
+        .unwrap();
+    let error = repo.commit("change").unwrap_err().to_string();
+    assert!(
+        error.contains("user.name") && error.contains("user.email"),
+        "{error}"
+    );
+}
+
+#[test]
+fn commit_refuses_empty_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.set_identity("Ada Writer", "ada@example.com");
+    test.write("page.adoc", "one\n");
+    test.commit_all("first");
+    test.write("page.adoc", "edited but not staged\n");
+    let error = repo_in(dir.path())
+        .commit("nothing")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("nothing is staged"), "{error}");
+}
+
+#[test]
+fn unpushed_count_against_remote_tracking() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\n");
+    test.commit_all("first");
+    test.add_remote("origin", "git@github.com:org/docs.git");
+    assert_eq!(
+        repo_in(dir.path()).unpushed("origin", "main").unwrap(),
+        None
+    );
+    test.track_remote("origin");
+    assert_eq!(
+        repo_in(dir.path()).unpushed("origin", "main").unwrap(),
+        Some(0)
+    );
+    test.write("page.adoc", "two\n");
+    test.commit_all("second");
+    test.write("page.adoc", "three\n");
+    test.commit_all("third");
+    assert_eq!(
+        repo_in(dir.path()).unpushed("origin", "main").unwrap(),
+        Some(2)
+    );
+}
