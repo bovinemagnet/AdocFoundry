@@ -142,6 +142,15 @@ impl Model {
             .filter(|frame| !stack.contains(frame))
             .map(|frame| frame.id)
             .collect();
+        // Marks either side may need the unconstrained form once text runs up against them.
+        for neighbour in [index.at.checked_sub(1), Some(index.at)]
+            .into_iter()
+            .flatten()
+        {
+            if let Some(unit) = units.get(neighbour) {
+                touched.extend(unit.stack.iter().map(|frame| frame.id));
+            }
+        }
         let shown_after = {
             let mut shown = block.display.clone();
             shown.insert_str(display, &text);
@@ -290,6 +299,12 @@ impl Model {
             }
             let flat = flatten(&self.source, block);
             let next_id = flat.next_id;
+            // Adding a mark absorbs marks of the same kind that overlap the range.
+            let (start, end) = if remove {
+                (start, end)
+            } else {
+                absorb(&flat.units, mark, start, end)
+            };
             let (mut units, first, last) = split_display(flat.units, start, end);
             let mut touched = Vec::new();
             if remove {
@@ -305,13 +320,19 @@ impl Model {
             } else {
                 let frame = new_frame(next_id, mark, &block.display, start, end);
                 touched.push(frame.id);
+                for unit in &mut units[first..last] {
+                    touched.extend(
+                        unit.stack
+                            .iter()
+                            .filter(|existing| existing.mark == mark)
+                            .map(|existing| existing.id),
+                    );
+                    unit.stack.retain(|existing| existing.mark != mark);
+                }
                 let uniform = units[first..last]
                     .windows(2)
                     .all(|pair| pair[0].stack == pair[1].stack);
                 for unit in &mut units[first..last] {
-                    if unit.stack.iter().any(|existing| existing.mark == mark) {
-                        continue;
-                    }
                     touched.extend(unit.stack.iter().map(|existing| existing.id));
                     if uniform {
                         unit.stack.push(frame.clone());
@@ -688,6 +709,28 @@ fn split_display(units: Vec<Unit>, start: usize, end: usize) -> (Vec<Unit>, usiz
     let first = first.unwrap_or(out.len());
     let last = last.unwrap_or(out.len()).max(first);
     (out, first, last)
+}
+
+/// `start..end` widened to take in every frame of `mark` it overlaps.
+fn absorb(units: &[Unit], mark: Mark, start: usize, end: usize) -> (usize, usize) {
+    let mut extents: Vec<(u32, usize, usize)> = Vec::new();
+    let mut at = 0;
+    for unit in units {
+        let unit_end = at + unit.shown.len();
+        for frame in unit.stack.iter().filter(|frame| frame.mark == mark) {
+            match extents.iter_mut().find(|(id, _, _)| *id == frame.id) {
+                Some(extent) => extent.2 = unit_end,
+                None => extents.push((frame.id, at, unit_end)),
+            }
+        }
+        at = unit_end;
+    }
+    extents
+        .into_iter()
+        .filter(|(_, from, to)| *from < end && start < *to)
+        .fold((start, end), |(start, end), (_, from, to)| {
+            (start.min(from), end.max(to))
+        })
 }
 
 /// `start..end` of `display` without whitespace at either end.

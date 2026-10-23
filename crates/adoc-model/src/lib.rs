@@ -9,6 +9,7 @@ mod build;
 mod inline;
 mod mapping;
 mod scan;
+mod serialise;
 mod step;
 mod text;
 mod tree;

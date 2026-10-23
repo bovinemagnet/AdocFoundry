@@ -382,3 +382,18 @@ fn steps_invert_exactly() {
     }
     assert!(applied > 40, "only {applied} steps applied");
 }
+
+#[test]
+fn adding_a_mark_absorbs_overlapping_marks_of_its_kind() {
+    let model = build("Use `build`, `target` and more.\n");
+    let start = offset(&model.source, "ld`");
+    let end = offset(&model.source, "get`");
+    let (after, _) = apply(
+        &model,
+        Step::ToggleMark {
+            range: SourceRange::new(start, end),
+            mark: Mark::Code,
+        },
+    );
+    assert_eq!(after, "Use `build, target` and more.\n");
+}
