@@ -207,6 +207,11 @@ dependencies = [
 [[package]]
 name = "adoc-render"
 version = "0.1.0"
+dependencies = [
+ "adoc-antora",
+ "adoc-core",
+ "adoc-dom",
+]
 
 [[package]]
 name = "adocfoundry"

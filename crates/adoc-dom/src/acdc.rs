@@ -77,8 +77,9 @@ fn unsupported_page(page: &Path, text: &str) -> Block {
     }
 }
 
-/// Requested include path → the file the resolver actually read, so spans name real files.
-type ResolvedIncludes = Arc<Mutex<HashMap<PathBuf, PathBuf>>>;
+/// Requested include path → the file the resolver actually read and its text, so spans name
+/// real files and end on character boundaries in them.
+type ResolvedIncludes = Arc<Mutex<HashMap<PathBuf, (PathBuf, Arc<str>)>>>;
 
 fn parse(input: &ParseInput<'_>) -> Dom {
     let page = input.path.to_path_buf();
@@ -96,7 +97,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
             match resolver.read(requested) {
                 Some((path, text)) => {
                     if let Ok(mut map) = resolved.lock() {
-                        map.insert(requested.clone(), path);
+                        map.insert(requested.clone(), (path, Arc::from(text.as_str())));
                     }
                     Ok(acdc::IncludeSource::from_reader(Cursor::new(
                         text.into_bytes(),
@@ -133,6 +134,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
     let converter = Converter {
         parsed: &parsed,
         page,
+        page_text: input.text,
         resolved,
     };
     converter.document()
@@ -152,7 +154,8 @@ fn failed(page: &Path, text: &str, message: &str) -> Dom {
 struct Converter<'p> {
     parsed: &'p acdc::ParseResult,
     page: PathBuf,
-    resolved: HashMap<PathBuf, PathBuf>,
+    page_text: &'p str,
+    resolved: HashMap<PathBuf, (PathBuf, Arc<str>)>,
 }
 
 impl Converter<'_> {
@@ -166,7 +169,15 @@ impl Converter<'_> {
         let attributes = document
             .attributes
             .iter()
-            .filter_map(|(name, value)| Some((name.to_owned(), value.text()?.to_owned())))
+            .filter_map(|(name, value)| {
+                // A set attribute without a value (`:toc:`) is present with empty text.
+                let value = match (value.text(), value.as_integer()) {
+                    (Some(text), _) => text.to_owned(),
+                    (None, Some(integer)) => integer.to_string(),
+                    (None, None) => value.is_presence().then(String::new)?,
+                };
+                Some((name.to_owned(), value))
+            })
             .collect();
         let warnings = self
             .parsed
@@ -193,7 +204,10 @@ impl Converter<'_> {
     fn real_path(&self, file: Option<PathBuf>) -> PathBuf {
         match file {
             None => self.page.clone(),
-            Some(file) => self.resolved.get(&file).cloned().unwrap_or(file),
+            Some(file) => self
+                .resolved
+                .get(&file)
+                .map_or(file, |(path, _)| path.clone()),
         }
     }
 
@@ -204,12 +218,19 @@ impl Converter<'_> {
 
     fn span_of_source_location(&self, source: &acdc::SourceLocation) -> SourceSpan {
         let location = &source.location;
+        // acdc's end offset is the start of the last character; spans end after it.
+        let text = match &source.file {
+            None => Some(self.page_text),
+            Some(file) => self.resolved.get(file).map(|(_, text)| &**text),
+        };
+        let last = location.absolute_end.max(location.absolute_start);
+        let end = text
+            .and_then(|text| text.get(last..))
+            .and_then(|rest| rest.chars().next())
+            .map_or(last, |character| last + character.len_utf8());
         SourceSpan {
             path: self.real_path(source.file.clone()),
-            range: SourceRange::new(
-                location.absolute_start,
-                location.absolute_end.max(location.absolute_start),
-            ),
+            range: SourceRange::new(location.absolute_start, end),
             line: location.start.line,
             include_chain: location
                 .start
@@ -254,17 +275,15 @@ impl Converter<'_> {
         meta
     }
 
-    /// The page text a location covers, when it lies in the page itself.
+    /// The source text a location covers, in the page or an included file.
     fn source_text(&self, location: &acdc::Location) -> String {
         let source = self.parsed.source_location(location);
-        if source.file.is_some() {
-            return String::new();
-        }
-        self.parsed
-            .source()
-            .get(location.absolute_start..location.absolute_end)
-            .unwrap_or("")
-            .to_owned()
+        let range = self.span_of_source_location(&source).range;
+        let text = match &source.file {
+            None => self.page_text,
+            Some(file) => self.resolved.get(file).map_or("", |(_, text)| &**text),
+        };
+        text.get(range.start..range.end).unwrap_or("").to_owned()
     }
 
     // --- blocks ----------------------------------------------------------------------------
@@ -502,6 +521,12 @@ impl Converter<'_> {
             BlockKind::Passthrough {
                 content: self.verbatim_text(&paragraph.content).0,
             }
+        } else if let Some(image) = style
+            .is_empty()
+            .then(|| block_image_macro(&self.source_text(&paragraph.location)))
+            .flatten()
+        {
+            image
         } else {
             BlockKind::Paragraph {
                 inlines: self.inlines(&paragraph.content),
@@ -660,7 +685,7 @@ impl Converter<'_> {
                 }
             }
         }
-        out
+        out.into_iter().flat_map(split_inline_images).collect()
     }
 
     fn inline(&self, node: &acdc::InlineNode<'_>) -> Vec<Inline> {
@@ -753,7 +778,8 @@ impl Converter<'_> {
                     .attributes
                     .get_string("alt")
                     .map(|alt| alt.into_owned())
-                    .or_else(|| image.metadata.positional_attribute(0).map(str::to_owned))
+                    // acdc keeps an inline image's alt text as its title.
+                    .or_else(|| Some(inline_text(&image.title)).filter(|alt| !alt.is_empty()))
                     .unwrap_or_default(),
             },
             acdc::InlineMacro::Keyboard(keyboard) => {
@@ -820,6 +846,111 @@ fn image_kind(source: &acdc::Source<'_>, metadata: &acdc::BlockMetadata<'_>) -> 
         width: named("width").or_else(|| metadata.positional_attribute(1).map(str::to_owned)),
         height: named("height").or_else(|| metadata.positional_attribute(2).map(str::to_owned)),
     }
+}
+
+/// A block image macro acdc left as a paragraph: it rejects targets containing `:` or `$`,
+/// which every Antora resource id (`ROOT:image$x.svg`) can.
+fn block_image_macro(source: &str) -> Option<BlockKind> {
+    let line = source.trim_end();
+    let rest = line.strip_prefix("image::")?;
+    if line.contains('\n') {
+        return None;
+    }
+    let (target, attributes) = rest.strip_suffix(']')?.split_once('[')?;
+    if target.is_empty() || target.contains(char::is_whitespace) {
+        return None;
+    }
+    let mut positional = Vec::new();
+    let (mut alt, mut width, mut height) = (None, None, None);
+    for attribute in attributes.split(',').map(str::trim) {
+        match attribute.split_once('=') {
+            Some(("alt", value)) => alt = Some(value.trim_matches('"').to_owned()),
+            Some(("width", value)) => width = Some(value.trim_matches('"').to_owned()),
+            Some(("height", value)) => height = Some(value.trim_matches('"').to_owned()),
+            Some(_) => {}
+            None => positional.push(attribute.trim_matches('"').to_owned()),
+        }
+    }
+    let mut positional = positional.into_iter();
+    let alt = alt.or(positional.next()).unwrap_or_default();
+    let width = width
+        .or(positional.next())
+        .filter(|value| !value.is_empty());
+    let height = height
+        .or(positional.next())
+        .filter(|value| !value.is_empty());
+    Some(BlockKind::Image {
+        target: target.to_owned(),
+        alt,
+        width,
+        height,
+    })
+}
+
+/// Inline image macros acdc left as text because their target holds `:` or `$`.
+fn split_inline_images(inline: Inline) -> Vec<Inline> {
+    let Inline::Text(text) = inline else {
+        return vec![inline];
+    };
+    let mut out = Vec::new();
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find("image:") {
+        let after = &rest[start + "image:".len()..];
+        let preceded_by_word = rest[..start]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric);
+        let parsed = after.split_once('[').and_then(|(target, tail)| {
+            let (attributes, tail) = tail.split_once(']')?;
+            let antora = target.contains([':', '$']);
+            (antora
+                && !preceded_by_word
+                && !target.is_empty()
+                && !target.starts_with(':')
+                && !target.contains(char::is_whitespace))
+            .then_some((target, attributes, tail))
+        });
+        let Some((target, attributes, tail)) = parsed else {
+            let skip = start + "image:".len();
+            out.push(Inline::Text(rest[..skip].to_owned()));
+            rest = &rest[skip..];
+            continue;
+        };
+        if start > 0 {
+            out.push(Inline::Text(rest[..start].to_owned()));
+        }
+        let alt = attributes
+            .split(',')
+            .map(str::trim)
+            .find_map(|attribute| attribute.strip_prefix("alt="))
+            .or_else(|| {
+                attributes
+                    .split(',')
+                    .next()
+                    .filter(|first| !first.contains('='))
+            })
+            .unwrap_or("")
+            .trim()
+            .trim_matches('"');
+        out.push(Inline::Image {
+            target: target.to_owned(),
+            alt: alt.to_owned(),
+        });
+        rest = tail;
+    }
+    if !rest.is_empty() {
+        out.push(Inline::Text(rest.to_owned()));
+    }
+    // Rejoin text the scan split without finding an image.
+    let mut merged: Vec<Inline> = Vec::new();
+    for inline in out {
+        if let (Inline::Text(next), Some(Inline::Text(previous))) = (&inline, merged.last_mut()) {
+            previous.push_str(next);
+        } else {
+            merged.push(inline);
+        }
+    }
+    merged
 }
 
 fn source_language(metadata: &acdc::BlockMetadata<'_>) -> Option<String> {

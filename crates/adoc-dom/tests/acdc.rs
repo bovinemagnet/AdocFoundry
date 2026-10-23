@@ -309,3 +309,94 @@ fn ifeval_arithmetic_is_evaluated() {
         .collect();
     assert_eq!(texts, ["Shown."]);
 }
+
+#[test]
+fn spans_cover_the_whole_block() {
+    // Location ends are exclusive byte offsets, including after a multi-byte character.
+    let text = "= Page\n:toc:\n\nSome text.\n\nEnds in é\n\n|===\n|1 |22\n|===\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let spans: Vec<&str> = dom
+        .walk()
+        .into_iter()
+        .filter(|block| block.kind_name() == "paragraph")
+        .map(|block| &text[block.meta.span.range.start..block.meta.span.range.end])
+        .collect();
+    assert_eq!(spans, ["Some text.", "Ends in é", "1", "22"]);
+    assert_eq!(dom.attributes.get("toc").map(String::as_str), Some(""));
+
+    let dom = parse_fixture("blocks.adoc");
+    let partial = std::fs::read_to_string(fixture("partials/included.adoc")).unwrap();
+    let paragraph = dom
+        .walk()
+        .into_iter()
+        .find(|block| block.meta.span.path.ends_with("partials/included.adoc"))
+        .unwrap();
+    let range = paragraph.meta.span.range;
+    assert_eq!(
+        &partial[range.start..range.end],
+        "A paragraph from a partial."
+    );
+}
+
+#[test]
+fn antora_image_targets_are_block_images() {
+    // acdc does not accept `:` or `$` in a block image target; Antora ids need both.
+    let text = "= Page\n\nimage::ROOT:image$architecture.svg[Architecture,200,100]\n\nimage::partial$x.png[]\n\nNot image::a:b.png[] an image.\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let images: Vec<_> = dom
+        .walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Image {
+                target,
+                alt,
+                width,
+                height,
+            } => Some((
+                target.clone(),
+                alt.clone(),
+                width.clone(),
+                height.clone(),
+                block.meta.span.range,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images.len(), 2, "{images:?}");
+    assert_eq!(images[0].0, "ROOT:image$architecture.svg");
+    assert_eq!(images[0].1, "Architecture");
+    assert_eq!(images[0].2.as_deref(), Some("200"));
+    assert_eq!(images[0].3.as_deref(), Some("100"));
+    assert!(text[images[0].4.start..images[0].4.end].starts_with("image::ROOT:"));
+    assert_eq!(images[1].0, "partial$x.png");
+    assert_eq!(images[1].1, "");
+}
+
+#[test]
+fn inline_images_keep_alt_and_antora_targets() {
+    let text =
+        "Icons image:ROOT:icon.svg[Icon] and image:a$b.png[] and image:plain.png[Plain,16] here.\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let BlockKind::Paragraph { inlines } = &dom.blocks[0].kind else {
+        panic!("{:?}", dom.blocks[0].kind);
+    };
+    let images: Vec<(&str, &str)> = inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Image { target, alt } => Some((target.as_str(), alt.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        images,
+        [
+            ("ROOT:icon.svg", "Icon"),
+            ("a$b.png", ""),
+            ("plain.png", "Plain")
+        ]
+    );
+    assert_eq!(
+        Inline::plain_text(inlines),
+        "Icons Icon and  and Plain here."
+    );
+}
