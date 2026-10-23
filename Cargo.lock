@@ -291,6 +291,7 @@ dependencies = [
  "adoc-core",
  "adoc-dom",
  "adoc-engine",
+ "adoc-git",
  "adoc-index",
  "adoc-render",
  "insta",

@@ -89,7 +89,7 @@ fn discovery_reports_head_and_status() {
     let repositories = engine.git().repositories();
     assert_eq!(repositories.len(), 1);
     assert_eq!(repositories[0].workdir, dir.path());
-    assert_eq!(repositories[0].roots, [root.clone()]);
+    assert_eq!(repositories[0].roots, std::slice::from_ref(&root));
     assert_eq!(
         engine.git().head_for(&root),
         Some(&Head::Branch("main".to_owned()))

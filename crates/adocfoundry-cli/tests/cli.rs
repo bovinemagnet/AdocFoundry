@@ -246,3 +246,47 @@ fn follow_accepts_the_current_directory_as_root() {
         "modules/security/pages/authentication.adoc:1:1"
     );
 }
+
+#[test]
+fn git_status_lists_changed_pages_with_hunk_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("docs/page.adoc", "= Page\n\nOne.\n\nTwo.\n\nThree.\n");
+    test.write("docs/same.adoc", "= Same\n");
+    test.write("README.md", "readme\n");
+    test.commit_all("first");
+    test.write(
+        "docs/page.adoc",
+        "= Page\n\nOne, changed.\n\nTwo.\n\nThree.\n\nFour.\n",
+    );
+    test.write("docs/new.adoc", "= New\n");
+    test.write("README.md", "readme, changed\n");
+
+    let root = dir.path().to_str().unwrap();
+    let output = cli(&["git-status", root, "--format", "json"]);
+    assert!(output.status.success(), "{output:?}");
+    let status: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(status["head"], "main");
+    let files = status["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2, "only changed AsciiDoc files: {files:?}");
+    assert_eq!(files[0]["path"], "docs/new.adoc");
+    assert_eq!(files[0]["worktree"], "untracked");
+    assert_eq!(files[1]["path"], "docs/page.adoc");
+    assert_eq!(files[1]["worktree"], "modified");
+    assert_eq!(files[1]["hunks"], 2);
+
+    let text = stdout(&cli(&["git-status", root]));
+    assert!(text.starts_with("branch main\n"), "{text}");
+    assert!(text.contains(" M docs/page.adoc (2 changed)"), "{text}");
+    assert!(text.contains("?? docs/new.adoc"), "{text}");
+
+    let outside = tempfile::tempdir().unwrap();
+    if !outside
+        .path()
+        .ancestors()
+        .any(|ancestor| ancestor.join(".git").exists())
+    {
+        let output = cli(&["git-status", outside.path().to_str().unwrap()]);
+        assert!(!output.status.success());
+    }
+}

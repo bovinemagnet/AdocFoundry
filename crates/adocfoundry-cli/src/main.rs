@@ -5,6 +5,7 @@
 //! adocfoundry-cli symbols <root> <query>
 //! adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 //! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+//! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli --version
 //! ```
 
@@ -15,7 +16,9 @@ use std::{
 };
 
 use adoc_core::{Diagnostic, DiagnosticSeverity, LineIndex};
-use adoc_engine::{commands::ids, CommandArgs, CommandOutcome, Engine, EngineError, Settings};
+use adoc_engine::{
+    commands::ids, CommandArgs, CommandOutcome, Engine, EngineError, GitChange, Head, Settings,
+};
 use serde::Serialize;
 
 const USAGE: &str = "usage:
@@ -23,6 +26,7 @@ const USAGE: &str = "usage:
   adocfoundry-cli symbols <root> <query>
   adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
   adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+  adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli --version";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -55,6 +59,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         "symbols" => symbols(rest),
         "follow" => follow(rest),
         "render" => render(rest),
+        "git-status" => git_status(rest),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
 }
@@ -91,8 +96,10 @@ fn option<'a>(options: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
         .map(|(_, value)| *value)
 }
 
-fn open_engine(root: &Path) -> Result<Engine, String> {
-    let settings = Settings::load(None, None).map_err(|error| error.to_string())?;
+/// An engine over the workspace at `root`, indexed. Git is looked at only when `git` is true.
+fn open_engine(root: &Path, git: bool) -> Result<Engine, String> {
+    let mut settings = Settings::load(None, None).map_err(|error| error.to_string())?;
+    settings.git.enabled = git;
     let mut engine = Engine::new(settings);
     engine
         .open_workspace(vec![root.to_path_buf()])
@@ -157,7 +164,7 @@ fn check(arguments: &[String]) -> Result<ExitCode, String> {
     };
 
     let root = adoc_index::normalize_path(Path::new(root));
-    let engine = open_engine(&root)?;
+    let engine = open_engine(&root, false)?;
     let mut failed = false;
     let mut entries = Vec::new();
     for (path, diagnostics) in engine.workspace_diagnostics() {
@@ -213,7 +220,7 @@ fn symbols(arguments: &[String]) -> Result<ExitCode, String> {
         return Err(USAGE.to_owned());
     };
     let root = adoc_index::normalize_path(Path::new(root));
-    let engine = open_engine(&root)?;
+    let engine = open_engine(&root, false)?;
     for symbol in engine.workspace_symbols(query) {
         let text = std::fs::read_to_string(&symbol.path).unwrap_or_default();
         let (line, column) = LineIndex::new(&text).line_column(symbol.range.start);
@@ -262,7 +269,7 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
         |root| adoc_index::normalize_path(Path::new(root)),
     );
 
-    let mut engine = open_engine(&root)?;
+    let mut engine = open_engine(&root, false)?;
     let id = engine.open(&file).map_err(|error| error.to_string())?;
     match engine.invoke(
         ids::NAVIGATE_FOLLOW_LINK,
@@ -310,7 +317,7 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
         |root| adoc_index::normalize_path(Path::new(root)),
     );
 
-    let mut engine = open_engine(&root)?;
+    let mut engine = open_engine(&root, false)?;
     engine.set_document_parser(parser);
     let id = engine.open(&file).map_err(|error| error.to_string())?;
     let preview = engine
@@ -327,4 +334,134 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
         None => print!("{html}"),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Serialize)]
+struct JsonGitStatus {
+    /// `main`, `detached @ <id>` or `unborn`.
+    head: String,
+    files: Vec<JsonChangedFile>,
+}
+
+#[derive(Serialize)]
+struct JsonChangedFile {
+    path: String,
+    index: &'static str,
+    worktree: &'static str,
+    /// Changed line runs against `HEAD`; absent for a file that is no longer there.
+    hunks: Option<usize>,
+}
+
+/// The branch of the repository holding `root`, and its changed AsciiDoc files with the number
+/// of changed line runs in each.
+fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
+    let (positional, options) = parse_options(arguments, &["format"])?;
+    let [root] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let json = match option(&options, "format").unwrap_or("text") {
+        "text" => false,
+        "json" => true,
+        other => return Err(format!("unknown format `{other}`")),
+    };
+    let root = adoc_index::normalize_path(Path::new(root));
+    let mut engine = open_engine(&root, true)?;
+    let Some(repository) = engine.git().repository_for(&root).cloned() else {
+        return Err(format!("{} is not in a Git repository", root.display()));
+    };
+    let changed: Vec<(PathBuf, GitChange, GitChange)> = engine
+        .git()
+        .statuses()
+        .filter(|(path, status)| {
+            path.starts_with(&root)
+                && adoc_index::is_asciidoc_path(path)
+                && status.worktree != GitChange::Ignored
+        })
+        .map(|(path, status)| {
+            (
+                path.to_path_buf(),
+                status.index.clone(),
+                status.worktree.clone(),
+            )
+        })
+        .collect();
+    let mut opened = Vec::new();
+    for (path, _, _) in &changed {
+        opened.push(if path.is_file() {
+            Some(engine.open(path).map_err(|error| error.to_string())?)
+        } else {
+            None
+        });
+    }
+    let deadline = std::time::Instant::now() + INDEX_TIMEOUT;
+    while engine.has_pending() && std::time::Instant::now() < deadline {
+        engine.pump();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let head = match &repository.head {
+        Head::Branch(name) => name.clone(),
+        Head::Detached(id) => format!("detached @ {}", &id[..id.len().min(7)]),
+        Head::Unborn => "unborn".to_owned(),
+    };
+    let files: Vec<JsonChangedFile> = changed
+        .iter()
+        .zip(opened)
+        .map(|((path, index, worktree), id)| JsonChangedFile {
+            path: display_path(path, &root),
+            index: change_name(index),
+            worktree: change_name(worktree),
+            hunks: id.map(|id| engine.git().hunks_for(id).len()),
+        })
+        .collect();
+    if json {
+        let output = serde_json::to_string_pretty(&JsonGitStatus { head, files })
+            .map_err(|error| error.to_string())?;
+        println!("{output}");
+    } else {
+        println!("branch {head}");
+        for file in &files {
+            let hunks = file
+                .hunks
+                .map_or_else(String::new, |count| format!(" ({count} changed)"));
+            println!("{} {}{hunks}", short_status(file), file.path);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn change_name(change: &GitChange) -> &'static str {
+    match change {
+        GitChange::Unmodified => "unmodified",
+        GitChange::Added => "added",
+        GitChange::Modified => "modified",
+        GitChange::Deleted => "deleted",
+        GitChange::Renamed(_) => "renamed",
+        GitChange::Untracked => "untracked",
+        GitChange::Ignored => "ignored",
+        GitChange::Conflicted => "conflicted",
+    }
+}
+
+/// The two letters `git status --short` shows for a file.
+fn short_status(file: &JsonChangedFile) -> String {
+    match file.worktree {
+        "untracked" => "??".to_owned(),
+        "ignored" => "!!".to_owned(),
+        worktree => format!("{}{}", change_letter(file.index), change_letter(worktree)),
+    }
+}
+
+/// The letter `git status --short` shows for a change.
+fn change_letter(name: &str) -> char {
+    match name {
+        "added" => 'A',
+        "modified" => 'M',
+        "deleted" => 'D',
+        "renamed" => 'R',
+        "untracked" => '?',
+        "ignored" => '!',
+        "conflicted" => 'U',
+        _ => ' ',
+    }
 }
