@@ -59,6 +59,9 @@ pub(crate) struct FileWatcher {
     _watcher: notify::RecommendedWatcher,
     events: Receiver<notify::Result<notify::Event>>,
     pending: BTreeMap<PathBuf, (Instant, Change)>,
+    // `(resolved, as opened)` for each root reached through a symlink. Some back ends (FSEvents
+    // on macOS) report resolved paths, which would match nothing the engine holds.
+    aliases: Vec<(PathBuf, PathBuf)>,
 }
 
 impl FileWatcher {
@@ -67,13 +70,21 @@ impl FileWatcher {
         let mut watcher = notify::recommended_watcher(move |event| {
             let _ = sender.send(event);
         })?;
+        let mut aliases = Vec::new();
         for root in roots {
             watcher.watch(root, RecursiveMode::Recursive)?;
+            // Roots exist (checked by `open_workspace`), so resolving them is safe.
+            if let Ok(resolved) = fs::canonicalize(root) {
+                if resolved != *root {
+                    aliases.push((resolved, root.clone()));
+                }
+            }
         }
         Ok(Self {
             _watcher: watcher,
             events,
             pending: BTreeMap::new(),
+            aliases,
         })
     }
 }
@@ -237,6 +248,7 @@ impl Engine {
                 continue;
             }
             for path in event.paths {
+                let path = as_opened(&path, &watcher.aliases);
                 if is_ignored(&path, &self.settings.workspace.ignore) {
                     continue;
                 }
@@ -338,9 +350,42 @@ impl Engine {
     }
 }
 
+/// Maps a path reported under a resolved root back to the root as it was opened.
+fn as_opened(path: &Path, aliases: &[(PathBuf, PathBuf)]) -> PathBuf {
+    aliases
+        .iter()
+        .find_map(|(resolved, opened)| {
+            path.strip_prefix(resolved)
+                .ok()
+                .map(|rest| opened.join(rest))
+        })
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 fn is_ignored(path: &Path, ignore: &[String]) -> bool {
     path.components().any(|component| {
         let component = component.as_os_str().to_string_lossy();
         ignore.iter().any(|ignored| *ignored == component)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watcher_paths_map_back_to_the_root_as_opened() {
+        let aliases = vec![(
+            PathBuf::from("/private/var/docs"),
+            PathBuf::from("/var/docs"),
+        )];
+        assert_eq!(
+            as_opened(Path::new("/private/var/docs/modules/page.adoc"), &aliases),
+            PathBuf::from("/var/docs/modules/page.adoc")
+        );
+        assert_eq!(
+            as_opened(Path::new("/elsewhere/page.adoc"), &aliases),
+            PathBuf::from("/elsewhere/page.adoc")
+        );
+    }
 }
