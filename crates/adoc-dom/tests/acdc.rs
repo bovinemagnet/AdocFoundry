@@ -438,3 +438,122 @@ fn replacements_apply_outside_verbatim_content() {
         "escaped and passed-through text is kept"
     );
 }
+
+/// Records what it is asked for and answers only the exact path a relative page implies.
+struct Expects(std::sync::Mutex<Vec<PathBuf>>);
+
+impl IncludeResolver for Expects {
+    fn read(&self, requested: &Path) -> Option<(PathBuf, String)> {
+        self.0.lock().unwrap().push(requested.to_path_buf());
+        (requested == Path::new("docs/pages/example$diagram.mmd")).then(|| {
+            (
+                PathBuf::from("docs/examples/diagram.mmd"),
+                "graph TD\n  A --> B\n".to_owned(),
+            )
+        })
+    }
+}
+
+#[test]
+fn includes_are_requested_beside_a_relative_page() {
+    // A page given by a relative path asks for its includes relative to it too, as the
+    // workspace's include map is keyed, even inside a verbatim block.
+    let text = "= Page\n\n[mermaid]\n----\ninclude::example$diagram.mmd[]\n----\n";
+    let expects = Arc::new(Expects(std::sync::Mutex::default()));
+    let dom = AcdcParser.parse(&ParseInput {
+        path: Path::new("docs/pages/page.adoc"),
+        text,
+        attributes: Vec::new(),
+        includes: expects.clone(),
+    });
+    let requested = expects.0.lock().unwrap().clone();
+    assert_eq!(requested, [PathBuf::from("docs/pages/example$diagram.mmd")]);
+    assert!(dom.walk().iter().any(|block| matches!(
+        &block.kind,
+        BlockKind::Diagram { source, .. } if source.contains("A --> B")
+    )));
+}
+
+struct Qualified;
+
+impl IncludeResolver for Qualified {
+    fn read(&self, requested: &Path) -> Option<(PathBuf, String)> {
+        let name = requested.file_name()?.to_str()?;
+        match name {
+            "developer:example$flow.mmd" => Some((
+                PathBuf::from("/c/modules/developer/examples/flow.mmd"),
+                "graph TD\n  A --> B\n".to_owned(),
+            )),
+            "partial$outer.adoc" => Some((
+                PathBuf::from("/c/modules/ROOT/partials/outer.adoc"),
+                "Outer.\n\ninclude::other:partial$inner.adoc[]\n".to_owned(),
+            )),
+            "other:partial$inner.adoc" => Some((
+                PathBuf::from("/c/modules/other/partials/inner.adoc"),
+                "Inner.\n".to_owned(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+#[test]
+fn qualified_resource_ids_are_includes_not_uris() {
+    // `module:family$path` looks like a URI scheme to a stock processor; Antora reads it as a
+    // resource id, and so must we, in the page and in the files it includes.
+    let text = "= Page\n\n[mermaid]\n----\ninclude::developer:example$flow.mmd[]\n----\n\ninclude::partial$outer.adoc[]\n\nAfter.\n";
+    let dom = AcdcParser.parse(&ParseInput {
+        path: Path::new("/c/modules/ROOT/pages/page.adoc"),
+        text,
+        attributes: Vec::new(),
+        includes: Arc::new(Qualified),
+    });
+    let blocks = dom.walk();
+    assert!(blocks.iter().any(|block| matches!(
+        &block.kind,
+        BlockKind::Diagram { source, .. } if source.contains("A --> B")
+    )));
+    let paragraphs: Vec<String> = blocks
+        .iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Paragraph { inlines } => Some(Inline::plain_text(inlines)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(paragraphs, ["Outer.", "Inner.", "After."]);
+    let after = blocks.last().unwrap();
+    assert_eq!(
+        &text[after.meta.span.range.start..after.meta.span.range.end],
+        "After."
+    );
+}
+
+struct Beside(PathBuf);
+
+impl IncludeResolver for Beside {
+    fn read(&self, requested: &Path) -> Option<(PathBuf, String)> {
+        (requested == self.0).then(|| (self.0.clone(), "Shared.\n".to_owned()))
+    }
+}
+
+#[test]
+fn includes_resolve_beside_a_page_above_the_working_directory() {
+    let text = "= Page\n\ninclude::partial$shared.adoc[]\n";
+    let dom = AcdcParser.parse(&ParseInput {
+        path: Path::new("../elsewhere/pages/page.adoc"),
+        text,
+        attributes: Vec::new(),
+        includes: Arc::new(Beside(PathBuf::from(
+            "../elsewhere/pages/partial$shared.adoc",
+        ))),
+    });
+    let texts: Vec<String> = dom
+        .walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Paragraph { inlines } => Some(Inline::plain_text(inlines)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["Shared."]);
+}

@@ -28,6 +28,20 @@ impl ResourceFamily {
             Self::Attachment => "attachments",
         }
     }
+
+    /// Every directory of a module holding this family, in the order they are read: the
+    /// legacy `assets/images` and `assets/attachments` come first, so the standard directory
+    /// wins when both hold the same file.
+    #[must_use]
+    pub const fn directories(self) -> &'static [&'static str] {
+        match self {
+            Self::Image => &["assets/images", "images"],
+            Self::Attachment => &["assets/attachments", "attachments"],
+            Self::Page => &["pages"],
+            Self::Partial => &["partials"],
+            Self::Example => &["examples"],
+        }
+    }
 }
 
 impl fmt::Display for ResourceFamily {

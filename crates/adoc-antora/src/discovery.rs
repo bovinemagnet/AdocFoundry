@@ -153,8 +153,14 @@ pub(crate) fn discover_component(
             nav: nav_path.is_file().then_some(nav_path),
         });
 
-        for family in ResourceFamily::ALL {
-            let family_root = root.join(family.directory());
+        let family_roots = ResourceFamily::ALL.into_iter().flat_map(|family| {
+            family
+                .directories()
+                .iter()
+                .map(move |directory| (family, directory))
+        });
+        for (family, directory) in family_roots {
+            let family_root = root.join(directory);
             if !family_root.is_dir() {
                 continue;
             }
@@ -293,6 +299,34 @@ mod tests {
                 },
             )
             .is_ok());
+        }
+    }
+
+    #[test]
+    fn legacy_assets_directories_hold_images_and_attachments() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-assets");
+        let discovery = discover_antora_workspace(std::slice::from_ref(&root)).unwrap();
+        let context = AntoraContext {
+            component: "assets".to_owned(),
+            version: None,
+            module: "ROOT".to_owned(),
+            family: ResourceFamily::Page,
+        };
+        for (id, path) in [
+            ("image$legacy.svg", "modules/ROOT/assets/images/legacy.svg"),
+            ("image$modern.svg", "modules/ROOT/images/modern.svg"),
+            (
+                "attachment$guide.txt",
+                "modules/ROOT/assets/attachments/guide.txt",
+            ),
+        ] {
+            let resource = AntoraResolver::resolve(
+                &discovery.catalog,
+                &parse_resource_id(id).unwrap(),
+                &context,
+            )
+            .unwrap_or_else(|error| panic!("{id}: {error:?}"));
+            assert!(resource.source_path.ends_with(path), "{id}");
         }
     }
 }

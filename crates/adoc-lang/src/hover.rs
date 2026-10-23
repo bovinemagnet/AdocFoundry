@@ -203,10 +203,15 @@ fn antora_resource_id(antora: &AntoraCatalog, path: &Path) -> Option<String> {
         context.version.as_deref(),
         &context.module,
     )?;
-    let family_root = normalize_path(&module.root.join(context.family.directory()));
-    let relative = normalize_path(path)
-        .strip_prefix(&family_root)
-        .ok()?
+    let path = normalize_path(path);
+    let relative = context
+        .family
+        .directories()
+        .iter()
+        .find_map(|directory| {
+            path.strip_prefix(normalize_path(&module.root.join(directory)))
+                .ok()
+        })?
         .to_path_buf();
     let version = context
         .version

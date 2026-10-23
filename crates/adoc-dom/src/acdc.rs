@@ -83,10 +83,15 @@ type ResolvedIncludes = Arc<Mutex<HashMap<PathBuf, (PathBuf, Arc<str>)>>>;
 
 fn parse(input: &ParseInput<'_>) -> Dom {
     let page = input.path.to_path_buf();
+    let base = page.parent().map_or_else(PathBuf::new, Path::to_path_buf);
+    // acdc joins targets onto an absolute base; resolvers are asked beside the page as it
+    // was given, which may be relative.
+    let absolute_base = lexical(&std::path::absolute(&base).unwrap_or_else(|_| base.clone()));
     let resolved: ResolvedIncludes = Arc::default();
     let loader = {
         let resolver: Arc<dyn IncludeResolver> = input.includes.clone();
         let resolved = resolved.clone();
+        let base = base.clone();
         acdc::IncludeLoader::custom(move |target: &acdc::IncludeSourceTarget| {
             let acdc::IncludeSourceTarget::File(requested) = target else {
                 return Err(acdc::IncludeSourceError::new(
@@ -94,13 +99,18 @@ fn parse(input: &ParseInput<'_>) -> Dom {
                     "remote includes are not read",
                 ));
             };
-            match resolver.read(requested) {
+            let asked = match requested.strip_prefix(&absolute_base) {
+                Ok(rest) if absolute_base != base => base.join(rest),
+                _ => requested.clone(),
+            };
+            let asked = unprotect(&asked);
+            match resolver.read(&asked) {
                 Some((path, text)) => {
                     if let Ok(mut map) = resolved.lock() {
                         map.insert(requested.clone(), (path, Arc::from(text.as_str())));
                     }
                     Ok(acdc::IncludeSource::from_reader(Cursor::new(
-                        text.into_bytes(),
+                        protect_resource_ids(&text).into_bytes(),
                     )))
                 }
                 None => Err(acdc::IncludeSourceError::new(
@@ -110,7 +120,6 @@ fn parse(input: &ParseInput<'_>) -> Dom {
             }
         })
     };
-    let base = page.parent().map_or_else(PathBuf::new, Path::to_path_buf);
     let options = acdc::Options::builder()
         .with_safe_mode(acdc::SafeMode::Unsafe)
         .with_base_dir(&base)
@@ -126,7 +135,8 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         Ok(options) => options,
         Err(error) => return failed(&page, input.text, &error.to_string()),
     };
-    let parsed = match acdc::parse(input.text, &options) {
+    let protected = protect_resource_ids(input.text);
+    let parsed = match acdc::parse(&protected, &options) {
         Ok(parsed) => parsed,
         Err(error) => return failed(&page, input.text, &error.to_string()),
     };
@@ -139,6 +149,65 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         verbatim: std::cell::Cell::new(false),
     };
     converter.document()
+}
+
+/// Stands in for `:` inside Antora resource ids in include targets while acdc parses.
+const PROTECTED_COLON: char = '\u{1}';
+
+/// `text` with the colons of each include target that is a qualified Antora resource id
+/// (`module:family$path`, `component:module:family$path`) replaced by [`PROTECTED_COLON`].
+///
+/// A stock processor reads `module:` as a URI scheme and links the include instead of reading
+/// it; Antora resolves it as a resource. The placeholder is one byte, like the colon, so every
+/// offset in the text is unchanged.
+fn protect_resource_ids(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let target = line
+            .strip_prefix("include::")
+            .and_then(|rest| rest.split_once('['))
+            .map(|(target, _)| target)
+            .filter(|target| target.contains('$') && target.contains(':'));
+        match target {
+            Some(target) => {
+                let start = "include::".len();
+                out.push_str(&line[..start]);
+                out.push_str(&target.replace(':', &PROTECTED_COLON.to_string()));
+                out.push_str(&line[start + target.len()..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// `path` with `.` and `..` resolved without touching the file system, as acdc resolves the
+/// base it joins include targets onto.
+fn lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(component.as_os_str());
+                }
+            }
+            _ => out.push(component.as_os_str()),
+        }
+    }
+    out
+}
+
+/// A requested path with protected colons restored.
+fn unprotect(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if text.contains(PROTECTED_COLON) {
+        PathBuf::from(text.replace(PROTECTED_COLON, ":"))
+    } else {
+        path.to_path_buf()
+    }
 }
 
 fn failed(page: &Path, text: &str, message: &str) -> Dom {
@@ -239,7 +308,12 @@ impl Converter<'_> {
                 .start
                 .file
                 .as_ref()
-                .map(|chain| chain.as_ref().clone())
+                .map(|chain| {
+                    chain
+                        .iter()
+                        .map(|file| file.replace(PROTECTED_COLON, ":"))
+                        .collect()
+                })
                 .unwrap_or_default(),
         }
     }
