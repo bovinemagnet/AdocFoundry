@@ -6,6 +6,7 @@
 //! so the parser behind the trait can change without touching anything above it.
 
 mod acdc;
+mod asciidoc;
 mod model;
 mod replacements;
 
@@ -15,6 +16,7 @@ use std::{
 };
 
 pub use acdc::AcdcParser;
+pub use asciidoc::AsciidocParser;
 pub use model::*;
 
 /// Supplies included files: open buffers, files on disk, and Antora resources.

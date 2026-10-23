@@ -4,7 +4,7 @@
 //! adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 //! adocfoundry-cli symbols <root> <query>
 //! adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
-//! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc]
+//! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 //! adocfoundry-cli --version
 //! ```
 
@@ -22,7 +22,7 @@ const USAGE: &str = "usage:
   adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
   adocfoundry-cli symbols <root> <query>
   adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
-  adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc]
+  adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
   adocfoundry-cli --version";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -292,10 +292,12 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
     let [file] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    match option(&options, "parser").unwrap_or("acdc") {
-        "acdc" => {}
-        other => return Err(format!("unknown parser `{other}`")),
-    }
+    let parser: std::sync::Arc<dyn adoc_dom::DocumentParser> =
+        match option(&options, "parser").unwrap_or("acdc") {
+            "acdc" => std::sync::Arc::new(adoc_dom::AcdcParser),
+            "asciidoc-parser" => std::sync::Arc::new(adoc_dom::AsciidocParser),
+            other => return Err(format!("unknown parser `{other}`")),
+        };
     let file = adoc_index::normalize_path(Path::new(file));
     let root = option(&options, "root").map_or_else(
         || default_root(&file),
@@ -303,6 +305,7 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
     );
 
     let mut engine = open_engine(&root)?;
+    engine.set_document_parser(parser);
     let id = engine.open(&file).map_err(|error| error.to_string())?;
     let preview = engine
         .render_blocking(id, INDEX_TIMEOUT)

@@ -59,7 +59,7 @@ impl DocumentParser for AcdcParser {
     }
 }
 
-fn unsupported_page(page: &Path, text: &str) -> Block {
+pub(crate) fn unsupported_page(page: &Path, text: &str) -> Block {
     Block {
         meta: BlockMeta {
             span: SourceSpan {

@@ -82,6 +82,8 @@ pub(crate) struct PreviewState {
     parsed: BTreeMap<DocumentId, Parsed>,
     published: BTreeMap<DocumentId, Arc<RenderedPreview>>,
     diagrams: Option<Arc<Diagrams>>,
+    /// The parser previews are built with; acdc unless set otherwise.
+    parser: Option<Arc<dyn DocumentParser>>,
     rendering: BTreeSet<String>,
     failed: BTreeMap<String, String>,
 }
@@ -94,6 +96,7 @@ impl PreviewState {
 
 /// The worker's input: everything it reads, copied, so the engine stays free to change.
 struct Snapshot {
+    parser: Arc<dyn DocumentParser>,
     id: DocumentId,
     generation: u64,
     version: u64,
@@ -326,6 +329,11 @@ impl Engine {
         let generation = self.rendered.next_generation;
         self.rendered.latest.insert(id, generation);
         Some(Snapshot {
+            parser: self
+                .rendered
+                .parser
+                .clone()
+                .unwrap_or_else(|| Arc::new(AcdcParser)),
             id,
             generation,
             version: document.version,
@@ -345,6 +353,7 @@ impl Engine {
         self.workers_running += 1;
         thread::spawn(move || {
             let Snapshot {
+                parser,
                 id,
                 generation,
                 version,
@@ -354,7 +363,7 @@ impl Engine {
                 includes,
             } = snapshot;
             let includes = Arc::new(includes);
-            let dom = AcdcParser.parse(&ParseInput {
+            let dom = parser.parse(&ParseInput {
                 path: &path,
                 text: &text,
                 attributes,
@@ -454,6 +463,12 @@ impl Engine {
                 Arc::new(Diagrams::new(cache))
             })
             .clone()
+    }
+
+    /// Chooses the parser previews are built with.
+    pub fn set_document_parser(&mut self, parser: Arc<dyn DocumentParser>) {
+        self.rendered.parser = Some(parser);
+        self.preview_workspace_changed();
     }
 
     /// Replaces the diagram renderer, for tests and front ends with their own providers.
