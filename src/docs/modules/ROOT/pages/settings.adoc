@@ -37,6 +37,7 @@ ignore = ["node_modules", ".git", "build", "target", ".cache"]
 
 [tools]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
+git = ""                         # optional absolute path; discovered on PATH if empty
 
 [git]
 enabled = true                   # false: no repository is discovered
@@ -88,6 +89,11 @@ remote = "origin"                # the remote used for links to a line
 |string
 |`""`
 |An absolute path to `asciidoctor`. Discovered on `PATH` when empty. Used by the language server's preview only. The application's preview renders in process and does not use it.
+
+|`tools.git`
+|string
+|`""`
+|An absolute path to `git`. Discovered on `PATH` when empty. Used to push, and to make signed commits. Everything else in Git is done in process.
 
 |`git.enabled`
 |boolean
