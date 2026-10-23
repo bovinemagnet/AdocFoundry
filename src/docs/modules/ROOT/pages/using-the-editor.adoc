@@ -33,6 +33,7 @@ The sidebar has three tabs and an outline.
 
 Navigation::
 Each component version's navigation, nested as its `nav.adoc` files list it.
+A line such as `product@2.0 · main` heads the panel, naming the active page's component version and branch.
 A component that declares no `nav` in `antora.yml` shows its pages by module instead.
 
 Modules::
@@ -143,6 +144,8 @@ Inside a Git repository the status bar shows the current branch, such as `⎇ ma
 It is the branch of the repository that holds the active document, or of the first root when no document is open.
 A detached HEAD shows `⎇ detached @ 1a2b3c4` and a repository with no commits shows `⎇ no commits yet`.
 Outside a repository nothing is shown.
+When the active page belongs to an Antora component, the bar shows its version and the branch together, such as `product@2.0 · main`, or `product@latest` for a component with `version: ~`.
+See xref:antora-support.adoc#versions-and-branches[Versions and branches].
 The branch updates after a commit or a branch switch.
 Refresh Git Status (`git.refresh`) in the palette discovers the repositories again, and the `git.enabled` setting turns this off; see xref:settings.adoc[Settings].
 

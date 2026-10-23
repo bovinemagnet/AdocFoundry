@@ -13,7 +13,7 @@ Diagnostics are deliberately conservative.
 * Prefer no diagnostic to a false positive.
 * Unresolved references are warnings, not errors.
 * Dynamic constructs such as `+include::{attr}/x.adoc[]+` produce no diagnostic at all.
-* A reference to a version of a known component that is not in the workspace produces none either.
+* A reference to a version of a known component that is not in the workspace produces none either, unless the playbook and repository say another branch publishes it (`adoc.antora.version-not-on-branch`).
 * Includes are recognised only as whole-line directives, and block images only at the start of a line or table cell, matching Asciidoctor.
 
 Codes are stable strings, so you can filter on them in scripts.
@@ -71,6 +71,10 @@ Codes are stable strings, so you can filter on them in scripts.
 |`adoc.antora.nav-unresolved`
 |Warning
 |A navigation file lists an xref that does not resolve.
+
+|`adoc.antora.version-not-on-branch`
+|Warning
+|An xref names a version that is not in the workspace, and the playbook and repository say it is published from another branch than the current one. See xref:antora-support.adoc#versions-and-branches[Versions and branches].
 |===
 
 The engine currently reports warnings and information only.

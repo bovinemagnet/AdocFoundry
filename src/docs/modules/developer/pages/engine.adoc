@@ -384,6 +384,23 @@ It reports "there is no change here" when the caret is in no change.
 They report "there are no changes" when there are none.
 * `git.show_changes` (Show Changes, View category) switches the sidebar to the Changes panel.
 
+[[versions-table]]
+=== Versions per branch
+
+`Engine::version_badge(path)` gives the component version and branch for a path, as shown in the status bar and the Navigation panel.
+`Engine::other_versions(id)` lists the other versions of the document's component that have the same page in the workspace, in Antora's order.
+
+The engine builds the table of which branch publishes which version on a worker (`src/versions.rs`).
+It reads the playbook's sources through `adoc-antora` (`ContentSource`), lists the repository's branches with `Repository::branches()`, and reads each taken branch's `antora.yml` with `Repository::file_at(branch, path)`.
+The result is a `PublishedVersions` table, set on the catalog as `BranchVersions { current, published }` with `AntoraCatalog::set_branch_versions`.
+`adoc-lang` reads it to report `adoc.antora.version-not-on-branch`.
+
+The table is built after Git discovery, after each index and after a branch switch.
+A change to `.git/HEAD` indexes the workspace again, so descriptors and pages are reloaded, and diagnostics are refreshed.
+
+`navigate.open_in_version` (Open in Another Version, Navigate category, no default binding) takes `CommandArgs::Custom` with `{ "document": <id>, "version": "1.0" | null }`.
+It opens the same resource id in the chosen version, in the workspace root that holds it.
+
 == Settings
 
 `Settings` loads the user and workspace TOML layers described in xref:ROOT:settings.adoc[Settings].
