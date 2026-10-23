@@ -58,6 +58,8 @@ pub enum ResolutionError {
         component: String,
         version: Option<String>,
     },
+    /// The component is known but not at this version.
+    UnknownVersion { component: String, version: String },
     UnknownModule {
         component: String,
         version: Option<String>,
@@ -82,6 +84,10 @@ impl fmt::Display for ResolutionError {
                     || component.clone(),
                     |version| format!("{version}@{component}")
                 )
+            ),
+            Self::UnknownVersion { component, version } => write!(
+                formatter,
+                "unknown version `{version}` of Antora component `{component}`"
             ),
             Self::UnknownModule { module, .. } => {
                 write!(formatter, "unknown Antora module `{module}`")

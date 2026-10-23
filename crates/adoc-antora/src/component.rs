@@ -10,4 +10,6 @@ pub struct ComponentDescriptor {
     pub start_page: Option<String>,
     pub nav: Vec<String>,
     pub asciidoc_attributes: BTreeMap<String, String>,
+    /// `prerelease` in `antora.yml`: the version sorts below every released version.
+    pub prerelease: bool,
 }

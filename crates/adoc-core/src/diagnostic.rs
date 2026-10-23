@@ -12,6 +12,8 @@ pub enum DiagnosticCode {
     AntoraInvalidFamily,
     AntoraInvalidCoordinate,
     AntoraInvalidDescriptor,
+    AntoraResolvedViaAlias,
+    AntoraNavUnresolved,
 }
 
 impl DiagnosticCode {
@@ -28,6 +30,8 @@ impl DiagnosticCode {
             Self::AntoraInvalidFamily => "adoc.antora.invalid-family",
             Self::AntoraInvalidCoordinate => "adoc.antora.invalid-coordinate",
             Self::AntoraInvalidDescriptor => "adoc.antora.invalid-descriptor",
+            Self::AntoraResolvedViaAlias => "adoc.antora.resolved-via-alias",
+            Self::AntoraNavUnresolved => "adoc.antora.nav-unresolved",
         }
     }
 }

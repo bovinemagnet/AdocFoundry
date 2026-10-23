@@ -1,0 +1,5 @@
+= Alpha
+
+See xref:beta::index.adoc[Beta] and xref:beta:api:reference.adoc[the API reference].
+
+The xref:old-guide.adoc[old guide link] still works through a page alias.

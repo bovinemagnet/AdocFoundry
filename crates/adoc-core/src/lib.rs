@@ -4,6 +4,8 @@ mod reference;
 mod symbol;
 
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity};
-pub use document::{AttributeDeclaration, Document, DocumentTitle, LineIndex, SourceRange};
+pub use document::{
+    AttributeDeclaration, Document, DocumentTitle, LineIndex, Location, SourceRange,
+};
 pub use reference::{ImageDirective, IncludeDirective, Reference, ReferenceKind};
 pub use symbol::{alphanumeric_id, asciidoctor_id, canonical_id, Anchor, Section};

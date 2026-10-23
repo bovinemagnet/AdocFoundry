@@ -1,0 +1,7 @@
+= Guide
+:page-aliases: old-guide.adoc
+
+[[setup]]
+== Setup
+
+Set it up.

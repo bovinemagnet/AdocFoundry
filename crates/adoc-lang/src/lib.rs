@@ -21,18 +21,12 @@ use adoc_core::{Diagnostic, Document, ReferenceKind, SourceRange};
 use adoc_index::normalize_path;
 use adoc_parser::parse;
 
+pub use adoc_core::Location;
 pub use adoc_index::{WorkspaceSymbol, WorkspaceSymbolKind};
 pub use completion::{Candidate as CompletionItem, CandidateKind as CompletionItemKind};
 pub use hover::HoverContent as Hover;
 pub use symbols::{DocumentSymbol, DocumentSymbolKind};
 pub use workspace::WorkspaceState;
-
-/// A range in a file of the workspace.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Location {
-    pub path: PathBuf,
-    pub range: SourceRange,
-}
 
 /// Where following the construct under the cursor leads.
 #[derive(Clone, Debug, Eq, PartialEq)]

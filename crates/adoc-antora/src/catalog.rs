@@ -1,12 +1,28 @@
 use std::{
-    collections::BTreeMap,
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
     path::{Component, Path, PathBuf},
 };
 
 use crate::{
-    AntoraContext, AntoraCoordinate, AntoraResolver, AntoraResource, AntoraResourceId,
-    ComponentDescriptor, Module, ResolutionError, ResolutionResult, ResourceFamily,
+    discovery::discover_component, read_component_descriptor, AntoraContext, AntoraCoordinate,
+    AntoraResolver, AntoraResource, AntoraResourceId, ComponentDescriptor, DescriptorError,
+    DescriptorErrorKind, Module, ResolutionError, ResolutionResult, ResourceFamily,
 };
+
+/// A successful resolution, and whether it went through a `page-aliases` entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Resolved<'a> {
+    pub resource: &'a AntoraResource,
+    pub via_alias: bool,
+}
+
+/// The resource ids a descriptor reload added and removed.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReloadReport {
+    pub added: Vec<AntoraResourceId>,
+    pub removed: Vec<AntoraResourceId>,
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct ComponentKey {
@@ -26,6 +42,8 @@ pub struct AntoraCatalog {
     components: BTreeMap<ComponentKey, ComponentDescriptor>,
     modules: BTreeMap<ModuleKey, Module>,
     resources: BTreeMap<AntoraCoordinate, AntoraResource>,
+    /// Alias coordinate → the coordinate of the page that declares it.
+    aliases: BTreeMap<AntoraCoordinate, AntoraCoordinate>,
 }
 
 impl AntoraCatalog {
@@ -59,6 +77,11 @@ impl AntoraCatalog {
     }
 
     pub fn insert(&mut self, resource: AntoraResource) -> Option<AntoraResource> {
+        for alias in &resource.aliases {
+            if let Some(alias) = qualified_coordinate(alias) {
+                self.aliases.insert(alias, resource.coordinate.clone());
+            }
+        }
         self.resources.insert(resource.coordinate.clone(), resource)
     }
 
@@ -79,9 +102,172 @@ impl AntoraCatalog {
         })
     }
 
+    /// The resource at `coordinate`, falling back to a page that lists it in `page-aliases`.
     #[must_use]
     pub fn resolve(&self, coordinate: &AntoraCoordinate) -> Option<&AntoraResource> {
-        self.resources.get(coordinate)
+        self.resources.get(coordinate).or_else(|| {
+            self.aliases
+                .get(coordinate)
+                .and_then(|target| self.resources.get(target))
+        })
+    }
+
+    /// The latest version of component `name`: released versions above prereleases, then the
+    /// versionless (`~`) version above numbered ones, numbered versions compared as dotted
+    /// integers and anything else lexically.
+    #[must_use]
+    pub fn latest_version(&self, name: &str) -> Option<&ComponentDescriptor> {
+        self.components
+            .values()
+            .filter(|component| component.name == name)
+            .max_by(|left, right| compare_component_versions(left, right))
+    }
+
+    /// Every version of component `name`, latest first.
+    #[must_use]
+    pub fn versions_of(&self, name: &str) -> Vec<&ComponentDescriptor> {
+        let mut versions: Vec<_> = self
+            .components
+            .values()
+            .filter(|component| component.name == name)
+            .collect();
+        versions.sort_by(|left, right| compare_component_versions(right, left));
+        versions
+    }
+
+    /// Resolves `id` relative to `context` following Antora 3.2: an omitted component and
+    /// version mean the current component version; a component without a version means its
+    /// latest version; a component without a module means its `ROOT` module.
+    pub fn resolve_detailed(
+        &self,
+        id: &AntoraResourceId,
+        context: &AntoraContext,
+    ) -> Result<Resolved<'_>, ResolutionError> {
+        let (component, version) = match (&id.component, &id.version) {
+            (None, None) => (context.component.clone(), context.version.clone()),
+            (None, Some(version)) => (context.component.clone(), Some(version.clone())),
+            (Some(component), Some(version)) => (component.clone(), Some(version.clone())),
+            (Some(component), None) => match self.latest_version(component) {
+                Some(latest) => (component.clone(), latest.version.clone()),
+                None => {
+                    return Err(ResolutionError::UnknownComponent {
+                        component: component.clone(),
+                        version: None,
+                    })
+                }
+            },
+        };
+        if self.component(&component, version.as_deref()).is_none() {
+            if self.latest_version(&component).is_some() {
+                return Err(ResolutionError::UnknownVersion {
+                    component,
+                    version: version.unwrap_or_else(|| "~".to_owned()),
+                });
+            }
+            return Err(ResolutionError::UnknownComponent { component, version });
+        }
+
+        let module = match (&id.module, &id.component) {
+            (Some(module), _) => module.clone(),
+            (None, Some(_)) => "ROOT".to_owned(),
+            (None, None) => context.module.clone(),
+        };
+        if self
+            .module(&component, version.as_deref(), &module)
+            .is_none()
+        {
+            return Err(ResolutionError::UnknownModule {
+                component,
+                version,
+                module,
+            });
+        }
+
+        let family = id.family.unwrap_or(ResourceFamily::Page);
+        let coordinate = AntoraCoordinate {
+            component: component.clone(),
+            version: version.clone(),
+            module: module.clone(),
+            family,
+            relative_path: id.path.as_str().into(),
+        };
+        if let Some(resource) = self.resources.get(&coordinate) {
+            return Ok(Resolved {
+                resource,
+                via_alias: false,
+            });
+        }
+        if let Some(resource) = self
+            .aliases
+            .get(&coordinate)
+            .and_then(|target| self.resources.get(target))
+        {
+            return Ok(Resolved {
+                resource,
+                via_alias: true,
+            });
+        }
+        Err(ResolutionError::UnknownResource {
+            component,
+            version,
+            module,
+            family,
+            path: coordinate.relative_path,
+        })
+    }
+
+    /// Re-reads the `antora.yml` at `descriptor_path`, replacing that component version's
+    /// modules and resources. On failure the component is removed, as it would be at start-up.
+    pub fn reload_component(
+        &mut self,
+        descriptor_path: &Path,
+    ) -> Result<ReloadReport, DescriptorError> {
+        let root = normalize_path(descriptor_path.parent().unwrap_or_else(|| Path::new("")));
+        let before = self.remove_component_at(&root);
+        let descriptor = read_component_descriptor(&root)?;
+        discover_component(self, descriptor).map_err(|error| DescriptorError {
+            kind: DescriptorErrorKind::Read,
+            path: root.join("antora.yml"),
+            message: error.to_string(),
+        })?;
+        let after: BTreeSet<AntoraCoordinate> = self
+            .resources
+            .values()
+            .filter(|resource| resource.source_path.starts_with(&root))
+            .map(|resource| resource.coordinate.clone())
+            .collect();
+        Ok(ReloadReport {
+            added: after.difference(&before).map(resource_id).collect(),
+            removed: before.difference(&after).map(resource_id).collect(),
+        })
+    }
+
+    /// Removes every component version rooted at `root` with its modules, resources and
+    /// aliases, returning the coordinates of the removed resources.
+    fn remove_component_at(&mut self, root: &Path) -> BTreeSet<AntoraCoordinate> {
+        let removed_keys: Vec<ComponentKey> = self
+            .components
+            .iter()
+            .filter(|(_, component)| normalize_path(&component.root) == root)
+            .map(|(key, _)| key.clone())
+            .collect();
+        let mut removed = BTreeSet::new();
+        for key in removed_keys {
+            self.components.remove(&key);
+            self.modules.retain(|module, _| {
+                !(module.component == key.name && module.version == key.version)
+            });
+            self.resources.retain(|coordinate, _| {
+                let matches = coordinate.component == key.name && coordinate.version == key.version;
+                if matches {
+                    removed.insert(coordinate.clone());
+                }
+                !matches
+            });
+        }
+        self.aliases
+            .retain(|_, target| self.resources.contains_key(target));
+        removed
     }
 
     pub fn components(&self) -> impl Iterator<Item = &ComponentDescriptor> {
@@ -231,47 +417,83 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+/// Orders component versions so that the greater one is the later: released above prerelease,
+/// then by [`compare_versions`].
+#[must_use]
+pub fn compare_component_versions(
+    left: &ComponentDescriptor,
+    right: &ComponentDescriptor,
+) -> Ordering {
+    right
+        .prerelease
+        .cmp(&left.prerelease)
+        .then_with(|| compare_versions(left.version.as_deref(), right.version.as_deref()))
+}
+
+/// Orders version strings: versionless highest, then numbered versions as dotted integers
+/// (an optional leading `v` ignored), then other names lexically.
+#[must_use]
+pub fn compare_versions(left: Option<&str>, right: Option<&str>) -> Ordering {
+    fn numeric(version: &str) -> Option<Vec<u64>> {
+        version
+            .strip_prefix('v')
+            .unwrap_or(version)
+            .split('.')
+            .map(|part| part.parse().ok())
+            .collect()
+    }
+    match (left, right) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(left), Some(right)) => match (numeric(left), numeric(right)) {
+            (Some(mut left), Some(mut right)) => {
+                let len = left.len().max(right.len());
+                left.resize(len, 0);
+                right.resize(len, 0);
+                left.cmp(&right)
+            }
+            (Some(_), None) => Ordering::Greater,
+            (None, Some(_)) => Ordering::Less,
+            (None, None) => left.cmp(right),
+        },
+    }
+}
+
+fn qualified_coordinate(id: &AntoraResourceId) -> Option<AntoraCoordinate> {
+    Some(AntoraCoordinate {
+        component: id.component.clone()?,
+        version: id.version.clone(),
+        module: id.module.clone()?,
+        family: id.family.unwrap_or(ResourceFamily::Page),
+        relative_path: id.path.as_str().into(),
+    })
+}
+
+/// The fully qualified resource id of `coordinate`. Paths always use `/`.
+fn resource_id(coordinate: &AntoraCoordinate) -> AntoraResourceId {
+    AntoraResourceId {
+        version: coordinate.version.clone(),
+        component: Some(coordinate.component.clone()),
+        module: Some(coordinate.module.clone()),
+        family: Some(coordinate.family),
+        path: coordinate
+            .relative_path
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+    }
+}
+
 impl AntoraResolver for AntoraCatalog {
     fn resolve<'a>(
         &'a self,
         id: &AntoraResourceId,
         context: &AntoraContext,
     ) -> ResolutionResult<'a> {
-        let component = id.component.as_deref().unwrap_or(&context.component);
-        let version = id.version.clone().or_else(|| context.version.clone());
-        if self.component(component, version.as_deref()).is_none() {
-            return Err(ResolutionError::UnknownComponent {
-                component: component.to_owned(),
-                version,
-            });
-        }
-
-        let module = id.module.as_deref().unwrap_or(&context.module);
-        if self.module(component, version.as_deref(), module).is_none() {
-            return Err(ResolutionError::UnknownModule {
-                component: component.to_owned(),
-                version,
-                module: module.to_owned(),
-            });
-        }
-
-        let family = id.family.unwrap_or(ResourceFamily::Page);
-        let coordinate = AntoraCoordinate {
-            component: component.to_owned(),
-            version: version.clone(),
-            module: module.to_owned(),
-            family,
-            relative_path: id.path.as_str().into(),
-        };
-        self.resources
-            .get(&coordinate)
-            .ok_or_else(|| ResolutionError::UnknownResource {
-                component: component.to_owned(),
-                version,
-                module: module.to_owned(),
-                family,
-                path: coordinate.relative_path,
-            })
+        self.resolve_detailed(id, context)
+            .map(|resolved| resolved.resource)
     }
 }
 
@@ -301,6 +523,7 @@ mod tests {
             start_page: None,
             nav: Vec::new(),
             asciidoc_attributes: BTreeMap::new(),
+            prerelease: false,
         });
         catalog.insert_module(Module {
             component: "demo".to_owned(),
@@ -318,6 +541,7 @@ mod tests {
                 relative_path: PathBuf::from("api/note.adoc"),
             },
             source_path: PathBuf::from("modules/ROOT/partials/api/note.adoc"),
+            aliases: Vec::new(),
         });
         let context = AntoraContext {
             component: "demo".to_owned(),
@@ -351,6 +575,7 @@ mod tests {
         let resource = AntoraResource {
             coordinate: coordinate.clone(),
             source_path: PathBuf::from("modules/ROOT/pages/index.adoc"),
+            aliases: Vec::new(),
         };
         let mut catalog = AntoraCatalog::new();
         catalog.insert_component(ComponentDescriptor {
@@ -362,6 +587,7 @@ mod tests {
             start_page: None,
             nav: Vec::new(),
             asciidoc_attributes: BTreeMap::new(),
+            prerelease: false,
         });
         catalog.insert_module(Module {
             component: "demo".to_owned(),
@@ -402,6 +628,7 @@ mod tests {
             start_page: None,
             nav: Vec::new(),
             asciidoc_attributes: BTreeMap::new(),
+            prerelease: false,
         });
         for module in ["ROOT", "security"] {
             catalog.insert_module(Module {
@@ -427,6 +654,7 @@ mod tests {
                         "modules/{module}/{}/{file}",
                         family.directory()
                     )),
+                    aliases: Vec::new(),
                 });
             }
         }

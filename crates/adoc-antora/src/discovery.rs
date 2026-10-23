@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    read_component_descriptor, AntoraCatalog, AntoraCoordinate, AntoraResource,
-    ComponentDescriptor, DescriptorError, Module, ResourceFamily,
+    parse_resource_id, read_component_descriptor, AntoraCatalog, AntoraCoordinate, AntoraResource,
+    AntoraResourceId, ComponentDescriptor, DescriptorError, Module, ResourceFamily,
 };
 
 const IGNORED_DIRECTORIES: &[&str] = &[
@@ -43,6 +43,56 @@ pub fn discover_antora_workspace(roots: &[PathBuf]) -> io::Result<DiscoveryResul
     Ok(result)
 }
 
+/// The ids a page's `:page-aliases:` header attribute lists, qualified with the page's own
+/// coordinates where they omit them. Ids that do not parse are skipped.
+pub(crate) fn page_aliases(text: &str, page: &AntoraCoordinate) -> Vec<AntoraResourceId> {
+    let Some(value) = header_attribute(text, "page-aliases") else {
+        return Vec::new();
+    };
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|alias| !alias.is_empty())
+        .filter_map(|alias| parse_resource_id(alias).ok())
+        .map(|mut id| {
+            if id.component.is_none() {
+                id.component = Some(page.component.clone());
+                if id.version.is_none() {
+                    id.version.clone_from(&page.version);
+                }
+                if id.module.is_none() {
+                    id.module = Some(page.module.clone());
+                }
+            } else if id.module.is_none() {
+                id.module = Some("ROOT".to_owned());
+            }
+            id.family.get_or_insert(ResourceFamily::Page);
+            id
+        })
+        .collect()
+}
+
+/// The value of attribute `name` declared in the document header: the lines from the top of
+/// the file up to the first blank line after the header starts.
+fn header_attribute<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let prefix = format!(":{name}:");
+    let mut started = false;
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            if started {
+                break;
+            }
+            continue;
+        }
+        started = true;
+        if let Some(value) = line.strip_prefix(&prefix) {
+            return Some(value.trim());
+        }
+    }
+    None
+}
+
 fn collect_component_roots(path: &Path, roots: &mut Vec<PathBuf>) -> io::Result<()> {
     if path.is_file() {
         if path.file_name() == Some(OsStr::new("antora.yml")) {
@@ -65,7 +115,7 @@ fn collect_component_roots(path: &Path, roots: &mut Vec<PathBuf>) -> io::Result<
     Ok(())
 }
 
-fn discover_component(
+pub(crate) fn discover_component(
     catalog: &mut AntoraCatalog,
     descriptor: ComponentDescriptor,
 ) -> io::Result<()> {
@@ -104,15 +154,24 @@ fn discover_component(
                     .strip_prefix(&family_root)
                     .expect("collected resource remains beneath its family root")
                     .to_path_buf();
+                let coordinate = AntoraCoordinate {
+                    component: component.clone(),
+                    version: version.clone(),
+                    module: name.clone(),
+                    family,
+                    relative_path,
+                };
+                let aliases = if family == ResourceFamily::Page {
+                    fs::read_to_string(&source_path)
+                        .map(|text| page_aliases(&text, &coordinate))
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 catalog.insert(AntoraResource {
-                    coordinate: AntoraCoordinate {
-                        component: component.clone(),
-                        version: version.clone(),
-                        module: name.clone(),
-                        family,
-                        relative_path,
-                    },
+                    coordinate,
                     source_path,
+                    aliases,
                 });
             }
         }

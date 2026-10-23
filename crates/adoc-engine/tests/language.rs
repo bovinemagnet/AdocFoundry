@@ -110,3 +110,24 @@ fn workspace_diagnostics_include_unopened_files() {
         .iter()
         .any(|diagnostic| diagnostic.code == DiagnosticCode::AntoraInvalidDescriptor)));
 }
+
+#[test]
+fn nav_trees_read_unsaved_buffers() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-multi-component");
+    let mut engine = open_workspace(&root);
+    let nav = root.join("alpha/modules/ROOT/nav.adoc");
+    let id = engine.open(&nav).unwrap();
+    engine
+        .invoke(
+            ids::EDIT_REPLACE_RANGE,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, ".Alpha".len()),
+                text: ".Renamed".to_owned(),
+            },
+        )
+        .unwrap();
+    let trees = engine.nav_trees("alpha", Some("1.0")).unwrap();
+    assert_eq!(trees[0].items[0].title, "Renamed");
+}

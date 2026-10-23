@@ -77,6 +77,12 @@ pub fn parse_component_descriptor(
         start_page: raw.start_page,
         nav: raw.nav.map_or_else(Vec::new, OneOrMany::into_vec),
         asciidoc_attributes,
+        // Antora accepts `true` or a string such as `-beta`, which also marks a prerelease.
+        prerelease: match raw.prerelease {
+            Some(ScalarValue::Boolean(prerelease)) => prerelease,
+            Some(ScalarValue::String(suffix)) => !suffix.is_empty(),
+            _ => false,
+        },
     })
 }
 
@@ -89,6 +95,7 @@ struct RawDescriptor {
     start_page: Option<String>,
     nav: Option<OneOrMany>,
     asciidoc: Option<RawAsciidoc>,
+    prerelease: Option<ScalarValue>,
 }
 
 #[derive(Debug, Deserialize)]

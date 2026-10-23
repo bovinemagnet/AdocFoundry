@@ -3,9 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use adoc_antora::{
-    discover_antora_workspace, read_component_descriptor, AntoraCatalog, DescriptorError,
-};
+use adoc_antora::{discover_antora_workspace, AntoraCatalog, DescriptorError, ReloadReport};
 use adoc_core::Document;
 use adoc_index::{normalize_path, WorkspaceIndex};
 
@@ -42,40 +40,19 @@ impl WorkspaceState {
         self.index.remove(path);
     }
 
-    /// Re-reads one `antora.yml`. On success, any issue previously recorded for it is cleared;
-    /// on failure, the issue is recorded and returned.
-    pub fn reload_descriptor(&mut self, descriptor_path: &Path) -> Result<(), DescriptorError> {
+    /// Re-reads one `antora.yml`, replacing that component version in the catalog. On success
+    /// any issue previously recorded for it is cleared; on failure the issue is recorded, the
+    /// component is removed and the error returned.
+    pub fn reload_descriptor(
+        &mut self,
+        descriptor_path: &Path,
+    ) -> Result<ReloadReport, DescriptorError> {
         let descriptor_path = normalize_path(descriptor_path);
         self.descriptor_issues
             .retain(|issue| normalize_path(&issue.path) != descriptor_path);
-        let root = descriptor_path.parent().unwrap_or_else(|| Path::new(""));
-        match read_component_descriptor(root) {
-            Ok(_) => {
-                // Module and resource discovery is per component root; rebuild the catalog
-                // from every component root currently known plus this one.
-                let mut roots: Vec<PathBuf> = self
-                    .antora
-                    .components()
-                    .map(|component| component.root.clone())
-                    .collect();
-                roots.push(root.to_path_buf());
-                roots.sort();
-                roots.dedup();
-                if let Ok(discovery) = discover_antora_workspace(&roots) {
-                    self.antora = discovery.catalog;
-                    for issue in discovery.issues {
-                        if !self.descriptor_issues.contains(&issue) {
-                            self.descriptor_issues.push(issue);
-                        }
-                    }
-                }
-                Ok(())
-            }
-            Err(error) => {
-                self.descriptor_issues.push(error.clone());
-                Err(error)
-            }
-        }
+        self.antora
+            .reload_component(&descriptor_path)
+            .inspect_err(|error| self.descriptor_issues.push(error.clone()))
     }
 }
 

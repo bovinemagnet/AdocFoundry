@@ -46,9 +46,22 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
                 continue;
             }
         };
-        match AntoraResolver::resolve(antora, &id, &context) {
-            Ok(resource) => {
+        match antora.resolve_detailed(&id, &context) {
+            Ok(adoc_antora::Resolved {
+                resource,
+                via_alias,
+            }) => {
                 resolved.insert(reference.range);
+                if via_alias {
+                    pending.push((
+                        DiagnosticCode::AntoraResolvedViaAlias,
+                        format!(
+                            "Resolved through a page alias; link to {} instead",
+                            alias_target_id(&resource.coordinate)
+                        ),
+                        reference.range,
+                    ));
+                }
                 if let Some(anchor) = anchor.filter(|anchor| !anchor.is_empty()) {
                     if !declares_anchor(index, antora, &context, &resource.source_path, anchor) {
                         pending.push((
@@ -61,7 +74,10 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
             }
             // A component missing from the workspace is normally published from another
             // repository in the playbook, so its absence here says nothing about the xref.
-            Err(ResolutionError::UnknownComponent { .. }) => {
+            // The same holds for a version of a known component that is not checked out here.
+            Err(
+                ResolutionError::UnknownComponent { .. } | ResolutionError::UnknownVersion { .. },
+            ) => {
                 resolved.insert(reference.range);
             }
             // Only explicit resource IDs are reported as Antora failures. A bare path that the
@@ -153,7 +169,11 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
                 };
                 match AntoraResolver::resolve(antora, &id, &context) {
                     // A component missing from the workspace is published from elsewhere.
-                    Ok(_) | Err(ResolutionError::UnknownComponent { .. }) => {}
+                    Ok(_)
+                    | Err(
+                        ResolutionError::UnknownComponent { .. }
+                        | ResolutionError::UnknownVersion { .. },
+                    ) => {}
                     Err(ResolutionError::UnknownModule { module, .. }) => output.push(
                         DiagnosticCode::AntoraUnknownModule,
                         format!("Unknown Antora module: {module}"),
@@ -249,12 +269,31 @@ fn diagnose_resolution(
             range,
         ),
         Err(ResolutionError::UnknownComponent { .. })
+        | Err(ResolutionError::UnknownVersion { .. })
         | Err(ResolutionError::UnknownResource { .. }) => output.push(
             DiagnosticCode::AntoraUnknownResource,
             format!("Unknown Antora resource: {target}"),
             range,
         ),
     }
+}
+
+/// The resource id an alias resolves to, as a writer would put it in an xref.
+fn alias_target_id(coordinate: &adoc_antora::AntoraCoordinate) -> String {
+    let path = coordinate
+        .relative_path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    let version = coordinate
+        .version
+        .as_deref()
+        .map_or_else(String::new, |version| format!("{version}@"));
+    format!(
+        "{version}{}:{}:{path}",
+        coordinate.component, coordinate.module
+    )
 }
 
 /// An anchor counts as declared when any file composed into `path` declares it.
@@ -284,7 +323,9 @@ fn resolution_diagnostic(
             format!("Unknown Antora module: {module}"),
             range,
         ),
-        ResolutionError::UnknownComponent { .. } | ResolutionError::UnknownResource { .. } => (
+        ResolutionError::UnknownComponent { .. }
+        | ResolutionError::UnknownVersion { .. }
+        | ResolutionError::UnknownResource { .. } => (
             DiagnosticCode::AntoraUnknownResource,
             format!("Unknown Antora resource: {target}"),
             range,
@@ -314,9 +355,14 @@ struct DiagnosticOutput<'a> {
 impl DiagnosticOutput<'_> {
     fn push(&mut self, code: DiagnosticCode, message: String, range: SourceRange) {
         if self.seen.insert((code, range)) {
+            let severity = if code == DiagnosticCode::AntoraResolvedViaAlias {
+                DiagnosticSeverity::Information
+            } else {
+                DiagnosticSeverity::Warning
+            };
             self.diagnostics.push(Diagnostic {
                 code,
-                severity: DiagnosticSeverity::Warning,
+                severity,
                 message,
                 range,
             });
@@ -333,6 +379,27 @@ mod tests {
     use adoc_index::WorkspaceIndex;
 
     use super::{descriptor_diagnostics, diagnostics};
+
+    #[test]
+    fn reports_xrefs_resolved_through_a_page_alias_as_information() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-multi-component");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+        let page = adoc_index::normalize_path(&root.join("alpha/modules/ROOT/pages/index.adoc"));
+
+        let found = diagnostics(&index, &antora, &page);
+        let codes: Vec<_> = found.iter().map(|diagnostic| diagnostic.code).collect();
+        assert_eq!(codes, [DiagnosticCode::AntoraResolvedViaAlias], "{found:?}");
+        assert_eq!(
+            found[0].severity,
+            adoc_core::DiagnosticSeverity::Information
+        );
+        assert!(found[0].message.contains("1.0@alpha:ROOT:guide.adoc"));
+    }
 
     #[test]
     fn validates_antora_xrefs_and_includes() {

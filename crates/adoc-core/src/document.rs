@@ -23,6 +23,13 @@ impl SourceRange {
     }
 }
 
+/// A range in a file.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Location {
+    pub path: std::path::PathBuf,
+    pub range: SourceRange,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentTitle {
     pub text: String,

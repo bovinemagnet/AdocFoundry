@@ -71,4 +71,6 @@ pub struct AntoraCoordinate {
 pub struct AntoraResource {
     pub coordinate: AntoraCoordinate,
     pub source_path: PathBuf,
+    /// Fully qualified ids from the page's `:page-aliases:` attribute.
+    pub aliases: Vec<crate::AntoraResourceId>,
 }

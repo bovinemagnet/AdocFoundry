@@ -37,6 +37,7 @@ pub use settings::{
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
 pub use workspace::WATCH_DEBOUNCE;
 
+pub use adoc_antora::{NavError, NavItem, NavTree};
 pub use adoc_lang::{
     CompletionItem, CompletionItemKind, DefinitionTarget, DocumentSymbol, DocumentSymbolKind,
     Hover, Location, WorkspaceState, WorkspaceSymbol, WorkspaceSymbolKind,

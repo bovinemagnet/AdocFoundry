@@ -31,8 +31,10 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "adoc-antora"
 version = "0.1.0"
 dependencies = [
+ "adoc-core",
  "serde",
  "serde-saphyr 1.0.1",
+ "tempfile",
 ]
 
 [[package]]
@@ -43,6 +45,7 @@ version = "0.1.0"
 name = "adoc-engine"
 version = "0.1.0"
 dependencies = [
+ "adoc-antora",
  "adoc-core",
  "adoc-index",
  "adoc-lang",

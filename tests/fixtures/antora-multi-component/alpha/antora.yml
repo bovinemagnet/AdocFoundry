@@ -1,0 +1,5 @@
+name: alpha
+title: Alpha
+version: '1.0'
+nav:
+- modules/ROOT/nav.adoc

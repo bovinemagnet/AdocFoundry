@@ -1,7 +1,12 @@
 //! Language features for open documents, delegated to `adoc-lang` so the engine and the
 //! language server behave identically.
 
-use std::path::PathBuf;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use adoc_antora::{NavError, NavTree};
 
 use adoc_core::Diagnostic;
 use adoc_lang::{CompletionItem, DefinitionTarget, DocumentSymbol, Hover, WorkspaceSymbol};
@@ -68,5 +73,21 @@ impl Engine {
     #[must_use]
     pub fn workspace_symbols(&self, query: &str) -> Vec<WorkspaceSymbol> {
         adoc_lang::workspace_symbols(&self.workspace, query)
+    }
+
+    /// The navigation trees of a component version, reading open documents from their buffers.
+    pub fn nav_trees(
+        &self,
+        component: &str,
+        version: Option<&str>,
+    ) -> Result<Vec<NavTree>, NavError> {
+        let read = |path: &Path| match self.document_for_path(path) {
+            Some(id) => Ok(self
+                .document(id)
+                .map(|document| document.text.to_string())
+                .unwrap_or_default()),
+            None => fs::read_to_string(path),
+        };
+        adoc_antora::nav_tree(&self.workspace.antora, component, version, &read)
     }
 }
