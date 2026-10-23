@@ -138,9 +138,18 @@ fn classify_xref_target(target: &str) -> (ReferenceKind, &str) {
     }
 }
 
+/// The include directive on `line`, if it is one. Like Asciidoctor's preprocessor, only a line
+/// that starts with `include::` and ends at the directive's closing bracket counts; an include
+/// mentioned in prose, indented, escaped or followed by text is not one.
 pub(crate) fn find_includes(line: &str, offset: usize) -> Vec<IncludeDirective> {
-    find_macros(content(line), "include::", offset)
+    let line = content(line).trim_end();
+    if !line.starts_with("include::") {
+        return Vec::new();
+    }
+    find_macros(line, "include::", offset)
         .into_iter()
+        .take(1)
+        .filter(|mac| mac.range.start == offset && mac.range.end == offset + line.len())
         .map(|mac| IncludeDirective {
             target: mac.target.to_owned(),
             attributes: nonempty(mac.attributes),
@@ -149,9 +158,16 @@ pub(crate) fn find_includes(line: &str, offset: usize) -> Vec<IncludeDirective> 
         .collect()
 }
 
+/// Block images on `line`. A block macro starts its line, or a table cell (`| image::…`,
+/// `a| image::…`); one mentioned anywhere else is text.
 pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
-    find_macros(content(line), "image::", offset)
+    let line = content(line);
+    find_macros(line, "image::", offset)
         .into_iter()
+        .filter(|mac| {
+            let before = line[..mac.range.start - offset].trim_end();
+            before.is_empty() || before.ends_with('|')
+        })
         .map(|mac| ImageDirective {
             target: mac.target.to_owned(),
             attributes: nonempty(mac.attributes),

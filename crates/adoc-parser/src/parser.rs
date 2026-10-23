@@ -202,6 +202,38 @@ image::diagram.png[Architecture]\n";
         assert_eq!(document.anchors[0].id, "GOOGLE-LIMITS");
     }
 
+    /// A block image starts its line, or a table cell; mentioned in prose or a list item it is
+    /// text, and Asciidoctor's inline `image:` cannot take a target starting with `:` either.
+    #[test]
+    fn block_images_start_a_line_or_a_table_cell() {
+        let source = "= Demo\n\nimage::real.png[]\n* `image::example.png[]` is how to write one\n\
+                      |===\n| image::cell.png[]\na| image::styled.png[]\n|===\n";
+        let targets: Vec<_> = parse("file:///doc.adoc", source)
+            .document
+            .images
+            .into_iter()
+            .map(|image| image.target)
+            .collect();
+        assert_eq!(targets, ["real.png", "cell.png", "styled.png"]);
+    }
+
+    /// An include is a preprocessor directive: Asciidoctor recognises it only at the start of
+    /// a line with nothing after its closing bracket, so prose that mentions one, an indented
+    /// line and a line with trailing text are not includes.
+    #[test]
+    fn include_directives_must_stand_alone_at_the_start_of_a_line() {
+        let source = "= Demo\n\nUse `include::partial$<file>.adoc[]` in a page.\n\
+                      include::real.adoc[]\n  include::indented.adoc[]\n\
+                      include::trailing.adoc[] and more\ninclude::spaced.adoc[]  \n";
+        let targets: Vec<_> = parse("file:///doc.adoc", source)
+            .document
+            .includes
+            .into_iter()
+            .map(|include| include.target)
+            .collect();
+        assert_eq!(targets, ["real.adoc", "spaced.adoc"]);
+    }
+
     /// Asciidoctor processes `include::` inside listing, literal and passthrough blocks —
     /// pulling a code sample into a `[source]` block is the commonest use of the
     /// `example$` family — but not inside a comment block.
