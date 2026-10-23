@@ -91,13 +91,25 @@ fn runs_of(block: &TextBlock) -> Vec<Run<'_>> {
 #[must_use]
 pub fn shown(block: &TextBlock, composing: Option<(usize, &str)>) -> Shown {
     let mut text = String::with_capacity(block.display.len());
+    let mut after_break = false;
     for run in runs_of(block) {
         let part = &block.display[run.range.clone()];
-        if block.context == TextContext::Verbatim || run.atom.is_some() {
+        if block.context == TextContext::Verbatim {
             text.push_str(part);
+        } else if matches!(run.atom, Some(Atom::LineBreak)) {
+            // ` +` is drawn as a space; the source's own line break after it breaks the line.
+            text.push_str(&" ".repeat(part.len()));
+            after_break = true;
+            continue;
+        } else if run.atom.is_some() {
+            text.push_str(part);
+        } else if let Some(rest) = part.strip_prefix('\n').filter(|_| after_break) {
+            text.push('\n');
+            text.push_str(&rest.replace('\n', " "));
         } else {
             text.push_str(&part.replace('\n', " "));
         }
+        after_break = false;
     }
     let display_len = text.len();
     let composing = composing.map(|(caret, composition)| {
@@ -115,7 +127,12 @@ pub fn shown(block: &TextBlock, composing: Option<(usize, &str)>) -> Shown {
 /// The text runs for `shown`: fonts and colours by mark, atoms drawn as references, the
 /// composition underlined.
 #[must_use]
-pub fn text_runs(block: &TextBlock, shown: &Shown, style: &InlineStyle) -> Vec<TextRun> {
+pub fn text_runs(
+    block: &TextBlock,
+    shown: &Shown,
+    style: &InlineStyle,
+    bold: bool,
+) -> Vec<TextRun> {
     let mut runs: Vec<TextRun> = Vec::new();
     let mut push = |length: usize, marks: MarkSet, atom: Option<&Atom>, composing: bool| {
         if length == 0 {
@@ -129,7 +146,7 @@ pub fn text_runs(block: &TextBlock, shown: &Shown, style: &InlineStyle) -> Vec<T
         } else {
             style.font.clone()
         };
-        if marks.contains(Mark::Strong) {
+        if bold || marks.contains(Mark::Strong) {
             font.weight = FontWeight::BOLD;
         }
         if marks.contains(Mark::Emphasis) {

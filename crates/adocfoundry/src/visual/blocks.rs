@@ -500,7 +500,12 @@ impl VisualView {
             .flatten();
         let composing = caret_display.zip(self.composing.as_deref());
         let shown = text::shown(block, composing);
-        let runs = text::text_runs(block, &shown, &draw.inline);
+        // Titles, headings and terms are bold throughout: runs set their own weight.
+        let bold = matches!(
+            node.kind,
+            NodeKind::Title | NodeKind::Section { .. } | NodeKind::Heading { .. } | NodeKind::Term
+        );
+        let runs = text::text_runs(block, &shown, &draw.inline, bold);
         let pending = self.pending.filter(|_| caret_here);
         let caret = caret_display
             .filter(|_| draw.focused && self.selection.is_empty() && pending.is_none())

@@ -226,6 +226,7 @@ impl VisualView {
         let separator = move || div().w(gpui::px(1.)).h(gpui::px(16.)).bg(border);
         h_flex()
             .id("visual-toolbar")
+            .flex_wrap()
             .gap_1()
             .px_2()
             .py_1()
