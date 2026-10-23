@@ -72,6 +72,7 @@ pub mod ids {
     pub const GIT_NEXT_CHANGE: CommandId = CommandId::new("git.next_change");
     pub const GIT_PREVIOUS_CHANGE: CommandId = CommandId::new("git.previous_change");
     pub const GIT_SHOW_CHANGES: CommandId = CommandId::new("git.show_changes");
+    pub const NAVIGATE_OPEN_IN_VERSION: CommandId = CommandId::new("navigate.open_in_version");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;
@@ -355,6 +356,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     }
     crate::visual::register_visual(registry);
     crate::git::register_git(registry);
+    crate::versions::register_versions(registry);
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry, spec: CommandSpec, run: Run) {

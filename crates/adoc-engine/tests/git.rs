@@ -335,3 +335,115 @@ fn next_change_wraps_around() {
         .invoke(ids::GIT_NEXT_CHANGE, CommandArgs::Document(id))
         .is_err());
 }
+
+/// A docs repository whose playbook builds `main` and the `v*` branches from `docs/`, with
+/// `main` unversioned and branch `v1.0` publishing version 1.0. Its page links to version 1.0.
+fn versioned_repository(dir: &Path) -> TestRepo {
+    let test = TestRepo::init(dir);
+    test.write(
+        "antora-playbook.yml",
+        "site:\n  title: Docs\ncontent:\n  sources:\n  - url: .\n    branches: [main, 'v*']\n    start_path: docs\n",
+    );
+    test.write("docs/antora.yml", "name: product\nversion: ~\n");
+    test.write(
+        "docs/modules/ROOT/pages/index.adoc",
+        "= Home\n\nSee xref:1.0@product::index.adoc[the 1.0 home].\n",
+    );
+    test.commit_all("main");
+    test.switch_branch("v1.0");
+    test.write("docs/antora.yml", "name: product\nversion: '1.0'\n");
+    test.commit_all("version 1.0");
+    test.checkout("main");
+    test
+}
+
+fn version_warnings(engine: &Engine, id: adoc_engine::DocumentId) -> Vec<String> {
+    engine
+        .document(id)
+        .unwrap()
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_str() == "adoc.antora.version-not-on-branch")
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect()
+}
+
+#[test]
+fn head_change_reloads_descriptors_and_rediagnoses() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = versioned_repository(dir.path());
+    let mut engine = engine();
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let page = dir.path().join("docs/modules/ROOT/pages/index.adoc");
+    let id = engine.open(&page).unwrap();
+    assert!(
+        pump_until(&mut engine, |engine| !version_warnings(engine, id)
+            .is_empty()),
+        "the xref to 1.0 is reported on main"
+    );
+    assert_eq!(
+        version_warnings(&engine, id),
+        ["version 1.0 is published from branch v1.0, not main"]
+    );
+    assert_eq!(
+        engine.version_badge(&page).as_deref(),
+        Some("product@latest")
+    );
+
+    // Let the watcher settle, then check out the version branch in the same folder.
+    thread::sleep(Duration::from_millis(100));
+    test.checkout("v1.0");
+    assert!(
+        pump_until(&mut engine, |engine| {
+            engine.version_badge(&page).as_deref() == Some("product@1.0")
+                && version_warnings(engine, id).is_empty()
+        }),
+        "the switch reloads the descriptor and clears the warning: {:?}",
+        version_warnings(&engine, id)
+    );
+}
+
+#[test]
+fn open_in_version_resolves_same_resource_in_other_root() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-versions");
+    let roots: Vec<_> = ["main", "v1", "v2", "next"]
+        .iter()
+        .map(|root| adoc_index::normalize_path(&fixture.join(root)))
+        .collect();
+    let mut engine = engine();
+    engine.open_workspace(roots.clone()).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let feature = |root: &Path| root.join("modules/ROOT/pages/feature.adoc");
+    let id = engine.open(&feature(&roots[2])).unwrap();
+
+    let others: Vec<Option<String>> = engine
+        .other_versions(id)
+        .into_iter()
+        .map(|(version, _)| version)
+        .collect();
+    // Latest first as Antora orders them: unversioned, then released, then the prerelease.
+    assert_eq!(
+        others,
+        [None, Some("1.0".to_owned()), Some("3.0".to_owned())]
+    );
+    let outcome = engine
+        .invoke(
+            ids::NAVIGATE_OPEN_IN_VERSION,
+            CommandArgs::Custom(serde_json::json!({ "document": id.get(), "version": "1.0" })),
+        )
+        .unwrap();
+    let adoc_engine::CommandOutcome::Opened(opened) = outcome else {
+        panic!("expected a document, got {outcome:?}");
+    };
+    assert_eq!(engine.document(opened).unwrap().path, feature(&roots[1]));
+    assert!(engine
+        .invoke(
+            ids::NAVIGATE_OPEN_IN_VERSION,
+            CommandArgs::Custom(serde_json::json!({ "document": id.get(), "version": "9.9" })),
+        )
+        .is_err());
+}

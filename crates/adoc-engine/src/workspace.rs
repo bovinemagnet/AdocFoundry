@@ -62,6 +62,10 @@ pub(crate) enum WorkerMessage {
         version: u64,
         hunks: Result<Vec<adoc_git::Hunk>, String>,
     },
+    BranchVersions {
+        generation: u64,
+        versions: Option<adoc_antora::BranchVersions>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -232,6 +236,7 @@ impl Engine {
                     return; // A newer workspace replaced the one this worker indexed.
                 }
                 self.workspace = *state;
+                self.restore_branch_versions();
                 // Open documents are newer than the files the worker read.
                 let open: Vec<_> = self
                     .documents
@@ -244,6 +249,10 @@ impl Engine {
                 }
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
+                // The playbook may have changed with the files.
+                if !self.git.repositories().is_empty() {
+                    self.refresh_branch_versions();
+                }
                 self.preview_workspace_changed();
                 self.visual_workspace_changed();
             }
@@ -270,6 +279,10 @@ impl Engine {
                 result,
             } => self.git_refreshed(generation, &workdir, refresh, result),
             WorkerMessage::GitHunks { id, version, hunks } => self.git_hunks(id, version, hunks),
+            WorkerMessage::BranchVersions {
+                generation,
+                versions,
+            } => self.branch_versions_found(generation, versions),
             WorkerMessage::IndexFailed { error } => {
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,
