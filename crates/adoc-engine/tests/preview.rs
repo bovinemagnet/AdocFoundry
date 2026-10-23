@@ -310,3 +310,47 @@ fn preview_commands_follow_and_pin() {
     assert_eq!(engine.preview_target(), None);
     assert!(engine.rendered_preview(second).is_none());
 }
+
+#[test]
+fn go_to_records_history_and_reveal_does_not() {
+    use adoc_engine::NavigationPosition;
+
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    let other = directory.path().join("other.adoc");
+    fs::write(&page, "= Page\n").unwrap();
+    fs::write(&other, "= Other\n\n== Part\n").unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    let page_id = engine.open(&page).unwrap();
+
+    engine
+        .invoke(
+            ids::NAVIGATE_REVEAL,
+            CommandArgs::Position(NavigationPosition {
+                path: other.clone(),
+                offset: 10,
+            }),
+        )
+        .unwrap();
+    let other_id = engine.document_for_path(&other).unwrap();
+    assert_eq!(engine.active(), Some(other_id));
+    assert_eq!(engine.navigation_position().unwrap().offset, 10);
+    assert!(!engine.can_go_back());
+
+    engine.set_active(page_id);
+    engine
+        .invoke(
+            ids::NAVIGATE_GO_TO,
+            CommandArgs::Position(NavigationPosition {
+                path: other.clone(),
+                offset: 9,
+            }),
+        )
+        .unwrap();
+    assert_eq!(engine.active(), Some(other_id));
+    assert!(engine.can_go_back());
+    engine
+        .invoke(ids::NAVIGATE_BACK, CommandArgs::None)
+        .unwrap();
+    assert_eq!(engine.active(), Some(page_id));
+}

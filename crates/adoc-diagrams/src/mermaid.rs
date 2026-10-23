@@ -1,8 +1,11 @@
-use merman::{OperationControl, RenderOutput, RenderRequest, Renderer, SvgRequest};
+use merman::{
+    svg::SvgPipeline, OperationControl, RenderOutput, RenderRequest, Renderer, SvgRequest,
+};
 
 use crate::{DiagramError, DiagramProvider, DiagramRequest};
 
-/// Mermaid, rendered in process by merman.
+/// Mermaid, rendered in process by merman, as SVG that native renderers draw completely:
+/// labels are SVG text rather than HTML in `foreignObject`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MermaidProvider;
 
@@ -16,7 +19,10 @@ impl DiagramProvider for MermaidProvider {
             .render(RenderRequest::svg(
                 &request.source,
                 OperationControl::new(),
-                SvgRequest::default(),
+                SvgRequest {
+                    pipeline: Some(SvgPipeline::resvg_safe()),
+                    ..SvgRequest::default()
+                },
             ))
             .map_err(|error| DiagramError::Failed(error.to_string()))?;
         match output {

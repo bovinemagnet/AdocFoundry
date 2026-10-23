@@ -32,6 +32,7 @@ use gpui_component::{
 use crate::{
     app::{open_secondary_window, AppState, WindowKind},
     editor::{bindings::*, language, SourceEditorView},
+    preview::PreviewView,
     search_view::SearchView,
     sidebar,
 };
@@ -91,6 +92,7 @@ pub struct WorkspaceView {
     search: Entity<SearchView>,
     show_search: bool,
     palette: Entity<CommandState>,
+    preview: Entity<PreviewView>,
     revealed: Option<NavigationPosition>,
     _subscriptions: Vec<Subscription>,
 }
@@ -123,6 +125,7 @@ impl WorkspaceView {
             search,
             show_search: false,
             palette: cx.new(|cx| CommandState::new(window, cx)),
+            preview: cx.new(|cx| PreviewView::new(app.clone(), window, cx)),
             revealed: None,
             app,
             _subscriptions: subscriptions,
@@ -286,6 +289,11 @@ impl WorkspaceView {
     #[cfg(test)]
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
+    }
+
+    #[cfg(test)]
+    pub fn preview(&self) -> &Entity<PreviewView> {
+        &self.preview
     }
 
     fn active_editor(&self) -> Option<&Entity<SourceEditorView>> {
@@ -759,6 +767,37 @@ impl WorkspaceView {
         open_secondary_window(self.app.clone(), WindowKind::Mirror, cx);
     }
 
+    fn on_toggle_preview(
+        &mut self,
+        _: &TogglePreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None, window, cx);
+    }
+
+    fn on_detach_preview(
+        &mut self,
+        _: &DetachPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_DETACH_PREVIEW, CommandArgs::None, window, cx);
+    }
+
+    fn on_toggle_preview_sync(
+        &mut self,
+        _: &TogglePreviewScrollSync,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_TOGGLE_SCROLL_SYNC, CommandArgs::None, window, cx);
+    }
+
+    fn on_pin_preview(&mut self, _: &PinPreview, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::PREVIEW_PIN, CommandArgs::None, window, cx);
+    }
+
     fn on_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
         let mut items: Vec<CommandItem> = self
             .app
@@ -980,6 +1019,39 @@ impl Render for WorkspaceView {
         let editor = self.active_editor().cloned();
         let has_tabs = !self.tabs.is_empty();
         let show_search = self.show_search;
+        let layout = self.app.read(cx).engine.preview_layout();
+        let docked_preview = (layout.visible && !layout.detached).then(|| self.preview.clone());
+        let center = v_flex()
+            .size_full()
+            .when(has_tabs, |center| center.child(self.render_tabs(cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .children(editor)
+                    .when(!has_tabs, |empty| {
+                        empty.child(
+                            v_flex()
+                                .size_full()
+                                .items_center()
+                                .justify_center()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Open a folder or a page from the sidebar")
+                                .child(
+                                    Button::new("open-folder")
+                                        .primary()
+                                        .label("Open Folder…")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.on_open_folder(&OpenFolder, window, cx);
+                                        })),
+                                ),
+                        )
+                    }),
+            )
+            .when(show_search, |center| {
+                center.child(div().h(px(280.)).child(self.search.clone()))
+            })
+            .into_any_element();
 
         v_flex()
             .id("workspace")
@@ -1009,6 +1081,10 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_mirror))
             .on_action(cx.listener(Self::on_palette))
+            .on_action(cx.listener(Self::on_toggle_preview))
+            .on_action(cx.listener(Self::on_detach_preview))
+            .on_action(cx.listener(Self::on_toggle_preview_sync))
+            .on_action(cx.listener(Self::on_pin_preview))
             .child(
                 TitleBar::new().child(
                     h_flex()
@@ -1056,43 +1132,13 @@ impl Render for WorkspaceView {
                                 .child(self.render_sidebar(cx)),
                         )
                         .child(
-                            resizable_panel().child(
-                                v_flex()
-                                    .size_full()
-                                    .when(has_tabs, |center| center.child(self.render_tabs(cx)))
-                                    .child(div().flex_1().min_h_0().children(editor).when(
-                                        !has_tabs,
-                                        |empty| {
-                                            empty.child(
-                                                v_flex()
-                                                    .size_full()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(
-                                                        "Open a folder or a page from the sidebar",
-                                                    )
-                                                    .child(
-                                                        Button::new("open-folder")
-                                                            .primary()
-                                                            .label("Open Folder…")
-                                                            .on_click(cx.listener(
-                                                                |this, _, window, cx| {
-                                                                    this.on_open_folder(
-                                                                        &OpenFolder,
-                                                                        window,
-                                                                        cx,
-                                                                    );
-                                                                },
-                                                            )),
-                                                    ),
-                                            )
-                                        },
-                                    ))
-                                    .when(show_search, |center| {
-                                        center.child(div().h(px(280.)).child(self.search.clone()))
-                                    }),
-                            ),
+                            resizable_panel().child(match docked_preview {
+                                Some(preview) => h_resizable("editor-preview")
+                                    .child(resizable_panel().child(center))
+                                    .child(resizable_panel().size(px(520.)).child(preview))
+                                    .into_any_element(),
+                                None => center,
+                            }),
                         )
                         .child(
                             resizable_panel().size(px(240.)).child(

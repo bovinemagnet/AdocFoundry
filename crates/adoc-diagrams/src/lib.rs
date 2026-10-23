@@ -26,6 +26,9 @@ const PRESENTATION_ATTRIBUTES: &[&str] = &[
     "align", "caption", "float", "height", "id", "link", "role", "target", "title", "width",
 ];
 
+/// Changed whenever rendering changes for the same input, so cached images are rendered again.
+const RENDER_REVISION: &str = "2";
+
 impl DiagramRequest {
     #[must_use]
     pub fn new(kind: impl Into<String>, source: impl Into<String>) -> Self {
@@ -42,7 +45,7 @@ impl DiagramRequest {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         // Lengths separate the fields, so no two requests share an input.
-        for part in [self.kind.as_str(), self.source.as_str()] {
+        for part in [RENDER_REVISION, self.kind.as_str(), self.source.as_str()] {
             hasher.update((part.len() as u64).to_le_bytes());
             hasher.update(part.as_bytes());
         }
@@ -194,6 +197,8 @@ mod tests {
         let svg = MermaidProvider.render(&mermaid()).unwrap();
         assert!(svg.contains("<svg"), "{svg}");
         assert!(svg.contains("Start") && svg.contains("Done"), "{svg}");
+        // Labels are SVG text: native SVG renderers do not draw HTML in `foreignObject`.
+        assert!(!svg.contains("foreignObject"), "{svg}");
 
         let error = MermaidProvider
             .render(&DiagramRequest::new("mermaid", "graph TD\n  A -->"))

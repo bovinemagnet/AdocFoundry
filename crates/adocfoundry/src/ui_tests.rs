@@ -295,3 +295,111 @@ fn ime_composition_commits_the_composed_text(cx: &mut TestAppContext) {
         .is_none());
     assert!(cx.update(|_, cx| app.read(cx).engine.document(document).unwrap().dirty));
 }
+
+/// Drains the engine until `done` holds: preview rendering runs on worker threads.
+fn drain_until(
+    app: &Entity<AppState>,
+    cx: &mut VisualTestContext,
+    mut done: impl FnMut(&mut VisualTestContext) -> bool,
+) -> bool {
+    for _ in 0..400 {
+        cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
+        cx.run_until_parked();
+        if done(cx) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    false
+}
+
+fn workspace_window(
+    app: &Entity<AppState>,
+    files: Vec<PathBuf>,
+    cx: &mut TestAppContext,
+) -> (Entity<WorkspaceView>, VisualTestContext) {
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| WorkspaceView::new(app.clone(), None, files.clone(), window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let cx = VisualTestContext::from_window(window.into(), cx);
+    (workspace.unwrap(), cx)
+}
+
+fn shown_paragraphs(workspace: &Entity<WorkspaceView>, cx: &mut VisualTestContext) -> Vec<String> {
+    cx.update(|_, cx| {
+        let preview = workspace.read(cx).preview().read(cx);
+        let Some(shown) = preview.shown() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let mut stack: Vec<&adoc_render::ViewBlock> = shown.view.blocks.iter().rev().collect();
+        while let Some(block) = stack.pop() {
+            if let adoc_render::ViewKind::Paragraph(content) = &block.kind {
+                out.push(adoc_render::ViewInline::plain_text(content));
+            }
+            stack.extend(block.child_refs().into_iter().rev());
+        }
+        out
+    })
+}
+
+#[gpui::test]
+fn preview_renders_the_active_document(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("first.adoc");
+    let second = directory.path().join("second.adoc");
+    std::fs::write(
+        &first,
+        "= First\n\nThe first page.\n\n[source,rust]\n----\nfn main() {}\n----\n",
+    )
+    .unwrap();
+    std::fs::write(&second, "= Second\n\nThe second page.\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![first.clone()], cx);
+
+    cx.simulate_keystrokes("secondary-k v");
+    assert!(cx.update(|_, cx| app.read(cx).engine.preview_layout().visible));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        !shown_paragraphs(&workspace, cx).is_empty()
+    }));
+    assert_eq!(shown_paragraphs(&workspace, &mut cx), ["The first page."]);
+
+    // The preview follows the active document.
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_at(&second, SourceRange::default(), window, cx);
+        });
+    });
+    assert!(drain_until(&app, &mut cx, |cx| {
+        shown_paragraphs(&workspace, cx) == ["The second page."]
+    }));
+
+    // Typing re-renders it once the edits settle.
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            app.invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(14, 20),
+                    text: "edited".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    assert!(drain_until(&app, &mut cx, |cx| {
+        shown_paragraphs(&workspace, cx) == ["The edited page."]
+    }));
+
+    // Hidden again, it renders nothing.
+    cx.simulate_keystrokes("secondary-k v");
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| workspace.read(cx).preview().read(cx).shown().is_none()));
+}

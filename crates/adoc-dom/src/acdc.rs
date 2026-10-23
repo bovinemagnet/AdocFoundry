@@ -654,9 +654,18 @@ impl Converter<'_> {
         let mut callouts = Vec::new();
         for node in nodes {
             if let acdc::InlineNode::CalloutRef(callout) = node {
-                // The marker ends its line; drop the space written before it.
+                // The marker ends its line; drop the space written before it and, as
+                // Asciidoctor does, a line comment that only introduces it.
                 while text.ends_with(' ') {
                     text.pop();
+                }
+                for comment in ["//", "#", "--", ";;"] {
+                    if let Some(rest) = text.strip_suffix(comment) {
+                        if rest.is_empty() || rest.ends_with([' ', '\t', '\n']) {
+                            text.truncate(rest.trim_end_matches([' ', '\t']).len());
+                            break;
+                        }
+                    }
                 }
                 callouts.push(Callout {
                     line: text.matches('\n').count(),

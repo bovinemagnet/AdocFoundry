@@ -9,12 +9,14 @@ repository.workspace = true
 adoc-core.workspace = true
 adoc-engine.workspace = true
 adoc-index.workspace = true
+adoc-render.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
 gpui-kit-assets.workspace = true
 gpui-platform.workspace = true
 # Only as the vocabulary of gpui-component's editor provider traits; see `editor/providers.rs`.
 lsp-types.workspace = true
+ropey.workspace = true
 serde_json.workspace = true
 tree-sitter-asciidoc.workspace = true
 tree-sitter-asciidoc-inline.workspace = true

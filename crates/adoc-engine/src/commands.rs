@@ -25,6 +25,8 @@ pub mod ids {
     pub const NAVIGATE_BACK: CommandId = CommandId::new("navigate.back");
     pub const NAVIGATE_FORWARD: CommandId = CommandId::new("navigate.forward");
     pub const NAVIGATE_PEEK_INCLUDE: CommandId = CommandId::new("navigate.peek_include");
+    pub const NAVIGATE_GO_TO: CommandId = CommandId::new("navigate.go_to");
+    pub const NAVIGATE_REVEAL: CommandId = CommandId::new("navigate.reveal");
     pub const WORKSPACE_SEARCH: CommandId = CommandId::new("workspace.search");
     pub const WORKSPACE_REPLACE: CommandId = CommandId::new("workspace.replace");
     pub const WORKSPACE_APPLY_PREVIEW: CommandId = CommandId::new("workspace.apply_preview");
@@ -59,7 +61,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 25] = [
+    let builtin: [(CommandSpec, Run); 27] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -292,6 +294,26 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
             spec(ids::PREVIEW_PIN, "Pin Preview", View, None, Always),
             preview_pin,
         ),
+        (
+            spec(
+                ids::NAVIGATE_GO_TO,
+                "Go to Location",
+                Navigate,
+                None,
+                Always,
+            ),
+            navigate_go_to,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_REVEAL,
+                "Reveal in Editor",
+                Navigate,
+                None,
+                Always,
+            ),
+            navigate_reveal,
+        ),
     ];
     for (spec, run) in builtin {
         register(registry, spec, run);
@@ -505,6 +527,22 @@ fn navigate_follow_link(
         return Err(invalid(ids::NAVIGATE_FOLLOW_LINK, "a document and offset"));
     };
     engine.follow_link(id, offset)
+}
+
+/// Opens a location, keeping where the user was in the back history: a link in the preview.
+fn navigate_go_to(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Position(position) = args else {
+        return Err(invalid(ids::NAVIGATE_GO_TO, "a position"));
+    };
+    engine.go_to(position, true)
+}
+
+/// Opens a location without recording history: the source of a block clicked in the preview.
+fn navigate_reveal(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Position(position) = args else {
+        return Err(invalid(ids::NAVIGATE_REVEAL, "a position"));
+    };
+    engine.go_to(position, false)
 }
 
 fn navigate_back(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {

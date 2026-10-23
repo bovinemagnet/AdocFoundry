@@ -75,6 +75,10 @@ fn parses_every_block_kind() {
     assert_eq!(language.as_deref(), Some("rust"));
     assert!(text.contains("println!(\"hi\");"));
     assert!(!text.contains("<1>"));
+    assert!(
+        text.contains("println!(\"hi\");\n"),
+        "the comment before a callout goes with it, as in Asciidoctor: {text:?}"
+    );
     assert_eq!(callouts.len(), 1);
     assert_eq!(callouts[0].line, 1);
 

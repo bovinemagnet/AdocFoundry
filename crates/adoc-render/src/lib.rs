@@ -4,6 +4,10 @@ mod request;
 mod result;
 mod view;
 
+/// DOM value types the view tree shares, so renderers need not depend on the DOM crate.
+pub use adoc_dom::{
+    AdmonitionKind, Align, Callout, CellStyle, Column, ColumnWidth, ListKind, MediaKind, SourceSpan,
+};
 pub use asciidoctor::{MockRenderer, Renderer, SystemAsciidoctor};
 pub use html::{escape, inlines as inlines_html, to_html, HtmlOptions};
 pub use request::{RenderRequest, RenderSafeMode};
