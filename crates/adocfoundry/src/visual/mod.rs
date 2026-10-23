@@ -244,6 +244,26 @@ impl VisualView {
         self.set_selection(Selection { anchor, head }, cx);
     }
 
+    /// Scrolls so the text block holding source offset `offset` is in view, leaving the
+    /// selection where it is: following the source editor's caret in split mode.
+    pub fn reveal_offset(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let Some((path, _)) = self.block_at(offset) else {
+            return;
+        };
+        let Some(bounds) = text::bounds_of(&self.layouts, &path) else {
+            return;
+        };
+        let visible = self.scroll.bounds();
+        if bounds.top() >= visible.top() && bounds.bottom() <= visible.bottom() {
+            return;
+        }
+        let mut scroll = self.scroll.offset();
+        scroll.y += visible.top() + px(24.) - bounds.top();
+        scroll.y = scroll.y.min(px(0.));
+        self.scroll.set_offset(scroll);
+        cx.notify();
+    }
+
     /// Places the caret at source offset `offset`, for tests and navigation.
     pub fn place_caret(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.goal_x = None;

@@ -256,6 +256,12 @@ impl WorkspaceView {
         if self.active_document(cx) != Some(id) {
             return;
         }
+        // Side by side, the source follows the visual editor's caret.
+        if self.app.read(cx).engine.editor_mode(id) == EditorMode::Split {
+            if let Some(editor) = self.active_editor().cloned() {
+                editor.update(cx, |editor, cx| editor.scroll_to_offset(offset, cx));
+            }
+        }
         let path = {
             let engine = &self.app.read(cx).engine;
             if !engine.preview_layout().scroll_sync {
@@ -315,6 +321,13 @@ impl WorkspaceView {
         let SourceEditorEvent::CaretMoved(offset) = *event;
         if self.active_editor() != Some(&editor) {
             return;
+        }
+        // Side by side, the visual editor follows the source caret.
+        let id = editor.read(cx).document();
+        if self.app.read(cx).engine.editor_mode(id) == EditorMode::Split {
+            if let Some(visual) = self.visuals.get(&id).cloned() {
+                visual.update(cx, |visual, cx| visual.reveal_offset(offset, cx));
+            }
         }
         let path = {
             let engine = &self.app.read(cx).engine;

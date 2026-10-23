@@ -923,3 +923,74 @@ fn typing_in_a_table_cell_edits_only_the_cell(cx: &mut TestAppContext) {
         "= Page\n\n|===\n|Name |Value\n\n|a \\| b |1\n|===\n"
     );
 }
+
+#[gpui::test]
+fn source_edits_update_the_visual_editor(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst paragraph.\n";
+    let (app, workspace, visual, id, mut cx) = visual_workspace(text, cx);
+    cx.simulate_keystrokes("secondary-k d");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.editor_mode(id)),
+        adoc_engine::EditorMode::Split
+    );
+    let editor = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .active_editor_for_test()
+            .cloned()
+            .unwrap()
+    });
+    let end = text.find('.').unwrap();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(end, end), window, cx)
+        });
+    });
+    cx.simulate_keystrokes("space e d i t e d");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nFirst paragraph edited.\n"
+    );
+    // The model is rebuilt once typing in the source pauses.
+    assert!(drain_until(&app, &mut cx, |cx| {
+        shown_blocks(&visual, cx) == ["Page", "First paragraph edited."]
+    }));
+}
+
+#[gpui::test]
+fn undo_is_shared_between_editors(cx: &mut TestAppContext) {
+    let text = "= Page\n\nText.\n";
+    let (app, workspace, visual, id, mut cx) = visual_workspace(text, cx);
+    cx.simulate_keystrokes("secondary-k d");
+    cx.run_until_parked();
+    place_caret(&visual, text.find('.').unwrap(), &mut cx);
+    cx.simulate_keystrokes("s");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nTexts.\n");
+    let editor = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .active_editor_for_test()
+            .cloned()
+            .unwrap()
+    });
+    assert_eq!(
+        widget_text(&editor, &mut cx),
+        "= Page\n\nTexts.\n",
+        "the source shows the visual edit"
+    );
+
+    // Undo from the source editor undoes the visual edit, in both views.
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(0, 0), window, cx)
+        });
+    });
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), text);
+    assert_eq!(widget_text(&editor, &mut cx), text);
+    assert_eq!(shown_blocks(&visual, &mut cx), ["Page", "Text."]);
+}
