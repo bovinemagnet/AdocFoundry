@@ -7,7 +7,7 @@ use adoc_antora::{
 use adoc_core::{Diagnostic, DiagnosticCode, DiagnosticSeverity, ReferenceKind, SourceRange};
 use adoc_index::{normalize_path, workspace_diagnostics, WorkspaceIndex};
 
-use super::{images::antora_image_id, includes::composed_files};
+use crate::{images::antora_image_id, includes::composed_files};
 
 #[must_use]
 pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) -> Vec<Diagnostic> {

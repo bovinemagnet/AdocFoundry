@@ -6,7 +6,7 @@ use adoc_core::{asciidoctor_id, canonical_id, Document, SourceRange};
 use adoc_index::{list_directory, WorkspaceIndex};
 use adoc_parser::{completion_context, CompletionKind};
 
-use crate::handlers::{
+use crate::{
     attributes::{attribute_definitions, AttributeSource},
     definition::reference_target_path,
 };

@@ -63,12 +63,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "adoc-ls"
+name = "adoc-lang"
 version = "0.1.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
  "adoc-index",
+ "adoc-parser",
+]
+
+[[package]]
+name = "adoc-ls"
+version = "0.1.0"
+dependencies = [
+ "adoc-core",
+ "adoc-index",
+ "adoc-lang",
  "adoc-parser",
  "adoc-render",
  "lsp-server",

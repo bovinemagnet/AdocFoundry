@@ -6,9 +6,9 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-adoc-antora.workspace = true
 adoc-core.workspace = true
 adoc-index.workspace = true
+adoc-lang.workspace = true
 adoc-parser.workspace = true
 adoc-render.workspace = true
 lsp-server.workspace = true

@@ -7,11 +7,12 @@ use std::path::PathBuf;
 
 use adoc_render::{RenderRequest, RenderSafeMode, Renderer};
 
+use adoc_lang::{
+    attributes::{antora_attributes, component_attributes},
+    render_source::source_for_render,
+};
+
 use crate::{
-    handlers::{
-        attributes::{antora_attributes, component_attributes},
-        render_source::source_for_render,
-    },
     preview::{scratch_directory, PreviewError, PreviewMode, PreviewSink},
     state::{document_path, ServerState},
 };
@@ -43,17 +44,22 @@ fn preview_request(
         .ok_or_else(|| PreviewError::NotOpen(uri.to_owned()))?;
 
     let source = document_path(uri);
-    let text = source_for_render(&open.document, &state.antora, &source, &scratch_directory());
+    let text = source_for_render(
+        &open.document,
+        &state.workspace.antora,
+        &source,
+        &scratch_directory(),
+    );
     let mut request = RenderRequest::from_source(source.clone(), text);
     // Component attributes first, so the page and family attributes Antora computes itself
     // win should `antora.yml` name one of them.
     request.attributes.extend(
-        component_attributes(&state.antora, &source)
+        component_attributes(&state.workspace.antora, &source)
             .map(|(name, value)| (name.to_owned(), value.to_owned())),
     );
     request
         .attributes
-        .extend(antora_attributes(&state.antora, &source));
+        .extend(antora_attributes(&state.workspace.antora, &source));
     // Rewritten copies of included files sit in a scratch directory outside the
     // component, which any jailed safe mode refuses to read.
     request.safe_mode = RenderSafeMode::Unsafe;

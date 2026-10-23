@@ -4,9 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use adoc_antora::{discover_antora_workspace, AntoraCatalog, DescriptorError};
 use adoc_core::Document;
-use adoc_index::WorkspaceIndex;
+use adoc_lang::WorkspaceState;
 use adoc_parser::parse;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,18 +53,15 @@ impl DocumentStore {
 pub struct ServerState {
     pub workspace_roots: Vec<PathBuf>,
     pub documents: DocumentStore,
-    pub index: WorkspaceIndex,
-    pub antora: AntoraCatalog,
-    pub antora_issues: Vec<DescriptorError>,
+    /// The index, Antora catalog and descriptor problems, shared with every other front end
+    /// through `adoc-lang`.
+    pub workspace: WorkspaceState,
 }
 
 impl ServerState {
     pub fn index_workspace(&mut self, roots: Vec<PathBuf>) -> io::Result<usize> {
-        let indexed = self.index.index_roots(&roots)?;
-        let discovery = discover_antora_workspace(&roots)?;
+        let indexed = self.workspace.index_roots(&roots)?;
         self.workspace_roots = roots;
-        self.antora = discovery.catalog;
-        self.antora_issues = discovery.issues;
         Ok(indexed)
     }
 
@@ -82,16 +78,18 @@ impl ServerState {
         let path = document_path(uri);
         if path.is_file() {
             let text = fs::read_to_string(&path)?;
-            self.index.index_source(&path, &text);
+            self.workspace.index.index_source(&path, &text);
         } else {
-            self.index.remove(&path);
+            self.workspace.index.remove(&path);
         }
         Ok(closed)
     }
 
     fn update(&mut self, uri: &str, text: &str, version: i32) -> &OpenDocument {
         let document = parse(uri, text).document;
-        self.index.replace(document_path(uri), document.clone());
+        self.workspace
+            .index
+            .replace(document_path(uri), document.clone());
         self.documents
             .insert(uri.to_owned(), OpenDocument { version, document });
         self.documents
@@ -121,6 +119,7 @@ mod tests {
 
         state.open(uri, "[[old]]\n== Old\n", 1);
         assert!(state
+            .workspace
             .index
             .resolve_anchor(std::path::Path::new("/docs/guide.adoc"), "old")
             .is_some());
@@ -128,13 +127,14 @@ mod tests {
         state.change(uri, "[[new]]\n== New\n", 2);
         assert_eq!(state.documents.get(uri).unwrap().version, 2);
         assert!(state
+            .workspace
             .index
             .resolve_anchor(std::path::Path::new("/docs/guide.adoc"), "old")
             .is_none());
 
         state.close(uri).unwrap();
         assert!(state.documents.is_empty());
-        assert_eq!(state.index.files().count(), 0);
+        assert_eq!(state.workspace.index.files().count(), 0);
     }
 
     #[test]
@@ -153,8 +153,12 @@ mod tests {
 
         state.index_workspace(vec![root]).unwrap();
 
-        assert!(state.antora_issues.is_empty());
-        assert!(state.antora.component("demo", Some("latest")).is_some());
-        assert_eq!(state.antora.len(), 7);
+        assert!(state.workspace.descriptor_issues.is_empty());
+        assert!(state
+            .workspace
+            .antora
+            .component("demo", Some("latest"))
+            .is_some());
+        assert_eq!(state.workspace.antora.len(), 7);
     }
 }

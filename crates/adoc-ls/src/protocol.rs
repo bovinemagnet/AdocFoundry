@@ -6,6 +6,12 @@ use std::{
 
 use adoc_core::DiagnosticSeverity as CoreDiagnosticSeverity;
 use adoc_index::WorkspaceSymbolKind;
+use adoc_lang::{
+    completion::{completion_at_offset, Candidate, CandidateKind},
+    definition::definition_at_offset,
+    hover::hover_at_offset,
+    symbols::{document_symbols, nav_symbols, DocumentSymbolKind},
+};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::{
     notification::{
@@ -34,12 +40,7 @@ use crate::{
             code_actions_for, LivePreview, RENDER_LIVE_PREVIEW_COMMAND, RENDER_PREVIEW_COMMAND,
             STOP_LIVE_PREVIEW_COMMAND,
         },
-        completion::{completion_at_offset, Candidate, CandidateKind},
-        definition::definition_at_offset,
-        diagnostics::{descriptor_diagnostics, diagnostics},
-        document_symbols::{document_symbols, nav_symbols, DocumentSymbolKind},
         execute_command::{refresh_preview, render_preview},
-        hover::hover_at_offset,
     },
     position::PositionEncoding,
     preview::{BrowserSink, PreviewMode, PreviewSink, SystemLauncher},
@@ -263,9 +264,8 @@ impl ProtocolServer {
         let uri = Uri::from_str(uri_text).ok()?;
         let open_document = self.state.documents.get(uri_text)?;
         let path = document_path(uri_text);
-        let diagnostics = diagnostics(&self.state.index, &self.state.antora, &path)
+        let diagnostics = adoc_lang::diagnostics(&self.state.workspace, &path)
             .into_iter()
-            .chain(descriptor_diagnostics(&self.state.antora_issues, &path))
             .filter_map(|diagnostic| {
                 Some(Diagnostic {
                     range: self
@@ -296,7 +296,7 @@ impl ProtocolServer {
         let uri = params.text_document.uri.as_str();
         let document = &self.state.documents.get(uri)?.document;
         // A navigation file is a list, not sections: its outline is the navigation tree.
-        let symbols = if self.state.antora.is_nav_file(&document_path(uri)) {
+        let symbols = if self.state.workspace.antora.is_nav_file(&document_path(uri)) {
             nav_symbols(document)
         } else {
             document_symbols(document)
@@ -313,7 +313,7 @@ impl ProtocolServer {
     fn lsp_document_symbol(
         &self,
         text: &str,
-        symbol: crate::handlers::document_symbols::DocumentSymbol,
+        symbol: adoc_lang::symbols::DocumentSymbol,
     ) -> Option<DocumentSymbol> {
         let children: Vec<_> = symbol
             .children
@@ -442,14 +442,15 @@ impl ProtocolServer {
         )?;
         let current_path = document_path(document_uri);
         let target = definition_at_offset(
-            &self.state.index,
-            &self.state.antora,
+            &self.state.workspace.index,
+            &self.state.workspace.antora,
             &current_path,
             document,
             offset,
         )?;
         let target_text = self
             .state
+            .workspace
             .index
             .file(&target.path)
             .map(|file| file.document.text.clone())
@@ -467,12 +468,13 @@ impl ProtocolServer {
     ) -> Option<WorkspaceSymbolResponse> {
         let symbols = self
             .state
+            .workspace
             .index
             .symbols_matching(&params.query)
             .into_iter()
             .filter_map(|symbol| {
                 // The indexed text is the open buffer when the file is open.
-                let text = &self.state.index.file(&symbol.path)?.document.text;
+                let text = &self.state.workspace.index.file(&symbol.path)?.document.text;
                 Some(SymbolInformation {
                     name: symbol.name.clone(),
                     kind: match symbol.kind {
@@ -506,8 +508,8 @@ impl ProtocolServer {
             params.text_document_position_params.position,
         )?;
         let content = hover_at_offset(
-            &self.state.index,
-            &self.state.antora,
+            &self.state.workspace.index,
+            &self.state.workspace.antora,
             &document_path(document_uri),
             document,
             offset,
@@ -529,8 +531,8 @@ impl ProtocolServer {
             .offset(&document.text, params.text_document_position.position)?;
         let current_path = document_path(document_uri);
         let candidates = completion_at_offset(
-            &self.state.index,
-            &self.state.antora,
+            &self.state.workspace.index,
+            &self.state.workspace.antora,
             &current_path,
             document,
             offset,

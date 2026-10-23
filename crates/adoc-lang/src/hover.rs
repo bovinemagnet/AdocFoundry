@@ -9,7 +9,7 @@ use adoc_antora::AntoraCatalog;
 use adoc_core::{Document, ReferenceKind, SourceRange};
 use adoc_index::{normalize_path, WorkspaceIndex};
 
-use super::{
+use crate::{
     attributes::{attribute_definitions, AttributeSource},
     definition::{definition_at_offset, DefinitionTarget},
     images::resolve_image,
@@ -84,7 +84,7 @@ pub fn hover_at_offset(
 }
 
 /// The `{name}` reference around `offset`, with the range of the whole reference.
-fn attribute_reference_at(text: &str, offset: usize) -> Option<(&str, SourceRange)> {
+pub(crate) fn attribute_reference_at(text: &str, offset: usize) -> Option<(&str, SourceRange)> {
     if offset > text.len() || !text.is_char_boundary(offset) {
         return None;
     }

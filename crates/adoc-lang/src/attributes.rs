@@ -9,7 +9,7 @@ use adoc_antora::AntoraCatalog;
 use adoc_core::Document;
 use adoc_index::{normalize_path, WorkspaceIndex};
 
-use super::includes::composed_files;
+use crate::includes::composed_files;
 
 /// Where an attribute's value comes from.
 #[derive(Clone, Debug, Eq, PartialEq)]
