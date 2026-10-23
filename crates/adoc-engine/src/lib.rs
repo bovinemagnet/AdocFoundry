@@ -11,6 +11,7 @@ mod edit;
 mod engine;
 mod error;
 mod event;
+mod git;
 mod language;
 mod navigation;
 mod preview;
@@ -31,14 +32,15 @@ pub use edit::TextEdit;
 pub use engine::{Engine, INDEX_SETTLE};
 pub use error::EngineError;
 pub use event::EngineEvent;
+pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use navigation::NavigationPosition;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };
 pub use rendered::{PreviewLayout, RenderedPreview, PREVIEW_SETTLE};
 pub use settings::{
-    EditorSettings, Settings, ThemePreference, ToolSettings, WorkspaceSettings, USER_SETTINGS_FILE,
-    WORKSPACE_SETTINGS_FILE,
+    EditorSettings, GitSettings, Settings, ThemePreference, ToolSettings, WorkspaceSettings,
+    USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
 pub use visual::{EditorMode, VisualArgs, VisualDocument, VisualValue, MODEL_SETTLE};
@@ -48,6 +50,7 @@ pub use adoc_antora::{
     compare_component_versions, AntoraCoordinate, AntoraResourceId, NavError, NavItem, NavTree,
     ResourceFamily,
 };
+pub use adoc_git::{Change as GitChange, FileStatus, Head, Hunk, HunkKind};
 pub use adoc_lang::{
     CompletionItem, CompletionItemKind, DefinitionTarget, DocumentSymbol, DocumentSymbolKind,
     Hover, Location, WorkspaceState, WorkspaceSymbol, WorkspaceSymbolKind,

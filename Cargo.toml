@@ -21,6 +21,7 @@ adoc-core = { path = "crates/adoc-core" }
 adoc-diagrams = { path = "crates/adoc-diagrams" }
 adoc-dom = { path = "crates/adoc-dom" }
 adoc-engine = { path = "crates/adoc-engine" }
+adoc-git = { path = "crates/adoc-git" }
 adoc-index = { path = "crates/adoc-index" }
 adoc-lang = { path = "crates/adoc-lang" }
 adoc-model = { path = "crates/adoc-model" }
@@ -31,6 +32,8 @@ adoc-render = { path = "crates/adoc-render" }
 acdc-parser = "=0.11.0"
 asciidoc-parser = "=0.31.2"
 dirs = "=6.0.0"
+# Pure-Rust Git, without network transports; see crates/adoc-git.
+gix = { version = "=0.90.0", default-features = false, features = ["sha1", "status", "revision"] }
 gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-component = { version = "=0.8.0", features = [
     "tree-sitter",

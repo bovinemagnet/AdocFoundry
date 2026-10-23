@@ -711,6 +711,49 @@ fn scroll_sync_works_both_ways(cx: &mut TestAppContext) {
     assert_eq!(caret(&workspace, &mut cx), offset, "the caret stays put");
 }
 
+// --- git ---------------------------------------------------------------------------------------
+
+/// A workspace window on `root` with `page` open, after the engine has indexed it and found its
+/// repository.
+fn git_workspace(root: &Path, page: &Path, cx: &mut TestAppContext) -> VisualTestContext {
+    init(cx);
+    let mut engine = Engine::new(Settings::default());
+    engine.open_workspace(vec![root.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (_, cx) = workspace_window(&app, vec![page.to_path_buf()], cx);
+    cx.run_until_parked();
+    cx
+}
+
+#[gpui::test]
+fn status_bar_shows_the_branch(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("page.adoc", "= Page\n");
+    test.commit_all("first");
+    let mut cx = git_workspace(dir.path(), &dir.path().join("page.adoc"), cx);
+    assert!(
+        cx.debug_bounds("status-branch-main").is_some(),
+        "the branch is in the status bar"
+    );
+}
+
+#[gpui::test]
+fn status_bar_shows_no_branch_outside_git(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    if dir
+        .path()
+        .ancestors()
+        .any(|ancestor| ancestor.join(".git").exists())
+    {
+        return;
+    }
+    std::fs::write(dir.path().join("page.adoc"), "= Page\n").unwrap();
+    let mut cx = git_workspace(dir.path(), &dir.path().join("page.adoc"), cx);
+    assert!(cx.debug_bounds("status-branch-main").is_none());
+}
+
 // --- visual editor ---------------------------------------------------------------------------
 
 /// A workspace showing `text` as its only page in the visual editor.

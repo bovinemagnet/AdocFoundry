@@ -21,6 +21,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-render", 2),
     ("adoc-diagrams", 2),
     ("adoc-model", 2),
+    ("adoc-git", 2),
     ("adoc-pdf", 2),
     ("adoc-engine", 3),
     ("adocfoundry", 4),
@@ -125,6 +126,10 @@ pub fn check_manifest(manifest: &Manifest) -> Vec<String> {
 
     for dependency in &manifest.dependencies {
         let dependency = dependency.as_str();
+        // A dev-dependency on itself (to turn on a feature for its own tests) is no dependency.
+        if dependency == name {
+            continue;
+        }
         if let Some(dependency_layer) = layer_of(dependency) {
             let allowed = dependency_layer < layer
                 || (dependency_layer == layer && SAME_LAYER_ALLOWED.contains(&(name, dependency)));
@@ -288,6 +293,12 @@ libc = "=0.2.0"
             check_manifest(&manifest("adoc-ls", &["adocfoundry-cli"])).len(),
             1
         );
+    }
+
+    #[test]
+    fn accepts_a_crate_depending_on_itself() {
+        // A dev-dependency on the crate itself turns on a feature for its own tests.
+        assert!(check_manifest(&manifest("adoc-git", &["adoc-git", "adoc-core"])).is_empty());
     }
 
     #[test]

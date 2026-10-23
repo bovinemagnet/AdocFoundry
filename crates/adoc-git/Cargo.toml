@@ -1,0 +1,21 @@
+[package]
+name = "adoc-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+# Builds temporary repositories with gix for the tests of this and other crates.
+test-support = []
+
+[dependencies]
+adoc-core.workspace = true
+gix.workspace = true
+
+[dev-dependencies]
+adoc-git = { path = ".", features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

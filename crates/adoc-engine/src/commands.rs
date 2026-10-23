@@ -67,6 +67,7 @@ pub mod ids {
     pub const EDIT_DELETE_TABLE_COLUMN: CommandId = CommandId::new("edit.delete_table_column");
     pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
     pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
+    pub const GIT_REFRESH: CommandId = CommandId::new("git.refresh");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;
@@ -349,6 +350,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
         register(registry, spec, run);
     }
     crate::visual::register_visual(registry);
+    crate::git::register_git(registry);
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry, spec: CommandSpec, run: Run) {

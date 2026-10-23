@@ -137,6 +137,15 @@ See xref:settings.adoc[Settings].
 
 The command palette lists every command with its title.
 
+== The branch in the status bar
+
+Inside a Git repository the status bar shows the current branch, such as `⎇ main`.
+It is the branch of the repository that holds the active document, or of the first root when no document is open.
+A detached HEAD shows `⎇ detached @ 1a2b3c4` and a repository with no commits shows `⎇ no commits yet`.
+Outside a repository nothing is shown.
+The branch updates after a commit or a branch switch.
+Refresh Git Status (`git.refresh`) in the palette discovers the repositories again, and the `git.enabled` setting turns this off; see xref:settings.adoc[Settings].
+
 == Known limits
 
 * Input-method (IME) composition has not been verified by hand on any platform.

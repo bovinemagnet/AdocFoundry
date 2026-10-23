@@ -64,11 +64,36 @@ pub struct ToolSettings {
     pub asciidoctor: String,
 }
 
+/// The `[git]` table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitSettings {
+    /// When false, the engine looks for no repository and reports none.
+    pub enabled: bool,
+    /// Change markers in the editors.
+    pub show_markers: bool,
+    /// Line blame shown when hovering the gutter.
+    pub blame_on_hover: bool,
+    /// The remote that links to the hosting site and pushes use.
+    pub remote: String,
+}
+
+impl Default for GitSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            show_markers: true,
+            blame_on_hover: false,
+            remote: "origin".to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Settings {
     pub editor: EditorSettings,
     pub workspace: WorkspaceSettings,
     pub tools: ToolSettings,
+    pub git: GitSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -183,6 +208,10 @@ impl Settings {
                 self.workspace.ignore = items.iter().map(string).collect::<Result<_, _>>()?;
             }
             ("tools", "asciidoctor") => self.tools.asciidoctor = string(value)?,
+            ("git", "enabled") => self.git.enabled = boolean(value)?,
+            ("git", "show_markers") => self.git.show_markers = boolean(value)?,
+            ("git", "blame_on_hover") => self.git.blame_on_hover = boolean(value)?,
+            ("git", "remote") => self.git.remote = string(value)?,
             _ => return Err("unknown setting"),
         }
         Ok(())
@@ -201,11 +230,19 @@ fn is_known(section: &str, key: &str) -> bool {
             "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme"
         ) | ("workspace", "ignore")
             | ("tools", "asciidoctor")
+            | (
+                "git",
+                "enabled" | "show_markers" | "blame_on_hover" | "remote"
+            )
     )
 }
 
 fn string(value: &toml::Value) -> Result<String, &'static str> {
     value.as_str().map(str::to_owned).ok_or("expected a string")
+}
+
+fn boolean(value: &toml::Value) -> Result<bool, &'static str> {
+    value.as_bool().ok_or("expected true or false")
 }
 
 fn positive(value: &toml::Value) -> Result<u32, &'static str> {
@@ -271,6 +308,25 @@ mod tests {
             Settings::load(Some(&user), None),
             Err(EngineError::Settings(_))
         ));
+    }
+
+    #[test]
+    fn git_settings_have_defaults_and_load() {
+        let defaults = Settings::default();
+        assert!(defaults.git.enabled && defaults.git.show_markers && !defaults.git.blame_on_hover);
+        assert_eq!(defaults.git.remote, "origin");
+
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(
+            &user,
+            "[git]\nenabled = false\nblame_on_hover = true\nremote = \"upstream\"\ncolour = 1\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert!(!settings.git.enabled && settings.git.blame_on_hover);
+        assert_eq!(settings.git.remote, "upstream");
+        assert_eq!(settings.warnings.len(), 1, "an unknown key warns");
     }
 
     #[test]

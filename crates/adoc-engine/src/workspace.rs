@@ -46,6 +46,22 @@ pub(crate) enum WorkerMessage {
         checksum: String,
         result: Result<PathBuf, String>,
     },
+    GitDiscovered {
+        generation: u64,
+        found: Vec<(crate::GitRepository, Vec<adoc_git::FileStatus>)>,
+        errors: Vec<String>,
+    },
+    GitRefreshed {
+        generation: u64,
+        workdir: PathBuf,
+        refresh: u64,
+        result: Result<(adoc_git::Head, Vec<adoc_git::FileStatus>), String>,
+    },
+    GitHunks {
+        id: crate::DocumentId,
+        version: u64,
+        hunks: Result<Vec<adoc_git::Hunk>, String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,6 +103,16 @@ impl FileWatcher {
             aliases,
         })
     }
+
+    /// Also watches a repository's `.git` directory for the files that change on a commit, a
+    /// branch switch or staging. Watching is a convenience: a failure is ignored.
+    pub(crate) fn watch_git_dir(&mut self, git_dir: &Path) {
+        let _ = self._watcher.watch(git_dir, RecursiveMode::NonRecursive);
+        let refs = git_dir.join("refs");
+        if refs.is_dir() {
+            let _ = self._watcher.watch(&refs, RecursiveMode::Recursive);
+        }
+    }
 }
 
 impl Engine {
@@ -118,6 +144,7 @@ impl Engine {
             }
         };
         self.reindex();
+        self.discover_git();
         Ok(())
     }
 
@@ -155,6 +182,7 @@ impl Engine {
             || !self.pending_index.is_empty()
             || self.rendered.has_scheduled()
             || self.visual.has_due()
+            || self.git.has_pending()
             || self
                 .watcher
                 .as_ref()
@@ -175,6 +203,7 @@ impl Engine {
             + self.apply_file_changes(Instant::now())
             + self.start_due_previews()
             + self.rebuild_due_visuals()
+            + self.start_due_hunks()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the
@@ -229,6 +258,18 @@ impl Engine {
             WorkerMessage::DiagramRendered { checksum, result } => {
                 self.diagram_rendered(&checksum, result);
             }
+            WorkerMessage::GitDiscovered {
+                generation,
+                found,
+                errors,
+            } => self.git_discovered(generation, found, errors),
+            WorkerMessage::GitRefreshed {
+                generation,
+                workdir,
+                refresh,
+                result,
+            } => self.git_refreshed(generation, &workdir, refresh, result),
+            WorkerMessage::GitHunks { id, version, hunks } => self.git_hunks(id, version, hunks),
             WorkerMessage::IndexFailed { error } => {
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,
@@ -249,7 +290,11 @@ impl Engine {
             }
             for path in event.paths {
                 let path = as_opened(&path, &watcher.aliases);
-                if is_ignored(&path, &self.settings.workspace.ignore) {
+                // `.git` is ignored, but its `HEAD`, `index` and `refs` show branch switches,
+                // staging and commits.
+                if is_ignored(&path, &self.settings.workspace.ignore)
+                    && !self.git.is_metadata_path(&path)
+                {
                     continue;
                 }
                 let change = match event.kind {
@@ -270,6 +315,12 @@ impl Engine {
         for (path, _) in &ready {
             watcher.pending.remove(path);
         }
+        let changed: Vec<PathBuf> = ready.iter().map(|(path, _)| path.clone()).collect();
+        let metadata = self.git_paths_changed(&changed);
+        let ready: Vec<(PathBuf, Change)> = ready
+            .into_iter()
+            .filter(|(path, _)| !metadata.contains(path))
+            .collect();
 
         let mut reindex = false;
         for (path, change) in &ready {

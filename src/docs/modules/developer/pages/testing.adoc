@@ -104,6 +104,14 @@ The application tests for the visual editor are the last in `ui_tests.rs`, on GP
 None of them needs a display.
 As with the other application tests, `ime_composition_commits_once` is not evidence that a real input method works.
 
+== Git tests
+
+Tests that need a repository build one with `adoc_git::testing::TestRepo`, available through the `test-support` feature of `adoc-git`.
+It creates a temporary repository with `gix`, so no test touches a developer's checkout and none runs the `git` executable.
+
+`crates/adoc-git/tests/repository.rs` checks discovery, the head, status and line diffs.
+`crates/adoc-engine/tests/git.rs` drives the engine's Git state headlessly: discovery, status, hunks and the events.
+
 == Language server tests
 
 `crates/adoc-ls/tests/stdio.rs` starts the real `adoc-ls` binary and speaks LSP to it: initialise and shutdown, completion, hover, the preview commands and command routing.

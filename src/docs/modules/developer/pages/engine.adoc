@@ -156,6 +156,15 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 
 |`ModelChanged`
 |A document's visual model was built or updated, with the document version it describes.
+
+|`GitHeadChanged`
+|The head of the repository behind a root changed, with the root and the new head.
+
+|`GitStatusChanged`
+|The status of the repository behind a root was refreshed.
+
+|`GitHunksChanged`
+|The changed line runs of an open document were recomputed.
 |===
 
 == The preview service
@@ -342,6 +351,26 @@ A `notify` watcher, with a 250 ms debounce, feeds the pump.
 * A document with unsaved edits is never overwritten; the engine emits `DocumentChangedOnDisk` instead.
 * A modified `antora.yml` reloads that component version, and diagnostics are re-run for affected files.
 * A directory created or removed under a module re-indexes the root.
+
+[[git]]
+== Git
+
+`Engine::git()` returns a `GitState`, built on the `adoc-git` crate.
+It holds one `GitRepository` (`workdir`, `git_dir`, `head` and the `roots` it serves) per repository, however many workspace roots lie inside it.
+`repositories()`, `repository_for(path)`, `head_for(root)`, `status_for(path)`, `statuses()` and `hunks_for(DocumentId)` read it.
+
+`open_workspace` discovers each root's repository and reads its status on a worker thread, and the result arrives through `pump()` as indexing does.
+A workspace outside any repository, or with `git.enabled` turned off, has no repositories and publishes no Git events.
+
+The hunks of an open document are its changes against HEAD, computed from the buffer text and not from the file on disk.
+They are recomputed `GIT_SETTLE` (150 ms) after typing pauses, at once on open, save and any other edit, and after every status refresh.
+Untracked and ignored files have no hunks.
+
+The file watcher also watches each repository's `.git/HEAD`, `index`, `packed-refs` and `refs/`, which are otherwise ignored along with `.git`.
+A commit, a branch switch or staging therefore refreshes the status and the head.
+A change to any file in the working tree refreshes the status as well, after the watcher's 250 ms debounce.
+
+`git.refresh` (Refresh Git Status, Workspace category, no default binding) runs discovery again.
 
 == Settings
 
