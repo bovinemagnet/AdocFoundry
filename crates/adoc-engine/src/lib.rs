@@ -12,6 +12,7 @@ mod engine;
 mod error;
 mod event;
 mod language;
+mod navigation;
 mod preview;
 mod settings;
 mod undo;
@@ -27,6 +28,7 @@ pub use edit::TextEdit;
 pub use engine::Engine;
 pub use error::EngineError;
 pub use event::EngineEvent;
+pub use navigation::NavigationPosition;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };

@@ -55,7 +55,47 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 13] = [
+    let builtin: [(CommandSpec, Run); 17] = [
+        (
+            spec(
+                ids::NAVIGATE_FOLLOW_LINK,
+                "Follow Link",
+                Navigate,
+                Some("cmd-enter"),
+                ActiveDocument,
+            ),
+            navigate_follow_link,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_BACK,
+                "Go Back",
+                Navigate,
+                Some("ctrl--"),
+                Always,
+            ),
+            navigate_back,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_FORWARD,
+                "Go Forward",
+                Navigate,
+                Some("ctrl-shift--"),
+                Always,
+            ),
+            navigate_forward,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_PEEK_INCLUDE,
+                "Peek Include",
+                Navigate,
+                Some("alt-f12"),
+                ActiveDocument,
+            ),
+            navigate_peek_include,
+        ),
         (
             spec(
                 ids::NAVIGATE_DEFINITION,
@@ -329,4 +369,32 @@ fn navigate_definition(
             "nothing to follow at offset {offset}"
         ))),
     }
+}
+
+fn navigate_follow_link(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Offset { id, offset } = args else {
+        return Err(invalid(ids::NAVIGATE_FOLLOW_LINK, "a document and offset"));
+    };
+    engine.follow_link(id, offset)
+}
+
+fn navigate_back(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    engine.go_back()
+}
+
+fn navigate_forward(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    engine.go_forward()
+}
+
+fn navigate_peek_include(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Offset { id, offset } = args else {
+        return Err(invalid(ids::NAVIGATE_PEEK_INCLUDE, "a document and offset"));
+    };
+    engine.peek_include(id, offset)
 }

@@ -1,0 +1,159 @@
+//! Link following and back/forward history. History is engine state so that every front end,
+//! and the CLI tests, share it.
+
+use std::path::PathBuf;
+
+use adoc_core::SourceRange;
+use adoc_lang::{DefinitionTarget, Location};
+
+use crate::{CommandOutcome, DocumentId, Engine, EngineError, EngineEvent};
+
+/// A place in the workspace the user has been.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NavigationPosition {
+    pub path: PathBuf,
+    pub offset: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct History {
+    back: Vec<NavigationPosition>,
+    forward: Vec<NavigationPosition>,
+    current: Option<NavigationPosition>,
+}
+
+impl Engine {
+    #[must_use]
+    pub fn can_go_back(&self) -> bool {
+        !self.history.back.is_empty()
+    }
+
+    #[must_use]
+    pub fn can_go_forward(&self) -> bool {
+        !self.history.forward.is_empty()
+    }
+
+    /// The position the last navigation arrived at, for the front end to scroll to.
+    #[must_use]
+    pub fn navigation_position(&self) -> Option<&NavigationPosition> {
+        self.history.current.as_ref()
+    }
+
+    /// Follows the link at `offset` in document `id`: opens and activates the target and
+    /// records where the user came from. Images and attachments are returned as `External`.
+    pub(crate) fn follow_link(
+        &mut self,
+        id: DocumentId,
+        offset: usize,
+    ) -> Result<CommandOutcome, EngineError> {
+        let from = self
+            .document(id)
+            .ok_or(EngineError::UnknownDocument(id))?
+            .path
+            .clone();
+        match self.definition(id, offset) {
+            Some(DefinitionTarget::External(path)) => Ok(CommandOutcome::External(path)),
+            Some(DefinitionTarget::Location(location)) => {
+                let target = self.open(&location.path)?;
+                self.history
+                    .back
+                    .push(NavigationPosition { path: from, offset });
+                self.history.forward.clear();
+                self.history.current = Some(NavigationPosition {
+                    path: location.path.clone(),
+                    offset: location.range.start,
+                });
+                self.set_active(target);
+                self.emit(EngineEvent::NavigationChanged);
+                Ok(CommandOutcome::Location(location))
+            }
+            None => Err(EngineError::NotFound(format!(
+                "nothing to follow at offset {offset}"
+            ))),
+        }
+    }
+
+    pub(crate) fn go_back(&mut self) -> Result<CommandOutcome, EngineError> {
+        let target = self
+            .history
+            .back
+            .pop()
+            .ok_or_else(|| EngineError::NotFound("no earlier location".to_owned()))?;
+        if let Some(current) = self
+            .history
+            .current
+            .take()
+            .or_else(|| self.active_position())
+        {
+            self.history.forward.push(current);
+        }
+        self.arrive(target)
+    }
+
+    pub(crate) fn go_forward(&mut self) -> Result<CommandOutcome, EngineError> {
+        let target = self
+            .history
+            .forward
+            .pop()
+            .ok_or_else(|| EngineError::NotFound("no later location".to_owned()))?;
+        if let Some(current) = self
+            .history
+            .current
+            .take()
+            .or_else(|| self.active_position())
+        {
+            self.history.back.push(current);
+        }
+        self.arrive(target)
+    }
+
+    fn arrive(&mut self, position: NavigationPosition) -> Result<CommandOutcome, EngineError> {
+        let id = self.open(&position.path)?;
+        self.set_active(id);
+        self.history.current = Some(position);
+        self.emit(EngineEvent::NavigationChanged);
+        Ok(CommandOutcome::Opened(id))
+    }
+
+    fn active_position(&self) -> Option<NavigationPosition> {
+        let document = self.document(self.active?)?;
+        Some(NavigationPosition {
+            path: document.path.clone(),
+            offset: 0,
+        })
+    }
+
+    /// The included file at `offset`, for a read-only inline view. Only include directives
+    /// can be peeked.
+    pub(crate) fn peek_include(
+        &self,
+        id: DocumentId,
+        offset: usize,
+    ) -> Result<CommandOutcome, EngineError> {
+        let document = self.document(id).ok_or(EngineError::UnknownDocument(id))?;
+        let on_include = document
+            .parsed
+            .includes
+            .iter()
+            .any(|include| include.range.start <= offset && offset < include.range.end);
+        if !on_include {
+            return Err(EngineError::NotFound(format!(
+                "no include directive at offset {offset}"
+            )));
+        }
+        match self.definition(id, offset) {
+            Some(DefinitionTarget::Location(location)) => {
+                let len = std::fs::metadata(&location.path)
+                    .map(|metadata| metadata.len() as usize)
+                    .unwrap_or(0);
+                Ok(CommandOutcome::Location(Location {
+                    path: location.path,
+                    range: SourceRange::new(0, len),
+                }))
+            }
+            _ => Err(EngineError::NotFound(format!(
+                "the include at offset {offset} does not resolve"
+            ))),
+        }
+    }
+}

@@ -45,6 +45,7 @@ pub struct Engine {
     pub(crate) worker_receiver: Receiver<WorkerMessage>,
     pub(crate) workers_running: usize,
     pub(crate) watcher: Option<FileWatcher>,
+    pub(crate) history: crate::navigation::History,
 }
 
 /// How an edit is recorded in undo history.
@@ -86,6 +87,7 @@ impl Engine {
             worker_receiver,
             workers_running: 0,
             watcher: None,
+            history: crate::navigation::History::default(),
         }
     }
 
