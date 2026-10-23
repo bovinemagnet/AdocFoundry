@@ -33,6 +33,8 @@ Phase 5 must provide:
 | STEM in the preview and HTML | SVG rendered by `adoc-pdf` through `typst-svg` (already in the tree), cached by checksum in the diagram cache, through an engine-provided `DiagramProvider` | One Typst world, one font setup and one cache for every output. Block STEM is typeset in the preview; see §8 for inline. |
 | Maths font | STIX Two Math (OFL-1.1), bundled in `adoc-pdf` | Typst needs an OpenType MATH font. STIX suits the serif default theme. New Computer Modern Math is under the GUST licence, which the policy does not list. |
 | The language server | `adoc-ls` depends on `adoc-engine` (L4 on L3) and drops its own `ServerState` and index | One implementation of documents, diagnostics and resolution for the app, the CLI and every LSP client. `adoc-ls` stays the only crate that knows LSP. |
+| Compatibility for existing `adoc-ls` users | the binary name, `--stdio` and the three existing command ids stay as they are; the preview keeps rendering through Asciidoctor when it is configured or on `PATH`; `cargo install` builds a lean server by default | The Zed extension `zed-asciidoc` starts `adoc-ls` from `PATH` and relies on exactly these. Anyone who reinstalls keeps a working setup and a similar install. |
+| Optional engine features | `adoc-engine` gains the features `typst` (PDF export and typeset STEM, through `adoc-pdf`) and `git` (`adoc-git`). The app and the CLI enable both; `adoc-ls` enables neither by default and offers both as features of its own | A default `adoc-ls` build stays close to today's 100 crates and 4 MB instead of the engine's 482 crates and about 85 MB. The release archives are built with both features. |
 | Rename over LSP | `workspace/willRenameFiles`, answered from the engine's pending change (the same one `workspace.apply_preview` applies), as a `WorkspaceEdit` | The client moves the file and applies the edits; the server never writes files behind the client's back. |
 | MCP | a new L4 crate and binary, `adoc-mcp`, on `rmcp` 3.7.0 (Apache-2.0) with only its server and stdio transport features, on a current-thread tokio runtime (tokio is already in the tree) | No HTTP transport is compiled in; the network confinement rule checks it. |
 | MCP writes | read-only by default; `--allow-write` enables tools that edit, rename or export, each going through engine commands | An assistant cannot change a workspace unless the user started the server to allow it, and every change is an ordinary command. |
@@ -165,10 +167,27 @@ The reference article gains a STEM section, and `pdf_regression` compares it. as
   - `adoc.checkWorkspace`.
 
   Every command a code action carries stays in `executeCommandProvider.commands`.
-- **Compatibility:** the server's capabilities are a superset of today's. `crates/adoc-ls/tests/stdio.rs` keeps its lifecycle test.
+- **Compatibility:**
+  - The binary is still `adoc-ls` and still serves over `--stdio`.
+  - The three command ids clients already hold in code actions stay: `adoc.renderPreview`, `adoc.renderLivePreview` and `adoc.stopLivePreview`.
+  - The server's capabilities are a superset of today's, and `crates/adoc-ls/tests/stdio.rs` keeps its lifecycle test.
+  - The preview renders through Asciidoctor whenever `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, as it does today. Otherwise it renders through the engine's view tree, with diagrams, and with typeset STEM in builds with the `typst` feature. A preview that fails today for want of Ruby now works, and nobody else's changes.
+  - Settings come from the same files the app reads: the user settings file and the workspace's `.adocfoundry.toml`. The README's language-server section says so.
+- **Features and size:**
+  - `adoc-engine`'s `typst` feature gates PDF export and the STEM provider: their commands are not registered without it, and STEM shows as styled source.
+  - Its `git` feature gates `adoc-git`: without it the engine behaves as with `[git] enabled = false`.
+  - `adoc-ls` forwards both as its own `typst` and `git` features, default off. `adoc.exportPdf` is advertised only when the server is built with `typst`.
+  - CI builds `adoc-ls` with no features and with all features, and the default build's size and crate count are recorded in §12.
+  - The release archives (WP 5.8) are built with both features.
+- **Installing:**
+  - The README keeps `cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls` for the lean server, and adds `--features typst,git` and the release archives for the full one.
+  - Changing `zed-asciidoc` to download the release archive is a follow-up in that repository (§12), not part of this phase.
 
 Acceptance tests (stdio):
 
+- `command_ids_and_stdio_are_unchanged`: the three existing command ids are advertised, and `--stdio` is accepted.
+- `preview_uses_asciidoctor_when_available`, and `preview_falls_back_to_the_engine` when it is not (both take `spawn_guard()`).
+- `default_build_has_no_typst_or_git` (xtask, from `cargo metadata`).
 - `diagnostics_come_from_the_engine`
 - `incremental_changes_apply`
 - `references_list_linking_pages`
@@ -228,7 +247,7 @@ Documentation: a user page on running `adoc-mcp` with MCP clients, in the client
   - Windows: an MSI and a zip, x64 and ARM64;
   - Linux: an AppImage, a deb and an rpm, x64 and arm64.
 
-  Each carries the app and the `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` binaries. The Flatpak manifest is checked against the release.
+  Each carries the app and the `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` binaries. `adoc-ls` is built with the `typst` and `git` features and is also published as its own archive per platform, as `release.yml` already does. The Flatpak manifest is checked against the release.
 - **Smoke test** on each platform from the downloaded artefacts: every binary's `--version`, the app launching on a fixture workspace, a PDF export from the CLI, and `adoc-mcp`'s and `adoc-ls`'s initialise and shutdown.
 - **Manual QA:** every item in `docs/qa/phase1.md` to `phase4.md`, and a new `docs/qa/phase5.md`, run on macOS, Windows and Linux and recorded in their Results tables. That includes:
   - IME and frame timing;
@@ -257,6 +276,7 @@ Open questions, to settle before the package that needs them:
 - [ ] **WP 5.8:** the first version number. `0.1.0` unless decided otherwise.
 - [ ] **WP 5.7:** whether `export_pdf` counts as a write, as decided here, or may run read-only when `output` is outside the roots.
 - [ ] **WP 5.3:** whether to keep the `adoc-dom` workarounds for #32 and #33 after acdc-parser releases fixes, or drop them on upgrade.
+- [ ] **After WP 5.8, in `zed-asciidoc`:** download the `adoc-ls` release archive for the platform (Zed extensions can fetch GitHub release assets), and fall back to `PATH`. That repository's change, not this one's.
 
 Implementation notes: none yet. Departures are recorded here as each package lands, with what the spec said, what was built and why, as in the earlier phases.
 
@@ -269,7 +289,7 @@ Implementation notes: none yet. Departures are recorded here as each package lan
 | 5.3 | Fidelity: description-list tags, acdc gaps, footnote position, book memory (#31–#35) | 5.1 |
 | 5.4 | `adoc-math`: AsciiMath and LaTeX to checked Typst maths | 5.1 |
 | 5.5 | Typeset STEM in PDF, preview and HTML | 5.4 |
-| 5.6 | `adoc-ls` on the engine: diagnostics, references, rename, commands | 5.5 |
+| 5.6 | `adoc-ls` on the engine: diagnostics, references, rename, commands, with today's command ids, Asciidoctor preview and a lean default build kept | 5.5 |
 | 5.7 | `adoc-mcp` | 5.5 |
 | 5.8 | Release: packages, signing, smoke tests, the QA backlog (#30), changelog | 5.2, 5.3, 5.6, 5.7 |
 
@@ -278,7 +298,7 @@ Implementation notes: none yet. Departures are recorded here as each package lan
 - CI runs on Linux, macOS and Windows on every push, with the asciidoctor-pdf comparison and veraPDF validation, and is green.
 - The issues listed in §5 and §6 are closed, each with its acceptance test.
 - A STEM formula in AsciiMath or LaTeX typesets in the PDF, in the preview (blocks) and in the HTML backend, and a formula that cannot be converted is shown as its source with a warning naming its file and line.
-- `adoc-ls` serves the engine's diagnostics, references, rename and PDF export to an LSP client, and its stdio tests pass.
+- `adoc-ls` serves the engine's diagnostics, references, rename and PDF export to an LSP client, existing clients (the Zed extension among them) keep working unchanged, the default build carries neither Typst nor Git, and its stdio tests pass.
 - `adoc-mcp` serves the read-only tools by default and the write tools only with `--allow-write`, and its stdio tests pass.
 - A release is tagged, its packages pass the smoke test on all three platforms, and every manual QA record is complete for them.
 - README, the documentation site, `CHANGELOG.md` and `docs/qa/phase5.md` describe what shipped.
