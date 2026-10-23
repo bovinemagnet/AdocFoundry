@@ -1,0 +1,10 @@
+site:
+  title: Product documentation
+content:
+  sources:
+  - url: .
+    branches: [main, 'v{1..9}*', '!v1.0-draft']
+    start_path: docs
+  - url: https://example.com/other/docs.git
+    branches: HEAD
+    start_paths: [guide, reference]
