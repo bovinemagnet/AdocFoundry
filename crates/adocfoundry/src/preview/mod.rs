@@ -18,7 +18,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     highlighter::SyntaxHighlighter,
-    v_flex, ActiveTheme as _, Sizable as _, WindowExt as _,
+    v_flex, ActiveTheme as _, Sizable as _, TitleBar, WindowExt as _,
 };
 
 use crate::app::AppState;
@@ -30,6 +30,8 @@ type HighlightCache = HashMap<(bool, String, String), Vec<(Range<usize>, Highlig
 
 pub struct PreviewView {
     app: Entity<AppState>,
+    /// In its own window, which then needs a title bar.
+    standalone: bool,
     shown: Option<Arc<RenderedPreview>>,
     scroll: ScrollHandle,
     positions: HashMap<DocumentId, Point<Pixels>>,
@@ -38,7 +40,12 @@ pub struct PreviewView {
 }
 
 impl PreviewView {
-    pub fn new(app: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        app: Entity<AppState>,
+        standalone: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscription = cx.subscribe_in(&app, window, |this, _, event, _, cx| {
             let relevant = match event {
                 EngineEvent::PreviewReady { id, .. } => {
@@ -55,6 +62,7 @@ impl PreviewView {
         });
         let mut view = Self {
             app,
+            standalone,
             shown: None,
             scroll: ScrollHandle::new(),
             positions: HashMap::new(),
@@ -270,10 +278,20 @@ impl Render for PreviewView {
             let context = self.context(&highlight, window, cx);
             blocks::document(&shown.view, &context)
         });
+        let window_title = self.standalone.then(|| {
+            let name = self
+                .shown
+                .as_ref()
+                .and_then(|shown| shown.path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            TitleBar::new().child(format!("Preview — {name}"))
+        });
         v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
+            .children(window_title)
             .child(header)
             .child(
                 div()

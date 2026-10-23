@@ -93,6 +93,11 @@ pub struct WorkspaceView {
     show_search: bool,
     palette: Entity<CommandState>,
     preview: Entity<PreviewView>,
+    /// The preview's own window while it is detached.
+    detached: Option<(
+        gpui::WindowHandle<gpui_component::Root>,
+        Entity<PreviewView>,
+    )>,
     revealed: Option<NavigationPosition>,
     _subscriptions: Vec<Subscription>,
 }
@@ -125,7 +130,8 @@ impl WorkspaceView {
             search,
             show_search: false,
             palette: cx.new(|cx| CommandState::new(window, cx)),
-            preview: cx.new(|cx| PreviewView::new(app.clone(), window, cx)),
+            preview: cx.new(|cx| PreviewView::new(app.clone(), false, window, cx)),
+            detached: None,
             revealed: None,
             app,
             _subscriptions: subscriptions,
@@ -190,9 +196,38 @@ impl WorkspaceView {
             EngineEvent::CommandFailed { command, error } => {
                 window.push_notification(format!("{command}: {error}"), cx);
             }
+            EngineEvent::PreviewLayoutChanged => self.place_preview(cx),
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Opens the preview's own window when it is detached, and closes it when it docks or hides.
+    fn place_preview(&mut self, cx: &mut Context<Self>) {
+        let layout = self.app.read(cx).engine.preview_layout();
+        let wants_window = layout.visible && layout.detached;
+        match (&self.detached, wants_window) {
+            (None, true) => {
+                self.detached = open_secondary_window(self.app.clone(), WindowKind::Preview, cx)
+                    .and_then(|(handle, view)| {
+                        view.downcast::<PreviewView>()
+                            .ok()
+                            .map(|view| (handle, view))
+                    });
+            }
+            (Some(_), false) => {
+                if let Some((handle, _)) = self.detached.take() {
+                    // Fails harmlessly when the window is already closing itself.
+                    let _ = handle.update(cx, |_, window, _| window.remove_window());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(test)]
+    pub fn detached_preview(&self) -> Option<&Entity<PreviewView>> {
+        self.detached.as_ref().map(|(_, view)| view)
     }
 
     fn rebuild_catalog_trees(&mut self, cx: &mut Context<Self>) {

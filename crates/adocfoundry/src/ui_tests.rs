@@ -403,3 +403,81 @@ fn preview_renders_the_active_document(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(cx.update(|_, cx| workspace.read(cx).preview().read(cx).shown().is_none()));
 }
+
+fn detached_paragraphs(
+    workspace: &Entity<WorkspaceView>,
+    cx: &mut VisualTestContext,
+) -> Vec<String> {
+    cx.update(|_, cx| {
+        let Some(preview) = workspace.read(cx).detached_preview() else {
+            return Vec::new();
+        };
+        let Some(shown) = preview.read(cx).shown() else {
+            return Vec::new();
+        };
+        shown
+            .view
+            .blocks
+            .iter()
+            .filter_map(|block| match &block.kind {
+                adoc_render::ViewKind::Paragraph(content) => {
+                    Some(adoc_render::ViewInline::plain_text(content))
+                }
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn detached_preview_follows_edits(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n\nBefore.\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+
+    let invoke = |command, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.invoke(command, CommandArgs::None, cx).unwrap()
+            });
+        });
+        cx.run_until_parked();
+    };
+    invoke(ids::VIEW_DETACH_PREVIEW, &mut cx);
+    let layout = cx.update(|_, cx| app.read(cx).engine.preview_layout());
+    assert!(layout.visible && layout.detached);
+    assert!(cx.update(|_, cx| workspace.read(cx).detached_preview().is_some()));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        detached_paragraphs(&workspace, cx) == ["Before."]
+    }));
+
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            app.invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(8, 14),
+                    text: "After".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    assert!(drain_until(&app, &mut cx, |cx| {
+        detached_paragraphs(&workspace, cx) == ["After."]
+    }));
+
+    // Docking again closes the window and shows the preview beside the editor.
+    invoke(ids::VIEW_DETACH_PREVIEW, &mut cx);
+    assert!(cx.update(|_, cx| workspace.read(cx).detached_preview().is_none()));
+    assert!(!cx.update(|_, cx| app.read(cx).engine.preview_layout().detached));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        shown_paragraphs(&workspace, cx) == ["After."]
+    }));
+}

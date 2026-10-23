@@ -4,12 +4,12 @@ use std::{path::PathBuf, sync::mpsc::Receiver, time::Duration};
 
 use adoc_engine::{CommandArgs, CommandId, CommandOutcome, Engine, EngineError, EngineEvent};
 use gpui::{
-    px, size, App, AppContext as _, Bounds, Context, Entity, EventEmitter, Task, WindowBounds,
-    WindowOptions,
+    px, size, AnyView, App, AppContext as _, Bounds, Context, Entity, EventEmitter, Task,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 use gpui_component::Root;
 
-use crate::{mirror_view::MirrorView, workspace_view::WorkspaceView};
+use crate::{mirror_view::MirrorView, preview::PreviewView, workspace_view::WorkspaceView};
 
 /// How often the engine is pumped while work is pending, and while idle.
 const BUSY_TICK: Duration = Duration::from_millis(16);
@@ -74,11 +74,14 @@ impl AppState {
     }
 }
 
-/// The kinds of secondary window. Phase 2 adds a detachable preview here.
+/// The kinds of secondary window.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WindowKind {
     /// A read-only view of the active document that follows its edits.
     Mirror,
+    /// The rendered preview, detached from the workspace window. Closing it docks the preview
+    /// again.
+    Preview,
 }
 
 pub fn open_main_window(
@@ -102,22 +105,52 @@ pub fn open_main_window(
     }
 }
 
-/// Opens a secondary window sharing `app`. Window creation lives here so that later window
-/// kinds are added without touching the main window.
-pub fn open_secondary_window(app: Entity<AppState>, kind: WindowKind, cx: &mut App) {
+/// Opens a secondary window sharing `app`, returning it and its view. Window creation lives
+/// here so that window kinds are added without touching the main window.
+pub fn open_secondary_window(
+    app: Entity<AppState>,
+    kind: WindowKind,
+    cx: &mut App,
+) -> Option<(WindowHandle<Root>, AnyView)> {
     let bounds = Bounds::centered(None, size(px(720.), px(640.)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(gpui_component::TitleBar::title_bar_options()),
         ..WindowOptions::default()
     };
+    let mut view: Option<AnyView> = None;
     let opened = cx.open_window(options, |window, cx| {
-        let view = match kind {
-            WindowKind::Mirror => cx.new(|cx| MirrorView::new(app.clone(), window, cx)),
-        };
-        cx.new(|cx| Root::new(view, window, cx))
+        match kind {
+            WindowKind::Mirror => {
+                let mirror = cx.new(|cx| MirrorView::new(app.clone(), window, cx));
+                view = Some(mirror.clone().into());
+                cx.new(|cx| Root::new(mirror, window, cx))
+            }
+            WindowKind::Preview => {
+                let preview = cx.new(|cx| PreviewView::new(app.clone(), true, window, cx));
+                let docking = app.clone();
+                window.on_window_should_close(cx, move |_, cx| {
+                    docking.update(cx, |app, cx| {
+                        if app.engine.preview_layout().detached {
+                            let _ = app.invoke(
+                                adoc_engine::commands::ids::VIEW_DETACH_PREVIEW,
+                                CommandArgs::None,
+                                cx,
+                            );
+                        }
+                    });
+                    true
+                });
+                view = Some(preview.clone().into());
+                cx.new(|cx| Root::new(preview, window, cx))
+            }
+        }
     });
-    if let Err(error) = opened {
-        eprintln!("adocfoundry: could not open a window: {error}");
+    match opened {
+        Ok(handle) => view.map(|view| (handle, view)),
+        Err(error) => {
+            eprintln!("adocfoundry: could not open a window: {error}");
+            None
+        }
     }
 }
