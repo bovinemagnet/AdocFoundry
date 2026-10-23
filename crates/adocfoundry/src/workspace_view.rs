@@ -1253,7 +1253,7 @@ impl WorkspaceView {
     fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let engine = &self.app.read(cx).engine;
         let roots = engine.roots().to_vec();
-        let (location, path) = match self.active_editor() {
+        let (location, path, file) = match self.active_editor() {
             Some(editor) => {
                 let editor = editor.read(cx);
                 let id = editor.document();
@@ -1261,10 +1261,20 @@ impl WorkspaceView {
                 let (line, column) = editor.cursor_line_column(cx);
                 let position = Some(format!("Ln {}, Col {}", line + 1, column + 1));
                 let path = document.map(|document| sidebar::display_path(&document.path, &roots));
-                (position, path)
+                (
+                    position,
+                    path,
+                    document.map(|document| document.path.clone()),
+                )
             }
-            None => (None, None),
+            None => (None, None, None),
         };
+        // The branch of the active document's repository, else of the first root's.
+        let branch = file
+            .as_deref()
+            .or(roots.first().map(std::path::PathBuf::as_path))
+            .and_then(|path| engine.git().head_for(path))
+            .map(ToString::to_string);
         let indexing = engine.has_pending();
         StatusBar::new()
             .left(
@@ -1272,6 +1282,15 @@ impl WorkspaceView {
                     .text_xs()
                     .child(path.unwrap_or_else(|| "No document".to_owned())),
             )
+            .when_some(branch, |bar, branch| {
+                let selector = format!("status-branch-{branch}");
+                bar.left(
+                    div()
+                        .debug_selector(move || selector)
+                        .text_xs()
+                        .child(format!("⎇ {branch}")),
+                )
+            })
             .when(indexing, |bar| bar.left(div().text_xs().child("Indexing…")))
             .right(
                 div()

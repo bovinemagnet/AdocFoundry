@@ -17,7 +17,7 @@ use std::{
 
 use adoc_core::{Diagnostic, DiagnosticSeverity, LineIndex};
 use adoc_engine::{
-    commands::ids, CommandArgs, CommandOutcome, Engine, EngineError, GitChange, Head, Settings,
+    commands::ids, CommandArgs, CommandOutcome, Engine, EngineError, GitChange, Settings,
 };
 use serde::Serialize;
 
@@ -338,7 +338,7 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
 
 #[derive(Serialize)]
 struct JsonGitStatus {
-    /// `main`, `detached @ <id>` or `unborn`.
+    /// `main`, `detached @ <id>` or `no commits yet`.
     head: String,
     files: Vec<JsonChangedFile>,
 }
@@ -399,11 +399,7 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
         std::thread::sleep(Duration::from_millis(10));
     }
 
-    let head = match &repository.head {
-        Head::Branch(name) => name.clone(),
-        Head::Detached(id) => format!("detached @ {}", &id[..id.len().min(7)]),
-        Head::Unborn => "unborn".to_owned(),
-    };
+    let head = repository.head.to_string();
     let files: Vec<JsonChangedFile> = changed
         .iter()
         .zip(opened)

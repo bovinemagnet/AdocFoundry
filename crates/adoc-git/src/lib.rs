@@ -29,6 +29,17 @@ pub enum Head {
     Unborn,
 }
 
+impl std::fmt::Display for Head {
+    /// As a status bar shows it: `main`, `detached @ 1a2b3c4` or `no commits yet`.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Branch(name) => formatter.write_str(name),
+            Self::Detached(id) => write!(formatter, "detached @ {}", &id[..id.len().min(7)]),
+            Self::Unborn => formatter.write_str("no commits yet"),
+        }
+    }
+}
+
 /// The state of one file in the index (against `HEAD`) and in the working tree (against the
 /// index), as `git status` reports it.
 #[derive(Clone, Debug, Eq, PartialEq)]

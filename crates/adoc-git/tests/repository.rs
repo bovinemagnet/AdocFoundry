@@ -66,7 +66,10 @@ fn head_reports_branch_detached_and_unborn() {
     );
 
     assert_eq!(test.detach(), id);
-    assert_eq!(repo_in(dir.path()).head().unwrap(), Head::Detached(id));
+    let detached = repo_in(dir.path()).head().unwrap();
+    assert_eq!(detached.to_string(), format!("detached @ {}", &id[..7]));
+    assert_eq!(detached, Head::Detached(id));
+    assert_eq!(Head::Unborn.to_string(), "no commits yet");
 }
 
 #[test]
