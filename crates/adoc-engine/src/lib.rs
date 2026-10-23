@@ -19,6 +19,7 @@ mod rendered;
 mod search;
 mod settings;
 mod undo;
+mod versions;
 mod visual;
 mod workspace;
 

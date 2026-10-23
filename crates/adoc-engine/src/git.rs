@@ -50,6 +50,9 @@ pub struct GitState {
     /// The latest refresh started for each working tree; older results are dropped.
     refreshes: BTreeMap<PathBuf, u64>,
     next_refresh: u64,
+    /// Which branch publishes each Antora version, and the computation that will replace it.
+    pub(crate) branch_versions: Option<adoc_antora::BranchVersions>,
+    pub(crate) versions_generation: u64,
 }
 
 impl GitState {
@@ -228,6 +231,7 @@ impl Engine {
             }
         }
         self.schedule_all_hunks();
+        self.refresh_branch_versions();
     }
 
     /// Re-reads the head and status of the repository at `workdir` on a worker thread.
@@ -290,6 +294,9 @@ impl Engine {
                     head: head.clone(),
                 });
             }
+            // Another branch has other component descriptors and pages: index them again,
+            // which also recomputes the versions published from each branch.
+            self.reindex();
         }
         self.replace_status(workdir, status);
         for root in roots {
