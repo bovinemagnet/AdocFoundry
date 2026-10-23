@@ -56,9 +56,13 @@ include::example$crate-layers.mmd[]
 |`adoc-model`
 |The editable model behind the visual editor. It depends on `adoc-core` and `adoc-dom`, and the engine depends on it. A `Model` is typed blocks whose text is scanned losslessly into pieces (text, marks and atoms) that each know their exact source bytes, checked against the DOM. A `Step` on the model yields minimal `SourceEdit` values, an inverse, and a position `Mapping`. The source stays the truth; see xref:engine.adoc#the-visual-model-service[the engine].
 
+|L2
+|`adoc-git`
+|Git repository discovery, head, status and line diffs against HEAD, over `gix` (gitoxide) with no network transports. Nothing runs the `git` executable. The `test-support` feature provides `adoc_git::testing::TestRepo` for tests. The engine depends on it.
+
 |L3
 |`adoc-engine`
-|Documents, commands, undo, workspace, file watcher, settings, search and rename, the preview and visual model services, and the `EngineEvent` stream. The only entry point front ends use.
+|Documents, commands, undo, workspace, file watcher, settings, Git state, search and rename, the preview and visual model services, and the `EngineEvent` stream. The only entry point front ends use.
 
 |L4
 |`adocfoundry`
@@ -66,7 +70,7 @@ include::example$crate-layers.mmd[]
 
 |L4
 |`adocfoundry-cli`
-|The headless binary: `check`, `symbols` and `follow`.
+|The headless binary: `check`, `symbols`, `follow`, `render` and `git-status`.
 
 |L4
 |`adoc-ls`

@@ -37,6 +37,12 @@ ignore = ["node_modules", ".git", "build", "target", ".cache"]
 
 [tools]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
+
+[git]
+enabled = true                   # false: no repository is discovered
+show_markers = true              # reserved for change markers
+blame_on_hover = false           # reserved for blame
+remote = "origin"                # reserved for remote links
 ----
 
 == Keys
@@ -79,12 +85,36 @@ asciidoctor = ""                 # optional absolute path; discovered on PATH if
 |string
 |`""`
 |An absolute path to `asciidoctor`. Discovered on `PATH` when empty. Used by the language server's preview only. The application's preview renders in process and does not use it.
+
+|`git.enabled`
+|boolean
+|`true`
+|Discover the Git repository of each workspace root, and show its branch and track its changes. When `false`, nothing is discovered and the workspace behaves as if it were outside a repository.
+
+|`git.show_markers`
+|boolean
+|`true`
+|Show change markers in the editor. Read now and reserved for the change markers that follow; it has no effect yet.
+
+|`git.blame_on_hover`
+|boolean
+|`false`
+|Show blame on hover. Read now and reserved for blame; it has no effect yet.
+
+|`git.remote`
+|string
+|`"origin"`
+|The remote used for links to the hosting service. Read now and reserved for remote links; it has no effect yet.
 |===
+
+Of the `git` keys only `git.enabled` has an effect today.
+The others are read and kept for the change markers, blame and remote links that follow.
 
 == What a workspace file may set
 
 A workspace file may override `editor.*` and `workspace.ignore` only.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
+`git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.
 
 == Warnings
 

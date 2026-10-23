@@ -12,6 +12,7 @@ adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli --version
 ----
 
@@ -131,6 +132,46 @@ adocfoundry-cli render docs/modules/ROOT/pages/index.adoc --root docs > index.ht
 
 Images and diagrams are written as absolute `file://` URLs, so the file shows them wherever it is opened on the same machine.
 A usage or runtime error exits with 2, as for the other subcommands.
+
+[[git-status]]
+== git-status
+
+`git-status` reports the Git state of the AsciiDoc files under `<root>`.
+It finds the repository that holds `<root>` and does not run the `git` executable.
+
+[source,sh]
+----
+adocfoundry-cli git-status docs
+adocfoundry-cli git-status docs --format json
+----
+
+The default `text` format prints `branch <head>`, then one line per changed AsciiDoc file in the style of `git status --short`.
+The head reads `main`, `detached @ 1a2b3c4` or `no commits yet`.
+A file with changes against HEAD ends with the number of changed line runs; a deleted file has no number.
+
+[source,text]
+----
+branch main
+?? docs/new.adoc
+ M docs/page.adoc (2 changed)
+----
+
+`--format json` prints one object.
+`index` and `worktree` are each one of `unmodified`, `added`, `modified`, `deleted`, `renamed`, `untracked`, `ignored` or `conflicted`.
+
+[source,json]
+----
+{
+  "head": "main",
+  "files": [
+    { "path": "docs/new.adoc", "index": "unmodified", "worktree": "untracked", "hunks": 0 },
+    { "path": "docs/page.adoc", "index": "unmodified", "worktree": "modified", "hunks": 2 }
+  ]
+}
+----
+
+If `<root>` is not in a Git repository the command fails with an error and exits with 2.
+The other subcommands do not look at Git.
 
 == Using it in CI
 

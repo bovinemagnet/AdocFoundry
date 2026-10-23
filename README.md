@@ -59,6 +59,11 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Undo and redo are shared with the source editor: one history whichever editor made the change. In Split mode each side follows the other's caret.
 - Included content, diagrams, STEM, passthroughs, attribute entries, conditionals and anything the editor and the parser read differently are shown read-only; clicking them shows their source. Block titles show above their blocks and are edited in the source.
 
+**Git**
+
+- The status bar shows the branch of the active document's repository (or `detached @ 1a2b3c4`). Repositories are found and read in-process with `gix`; nothing runs `git`. A folder outside Git behaves as before.
+- The engine tracks the status of the repository's files and the changed lines of every open document against `HEAD`, including unsaved edits; a commit, a branch switch or staging is picked up from `.git` without a restart. Change markers, a Changes panel, branch-aware Antora versions, blame and committing build on this (epic [#2](https://github.com/bovinemagnet/AdocFoundry/issues/2)).
+
 **Find, replace and rename**
 
 - Find in the workspace, with regular expression, case and whole-word options.
@@ -131,6 +136,12 @@ ignore = ["node_modules", ".git", "build", "target", ".cache"]
 
 [tools]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
+
+[git]
+enabled = true                   # false: look for no repository
+show_markers = true              # reserved for change markers
+blame_on_hover = false           # reserved for line blame
+remote = "origin"                # reserved for links to the hosting site
 ```
 
 `tools.asciidoctor` is used only by `adoc-ls`'s HTML preview; the app's preview needs no external tool. Diagram tools are found on `PATH` and cannot be set here yet.
@@ -142,11 +153,14 @@ adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+adocfoundry-cli git-status <root> [--format text|json]
 ```
 
 `check` prints the workspace's diagnostics (text: `path:line:col: severity code message`) and exits with 1 when any meets `--fail-on` (default `error`), which suits CI. It reports exactly what the editor and `adoc-ls` report.
 
 `render` writes a page as a standalone HTML file, as the preview renders it, waiting for its diagrams; without `--output` it writes to standard output. Without `--root`, the workspace is the folder above the page's Antora component, or the page's own folder outside Antora. `--parser asciidoc-parser` renders with the second document parser, for comparison; the app always uses `acdc`.
+
+`git-status` prints the branch of the repository holding the root and its changed AsciiDoc files as `git status --short` does, with the number of changed line runs against `HEAD` in each (`branch main`, ` M docs/page.adoc (2 changed)`); `--format json` gives the same as an object. The other commands do not look at Git.
 
 ## Language server
 
@@ -162,7 +176,8 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
 - Typeset STEM: the preview shows the maths source until Phase 4.
 - Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
-- Editing included content in place, spell checking, Git integration, plugins.
+- Editing included content in place, spell checking, plugins.
+- Change markers, a Changes panel, branch-aware Antora versions, blame and committing: the rest of the Git epic.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
 - Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
@@ -183,7 +198,7 @@ The workspace is a ladder of crates, each depending only on those below it:
 ```text
 adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)
 adoc-engine              documents, commands, undo, workspace, watcher, settings, search, preview, visual model
-adoc-render   adoc-diagrams   adoc-model   view tree and HTML; Mermaid and diagram tools; the editable model
+adoc-render   adoc-diagrams   adoc-model   adoc-git   view tree and HTML; diagrams; the editable model; Git
 adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang
 adoc-core
 ```
