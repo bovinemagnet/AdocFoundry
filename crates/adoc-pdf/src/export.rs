@@ -279,6 +279,9 @@ fn typeset(
         .and_then(|(year, month, day)| Datetime::from_ymd(year, month, day));
     let world = PdfWorld::new(typst.source.clone(), fonts, &typst.files, today);
     let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
+    // Typst memoises layout in a process-wide cache that nothing else empties; a book's is
+    // gigabytes, and the app would keep it after the export.
+    typst::comemo::evict(0);
     let map = |list: &[SourceDiagnostic]| -> Vec<PdfDiagnostic> {
         list.iter()
             .map(|diagnostic| diagnostic_of(&world, typst, diagnostic))

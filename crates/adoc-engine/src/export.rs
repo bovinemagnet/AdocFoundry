@@ -11,12 +11,12 @@ use std::{
 };
 
 use adoc_core::DiagnosticSeverity;
-use adoc_dom::Dom;
+use adoc_dom::{BlockKind, Dom};
 use adoc_pdf::{
     Book, BookItem, Document, LoadedTheme, PageView, PdfOptions, PdfSeverity, PdfStandard,
     ThemeSource,
 };
-use adoc_render::{DiagramView, ViewBlock, ViewKind, ViewTree};
+use adoc_render::{DiagramView, ViewBlock, ViewInline, ViewKind, ViewTree};
 
 use crate::{
     commands::{ids, register, spec},
@@ -94,8 +94,16 @@ enum Plan {
 #[derive(Clone, Debug)]
 enum PlanItem {
     Part(String),
-    Heading { title: String, depth: u8 },
-    Page { path: PathBuf, depth: u8 },
+    Heading {
+        title: String,
+        depth: u8,
+    },
+    /// A page, with its nav entry's text for when the page has no title.
+    Page {
+        path: PathBuf,
+        depth: u8,
+        nav_title: Option<String>,
+    },
 }
 
 impl Plan {
@@ -271,16 +279,15 @@ impl Engine {
             .nav_trees(name, version)
             .map_err(|error| EngineError::NotFound(error.to_string()))?;
         // Groups of entries, each a candidate part: a titled list, or a whole nav file.
-        let mut groups: Vec<(Option<String>, Vec<NavItem>)> = Vec::new();
+        let mut groups: Vec<(Option<&NavItem>, Vec<NavItem>)> = Vec::new();
         for tree in &trees {
             let titled = !tree.items.is_empty()
-                && tree
-                    .items
-                    .iter()
-                    .all(|item| item.target.is_none() && !item.children.is_empty());
+                && tree.items.iter().all(|item| {
+                    (item.list_title || item.target.is_none()) && !item.children.is_empty()
+                });
             if titled {
                 for item in &tree.items {
-                    groups.push((Some(item.title.clone()), item.children.clone()));
+                    groups.push((Some(item), item.children.clone()));
                 }
             } else {
                 groups.push((None, tree.items.clone()));
@@ -298,21 +305,34 @@ impl Engine {
                         || contains(engine, &item.children, path)
                 })
             }
-            groups
-                .iter()
-                .any(|(_, entries)| contains(self, entries, path))
+            groups.iter().any(|(title, entries)| {
+                title.is_some_and(|title| self.nav_page(title).as_deref() == Some(path))
+                    || contains(self, entries, path)
+            })
         };
         if let Some(start) = start.filter(|start| !listed(start)) {
             seen.insert(start.clone());
             items.push(PlanItem::Page {
                 path: start,
                 depth: 1,
+                nav_title: None,
             });
         }
         for (title, entries) in &groups {
-            if parts {
-                if let Some(title) = title {
-                    items.push(PlanItem::Part(title.clone()));
+            if let Some(title) = title {
+                if parts {
+                    items.push(PlanItem::Part(title.title.clone()));
+                }
+                // A title that links to a page leads its list with that page.
+                if let Some(path) = self
+                    .nav_page(title)
+                    .filter(|path| seen.insert(path.clone()))
+                {
+                    items.push(PlanItem::Page {
+                        path,
+                        depth: 1,
+                        nav_title: Some(title.title.clone()),
+                    });
                 }
             }
             self.plan_entries(entries, 1, &mut items, &mut seen);
@@ -368,7 +388,11 @@ impl Engine {
         for entry in entries {
             match self.nav_page(entry) {
                 Some(path) if seen.insert(path.clone()) => {
-                    items.push(PlanItem::Page { path, depth });
+                    items.push(PlanItem::Page {
+                        path,
+                        depth,
+                        nav_title: Some(entry.title.clone()),
+                    });
                 }
                 Some(_) => {}
                 None => items.push(PlanItem::Heading {
@@ -482,6 +506,7 @@ impl Engine {
             return;
         };
         state.stage = Stage::Typesetting;
+        let unread = unread_pages(&state.doms);
         let args = state.args.clone();
         let plan = state.plan.clone();
         let document = assemble(&plan, views);
@@ -495,7 +520,12 @@ impl Engine {
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         thread::spawn(move || {
-            let result = theme.and_then(|theme| typeset(&document, &theme, &options, &args));
+            let result = theme
+                .and_then(|theme| typeset(&document, &theme, &options, &args))
+                .map(|mut summary| {
+                    summary.diagnostics.extend(unread);
+                    summary
+                });
             let _ = sender.send(WorkerMessage::ExportFinished { job, result });
         });
     }
@@ -663,8 +693,17 @@ fn assemble(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Document {
                         title: title.clone(),
                         depth: *depth,
                     }),
-                    PlanItem::Page { path, depth } => {
-                        let view = views.remove(path)?;
+                    PlanItem::Page {
+                        path,
+                        depth,
+                        nav_title,
+                    } => {
+                        let mut view = views.remove(path)?;
+                        if view.title.is_none() {
+                            view.title = nav_title
+                                .as_ref()
+                                .map(|title| vec![ViewInline::Text(title.clone())]);
+                        }
                         index += 1;
                         Some(BookItem::Page(PageView {
                             key: format!("p{index}"),
@@ -720,6 +759,28 @@ fn typeset(
         pages: output.pages,
         diagnostics,
     })
+}
+
+/// A warning for each page the parser could not read, which is shown as its source.
+fn unread_pages(doms: &[(PathBuf, Dom)]) -> Vec<ExportDiagnostic> {
+    doms.iter()
+        .filter(|(_, dom)| {
+            matches!(dom.blocks.as_slice(), [block] if matches!(
+                &block.kind,
+                BlockKind::Unsupported { name, .. } if name == "document"
+            ))
+        })
+        .map(|(path, dom)| {
+            let reason = dom.warnings.first().map_or("", |warning| &warning.message);
+            ExportDiagnostic {
+                severity: DiagnosticSeverity::Warning,
+                message: format!(
+                    "the page could not be parsed and is shown as its source: {reason}"
+                ),
+                location: Some((path.clone(), 1)),
+            }
+        })
+        .collect()
 }
 
 /// A warning for each diagram that could not be rendered and is shown as its source.

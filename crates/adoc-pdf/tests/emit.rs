@@ -260,6 +260,17 @@ fn labels_are_namespaced_per_page() {
 }
 
 #[test]
+fn unresolved_references_stay_text() {
+    let typst = typst_of("= Page\n\nSee xref:missing.adoc[the missing page] and <<nowhere>>.\n");
+    assert!(typst.source.contains("#\"the missing page\""));
+    assert!(
+        !typst.source.contains("adoc-link(label("),
+        "an unresolved reference links somewhere:\n{}",
+        typst.source
+    );
+}
+
+#[test]
 fn passthrough_is_text() {
     let typst = typst_of(
         "Inline +++#set page(width: 10pt)+++ pass.\n\n++++\n#pagebreak() #pagebreak()\n++++\n",

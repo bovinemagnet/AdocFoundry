@@ -50,20 +50,22 @@ pub fn parse_nav(text: &str) -> Vec<NavEntry> {
             start,
             end: start + content.len(),
         };
-        if let Some(title) = block_title(content) {
-            entries.push(entry(0, title, None));
-        } else if let Some((level, item)) = list_item(content) {
-            match xref(item) {
-                Some((target, link_text)) => {
-                    let text = if link_text.is_empty() {
-                        target
-                    } else {
-                        link_text
-                    };
-                    entries.push(entry(level, text, Some(target)));
-                }
-                None => entries.push(entry(level, item, None)),
+        // A title, like an item, may link to a page.
+        let linked = |level, text: &str| match xref(text) {
+            Some((target, link_text)) => {
+                let text = if link_text.is_empty() {
+                    target
+                } else {
+                    link_text
+                };
+                entry(level, text, Some(target))
             }
+            None => entry(level, text, None),
+        };
+        if let Some(title) = block_title(content) {
+            entries.push(linked(0, title));
+        } else if let Some((level, item)) = list_item(content) {
+            entries.push(linked(level, item));
         }
     }
     entries
@@ -127,6 +129,20 @@ mod tests {
                 (2, "Install", Some("install.adoc")),
                 (2, "Plain category", None),
                 (3, "security:auth.adoc", Some("security:auth.adoc")),
+            ]
+        );
+    }
+
+    #[test]
+    fn linked_titles_read_their_text_and_target() {
+        let text = ".xref:index.adoc[Home]\n* xref:a.adoc[A]\n.xref:b.adoc[]\n";
+
+        assert_eq!(
+            summary(&parse_nav(text)),
+            [
+                (0, "Home", Some("index.adoc")),
+                (1, "A", Some("a.adoc")),
+                (0, "b.adoc", Some("b.adoc")),
             ]
         );
     }

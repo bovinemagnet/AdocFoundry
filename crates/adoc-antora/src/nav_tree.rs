@@ -32,6 +32,8 @@ pub struct NavItem {
     pub target: Option<AntoraResourceId>,
     /// The entry's line in the nav file.
     pub source: Location,
+    /// Whether the entry is a `.Title` line, heading the list beneath it.
+    pub list_title: bool,
     pub children: Vec<NavItem>,
 }
 
@@ -160,6 +162,7 @@ fn build_tree(
                         path: path.clone(),
                         range,
                     },
+                    list_title: entry.level == 0,
                     children: Vec::new(),
                 },
             )

@@ -124,9 +124,13 @@ fn exports_a_component_in_nav_order() {
             "[#\"Configure\"]",
             "[#\"Use\"]",
             "#adoc-part[#\"Administration\"]",
+            // A title that links to a page leads its part with that page.
+            "[#\"Administering the Guide\"]",
             "[#\"Backup\"]",
             "[#\"Recovery\"]",
             "[#\"Restore\"]",
+            // A page with no title takes its entry's text.
+            "[#\"Empty Page\"]",
         ],
     );
     assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
@@ -313,4 +317,24 @@ fn writes_the_book() {
     fs::copy(directory.path().join("out.pdf"), out.join("book.pdf")).unwrap();
     fs::copy(directory.path().join("out.typ"), out.join("book.typ")).unwrap();
     eprintln!("{} pages, {:?}", summary.pages, summary.diagnostics);
+}
+
+#[test]
+fn pages_the_parser_cannot_read_are_reported() {
+    let (directory, root, mut engine) = book_workspace("");
+    let page = root.join("guide/modules/ROOT/pages/unreadable.adoc");
+    fs::write(&page, "= Unreadable\n\ninclude::install.adoc[foo=bar]\n").unwrap();
+    let id = engine.open(&page).unwrap();
+    let (summary, _) = export(&mut engine, directory.path(), ExportTarget::Page(id));
+    let reported = summary.diagnostics.iter().find(|diagnostic| {
+        diagnostic
+            .location
+            .as_ref()
+            .is_some_and(|(path, _)| path == &page)
+    });
+    let reported = reported.unwrap_or_else(|| panic!("{:?}", summary.diagnostics));
+    assert!(
+        reported.message.contains("shown as its source"),
+        "{reported}"
+    );
 }

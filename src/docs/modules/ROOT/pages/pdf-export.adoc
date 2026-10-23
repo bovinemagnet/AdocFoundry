@@ -30,6 +30,8 @@ The book follows the component's navigation.
 * The title page shows the `title` from `antora.yml` (or the component's name), and the version as "Version X".
 * The table of contents is on its own page.
 * When there is more than one navigation file, each becomes a part, titled by its nav list's title if it has one.
+* A nav list title that links to a page, as in `.xref:index.adoc[Architecture]`, names the part, and the linked page leads that part as its first chapter.
+* A page with no title of its own, such as an empty file listed in the navigation, takes the text of its navigation entry as its heading.
 * Each top-level navigation entry is a chapter and starts on a new page.
 * Nested entries become sections of their chapter.
 * An entry with no page is a heading at its depth.
@@ -209,6 +211,7 @@ Typst's errors and warnings are mapped back to the AsciiDoc file and line that p
 A missing image is a warning, not a failure.
 A problem with no source position is reported against the page.
 A diagram that failed to render is reported as a warning.
+A page the parser cannot read is shown in the PDF as its source, and the export warns with the file and the parser's message.
 
 == What is not supported
 

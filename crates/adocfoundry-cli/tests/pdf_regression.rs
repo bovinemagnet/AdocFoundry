@@ -203,6 +203,20 @@ fn references() -> Vec<Reference> {
             max_edge: 6.0,
         },
         Reference {
+            name: "default-sans",
+            source: "tests/fixtures/pdf/reference/article.adoc",
+            asciidoctor: vec!["-a".into(), "pdf-theme=default-sans".into()],
+            ours: vec!["--theme".into(), "default-sans".into()],
+            max_edge: 6.0,
+        },
+        Reference {
+            name: "default-for-print",
+            source: "tests/fixtures/pdf/reference/article.adoc",
+            asciidoctor: vec!["-a".into(), "pdf-theme=default-for-print".into()],
+            ours: vec!["--theme".into(), "default-for-print".into()],
+            max_edge: 6.0,
+        },
+        Reference {
             name: "custom-theme",
             source: "tests/fixtures/pdf/reference/article.adoc",
             asciidoctor: vec![

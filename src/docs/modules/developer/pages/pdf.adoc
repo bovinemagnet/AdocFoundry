@@ -52,6 +52,7 @@ It knows nothing of the engine, the workspace or a UI framework: it is given a `
 |===
 
 The public entry points are `load_theme`, `to_typst` (for inspection), `compile` and `export`, which does both.
+Every compile, for a PDF or for text, empties Typst's process-wide memoisation cache (`typst::comemo::evict(0)`) once layout is done, because after a 2,000-page book it held about 11 GB that the app would otherwise keep.
 
 .From command to PDF
 [mermaid]
@@ -162,6 +163,8 @@ The engine builds a `Document::Book` from `Engine::nav_trees`.
 A `Book` is a title, a subtitle, attributes and a list of `BookItem` values: a `Part`, a `Heading` with a depth, or a `Page` (a `PageView` with a key and a depth).
 
 * There is one part per nav file when there are several, titled by the nav list's title if it has one.
+* A nav list title that links to a page (`.xref:index.adoc[Architecture]`) titles the part, and the linked page leads that part as its first chapter.
+* A page with no title of its own takes the text of its nav entry as its heading.
 * A nav entry with no page is a heading at its depth.
 * Each page appears once, the first time the nav lists it.
 * The component's start page leads as a preface unless the nav lists it.

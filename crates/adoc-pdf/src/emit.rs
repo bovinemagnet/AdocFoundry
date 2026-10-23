@@ -889,6 +889,10 @@ impl<'a> Emitter<'a> {
                 .split_once('#')
                 .map(|(_, fragment)| fragment.to_owned())
         });
+        // A reference that leads nowhere stays text; it must not fall back to this page.
+        if link.unresolved {
+            return None;
+        }
         let page = match &link.target {
             Some(location) if location.path != self.source => self.pages.get(&location.path),
             _ => Some(&self.key),

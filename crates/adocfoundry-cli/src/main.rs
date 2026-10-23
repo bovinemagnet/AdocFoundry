@@ -366,10 +366,13 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
     let root = option(&options, "root").map_or_else(
         || {
             if is_dir {
-                // A component directory: its parent, so sibling components resolve.
-                let parent = target.parent().unwrap_or(&target);
-                if target.join("antora.yml").is_file() && !parent.as_os_str().is_empty() {
-                    parent.to_path_buf()
+                // A component directory: its parent, so sibling components resolve; the parent
+                // of a relative name such as `guide` is the current directory.
+                if target.join("antora.yml").is_file() {
+                    match target.parent() {
+                        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+                        _ => PathBuf::from("."),
+                    }
                 } else {
                     target.clone()
                 }

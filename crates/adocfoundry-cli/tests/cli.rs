@@ -331,7 +331,23 @@ fn pdf_exports_a_component() {
             .output()
             .unwrap()
     };
-    // A component directory exports its book, named after the component.
+    // A component directory exports its book, named after the component; given by a relative
+    // name, its siblings are in the workspace too, so references to them resolve.
+    let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(directory.path().join("book"))
+        .args(["pdf", "guide", "--typst", "guide.typ"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let typst = std::fs::read_to_string(directory.path().join("book/guide.typ")).unwrap();
+    assert!(
+        !typst.contains("adoc-link(label(\"p2\"), [#\"other component\"])"),
+        "the reference to the other component leads back to its own page"
+    );
     let output = run(&["pdf", "book/guide"]);
     assert!(
         output.status.success(),

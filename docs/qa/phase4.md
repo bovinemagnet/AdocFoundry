@@ -14,7 +14,7 @@ Automated coverage for reference: the theme loader against asciidoctor-pdf's own
 
 1. `git submodule update --init`, then `cargo build --release -p adocfoundry -p adocfoundry-cli`.
 2. Install asciidoctor-pdf 2.3 (`gem install asciidoctor-pdf`, or Homebrew's `asciidoctor`) for the side-by-side checks.
-3. A PDF viewer that shows two documents side by side, and a PDF/A and PDF/UA validator (veraPDF) for the standards.
+3. A PDF viewer that shows two documents side by side, and a PDF/A and PDF/UA validator for the standards (veraPDF 1.30, `brew install verapdf`).
 
 ## Reading distance (Definition of Done)
 
@@ -25,19 +25,20 @@ Automated coverage for reference: the theme loader against asciidoctor-pdf's own
 ## Themes
 
 - [x] A custom theme written for asciidoctor-pdf loads without edits: the fixture theme, and eleven themes from a real project, key for key against asciidoctor-pdf's loader (`ADOC_PDF_THEME_CORPUS`, macOS).
-- [ ] A theme with `font.fallbacks` renders a glyph the base font lacks (a CJK character with a fallback font installed in the theme).
-- [ ] `default-sans` and `default-for-print` side by side with asciidoctor-pdf.
+- [x] A theme with `font.fallbacks` renders a glyph the base font lacks: a theme extending `default` with asciidoctor-pdf's `M+ 1p Fallback` font in `font.catalog` and `font.fallbacks` draws Japanese text and arrows in the fallback font, on a line within 0.05 pt of asciidoctor-pdf's `default-with-font-fallbacks` (macOS).
+- [x] `default-sans` and `default-for-print` side by side with asciidoctor-pdf: now part of the visual regression test, at most 0.0072 and 0.0087 mean grey difference per page, with the ink within 3.6 pt and 1.8 pt (macOS).
 
 ## Books
 
 - [x] `adocfoundry-cli pdf tests/fixtures/pdf/book/guide` (copied elsewhere first): title page with the version, table of contents with parts, chapters and sections, the start page as the preface, each chapter on a new page, the Mermaid diagram drawn, links between pages work in a PDF viewer (macOS).
-- [ ] A large real component: every page appears once and in navigation order; the bookmarks panel mirrors the table of contents.
-- [ ] `[pdf] site_url` set: a reference to another component opens the published page in the browser.
+- [x] A large real component: a documentation project's component of 212 pages in 17 nav files exports as a book of 1,838 pages in 55 s (release build). Every page appears once and in navigation order, checked against the nav files by a script that does not use the exporter. The bookmarks are the 17 parts in navigation order with their chapters, 3,093 in all (macOS). The run found and fixed: nav titles written as links, untitled pages, document titles cut at `: `, tag directives left in paragraphs, spaced include attributes, and pages the parser rejects being exported without a warning.
+- [x] `[pdf] site_url` set: in the book fixture, the reference to the other component is a link to `https://docs.example.com/other/index.html` in the PDF's link annotations; without `site_url` it is text (macOS). The link was not clicked in a viewer.
 
 ## Standards
 
-- [ ] `--standard pdf-a-2a` passes veraPDF's PDF/A-2a profile.
-- [ ] `--standard pdf-ua-1` passes veraPDF's PDF/UA-1 profile; a screen reader reads headings, lists, tables and image alternatives in order.
+- [x] `--standard pdf-a-2a` passes veraPDF's PDF/A-2a profile: the reference article (43,438 checks, none failed) and the book fixture with both standards (36,972 checks, none failed) (veraPDF 1.30.3, macOS).
+- [x] `--standard pdf-ua-1` passes veraPDF's PDF/UA-1 profile: the reference article (13,062 checks, none failed) and the book fixture with both standards (5,938 checks, none failed) (veraPDF 1.30.3, macOS).
+- [ ] A screen reader reads headings, lists, tables and image alternatives in order.
 
 ## The app
 
@@ -53,4 +54,10 @@ Automated coverage for reference: the theme loader against asciidoctor-pdf's own
 
 | Date | Build | Platform | Result |
 |---|---|---|---|
-| 2026-10-24 | `phase-4` branch, debug and release | macOS 26 (arm64) | The checks marked above pass. |
+| 2026-10-24 | `phase-4` branch, debug and release | macOS 26 (arm64) | The checks marked above pass. App: the palette lists Export Page to PDF…, and choosing it opens the save dialog; the dialog could not be completed from a script, so the app checks need a person. Windows, Linux and the screen reader are not yet run. |
+
+## Known limitations found
+
+- acdc-parser rejects some input Asciidoctor reads: `subs=` on an include, and a tab between a section title's `=` and its text. The page is exported as its source with a warning naming the file and the parser's message (two pages of the 212 above).
+- acdc-parser keeps tag directives in two places Asciidoctor drops them: the lines of a tagged include that mark other tags, and a callout list item's text, where the directive is joined to the item (145 lines in the book above).
+- Memory: Typst holds the whole layout while it compiles, about 9 MB a PDF page; the 1,838-page book peaked at 17 GB. Typst's cache is emptied after each compile, which frees about 11 GB, but about 15 GB stays allocated after the export in a long-running process, and its holder is not yet known.

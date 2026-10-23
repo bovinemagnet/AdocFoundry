@@ -215,6 +215,21 @@ Where it differs from the earlier sections of that specification, section 12 win
 |acdc joins targets onto an absolute base; the path handed to the `IncludeResolver` is made relative again when the page was given by a relative path, including one above the working directory
 |The workspace's include map is keyed by the path as the page was given.
 
+|Document title
+|Not specified
+|a title acdc splits at its last `: ` is joined again (`Main: Sub`)
+|Asciidoctor's `doctitle` is the whole text. Only a title page partitions it, and `adoc-pdf`'s title page does so itself.
+
+|Comment lines in text
+|Not specified
+|lines starting `//` (not `///`) are dropped from paragraph and list item text
+|acdc keeps tag directives (`// end::x[]`) for include filtering, and they stayed in the text, at times with a comment beside them. A documentation project that tags its leads leaked one into most pages.
+
+|Spaced include attributes
+|Not specified
+|before acdc parses a page or an included file, the spaces after the commas of an include's attribute list are taken out and as many one-byte placeholders put at the end of its target, which the loader removes
+|acdc rejects `[tag=a, leveloffset=+1]`, which Asciidoctor reads. The line keeps its length, so spans are unchanged. acdc still rejects attributes Asciidoctor ignores (`subs=` on an include) and a tab after a section title's `=`. Such a page is shown as its source.
+
 |Legacy asset directories
 |Not specified
 |`ResourceFamily::directories()`: images and attachments are also discovered under a module's `assets/images` and `assets/attachments`, read first so the standard directory wins when both hold a file; hover names resource ids from either
@@ -416,9 +431,24 @@ Not in Phase 4, by decision: typeset STEM, a live Typst preview, PDF/A-1 and PDF
 |An image without alt text gets its file name
 |Every image needs a text alternative for PDF/UA.
 
+|Book plan
+|Parts from nav files or titled lists when there are several
+|As specified. An untargeted nav entry is a heading at its depth, each page appears once, and the start page leads as a preface unless the nav lists it. A list title that links to a page (`.xref:index.adoc[Architecture]`) titles the part and its page leads it. A page with no title takes its entry's text.
+|Every nav file of a real project titles its list with a link to the module's index page.
+
+|Unreadable pages
+|Not specified
+|A page the parser rejects is shown as its source, and the export warns with the parser's message
+|Without the warning the page's source appeared in the book unexplained.
+
+|Typst's cache
+|Not specified
+|Emptied after each compile
+|Typst memoises layout in a process-wide cache that nothing else empties. After a 2,000-page book it held about 11 GB, which the app would keep.
+
 |CLI
 |`--component <name>[@<version>]`
-|`--component [<version>@]<name>`, and also `--fonts-dir`
+|`--component [<version>@]<name>`, and also `--fonts-dir`. For a component directory the workspace is its parent, so its sibling components resolve.
 |It matches Antora coordinates, and real projects pass a fonts directory.
 
 |App

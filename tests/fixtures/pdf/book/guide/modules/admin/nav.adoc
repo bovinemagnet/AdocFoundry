@@ -1,4 +1,5 @@
-.Administration
+.xref:index.adoc[Administration]
 * xref:backup.adoc[Backup]
 * Recovery
 ** xref:restore.adoc[Restore]
+* xref:empty.adoc[Empty Page]
