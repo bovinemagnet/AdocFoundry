@@ -105,7 +105,8 @@
 #let prose-bottom = pick("prose_margin_bottom", default: block-bottom)
 
 // A heading styled by its caller (the document title, the title page's title): still a level 1
-// heading in the PDF's structure, as PDF/UA asks of the first one.
+// heading in the PDF's structure, as PDF/UA asks of the first one. `body` carries its own
+// styling, which wins over Typst's heading styles.
 #let plain-heading(body) = [#heading(level: 1, outlined: false, bookmarked: false, body) <adoc-plain-heading>]
 
 // --- inlines ----------------------------------------------------------------------------------
@@ -229,12 +230,14 @@
   let size = resolve-size(pick("heading_h1_font_size", default: 24pt), base-size)
   set par(leading: leading(size, pick("heading_h1_line_height", "heading_line_height", default: 1.15)), justify: false)
   block(width: 100%, align(alignment(pick("heading_h1_text_align", default: "center"), default: center),
-    styled(("heading_h1", "heading"), plain-heading(body))))
+    plain-heading(styled(("heading_h1", "heading"), body))))
   v(pick("heading_h1_margin_bottom", "heading_margin_bottom", default: 12pt))
 }
 
-// Typst's own spacing around headings and outline entries gives way to the theme's.
+// Typst's own spacing, size and weight for headings and outline entries give way to the
+// theme's.
 #show heading: set block(above: 0pt, below: 0pt, sticky: false)
+#show heading: set text(size: 1em, weight: "regular")
 #show outline.entry: set block(above: 0pt, below: 0pt)
 
 #show heading: it => {
@@ -590,16 +593,17 @@
   let alignment = if a == "center" { center } else if a == "right" { right } else { left }
   let margin = doc.page.margin
   let width = doc.page.width - margin.left - margin.right
-  let part(prefix, body) = {
+  let part(prefix, body, heading: false) = {
     let size = resolve-size(pick(prefix + "_font_size", default: base-size), base-size)
     let ratio = pick(prefix + "_line_height", default: base-line-height)
+    let body = styled((prefix, "title_page"), body, size: size)
     block(
       above: pick(prefix + "_margin_top", default: 0pt),
       below: pick(prefix + "_margin_bottom", default: 0pt),
       width: 100%,
       {
         set par(leading: leading(size, ratio), justify: false)
-        align(alignment, styled((prefix, "title_page"), body, size: size))
+        align(alignment, if heading { plain-heading(body) } else { body })
       },
     )
   }
@@ -613,7 +617,7 @@
           block(width: width, align(if la == "center" { center } else if la == "right" { right } else { left }, logo)))
       }
       place(top + left, dy: from-top(pick("title_page_title_top", default: 40%)) - margin.top, block(width: width, {
-        if pick("title_page_title_display") != "none" { part("title_page_title", plain-heading(title)) }
+        if pick("title_page_title_display") != "none" { part("title_page_title", title, heading: true) }
         if subtitle != none and pick("title_page_subtitle_display") != "none" { part("title_page_subtitle", subtitle) }
         if authors != none and pick("title_page_authors_display") != "none" { part("title_page_authors", authors) }
         if revision != none and pick("title_page_revision_display") != "none" { part("title_page_revision", revision) }

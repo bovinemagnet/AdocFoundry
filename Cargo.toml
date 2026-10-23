@@ -52,6 +52,8 @@ gpui-component = { version = "=0.8.0", features = [
     "tree-sitter-yaml",
 ] }
 gpui-kit-assets = "=0.8.0"
+# Rasterises PDFs for the visual regression tests; already in the tree through Typst.
+hayro = "=0.7.1"
 gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 # Built from the grammar submodule by the grammar's own binding crates.
 tree-sitter-asciidoc = { path = "grammars/tree-sitter-asciidoc/tree-sitter-asciidoc" }
