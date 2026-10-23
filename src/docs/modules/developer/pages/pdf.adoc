@@ -53,7 +53,8 @@ It knows nothing of the engine, the workspace or a UI framework: it is given a `
 
 The public entry points are `load_theme`, `to_typst` (for inspection), `compile` and `export`, which does both.
 Every compile, for a PDF or for text, empties Typst's process-wide memoisation cache (`typst::comemo::evict(0)`) once layout is done, because after a 2,000-page book it held about 11 GB that the app would otherwise keep.
-comemo keeps the capacity of the tables it empties, so a long-running process keeps its peak memory (6 to 8 MB a PDF page), which the next export reuses.
+The vendored `comemo` in `vendor/comemo` frees the memory of the caches it empties, which upstream comemo 0.5.1 keeps.
+After a 2,058-page book, 67 MB stays allocated instead of 15.5 GB.
 
 .From command to PDF
 [mermaid]

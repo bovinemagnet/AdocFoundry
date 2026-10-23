@@ -61,5 +61,9 @@ Automated coverage for reference: the theme loader against asciidoctor-pdf's own
 
 - acdc-parser rejects some input Asciidoctor reads: `subs=` on an include, and a tab between a section title's `=` and its text. The page is exported as its source with a warning naming the file and the parser's message (two pages of the 212 above).
 - acdc-parser keeps tag directives in two places Asciidoctor drops them: the lines of a tagged include that mark other tags, and a callout list item's text, where the directive is joined to the item (145 lines in the book above).
-- Memory: Typst holds the whole layout while it compiles, about 9 MB a PDF page; the 1,838-page book peaked at 17 GB. Typst's cache is emptied after each compile, which frees about 11 GB. What stays allocated afterwards in a long-running process (15.5 GB after a 2,062-page book, 4.5 GB after 712 pages) is the capacity of comemo's emptied tables: its call-tree slabs, edge maps and per-call constraint tables, found with `malloc_history`, with no leaks. A second export reuses it rather than growing. Freeing it needs typesetting in a child process or a change to comemo.
+- Memory: Typst holds the whole layout while it compiles, about 9 MB a PDF page; the 1,838-page book peaked at 17 GB.
+
+## Fixed after the first QA run
+
+- Memory kept after an export: 15.5 GB stayed allocated in a long-running process after a 2,058-page book. `malloc_history` showed it was comemo's evicted caches, emptied but not freed (call-tree slabs and maps, accelerator tables), with no leaks. Typst's cache is now emptied after each compile, and `vendor/comemo` frees what it empties: 67 MB stays allocated after the same book, what parsing alone leaves (macOS).
 - Description lists are tagged `Div`, not as lists.

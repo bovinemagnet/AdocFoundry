@@ -98,6 +98,7 @@ Preview flow: while the preview is visible the engine requests its target (the p
 - Edition 2021 (matching the migrated crates); the toolchain is pinned in `rust-toolchain.toml`. Crates take dependency versions from `[workspace.dependencies]`, never their own.
 - All external dependencies are pinned exactly (`=1.0.229` style) and new ones must pass `cargo deny` (MIT, Apache-2.0, BSD-2/3, MPL-2.0, Unlicense, Zlib, OFL-1.1 for fonts; GPL and LGPL are denied).
 - `vendor/evalexpr` is a home-grown Apache-2.0 stand-in, patched in through `[patch.crates-io]`, for the AGPL `evalexpr` that acdc-parser pulls in (see `vendor/README.md`). Do not remove the patch while acdc-parser still depends on it.
+- `vendor/comemo` is comemo 0.5.1 with two changes that free the memory of evicted caches (gigabytes after a book export, which the app would otherwise keep), patched in the same way. Keep it at the comemo version Typst uses, and drop it once a release frees evicted memory (see `vendor/README.md`).
 - Keep the UI framework a one-crate swap (egui/eframe was the fallback had the GPUI spike failed): nothing below `adocfoundry` may know which framework is in use.
 - **Never** depend on Zed's `editor`, `text`, `rope`, `multi_buffer`, `language` or `project` crates: they are GPL-3.0. The permitted GPUI crates are `gpui`/`gpui-pre`, `gpui-component`, `gpui-base` and their platform crates (Apache-2.0).
 - No Node.js, no JVM, no Ruby required at runtime. External tools (`asciidoctor`, `dot`, `plantuml`, `mmdc`) are optional and discovered, never assumed.

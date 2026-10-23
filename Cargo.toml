@@ -84,4 +84,6 @@ url = "=2.5.8"
 [patch.crates-io]
 # acdc-parser depends on evalexpr 13, which is AGPL-3.0-only; see vendor/README.md.
 evalexpr = { path = "vendor/evalexpr" }
+# comemo keeps the memory of the caches it evicts, gigabytes after a book; see vendor/README.md.
+comemo = { path = "vendor/comemo" }
 
