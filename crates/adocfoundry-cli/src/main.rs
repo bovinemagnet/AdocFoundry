@@ -233,13 +233,19 @@ fn symbols(arguments: &[String]) -> Result<ExitCode, String> {
 /// resolve), or the file's own directory outside Antora.
 fn default_root(file: &Path) -> PathBuf {
     let directory = file.parent().unwrap_or_else(|| Path::new("."));
-    directory
+    let root = directory
         .ancestors()
         .find(|ancestor| ancestor.join("antora.yml").is_file())
         .map_or_else(
             || directory.to_path_buf(),
             |component| component.parent().unwrap_or(component).to_path_buf(),
-        )
+        );
+    // A relative path's last ancestor is the empty path, which stands for the current directory.
+    if root.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        root
+    }
 }
 
 fn follow(arguments: &[String]) -> Result<ExitCode, String> {
