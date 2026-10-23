@@ -16,7 +16,16 @@ The spike was folded into the application crate rather than built as a throwaway
 
 - gpui-component's code editor shows `.adoc` files with the block grammar and the inline grammar injected into paragraphs, titles, table cells and macro targets, plus source-block injection (`crates/adocfoundry/src/editor/language.rs`). Every query compiles against the pinned grammars (`queries_compile_against_the_grammars`).
 - The engine's work per keystroke — rope edit, re-parse, index replacement and diagnostics for open documents — was measured on a 5,008-line synthetic document with `cargo test --release -p adoc-engine --test perf -- --ignored --nocapture`: **median 0.76 ms, worst 3.8 ms** over 200 keystrokes, inside the 5 ms budget. Workspace diagnostics for 501 files take 2.3 ms.
-- **Frame timing, Linux (inconclusive):** the typing benchmark (`ADOCFOUNDRY_TYPING_BENCH`, see `docs/qa/phase1.md`) types 28 characters a second into the real editor and records frame intervals. On a 5,000-line document the first measurement dropped 42 frames over 25 ms in 10 seconds (worst 101 ms). The app then rebuilt the outline, problems list and editor squiggles on every keystroke, and the engine re-indexed on every keystroke (5–8 ms). Deferring all of that until typing pauses brought a later run to 25 frames over 25 ms (worst 63 ms, median 16.7 ms). In that same session, a three-line control dropped 146 frames, so the desktop was too busy for the measurement to be trusted. It needs repeating on an idle desktop on each platform.
+- **Frame timing, Linux (verified):** the typing benchmark (`ADOCFOUNDRY_TYPING_BENCH`, see `docs/qa/phase1.md`) types 28 characters a second into the real editor for ten seconds and records frame intervals.
+  - **First measurement:** on a 5,000-line document, 42 frames went over 25 ms (worst 101 ms). The engine re-indexed and refreshed diagnostics on every keystroke (5–8 ms), and the app rebuilt the outline, problems list and squiggles each time.
+  - **After the fix:** all of that now waits for a pause in typing. Measured with the 5,000-line document and a three-line control run alternately on a quiet desktop:
+
+  | Run | Frames | Median | p99 | Worst | Over 25 ms |
+  |---|---|---|---|---|---|
+  | three-line control | 569, 589 | 16.7 ms | 33.4, 18.1 ms | 67, 36 ms | 9, 3 |
+  | 5,000-line document | 584, 590 | 16.7 ms | 22.5, 21.8 ms | 40, 44 ms | 6, 1 |
+
+  The large document draws as smoothly as the near-empty one: at 60 Hz the median is the refresh interval, and the few late frames appear in the control too, so they come from the desktop, not the editor. On a busy desktop the control itself dropped 146 frames, so run the check on an idle one. macOS and Windows still need the same run.
 
 ### 2. `definition_at_offset` wired in-process to a click — *verified*
 

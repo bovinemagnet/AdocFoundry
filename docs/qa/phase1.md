@@ -67,4 +67,4 @@ Automated coverage for reference: the engine's headless tests (`crates/adoc-engi
 
 | Date | Build | Platform | Result | Notes |
 |---|---|---|---|---|
-| | | | | |
+| 2026-10-23 | `phase-1` (release) | Linux x86_64, KDE Plasma Wayland | Partial | Typing benchmark passed on the 5,000-line document (as smooth as the control; see `docs/qa/spike-gpui.md`). Navigation tree, highlighting, diagnostics, outline and status bar checked visually on a real five-module component. Link following, undo routing, IME composition (input-handler level), second window and search panel are covered by the app's test-platform tests. The rest of this list is still to do by hand. |
