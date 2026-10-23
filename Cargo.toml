@@ -33,6 +33,7 @@ acdc-parser = "=0.11.0"
 asciidoc-parser = "=0.31.2"
 dirs = "=6.0.0"
 # Pure-Rust Git, without network transports; see crates/adoc-git.
+globset = "=0.4.20"
 gix = { version = "=0.90.0", default-features = false, features = ["sha1", "status", "revision"] }
 gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-component = { version = "=0.8.0", features = [

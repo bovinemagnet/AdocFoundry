@@ -141,6 +141,7 @@ name = "adoc-antora"
 version = "0.1.0"
 dependencies = [
  "adoc-core",
+ "globset",
  "serde",
  "serde-saphyr 1.3.0",
  "tempfile",
