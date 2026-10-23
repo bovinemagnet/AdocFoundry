@@ -63,6 +63,7 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
             name: "adoc-ls".to_owned(),
             version: Some(env!("CARGO_PKG_VERSION").to_owned()),
         }),
+        offset_encoding: None,
     };
     connection.initialize_finish(initialize_id, serde_json::to_value(result)?)?;
 

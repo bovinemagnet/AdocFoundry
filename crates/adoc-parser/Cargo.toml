@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-adoc-core = { path = "../adoc-core" }
+adoc-core.workspace = true
 
 [lints]
 workspace = true

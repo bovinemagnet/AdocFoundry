@@ -1,0 +1,42 @@
+[workspace]
+members = ["crates/*", "xtask"]
+default-members = ["crates/adocfoundry"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/bovinemagnet/AdocFoundry"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+# Internal crates
+adoc-antora = { path = "crates/adoc-antora" }
+adoc-core = { path = "crates/adoc-core" }
+adoc-engine = { path = "crates/adoc-engine" }
+adoc-index = { path = "crates/adoc-index" }
+adoc-lang = { path = "crates/adoc-lang" }
+adoc-parser = { path = "crates/adoc-parser" }
+adoc-render = { path = "crates/adoc-render" }
+
+# External crates: every entry pinned exactly; crates reference these, never their own versions
+dirs = "=6.0.0"
+gpui = { package = "gpui-pre", version = "=0.3.9" }
+gpui-component = { version = "=0.8.0", features = ["tree-sitter"] }
+insta = { version = "=1.49.0", features = ["json"] }
+lsp-server = "=0.10.0"
+# `proposed` is enabled by gpui-component through feature unification; enable it everywhere
+# so adoc-ls compiles the same way alone and in the workspace.
+lsp-types = { version = "=0.97.0", features = ["proposed"] }
+notify = "=8.2.0"
+regex = "=1.13.1"
+ropey = "=2.0.0-beta.1"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde-saphyr = { version = "=1.0.1", default-features = false, features = ["deserialize"] }
+serde_json = "=1.0.151"
+tempfile = "=3.27.0"
+toml = "=1.1.8"
+url = "=2.5.8"

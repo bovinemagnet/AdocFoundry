@@ -6,8 +6,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-adoc-core = { path = "../adoc-core" }
-adoc-parser = { path = "../adoc-parser" }
+adoc-core.workspace = true
+adoc-parser.workspace = true
 
 [lints]
 workspace = true
