@@ -269,9 +269,11 @@ dependencies = [
  "adoc-core",
  "adoc-engine",
  "adoc-index",
+ "adoc-render",
  "insta",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -9,11 +9,13 @@ repository.workspace = true
 adoc-core.workspace = true
 adoc-engine.workspace = true
 adoc-index.workspace = true
+adoc-render.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

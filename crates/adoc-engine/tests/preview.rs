@@ -354,3 +354,26 @@ fn go_to_records_history_and_reveal_does_not() {
         .unwrap();
     assert_eq!(engine.active(), Some(page_id));
 }
+
+#[test]
+fn render_blocking_waits_for_diagrams() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(
+        &page,
+        "= Page\n\n[mermaid]\n----\ngraph LR\n  X --> Y\n----\n",
+    )
+    .unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    engine.set_diagrams(Diagrams::with_providers(
+        DiagramCache::new(directory.path().join("cache")),
+        vec![Box::new(MermaidProvider)],
+    ));
+    let id = engine.open(&page).unwrap();
+    let preview = engine.render_blocking(id, WAIT).unwrap();
+    assert!(matches!(
+        &preview.view.blocks[0].kind,
+        ViewKind::Diagram(DiagramView::Svg(_))
+    ));
+    assert!(engine.rendered_preview(id).is_none(), "released afterwards");
+}

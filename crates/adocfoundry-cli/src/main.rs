@@ -4,6 +4,7 @@
 //! adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 //! adocfoundry-cli symbols <root> <query>
 //! adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
+//! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc]
 //! adocfoundry-cli --version
 //! ```
 
@@ -21,6 +22,7 @@ const USAGE: &str = "usage:
   adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
   adocfoundry-cli symbols <root> <query>
   adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
+  adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc]
   adocfoundry-cli --version";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -52,6 +54,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         "check" => check(rest),
         "symbols" => symbols(rest),
         "follow" => follow(rest),
+        "render" => render(rest),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
 }
@@ -281,4 +284,38 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
         }
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Renders a page to a standalone HTML file, or to standard output, as the preview shows it.
+fn render(arguments: &[String]) -> Result<ExitCode, String> {
+    let (positional, options) = parse_options(arguments, &["root", "output", "parser"])?;
+    let [file] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    match option(&options, "parser").unwrap_or("acdc") {
+        "acdc" => {}
+        other => return Err(format!("unknown parser `{other}`")),
+    }
+    let file = adoc_index::normalize_path(Path::new(file));
+    let root = option(&options, "root").map_or_else(
+        || default_root(&file),
+        |root| adoc_index::normalize_path(Path::new(root)),
+    );
+
+    let mut engine = open_engine(&root)?;
+    let id = engine.open(&file).map_err(|error| error.to_string())?;
+    let preview = engine
+        .render_blocking(id, INDEX_TIMEOUT)
+        .ok_or_else(|| format!("{} did not render", file.display()))?;
+    let html = adoc_render::to_html(
+        &preview.view,
+        &adoc_render::HtmlOptions { standalone: true },
+    );
+    match option(&options, "output") {
+        Some(output) => {
+            std::fs::write(output, html).map_err(|error| format!("{output}: {error}"))?;
+        }
+        None => print!("{html}"),
+    }
+    Ok(ExitCode::SUCCESS)
 }

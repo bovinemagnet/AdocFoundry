@@ -143,3 +143,41 @@ fn rejects_unknown_commands() {
     assert_eq!(cli(&["frobnicate"]).status.code(), Some(2));
     assert_eq!(cli(&[]).status.code(), Some(2));
 }
+
+#[test]
+fn render_writes_html() {
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("blocks.html");
+    let output = cli(&[
+        "render",
+        "tests/fixtures/render/blocks.adoc",
+        "--output",
+        output_path.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let html = std::fs::read_to_string(&output_path).unwrap();
+    assert!(html.starts_with("<!DOCTYPE html>"), "{html}");
+    assert!(html.contains("<title>Every Block Kind</title>"));
+    assert!(html.contains("<div class=\"sect1\">"));
+    assert!(
+        html.contains("A paragraph from a partial."),
+        "includes are followed"
+    );
+
+    // Without --output, the page goes to standard output.
+    let output = cli(&["render", "tests/fixtures/simple/guide.adoc"]);
+    assert!(output.status.success());
+    assert!(stdout(&output).contains("<div id=\"content\">"));
+
+    let output = cli(&[
+        "render",
+        "tests/fixtures/simple/guide.adoc",
+        "--parser",
+        "nope",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+}

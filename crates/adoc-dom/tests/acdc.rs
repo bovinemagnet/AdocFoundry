@@ -404,3 +404,37 @@ fn inline_images_keep_alt_and_antora_targets() {
         "Icons Icon and  and Plain here."
     );
 }
+
+#[test]
+fn replacements_apply_outside_verbatim_content() {
+    let text = "Copyright (C) -- it's done...\n\n[source]\n----\na -> b ... (C)\n----\n\n[literal]\nx -> y\n\nkeep \\(C) and +(R)+\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let blocks = dom.walk();
+    let BlockKind::Paragraph { inlines } = &blocks[0].kind else {
+        panic!("{:?}", blocks[0].kind);
+    };
+    assert_eq!(
+        Inline::plain_text(inlines),
+        "Copyright \u{a9}\u{2009}\u{2014}\u{2009}it\u{2019}s done\u{2026}\u{200b}"
+    );
+    assert!(blocks.iter().any(|block| matches!(
+        &block.kind,
+        BlockKind::Listing { text, .. } if text == "a -> b ... (C)"
+    )));
+    assert!(blocks.iter().any(|block| matches!(
+        &block.kind,
+        BlockKind::Literal { text } if text == "x -> y"
+    )));
+    let last = blocks
+        .iter()
+        .rev()
+        .find_map(|block| match &block.kind {
+            BlockKind::Paragraph { inlines } => Some(Inline::plain_text(inlines)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        last, "keep (C) and (R)",
+        "escaped and passed-through text is kept"
+    );
+}

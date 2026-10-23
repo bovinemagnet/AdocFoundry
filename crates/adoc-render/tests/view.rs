@@ -436,3 +436,55 @@ fn adoc_render_path(view: &ViewTree, partial: &Path) -> PathBuf {
     }
     find(view.blocks.iter().collect(), "partials/included.adoc").unwrap_or(partial.to_path_buf())
 }
+
+#[test]
+fn html_follows_asciidoctor_where_forms_differ() {
+    let text = "= Page\n\nNOTE: Inline note.\n\n[NOTE]\n====\nBlock note.\n====\n\n|===\n|Head\n\n|Body\n|===\n\n[mermaid]\n----\ngraph TD\n  A --> B\n----\n";
+    struct Rendered;
+    impl ViewResolver for Rendered {
+        fn xref(&self, from: &Path, target: &str) -> ResolvedLink {
+            LocalResolver.xref(from, target)
+        }
+        fn image(&self, _: &Path, _: &str, _: Option<&str>) -> Option<PathBuf> {
+            None
+        }
+        fn diagram(&self, _: &str, _: &str, _: &BTreeMap<String, String>) -> DiagramView {
+            DiagramView::Svg(PathBuf::from("/cache/d.svg"))
+        }
+    }
+    let view = view_of(Path::new("/page.adoc"), text, &Rendered);
+    let html = to_html(&view, &HtmlOptions::default());
+    // A paragraph-form admonition holds its text directly; a delimited one holds blocks.
+    assert!(
+        html.contains("<td class=\"content\">\nInline note.\n</td>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<div class=\"paragraph\"><p>Block note.</p></div>"),
+        "{html}"
+    );
+    // Header cells hold their text without a paragraph.
+    assert!(html.contains(">Head</th>"), "{html}");
+    assert!(html.contains("<p class=\"tableblock\">Body</p>"), "{html}");
+    assert!(html.contains("class=\"imageblock diagram\""), "{html}");
+}
+
+#[test]
+fn html_renders_list_styles_and_asciidoc_cells() {
+    let text = "= Page\n:experimental:\n\n[qanda]\nWhat?::\n  This.\n\n[horizontal]\nKey:: Value.\n\n[cols=\"1,1a\"]\n|===\n|Plain\n|First.\n\nSecond.\n|===\n\nmenu:File[Save]\n";
+    let view = view_of(Path::new("/page.adoc"), text, &LocalResolver);
+    let html = to_html(&view, &HtmlOptions::default());
+    assert!(html.contains("<div class=\"qlist qanda\">"), "{html}");
+    assert!(
+        html.contains("<li><p><em>What?</em></p><p>This.</p>"),
+        "{html}"
+    );
+    assert!(html.contains("<div class=\"hdlist\">"), "{html}");
+    assert!(html.contains("<td class=\"hdlist1\">"), "{html}");
+    assert!(
+        html.contains("<div class=\"content\"><div class=\"paragraph\"><p>First.</p></div>"),
+        "an AsciiDoc cell holds blocks: {html}"
+    );
+    assert!(html.contains("<p class=\"tableblock\">Plain</p>"), "{html}");
+    assert!(html.contains("File&#160;&#8250; Save"), "{html}");
+}

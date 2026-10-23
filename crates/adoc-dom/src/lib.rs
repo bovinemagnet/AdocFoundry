@@ -7,6 +7,7 @@
 
 mod acdc;
 mod model;
+mod replacements;
 
 use std::{
     path::{Path, PathBuf},

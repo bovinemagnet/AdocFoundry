@@ -194,6 +194,38 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             }
             let _ = writeln!(out, "</{tag}>\n</div>");
         }
+        ViewKind::DescriptionList(items) if block.style.as_deref() == Some("qanda") => {
+            let _ = writeln!(out, "<div{id} class=\"{}\">", classes("qlist qanda", block));
+            block_title(out, block);
+            out.push_str("<ol>\n");
+            for item in items {
+                let _ = write!(out, "<li><p><em>{}</em></p>", inlines(&item.term));
+                if !item.content.is_empty() {
+                    let _ = write!(out, "<p>{}</p>", inlines(&item.content));
+                }
+                render_blocks(out, view, &item.blocks);
+                out.push_str("</li>\n");
+            }
+            out.push_str("</ol>\n</div>\n");
+        }
+        ViewKind::DescriptionList(items) if block.style.as_deref() == Some("horizontal") => {
+            let _ = writeln!(out, "<div{id} class=\"{}\">", classes("hdlist", block));
+            block_title(out, block);
+            out.push_str("<table>\n");
+            for item in items {
+                let _ = write!(
+                    out,
+                    "<tr>\n<td class=\"hdlist1\">\n{}\n</td>\n<td class=\"hdlist2\">\n",
+                    inlines(&item.term)
+                );
+                if !item.content.is_empty() {
+                    let _ = writeln!(out, "<p>{}</p>", inlines(&item.content));
+                }
+                render_blocks(out, view, &item.blocks);
+                out.push_str("</td>\n</tr>\n");
+            }
+            out.push_str("</table>\n</div>\n");
+        }
         ViewKind::DescriptionList(items) => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("dlist", block));
             block_title(out, block);
@@ -235,7 +267,21 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 "<table><tr><td class=\"icon\"><div class=\"title\">{label}</div></td><td class=\"content\">"
             );
             block_title(out, block);
-            render_blocks(out, view, blocks);
+            match blocks.as_slice() {
+                // `NOTE: text`: the paragraph is the admonition itself, starting on its line,
+                // and Asciidoctor writes its text straight into the cell. A delimited block's
+                // content starts lower down.
+                [only]
+                    if only.span.path == block.span.path && only.span.line == block.span.line =>
+                {
+                    if let ViewKind::Paragraph(content) = &only.kind {
+                        let _ = writeln!(out, "{}", inlines(content));
+                    } else {
+                        render_block(out, view, only);
+                    }
+                }
+                _ => render_blocks(out, view, blocks),
+            }
             out.push_str("</td></tr></table>\n</div>\n");
         }
         ViewKind::Code {
@@ -374,8 +420,21 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                         out,
                         "<{tag} class=\"tableblock halign-{align} valign-top\"{span}>"
                     );
+                    if cell.style == CellStyle::AsciiDoc {
+                        // An AsciiDoc cell is a nested document: its blocks render as blocks.
+                        out.push_str("<div class=\"content\">");
+                        for block in &cell.blocks {
+                            render_block(out, view, block);
+                        }
+                        out.push_str("</div>");
+                        let _ = writeln!(out, "</{tag}>");
+                        continue;
+                    }
                     for block in &cell.blocks {
                         match &block.kind {
+                            ViewKind::Paragraph(content) if tag == "th" => {
+                                out.push_str(&inlines(content));
+                            }
                             ViewKind::Paragraph(content) => {
                                 let _ =
                                     write!(out, "<p class=\"tableblock\">{}</p>", inlines(content));
@@ -426,7 +485,11 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
         }
         ViewKind::Diagram(diagram) => match diagram {
             DiagramView::Svg(path) => {
-                let _ = writeln!(out, "<div{id} class=\"{}\">", classes("imageblock", block));
+                let _ = writeln!(
+                    out,
+                    "<div{id} class=\"{}\">",
+                    classes("imageblock diagram", block)
+                );
                 let _ = writeln!(
                     out,
                     "<div class=\"content\">\n<img src=\"{}\" alt=\"Diagram\">\n</div>",
@@ -651,7 +714,7 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
                     .iter()
                     .map(|item| escape(item))
                     .collect::<Vec<_>>()
-                    .join("&#160;&#9656; ")
+                    .join("&#160;&#8250; ")
             );
         }
         ViewInline::Stem { latex, source } => {

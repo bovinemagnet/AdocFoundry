@@ -43,6 +43,8 @@ pub struct ViewBlock {
     pub span: SourceSpan,
     pub id: Option<String>,
     pub roles: Vec<String>,
+    /// The block style, where it changes presentation: `qanda` and `horizontal` lists.
+    pub style: Option<String>,
     pub title: Vec<ViewInline>,
     /// A numbered caption such as `Figure 1.` or `Table 2.`, for titled images, tables,
     /// examples and listings.
@@ -637,6 +639,7 @@ impl Builder<'_> {
             span: block.meta.span.clone(),
             id: block.meta.id.clone(),
             roles: block.meta.roles.clone(),
+            style: block.meta.style.clone(),
             title,
             caption,
             kind,

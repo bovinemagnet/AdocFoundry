@@ -136,6 +136,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         page,
         page_text: input.text,
         resolved,
+        verbatim: std::cell::Cell::new(false),
     };
     converter.document()
 }
@@ -156,6 +157,8 @@ struct Converter<'p> {
     page: PathBuf,
     page_text: &'p str,
     resolved: HashMap<PathBuf, (PathBuf, Arc<str>)>,
+    /// Set while converting verbatim content, which takes no replacements.
+    verbatim: std::cell::Cell<bool>,
 }
 
 impl Converter<'_> {
@@ -650,6 +653,13 @@ impl Converter<'_> {
 
     /// The text of a verbatim block, and its callout markers by line.
     fn verbatim_text(&self, nodes: &[acdc::InlineNode<'_>]) -> (String, Vec<Callout>) {
+        let outer = self.verbatim.replace(true);
+        let converted = self.verbatim_text_inner(nodes);
+        self.verbatim.set(outer);
+        converted
+    }
+
+    fn verbatim_text_inner(&self, nodes: &[acdc::InlineNode<'_>]) -> (String, Vec<Callout>) {
         let mut text = String::new();
         let mut callouts = Vec::new();
         for node in nodes {
@@ -713,7 +723,12 @@ impl Converter<'_> {
             }
         };
         match node {
-            acdc::InlineNode::PlainText(text) => vec![Inline::Text(text.content.to_owned())],
+            acdc::InlineNode::PlainText(text) if text.escaped || self.verbatim.get() => {
+                vec![Inline::Text(text.content.to_owned())]
+            }
+            acdc::InlineNode::PlainText(text) => {
+                vec![Inline::Text(crate::replacements::replace(text.content))]
+            }
             acdc::InlineNode::RawText(text) => vec![Inline::Text(text.content.to_owned())],
             acdc::InlineNode::VerbatimText(text) => vec![Inline::Text(text.content.to_owned())],
             acdc::InlineNode::BoldText(bold) => {

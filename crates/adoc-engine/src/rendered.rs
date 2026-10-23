@@ -147,6 +147,24 @@ impl Engine {
         }
     }
 
+    /// Renders `id` and waits for the result, diagrams included, for front ends without an
+    /// event loop such as the CLI. `None` when it does not finish within `timeout`.
+    pub fn render_blocking(
+        &mut self,
+        id: DocumentId,
+        timeout: Duration,
+    ) -> Option<Arc<RenderedPreview>> {
+        self.request_preview(id);
+        // Rendered now, not after the settle time.
+        let now = self.clock.now();
+        self.rendered.scheduled.insert(id, now);
+        self.start_due_previews();
+        let finished = self.wait_for_workers(timeout);
+        let preview = self.rendered_preview(id);
+        self.release_preview(id);
+        preview.filter(|_| finished)
+    }
+
     pub fn release_preview(&mut self, id: DocumentId) {
         let Some(count) = self.rendered.requests.get_mut(&id) else {
             return;
