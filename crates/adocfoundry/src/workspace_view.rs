@@ -253,6 +253,11 @@ impl WorkspaceView {
         window.focus(&focus, cx);
     }
 
+    #[cfg(test)]
+    pub fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
     fn active_editor(&self) -> Option<&Entity<SourceEditorView>> {
         self.tabs.get(self.active_tab)
     }

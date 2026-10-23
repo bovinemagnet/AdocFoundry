@@ -7,6 +7,8 @@ mod editor;
 mod mirror_view;
 mod search_view;
 mod sidebar;
+#[cfg(test)]
+mod ui_tests;
 mod workspace_view;
 
 use std::path::PathBuf;

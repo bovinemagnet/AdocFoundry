@@ -162,6 +162,12 @@ impl SourceEditorView {
             .is_some_and(|open| open.path == path)
     }
 
+    /// The widget's current text.
+    #[cfg(test)]
+    pub fn widget_text(&self, cx: &gpui::App) -> String {
+        self.state.read(cx).text().to_string()
+    }
+
     /// The caret's byte offset.
     pub fn cursor(&self, cx: &gpui::App) -> usize {
         self.state.read(cx).cursor()
