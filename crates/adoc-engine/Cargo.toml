@@ -12,6 +12,7 @@ adoc-diagrams.workspace = true
 adoc-dom.workspace = true
 adoc-index.workspace = true
 adoc-lang.workspace = true
+adoc-model.workspace = true
 adoc-parser.workspace = true
 adoc-render.workspace = true
 dirs.workspace = true

@@ -18,6 +18,8 @@ pub enum EngineError {
     InvalidRequest(String),
     NotFound(String),
     Settings(String),
+    /// A visual edit that cannot be made without changing text the user did not edit.
+    Refused(String),
 }
 
 impl EngineError {
@@ -42,6 +44,7 @@ impl fmt::Display for EngineError {
             Self::InvalidRequest(message) => formatter.write_str(message),
             Self::NotFound(message) => formatter.write_str(message),
             Self::Settings(message) => write!(formatter, "settings: {message}"),
+            Self::Refused(message) => formatter.write_str(message),
         }
     }
 }

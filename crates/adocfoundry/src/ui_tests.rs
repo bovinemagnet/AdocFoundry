@@ -652,3 +652,614 @@ fn scroll_sync_works_both_ways(cx: &mut TestAppContext) {
     assert_eq!(top_line, Some(line));
     assert_eq!(caret(&workspace, &mut cx), offset, "the caret stays put");
 }
+
+// --- visual editor ---------------------------------------------------------------------------
+
+/// A workspace showing `text` as its only page in the visual editor.
+fn visual_workspace(
+    text: &str,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    Entity<crate::visual::VisualView>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap().keep();
+    let page = adoc_index::normalize_path(&directory.join("page.adoc"));
+    std::fs::write(&page, text).unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    (app, workspace, visual, id, cx)
+}
+
+fn shown_blocks(
+    visual: &Entity<crate::visual::VisualView>,
+    cx: &mut VisualTestContext,
+) -> Vec<String> {
+    cx.update(|_, cx| {
+        visual
+            .read(cx)
+            .shown()
+            .map(|shown| {
+                shown
+                    .model
+                    .text_blocks()
+                    .map(|(_, _, text)| text.display.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn text_of(
+    app: &Entity<AppState>,
+    id: adoc_engine::DocumentId,
+    cx: &mut VisualTestContext,
+) -> String {
+    cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().text_string())
+}
+
+fn place_caret(
+    visual: &Entity<crate::visual::VisualView>,
+    offset: usize,
+    cx: &mut VisualTestContext,
+) {
+    cx.update(|window, cx| {
+        let focus = gpui::Focusable::focus_handle(visual.read(cx), cx);
+        window.focus(&focus, cx);
+        visual.update(cx, |visual, cx| visual.place_caret(offset, cx));
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn visual_mode_renders_the_document(cx: &mut TestAppContext) {
+    let (app, _, visual, id, mut cx) =
+        visual_workspace("= Page\n\nA *bold* word.\n\n* An item\n", cx);
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.editor_mode(id)),
+        adoc_engine::EditorMode::Visual
+    );
+    assert_eq!(
+        shown_blocks(&visual, &mut cx),
+        ["Page", "A bold word.", "An item"]
+    );
+    let drawn = cx.update(|_, cx| visual.read(cx).layouts().borrow().len());
+    assert_eq!(drawn, 3, "every text block is laid out");
+
+    cx.simulate_keystrokes("secondary-k s");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.editor_mode(id)),
+        adoc_engine::EditorMode::Source
+    );
+}
+
+#[gpui::test]
+fn typing_in_visual_mode_edits_the_source(cx: &mut TestAppContext) {
+    let text = "= Page\n\nA *bold* word.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("word").unwrap() + 4, &mut cx);
+    cx.simulate_keystrokes("s space a n d space * m o r e");
+    cx.run_until_parked();
+    // A lone star forms no markup, so it is written as typed.
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nA *bold* words and *more.\n"
+    );
+    assert_eq!(
+        shown_blocks(&visual, &mut cx),
+        ["Page", "A bold words and *more."]
+    );
+
+    cx.simulate_keystrokes("backspace backspace");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nA *bold* words and *mo.\n"
+    );
+
+    // Undo is the engine's, shared with the source editor.
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nA *bold* words and *mor.\n"
+    );
+}
+
+#[gpui::test]
+fn clicking_text_places_the_caret(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst paragraph.\n\nSecond paragraph.\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    let bounds = cx.update(|_, cx| {
+        let layouts = visual.read(cx).layouts().borrow();
+        layouts.get(&vec![2]).map(gpui::TextLayout::bounds)
+    });
+    let bounds = bounds.expect("the second paragraph is laid out");
+    cx.simulate_click(
+        gpui::point(bounds.left() + px(1.), bounds.top() + px(2.)),
+        gpui::Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(selection.head, text.find("Second").unwrap());
+
+    // Past the end of the text, still inside the paragraph.
+    cx.simulate_click(
+        gpui::point(bounds.right() - px(2.), bounds.top() + px(2.)),
+        gpui::Modifiers::none(),
+    );
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(
+        selection.head,
+        text.find("Second paragraph.").unwrap() + "Second paragraph.".len()
+    );
+}
+
+#[gpui::test]
+fn ime_composition_commits_once(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+
+    let text = "= Page\n\nText.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find('.').unwrap(), &mut cx);
+    let undo_before = cx.update(|_, cx| app.read(cx).engine.undo_stack(id).unwrap().len());
+    cx.update(|window, cx| {
+        visual.update(cx, |visual, cx| {
+            for stage in ["に", "にほ", "にほん", "日本"] {
+                let marked = visual.marked_text_range(window, cx);
+                visual.replace_and_mark_text_in_range(marked, stage, None, window, cx);
+            }
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        text,
+        "nothing is written while composing"
+    );
+    let marked = cx
+        .update(|window, cx| visual.update(cx, |visual, cx| visual.marked_text_range(window, cx)));
+    assert_eq!(
+        marked,
+        Some(4..6),
+        "the composition is provisional, after `Text`"
+    );
+
+    cx.update(|window, cx| {
+        visual.update(cx, |visual, cx| {
+            let marked = visual.marked_text_range(window, cx);
+            visual.replace_text_in_range(marked, "日本", window, cx);
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nText日本.\n");
+    assert!(cx
+        .update(|window, cx| visual.update(cx, |visual, cx| visual.marked_text_range(window, cx)))
+        .is_none());
+    let undo_after = cx.update(|_, cx| app.read(cx).engine.undo_stack(id).unwrap().len());
+    assert_eq!(undo_after, undo_before + 1, "the commit is one edit");
+}
+
+#[gpui::test]
+fn keyboard_formatting_marks_the_selection_or_what_is_typed(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("plain").unwrap();
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, start + 5, cx)));
+    cx.simulate_keystrokes("secondary-b");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n"
+    );
+
+    // With nothing selected, the mark applies to what is typed next.
+    let end = text_of(&app, id, &mut cx).find('.').unwrap();
+    place_caret(&visual, end, &mut cx);
+    cx.simulate_keystrokes("secondary-i space n e w");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words _new_.\n"
+    );
+}
+
+#[gpui::test]
+fn enter_splits_the_paragraph(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst half second half.\n\n* one\n* two\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("second").unwrap(), &mut cx);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let after = "= Page\n\nFirst half\n\nsecond half.\n\n* one\n* two\n";
+    assert_eq!(text_of(&app, id, &mut cx), after);
+    assert_eq!(
+        shown_blocks(&visual, &mut cx),
+        ["Page", "First half", "second half.", "one", "two"]
+    );
+
+    // At the end of a paragraph, Enter begins a paragraph that exists once typed into.
+    place_caret(&visual, after.find("half.").unwrap() + 5, &mut cx);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), after, "nothing is written yet");
+    cx.simulate_keystrokes("N e w");
+    cx.run_until_parked();
+    let after = "= Page\n\nFirst half\n\nsecond half.\n\nNew\n\n* one\n* two\n";
+    assert_eq!(text_of(&app, id, &mut cx), after);
+
+    // At the end of a list item, another item; Tab indents it.
+    place_caret(&visual, after.find("two").unwrap() + 3, &mut cx);
+    cx.simulate_keystrokes("enter t h r e e tab");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nFirst half\n\nsecond half.\n\nNew\n\n* one\n* two\n** three\n"
+    );
+}
+
+#[gpui::test]
+fn typing_in_a_table_cell_edits_only_the_cell(cx: &mut TestAppContext) {
+    let text = "= Page\n\n|===\n|Name |Value\n\n|a |1\n|===\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("a |").unwrap() + 1, &mut cx);
+    cx.simulate_keystrokes("space | space b");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\n|===\n|Name |Value\n\n|a \\| b |1\n|===\n"
+    );
+}
+
+#[gpui::test]
+fn source_edits_update_the_visual_editor(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst paragraph.\n";
+    let (app, workspace, visual, id, mut cx) = visual_workspace(text, cx);
+    cx.simulate_keystrokes("secondary-k d");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.editor_mode(id)),
+        adoc_engine::EditorMode::Split
+    );
+    let editor = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .active_editor_for_test()
+            .cloned()
+            .unwrap()
+    });
+    let end = text.find('.').unwrap();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(end, end), window, cx)
+        });
+    });
+    cx.simulate_keystrokes("space e d i t e d");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nFirst paragraph edited.\n"
+    );
+    // The model is rebuilt once typing in the source pauses.
+    assert!(drain_until(&app, &mut cx, |cx| {
+        shown_blocks(&visual, cx) == ["Page", "First paragraph edited."]
+    }));
+}
+
+#[gpui::test]
+fn undo_is_shared_between_editors(cx: &mut TestAppContext) {
+    let text = "= Page\n\nText.\n";
+    let (app, workspace, visual, id, mut cx) = visual_workspace(text, cx);
+    cx.simulate_keystrokes("secondary-k d");
+    cx.run_until_parked();
+    place_caret(&visual, text.find('.').unwrap(), &mut cx);
+    cx.simulate_keystrokes("s");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nTexts.\n");
+    let editor = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .active_editor_for_test()
+            .cloned()
+            .unwrap()
+    });
+    assert_eq!(
+        widget_text(&editor, &mut cx),
+        "= Page\n\nTexts.\n",
+        "the source shows the visual edit"
+    );
+
+    // Undo from the source editor undoes the visual edit, in both views.
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(0, 0), window, cx)
+        });
+    });
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), text);
+    assert_eq!(widget_text(&editor, &mut cx), text);
+    assert_eq!(shown_blocks(&visual, &mut cx), ["Page", "Text."]);
+}
+
+#[gpui::test]
+fn tables_and_titles_are_drawn_as_written(cx: &mut TestAppContext) {
+    let text = "= Page\n\n.Widths\n[cols=\"1,3\"]\n|===\n|a |b\n|===\n\n\
+                [cols=\"1,1a\"]\n|===\n|Plain\n|Paragraph one.\n\nParagraph two.\n|===\n\n\
+                |===\n|A |B |C\n\n2+|Two columns |C\n|===\n";
+    let (_, _, _, _, mut cx) = visual_workspace(text, cx);
+    assert!(
+        cx.debug_bounds("visual-title-1").is_some(),
+        "a block's title is shown above it"
+    );
+    let narrow = cx
+        .debug_bounds("visual-cell-1-0-0")
+        .expect("the first cell");
+    let wide = cx
+        .debug_bounds("visual-cell-1-0-1")
+        .expect("the second cell");
+    let ratio = f32::from(wide.size.width) / f32::from(narrow.size.width);
+    assert!((ratio - 3.).abs() < 0.1, "the columns follow cols: {ratio}");
+    assert!(
+        cx.debug_bounds("visual-cell-2-0-1-block-1").is_some(),
+        "an AsciiDoc cell shows every block it holds"
+    );
+    // Without cols, every column is as wide as the others and a span takes its columns.
+    let one = cx.debug_bounds("visual-cell-3-0-0").expect("a header cell");
+    let two = cx
+        .debug_bounds("visual-cell-3-1-0")
+        .expect("the spanning cell");
+    let ratio = f32::from(two.size.width) / f32::from(one.size.width);
+    assert!(
+        (ratio - 2.).abs() < 0.1,
+        "a span takes its columns: {ratio}"
+    );
+}
+
+#[gpui::test]
+fn toolbar_bold_toggles_strong(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n\n* An item\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("plain").unwrap();
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, start + 5, cx)));
+    cx.run_until_parked();
+    let bold = cx
+        .debug_bounds("toolbar-bold")
+        .expect("the toolbar is drawn");
+    cx.simulate_click(bold.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n\n* An item\n"
+    );
+
+    // The list buttons act on the caret's block.
+    let item = text_of(&app, id, &mut cx).find("An item").unwrap();
+    place_caret(&visual, item, &mut cx);
+    let numbers = cx
+        .debug_bounds("toolbar-numbers")
+        .expect("the list buttons are drawn");
+    cx.simulate_click(numbers.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n\n. An item\n"
+    );
+}
+
+#[gpui::test]
+fn included_content_is_not_editable(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap().keep();
+    std::fs::write(directory.join("partial.adoc"), "From the partial.\n").unwrap();
+    let text = "= Page\n\nBefore.\n\ninclude::partial.adoc[]\n";
+    let page = adoc_index::normalize_path(&directory.join("page.adoc"));
+    std::fs::write(&page, text).unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.simulate_keystrokes("secondary-k w");
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .unwrap();
+    let included = cx.update(|_, cx| {
+        let shown = visual.read(cx).shown().cloned().unwrap();
+        shown
+            .model
+            .walk()
+            .into_iter()
+            .any(|(_, node)| matches!(node.kind, adoc_engine::NodeKind::Include { .. }))
+    });
+    assert!(included, "the include is a node of its own");
+    place_caret(&visual, text.find("partial.adoc").unwrap(), &mut cx);
+    cx.simulate_keystrokes("x");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        text,
+        "nothing is typed into the include"
+    );
+}
+
+#[gpui::test]
+fn sidebar_navigation_moves_the_visual_caret(cx: &mut TestAppContext) {
+    let text = "= Page\n\nIntro.\n\n== Later\n\nMore text.\n";
+    let (app, workspace, visual, id, mut cx) = visual_workspace(text, cx);
+    let path = cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().path.clone());
+    let heading = text.find("== Later").unwrap();
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_at(&path, SourceRange::new(heading, heading), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(
+        selection.head,
+        text.find("Later").unwrap(),
+        "the caret lands in the heading's text"
+    );
+}
+
+#[gpui::test]
+fn showing_read_only_source_leaves_the_visual_caret(cx: &mut TestAppContext) {
+    let mut text = String::from("= Page\n\nIntro.\n");
+    for number in 1..=40 {
+        text.push_str(&format!("\nParagraph {number}.\n"));
+    }
+    text.push_str("\n++++\n<b>raw</b>\n++++\n");
+    for number in 41..=80 {
+        text.push_str(&format!("\nParagraph {number}.\n"));
+    }
+    let (app, workspace, visual, id, mut cx) = visual_workspace(&text, cx);
+    let path = cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().path.clone());
+    let intro = text.find("Intro").unwrap();
+    place_caret(&visual, intro, &mut cx);
+    // As a click on the passthrough does: its source is shown beside the visual editor.
+    let block = text.find("++++").unwrap();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::VIEW_SHOW_SPLIT, CommandArgs::None, cx)?;
+            app.invoke(
+                ids::NAVIGATE_REVEAL,
+                CommandArgs::Position(adoc_engine::NavigationPosition {
+                    path: path.clone(),
+                    offset: block,
+                }),
+                cx,
+            )
+        })
+        .unwrap();
+    });
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(
+        selection.head, intro,
+        "a block with no text leaves the visual caret where it was"
+    );
+    let line = text[..block].matches('\n').count();
+    let top_line = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .active_editor_for_test()
+            .unwrap()
+            .read(cx)
+            .top_line(cx)
+    });
+    assert!(
+        top_line.is_some_and(|top| top <= line && line <= top + 3),
+        "the source shows the block's line {line} near its top: top line {top_line:?}"
+    );
+}
+
+#[gpui::test]
+fn down_keeps_to_the_column_in_a_table(cx: &mut TestAppContext) {
+    let text = "= Page\n\n|===\n|Name |Value\n\n|a |1\n|===\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("Value").unwrap() + 2, &mut cx);
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    let one = text.find("|1").unwrap() + 1;
+    assert!(
+        (one..=one + 1).contains(&selection.head),
+        "the caret goes to the cell below, not the next cell: {} not in {one}..={}",
+        selection.head,
+        one + 1
+    );
+}
+
+#[gpui::test]
+fn home_and_end_work_on_the_line(cx: &mut TestAppContext) {
+    let text = "= Page\n\n----\nfirst = 1\nsecond = 2\n----\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("first").unwrap() + 2, &mut cx);
+    cx.simulate_keystrokes("end");
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(
+        selection.head,
+        text.find("first = 1").unwrap() + "first = 1".len()
+    );
+    cx.simulate_keystrokes("down home x");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\n----\nfirst = 1\nxsecond = 2\n----\n"
+    );
+}
+
+#[gpui::test]
+fn the_image_dialog_edits_the_image(cx: &mut TestAppContext) {
+    let text = "= Page\n\nimage::old.png[Old,200,100]\n\nAfter.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let at = text.find("image::").unwrap();
+    cx.update(|window, cx| {
+        visual.update(cx, |visual, cx| visual.image_dialog(Some(at), window, cx))
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("end");
+    cx.simulate_input("-new");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nimage::old.png-new[Old,200,100]\n\nAfter.\n"
+    );
+}
+
+#[gpui::test]
+fn the_link_dialog_takes_the_target_as_typed(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("plain").unwrap();
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, start + 5, cx)));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-shift-l");
+    cx.run_until_parked();
+    cx.simulate_input("https://example.com");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome https://example.com[plain] words.\n"
+    );
+}
+
+#[gpui::test]
+fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("plain").unwrap();
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, start + 5, cx)));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.run_until_parked();
+    cx.simulate_input("Bold");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n"
+    );
+}

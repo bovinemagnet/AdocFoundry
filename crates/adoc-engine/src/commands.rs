@@ -37,6 +37,36 @@ pub mod ids {
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
     pub const VIEW_TOGGLE_SCROLL_SYNC: CommandId = CommandId::new("view.toggle_scroll_sync");
     pub const PREVIEW_PIN: CommandId = CommandId::new("preview.pin");
+    pub const VIEW_SHOW_SOURCE: CommandId = CommandId::new("view.show_source");
+    pub const VIEW_SHOW_VISUAL: CommandId = CommandId::new("view.show_visual");
+    pub const VIEW_SHOW_SPLIT: CommandId = CommandId::new("view.show_split");
+    pub const VISUAL_INSERT_TEXT: CommandId = CommandId::new("visual.insert_text");
+    pub const VISUAL_DELETE_BACKWARD: CommandId = CommandId::new("visual.delete_backward");
+    pub const VISUAL_DELETE_FORWARD: CommandId = CommandId::new("visual.delete_forward");
+    pub const EDIT_TOGGLE_STRONG: CommandId = CommandId::new("edit.toggle_strong");
+    pub const EDIT_TOGGLE_EMPHASIS: CommandId = CommandId::new("edit.toggle_emphasis");
+    pub const EDIT_TOGGLE_CODE: CommandId = CommandId::new("edit.toggle_code");
+    pub const EDIT_TOGGLE_HIGHLIGHT: CommandId = CommandId::new("edit.toggle_highlight");
+    pub const EDIT_INSERT_LINK: CommandId = CommandId::new("edit.insert_link");
+    pub const EDIT_REMOVE_LINK: CommandId = CommandId::new("edit.remove_link");
+    pub const VISUAL_SPLIT_BLOCK: CommandId = CommandId::new("visual.split_block");
+    pub const VISUAL_INSERT_BLOCK: CommandId = CommandId::new("visual.insert_block");
+    pub const EDIT_SET_BLOCK_TYPE: CommandId = CommandId::new("edit.set_block_type");
+    pub const EDIT_TOGGLE_BULLET_LIST: CommandId = CommandId::new("edit.toggle_bullet_list");
+    pub const EDIT_TOGGLE_NUMBERED_LIST: CommandId = CommandId::new("edit.toggle_numbered_list");
+    pub const EDIT_TOGGLE_CHECKLIST: CommandId = CommandId::new("edit.toggle_checklist");
+    pub const EDIT_TOGGLE_CHECKED: CommandId = CommandId::new("edit.toggle_checked");
+    pub const EDIT_INDENT_LIST_ITEM: CommandId = CommandId::new("edit.indent_list_item");
+    pub const EDIT_OUTDENT_LIST_ITEM: CommandId = CommandId::new("edit.outdent_list_item");
+    pub const EDIT_INSERT_CODE_BLOCK: CommandId = CommandId::new("edit.insert_code_block");
+    pub const EDIT_INSERT_ADMONITION: CommandId = CommandId::new("edit.insert_admonition");
+    pub const EDIT_INSERT_TABLE: CommandId = CommandId::new("edit.insert_table");
+    pub const EDIT_INSERT_TABLE_ROW: CommandId = CommandId::new("edit.insert_table_row");
+    pub const EDIT_DELETE_TABLE_ROW: CommandId = CommandId::new("edit.delete_table_row");
+    pub const EDIT_INSERT_TABLE_COLUMN: CommandId = CommandId::new("edit.insert_table_column");
+    pub const EDIT_DELETE_TABLE_COLUMN: CommandId = CommandId::new("edit.delete_table_column");
+    pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
+    pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;
@@ -318,6 +348,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     for (spec, run) in builtin {
         register(registry, spec, run);
     }
+    crate::visual::register_visual(registry);
 }
 
 pub(crate) fn register(registry: &mut CommandRegistry, spec: CommandSpec, run: Run) {

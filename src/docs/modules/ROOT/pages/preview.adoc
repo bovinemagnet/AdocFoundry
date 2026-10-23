@@ -140,7 +140,7 @@ They are found on the `PATH` only.
 * STEM is shown as styled maths source.
 Typesetting arrives with PDF export in Phase 4.
 * The preview is read-only.
-Editing in the rendered view is Phase 3.
+To edit the rendered page, use the visual editor; see xref:visual-editing.adoc[Visual editing].
 * The preview has no settings of its own.
 It follows the editor theme.
 * The preview is a native approximation of Asciidoctor's output, not a copy of it.

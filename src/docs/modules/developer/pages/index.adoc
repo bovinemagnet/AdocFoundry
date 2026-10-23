@@ -22,7 +22,7 @@ The ladder is checked in CI.
 
 * xref:architecture.adoc[Architecture] -- the crate ladder and its rules.
 * xref:engine.adoc[The engine] -- documents, commands, undo, events, workers and the watcher.
-* xref:desktop-app.adoc[The desktop app] -- GPUI, synchronisation and the keymap.
+* xref:desktop-app.adoc[The desktop app] -- GPUI, synchronisation, the preview, the visual editor and the keymap.
 * xref:testing.adoc[Testing] -- the test layers and the manual QA record.
 * xref:building-and-releasing.adoc[Building and releasing] -- commands, CI and packaging.
 * xref:documentation-site.adoc[This documentation site] -- how it is built.

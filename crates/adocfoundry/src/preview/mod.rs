@@ -1,9 +1,9 @@
 //! The rendered preview: the engine's view tree of the preview target, drawn natively. It
 //! follows the active document unless pinned, and remembers each page's scroll position.
 
-mod blocks;
-mod inlines;
-mod sync;
+pub(crate) mod blocks;
+pub(crate) mod inlines;
+pub(crate) mod sync;
 
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 
@@ -27,7 +27,8 @@ use crate::app::AppState;
 pub use inlines::Link;
 
 /// Highlighted code, by theme brightness, language and text.
-type HighlightCache = HashMap<(bool, String, String), Vec<(Range<usize>, HighlightStyle)>>;
+pub(crate) type HighlightCache =
+    HashMap<(bool, String, String), Vec<(Range<usize>, HighlightStyle)>>;
 
 /// What the preview tells the window around it.
 #[derive(Clone, Debug, PartialEq)]
@@ -250,27 +251,6 @@ impl PreviewView {
         window: &Window,
         cx: &App,
     ) -> blocks::BlockContext<'a> {
-        let theme = cx.theme();
-        let app = self.app.clone();
-        let on_link: inlines::LinkHandler = Rc::new(move |link, window, cx| match link {
-            Link::Url(url) => cx.open_url(url),
-            Link::File(path) => cx.open_with_system(path),
-            Link::Xref { link, .. } => match &link.target {
-                Some(target) => {
-                    let position = NavigationPosition {
-                        path: target.path.clone(),
-                        offset: target.range.start,
-                    };
-                    let result = app.update(cx, |app, cx| {
-                        app.invoke(ids::NAVIGATE_GO_TO, CommandArgs::Position(position), cx)
-                    });
-                    if let Err(error) = result {
-                        window.push_notification(error.to_string(), cx);
-                    }
-                }
-                None => window.push_notification("This reference does not resolve.", cx),
-            },
-        });
         let app = self.app.clone();
         let on_block: blocks::BlockHandler = Rc::new(move |span, window, cx| {
             let position = NavigationPosition {
@@ -284,40 +264,83 @@ impl PreviewView {
                 window.push_notification(error.to_string(), cx);
             }
         });
-        blocks::BlockContext {
-            extents: self.extents.clone(),
-            scroll: self.scroll.clone(),
-            inline: inlines::InlineStyle {
-                font: window.text_style().font(),
-                mono_family: theme.mono_font_family.clone(),
-                color: theme.foreground,
-                muted: theme.muted_foreground,
-                link: theme.link,
-                unresolved: theme.danger,
-                mark: theme.yellow_light,
-                code_background: theme.muted,
-            },
-            palette: blocks::Palette {
-                border: theme.border,
-                surface: theme.muted,
-                muted: theme.muted_foreground,
-                note: theme.info,
-                tip: theme.success,
-                important: theme.primary,
-                warning: theme.warning,
-                caution: theme.danger,
-                danger: theme.danger,
-            },
-            radius: theme.radius,
-            on_link,
+        block_context(
+            &self.app,
+            self.extents.clone(),
+            self.scroll.clone(),
             on_block,
             highlight,
-        }
+            window,
+            cx,
+        )
+    }
+}
+
+/// How blocks are drawn: the theme's fonts and colours, links that navigate through the engine,
+/// and `on_block` for a click on a block.
+pub(crate) fn block_context<'a>(
+    app: &Entity<AppState>,
+    extents: sync::Extents,
+    scroll: ScrollHandle,
+    on_block: blocks::BlockHandler,
+    highlight: blocks::Highlighter<'a>,
+    window: &Window,
+    cx: &App,
+) -> blocks::BlockContext<'a> {
+    let theme = cx.theme();
+    let app = app.clone();
+    let on_link: inlines::LinkHandler = Rc::new(move |link, window, cx| match link {
+        Link::Url(url) => cx.open_url(url),
+        Link::File(path) => cx.open_with_system(path),
+        Link::Xref { link, .. } => match &link.target {
+            Some(target) => {
+                let position = NavigationPosition {
+                    path: target.path.clone(),
+                    offset: target.range.start,
+                };
+                let result = app.update(cx, |app, cx| {
+                    app.invoke(ids::NAVIGATE_GO_TO, CommandArgs::Position(position), cx)
+                });
+                if let Err(error) = result {
+                    window.push_notification(error.to_string(), cx);
+                }
+            }
+            None => window.push_notification("This reference does not resolve.", cx),
+        },
+    });
+    blocks::BlockContext {
+        extents,
+        scroll,
+        inline: inlines::InlineStyle {
+            font: window.text_style().font(),
+            mono_family: theme.mono_font_family.clone(),
+            color: theme.foreground,
+            muted: theme.muted_foreground,
+            link: theme.link,
+            unresolved: theme.danger,
+            mark: theme.yellow_light,
+            code_background: theme.muted,
+        },
+        palette: blocks::Palette {
+            border: theme.border,
+            surface: theme.muted,
+            muted: theme.muted_foreground,
+            note: theme.info,
+            tip: theme.success,
+            important: theme.primary,
+            warning: theme.warning,
+            caution: theme.danger,
+            danger: theme.danger,
+        },
+        radius: theme.radius,
+        on_link,
+        on_block,
+        highlight,
     }
 }
 
 /// Highlights `text` as `language` with the editor's tree-sitter grammars, cached.
-fn highlight(
+pub(crate) fn highlight(
     cache: &RefCell<HighlightCache>,
     dark: bool,
     theme: &gpui_component::highlighter::HighlightTheme,

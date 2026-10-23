@@ -116,6 +116,8 @@ pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
                 })
             }),
     );
+    // A backslash before a reference shows it as written.
+    references.retain(|reference| !line[..reference.range.start - offset].ends_with('\\'));
     references
 }
 

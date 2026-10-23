@@ -1,0 +1,322 @@
+= Visual editing
+Paul Snow
+:revnumber: 0.0.0
+:description: Editing the rendered page in place: modes, text and marks, links, blocks, lists, tables, images, undo, read-only content and the current limits.
+
+The visual editor lets you edit the page as it reads, without leaving the application.
+You type into the rendered text, apply bold or a heading from the toolbar, and the changes are written to the AsciiDoc source.
+It is drawn natively and needs no browser, Node.js, Ruby or Java.
+Every action described here is an engine command, so it also appears in the command palette.
+See xref:keyboard-shortcuts.adoc#visual-editor[Keyboard shortcuts] for the bindings.
+
+== Source, Visual and Split modes
+
+Each tab shows its page in one of three modes.
+The Source, Visual and Split buttons beside the tabs switch between them, and each has a command.
+
+[cols="2,3,2"]
+|===
+|Mode |Shows |Command and binding
+
+|Source
+|The source editor only.
+|Show Source (`view.show_source`), kbd:[Cmd+K] then kbd:[S] on macOS, kbd:[Ctrl+K] then kbd:[S] elsewhere
+
+|Visual
+|The visual editor only.
+|Show Visual Editor (`view.show_visual`), kbd:[Cmd+K] then kbd:[W], kbd:[Ctrl+K] then kbd:[W]
+
+|Split
+|The source and the visual editor side by side.
+|Show Source and Visual Editor (`view.show_split`), kbd:[Cmd+K] then kbd:[D], kbd:[Ctrl+K] then kbd:[D]
+|===
+
+These are chords: hold the modifier for kbd:[K] only, release it, then press the letter on its own.
+
+The mode belongs to the page, so two tabs can be in different modes.
+In Split mode the two halves stay in step.
+An edit in either one appears in the other, and each follows the other's caret: the source scrolls to the visual caret, and the visual editor brings the block holding the source caret into view.
+Neither moves the caret you are not using.
+
+== The source stays the truth
+
+The visual editor is a view of the source text, not a second copy of the document.
+Every edit you make becomes a small edit of the source, and text you do not touch is never rewritten.
+Blank lines, comments, attribute lists, block titles, the form of your lists and marks (`-` or `*`, `*bold*` or `**bold**`) and the way you wrote each link all stay as they were.
+After an hour in the visual editor, the Git diff touches only the lines you changed.
+
+Text the editor does not understand is left alone and shown read-only; see <<read-only-content>>.
+
+== Typing, deleting and selecting
+
+Click to place the caret, and type.
+The caret carries the formatting of the text before it, so text typed inside bold is bold.
+
+Select text by:
+
+* dragging;
+* shift-clicking;
+* holding kbd:[Shift] with the arrow keys, kbd:[Home] or kbd:[End].
+
+kbd:[Home] and kbd:[End] go to the start and end of the line.
+Select All, Copy, Cut and Paste work on the selection.
+Input-method (IME) composition is shown underlined in place and written to the page as one edit when you commit it.
+
+NOTE: IME composition has been tested only on GPUI's test platform.
+It has not been verified by hand with a real input method.
+
+=== Characters that look like markup
+
+Type what you mean.
+A typed `*` does not make text bold.
+A markup character is escaped only when it would otherwise become formatting, so a lone star is written as typed, and a second star that would pair with an earlier one gets a backslash.
+Where the page already holds text that would pair with what you type, the escape goes before that earlier construct.
+A line that would start another block, such as one that begins with `.` or `*`, gets `{empty}` in front of it so it stays a paragraph.
+In a table cell, a typed `|` is written as `\|`.
+
+If no escape can keep the meaning of other text, the edit is refused and nothing changes.
+
+== Marks
+
+Apply a mark to the selection, or turn it on or off for what you type next.
+
+[cols="2,2,3"]
+|===
+|Mark |Binding |Command id
+
+|Bold
+|kbd:[Cmd+B] or kbd:[Ctrl+B]
+|`edit.toggle_strong`
+
+|Italic
+|kbd:[Cmd+I] or kbd:[Ctrl+I]
+|`edit.toggle_emphasis`
+
+|Code
+|kbd:[Cmd+E] or kbd:[Ctrl+E]
+|`edit.toggle_code`
+
+|Highlight
+|Toolbar (Mark) and palette only
+|`edit.toggle_highlight`
+|===
+
+Highlight has no key binding, because kbd:[Cmd+Shift+H] and kbd:[Ctrl+Shift+H] are Replace in Workspace.
+
+A mark is added where any of the selection lacks it, and removed where all of it has it.
+With nothing selected, the mark applies to the text you type next; it is held by the editor and resets when the caret moves.
+A mark keeps the delimiters it was written with.
+Where the constrained form (`*bold*`) cannot be valid, such as inside a word, the unconstrained form (`**bold**`) is used.
+Applying a mark leaves spaces at the edges of the selection outside it.
+
+== Links
+
+Insert Link (`edit.insert_link`, kbd:[Cmd+Shift+L] or kbd:[Ctrl+Shift+L]) opens a dialog with a target and the link text.
+With text selected, the selection becomes the link text.
+With the caret inside a link, the dialog edits that link.
+
+The form of the target decides what is written.
+
+[cols="2,3"]
+|===
+|Target |Written as
+
+|A URL, such as `+https://example.com+`
+|`+https://example.com[text]+`
+
+|A page, such as `other.adoc#section` or `module:page.adoc`
+|`+xref:other.adoc#section[text]+`
+
+|An anchor id in the page, such as `usage`
+|`+<<usage,text>>+`
+|===
+
+Editing a link changes only the part you changed, and keeps its form.
+A link written as `xref:` stays an `xref:` macro, and the text is left as written unless you edit it.
+A target cannot contain spaces.
+
+Remove Link (`edit.remove_link`) replaces the link at the caret with its text.
+It is in the command palette.
+
+== Blocks
+
+=== Enter
+
+Enter splits the block at the caret.
+It works in paragraphs, headings, list items and admonitions.
+The whitespace at the split point is dropped from both halves.
+
+* At the end of a block, Enter starts a new paragraph, or a new list item in a list.
+The new block exists only on screen until you type into it, because AsciiDoc has no empty paragraph or empty list item.
+Its first character writes it to the source.
+* A second Enter on a new, empty list item leaves the list.
+* In a code block, Enter inserts a new line.
+* At the start of a block, Enter does nothing.
+
+=== Backspace at the start of a block
+
+Backspace at the start of a block changes the structure rather than deleting a character.
+
+[cols="2,4"]
+|===
+|Block |Result
+
+|Heading
+|It becomes a paragraph.
+
+|Admonition
+|The label is removed, leaving a paragraph.
+
+|List item
+|A nested item is outdented. A top-level item is lifted out of the list, or joined to the item before it by losing its marker.
+
+|Paragraph
+|It joins the paragraph before. Only the blank line between them is removed, so the second paragraph's own line is not touched, and a space shows where they met.
+
+|Paragraph after a heading
+|Nothing happens.
+|===
+
+=== The block-type picker
+
+The picker at the left of the toolbar shows the type of the block at the caret and changes it.
+It offers:
+
+* Paragraph;
+* Headings 1 to 5;
+* Code block and Quote;
+* the admonitions Note, Tip, Important, Caution and Warning.
+
+Changing the type edits the block's prefix and leaves its text alone.
+Set Block Type (`edit.set_block_type`) is the command behind it.
+
+== Lists
+
+[cols="2,2,3"]
+|===
+|Action |Binding |Command id
+
+|Bulleted list
+|kbd:[Cmd+Shift+U] or kbd:[Ctrl+Shift+U]
+|`edit.toggle_bullet_list`
+
+|Numbered list
+|kbd:[Cmd+Shift+N] or kbd:[Ctrl+Shift+N]
+|`edit.toggle_numbered_list`
+
+|Checklist
+|kbd:[Cmd+Shift+X] or kbd:[Ctrl+Shift+X]
+|`edit.toggle_checklist`
+
+|Indent item
+|kbd:[Tab]
+|`edit.indent_list_item`
+
+|Outdent item
+|kbd:[Shift+Tab]
+|`edit.outdent_list_item`
+|===
+
+Each list command toggles: it turns the block at the caret into that kind of list, or back into a paragraph.
+Indent and Outdent change the nesting level and the marker to match (`*`, `**`; `.`, `..`).
+Click the checkbox of a checklist item to check or uncheck it (`edit.toggle_checked`).
+
+== Tables
+
+Click in a cell to edit its text in place.
+A typed `|` is escaped.
+
+The Table menu appears on the toolbar while the caret is in a cell.
+
+[cols="2,4"]
+|===
+|Item |Effect
+
+|Insert row below
+|Adds an empty row below the caret's row. In a table with a header, a row added at the header goes below it, before the first body row, so an implicit header stays a header.
+
+|Delete row
+|Removes the caret's row. The header row cannot be deleted.
+
+|Insert column after
+|Adds a column after the caret's, with a matching width in `cols`.
+
+|Delete column
+|Removes the caret's column and its width from `cols`.
+|===
+
+The `cols` attribute is kept in step with the cells.
+A table without `cols` takes its column count from its first row.
+These commands work only on tables whose cells the editor can address.
+A table with spans or cell specifiers (`2+|`, `.2+|`, `a|`) is edited in the source editor, as are widths written with `*`.
+
+Column widths follow `cols`.
+A cell spanning columns (`2+|`) takes the width of the columns it spans.
+A cell spanning rows (`.2+|`) is drawn in the row where it starts only, as in the preview, so the cells below it start at the left.
+
+== Images
+
+Insert menu, then Image… asks for a target and alt text and adds a block image after the block at the caret.
+Click an image to open the same dialog and change its target and alt text.
+Only those two parts are rewritten, and any other attributes on the image macro are kept.
+Images are drawn from the file their target resolves to, through the Antora catalog; a missing image shows "Missing image: " and its target.
+
+== The toolbar
+
+The formatting toolbar sits above the visual editor.
+From left to right it has:
+
+* the block-type picker;
+* Bold (B), Italic (I), Code and Mark (Highlight), which show as selected when the caret is in text that has them;
+* Link;
+* a bulleted, a numbered and a checklist button, then Outdent and Indent;
+* the Insert menu: Image…, Table, Code block and Admonition;
+* the Table menu, while the caret is in a table cell.
+
+Every button runs the command that has its key binding, and every command is in the palette.
+
+== Undo and redo
+
+Undo and redo are shared with the source editor.
+There is one history for the page, so a visual edit can be undone from the source editor and the other way round.
+A run of visual typing undoes as one step, as source typing does.
+Every other visual action, such as a mark, a link or a block change, is one step.
+
+[[read-only-content]]
+== Read-only content
+
+Text the editor cannot edit safely is shown but not changed.
+It is drawn with the preview's renderer, and anything with a dashed border or a "can only be edited in the source" message is read-only.
+
+* Included content is drawn in place under a dashed border, headed "Included from" and the target.
+An *Edit partial* button opens the included file in a tab.
+You cannot edit inside an include from the including page.
+* Diagrams, STEM, passthroughs, attribute entries, extension and unknown macros, and tables with AsciiDoc (`a`) cells are shown as the preview shows them.
+* A block's title (the `.Title` line above a table, image, code block, list or admonition) is drawn above the block as the preview draws it, for example "Table 1. Spans".
+The title is not editable in the visual editor; edit it in the source editor.
+* Conditionals (`ifdef`, `ifndef` and `ifeval`) are shown collapsed, with the directive named.
+The directives and the branch that is not in use are kept exactly as written.
+* A block is also read-only when the editor and the parser read its text differently.
+This is deliberate: it is better to show a block read-only than to edit it wrongly.
+
+Clicking read-only content switches to Split mode and moves the source caret to that content, so you can edit it in the source.
+Clicking read-only text shows a message saying the same.
+
+== Current limits
+
+* A selection cannot be deleted across blocks, and typing over such a selection or pressing Enter on one is refused.
+Do those in the source editor.
+Marks can be applied across blocks.
+* Included content cannot be edited in place.
+Use Edit partial.
+* Enter at the start of a block does nothing.
+* Bold text and headings may show at regular weight on Linux when the system's IBM Plex Sans is installed as a variable font.
+This is a font loading limit that affects the preview in the same way.
+The source is unaffected.
+* IME composition and frame timing have not been checked by hand on every platform.
+
+== Related
+
+* xref:preview.adoc[The preview] shows the rendered page read-only beside the editor.
+* xref:using-the-editor.adoc[Using the editor] describes the source editor and the workspace.
+* xref:developer:engine.adoc#the-visual-model-service[The engine] describes the visual model service.

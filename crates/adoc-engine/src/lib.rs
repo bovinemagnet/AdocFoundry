@@ -18,6 +18,7 @@ mod rendered;
 mod search;
 mod settings;
 mod undo;
+mod visual;
 mod workspace;
 
 pub use clock::{Clock, ManualClock, SystemClock};
@@ -40,6 +41,7 @@ pub use settings::{
     WORKSPACE_SETTINGS_FILE,
 };
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
+pub use visual::{EditorMode, VisualArgs, VisualDocument, VisualValue, MODEL_SETTLE};
 pub use workspace::WATCH_DEBOUNCE;
 
 pub use adoc_antora::{
@@ -49,4 +51,8 @@ pub use adoc_antora::{
 pub use adoc_lang::{
     CompletionItem, CompletionItemKind, DefinitionTarget, DocumentSymbol, DocumentSymbolKind,
     Hover, Location, WorkspaceState, WorkspaceSymbol, WorkspaceSymbolKind,
+};
+pub use adoc_model::{
+    Access, Assoc, Atom, BlockPath, BlockType, Mapping, Mark, MarkSet, Model, NewBlock, Node,
+    NodeKind, Piece, ReadOnly, RowSection, Segment, SourceEdit, TextBlock, TextContext,
 };

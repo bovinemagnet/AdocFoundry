@@ -4,7 +4,7 @@ Paul Snow
 :description: The workspace, sidebar, editor, link following, search and replace, and page rename.
 
 This page describes the source editor and the workspace around it.
-The rendered preview has its own page, xref:preview.adoc[The preview].
+The rendered preview has its own page, xref:preview.adoc[The preview], and editing the rendered page has another, xref:visual-editing.adoc[Visual editing].
 Every action described here is an engine command with a stable id, so it also appears in the command palette (kbd:[Cmd+Shift+P] or kbd:[Ctrl+Shift+P]).
 See xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the bindings.
 
@@ -51,6 +51,7 @@ For a navigation file, the outline is its navigation tree.
 
 The editor is a source editor.
 The rendered page is shown beside it by the preview; see xref:preview.adoc[The preview].
+The Source, Visual and Split buttons beside the tabs switch a page to the visual editor, where you edit the rendered text in place; see xref:visual-editing.adoc[Visual editing].
 It provides:
 
 * Syntax highlighting from the AsciiDoc tree-sitter grammars.

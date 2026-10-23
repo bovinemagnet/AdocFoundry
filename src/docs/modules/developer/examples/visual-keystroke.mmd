@@ -1,0 +1,24 @@
+sequenceDiagram
+    actor User
+    participant VV as VisualView
+    participant Eng as Engine
+    participant Mod as adoc-model
+    participant Doc as Document and undo history
+    participant Views
+    User->>VV: Types (or IME commits)
+    VV->>Eng: visual.insert_text<br/>(version, selection in source offsets, marks)
+    activate Eng
+    Eng->>Eng: Refuse if the version is older than the document's<br/>Rebuild the model first if it is stale
+    Eng->>Mod: apply(Step::InsertText)
+    Mod-->>Eng: StepResult: source edits, selection after,<br/>updated model (local steps only)
+    Eng->>Doc: apply_edits (typing coalesces within 500 ms)
+    Doc-->>Eng: Version bump, adoc-parser re-parse
+    alt Local step
+        Eng->>Eng: Keep the updated model<br/>and schedule a rebuild after MODEL_SETTLE
+    else Structural step
+        Eng->>Eng: Rebuild the model from a fresh parse now
+    end
+    Eng-->>Views: DocumentChanged, ModelChanged
+    deactivate Eng
+    Views->>Views: Source editor applies the edits to its buffer<br/>Visual editor redraws from the model<br/>Preview re-renders after its settle time
+    Note over Eng,Mod: Undo restores the source edits, marks the model stale<br/>and rebuilds it before returning

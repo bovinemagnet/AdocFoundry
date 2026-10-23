@@ -23,6 +23,7 @@ adoc-dom = { path = "crates/adoc-dom" }
 adoc-engine = { path = "crates/adoc-engine" }
 adoc-index = { path = "crates/adoc-index" }
 adoc-lang = { path = "crates/adoc-lang" }
+adoc-model = { path = "crates/adoc-model" }
 adoc-parser = { path = "crates/adoc-parser" }
 adoc-render = { path = "crates/adoc-render" }
 

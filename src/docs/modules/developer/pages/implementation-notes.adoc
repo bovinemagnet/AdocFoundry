@@ -1,7 +1,7 @@
 = Implementation notes
 Paul Snow
 :revnumber: 0.0.0
-:description: Where building Phases 1 and 2 departed from their specifications, and why.
+:description: Where building Phases 1, 2 and 3 departed from their specifications, and why.
 
 Where building a phase showed its specification to be wrong or incomplete, the implementation made the smallest change that works.
 This page summarises the departures that each phase specification records.
@@ -221,10 +221,125 @@ Where it differs from the earlier sections of that specification, section 12 win
 |Antora still reads this older layout, and real projects use it; their images were unresolved in the preview.
 |===
 
+== Phase 3
+
+This section summarises sections 2.1 and 11 of `docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`.
+Where it differs from the earlier sections of that specification, section 11 wins.
+
+=== Why prosemirror-rs was not adopted
+
+The `prosemirror` crate 0.5.2 (MIT) was built against an AsciiDoc-shaped schema as a spike.
+Replace steps applied, inverted and mapped positions correctly, and the crate passes `cargo deny`.
+It was not adopted, and its design (steps with inverses, step maps, marks on text) is followed in-house in `adoc-model`.
+
+* Its positions are UTF-16 code units, for parity with JavaScript. Every AdocFoundry crate works in byte offsets of the source, and a second coordinate system would run through the whole edit path.
+* Its schemas and attributes are runtime JSON, with node kinds as strings and attributes as `serde_json::Value`, so the typed tree the design asks for would be a layer of conversions on top.
+* Its node types live in a thread-local global store, against the workspace rule to avoid global mutable state, and every engine worker would need the scope.
+* It enables `serde_json`'s `preserve_order` feature, which feature unification would turn on for the whole workspace and change the key order of every JSON output.
+* What it adds is document-position arithmetic. With the source as the truth, a step's effect is a set of source edits, and source offsets already map through edits.
+
+=== Departures from the specification
+
+[cols="1,2,3,3"]
+|===
+|Area |Specification |Implementation |Why
+
+|Model types
+|`Node`, `TextBlock` and `Piece` as listed
+|`TextBlock` also carries its `display` text and a `context` (`Flow`, `Line`, `Cell`, `Verbatim`) that says what typed text may contain. `Piece::Atom` carries the text it shows. Marks include `Span` (text with a role, no formatting of its own), and node kinds include `Title`, `Term` and `Description`. `text_block_at` returns the path, node and block rather than a `TextBlockRef`.
+|The view draws from the display text and atoms' shown text. A cell must escape a vertical bar and a title stay on one line. A description list item has two text blocks.
+
+|Inline structure
+|The scanner's reading is checked against the DOM
+|As specified. The check compares the characters shown (ignoring whitespace) and their marks, with `Span` ignored on both sides and link text compared without its inner formatting.
+|Over this repository's documentation and the render fixtures, 1,188 of 1,189 text blocks agree. The one that does not is an acdc reading of an image macro inside backticks, and is read-only.
+
+|Block ranges
+|The DOM's spans
+|Block starts are moved past whitespace and block ends to the end of their line. A section runs to the next block of its parent. Text ranges are found from the source lines (heading markers, list markers, metadata lines).
+|acdc spans can be a byte short at either end on pages with multi-byte text, and a section's span ends early when its last child is included.
+
+|`kbd:`, `btn:`, `menu:`
+|Atoms
+|Atoms only when the document sets `experimental`
+|Asciidoctor requires it. Without it they are text, and the DOM check agrees.
+
+|Typed markup
+|Escaped, then checked
+|The escape goes before the first construct the rescan finds that the step did not intend, which may be existing text. A line of flowing text that would start another block is guarded with `{empty}`. A vertical bar typed in a cell gets a backslash.
+|Escaping only what forms markup keeps typed text as written, and Asciidoctor shows a backslash before anything else literally.
+
+|Mark changes
+|Keep delimiter form
+|As specified. When a split mark, or new text next to a mark, makes the constrained form invalid, the marks involved take the unconstrained form. A new mark leaves the typed text's outer whitespace outside, and adding a mark absorbs marks of the same kind it overlaps.
+|`*bo*ld` would not parse and `*bold *` neither, and a code mark over `a`, `b` becomes one span rather than nested backticks.
+
+|`VisualArgs`
+|`{ id, selection, marks, value }`
+|Also `version`, the document version the selection is in
+|A selection from an older version may point at different text. A stale model is rebuilt first, but a stale selection is refused.
+
+|Step errors
+|`StepError`
+|Reported as `EngineError::Refused` with the step's message. A join that is not possible, such as Backspace at the start of a paragraph after a heading, does nothing.
+|A refused join is common and harmless. Anything else is worth telling the user.
+
+|Deleting across blocks
+|`Delete` across blocks joins the first and last text blocks
+|Refused. Typing over, or pressing Enter on, a selection that spans blocks is refused too.
+|The effect of a join on everything between the blocks is easier to judge in the source. Deferred.
+
+|Joining
+|Backspace joins with the previous paragraph
+|Only the blank line between the paragraphs is removed. A list item joins the item before it by losing its marker. A paragraph does not join a heading.
+|Removing only the separator keeps the Git diff to the lines the user changed.
+
+|Enter at the end of a block
+|`SplitBlock`
+|The new paragraph or list item exists only in the view until its first character, which `visual.insert_block` writes. Enter on a pending list item leaves the list. Enter at the start of a block does nothing.
+|AsciiDoc has no empty paragraph or empty list item.
+
+|Split
+|Not specified
+|The whitespace at the split point is dropped from both halves.
+|Otherwise the left half keeps a trailing space, which breaks a constrained mark around it.
+
+|Tables
+|`InsertTableRow`, `InsertTableColumn`
+|Rows go below the caret's, below the header and before the first body row, so an implicit header stays one. Columns go after it. A table without `cols` takes its column count from its first row, and widths written with `*` are left to the source editor.
+|Inserting directly after an implicit header row would turn the header into a body row.
+
+|Highlight binding
+|`cmd-shift-h`
+|None
+|`cmd-shift-h` is Replace in Workspace. Highlight is on the toolbar and in the palette.
+
+|Typing marks
+|Not specified
+|With nothing selected, Bold, Italic, Code and Highlight toggle the marks the next typed text carries, held by the view. They reset when the caret moves.
+|There is nothing in the source to change until text is typed.
+
+|Split mode
+|Source and visual side by side
+|Each follows the other's caret: the source scrolls to the visual caret, and the visual editor brings the source caret's block into view.
+|Keeps both halves on the same text without moving the caret the user is not using.
+
+|Images
+|A dialog for target and alt text
+|Clicking an editable block image opens it, and the image is drawn from the file it resolves to.
+|A click on read-only content (diagrams, included blocks) shows its source instead.
+
+|Bold on Linux
+|Not specified
+|With the system's IBM Plex Sans installed as a variable font, GPUI draws its default weight, so bold text and headings show at regular weight in the preview and the visual editor alike.
+|A font loading limit outside the editor.
+|===
+
 == Related
 
 * xref:architecture.adoc[Architecture], for the layering exception
 * xref:desktop-app.adoc[The desktop app], for editor synchronisation
 * xref:testing.adoc[Testing], for what remains unverified
 * xref:engine.adoc#the-preview-service[The engine], for the preview service
-* xref:engine.adoc#the-preview-service[The engine], for the preview service
+* xref:engine.adoc#the-visual-model-service[The engine], for the visual model service
+* xref:architecture.adoc[Architecture], for `adoc-model`

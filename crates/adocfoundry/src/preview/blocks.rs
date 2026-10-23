@@ -89,6 +89,17 @@ pub fn document(view: &ViewTree, context: &BlockContext<'_>) -> Vec<AnyElement> 
     out
 }
 
+/// One block of `view` at `trail`, as the preview draws it: for content the visual editor shows
+/// but does not edit.
+pub fn block(
+    block: &ViewBlock,
+    trail: &[usize],
+    view: &ViewTree,
+    context: &BlockContext<'_>,
+) -> AnyElement {
+    block_element(block, &mut trail.to_vec(), view, context)
+}
+
 fn children(
     blocks: &[&ViewBlock],
     trail: &mut Vec<usize>,
@@ -120,7 +131,11 @@ fn text(
     )
 }
 
-fn title(block: &ViewBlock, trail: &[usize], context: &BlockContext<'_>) -> Option<AnyElement> {
+pub(crate) fn title(
+    block: &ViewBlock,
+    trail: &[usize],
+    context: &BlockContext<'_>,
+) -> Option<AnyElement> {
     if block.title.is_empty() {
         return None;
     }
@@ -483,7 +498,7 @@ fn block_element(
 
 /// Blocks nested in list items and cells are numbered across the whole list, as
 /// `ViewBlock::child_refs` numbers them.
-fn offset_children(
+pub(crate) fn offset_children(
     blocks: &[&ViewBlock],
     first: usize,
     trail: &mut Vec<usize>,

@@ -178,6 +178,7 @@ dependencies = [
  "adoc-dom",
  "adoc-index",
  "adoc-lang",
+ "adoc-model",
  "adoc-parser",
  "adoc-render",
  "dirs 6.0.0",
@@ -224,6 +225,14 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "adoc-model"
+version = "0.1.0"
+dependencies = [
+ "adoc-core",
+ "adoc-dom",
 ]
 
 [[package]]

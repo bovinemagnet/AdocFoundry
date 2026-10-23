@@ -3,11 +3,11 @@
 //! Views render engine state and dispatch commands. Opening a tab follows the engine's active
 //! document, so link following, back/forward and palette commands all arrive the same way.
 
-use std::{cell::Cell, path::Path, rc::Rc};
+use std::{cell::Cell, collections::HashMap, path::Path, rc::Rc};
 
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
-    commands::ids, CommandArgs, CommandOutcome, DocumentId, EditPreview, EngineEvent,
+    commands::ids, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode, EngineEvent,
     NavigationPosition, ThemePreference,
 };
 use gpui::{
@@ -35,6 +35,7 @@ use crate::{
     preview::{PreviewEvent, PreviewView},
     search_view::SearchView,
     sidebar,
+    visual::{VisualEvent, VisualView},
 };
 
 /// Follows the link at `offset` in `document`: the engine opens and activates the target, and the
@@ -77,6 +78,8 @@ pub struct WorkspaceView {
     app: Entity<AppState>,
     focus_handle: FocusHandle,
     tabs: Vec<Entity<SourceEditorView>>,
+    /// The visual editor of each document shown in visual or split mode.
+    visuals: HashMap<DocumentId, Entity<VisualView>>,
     active_tab: usize,
     sidebar_tab: SidebarTab,
     navigation: Entity<TreeState>,
@@ -120,6 +123,7 @@ impl WorkspaceView {
         let mut view = Self {
             focus_handle: cx.focus_handle(),
             tabs: Vec::new(),
+            visuals: HashMap::new(),
             active_tab: 0,
             sidebar_tab: SidebarTab::Navigation,
             navigation: cx.new(|cx| TreeState::new(cx)),
@@ -178,8 +182,10 @@ impl WorkspaceView {
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
             EngineEvent::DocumentClosed(id) => {
                 self.tabs.retain(|tab| tab.read(cx).document() != *id);
+                self.visuals.remove(id);
                 self.follow_active(window, cx);
             }
+            EngineEvent::EditorModeChanged(id) => self.sync_visual(*id, window, cx),
             EngineEvent::DocumentChanged { id, .. } if Some(*id) == self.active_document(cx) => {
                 self.outline_stale = true;
                 self.settle_later(cx);
@@ -204,6 +210,78 @@ impl WorkspaceView {
             _ => {}
         }
         cx.notify();
+    }
+
+    /// Creates or drops the visual editor of `id` to match its editor mode, and focuses the
+    /// editor the active document now shows.
+    fn sync_visual(&mut self, id: DocumentId, window: &mut Window, cx: &mut Context<Self>) {
+        let mode = self.app.read(cx).engine.editor_mode(id);
+        if mode == EditorMode::Source {
+            self.visuals.remove(&id);
+        } else if !self.visuals.contains_key(&id) {
+            let app = self.app.clone();
+            let visual = cx.new(|cx| VisualView::new(app, id, window, cx));
+            self._subscriptions
+                .push(cx.subscribe(&visual, Self::on_visual_event));
+            self.visuals.insert(id, visual);
+        }
+        if self.active_document(cx) == Some(id) {
+            self.focus_active_editor(window, cx);
+        }
+    }
+
+    /// Focuses the visual editor in visual mode, else the source editor.
+    fn focus_active_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.active_editor().cloned() else {
+            return;
+        };
+        let id = editor.read(cx).document();
+        let mode = self.app.read(cx).engine.editor_mode(id);
+        let focus = match (mode, self.visuals.get(&id)) {
+            (EditorMode::Visual, Some(visual)) => visual.read(cx).focus_handle(cx),
+            _ => editor.read(cx).focus_handle(cx),
+        };
+        window.focus(&focus, cx);
+    }
+
+    /// Keeps the preview level with the caret of the active visual editor.
+    fn on_visual_event(
+        &mut self,
+        visual: Entity<VisualView>,
+        event: &VisualEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let VisualEvent::CaretMoved(offset) = *event;
+        let id = visual.read(cx).document();
+        if self.active_document(cx) != Some(id) {
+            return;
+        }
+        // Side by side, the source follows the visual editor's caret.
+        if self.app.read(cx).engine.editor_mode(id) == EditorMode::Split {
+            if let Some(editor) = self.active_editor().cloned() {
+                editor.update(cx, |editor, cx| editor.scroll_to_offset(offset, cx));
+            }
+        }
+        let path = {
+            let engine = &self.app.read(cx).engine;
+            if !engine.preview_layout().scroll_sync {
+                return;
+            }
+            let Some(document) = engine.document(id) else {
+                return;
+            };
+            document.path.clone()
+        };
+        let previews = std::iter::once(self.preview.clone())
+            .chain(self.detached.as_ref().map(|(_, view)| view.clone()));
+        for preview in previews {
+            preview.update(cx, |preview, cx| preview.reveal_source(&path, offset, cx));
+        }
+    }
+
+    #[cfg(test)]
+    pub fn visual_for_test(&self, id: DocumentId) -> Option<&Entity<VisualView>> {
+        self.visuals.get(&id)
     }
 
     /// Opens the preview's own window when it is detached, and closes it when it docks or hides.
@@ -243,6 +321,13 @@ impl WorkspaceView {
         let SourceEditorEvent::CaretMoved(offset) = *event;
         if self.active_editor() != Some(&editor) {
             return;
+        }
+        // Side by side, the visual editor follows the source caret.
+        let id = editor.read(cx).document();
+        if self.app.read(cx).engine.editor_mode(id) == EditorMode::Split {
+            if let Some(visual) = self.visuals.get(&id).cloned() {
+                visual.update(cx, |visual, cx| visual.reveal_offset(offset, cx));
+            }
         }
         let path = {
             let engine = &self.app.read(cx).engine;
@@ -381,12 +466,15 @@ impl WorkspaceView {
             if self.revealed.as_ref() != Some(&position) && path.as_ref() == Some(&position.path) {
                 let range = SourceRange::new(position.offset, position.offset);
                 self.tabs[index].update(cx, |editor, cx| editor.reveal(range, window, cx));
+                if let Some(visual) = self.visuals.get(&active).cloned() {
+                    visual.update(cx, |visual, cx| visual.go_to(position.offset, cx));
+                }
                 self.revealed = Some(position);
+                self.focus_active_editor(window, cx);
                 return;
             }
         }
-        let focus = self.tabs[index].read(cx).focus_handle(cx);
-        window.focus(&focus, cx);
+        self.focus_active_editor(window, cx);
     }
 
     #[cfg(test)]
@@ -508,6 +596,10 @@ impl WorkspaceView {
         self.follow_active(window, cx);
         if let Some(editor) = self.active_editor().cloned() {
             editor.update(cx, |editor, cx| editor.reveal(range, window, cx));
+        }
+        if let Some(visual) = self.visuals.get(&id).cloned() {
+            visual.update(cx, |visual, cx| visual.go_to(range.start, cx));
+            self.focus_active_editor(window, cx);
         }
     }
 
@@ -901,7 +993,80 @@ impl WorkspaceView {
         self.invoke(ids::PREVIEW_PIN, CommandArgs::None, window, cx);
     }
 
+    fn show_mode(
+        &mut self,
+        command: adoc_engine::CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(id) = self.active_document(cx) {
+            self.invoke(command, CommandArgs::Document(id), window, cx);
+        }
+    }
+
+    fn on_show_source(&mut self, _: &ShowSource, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_mode(ids::VIEW_SHOW_SOURCE, window, cx);
+    }
+
+    fn on_show_visual(&mut self, _: &ShowVisual, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_mode(ids::VIEW_SHOW_VISUAL, window, cx);
+    }
+
+    fn on_show_split(&mut self, _: &ShowSplit, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_mode(ids::VIEW_SHOW_SPLIT, window, cx);
+    }
+
+    /// The active document's editor as its mode shows it: source, visual, or both.
+    fn editor_area(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let editor = self.active_editor().cloned()?;
+        let id = editor.read(cx).document();
+        let mode = self.app.read(cx).engine.editor_mode(id);
+        let visual = self.visuals.get(&id).cloned();
+        Some(match (mode, visual) {
+            (EditorMode::Visual, Some(visual)) => visual.into_any_element(),
+            (EditorMode::Split, Some(visual)) => h_resizable("source-visual")
+                .child(resizable_panel().child(editor))
+                .child(resizable_panel().child(visual))
+                .into_any_element(),
+            _ => editor.into_any_element(),
+        })
+    }
+
+    /// Source, Visual and Split buttons for the active document.
+    fn render_modes(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mode = self
+            .active_document(cx)
+            .map(|id| self.app.read(cx).engine.editor_mode(id))
+            .unwrap_or_default();
+        let button =
+            |id: &'static str, label: &'static str, shown: EditorMode, cx: &mut Context<Self>| {
+                let command = match shown {
+                    EditorMode::Source => ids::VIEW_SHOW_SOURCE,
+                    EditorMode::Visual => ids::VIEW_SHOW_VISUAL,
+                    EditorMode::Split => ids::VIEW_SHOW_SPLIT,
+                };
+                let button = Button::new(id).xsmall().label(label).on_click(
+                    cx.listener(move |this, _, window, cx| this.show_mode(command, window, cx)),
+                );
+                if mode == shown {
+                    button.primary()
+                } else {
+                    button.ghost()
+                }
+            };
+        h_flex()
+            .gap_1()
+            .px_2()
+            .child(button("mode-source", "Source", EditorMode::Source, cx))
+            .child(button("mode-visual", "Visual", EditorMode::Visual, cx))
+            .child(button("mode-split", "Split", EditorMode::Split, cx))
+    }
+
     fn on_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
+        // The palette dispatches an item's action from its own field, where only workspace
+        // actions are handled; the visual editor's run once the palette has closed and handed
+        // focus back, from `on_confirm`.
+        let mut visual_actions: Vec<Option<Box<dyn gpui::Action>>> = Vec::new();
         let mut items: Vec<CommandItem> = self
             .app
             .read(cx)
@@ -910,19 +1075,22 @@ impl WorkspaceView {
             .all()
             .filter_map(|spec| {
                 let action = action_for(spec.id)?;
-                Some(
-                    CommandItem::new()
-                        .label(spec.title)
-                        .keywords([spec.id.as_str()])
-                        .action(action),
-                )
+                let item = CommandItem::new()
+                    .label(spec.title)
+                    .keywords([spec.id.as_str()]);
+                Some(if in_visual_editor(spec.id) {
+                    visual_actions.push(Some(action));
+                    item
+                } else {
+                    visual_actions.push(None);
+                    item.action(action)
+                })
             })
             .collect();
-        items.extend(
-            UI_ACTIONS.iter().enumerate().map(|(index, (title, _))| {
-                CommandItem::new().label(*title).action(ui_action(index))
-            }),
-        );
+        items.extend(UI_ACTIONS.iter().enumerate().map(|(index, (title, _))| {
+            visual_actions.push(None);
+            CommandItem::new().label(*title).action(ui_action(index))
+        }));
         let palette = self.palette.clone();
         palette.update(cx, |palette, cx| palette.set_query("", window, cx));
         let focus = palette.read(cx).focus_handle(cx);
@@ -933,7 +1101,21 @@ impl WorkspaceView {
                     .bordered(false)
                     .placeholder("Run a command…")
                     .max_h(px(420.))
-                    .items(items.clone()),
+                    .items(items.clone())
+                    .on_confirm({
+                        let visual_actions: Vec<Option<Box<dyn gpui::Action>>> = visual_actions
+                            .iter()
+                            .map(|action| action.as_ref().map(|action| action.boxed_clone()))
+                            .collect();
+                        move |index, window, cx| {
+                            let Some(Some(action)) = visual_actions.get(index.row) else {
+                                return;
+                            };
+                            let action = action.boxed_clone();
+                            window.close_dialog(cx);
+                            window.defer(cx, move |window, cx| window.dispatch_action(action, cx));
+                        }
+                    }),
             )
         });
     }
@@ -1119,14 +1301,21 @@ impl Render for WorkspaceView {
                 .unwrap_or_else(|| "AdocFoundry".to_owned());
             (engine.can_go_back(), engine.can_go_forward(), title)
         };
-        let editor = self.active_editor().cloned();
+        let editor = self.editor_area(cx);
         let has_tabs = !self.tabs.is_empty();
         let show_search = self.show_search;
         let layout = self.app.read(cx).engine.preview_layout();
         let docked_preview = (layout.visible && !layout.detached).then(|| self.preview.clone());
         let center = v_flex()
             .size_full()
-            .when(has_tabs, |center| center.child(self.render_tabs(cx)))
+            .when(has_tabs, |center| {
+                center.child(
+                    h_flex()
+                        .items_center()
+                        .child(div().flex_1().min_w_0().child(self.render_tabs(cx)))
+                        .child(self.render_modes(cx)),
+                )
+            })
             .child(
                 div()
                     .flex_1()
@@ -1188,6 +1377,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_detach_preview))
             .on_action(cx.listener(Self::on_toggle_preview_sync))
             .on_action(cx.listener(Self::on_pin_preview))
+            .on_action(cx.listener(Self::on_show_source))
+            .on_action(cx.listener(Self::on_show_visual))
+            .on_action(cx.listener(Self::on_show_split))
             .child(
                 TitleBar::new().child(
                     h_flex()

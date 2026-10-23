@@ -32,6 +32,31 @@ actions!(
         DetachPreview,
         TogglePreviewScrollSync,
         PinPreview,
+        ShowSource,
+        ShowVisual,
+        ShowSplit,
+        ToggleStrong,
+        ToggleEmphasis,
+        ToggleCode,
+        ToggleHighlight,
+        InsertLink,
+        RemoveLink,
+        NewParagraph,
+        IndentListItem,
+        OutdentListItem,
+        ToggleBulletList,
+        ToggleNumberedList,
+        ToggleChecklist,
+        ToggleChecked,
+        InsertCodeBlock,
+        InsertAdmonition,
+        InsertTable,
+        InsertTableRow,
+        DeleteTableRow,
+        InsertTableColumn,
+        DeleteTableColumn,
+        InsertImage,
+        EditImage,
     ]
 );
 
@@ -67,6 +92,7 @@ pub fn platform_binding(binding: &str) -> String {
 fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
     let workspace = Some(WORKSPACE_CONTEXT);
     let editor = Some(EDITOR_CONTEXT);
+    let visual = Some(crate::visual::VISUAL_CONTEXT);
     Some(match id {
         ids::WORKSPACE_OPEN_FOLDER => KeyBinding::new(keys, OpenFolder, workspace),
         ids::DOCUMENT_OPEN => KeyBinding::new(keys, OpenFile, workspace),
@@ -90,6 +116,21 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::VIEW_DETACH_PREVIEW => KeyBinding::new(keys, DetachPreview, workspace),
         ids::VIEW_TOGGLE_SCROLL_SYNC => KeyBinding::new(keys, TogglePreviewScrollSync, workspace),
         ids::PREVIEW_PIN => KeyBinding::new(keys, PinPreview, workspace),
+        ids::VIEW_SHOW_SOURCE => KeyBinding::new(keys, ShowSource, workspace),
+        ids::VIEW_SHOW_VISUAL => KeyBinding::new(keys, ShowVisual, workspace),
+        ids::VIEW_SHOW_SPLIT => KeyBinding::new(keys, ShowSplit, workspace),
+        ids::EDIT_TOGGLE_STRONG => KeyBinding::new(keys, ToggleStrong, visual),
+        ids::EDIT_TOGGLE_EMPHASIS => KeyBinding::new(keys, ToggleEmphasis, visual),
+        ids::EDIT_TOGGLE_CODE => KeyBinding::new(keys, ToggleCode, visual),
+        ids::EDIT_TOGGLE_HIGHLIGHT => KeyBinding::new(keys, ToggleHighlight, visual),
+        ids::EDIT_INSERT_LINK => KeyBinding::new(keys, InsertLink, visual),
+        ids::EDIT_REMOVE_LINK => KeyBinding::new(keys, RemoveLink, visual),
+        ids::VISUAL_SPLIT_BLOCK => KeyBinding::new(keys, NewParagraph, visual),
+        ids::EDIT_INDENT_LIST_ITEM => KeyBinding::new(keys, IndentListItem, visual),
+        ids::EDIT_OUTDENT_LIST_ITEM => KeyBinding::new(keys, OutdentListItem, visual),
+        ids::EDIT_TOGGLE_BULLET_LIST => KeyBinding::new(keys, ToggleBulletList, visual),
+        ids::EDIT_TOGGLE_NUMBERED_LIST => KeyBinding::new(keys, ToggleNumberedList, visual),
+        ids::EDIT_TOGGLE_CHECKLIST => KeyBinding::new(keys, ToggleChecklist, visual),
         _ => return None,
     })
 }
@@ -119,8 +160,62 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::VIEW_DETACH_PREVIEW => Box::new(DetachPreview),
         ids::VIEW_TOGGLE_SCROLL_SYNC => Box::new(TogglePreviewScrollSync),
         ids::PREVIEW_PIN => Box::new(PinPreview),
+        ids::VIEW_SHOW_SOURCE => Box::new(ShowSource),
+        ids::VIEW_SHOW_VISUAL => Box::new(ShowVisual),
+        ids::VIEW_SHOW_SPLIT => Box::new(ShowSplit),
+        ids::EDIT_TOGGLE_STRONG => Box::new(ToggleStrong),
+        ids::EDIT_TOGGLE_EMPHASIS => Box::new(ToggleEmphasis),
+        ids::EDIT_TOGGLE_CODE => Box::new(ToggleCode),
+        ids::EDIT_TOGGLE_HIGHLIGHT => Box::new(ToggleHighlight),
+        ids::EDIT_INSERT_LINK => Box::new(InsertLink),
+        ids::EDIT_REMOVE_LINK => Box::new(RemoveLink),
+        ids::VISUAL_SPLIT_BLOCK => Box::new(NewParagraph),
+        ids::EDIT_INDENT_LIST_ITEM => Box::new(IndentListItem),
+        ids::EDIT_OUTDENT_LIST_ITEM => Box::new(OutdentListItem),
+        ids::EDIT_TOGGLE_BULLET_LIST => Box::new(ToggleBulletList),
+        ids::EDIT_TOGGLE_NUMBERED_LIST => Box::new(ToggleNumberedList),
+        ids::EDIT_TOGGLE_CHECKLIST => Box::new(ToggleChecklist),
+        ids::EDIT_TOGGLE_CHECKED => Box::new(ToggleChecked),
+        ids::EDIT_INSERT_CODE_BLOCK => Box::new(InsertCodeBlock),
+        ids::EDIT_INSERT_ADMONITION => Box::new(InsertAdmonition),
+        ids::EDIT_INSERT_TABLE => Box::new(InsertTable),
+        ids::EDIT_INSERT_TABLE_ROW => Box::new(InsertTableRow),
+        ids::EDIT_DELETE_TABLE_ROW => Box::new(DeleteTableRow),
+        ids::EDIT_INSERT_TABLE_COLUMN => Box::new(InsertTableColumn),
+        ids::EDIT_DELETE_TABLE_COLUMN => Box::new(DeleteTableColumn),
+        ids::EDIT_INSERT_IMAGE => Box::new(InsertImage),
+        ids::EDIT_EDIT_IMAGE => Box::new(EditImage),
         _ => return None,
     })
+}
+
+/// Whether command `id` is handled by the visual editor, and so must be dispatched from it.
+pub fn in_visual_editor(id: CommandId) -> bool {
+    matches!(
+        id,
+        ids::EDIT_TOGGLE_STRONG
+            | ids::EDIT_TOGGLE_EMPHASIS
+            | ids::EDIT_TOGGLE_CODE
+            | ids::EDIT_TOGGLE_HIGHLIGHT
+            | ids::EDIT_INSERT_LINK
+            | ids::EDIT_REMOVE_LINK
+            | ids::VISUAL_SPLIT_BLOCK
+            | ids::EDIT_INDENT_LIST_ITEM
+            | ids::EDIT_OUTDENT_LIST_ITEM
+            | ids::EDIT_TOGGLE_BULLET_LIST
+            | ids::EDIT_TOGGLE_NUMBERED_LIST
+            | ids::EDIT_TOGGLE_CHECKLIST
+            | ids::EDIT_TOGGLE_CHECKED
+            | ids::EDIT_INSERT_CODE_BLOCK
+            | ids::EDIT_INSERT_ADMONITION
+            | ids::EDIT_INSERT_TABLE
+            | ids::EDIT_INSERT_TABLE_ROW
+            | ids::EDIT_DELETE_TABLE_ROW
+            | ids::EDIT_INSERT_TABLE_COLUMN
+            | ids::EDIT_DELETE_TABLE_COLUMN
+            | ids::EDIT_INSERT_IMAGE
+            | ids::EDIT_EDIT_IMAGE
+    )
 }
 
 /// The UI-only action at `index` of [`UI_ACTIONS`].
@@ -143,6 +238,18 @@ pub fn bind(engine: &Engine, cx: &mut App) {
             binding_for(spec.id, &keys)
         })
         .collect();
+    // Undo and redo in the visual editor are the engine's, as in the source editor.
+    let visual = Some(crate::visual::VISUAL_CONTEXT);
+    for spec in engine.commands().all() {
+        let Some(keys) = spec.default_binding.map(platform_binding) else {
+            continue;
+        };
+        match spec.id {
+            ids::EDIT_UNDO => bindings.push(KeyBinding::new(&keys, Undo, visual)),
+            ids::EDIT_REDO => bindings.push(KeyBinding::new(&keys, Redo, visual)),
+            _ => {}
+        }
+    }
     let workspace = Some(WORKSPACE_CONTEXT);
     bindings.push(KeyBinding::new(
         &platform_binding("cmd-shift-p"),
@@ -160,6 +267,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
         workspace,
     ));
     cx.bind_keys(bindings);
+    crate::visual::bind(cx);
 }
 
 #[cfg(test)]

@@ -103,6 +103,77 @@ Block lookups use `adoc_render::block_at` and `block_by_trail`, which map betwee
 
 The application depends on `adoc-render` for the view types only; `adoc-dom` and the parser crates stay behind the engine.
 
+== The visual editor
+
+`crates/adocfoundry/src/visual/` draws the engine's `VisualDocument` as rendered text that can be edited in place.
+Like the preview, it owns no document semantics.
+It holds a selection and a few pieces of view state, invokes visual commands, and draws what `visual(id)` returns each time `ModelChanged` arrives.
+
+[cols="1,4"]
+|===
+|Module |Responsibility
+
+|`mod.rs`
+|`VisualView`: renders a document, holds the selection, the pending block and the typing marks, and dispatches commands. It maps clicks and drags to selections, and follows the source editor's caret in split mode.
+
+|`text.rs`
+|An editable text block: styled runs, wrapping, the caret and selection painted over the text, and hit testing. The layout of every text block drawn in a frame is recorded by path, so a click maps back to a display offset and arrow keys move by visual line.
+
+|`input.rs`
+|The visual editor's key bindings (`bind`), caret movement and deletion as actions, and the window's input handler for typing and IME composition.
+
+|`blocks.rs`
+|Model nodes to elements. Text blocks are drawn for editing. What the model keeps read-only (images, diagrams, included content, verbatim source) is drawn by the preview's block renderer from the `ViewTree` built with the model.
+
+|`format.rs`
+|Marks on the selection or on the text typed next, and the link and image dialogs.
+
+|`toolbar.rs`
+|The formatting toolbar and the block-type picker.
+|===
+
+=== Selection as source offsets
+
+A `Selection` is an anchor and a head, both byte offsets into the page source.
+The selection therefore survives a model rebuild unchanged, and maps through an edit made elsewhere like a source selection.
+When the document changes under the view, the selection is moved with the engine's `Mapping` of the edits.
+Offsets are converted to display positions only when painting and hit testing, through the model.
+
+The caret carries the marks of the text before it, so typed text continues a mark.
+With nothing selected, Bold, Italic, Code and Highlight toggle the marks the next typed text carries; the view holds them and resets them when the caret moves.
+
+=== Hit testing and layouts
+
+Each frame, every text block records its shaped layout under its path in the model.
+A click looks up the layout under the pointer, finds the display offset, and asks the block for the nearest caret stop.
+Clicking read-only content does not place a caret: it shows the source in split mode and moves the source editor to the content, through `view.show_split` and `navigate.reveal`.
+
+=== Input and IME
+
+The view is the window's input handler while it has focus.
+Typed text becomes `visual.insert_text` over the selection.
+An IME composition is shown underlined in place at the caret but is not in the document; it is committed as one `visual.insert_text` when the input method commits it.
+The test platform exercises this path, which is not evidence that a real input method works.
+
+=== The pending block
+
+Enter at the end of a block begins a paragraph or list item that exists only in the view, as `Pending`.
+AsciiDoc has no empty paragraph or empty list item, so nothing is written to the source until its first character, when `visual.insert_block` writes it.
+A second Enter on a pending list item leaves the list instead.
+Moving the caret away discards a pending block.
+
+=== The toolbar
+
+Every toolbar button runs the same engine command as its key binding and palette entry.
+Marks show as selected when the caret is in text that has them.
+The Table menu appears only while the caret is in a table cell.
+
+=== Split mode
+
+The mode buttons beside the tabs are in `workspace_view.rs` and invoke the `view.show_*` commands.
+In split mode the visual editor reveals the block holding the source editor's caret (`reveal_offset`) without moving its own selection, and the source editor scrolls to the visual caret.
+Edits in either editor reach the other through the engine: the source editor applies `DocumentChanged` edits to its widget, and the visual editor redraws from the model once it is rebuilt.
+
 == Tabs and the sidebar
 
 Opening a tab follows the engine's active document.

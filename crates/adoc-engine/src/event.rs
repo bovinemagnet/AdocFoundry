@@ -51,4 +51,11 @@ pub enum EngineEvent {
     /// The preview was shown, hidden, detached, docked, pinned or unpinned, or scroll sync
     /// was toggled.
     PreviewLayoutChanged,
+    /// A new visual model of `id` is available from `Engine::visual`.
+    ModelChanged {
+        id: DocumentId,
+        version: u64,
+    },
+    /// The document is now shown as source, visual or both.
+    EditorModeChanged(DocumentId),
 }

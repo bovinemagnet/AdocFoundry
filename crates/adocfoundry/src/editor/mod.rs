@@ -75,6 +75,8 @@ pub struct SourceEditorView {
 
 /// Diagnostics are redrawn once typing pauses for this long, not on every keystroke.
 const DIAGNOSTICS_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+/// Lines left above a place navigated to, so it is read in context.
+const REVEAL_MARGIN: usize = 3;
 
 impl SourceEditorView {
     pub fn new(
@@ -216,17 +218,28 @@ impl SourceEditorView {
             state.set_selected_range(range.start.min(len)..range.end.min(len), cx);
             state.focus(window, cx);
         });
+        // The editor would scroll only far enough to bring the caret to an edge, which can
+        // leave it just out of view; the place navigated to goes near the top instead.
+        self.scroll_to_line_of(range.start, REVEAL_MARGIN, cx);
     }
 
     /// Scrolls so the line holding `offset` is at the top, leaving the caret where it is.
     pub fn scroll_to_offset(&self, offset: usize, cx: &mut Context<Self>) {
+        self.scroll_to_line_of(offset, 0, cx);
+    }
+
+    /// Scrolls so the line holding `offset` is `margin` lines below the top.
+    fn scroll_to_line_of(&self, offset: usize, margin: usize, cx: &mut Context<Self>) {
         self.state.update(cx, |state, cx| {
             let Some(line_height) = state.line_height() else {
                 return;
             };
             let text = state.text().clone();
             let line = text.offset_to_position(offset.min(text.len())).line as usize;
-            let row = state.display_map().buffer_line_to_display_row(line);
+            let row = state
+                .display_map()
+                .buffer_line_to_display_row(line)
+                .saturating_sub(margin);
             let x = state.scroll_offset().x;
             state.set_scroll_offset(gpui::point(x, -(line_height * row as f32)), cx);
         });
