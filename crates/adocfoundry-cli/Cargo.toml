@@ -6,7 +6,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+adoc-core.workspace = true
 adoc-engine.workspace = true
+adoc-index.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
 
 [lints]
 workspace = true
