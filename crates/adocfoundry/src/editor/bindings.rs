@@ -58,6 +58,10 @@ actions!(
         InsertImage,
         EditImage,
         RefreshGit,
+        RevertChange,
+        NextChange,
+        PreviousChange,
+        ShowChanges,
     ]
 );
 
@@ -112,6 +116,10 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::PAGE_RENAME => KeyBinding::new(keys, RenamePage, workspace),
         ids::WORKSPACE_REINDEX => KeyBinding::new(keys, Reindex, workspace),
         ids::GIT_REFRESH => KeyBinding::new(keys, RefreshGit, workspace),
+        ids::GIT_REVERT_HUNK => KeyBinding::new(keys, RevertChange, workspace),
+        ids::GIT_NEXT_CHANGE => KeyBinding::new(keys, NextChange, workspace),
+        ids::GIT_PREVIOUS_CHANGE => KeyBinding::new(keys, PreviousChange, workspace),
+        ids::GIT_SHOW_CHANGES => KeyBinding::new(keys, ShowChanges, workspace),
         ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
         ids::SETTINGS_RELOAD => KeyBinding::new(keys, ReloadSettings, workspace),
         ids::VIEW_TOGGLE_PREVIEW => KeyBinding::new(keys, TogglePreview, workspace),
@@ -157,6 +165,10 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::PAGE_RENAME => Box::new(RenamePage),
         ids::WORKSPACE_REINDEX => Box::new(Reindex),
         ids::GIT_REFRESH => Box::new(RefreshGit),
+        ids::GIT_REVERT_HUNK => Box::new(RevertChange),
+        ids::GIT_NEXT_CHANGE => Box::new(NextChange),
+        ids::GIT_PREVIOUS_CHANGE => Box::new(PreviousChange),
+        ids::GIT_SHOW_CHANGES => Box::new(ShowChanges),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
         ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),

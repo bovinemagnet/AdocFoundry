@@ -72,6 +72,7 @@ enum SidebarTab {
     Navigation,
     Families,
     Problems,
+    Changes,
 }
 
 pub struct WorkspaceView {
@@ -87,6 +88,8 @@ pub struct WorkspaceView {
     problems: Entity<TreeState>,
     problem_count: usize,
     problems_stale: bool,
+    changes: Entity<TreeState>,
+    changes_stale: bool,
     outline: Entity<TreeState>,
     outline_stale: bool,
     /// True from an edit until typing pauses; the outline and problems wait for the pause.
@@ -131,6 +134,8 @@ impl WorkspaceView {
             problems: cx.new(|cx| TreeState::new(cx)),
             problem_count: 0,
             problems_stale: true,
+            changes: cx.new(|cx| TreeState::new(cx)),
+            changes_stale: true,
             outline: cx.new(|cx| TreeState::new(cx)),
             outline_stale: true,
             unsettled: false,
@@ -181,6 +186,7 @@ impl WorkspaceView {
             }
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
             EngineEvent::DocumentClosed(id) => {
+                self.changes_stale = true;
                 self.tabs.retain(|tab| tab.read(cx).document() != *id);
                 self.visuals.remove(id);
                 self.follow_active(window, cx);
@@ -207,6 +213,9 @@ impl WorkspaceView {
                 window.push_notification(format!("{command}: {error}"), cx);
             }
             EngineEvent::PreviewLayoutChanged => self.place_preview(cx),
+            EngineEvent::GitStatusChanged { .. }
+            | EngineEvent::GitHunksChanged(_)
+            | EngineEvent::DocumentOpened(_) => self.changes_stale = true,
             _ => {}
         }
         cx.notify();
@@ -416,6 +425,66 @@ impl WorkspaceView {
         self.problem_count = count;
         self.problems
             .update(cx, |tree, cx| tree.set_items(items, cx));
+    }
+
+    fn refresh_changes(&mut self, cx: &mut Context<Self>) {
+        if !self.changes_stale {
+            return;
+        }
+        self.changes_stale = false;
+        let items = {
+            let engine = &self.app.read(cx).engine;
+            sidebar::changes(engine, engine.roots())
+        };
+        self.changes
+            .update(cx, |tree, cx| tree.set_items(items, cx));
+    }
+
+    /// The labels of the Changes panel's leaves, in order.
+    #[cfg(test)]
+    pub fn changes_for_test(&mut self, cx: &mut Context<Self>) -> Vec<String> {
+        self.changes_stale = true;
+        self.refresh_changes(cx);
+        let engine = &self.app.read(cx).engine;
+        let mut labels = Vec::new();
+        let mut stack: Vec<gpui_component::tree::TreeItem> =
+            sidebar::changes(engine, engine.roots())
+                .into_iter()
+                .rev()
+                .collect();
+        while let Some(item) = stack.pop() {
+            if item.children.is_empty() {
+                labels.push(item.label.to_string());
+            }
+            stack.extend(item.children.iter().rev().cloned());
+        }
+        labels
+    }
+
+    /// Whether the sidebar offers the Changes panel: when a root is in a repository.
+    fn has_changes_panel(&self, cx: &App) -> bool {
+        !self.app.read(cx).engine.git().repositories().is_empty()
+    }
+
+    /// Opens `path` with the caret on its first change against `HEAD`.
+    pub fn open_first_change(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(CommandOutcome::Opened(id)) = self.invoke(
+            ids::DOCUMENT_OPEN,
+            CommandArgs::Path(path.to_path_buf()),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        let first = self
+            .app
+            .read(cx)
+            .engine
+            .hunks_now(id)
+            .ok()
+            .and_then(|hunks| hunks.first().map(|hunk| hunk.range.start))
+            .unwrap_or(0);
+        self.open_at(path, SourceRange::new(first, first), window, cx);
     }
 
     fn refresh_outline(&mut self, cx: &mut Context<Self>) {
@@ -935,6 +1004,63 @@ impl WorkspaceView {
         self.invoke(ids::GIT_REFRESH, CommandArgs::None, window, cx);
     }
 
+    /// The active document and the source caret, for commands that act at the caret.
+    fn caret(&self, cx: &App) -> Option<(DocumentId, usize)> {
+        let editor = self.active_editor()?.read(cx);
+        Some((editor.document(), editor.cursor(cx)))
+    }
+
+    fn on_revert_change(&mut self, _: &RevertChange, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((id, offset)) = self.caret(cx) else {
+            return;
+        };
+        self.invoke(
+            ids::GIT_REVERT_HUNK,
+            CommandArgs::Offset { id, offset },
+            window,
+            cx,
+        );
+    }
+
+    fn on_next_change(&mut self, _: &NextChange, window: &mut Window, cx: &mut Context<Self>) {
+        self.go_to_change(ids::GIT_NEXT_CHANGE, window, cx);
+    }
+
+    fn on_previous_change(
+        &mut self,
+        _: &PreviousChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_to_change(ids::GIT_PREVIOUS_CHANGE, window, cx);
+    }
+
+    fn go_to_change(
+        &mut self,
+        command: adoc_engine::CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((id, offset)) = self.caret(cx) else {
+            return;
+        };
+        if let Some(CommandOutcome::Location(location)) =
+            self.invoke(command, CommandArgs::Offset { id, offset }, window, cx)
+        {
+            self.open_at(&location.path, location.range, window, cx);
+        }
+    }
+
+    fn on_show_changes(&mut self, _: &ShowChanges, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.has_changes_panel(cx) {
+            window.push_notification("No workspace folder is in a Git repository.", cx);
+            return;
+        }
+        self.invoke(ids::GIT_SHOW_CHANGES, CommandArgs::None, window, cx);
+        self.sidebar_tab = SidebarTab::Changes;
+        cx.notify();
+    }
+
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::External(path)) =
             self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
@@ -1160,6 +1286,14 @@ impl WorkspaceView {
                             .child(item.label.clone()),
                     )
                     .on_click(move |_, window, cx| {
+                        if let Some(path) = sidebar::parse_change(&item.id) {
+                            if let Some(workspace) = workspace.upgrade() {
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.open_first_change(&path, window, cx);
+                                });
+                            }
+                            return;
+                        }
                         let Some(target) = sidebar::parse_target(&item.id) else {
                             return;
                         };
@@ -1176,12 +1310,27 @@ impl WorkspaceView {
 
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_problems(cx);
-        let selected = match self.sidebar_tab {
-            SidebarTab::Navigation => 0,
-            SidebarTab::Families => 1,
-            SidebarTab::Problems => 2,
-        };
-        let problems = format!("Problems ({})", self.problem_count);
+        let git = self.has_changes_panel(cx);
+        if git {
+            self.refresh_changes(cx);
+        } else if self.sidebar_tab == SidebarTab::Changes {
+            self.sidebar_tab = SidebarTab::Navigation;
+        }
+        let mut panels = vec![
+            (SidebarTab::Navigation, "Navigation".to_owned()),
+            (SidebarTab::Families, "Modules".to_owned()),
+            (
+                SidebarTab::Problems,
+                format!("Problems ({})", self.problem_count),
+            ),
+        ];
+        if git {
+            panels.push((SidebarTab::Changes, "Changes".to_owned()));
+        }
+        let selected = panels
+            .iter()
+            .position(|(tab, _)| *tab == self.sidebar_tab)
+            .unwrap_or(0);
         let content = match self.sidebar_tab {
             SidebarTab::Navigation => self
                 .render_tree(&self.navigation.clone(), "nav", cx)
@@ -1191,6 +1340,9 @@ impl WorkspaceView {
                 .into_any_element(),
             SidebarTab::Problems => self
                 .render_tree(&self.problems.clone(), "problems", cx)
+                .into_any_element(),
+            SidebarTab::Changes => self
+                .render_tree(&self.changes.clone(), "changes", cx)
                 .into_any_element(),
         };
         v_flex()
@@ -1202,15 +1354,15 @@ impl WorkspaceView {
                     .underline()
                     .small()
                     .selected_index(selected)
-                    .child(Tab::new().label("Navigation"))
-                    .child(Tab::new().label("Modules"))
-                    .child(Tab::new().label(problems))
-                    .on_click(cx.listener(|this, index: &usize, _, cx| {
-                        this.sidebar_tab = match index {
-                            0 => SidebarTab::Navigation,
-                            1 => SidebarTab::Families,
-                            _ => SidebarTab::Problems,
-                        };
+                    .children(
+                        panels
+                            .iter()
+                            .map(|(_, label)| Tab::new().label(label.clone())),
+                    )
+                    .on_click(cx.listener(move |this, index: &usize, _, cx| {
+                        if let Some((tab, _)) = panels.get(*index) {
+                            this.sidebar_tab = *tab;
+                        }
                         cx.notify();
                     })),
             )
@@ -1392,6 +1544,10 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_rename))
             .on_action(cx.listener(Self::on_reindex))
             .on_action(cx.listener(Self::on_refresh_git))
+            .on_action(cx.listener(Self::on_revert_change))
+            .on_action(cx.listener(Self::on_next_change))
+            .on_action(cx.listener(Self::on_previous_change))
+            .on_action(cx.listener(Self::on_show_changes))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))

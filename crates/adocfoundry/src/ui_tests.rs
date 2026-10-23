@@ -935,6 +935,63 @@ fn visual_blocks_marked_when_range_intersects_hunk(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("visual-change-3").is_none());
 }
 
+#[gpui::test]
+fn changes_panel_lists_changed_adoc_files_only(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("modules/ROOT/pages/page.adoc", "= Page\n\nText.\n");
+    test.write("modules/ROOT/pages/same.adoc", "= Same\n");
+    test.write("README.md", "readme\n");
+    test.write("notes.txt", "notes\n");
+    test.commit_all("first");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let page = dir.path().join("modules/ROOT/pages/page.adoc");
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    settle_engine(&app, &mut cx);
+    assert!(
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.changes_for_test(cx)))
+            .is_empty(),
+        "a repository with no changes has an empty panel"
+    );
+
+    test.write("modules/ROOT/pages/new.adoc", "= New\n");
+    test.write("modules/ROOT/images/diagram.svg", "<svg/>\n");
+    test.write("README.md", "readme, changed\n");
+    test.write("notes.txt", "notes, changed\n");
+    replace_in(&app, "Text.", "Text, edited.", &mut cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            app.invoke(
+                ids::DOCUMENT_SAVE,
+                adoc_engine::CommandArgs::Document(id),
+                cx,
+            )
+            .unwrap();
+            app.invoke(ids::GIT_REFRESH, adoc_engine::CommandArgs::None, cx)
+                .unwrap();
+        })
+    });
+    settle_engine(&app, &mut cx);
+
+    let labels =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.changes_for_test(cx)));
+    assert_eq!(
+        labels,
+        [
+            "?? modules/ROOT/images/diagram.svg",
+            "?? modules/ROOT/pages/new.adoc",
+            " M modules/ROOT/pages/page.adoc (1)",
+        ]
+    );
+}
+
 // --- visual editor ---------------------------------------------------------------------------
 
 /// A workspace showing `text` as its only page in the visual editor.
