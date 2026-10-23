@@ -35,6 +35,12 @@ actions!(
         ShowSource,
         ShowVisual,
         ShowSplit,
+        ToggleStrong,
+        ToggleEmphasis,
+        ToggleCode,
+        ToggleHighlight,
+        InsertLink,
+        RemoveLink,
     ]
 );
 
@@ -70,6 +76,7 @@ pub fn platform_binding(binding: &str) -> String {
 fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
     let workspace = Some(WORKSPACE_CONTEXT);
     let editor = Some(EDITOR_CONTEXT);
+    let visual = Some(crate::visual::VISUAL_CONTEXT);
     Some(match id {
         ids::WORKSPACE_OPEN_FOLDER => KeyBinding::new(keys, OpenFolder, workspace),
         ids::DOCUMENT_OPEN => KeyBinding::new(keys, OpenFile, workspace),
@@ -96,6 +103,12 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::VIEW_SHOW_SOURCE => KeyBinding::new(keys, ShowSource, workspace),
         ids::VIEW_SHOW_VISUAL => KeyBinding::new(keys, ShowVisual, workspace),
         ids::VIEW_SHOW_SPLIT => KeyBinding::new(keys, ShowSplit, workspace),
+        ids::EDIT_TOGGLE_STRONG => KeyBinding::new(keys, ToggleStrong, visual),
+        ids::EDIT_TOGGLE_EMPHASIS => KeyBinding::new(keys, ToggleEmphasis, visual),
+        ids::EDIT_TOGGLE_CODE => KeyBinding::new(keys, ToggleCode, visual),
+        ids::EDIT_TOGGLE_HIGHLIGHT => KeyBinding::new(keys, ToggleHighlight, visual),
+        ids::EDIT_INSERT_LINK => KeyBinding::new(keys, InsertLink, visual),
+        ids::EDIT_REMOVE_LINK => KeyBinding::new(keys, RemoveLink, visual),
         _ => return None,
     })
 }
@@ -128,6 +141,12 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::VIEW_SHOW_SOURCE => Box::new(ShowSource),
         ids::VIEW_SHOW_VISUAL => Box::new(ShowVisual),
         ids::VIEW_SHOW_SPLIT => Box::new(ShowSplit),
+        ids::EDIT_TOGGLE_STRONG => Box::new(ToggleStrong),
+        ids::EDIT_TOGGLE_EMPHASIS => Box::new(ToggleEmphasis),
+        ids::EDIT_TOGGLE_CODE => Box::new(ToggleCode),
+        ids::EDIT_TOGGLE_HIGHLIGHT => Box::new(ToggleHighlight),
+        ids::EDIT_INSERT_LINK => Box::new(InsertLink),
+        ids::EDIT_REMOVE_LINK => Box::new(RemoveLink),
         _ => return None,
     })
 }

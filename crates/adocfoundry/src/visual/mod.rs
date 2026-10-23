@@ -7,6 +7,7 @@
 //! selection with the text.
 
 mod blocks;
+mod format;
 mod input;
 mod text;
 
@@ -223,6 +224,12 @@ impl VisualView {
         self.reveal.set(true);
         cx.emit(VisualEvent::CaretMoved(selection.head));
         cx.notify();
+    }
+
+    /// Selects source offsets `anchor` to `head`.
+    #[cfg(test)]
+    pub fn select(&mut self, anchor: usize, head: usize, cx: &mut Context<Self>) {
+        self.set_selection(Selection { anchor, head }, cx);
     }
 
     /// Places the caret at source offset `offset`, for tests and navigation.

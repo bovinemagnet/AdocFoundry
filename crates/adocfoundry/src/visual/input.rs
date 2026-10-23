@@ -62,7 +62,27 @@ pub fn bind(cx: &mut App) {
 
 /// The view's action handlers.
 pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> Stateful<gpui::Div> {
-    view.on_action(cx.listener(|this, _: &Backspace, window, cx| {
+    use crate::editor::bindings::{
+        InsertLink, RemoveLink, ToggleCode, ToggleEmphasis, ToggleHighlight, ToggleStrong,
+    };
+    use adoc_engine::Mark;
+    view.on_action(cx.listener(|this, _: &ToggleStrong, window, cx| {
+        this.toggle_mark(ids::EDIT_TOGGLE_STRONG, Mark::Strong, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &ToggleEmphasis, window, cx| {
+        this.toggle_mark(ids::EDIT_TOGGLE_EMPHASIS, Mark::Emphasis, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &ToggleCode, window, cx| {
+        this.toggle_mark(ids::EDIT_TOGGLE_CODE, Mark::Code, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &ToggleHighlight, window, cx| {
+        this.toggle_mark(ids::EDIT_TOGGLE_HIGHLIGHT, Mark::Highlight, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &InsertLink, window, cx| this.edit_link(window, cx)))
+    .on_action(cx.listener(|this, _: &RemoveLink, window, cx| {
+        this.run(ids::EDIT_REMOVE_LINK, VisualValue::None, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &Backspace, window, cx| {
         this.run(ids::VISUAL_DELETE_BACKWARD, VisualValue::None, window, cx);
     }))
     .on_action(cx.listener(|this, _: &Delete, window, cx| {

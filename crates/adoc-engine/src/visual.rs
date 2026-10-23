@@ -15,7 +15,7 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_dom::Dom;
-use adoc_model::{apply_edits, MarkSet, Model, Step, StepResult};
+use adoc_model::{apply_edits, Mark, MarkSet, Model, Step, StepResult};
 use adoc_render::ViewTree;
 
 use crate::{
@@ -68,6 +68,11 @@ pub enum VisualValue {
     #[default]
     None,
     Text(String),
+    /// A link target and, optionally, its text.
+    Link {
+        target: String,
+        text: Option<String>,
+    },
 }
 
 struct Session {
@@ -370,7 +375,7 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
     use CommandCategory::{Edit, View};
     use CommandContext::{ActiveDocument, Selection};
 
-    let commands: [(crate::CommandSpec, Run); 6] = [
+    let commands: [(crate::CommandSpec, Run); 12] = [
         (
             spec(
                 ids::VIEW_SHOW_SOURCE,
@@ -424,6 +429,60 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
                 Selection,
             ),
             |engine, args| visual_delete(engine, args, true),
+        ),
+        (
+            spec(
+                ids::EDIT_TOGGLE_STRONG,
+                "Bold",
+                Edit,
+                Some("cmd-b"),
+                Selection,
+            ),
+            |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_STRONG, Mark::Strong),
+        ),
+        (
+            spec(
+                ids::EDIT_TOGGLE_EMPHASIS,
+                "Italic",
+                Edit,
+                Some("cmd-i"),
+                Selection,
+            ),
+            |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_EMPHASIS, Mark::Emphasis),
+        ),
+        (
+            spec(
+                ids::EDIT_TOGGLE_CODE,
+                "Code",
+                Edit,
+                Some("cmd-e"),
+                Selection,
+            ),
+            |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_CODE, Mark::Code),
+        ),
+        (
+            spec(
+                ids::EDIT_TOGGLE_HIGHLIGHT,
+                "Highlight",
+                Edit,
+                None,
+                Selection,
+            ),
+            |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_HIGHLIGHT, Mark::Highlight),
+        ),
+        (
+            spec(
+                ids::EDIT_INSERT_LINK,
+                "Insert Link",
+                Edit,
+                Some("cmd-shift-l"),
+                Selection,
+            ),
+            insert_link,
+        ),
+        (
+            spec(ids::EDIT_REMOVE_LINK, "Remove Link", Edit, None, Selection),
+            remove_link,
         ),
     ];
     for (spec, run) in commands {
@@ -583,4 +642,57 @@ fn visual_delete(
     let source = model.source.clone();
     let group = engine.new_group();
     engine.apply_visual(args.id, &source, result, UndoMode::Group(group))
+}
+
+/// Runs `step` on the model of `args.id` as one undo step.
+fn visual_step(
+    engine: &mut Engine,
+    args: &VisualArgs,
+    step: Step,
+) -> Result<CommandOutcome, EngineError> {
+    let visual = engine.visual_for(args)?;
+    let result = visual.model.apply(&step).map_err(refused)?;
+    let source = visual.model.source.clone();
+    let group = engine.new_group();
+    engine.apply_visual(args.id, &source, result, UndoMode::Group(group))
+}
+
+/// Adds `mark` to the selection, or removes it where all of the selection has it.
+fn toggle_mark(
+    engine: &mut Engine,
+    args: CommandArgs,
+    command: crate::CommandId,
+    mark: Mark,
+) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(command, args)?;
+    let range = ordered(args.selection);
+    visual_step(engine, &args, Step::ToggleMark { range, mark })
+}
+
+/// Makes the selection a link, or changes the link it is in.
+fn insert_link(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(ids::EDIT_INSERT_LINK, args)?;
+    let VisualValue::Link { target, text } = args.value.clone() else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EDIT_INSERT_LINK,
+            expected: "a link target",
+        });
+    };
+    let range = ordered(args.selection);
+    visual_step(
+        engine,
+        &args,
+        Step::SetLink {
+            range,
+            target,
+            text,
+        },
+    )
+}
+
+/// Replaces the link at the caret with its text.
+fn remove_link(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let args = visual_args(ids::EDIT_REMOVE_LINK, args)?;
+    let at = args.selection.end;
+    visual_step(engine, &args, Step::RemoveLink { at })
 }

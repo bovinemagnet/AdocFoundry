@@ -851,3 +851,28 @@ fn ime_composition_commits_once(cx: &mut TestAppContext) {
     let undo_after = cx.update(|_, cx| app.read(cx).engine.undo_stack(id).unwrap().len());
     assert_eq!(undo_after, undo_before + 1, "the commit is one edit");
 }
+
+#[gpui::test]
+fn keyboard_formatting_marks_the_selection_or_what_is_typed(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("plain").unwrap();
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, start + 5, cx)));
+    cx.simulate_keystrokes("secondary-b");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n"
+    );
+
+    // With nothing selected, the mark applies to what is typed next.
+    let end = text_of(&app, id, &mut cx).find('.').unwrap();
+    place_caret(&visual, end, &mut cx);
+    cx.simulate_keystrokes("secondary-i space n e w");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words _new_.\n"
+    );
+}

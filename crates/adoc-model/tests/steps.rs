@@ -397,3 +397,84 @@ fn adding_a_mark_absorbs_overlapping_marks_of_its_kind() {
     );
     assert_eq!(after, "Use `build, target` and more.\n");
 }
+
+#[test]
+fn links_wrap_the_selection_and_keep_their_text() {
+    let model = build("A word here.\n");
+    let word = offset(&model.source, "word");
+    let range = SourceRange::new(word, word + 4);
+    let (after, result) = apply(
+        &model,
+        Step::SetLink {
+            range,
+            target: "https://example.com".to_owned(),
+            text: None,
+        },
+    );
+    assert_eq!(after, "A https://example.com[word] here.\n");
+    assert_eq!(
+        &after[result.selection.start..result.selection.end],
+        "https://example.com[word]"
+    );
+
+    let (after, _) = apply(
+        &model,
+        Step::SetLink {
+            range,
+            target: "other.adoc#part".to_owned(),
+            text: None,
+        },
+    );
+    assert_eq!(after, "A xref:other.adoc#part[word] here.\n");
+
+    let (after, _) = apply(
+        &model,
+        Step::SetLink {
+            range,
+            target: "intro".to_owned(),
+            text: None,
+        },
+    );
+    assert_eq!(after, "A <<intro,word>> here.\n");
+
+    // With nothing selected, the link is inserted with its own text.
+    let (after, _) = apply(
+        &model,
+        Step::SetLink {
+            range: SourceRange::new(word, word),
+            target: "https://example.com".to_owned(),
+            text: Some("a [site]".to_owned()),
+        },
+    );
+    assert_eq!(after, "A https://example.com[a [site\\]]word here.\n");
+}
+
+#[test]
+fn editing_a_link_changes_only_what_changed() {
+    let model = build("See https://a.example[the text] now.\n");
+    let inside = offset(&model.source, "the text");
+    let (after, _) = apply(
+        &model,
+        Step::SetLink {
+            range: SourceRange::new(inside, inside),
+            target: "https://b.example".to_owned(),
+            text: None,
+        },
+    );
+    assert_eq!(after, "See https://b.example[the text] now.\n");
+
+    let (after, _) = apply(&model, Step::RemoveLink { at: inside });
+    assert_eq!(after, "See the text now.\n");
+
+    let model = build("Read xref:guide.adoc[the guide].\n");
+    let at = offset(&model.source, "the guide");
+    let (after, _) = apply(
+        &model,
+        Step::SetLink {
+            range: SourceRange::new(at, at),
+            target: "guide.adoc".to_owned(),
+            text: Some("our guide".to_owned()),
+        },
+    );
+    assert_eq!(after, "Read xref:guide.adoc[our guide].\n");
+}

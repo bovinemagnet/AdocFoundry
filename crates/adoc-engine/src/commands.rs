@@ -43,6 +43,12 @@ pub mod ids {
     pub const VISUAL_INSERT_TEXT: CommandId = CommandId::new("visual.insert_text");
     pub const VISUAL_DELETE_BACKWARD: CommandId = CommandId::new("visual.delete_backward");
     pub const VISUAL_DELETE_FORWARD: CommandId = CommandId::new("visual.delete_forward");
+    pub const EDIT_TOGGLE_STRONG: CommandId = CommandId::new("edit.toggle_strong");
+    pub const EDIT_TOGGLE_EMPHASIS: CommandId = CommandId::new("edit.toggle_emphasis");
+    pub const EDIT_TOGGLE_CODE: CommandId = CommandId::new("edit.toggle_code");
+    pub const EDIT_TOGGLE_HIGHLIGHT: CommandId = CommandId::new("edit.toggle_highlight");
+    pub const EDIT_INSERT_LINK: CommandId = CommandId::new("edit.insert_link");
+    pub const EDIT_REMOVE_LINK: CommandId = CommandId::new("edit.remove_link");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;

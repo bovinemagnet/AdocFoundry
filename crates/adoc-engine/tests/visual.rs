@@ -357,3 +357,71 @@ fn included_files_rebuild_the_model() {
         ["Before.", "Now From the partial.", "After."]
     );
 }
+
+#[test]
+fn marks_and_links_are_one_undo_step_each() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = page(directory.path(), "page.adoc", "Some plain words.\n");
+    let (mut engine, _) = engine_with_clock();
+    let id = engine.open(&path).unwrap();
+    show_visual(&mut engine, id);
+    let plain = SourceRange::new(5, 10);
+    let selection = visual(
+        &mut engine,
+        ids::EDIT_TOGGLE_STRONG,
+        id,
+        plain,
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "Some *plain* words.\n");
+    assert_eq!(&text(&engine, id)[selection.start..selection.end], "plain");
+    visual(
+        &mut engine,
+        ids::EDIT_TOGGLE_STRONG,
+        id,
+        selection,
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "Some plain words.\n");
+
+    let words = text(&engine, id).find("words").unwrap();
+    visual(
+        &mut engine,
+        ids::EDIT_INSERT_LINK,
+        id,
+        SourceRange::new(words, words + 5),
+        VisualValue::Link {
+            target: "https://example.com".to_owned(),
+            text: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        text(&engine, id),
+        "Some plain https://example.com[words].\n"
+    );
+    let inside = text(&engine, id).find("[words").unwrap() + 2;
+    visual(
+        &mut engine,
+        ids::EDIT_REMOVE_LINK,
+        id,
+        SourceRange::new(inside, inside),
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "Some plain words.\n");
+
+    for expected in [
+        "Some plain https://example.com[words].\n",
+        "Some plain words.\n",
+        "Some *plain* words.\n",
+        "Some plain words.\n",
+    ] {
+        engine
+            .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+            .unwrap();
+        assert_eq!(text(&engine, id), expected);
+    }
+}

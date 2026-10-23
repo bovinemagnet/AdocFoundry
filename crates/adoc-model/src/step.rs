@@ -25,6 +25,15 @@ pub enum Step {
     Delete { range: SourceRange },
     /// Adds `mark` where any of `range` lacks it, or else removes it.
     ToggleMark { range: SourceRange, mark: Mark },
+    /// Makes `range` a link to `target` (a URL, a page or an anchor id), or changes the link
+    /// it is inside; `text` replaces the link's text when given.
+    SetLink {
+        range: SourceRange,
+        target: String,
+        text: Option<String>,
+    },
+    /// Replaces the link at `at` with its text.
+    RemoveLink { at: usize },
     /// Raw source edits: the form an inverse takes.
     Replace { edits: Vec<SourceEdit> },
 }
@@ -84,8 +93,168 @@ impl Model {
             Step::InsertText { at, text, marks } => self.insert_text(*at, text, *marks),
             Step::Delete { range } => self.delete(*range),
             Step::ToggleMark { range, mark } => self.toggle_mark(*range, *mark),
+            Step::SetLink {
+                range,
+                target,
+                text,
+            } => self.set_link(*range, target, text.as_deref()),
+            Step::RemoveLink { at } => self.remove_link(*at),
             Step::Replace { edits } => self.replace(edits),
         }
+    }
+
+    /// The flattened inline block holding `range`, which must lie in one editable text block.
+    fn inline_block(&self, range: SourceRange) -> Result<(BlockPath, &TextBlock), StepError> {
+        if range.start > range.end {
+            return Err(StepError::OutOfRange);
+        }
+        self.check_offset(range.end)?;
+        let (path, block) = self.editable_at(range.start)?;
+        if range.end > block.range.end {
+            return Err(StepError::Unsupported("a link stays within one block"));
+        }
+        if block.plain {
+            return Err(StepError::NotEditable);
+        }
+        Ok((path, block))
+    }
+
+    fn set_link(
+        &self,
+        range: SourceRange,
+        target: &str,
+        text: Option<&str>,
+    ) -> Result<StepResult, StepError> {
+        let target = target.trim();
+        if target.is_empty() || target.contains(char::is_whitespace) {
+            return Err(StepError::Unsupported("a link target has no spaces"));
+        }
+        let (path, block) = self.inline_block(range)?;
+        let flat = flatten(&self.source, block);
+        // A link the selection lies in is changed, keeping its form and text.
+        let existing = flat.units.iter().zip(&flat.ranges).position(|(unit, at)| {
+            matches!(
+                unit.kind,
+                UnitKind::Atom(Atom::Link { .. } | Atom::Xref { .. })
+            ) && at.start <= range.start
+                && range.end <= at.end
+                && (!range.is_empty() || (at.start < range.start && range.start < at.end))
+        });
+        let (mut units, first, last, link_text, macro_form) = match existing {
+            Some(index) => {
+                let unit = &flat.units[index];
+                let old_text = match &unit.kind {
+                    UnitKind::Atom(Atom::Link { text, .. } | Atom::Xref { text, .. }) => {
+                        text.clone()
+                    }
+                    _ => None,
+                };
+                let macro_form = unit.source.starts_with("xref:");
+                let link_text = text.map(str::to_owned).or(old_text);
+                (flat.units.clone(), index, index + 1, link_text, macro_form)
+            }
+            None => {
+                let start = block
+                    .display_offset(range.start)
+                    .ok_or(StepError::OutOfRange)?;
+                let end = block
+                    .display_offset_towards(range.end, true)
+                    .ok_or(StepError::OutOfRange)?;
+                let selected = block.display[start..end].to_owned();
+                let (units, first, last) = split_display(flat.units.clone(), start, end);
+                let link_text = text
+                    .map(str::to_owned)
+                    .or_else(|| (!selected.is_empty()).then_some(selected));
+                (units, first, last, link_text, false)
+            }
+        };
+        let stack = match units.get(first) {
+            Some(unit) if first < last => unit.stack.clone(),
+            _ => frames_around(&flat, range.start),
+        };
+        let source = link_source(target, link_text.as_deref(), macro_form);
+        let url = is_url(target);
+        let shown = link_text.clone().unwrap_or_else(|| {
+            if url {
+                target.to_owned()
+            } else {
+                crate::scan::xref_label(target)
+            }
+        });
+        let atom = if url {
+            Atom::Link {
+                target: target.to_owned(),
+                text: link_text,
+            }
+        } else {
+            Atom::Xref {
+                target: target.to_owned(),
+                text: link_text,
+            }
+        };
+        let display = units[..first]
+            .iter()
+            .map(|unit| unit.shown.len())
+            .sum::<usize>();
+        let length = shown.len();
+        units.splice(
+            first..last,
+            [Unit {
+                kind: UnitKind::Atom(atom),
+                shown,
+                source,
+                stack,
+            }],
+        );
+        let selection = (
+            Caret {
+                display,
+                sticky: false,
+            },
+            Caret {
+                display: display + length,
+                sticky: true,
+            },
+        );
+        let realised = self.context(block).realise(units, &[], selection)?;
+        self.finish(&path, block, &realised.text, realised.selection)
+    }
+
+    fn remove_link(&self, at: usize) -> Result<StepResult, StepError> {
+        let (path, block) = self.inline_block(SourceRange::new(at, at))?;
+        let flat = flatten(&self.source, block);
+        let index = flat
+            .units
+            .iter()
+            .zip(&flat.ranges)
+            .position(|(unit, range)| {
+                matches!(
+                    unit.kind,
+                    UnitKind::Atom(Atom::Link { .. } | Atom::Xref { .. })
+                ) && range.start <= at
+                    && at <= range.end
+            })
+            .ok_or(StepError::Unsupported("there is no link here"))?;
+        let mut units = flat.units.clone();
+        let display = units[..index]
+            .iter()
+            .map(|unit| unit.shown.len())
+            .sum::<usize>();
+        let shown = units[index].shown.clone();
+        let stack = units[index].stack.clone();
+        let length = shown.len();
+        units[index] = Unit {
+            kind: UnitKind::Text,
+            source: shown.clone(),
+            shown,
+            stack,
+        };
+        let caret = Caret {
+            display: display + length,
+            sticky: true,
+        };
+        let realised = self.context(block).realise(units, &[], (caret, caret))?;
+        self.finish(&path, block, &realised.text, realised.selection)
     }
 
     fn check_offset(&self, offset: usize) -> Result<(), StepError> {
@@ -721,6 +890,27 @@ fn split_display(units: Vec<Unit>, start: usize, end: usize) -> (Vec<Unit>, usiz
     let first = first.unwrap_or(out.len());
     let last = last.unwrap_or(out.len()).max(first);
     (out, first, last)
+}
+
+fn is_url(target: &str) -> bool {
+    target.contains("://") || target.starts_with("mailto:")
+}
+
+/// A link as AsciiDoc: a URL with its text in brackets, an `xref:` to a page, or `<<id>>` for
+/// an anchor in the page (unless the link it replaces was an `xref:`).
+fn link_source(target: &str, text: Option<&str>, macro_form: bool) -> String {
+    let text = text.map(|text| text.replace(']', "\\]"));
+    if is_url(target) {
+        return format!("{target}[{}]", text.unwrap_or_default());
+    }
+    let page = target.contains(['.', '$', ':', '/']) || target.starts_with('#');
+    if page || macro_form {
+        return format!("xref:{target}[{}]", text.unwrap_or_default());
+    }
+    match text {
+        Some(text) => format!("<<{target},{text}>>"),
+        None => format!("<<{target}>>"),
+    }
 }
 
 /// `start..end` widened to take in every frame of `mark` it overlaps.
