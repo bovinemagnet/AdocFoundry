@@ -32,6 +32,9 @@ actions!(
         DetachPreview,
         TogglePreviewScrollSync,
         PinPreview,
+        ShowSource,
+        ShowVisual,
+        ShowSplit,
     ]
 );
 
@@ -90,6 +93,9 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::VIEW_DETACH_PREVIEW => KeyBinding::new(keys, DetachPreview, workspace),
         ids::VIEW_TOGGLE_SCROLL_SYNC => KeyBinding::new(keys, TogglePreviewScrollSync, workspace),
         ids::PREVIEW_PIN => KeyBinding::new(keys, PinPreview, workspace),
+        ids::VIEW_SHOW_SOURCE => KeyBinding::new(keys, ShowSource, workspace),
+        ids::VIEW_SHOW_VISUAL => KeyBinding::new(keys, ShowVisual, workspace),
+        ids::VIEW_SHOW_SPLIT => KeyBinding::new(keys, ShowSplit, workspace),
         _ => return None,
     })
 }
@@ -119,6 +125,9 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::VIEW_DETACH_PREVIEW => Box::new(DetachPreview),
         ids::VIEW_TOGGLE_SCROLL_SYNC => Box::new(TogglePreviewScrollSync),
         ids::PREVIEW_PIN => Box::new(PinPreview),
+        ids::VIEW_SHOW_SOURCE => Box::new(ShowSource),
+        ids::VIEW_SHOW_VISUAL => Box::new(ShowVisual),
+        ids::VIEW_SHOW_SPLIT => Box::new(ShowSplit),
         _ => return None,
     })
 }
@@ -143,6 +152,18 @@ pub fn bind(engine: &Engine, cx: &mut App) {
             binding_for(spec.id, &keys)
         })
         .collect();
+    // Undo and redo in the visual editor are the engine's, as in the source editor.
+    let visual = Some(crate::visual::VISUAL_CONTEXT);
+    for spec in engine.commands().all() {
+        let Some(keys) = spec.default_binding.map(platform_binding) else {
+            continue;
+        };
+        match spec.id {
+            ids::EDIT_UNDO => bindings.push(KeyBinding::new(&keys, Undo, visual)),
+            ids::EDIT_REDO => bindings.push(KeyBinding::new(&keys, Redo, visual)),
+            _ => {}
+        }
+    }
     let workspace = Some(WORKSPACE_CONTEXT);
     bindings.push(KeyBinding::new(
         &platform_binding("cmd-shift-p"),
@@ -160,6 +181,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
         workspace,
     ));
     cx.bind_keys(bindings);
+    crate::visual::bind(cx);
 }
 
 #[cfg(test)]

@@ -89,6 +89,17 @@ pub fn document(view: &ViewTree, context: &BlockContext<'_>) -> Vec<AnyElement> 
     out
 }
 
+/// One block of `view` at `trail`, as the preview draws it: for content the visual editor shows
+/// but does not edit.
+pub fn block(
+    block: &ViewBlock,
+    trail: &[usize],
+    view: &ViewTree,
+    context: &BlockContext<'_>,
+) -> AnyElement {
+    block_element(block, &mut trail.to_vec(), view, context)
+}
+
 fn children(
     blocks: &[&ViewBlock],
     trail: &mut Vec<usize>,

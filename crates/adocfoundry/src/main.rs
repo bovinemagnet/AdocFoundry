@@ -11,6 +11,7 @@ mod sidebar;
 mod typing_bench;
 #[cfg(test)]
 mod ui_tests;
+mod visual;
 mod workspace_view;
 
 use std::path::PathBuf;

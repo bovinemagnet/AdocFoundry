@@ -53,6 +53,6 @@ pub use adoc_lang::{
     Hover, Location, WorkspaceState, WorkspaceSymbol, WorkspaceSymbolKind,
 };
 pub use adoc_model::{
-    Access, Atom, BlockPath, Mark, MarkSet, Model, Node, NodeKind, Piece, ReadOnly, RowSection,
-    Segment, TextBlock, TextContext,
+    Access, Assoc, Atom, BlockPath, Mapping, Mark, MarkSet, Model, Node, NodeKind, Piece, ReadOnly,
+    RowSection, Segment, SourceEdit, TextBlock, TextContext,
 };
