@@ -2,6 +2,8 @@ use std::{collections::BTreeMap, fmt, path::PathBuf, sync::Arc};
 
 use adoc_core::SourceRange;
 
+use adoc_lang::Location;
+
 use crate::{DocumentId, EditPreview, Engine, EngineError, SearchRequest};
 
 /// The stable identifier of a command, such as `document.save`.
@@ -80,13 +82,6 @@ pub enum CommandArgs {
         new_path: PathBuf,
     },
     Custom(serde_json::Value),
-}
-
-/// A source location in the workspace.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Location {
-    pub path: PathBuf,
-    pub range: SourceRange,
 }
 
 #[derive(Clone, Debug, PartialEq)]

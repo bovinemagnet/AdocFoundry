@@ -14,11 +14,12 @@ mod event;
 mod preview;
 mod settings;
 mod undo;
+mod workspace;
 
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use command::{
     Command, CommandArgs, CommandCategory, CommandContext, CommandId, CommandOutcome,
-    CommandRegistry, CommandSpec, Location, RegistryError,
+    CommandRegistry, CommandSpec, RegistryError,
 };
 pub use document::{DocumentId, OpenDocument};
 pub use edit::TextEdit;
@@ -33,3 +34,6 @@ pub use settings::{
     WORKSPACE_SETTINGS_FILE,
 };
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
+pub use workspace::WATCH_DEBOUNCE;
+
+pub use adoc_lang::{DefinitionTarget, Location, WorkspaceState};

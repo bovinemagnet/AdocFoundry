@@ -10,6 +10,7 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_index::normalize_path;
+use adoc_lang::WorkspaceState;
 use adoc_parser::parse;
 use ropey::Rope;
 
@@ -18,6 +19,7 @@ use crate::{
     document::{hash_text, uri_for, DocumentState},
     edit,
     undo::Typing,
+    workspace::{FileWatcher, WorkerMessage},
     Clock, CommandArgs, CommandId, CommandOutcome, CommandRegistry, DocumentId, EngineError,
     EngineEvent, OpenDocument, Settings, SystemClock, TextEdit, UndoEntry, UndoGroup, UndoStack,
 };
@@ -27,16 +29,22 @@ use crate::{
 /// The engine is single-threaded: a front end owns it and mutates it through `&mut self`. Long
 /// work runs on worker threads whose results are applied by [`Engine::pump`].
 pub struct Engine {
-    settings: Settings,
-    clock: Arc<dyn Clock>,
-    registry: CommandRegistry,
-    documents: BTreeMap<DocumentId, OpenDocument>,
-    states: BTreeMap<DocumentId, DocumentState>,
-    next_document: u64,
-    next_group: u64,
-    next_untitled: u64,
-    active: Option<DocumentId>,
-    subscribers: Vec<Sender<EngineEvent>>,
+    pub(crate) settings: Settings,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) registry: CommandRegistry,
+    pub(crate) documents: BTreeMap<DocumentId, OpenDocument>,
+    pub(crate) states: BTreeMap<DocumentId, DocumentState>,
+    pub(crate) next_document: u64,
+    pub(crate) next_group: u64,
+    pub(crate) next_untitled: u64,
+    pub(crate) active: Option<DocumentId>,
+    pub(crate) subscribers: Vec<Sender<EngineEvent>>,
+    pub(crate) roots: Vec<PathBuf>,
+    pub(crate) workspace: WorkspaceState,
+    pub(crate) worker_sender: Sender<WorkerMessage>,
+    pub(crate) worker_receiver: Receiver<WorkerMessage>,
+    pub(crate) workers_running: usize,
+    pub(crate) watcher: Option<FileWatcher>,
 }
 
 /// How an edit is recorded in undo history.
@@ -60,6 +68,7 @@ impl Engine {
     pub fn with_clock(settings: Settings, clock: Arc<dyn Clock>) -> Self {
         let mut registry = CommandRegistry::new();
         commands::register_builtin(&mut registry);
+        let (worker_sender, worker_receiver) = mpsc::channel();
         Self {
             settings,
             clock,
@@ -71,6 +80,12 @@ impl Engine {
             next_untitled: 1,
             active: None,
             subscribers: Vec::new(),
+            roots: Vec::new(),
+            workspace: WorkspaceState::new(),
+            worker_sender,
+            worker_receiver,
+            workers_running: 0,
+            watcher: None,
         }
     }
 
@@ -102,7 +117,13 @@ impl Engine {
         let id = DocumentId(self.next_document);
         self.next_document += 1;
         let parsed = parse(&uri_for(&path), text).document;
-        let diagnostics = parsed.diagnostics.clone();
+        let diagnostics = if untitled {
+            parsed.diagnostics.clone()
+        } else {
+            self.workspace
+                .replace_document(path.clone(), parsed.clone());
+            adoc_lang::diagnostics(&self.workspace, &path)
+        };
         self.documents.insert(
             id,
             OpenDocument {
@@ -124,6 +145,9 @@ impl Engine {
             },
         );
         self.emit(EngineEvent::DocumentOpened(id));
+        if !untitled {
+            self.refresh_open_diagnostics(None);
+        }
         id
     }
 
@@ -151,11 +175,22 @@ impl Engine {
         self.states.get(&id).map(|state| &state.undo)
     }
 
+    /// Closes document `id`, discarding unsaved edits. The index reverts to the file on disk.
     pub fn close(&mut self, id: DocumentId) -> Result<(), EngineError> {
-        self.documents
+        let document = self
+            .documents
             .remove(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
+        if !document.untitled {
+            match fs::read_to_string(&document.path) {
+                Ok(text) => {
+                    self.workspace.index.index_source(&document.path, &text);
+                }
+                Err(_) => self.workspace.remove_document(&document.path),
+            }
+            self.refresh_open_diagnostics(None);
+        }
         if self.active == Some(id) {
             self.active = self.documents.keys().next_back().copied();
             self.emit(EngineEvent::NavigationChanged);
@@ -183,6 +218,16 @@ impl Engine {
         }
         self.emit(EngineEvent::DocumentSaved(id));
         Ok(())
+    }
+
+    /// Records `text` as the content on disk, so the document is clean when it matches.
+    pub(crate) fn mark_saved(&mut self, id: DocumentId, text: &str) {
+        if let Some(state) = self.states.get_mut(&id) {
+            state.saved_hash = hash_text(text);
+        }
+        if let Some(document) = self.documents.get_mut(&id) {
+            document.dirty = document.text != text;
+        }
     }
 
     #[must_use]
@@ -369,18 +414,28 @@ impl Engine {
         document.version += 1;
         let text = document.text.to_string();
         document.parsed = parse(&uri_for(&document.path), &text).document;
-        document.diagnostics = document.parsed.diagnostics.clone();
         let saved_hash = self.states.get(&id).map_or(0, |state| state.saved_hash);
         document.dirty = hash_text(&text) != saved_hash;
         let version_after = document.version;
         let path = document.path.clone();
+        let untitled = document.untitled;
+        if untitled {
+            document.diagnostics = document.parsed.diagnostics.clone();
+        } else {
+            let parsed = document.parsed.clone();
+            self.workspace.replace_document(path.clone(), parsed);
+        }
 
         self.emit(EngineEvent::DocumentChanged {
             id,
             version: version_after,
             edits: forward.clone(),
         });
-        self.emit(EngineEvent::DiagnosticsUpdated { path });
+        if untitled {
+            self.emit(EngineEvent::DiagnosticsUpdated { path });
+        } else {
+            self.refresh_open_diagnostics(Some(&path));
+        }
         Ok(AppliedEdits {
             forward,
             inverse,
@@ -398,11 +453,6 @@ impl Engine {
         receiver
     }
 
-    /// Applies results from worker threads and the file watcher. Returns the number applied.
-    pub fn pump(&mut self) -> usize {
-        0
-    }
-
     pub(crate) fn emit(&mut self, event: EngineEvent) {
         self.subscribers
             .retain(|subscriber| subscriber.send(event.clone()).is_ok());
@@ -413,6 +463,32 @@ impl Engine {
     #[must_use]
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    /// The workspace index, Antora catalog and descriptor problems.
+    #[must_use]
+    pub fn workspace(&self) -> &WorkspaceState {
+        &self.workspace
+    }
+
+    /// Recomputes the diagnostics of every open document, publishing `DiagnosticsUpdated` for
+    /// each whose diagnostics changed and always for `changed`.
+    pub(crate) fn refresh_open_diagnostics(&mut self, changed: Option<&Path>) {
+        let mut updated = Vec::new();
+        for document in self
+            .documents
+            .values_mut()
+            .filter(|document| !document.untitled)
+        {
+            let fresh = adoc_lang::diagnostics(&self.workspace, &document.path);
+            if fresh != document.diagnostics || changed == Some(document.path.as_path()) {
+                document.diagnostics = fresh;
+                updated.push(document.path.clone());
+            }
+        }
+        for path in updated {
+            self.emit(EngineEvent::DiagnosticsUpdated { path });
+        }
     }
 
     pub fn reload_settings(&mut self) -> Result<(), EngineError> {

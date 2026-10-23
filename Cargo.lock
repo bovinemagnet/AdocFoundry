@@ -45,8 +45,10 @@ version = "0.1.0"
 dependencies = [
  "adoc-core",
  "adoc-index",
+ "adoc-lang",
  "adoc-parser",
  "dirs",
+ "notify",
  "ropey",
  "serde",
  "serde_json",

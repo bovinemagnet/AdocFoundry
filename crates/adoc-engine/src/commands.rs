@@ -52,10 +52,40 @@ pub(crate) const fn spec(
 }
 
 pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
-    use CommandCategory::{Document, Edit, View};
+    use CommandCategory::{Document, Edit, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 9] = [
+    let builtin: [(CommandSpec, Run); 12] = [
+        (
+            spec(
+                ids::WORKSPACE_OPEN_FOLDER,
+                "Open Folder",
+                Workspace,
+                Some("cmd-shift-o"),
+                Always,
+            ),
+            workspace_open_folder,
+        ),
+        (
+            spec(
+                ids::WORKSPACE_REINDEX,
+                "Re-index Workspace",
+                Workspace,
+                None,
+                Always,
+            ),
+            workspace_reindex,
+        ),
+        (
+            spec(
+                ids::SETTINGS_OPEN,
+                "Open Settings",
+                View,
+                Some("cmd-,"),
+                Always,
+            ),
+            settings_open,
+        ),
         (
             spec(
                 ids::DOCUMENT_OPEN,
@@ -236,4 +266,38 @@ fn edit_redo(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, E
 
 fn settings_reload(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
     engine.reload_settings().map(|()| CommandOutcome::Done)
+}
+
+fn workspace_open_folder(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Path(path) = args else {
+        return Err(invalid(ids::WORKSPACE_OPEN_FOLDER, "a path"));
+    };
+    engine
+        .open_workspace(vec![path])
+        .map(|()| CommandOutcome::Done)
+}
+
+fn workspace_reindex(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    engine.reindex();
+    Ok(CommandOutcome::Done)
+}
+
+/// Returns the user settings file, creating an empty one so it can be opened for editing.
+fn settings_open(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let path = engine
+        .settings()
+        .user_file()
+        .map(std::path::Path::to_path_buf)
+        .or_else(crate::Settings::default_user_file)
+        .ok_or_else(|| EngineError::NotFound("no configuration directory".to_owned()))?;
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
+        }
+        std::fs::write(&path, "").map_err(|error| EngineError::io(&path, error))?;
+    }
+    Ok(CommandOutcome::External(path))
 }

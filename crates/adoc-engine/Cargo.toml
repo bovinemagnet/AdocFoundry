@@ -8,8 +8,10 @@ repository.workspace = true
 [dependencies]
 adoc-core.workspace = true
 adoc-index.workspace = true
+adoc-lang.workspace = true
 adoc-parser.workspace = true
 dirs.workspace = true
+notify.workspace = true
 ropey.workspace = true
 serde.workspace = true
 serde_json.workspace = true
