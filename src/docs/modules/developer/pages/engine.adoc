@@ -47,7 +47,7 @@ A `Command` has a `CommandSpec` and a `run` function.
 
 Commands are registered once in a `CommandRegistry`, and registering a duplicate id is an error.
 They are invoked with `Engine::invoke(id, args)`, where `CommandArgs` carries a document, an offset, a text edit, a path or a request.
-They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`, `Url` or `Preview`.
+They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`, `Url`, `Preview`, `Committed` or `CommitDraft`.
 `Url(String)` carries an address for the front end to open (`cx.open_url`) or copy, so the engine needs no browser-opening crate.
 
 [cols="2,3"]
@@ -166,6 +166,9 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 
 |`GitHunksChanged`
 |The changed line runs of an open document were recomputed.
+
+|`GitPushed`
+|A push finished, with a `message` that reports the result or the error Git gave.
 |===
 
 == The preview service
@@ -357,7 +360,7 @@ A `notify` watcher, with a 250 ms debounce, feeds the pump.
 == Git
 
 `Engine::git()` returns a `GitState`, built on the `adoc-git` crate.
-It holds one `GitRepository` (`workdir`, `git_dir`, `head` and the `roots` it serves) per repository, however many workspace roots lie inside it.
+It holds one `GitRepository` (`workdir`, `git_dir`, `head`, `ahead` and the `roots` it serves) per repository, however many workspace roots lie inside it.
 `repositories()`, `repository_for(path)`, `head_for(root)`, `status_for(path)`, `statuses()` and `hunks_for(DocumentId)` read it.
 
 `open_workspace` discovers each root's repository and reads its status on a worker thread, and the result arrives through `pump()` as indexing does.
@@ -384,6 +387,44 @@ It reports "there is no change here" when the caret is in no change.
 * `git.next_change` (Go to Next Change, Alt-Down) and `git.previous_change` (Go to Previous Change, Alt-Up) move the caret to the next or previous change, wrapping round at the ends.
 They report "there are no changes" when there are none.
 * `git.show_changes` (Show Changes, View category) switches the sidebar to the Changes panel.
+
+`GitRepository::ahead` is an `Option<usize>`: the commits on the current branch that the remote named by `git.remote` does not have, or `None` when the branch has no remote-tracking branch.
+It is refreshed with the status.
+
+=== Staging, committing and pushing
+
+`src/commit.rs` holds the commands, which are all in the palette with no default binding.
+`Engine::changed_writer_files` gives the files the Changes panel lists, and `git.stage_all_adoc` stages the same list.
+
+[cols="2,3"]
+|===
+|Command |Purpose
+
+|`git.stage` (Stage), `git.unstage` (Unstage)
+|Take `CommandArgs::Path` or `CommandArgs::Custom` with a `"paths"` array. From the palette they act on the active file.
+
+|`git.stage_all_adoc` (Stage All Changes)
+|Stages every file in `changed_writer_files`.
+
+|`git.commit` (Commit)
+|Takes `CommandArgs::Custom` with a `"message"` and optional `"paths"`. With paths, open documents among them that have unsaved edits are saved first and the paths are staged. It returns `CommandOutcome::Committed { commit, saved }`. From the palette, with no arguments, it opens the dialog.
+
+|`git.push` (Push)
+|Pushes the current branch to `[git] remote`. The push runs on a worker thread and publishes `EngineEvent::GitPushed { message }`.
+
+|`git.save_and_commit` (Save and Commit, Document category)
+|Saves the active page, stages it and returns `CommandOutcome::CommitDraft { message, paths }` for the front end to open the dialog with.
+|===
+
+Staging, unstaging and committing go through `adoc-git` and `gix` in process.
+`Repository::stage`, `unstage` and `commit` change the index and `HEAD`, and `identity` and `signs_commits` read the configuration.
+`unpushed(remote, branch)` counts the commits ahead of the remote-tracking branch, `has_upstream(branch)` says whether the branch has one, and `head_commit_id` gives the new commit.
+`GitError::NoIdentity` and `GitError::NothingToCommit` are the two refusals.
+`discover_isolated` opens a repository reading only its own configuration, so that a test can show the no-identity refusal whatever the developer's global identity is.
+
+A commit made with `commit.gpgsign` set, and every push, runs the `git` executable from `[tools] git`, else `git` on `PATH`.
+A push without one fails with "pushing needs the git executable: install Git or set [tools] git".
+A branch with no upstream is refused before anything is run.
 
 === Blame and remote links
 

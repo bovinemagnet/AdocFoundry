@@ -146,7 +146,9 @@ A detached HEAD shows `⎇ detached @ 1a2b3c4` and a repository with no commits 
 Outside a repository nothing is shown.
 When the active page belongs to an Antora component, the bar shows its version and the branch together, such as `product@2.0 · main`, or `product@latest` for a component with `version: ~`.
 See xref:antora-support.adoc#versions-and-branches[Versions and branches].
-The branch updates after a commit or a branch switch.
+When the branch has a remote-tracking branch on the remote named by `git.remote`, the bar adds the number of commits the remote does not have, such as `⎇ main ↑2` or `product@2.0 · main ↑0`.
+Nothing is added while the branch has no remote-tracking branch yet.
+The branch and the count update after a commit, a push or a branch switch.
 Refresh Git Status (`git.refresh`) in the palette discovers the repositories again, and the `git.enabled` setting turns this off; see xref:settings.adoc[Settings].
 
 [[change-markers]]
@@ -190,8 +192,61 @@ Each row has the status letters of `git status --short`, the path relative to th
 ----
 
 With more than one repository, the files are grouped under each repository's folder name.
-Clicking a row opens the file with the caret on its first change.
-The row of a deleted file does nothing.
+Clicking a row's name opens the file with the caret on its first change.
+The name of a deleted file is struck through and opens nothing.
+
+[[staging-and-committing]]
+=== Staging and committing
+
+Each row has a checkbox, ticked when the file has changes staged.
+Ticking it stages the file as it is in the working tree: new and changed files are added and a deleted file is staged as deleted.
+Unticking it unstages the file by putting the `HEAD` version back in the index.
+The working tree is not touched.
+
+Above the rows, *Stage All* stages every file the panel lists and is disabled when it lists none.
+*Commit…* opens the commit dialog and is disabled when nothing is staged.
+
+The commit dialog has:
+
+* a message field, whose first line is the summary, with a note under it such as "Summary: 41 of 72 characters", shown in the warning colour past 72;
+* the files that will be committed;
+* *Commit* and *Commit and Push* buttons.
+
+The dialog has no option to amend a commit or to create a branch.
+After committing, a notification reads `Committed abc1234`, or `Saved 2 files and committed abc1234` when open documents with unsaved edits were saved first.
+The change markers and the Changes panel clear, because `HEAD` has moved.
+
+Commit (`git.commit`) in the palette opens the same dialog.
+Stage (`git.stage`) and Unstage (`git.unstage`) in the palette act on the active file, and Stage All Changes (`git.stage_all_adoc`) does what *Stage All* does.
+
+Save and Commit (`git.save_and_commit`, in the Document category) saves the active page, stages it and opens the dialog with the message `docs: update <page title>`.
+The page title is the document title, or the file name when the page has none.
+
+A commit needs an author.
+The name and address come from `user.name` and `user.email` in the usual Git configuration scopes.
+Without them the commit is refused with a message that says how to set them:
+
+[source,sh]
+----
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+----
+
+A commit with nothing staged is refused with "nothing is staged to commit".
+When `commit.gpgsign` is `true`, the commit is made with the `git` executable so that it is signed with your key.
+
+[[pushing]]
+=== Pushing
+
+*Commit and Push* in the dialog, and Push (`git.push`) in the palette, push the current branch to the remote named by `git.remote`, `origin` by default.
+Pushing runs the `git` executable, so your credential helper, SSH agent and signing setup work unchanged.
+A notification reports the result, such as "Pushed main to origin", or shows the error Git gave.
+
+Push never forces and never sets an upstream.
+A branch with no upstream is refused with "branch X has no upstream: run `git push --set-upstream origin X` once".
+The executable is `tools.git` when set, else `git` on `PATH`.
+Without one, the command says "pushing needs the git executable: install Git or set [tools] git".
+Staging and committing do not need the executable, apart from signed commits.
 
 [[blame]]
 == Blame

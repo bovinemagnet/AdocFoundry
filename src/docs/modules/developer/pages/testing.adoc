@@ -126,6 +126,12 @@ Blame and remote links are covered at each layer.
 * `adoc-git`: `blame_attributes_committed_lines`, `blame_marks_uncommitted_lines`, `remote_link_github_ssh_and_https`, `remote_link_gitlab_self_hosted_uses_dash_blob`, `remote_link_unknown_host_is_none`, `remote_link_detached_head_uses_commit` and `remote_tracking_and_pushed_branches`, with a unit test of `blame_through` around insertions, changes and deletions.
 * `adoc-engine`: `blame_is_lazy_and_invalidated_on_save` and `remote_links_need_a_known_host_and_a_pushed_branch`.
 
+Staging, committing and pushing are covered at each layer.
+`TestRepo::set_identity(name, email)` writes the identity to the repository's own configuration, so a developer's global identity never reaches a test.
+
+* `adoc-git`: `stage_and_unstage_round_trip`, `commit_uses_config_identity`, `commit_refuses_without_identity`, `commit_refuses_empty_index` and `unpushed_count_against_remote_tracking`.
+* `adoc-engine`: `commit_saves_dirty_documents_first`, `save_and_commit_prefills_message`, `stage_all_stages_the_changed_writer_files` and `push_disabled_without_git_executable`.
+
 == Language server tests
 
 `crates/adoc-ls/tests/stdio.rs` starts the real `adoc-ls` binary and speaks LSP to it: initialise and shutdown, completion, hover, the preview commands and command routing.
@@ -149,6 +155,7 @@ They cover:
 * the search panel showing workspace results;
 * composed input committing the composed text;
 * the Git change markers and the Changes panel: `gutter_marks_follow_hunks`, `clicking_a_mark_shows_head_text_and_reverts`, `visual_blocks_marked_when_range_intersects_hunk` and `changes_panel_lists_changed_adoc_files_only`;
+* committing from the app: `save_and_commit_commits_the_page_and_counts_it_unpushed`;
 * the blame column and hover: `blame_column_toggles_and_hover_shows_the_commit`;
 * the version badge: `status_bar_shows_the_version_and_branch`;
 * `every_command_is_in_the_palette` (in `editor/bindings.rs`), which fails when an engine command has no UI action, apart from those driven by typing and clicks.

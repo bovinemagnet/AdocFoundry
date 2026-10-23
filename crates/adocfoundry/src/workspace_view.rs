@@ -644,7 +644,8 @@ impl WorkspaceView {
         let note = if saved.is_empty() {
             format!("Committed {short}")
         } else {
-            format!("Saved {} file(s) and committed {short}", saved.len())
+            let files = if saved.len() == 1 { "file" } else { "files" };
+            format!("Saved {} {files} and committed {short}", saved.len())
         };
         window.push_notification(note, cx);
         if push {

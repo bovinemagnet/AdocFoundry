@@ -362,6 +362,26 @@ It was not adopted, and its design (steps with inverses, step maps, marks on tex
 |Not specified
 |`blame_for` is on `Engine`, not `GitState`.
 |It overlays the HEAD blame with the current hunks, which needs the document's text.
+
+|Unpushed count test
+|Suggested a bare remote on disk
+|`unpushed_count_against_remote_tracking` uses a remote-tracking branch written by `TestRepo::track_remote`.
+|The count reads the remote-tracking branch, so a bare remote adds nothing to the test.
+
+|Writing the index to a tree
+|Not specified
+|`Repository::commit` builds the tree from the index entries with gix's tree editor.
+|gix 0.90 has no index-to-tree writer.
+
+|Staging and committing
+|Not specified
+|They go through `gix` in process. A commit made with `commit.gpgsign` set is made with the `git` executable so that it is signed with the user's key.
+|The signing setup is the user's, and gix does not sign.
+
+|Pushing
+|The epic allows the `git` executable
+|`git.push` runs `git push` from `[tools] git`, else `git` on `PATH`, on a worker thread. It never forces and never sets an upstream.
+|The user's credential helper, SSH agent and signing setup work unchanged.
 |===
 
 == Related

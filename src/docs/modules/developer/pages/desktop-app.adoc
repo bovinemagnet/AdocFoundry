@@ -201,7 +201,17 @@ The visual editor's bars are drawn in `visual/blocks.rs`: a block is marked when
 The Changes panel is `sidebar::changes`.
 It is built from the engine's Git statuses and shown only when a root is in a repository.
 Clicking a row invokes `document.open`, asks the engine for the document's changes with `Engine::hunks_now`, and places the caret on the first one (`WorkspaceView::open_first_change`, then `open_at`).
-A deleted file's row does nothing.
+A deleted file's name is struck through and its row opens nothing.
+The rows come from `Engine::changed_writer_files`, the list that Stage All uses.
+Each row has a checkbox, ticked when the file has changes staged, and it invokes `git.stage` or `git.unstage`.
+*Stage All* invokes `git.stage_all_adoc` and is disabled when the list is empty, and *Commit…* is disabled when nothing is staged.
+
+The commit dialog is `commit_dialog`.
+It holds the message field, the summary count ("Summary: N of 72 characters", in the warning colour past 72) and the files to be committed.
+*Commit* invokes `git.commit` with the message and the paths, and *Commit and Push* then invokes `git.push`.
+It reports the outcome in a notification: `Committed abc1234`, or `Saved N file(s) and committed abc1234`.
+The `CommandOutcome::CommitDraft` from Save and Commit opens it with the message and paths filled in.
+The status bar adds `↑n` from `GitRepository::ahead`.
 
 == Tree-sitter grammars
 
