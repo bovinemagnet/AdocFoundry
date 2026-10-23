@@ -55,6 +55,7 @@ pub struct Engine {
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
     pub(crate) rendered: crate::rendered::PreviewState,
     pub(crate) visual: crate::visual::VisualState,
+    pub(crate) git: crate::git::GitState,
 }
 
 /// Typed characters re-parse their document at once but re-index it, and refresh diagnostics,
@@ -108,6 +109,7 @@ impl Engine {
             pending_index: BTreeMap::new(),
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
+            git: crate::git::GitState::default(),
         }
     }
 
@@ -169,6 +171,7 @@ impl Engine {
         self.emit(EngineEvent::DocumentOpened(id));
         if !untitled {
             self.refresh_open_diagnostics(None);
+            self.schedule_hunks(id, false);
         }
         id
     }
@@ -207,6 +210,7 @@ impl Engine {
         self.pending_index.remove(&id);
         self.forget_preview(id);
         self.forget_visual(id);
+        self.forget_hunks(id);
         if self.rendered.layout.pinned == Some(id) {
             self.rendered.layout.pinned = None;
             self.emit(EngineEvent::PreviewLayoutChanged);
@@ -247,6 +251,7 @@ impl Engine {
             state.saved_hash = hash_text(&text);
         }
         self.emit(EngineEvent::DocumentSaved(id));
+        self.schedule_hunks(id, false);
         Ok(())
     }
 
@@ -490,6 +495,9 @@ impl Engine {
         });
         self.preview_source_changed(&path);
         self.visual_source_changed(&path);
+        if !untitled {
+            self.schedule_hunks(id, defer_index);
+        }
         if untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
         } else if !defer_index {
@@ -577,8 +585,12 @@ impl Engine {
     }
 
     pub fn reload_settings(&mut self) -> Result<(), EngineError> {
+        let git_was_enabled = self.settings.git.enabled;
         self.settings.reload()?;
         self.emit(EngineEvent::SettingsChanged);
+        if self.settings.git.enabled != git_was_enabled {
+            self.discover_git();
+        }
         Ok(())
     }
 

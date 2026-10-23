@@ -58,4 +58,16 @@ pub enum EngineEvent {
     },
     /// The document is now shown as source, visual or both.
     EditorModeChanged(DocumentId),
+    /// The repository holding workspace root `root` was found, or its `HEAD` moved to another
+    /// branch or commit.
+    GitHeadChanged {
+        root: PathBuf,
+        head: crate::Head,
+    },
+    /// The status of the files in the repository holding `root` changed, or was found.
+    GitStatusChanged {
+        root: PathBuf,
+    },
+    /// New line changes of an open document against `HEAD` are in `Engine::git`.
+    GitHunksChanged(DocumentId),
 }

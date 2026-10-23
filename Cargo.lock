@@ -176,6 +176,7 @@ dependencies = [
  "adoc-core",
  "adoc-diagrams",
  "adoc-dom",
+ "adoc-git",
  "adoc-index",
  "adoc-lang",
  "adoc-model",
