@@ -131,3 +131,81 @@ fn nav_trees_read_unsaved_buffers() {
     let trees = engine.nav_trees("alpha", Some("1.0")).unwrap();
     assert_eq!(trees[0].items[0].title, "Renamed");
 }
+
+#[test]
+fn typing_defers_reindexing_until_typing_pauses() {
+    use std::sync::Arc;
+
+    use adoc_engine::{ManualClock, INDEX_SETTLE};
+
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n\nSee xref:missing.adoc[].\n").unwrap();
+    let clock = ManualClock::new();
+    let mut engine =
+        Engine::with_clock(Settings::load(None, None).unwrap(), Arc::new(clock.clone()));
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&page).unwrap();
+    let indexed = |engine: &Engine| {
+        engine
+            .workspace()
+            .index
+            .file(&page)
+            .unwrap()
+            .document
+            .text
+            .clone()
+    };
+
+    // A typed character re-parses at once but leaves the index until typing pauses.
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, 0),
+                text: "x".to_owned(),
+            },
+        )
+        .unwrap();
+    assert!(engine
+        .document(id)
+        .unwrap()
+        .parsed
+        .text
+        .starts_with("x= Page"));
+    assert_eq!(indexed(&engine), "= Page\n\nSee xref:missing.adoc[].\n");
+    assert!(engine.has_pending());
+
+    let events = engine.subscribe();
+    engine.pump();
+    assert!(
+        indexed(&engine).starts_with("= Page"),
+        "not before the pause"
+    );
+    clock.advance(INDEX_SETTLE);
+    engine.pump();
+    assert!(indexed(&engine).starts_with("x= Page"));
+    assert!(events
+        .try_iter()
+        .any(|event| matches!(event, EngineEvent::DiagnosticsUpdated { .. })));
+
+    // Any other command brings the index up to date first.
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, 0),
+                text: "y".to_owned(),
+            },
+        )
+        .unwrap();
+    engine
+        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
+        .unwrap();
+    assert!(indexed(&engine).starts_with("yx= Page"));
+}

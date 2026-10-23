@@ -130,6 +130,7 @@ impl Engine {
     #[must_use]
     pub fn has_pending(&self) -> bool {
         self.workers_running > 0
+            || !self.pending_index.is_empty()
             || self
                 .watcher
                 .as_ref()
@@ -144,7 +145,8 @@ impl Engine {
             self.apply_worker_message(message);
             applied += 1;
         }
-        applied + self.apply_file_changes(Instant::now())
+        let due = self.clock.now();
+        applied + self.index_pending(Some(due)) + self.apply_file_changes(Instant::now())
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the

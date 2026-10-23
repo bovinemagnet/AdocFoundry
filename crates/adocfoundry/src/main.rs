@@ -7,6 +7,7 @@ mod editor;
 mod mirror_view;
 mod search_view;
 mod sidebar;
+mod typing_bench;
 #[cfg(test)]
 mod ui_tests;
 mod workspace_view;

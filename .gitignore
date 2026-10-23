@@ -25,3 +25,10 @@ rustc-ice-*.txt
 
 # cargo xtask package output
 /dist
+
+# Gradle (documentation build only)
+/.gradle
+/build
+/node_modules
+/package-lock.json
+/.cache

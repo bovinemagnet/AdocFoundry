@@ -61,8 +61,12 @@ pub struct SourceEditorView {
     app: Entity<AppState>,
     document: DocumentId,
     state: Entity<EditorState>,
+    _diagnostics: Option<gpui::Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
+
+/// Diagnostics are redrawn once typing pauses for this long, not on every keystroke.
+const DIAGNOSTICS_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl SourceEditorView {
     pub fn new(
@@ -134,7 +138,10 @@ impl SourceEditorView {
                     this.reconcile(window, cx);
                 }
                 EngineEvent::DiagnosticsUpdated { path } if this.is_path(path, cx) => {
-                    this.show_diagnostics(cx);
+                    this._diagnostics = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(DIAGNOSTICS_DELAY).await;
+                        let _ = this.update(cx, |this, cx| this.show_diagnostics(cx));
+                    }));
                 }
                 _ => {}
             },
@@ -144,6 +151,7 @@ impl SourceEditorView {
             app,
             document,
             state,
+            _diagnostics: None,
             _subscriptions: subscriptions,
         };
         view.show_diagnostics(cx);
@@ -160,6 +168,17 @@ impl SourceEditorView {
             .engine
             .document(self.document)
             .is_some_and(|open| open.path == path)
+    }
+
+    #[cfg(test)]
+    pub fn state_for_test(&self) -> &Entity<EditorState> {
+        &self.state
+    }
+
+    /// The caret's zero-based line and column (in UTF-16 code units, as the widget counts).
+    pub fn cursor_line_column(&self, cx: &gpui::App) -> (u32, u32) {
+        let position = self.state.read(cx).cursor_position();
+        (position.line, position.character)
     }
 
     /// The widget's current text.
@@ -230,6 +249,12 @@ impl SourceEditorView {
             }));
             cx.notify();
         });
+    }
+
+    /// Types `text` at the caret as a keystroke would, for the typing benchmark.
+    pub fn type_for_benchmark(&self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.state
+            .update(cx, |state, cx| state.insert(text.to_owned(), window, cx));
     }
 
     /// Follows the link under the caret.

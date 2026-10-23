@@ -50,7 +50,14 @@ pub struct Engine {
     pub(crate) next_preview: u64,
     pub(crate) next_search: u64,
     pub(crate) group_moves: BTreeMap<UndoGroup, Vec<crate::FileMove>>,
+    /// Documents whose typed edits are parsed but not yet in the index, with the time after
+    /// which `pump` indexes them.
+    pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
 }
+
+/// Typed characters re-parse their document at once but re-index it, and refresh diagnostics,
+/// only once typing pauses this long. Every other command indexes first.
+pub const INDEX_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// How an edit is recorded in undo history.
 #[derive(Clone, Copy, Debug)]
@@ -96,6 +103,7 @@ impl Engine {
             next_preview: 1,
             next_search: 1,
             group_moves: BTreeMap::new(),
+            pending_index: BTreeMap::new(),
         }
     }
 
@@ -192,6 +200,7 @@ impl Engine {
             .remove(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
+        self.pending_index.remove(&id);
         if !document.untitled {
             match fs::read_to_string(&document.path) {
                 Ok(text) => {
@@ -263,6 +272,9 @@ impl Engine {
             .registry
             .shared(command)
             .ok_or(EngineError::UnknownCommand(command))?;
+        if command != commands::ids::EDIT_INSERT_TEXT {
+            self.flush_index();
+        }
         let result = handler.run(self, args);
         if let Err(error) = &result {
             self.emit(EngineEvent::CommandFailed {
@@ -309,7 +321,10 @@ impl Engine {
             else {
                 continue;
             };
-            if self.edit_document(document, entry.inverse.clone()).is_ok() {
+            if self
+                .edit_document(document, entry.inverse.clone(), false)
+                .is_ok()
+            {
                 if let Some(state) = self.states.get_mut(&document) {
                     state.undo.push_redo(entry);
                 }
@@ -336,7 +351,10 @@ impl Engine {
             else {
                 continue;
             };
-            if self.edit_document(document, entry.forward.clone()).is_ok() {
+            if self
+                .edit_document(document, entry.forward.clone(), false)
+                .is_ok()
+            {
                 if let Some(state) = self.states.get_mut(&document) {
                     state.undo.push_undo_keep_redo(entry);
                 }
@@ -376,7 +394,7 @@ impl Engine {
             }
             _ => None,
         };
-        let applied = self.edit_document(id, edits)?;
+        let applied = self.edit_document(id, edits, typed.is_some())?;
         let now = self.clock.now();
         if let Some((offset, text)) = &typed {
             let coalesced = self.states.get_mut(&id).is_some_and(|state| {
@@ -410,11 +428,13 @@ impl Engine {
     }
 
     /// Applies edits without touching undo history: updates the rope, bumps the version,
-    /// re-parses and publishes the change.
+    /// re-parses and publishes the change. With `defer_index`, re-indexing and diagnostics wait
+    /// for [`INDEX_SETTLE`].
     fn edit_document(
         &mut self,
         id: DocumentId,
         edits: Vec<TextEdit>,
+        defer_index: bool,
     ) -> Result<AppliedEdits, EngineError> {
         let document = self
             .documents
@@ -433,7 +453,11 @@ impl Engine {
         let untitled = document.untitled;
         if untitled {
             document.diagnostics = document.parsed.diagnostics.clone();
+        } else if defer_index {
+            let deadline = self.clock.now() + INDEX_SETTLE;
+            self.pending_index.insert(id, deadline);
         } else {
+            self.pending_index.remove(&id);
             let parsed = document.parsed.clone();
             self.workspace.replace_document(path.clone(), parsed);
         }
@@ -445,7 +469,7 @@ impl Engine {
         });
         if untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
-        } else {
+        } else if !defer_index {
             self.refresh_open_diagnostics(Some(&path));
         }
         Ok(AppliedEdits {
@@ -475,6 +499,32 @@ impl Engine {
     #[must_use]
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    /// Indexes every document whose typed edits are waiting for a pause, and refreshes
+    /// diagnostics. Returns the number indexed.
+    pub(crate) fn flush_index(&mut self) -> usize {
+        self.index_pending(None)
+    }
+
+    /// Indexes pending documents whose deadline is at or before `due`, or all when `None`.
+    pub(crate) fn index_pending(&mut self, due: Option<std::time::Instant>) -> usize {
+        let ready: Vec<DocumentId> = self
+            .pending_index
+            .iter()
+            .filter(|(_, deadline)| due.is_none_or(|due| **deadline <= due))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &ready {
+            self.pending_index.remove(id);
+            let Some(document) = self.documents.get(id) else {
+                continue;
+            };
+            let (path, parsed) = (document.path.clone(), document.parsed.clone());
+            self.workspace.replace_document(path.clone(), parsed);
+            self.refresh_open_diagnostics(Some(&path));
+        }
+        ready.len()
     }
 
     /// The workspace index, Antora catalog and descriptor problems.

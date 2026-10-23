@@ -62,6 +62,9 @@ pub fn follow_link(
     }
 }
 
+/// How long typing must pause before the outline and problems list are rebuilt.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SidebarTab {
     Navigation,
@@ -82,6 +85,9 @@ pub struct WorkspaceView {
     problems_stale: bool,
     outline: Entity<TreeState>,
     outline_stale: bool,
+    /// True from an edit until typing pauses; the outline and problems wait for the pause.
+    unsettled: bool,
+    _settle: Option<gpui::Task<()>>,
     search: Entity<SearchView>,
     show_search: bool,
     palette: Entity<CommandState>,
@@ -112,6 +118,8 @@ impl WorkspaceView {
             problems_stale: true,
             outline: cx.new(|cx| TreeState::new(cx)),
             outline_stale: true,
+            unsettled: false,
+            _settle: None,
             search,
             show_search: false,
             palette: cx.new(|cx| CommandState::new(window, cx)),
@@ -126,6 +134,12 @@ impl WorkspaceView {
         }
         for file in files {
             view.open_at(&file, SourceRange::default(), window, cx);
+        }
+        if let (Some(duration), Some(editor)) = (
+            crate::typing_bench::requested(),
+            view.active_editor().cloned(),
+        ) {
+            crate::typing_bench::start(editor, duration, window, cx);
         }
         view
     }
@@ -144,7 +158,10 @@ impl WorkspaceView {
                 self.rebuild_catalog_trees(cx);
                 self.problems_stale = true;
             }
-            EngineEvent::DiagnosticsUpdated { .. } => self.problems_stale = true,
+            EngineEvent::DiagnosticsUpdated { .. } => {
+                self.problems_stale = true;
+                self.settle_later(cx);
+            }
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
             EngineEvent::DocumentClosed(id) => {
                 self.tabs.retain(|tab| tab.read(cx).document() != *id);
@@ -152,6 +169,7 @@ impl WorkspaceView {
             }
             EngineEvent::DocumentChanged { id, .. } if Some(*id) == self.active_document(cx) => {
                 self.outline_stale = true;
+                self.settle_later(cx);
             }
             EngineEvent::DocumentMoved { .. } => self.problems_stale = true,
             EngineEvent::DocumentSaved(id) => self.reload_settings_if_edited(*id, cx),
@@ -185,8 +203,20 @@ impl WorkspaceView {
             .update(cx, |tree, cx| tree.set_items(families, cx));
     }
 
+    /// Defers the outline and problems until no edit has arrived for [`SETTLE`].
+    fn settle_later(&mut self, cx: &mut Context<Self>) {
+        self.unsettled = true;
+        self._settle = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SETTLE).await;
+            let _ = this.update(cx, |this, cx| {
+                this.unsettled = false;
+                cx.notify();
+            });
+        }));
+    }
+
     fn refresh_problems(&mut self, cx: &mut Context<Self>) {
-        if !self.problems_stale {
+        if !self.problems_stale || self.unsettled {
             return;
         }
         self.problems_stale = false;
@@ -200,7 +230,7 @@ impl WorkspaceView {
     }
 
     fn refresh_outline(&mut self, cx: &mut Context<Self>) {
-        if !self.outline_stale {
+        if !self.outline_stale || self.unsettled {
             return;
         }
         self.outline_stale = false;
@@ -903,12 +933,9 @@ impl WorkspaceView {
             Some(editor) => {
                 let editor = editor.read(cx);
                 let id = editor.document();
-                let cursor = editor.cursor(cx);
                 let document = engine.document(id);
-                let position = document.map(|document| {
-                    let (line, column) = document.parsed.line_index().line_column(cursor);
-                    format!("Ln {}, Col {}", line + 1, column + 1)
-                });
+                let (line, column) = editor.cursor_line_column(cx);
+                let position = Some(format!("Ln {}, Col {}", line + 1, column + 1));
                 let path = document.map(|document| sidebar::display_path(&document.path, &roots));
                 (position, path)
             }

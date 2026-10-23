@@ -26,7 +26,7 @@ pub use command::{
 };
 pub use document::{DocumentId, OpenDocument};
 pub use edit::TextEdit;
-pub use engine::Engine;
+pub use engine::{Engine, INDEX_SETTLE};
 pub use error::EngineError;
 pub use event::EngineEvent;
 pub use navigation::NavigationPosition;

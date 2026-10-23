@@ -248,3 +248,50 @@ fn the_search_panel_shows_workspace_results(cx: &mut TestAppContext) {
     }
     assert_eq!(count, Some(9), "every xref: in the fixture is found");
 }
+
+/// IME composition reaches the editor through GPUI's input handler: marked (provisional) text is
+/// replaced as the user composes, then committed. The engine must end up with exactly the
+/// committed text, with nothing of the provisional stages left behind.
+#[gpui::test]
+fn ime_composition_commits_the_composed_text(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+
+    init(cx);
+    let mut engine = Engine::new(Settings::default());
+    let document = engine.open_untitled();
+    let app = app_with(engine, cx);
+    let (editor, window) = editor_window(&app, document, cx);
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let state = cx.update(|_, cx| editor.read(cx).state_for_test().clone());
+
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            state.replace_text_in_range(None, "= Title\n", window, cx);
+            for stage in ["に", "にほ", "にほん", "日本"] {
+                let marked = state.marked_text_range(window, cx);
+                state.replace_and_mark_text_in_range(marked, stage, None, window, cx);
+            }
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|window, cx| state.update(cx, |state, cx| state.marked_text_range(window, cx))),
+        Some(8..10),
+        "the composition is still provisional"
+    );
+
+    cx.update(|window, cx| {
+        state.update(cx, |state, cx| {
+            let marked = state.marked_text_range(window, cx);
+            state.replace_text_in_range(marked, "日本", window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    assert_eq!(document_text(&app, &mut cx), "= Title\n日本");
+    assert_eq!(widget_text(&editor, &mut cx), "= Title\n日本");
+    assert!(cx
+        .update(|window, cx| state.update(cx, |state, cx| state.marked_text_range(window, cx)))
+        .is_none());
+    assert!(cx.update(|_, cx| app.read(cx).engine.document(document).unwrap().dirty));
+}
