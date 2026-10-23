@@ -1127,6 +1127,44 @@ impl WorkspaceView {
         }
     }
 
+    fn on_toggle_blame(&mut self, _: &ToggleBlame, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.active_editor().cloned() {
+            editor.update(cx, |editor, cx| editor.toggle_blame(window, cx));
+        }
+    }
+
+    fn on_open_on_remote(&mut self, _: &OpenOnRemote, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(url) = self.remote_link(ids::NAVIGATE_OPEN_ON_REMOTE, window, cx) {
+            cx.open_url(&url);
+        }
+    }
+
+    fn on_copy_remote_link(
+        &mut self,
+        _: &CopyRemoteLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(url) = self.remote_link(ids::NAVIGATE_COPY_REMOTE_LINK, window, cx) {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
+            window.push_notification(format!("Copied {url}"), cx);
+        }
+    }
+
+    /// The address of the caret's line on the hosting site, from `command`.
+    fn remote_link(
+        &mut self,
+        command: adoc_engine::CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let (id, offset) = self.caret(cx)?;
+        match self.invoke(command, CommandArgs::Offset { id, offset }, window, cx)? {
+            CommandOutcome::Url(url) => Some(url),
+            _ => None,
+        }
+    }
+
     fn on_show_changes(&mut self, _: &ShowChanges, window: &mut Window, cx: &mut Context<Self>) {
         if !self.has_changes_panel(cx) {
             window.push_notification("No workspace folder is in a Git repository.", cx);
@@ -1650,6 +1688,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_previous_change))
             .on_action(cx.listener(Self::on_show_changes))
             .on_action(cx.listener(Self::on_open_in_version))
+            .on_action(cx.listener(Self::on_toggle_blame))
+            .on_action(cx.listener(Self::on_open_on_remote))
+            .on_action(cx.listener(Self::on_copy_remote_link))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))

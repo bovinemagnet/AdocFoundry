@@ -66,6 +66,11 @@ pub(crate) enum WorkerMessage {
         generation: u64,
         versions: Option<adoc_antora::BranchVersions>,
     },
+    GitBlame {
+        id: crate::DocumentId,
+        generation: u64,
+        blame: Result<Vec<adoc_git::BlameLine>, String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -283,6 +288,11 @@ impl Engine {
                 generation,
                 versions,
             } => self.branch_versions_found(generation, versions),
+            WorkerMessage::GitBlame {
+                id,
+                generation,
+                blame,
+            } => self.git_blamed(id, generation, blame),
             WorkerMessage::IndexFailed { error } => {
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,

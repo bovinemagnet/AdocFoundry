@@ -53,6 +53,12 @@ pub struct GitState {
     /// Which branch publishes each Antora version, and the computation that will replace it.
     pub(crate) branch_versions: Option<adoc_antora::BranchVersions>,
     pub(crate) versions_generation: u64,
+    /// The blame of open documents as they are in `HEAD`, computed when first asked for.
+    blames: BTreeMap<DocumentId, Vec<adoc_git::BlameLine>>,
+    /// Documents whose blame is being computed.
+    blaming: BTreeSet<DocumentId>,
+    /// Bumped whenever blame is forgotten, so a computation that started before is dropped.
+    blame_generation: u64,
 }
 
 impl GitState {
@@ -137,6 +143,7 @@ impl Engine {
             .iter()
             .flat_map(|repository| repository.roots.clone())
             .collect();
+        self.forget_blames();
         self.git.repositories.clear();
         self.git.status.clear();
         self.git.refreshes.clear();
@@ -304,6 +311,7 @@ impl Engine {
         }
         // A commit or a branch switch moves `HEAD` under the open documents.
         self.schedule_all_hunks();
+        self.forget_blames();
     }
 
     fn replace_status(&mut self, workdir: &Path, status: Vec<FileStatus>) {
@@ -364,6 +372,150 @@ impl Engine {
     pub(crate) fn forget_hunks(&mut self, id: DocumentId) {
         self.git.hunks.remove(&id);
         self.git.pending_hunks.remove(&id);
+        self.forget_blame(id);
+    }
+
+    // --- blame -------------------------------------------------------------------------------
+
+    /// Who last changed each line of open document `id`, once computed: its blame in `HEAD`
+    /// carried over to the current text, with lines not committed yet marked so. `None` until
+    /// [`Engine::request_blame`] has been answered.
+    #[must_use]
+    pub fn blame_for(&self, id: DocumentId) -> Option<Vec<adoc_git::BlameLine>> {
+        let head = self.git.blames.get(&id)?;
+        // Counted as `str::lines` does: a final newline ends the last line.
+        let lines = self.documents.get(&id)?.text.to_string().lines().count();
+        Some(adoc_git::blame_through(head, self.git.hunks_for(id), lines))
+    }
+
+    /// Computes the blame of open document `id` on a worker thread, unless it is known or on
+    /// its way. Blame is not recomputed as the text changes: edits are overlaid from the hunks.
+    pub fn request_blame(&mut self, id: DocumentId) {
+        if self.git.blames.contains_key(&id) || self.git.blaming.contains(&id) {
+            return;
+        }
+        let Some(document) = self.documents.get(&id) else {
+            return;
+        };
+        let Some(repository) = self.git.repository_for(&document.path) else {
+            return;
+        };
+        let (path, workdir) = (document.path.clone(), repository.workdir.clone());
+        let generation = self.git.blame_generation;
+        self.git.blaming.insert(id);
+        let sender = self.worker_sender.clone();
+        self.workers_running += 1;
+        thread::spawn(move || {
+            let blame = match Repository::discover(&workdir) {
+                Ok(Some(repo)) => repo.head_blame(&path).map_err(|error| error.to_string()),
+                Ok(None) => Ok(Vec::new()),
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = sender.send(WorkerMessage::GitBlame {
+                id,
+                generation,
+                blame,
+            });
+        });
+    }
+
+    pub(crate) fn git_blamed(
+        &mut self,
+        id: DocumentId,
+        generation: u64,
+        blame: Result<Vec<adoc_git::BlameLine>, String>,
+    ) {
+        if generation != self.git.blame_generation {
+            return;
+        }
+        self.git.blaming.remove(&id);
+        if !self.documents.contains_key(&id) {
+            return;
+        }
+        match blame {
+            Ok(blame) => {
+                self.git.blames.insert(id, blame);
+                self.emit(EngineEvent::GitBlameChanged(id));
+            }
+            Err(error) => self.emit(EngineEvent::CommandFailed {
+                command: ids::GIT_SHOW_BLAME,
+                error,
+            }),
+        }
+    }
+
+    /// Forgets the blame of `id`, on a save or a close.
+    pub(crate) fn forget_blame(&mut self, id: DocumentId) {
+        if self.git.blames.remove(&id).is_some() {
+            self.emit(EngineEvent::GitBlameChanged(id));
+        }
+    }
+
+    /// Forgets every document's blame, when `HEAD` may have moved.
+    fn forget_blames(&mut self) {
+        self.git.blame_generation += 1;
+        self.git.blaming.clear();
+        let forgotten: Vec<DocumentId> = self.git.blames.keys().copied().collect();
+        self.git.blames.clear();
+        for id in forgotten {
+            self.emit(EngineEvent::GitBlameChanged(id));
+        }
+    }
+
+    /// The address of the line holding `offset` of open document `id` on the site hosting the
+    /// repository's remote (`[git] remote`), at the current branch or commit.
+    pub fn remote_link(&self, id: DocumentId, offset: usize) -> Result<String, EngineError> {
+        let document = self
+            .documents
+            .get(&id)
+            .ok_or(EngineError::UnknownDocument(id))?;
+        let repository = self.git.repository_for(&document.path).ok_or_else(|| {
+            EngineError::NotFound(format!(
+                "{} is not in a Git repository",
+                document.path.display()
+            ))
+        })?;
+        let repo = self.repository_of(&document.path)?;
+        let remote = &self.settings.git.remote;
+        let url = repo
+            .remote_url(remote)
+            .map_err(|error| EngineError::InvalidRequest(error.to_string()))?
+            .ok_or_else(|| {
+                EngineError::NotFound(format!("the repository has no remote named {remote}"))
+            })?;
+        if let Head::Branch(branch) = &repository.head {
+            let pushed = repo
+                .is_pushed(remote, branch)
+                .map_err(|error| EngineError::InvalidRequest(error.to_string()))?;
+            if !pushed {
+                return Err(EngineError::NotFound(format!(
+                    "branch {branch} is not pushed to {remote}"
+                )));
+            }
+        }
+        let relative = document
+            .path
+            .strip_prefix(&repository.workdir)
+            .unwrap_or(&document.path)
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        let text = document.text.to_string();
+        let (line, _) = adoc_core::LineIndex::new(&text).line_column(offset.min(text.len()));
+        let hosts = self
+            .settings
+            .git
+            .hosts
+            .iter()
+            .filter_map(|(host, kind)| Some((host.clone(), adoc_git::HostKind::from_name(kind)?)))
+            .collect();
+        adoc_git::remote_link_for_line(&url, &repository.head, &relative, line + 1, &hosts)
+            .ok_or_else(|| {
+                EngineError::NotFound(format!(
+                    "the site hosting {url} is not known: name its kind under [git.hosts]"
+                ))
+            })
     }
 
     /// Starts the hunk computations that are due. Returns the number started.
@@ -509,7 +661,7 @@ fn hunk_at(hunks: &[Hunk], offset: usize) -> Option<&Hunk> {
 pub(crate) fn register_git(registry: &mut CommandRegistry) {
     use CommandCategory::{Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
-    let commands: [(crate::CommandSpec, Run); 5] = [
+    let commands: [(crate::CommandSpec, Run); 8] = [
         (
             spec(
                 ids::GIT_REFRESH,
@@ -551,6 +703,41 @@ pub(crate) fn register_git(registry: &mut CommandRegistry) {
             |engine, args| go_to_change(engine, args, false),
         ),
         (
+            spec(
+                ids::GIT_SHOW_BLAME,
+                "Toggle Blame",
+                View,
+                None,
+                ActiveDocument,
+            ),
+            // The front end shows or hides its blame column; the engine computes blame for it.
+            |engine, args| {
+                let (id, _) = document_offset(ids::GIT_SHOW_BLAME, args)?;
+                engine.request_blame(id);
+                Ok(CommandOutcome::Done)
+            },
+        ),
+        (
+            spec(
+                ids::NAVIGATE_OPEN_ON_REMOTE,
+                "Open on Remote",
+                Navigate,
+                None,
+                ActiveDocument,
+            ),
+            remote_link,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_COPY_REMOTE_LINK,
+                "Copy Remote Link",
+                Navigate,
+                None,
+                ActiveDocument,
+            ),
+            remote_link,
+        ),
+        (
             spec(ids::GIT_SHOW_CHANGES, "Show Changes", View, None, Always),
             // The front end shows its Changes panel; the engine has nothing to do.
             |_, _| Ok(CommandOutcome::Done),
@@ -576,6 +763,14 @@ fn document_offset(
             expected: "a document and an offset",
         }),
     }
+}
+
+/// The address of the offset's line on the hosting site, for the front end to open or copy.
+fn remote_link(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let (id, offset) = document_offset(ids::NAVIGATE_OPEN_ON_REMOTE, args)?;
+    engine
+        .remote_link(id, offset.unwrap_or(0))
+        .map(CommandOutcome::Url)
 }
 
 /// Replaces the change at the offset with its text in `HEAD`, as one undo step.

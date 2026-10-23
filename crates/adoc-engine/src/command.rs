@@ -97,6 +97,8 @@ pub enum CommandOutcome {
     Preview(EditPreview),
     /// The selection after a visual command, as source offsets.
     Selection(SourceRange),
+    /// A web address for the front end to open or copy.
+    Url(String),
     Cancelled,
 }
 
