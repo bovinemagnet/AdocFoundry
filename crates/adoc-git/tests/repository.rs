@@ -248,3 +248,71 @@ fn branches_and_files_at_a_branch() {
         "name: product\nversion: ~\n"
     );
 }
+
+#[test]
+fn blame_attributes_committed_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\ntwo\nthree\n");
+    let first = test.commit_all("Write the first draft");
+    test.write("page.adoc", "one\nTWO\nthree\n");
+    let second = test.commit_all("Shout the second line\n\nWith a body.");
+
+    let blame = repo_in(dir.path())
+        .blame(Path::new("page.adoc"), None)
+        .unwrap();
+    assert_eq!(blame.len(), 3);
+    assert_eq!(blame[0].commit.as_deref(), Some(&first[..7]));
+    assert_eq!(blame[1].commit.as_deref(), Some(&second[..7]));
+    assert_eq!(blame[2].commit.as_deref(), Some(&first[..7]));
+    assert_eq!(blame[1].author, "Test Writer");
+    assert_eq!(blame[1].summary, "Shout the second line");
+    assert_eq!(blame[0].summary, "Write the first draft");
+    assert!(blame[1].time > 0);
+    assert_eq!(
+        blame.iter().map(|line| line.line).collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+}
+
+#[test]
+fn blame_marks_uncommitted_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\ntwo\nthree\n");
+    let first = test.commit_all("first");
+
+    let repo = repo_in(dir.path());
+    let blame = repo
+        .blame(Path::new("page.adoc"), Some("one\ninserted\ntwo\nTHREE\n"))
+        .unwrap();
+    let commits: Vec<Option<&str>> = blame.iter().map(|line| line.commit.as_deref()).collect();
+    assert_eq!(
+        commits,
+        [Some(&first[..7]), None, Some(&first[..7]), None],
+        "the inserted and the changed lines are not committed"
+    );
+    assert_eq!(blame[1].summary, "Not committed");
+
+    // A file with no commit yet is all uncommitted.
+    let new = repo.blame(Path::new("new.adoc"), Some("a\nb\n")).unwrap();
+    assert!(new.iter().all(|line| line.commit.is_none()));
+    assert_eq!(new.len(), 2);
+}
+
+#[test]
+fn remote_tracking_and_pushed_branches() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\n");
+    test.commit_all("first");
+    test.add_remote("origin", "git@github.com:bovinemagnet/AdocFoundry.git");
+    let repo = repo_in(dir.path());
+    assert_eq!(
+        repo.remote_url("origin").unwrap().as_deref(),
+        Some("git@github.com:bovinemagnet/AdocFoundry.git")
+    );
+    assert!(!repo.is_pushed("origin", "main").unwrap());
+    test.track_remote("origin");
+    assert!(repo_in(dir.path()).is_pushed("origin", "main").unwrap());
+}
