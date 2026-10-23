@@ -26,6 +26,7 @@ adoc-index = { path = "crates/adoc-index" }
 adoc-lang = { path = "crates/adoc-lang" }
 adoc-model = { path = "crates/adoc-model" }
 adoc-parser = { path = "crates/adoc-parser" }
+adoc-pdf = { path = "crates/adoc-pdf" }
 adoc-render = { path = "crates/adoc-render" }
 
 # External crates: every entry pinned exactly; crates reference these, never their own versions
@@ -51,6 +52,9 @@ gpui-component = { version = "=0.8.0", features = [
     "tree-sitter-yaml",
 ] }
 gpui-kit-assets = "=0.8.0"
+# Rasterises PDFs for the visual regression tests; already in the tree through Typst.
+hayro = "=0.7.1"
+hayro-syntax = "=0.7.2"
 gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 # Built from the grammar submodule by the grammar's own binding crates.
 tree-sitter-asciidoc = { path = "grammars/tree-sitter-asciidoc/tree-sitter-asciidoc" }
@@ -71,9 +75,15 @@ sha2 = "=0.10.9"
 tempfile = "=3.27.0"
 toml = "=1.1.8"
 tree-sitter = "=0.26.13"
+# PDF export: Typst as a library, without its bundled fonts or packages; see crates/adoc-pdf.
+typst = "=0.15.1"
+typst-layout = "=0.15.1"
+typst-pdf = "=0.15.1"
 url = "=2.5.8"
 
 [patch.crates-io]
 # acdc-parser depends on evalexpr 13, which is AGPL-3.0-only; see vendor/README.md.
 evalexpr = { path = "vendor/evalexpr" }
+# comemo keeps the memory of the caches it evicts, gigabytes after a book; see vendor/README.md.
+comemo = { path = "vendor/comemo" }
 

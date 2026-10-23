@@ -1,0 +1,4 @@
+.Getting Started
+* xref:install.adoc[Install]
+** xref:configure.adoc[Configure]
+* xref:use.adoc[Use]

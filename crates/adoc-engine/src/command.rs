@@ -85,6 +85,8 @@ pub enum CommandArgs {
     },
     /// A visual editor command: a selection in a document's visual model.
     Visual(crate::VisualArgs),
+    /// A PDF export: what to export and where to write it.
+    Export(crate::ExportArgs),
     Custom(serde_json::Value),
 }
 

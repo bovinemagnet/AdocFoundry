@@ -1,0 +1,231 @@
+= PDF export
+Paul Snow
+:revnumber: 0.0.0
+:description: How the adoc-pdf crate turns view trees into PDF with Typst and asciidoctor-pdf themes, and how the engine's export service drives it.
+
+PDF export is two parts: the `adoc-pdf` crate, which turns view trees and a theme into PDF bytes, and the export service in `adoc-engine`, which gathers the pages and runs the crate on a worker.
+For using it, see xref:ROOT:pdf-export.adoc[Exporting to PDF].
+
+== Decisions
+
+* Typst 0.15.1 is the typesetter, used as a library (`typst`, `typst-layout` and `typst-pdf`, pinned exactly).
+There is no `typst-as-lib` and no `typst-kit`; the `World` is written in this crate.
+* The emitter reads the view tree (`adoc_render::ViewTree`), not the raw DOM.
+References, images, diagrams, numbering, captions and footnotes are already resolved, exactly as the preview and the HTML backend show them, so there is one resolution path for every output.
+* Styling comes from asciidoctor-pdf's YAML theme language, so existing themes carry over.
+* Nothing from a document or a theme is ever read as Typst code.
+
+== The crate
+
+`adoc-pdf` is at layer L2.
+It depends on `adoc-core`, `adoc-render` and Typst, with `serde`, `serde-saphyr` and `regex`.
+`adoc-render` is a same-layer dependency, listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`.
+It knows nothing of the engine, the workspace or a UI framework: it is given a `Document`, a `LoadedTheme` and `PdfOptions`, and returns a `PdfOutput` with the bytes, the page count and diagnostics.
+
+[cols="1,4"]
+|===
+|Module |Responsibility
+
+|`theme/`
+|The theme loader.
+
+|`emit.rs`
+|The emitter: view blocks and inlines to Typst source, with a source map.
+
+|`adoc.typ`
+|The Typst template: the functions the emitter calls and the styling.
+
+|`document.rs`
+|The whole document: article or book assembly, the title page, the table of contents, and `to_typst`.
+
+|`running.rs`
+|Running content (headers and footers) and the title page.
+
+|`fonts.rs`
+|Fonts for a theme, bundled or from directories.
+
+|`world.rs`
+|The Typst `World`.
+
+|`export.rs`
+|Compilation, PDF standards and the mapping of diagnostics.
+|===
+
+The public entry points are `load_theme`, `to_typst` (for inspection), `compile` and `export`, which does both.
+Every compile, for a PDF or for text, empties Typst's process-wide memoisation cache (`typst::comemo::evict(0)`) once layout is done, because after a 2,000-page book it held about 11 GB that the app would otherwise keep.
+The vendored `comemo` in `vendor/comemo` frees the memory of the caches it empties, which upstream comemo 0.5.1 keeps.
+After a 2,058-page book, 67 MB stays allocated instead of 15.5 GB.
+
+.From command to PDF
+[mermaid]
+----
+include::example$pdf-pipeline.mmd[]
+----
+
+== The theme loader
+
+`load_theme` reproduces asciidoctor-pdf 2.3's `ThemeLoader`.
+The result is a `LoadedTheme` holding the flattened and evaluated `ThemeKeys` in definition order, a `FontCatalog` and a list of `ThemeWarning` values.
+
+* A theme starts from `base_font_size: 12`.
+`base` is never implied; only `extends: base` loads it.
+* `extends` takes bundled names, `./` paths relative to the extending file, other paths relative to the theme directory, and lists.
+` !important` forces a reload.
+* Keys flatten with `_`, and `-` becomes `_` except under `role`.
+Deprecated categories and keys are renamed with a warning.
+* `$name` references, measurements and arithmetic (`*`, `/`, `^`, `+`, `-`, `round()`, `floor()` and `ceil()`) are evaluated.
+Measurements become points. `em`, `rem`, `%`, `vw` and `vh` stay as relative lengths for the template.
+* Colours are normalised from hex, `[r, g, b]`, `[c, m, y, k]` and `transparent`.
+Hex values in themes outside the bundled directory are quoted before YAML parsing, as asciidoctor-pdf does, so `000000` stays a colour.
+* `font.catalog` (with `merge`), `GEM_FONTS_DIR` and `font.fallbacks` are resolved.
+
+The four themes (`base`, `default`, `default-sans` and `default-for-print`) and their fonts are embedded with `include_str!` and `include_bytes!`, so nothing is read from disk.
+The `*-with-font-fallbacks` names load as the theme they extend, with a warning.
+
+A theme is not turned into a typed struct.
+The flattened keys are passed to the template as a Typst dictionary under asciidoctor-pdf's own names, with typed values (lengths in points, colours as colours), and the template resolves fallbacks with `pick`.
+A key asciidoctor-pdf reads is therefore a key the template can read.
+Only unknown top-level categories warn, because themes commonly keep variables in categories of their own.
+
+`ThemeSource::named` picks the source from a name: a `.yml` name is a file, a bundled name is bundled, and any other name is `<name>-theme.yml` in the themes directory.
+
+== The emitter
+
+The emitter (`emit.rs`, driven by `to_typst`) walks the view tree and writes Typst.
+The generated source uses only Typst markup and calls to functions the template defines, such as `adoc-admonition`, `adoc-code` and `adoc-sidebar`, so styling lives in one preamble generated from the theme.
+
+All text from a document is written as a Typst string literal (`typst::string`), shown with `#"…"`, so a document cannot inject Typst.
+Passthrough content is shown as text.
+Runs of spaces collapse to one, as Prawn does.
+The tests include a corpus of strings full of Typst syntax whose PDF text must equal the input.
+
+Anchors become labels namespaced by page (`p3#install`, and `p3` for the page itself), so two pages with the same section id do not collide.
+A cross reference becomes a link to a label, or to a URL.
+
+The emitter also returns a `SourceMap`, from each generated byte range to the AsciiDoc span that produced it, and the image and diagram files it refers to by virtual path.
+
+Index terms are written as `metadata` with labels.
+A section with the `index` style becomes the index, built with `query` over those markers, because no Typst package is reachable.
+
+== The template and the spacing model
+
+`adoc.typ` reads the theme as the dictionary `t` and the document's facts as `doc`: the page size and margins, the language and region, the catalogue's fallback families and line gaps, the table of contents' title and levels, and which heading levels running content names as part, chapter and section titles.
+
+The template reproduces Prawn's spacing model rather than Typst's.
+Typst collapses adjacent spacing to the larger value and spaces lines differently, so:
+
+* Block spacing is zero, and the body writes each block's bottom margin after it as `#v(...)`.
+* Heading tops are weak spacing, so they drop at the top of a page.
+* Every paragraph gets half its leading above and below, in its show rule.
+Wrapping a paragraph in a block from its own show rule cut its links off from the tag tree.
+* Line heights add the font's `hhea.lineGap`.
+* Superscripts and subscripts are zero-height boxes.
+* Typst's own heading size, weight, spacing and stickiness are switched off.
+* Line breaking is greedy (`linebreaks: "simple"`), and spaces only stretch (`justification-limits`), because Prawn fills lines first-fit and never shrinks spaces.
+* Admonitions, code, quotes, sidebars, examples and captioned blocks are unbreakable when they fit on a page, measured at the content width, and `heading_min_height_after` moves a heading with too little room below it.
+These follow asciidoctor-pdf's `arrange_block` and `arrange_heading`.
+`layout()` would measure the exact width, but links laid out inside it lose their place in a tagged PDF.
+
+With this model, the reference article lands within 1.7 pt of asciidoctor-pdf on every line, and negative theme margins work.
+
+Footnotes are collected and placed at the bottom of the last page of the article or chapter.
+The first paragraph of an article's preamble gets the `lead` role, styled only when the theme sets `role_lead_font_size`.
+
+Running content is counted from the page that holds the body's start marker, because a counter update at the start of a page comes after that page's background is laid out.
+Header and footer text is parsed in `running.rs`: attribute references, constrained `*`, `_` and `` ` ``, character references and a lone `image:` macro.
+Image widths are parsed as numbers before they are written.
+
+The article's title and the title page's title are level 1 headings in the PDF structure, because PDF/UA-1 requires the first heading to be level 1.
+
+Lists are drawn with Typst's `enum`, each item's marker given as its number, so that a tagged PDF marks them as lists (`L`, `LI`, `Lbl`, `LBody`) for screen readers.
+Description lists are drawn as blocks.
+
+== The world, fonts and errors
+
+The `World` in `world.rs` serves the generated main source, the theme's fonts and the files the document uses, each at a fixed virtual path.
+There are no packages, no network and no file system access.
+Typst's bundled fonts (`typst-assets`) are not enabled, so the output depends only on the theme's fonts.
+Typst interns file ids for the life of the process, so virtual paths are derived from the real path to stay stable between exports.
+
+`fonts.rs` registers each family of the catalogue under the theme's own name, one face per style, so a theme picks faces as asciidoctor-pdf's catalogue does.
+Bundled fonts are parsed once per process.
+Files are looked for in the given font directories, then the theme's directory.
+An unreadable font is a warning.
+
+Typst's errors and warnings carry spans in the generated source.
+`SourceMap` maps each to the innermost AsciiDoc span that produced it, so a diagnostic reads `install.adoc:42: unknown image format`.
+An error with no mapping is reported against the page.
+A missing image is a diagnostic, not a failure.
+
+`PdfStandard::A2a` and `Ua1` are passed to `typst-pdf`.
+A document date is written only when a standard is requested, the given one or else today's in UTC, so an ordinary export gives the same bytes for the same input.
+The document's title, language (`en-GB` is split into `en` and `GB`), author and keywords come from the attributes.
+An image without alt text gets its file name.
+
+== Book assembly
+
+The engine builds a `Document::Book` from `Engine::nav_trees`.
+A `Book` is a title, a subtitle, attributes and a list of `BookItem` values: a `Part`, a `Heading` with a depth, or a `Page` (a `PageView` with a key and a depth).
+
+* There is one part per nav file when there are several, titled by the nav list's title if it has one.
+* A nav list title that links to a page (`.xref:index.adoc[Architecture]`) titles the part, and the linked page leads that part as its first chapter.
+* A page with no title of its own takes the text of its nav entry as its heading.
+* A nav entry with no page is a heading at its depth.
+* Each page appears once, the first time the nav lists it.
+* The component's start page leads as a preface unless the nav lists it.
+* A page at nav depth `d` becomes a section at level `d`, titled by the page's title, and its own sections move down by `d`.
+* The attributes come from the component's and the playbook's `asciidoc.attributes`, with `doctype` set to `book`, `toc` set unless given, and `revnumber` from the version.
+`pdf-title` overrides the title.
+
+Chapters start a new page.
+Cross references to a page in the book become links to its labels.
+References to pages outside it become links to `[pdf] site_url`, built from `PdfOptions::page_urls`, or stay text without one.
+
+== The export service
+
+The service is in `crates/adoc-engine/src/export.rs`.
+Like the preview service, it keeps the engine single-threaded and puts the long work on workers.
+
+[cols="2,4"]
+|===
+|Item |Purpose
+
+|`export.pdf_page`, `export.pdf_component`
+|The commands. Both take `CommandArgs::Export(ExportArgs)`.
+
+|`ExportTarget`
+|`Page(DocumentId)` or `Component { name, version }`.
+
+|`ExportArgs`
+|The target, the output path, an optional theme, the standards, an optional fonts directory and an optional path to write the Typst to.
+
+|`Engine::export_blocking(args, timeout)`
+|Exports and waits, for front ends without an event loop. The command-line `pdf` uses it.
+
+|`Engine::is_exporting()`
+|True while a job is in flight. The status bar uses it.
+
+|`EngineEvent::ExportFinished`
+|The output path and either an `ExportSummary` (pages and diagnostics) or the error.
+|===
+
+The flow is:
+
+. The command makes a plan: one page, or the nav order of a component version.
+. A worker parses every page from its open buffer or its file, so unsaved buffers are exported.
+. On the engine thread, `pump` builds each view, which needs the catalogue and the index.
+. Diagrams are taken from the cache or rendered on workers. The export waits until none is pending.
+. The theme is loaded and a worker runs `adoc_pdf::export`, writes the PDF (and the Typst, if asked) and reports.
+. The engine publishes `ExportFinished`.
+
+Theme selection is the export's own theme, then `pdf-theme`, then `[pdf] theme`, then `default`.
+Themes directories and fonts directories follow the order in xref:ROOT:pdf-export.adoc[the user guide]; `GEM_FONTS_DIR` is always appended last.
+Standards are the settings' standards plus the export's own.
+Diagrams that failed are reported as warnings.
+
+== Related
+
+* xref:architecture.adoc[Architecture], for the layer of `adoc-pdf`
+* xref:engine.adoc#the-export-service[The engine], for the service in brief
+* xref:testing.adoc#pdf-tests[Testing], for the PDF tests
+* xref:implementation-notes.adoc#phase-4[Implementation notes], for departures from the specification

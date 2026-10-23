@@ -2,6 +2,7 @@
 * xref:developer:index.adoc[Developer overview]
 ** xref:developer:architecture.adoc[Architecture]
 ** xref:developer:engine.adoc[The engine]
+** xref:developer:pdf.adoc[PDF export]
 ** xref:developer:desktop-app.adoc[The desktop app]
 ** xref:developer:testing.adoc[Testing]
 ** xref:developer:building-and-releasing.adoc[Building and releasing]

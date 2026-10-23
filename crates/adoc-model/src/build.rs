@@ -1138,7 +1138,10 @@ fn dom_signature(inlines: &[Inline], marks: MarkSet, out: &mut Vec<(char, MarkSe
                 dom_signature(content, marks.with(Mark::Superscript), out);
             }
             Inline::Subscript(content) => dom_signature(content, marks.with(Mark::Subscript), out),
-            Inline::Span { content, .. } => dom_signature(content, marks, out),
+            Inline::Span { content, .. }
+            | Inline::IndexTerm {
+                visible: content, ..
+            } => dom_signature(content, marks, out),
             Inline::Link { text, .. } | Inline::Xref { text, .. } => {
                 push_chars(&Inline::plain_text(text), marks, out);
             }

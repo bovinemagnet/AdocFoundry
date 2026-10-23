@@ -138,7 +138,7 @@ They are found on the `PATH` only.
 == Known limits
 
 * STEM is shown as styled maths source.
-Typesetting arrives with PDF export in Phase 4.
+PDF export shows it as source too; see xref:pdf-export.adoc[Exporting to PDF].
 * The preview is read-only.
 To edit the rendered page, use the visual editor; see xref:visual-editing.adoc[Visual editing].
 * The preview has no settings of its own.

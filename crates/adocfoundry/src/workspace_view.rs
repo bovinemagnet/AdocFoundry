@@ -8,7 +8,7 @@ use std::{cell::Cell, collections::HashMap, path::Path, rc::Rc};
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode, EngineEvent,
-    NavigationPosition, ThemePreference,
+    ExportArgs, ExportSummary, ExportTarget, NavigationPosition, ThemePreference,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity, FocusHandle,
@@ -21,6 +21,7 @@ use gpui_component::{
     h_flex,
     input::{Editor, EditorState, Input, InputState},
     list::ListItem,
+    notification::Notification,
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
     tab::{Tab, TabBar},
@@ -104,6 +105,29 @@ pub struct WorkspaceView {
     )>,
     revealed: Option<NavigationPosition>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// What the notification says about a finished export: the file and its pages with the first
+/// warning, or the error, which names the file and line it comes from.
+pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, String>) -> String {
+    match result {
+        Ok(summary) => {
+            let warnings = summary.diagnostics.len();
+            let name = output
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+            let mut message = format!("Exported {name} ({} pages)", summary.pages);
+            if warnings > 0 {
+                message.push_str(&format!(
+                    "; {warnings} warning{}: {}",
+                    if warnings == 1 { "" } else { "s" },
+                    summary.diagnostics[0]
+                ));
+            }
+            message
+        }
+        Err(error) => format!("PDF export failed: {error}"),
+    }
 }
 
 impl WorkspaceView {
@@ -209,6 +233,9 @@ impl WorkspaceView {
             }
             EngineEvent::PreviewLayoutChanged => self.place_preview(cx),
             EngineEvent::GitPushed { message } => window.push_notification(message.clone(), cx),
+            EngineEvent::ExportFinished { output, result } => {
+                Self::export_finished(output, result, window, cx);
+            }
             _ => {}
         }
         cx.notify();
@@ -1391,6 +1418,123 @@ impl WorkspaceView {
         self.open_commit_dialog(String::new(), Vec::new(), window, cx);
     }
 
+    /// Asks where to write the active page's PDF, then exports it on the engine's workers.
+    fn on_export_page_pdf(
+        &mut self,
+        _: &ExportPagePdf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        let Some(id) = engine.active() else {
+            window.push_notification("Open a page to export it.", cx);
+            return;
+        };
+        let Some(path) = engine.document(id).map(|document| document.path.clone()) else {
+            return;
+        };
+        let directory = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let name = path
+            .file_stem()
+            .map(|stem| format!("{}.pdf", stem.to_string_lossy()));
+        self.export_to(ExportTarget::Page(id), &directory, name, window, cx);
+    }
+
+    /// Asks where to write the active page's component as a book, then exports it.
+    fn on_export_component_pdf(
+        &mut self,
+        _: &ExportComponentPdf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        let antora = &engine.workspace().antora;
+        let active = engine
+            .active()
+            .and_then(|id| engine.document(id))
+            .and_then(|document| antora.context_for_path(&document.path))
+            .map(|context| (context.component, context.version));
+        let Some((name, version)) = active.or_else(|| {
+            antora
+                .components()
+                .next()
+                .map(|component| (component.name.clone(), component.version.clone()))
+        }) else {
+            window.push_notification("The workspace has no Antora component to export.", cx);
+            return;
+        };
+        let directory = engine.roots().first().cloned().unwrap_or_default();
+        let suggested = Some(format!("{name}.pdf"));
+        self.export_to(
+            ExportTarget::Component { name, version },
+            &directory,
+            suggested,
+            window,
+            cx,
+        );
+    }
+
+    fn export_to(
+        &mut self,
+        target: ExportTarget,
+        directory: &Path,
+        suggested: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let command = match target {
+            ExportTarget::Page(_) => ids::EXPORT_PDF_PAGE,
+            ExportTarget::Component { .. } => ids::EXPORT_PDF_COMPONENT,
+        };
+        let chosen = cx.prompt_for_new_path(directory, suggested.as_deref());
+        cx.spawn_in(window, async move |this, cx| {
+            let output = chosen.await.ok()?.ok()??;
+            this.update_in(cx, |this, window, cx| {
+                this.invoke(
+                    command,
+                    CommandArgs::Export(ExportArgs {
+                        target,
+                        output,
+                        theme: None,
+                        standards: Vec::new(),
+                        fonts_dir: None,
+                        typst: None,
+                    }),
+                    window,
+                    cx,
+                );
+                cx.notify();
+            })
+            .ok()
+        })
+        .detach();
+    }
+
+    /// Tells the user how an export went, with a button to open the PDF.
+    fn export_finished(
+        output: &Path,
+        result: &Result<ExportSummary, String>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let message = export_message(output, result);
+        match result {
+            Ok(_) => {
+                let path = output.to_path_buf();
+                window.push_notification(
+                    Notification::new().message(message).action(move |_, _, _| {
+                        let path = path.clone();
+                        Button::new("open-pdf")
+                            .label("Open")
+                            .on_click(move |_, _, cx| cx.open_with_system(&path))
+                    }),
+                    cx,
+                );
+            }
+            Err(_) => window.push_notification(message, cx),
+        }
+    }
+
     fn on_push(&mut self, _: &Push, window: &mut Window, cx: &mut Context<Self>) {
         self.invoke(ids::GIT_PUSH, CommandArgs::None, window, cx);
     }
@@ -1829,6 +1973,9 @@ impl WorkspaceView {
                 )
             })
             .when(indexing, |bar| bar.left(div().text_xs().child("Indexing…")))
+            .when(engine.is_exporting(), |bar| {
+                bar.left(div().text_xs().child("Exporting PDF…"))
+            })
             .right(
                 div()
                     .text_xs()
@@ -1938,6 +2085,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_stage_all))
             .on_action(cx.listener(Self::on_commit_changes))
             .on_action(cx.listener(Self::on_push))
+            .on_action(cx.listener(Self::on_export_page_pdf))
+            .on_action(cx.listener(Self::on_export_component_pdf))
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_reload_settings))

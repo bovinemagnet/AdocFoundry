@@ -357,6 +357,27 @@ impl Engine {
     /// workspace's includes with open buffers.
     pub(crate) fn parse_input(&self, id: DocumentId) -> Option<OwnedInput> {
         let document = self.documents.get(&id)?;
+        Some(self.owned_input(
+            &document.path,
+            document.text.to_string(),
+            document.version,
+            &document.parsed,
+        ))
+    }
+
+    /// The parse input of the page at `path`: its open buffer when it is open, else the file.
+    pub(crate) fn parse_input_for_path(&self, path: &Path) -> Option<OwnedInput> {
+        if let Some(id) = self.document_for_path(path) {
+            return self.parse_input(id);
+        }
+        let text = fs::read_to_string(path).ok()?;
+        let parsed = adoc_parser::parse(&crate::document::uri_for(path), &text).document;
+        Some(self.owned_input(path, text, 0, &parsed))
+    }
+
+    /// The attributes a page is parsed with before its own header: the playbook's, its
+    /// component version's and Antora's page attributes.
+    pub(crate) fn antora_attributes_for(&self, path: &Path) -> Vec<(String, String)> {
         let antora = &self.workspace.antora;
         let mut attributes: Vec<(String, String)> = antora
             .playbook()
@@ -370,36 +391,44 @@ impl Engine {
             })
             .unwrap_or_default();
         attributes.extend(
-            adoc_lang::attributes::component_attributes(antora, &document.path)
+            adoc_lang::attributes::component_attributes(antora, path)
                 .map(|(name, value)| (name.to_owned(), value.to_owned())),
         );
-        attributes.extend(adoc_lang::attributes::antora_attributes(
-            antora,
-            &document.path,
-        ));
+        attributes.extend(adoc_lang::attributes::antora_attributes(antora, path));
+        attributes
+    }
+
+    fn owned_input(
+        &self,
+        path: &Path,
+        text: String,
+        version: u64,
+        parsed: &adoc_core::Document,
+    ) -> OwnedInput {
+        let attributes = self.antora_attributes_for(path);
         let map = adoc_lang::includes::include_map(
             &self.workspace.index,
-            antora,
-            &document.path,
-            &document.parsed,
+            &self.workspace.antora,
+            path,
+            parsed,
         );
         let buffers = self
             .documents
             .values()
-            .filter(|open| open.id != id)
+            .filter(|open| open.path != path)
             .map(|open| (open.path.clone(), open.text.to_string()))
             .collect();
-        Some(OwnedInput {
-            version: document.version,
-            path: document.path.clone(),
-            text: document.text.to_string(),
+        OwnedInput {
+            version,
+            path: path.to_path_buf(),
+            text,
             attributes,
             includes: SnapshotIncludes {
                 map,
                 buffers,
                 read: Mutex::default(),
             },
-        })
+        }
     }
 
     fn spawn_preview(&mut self, snapshot: Snapshot) {
@@ -564,6 +593,7 @@ impl Engine {
             self.publish_preview(id);
         }
         self.visual_diagram_rendered(checksum);
+        self.export_diagram_rendered(checksum);
     }
 }
 

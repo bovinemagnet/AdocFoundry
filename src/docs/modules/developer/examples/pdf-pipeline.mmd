@@ -1,0 +1,15 @@
+flowchart TD
+    cmd["export.pdf_page or export.pdf_component<br/>(or Engine::export_blocking)"] --> plan["Plan: one page, or the nav order<br/>as a book"]
+    plan --> parse["Worker: parse every page<br/>from its open buffer or file"]
+    parse --> views["Engine thread: build_view for each page<br/>(xrefs, includes, images resolved)"]
+    views --> pending{"Diagrams<br/>pending?"}
+    pending -->|yes| diag["Diagram workers"]
+    diag -->|"each finished"| pending
+    pending -->|no| theme["Load the theme and fonts<br/>(load_theme)"]
+    theme --> worker["Worker: adoc-pdf"]
+    worker --> emit["to_typst: theme keys, document facts<br/>and view trees to Typst source"]
+    emit --> compile["compile: Typst World with the<br/>generated source, fonts and files"]
+    compile --> map["Map Typst diagnostics to<br/>AsciiDoc file and line"]
+    compile --> write["Write the PDF<br/>(and the Typst, if asked)"]
+    write --> done["EngineEvent::ExportFinished<br/>path, pages, diagnostics"]
+    map --> done

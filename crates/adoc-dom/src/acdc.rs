@@ -110,7 +110,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
                         map.insert(requested.clone(), (path, Arc::from(text.as_str())));
                     }
                     Ok(acdc::IncludeSource::from_reader(Cursor::new(
-                        protect_resource_ids(&text).into_bytes(),
+                        unspace_include_attributes(&protect_resource_ids(&text)).into_bytes(),
                     )))
                 }
                 None => Err(acdc::IncludeSourceError::new(
@@ -135,7 +135,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         Ok(options) => options,
         Err(error) => return failed(&page, input.text, &error.to_string()),
     };
-    let protected = protect_resource_ids(input.text);
+    let protected = unspace_include_attributes(&protect_resource_ids(input.text));
     let parsed = match acdc::parse(&protected, &options) {
         Ok(parsed) => parsed,
         Err(error) => return failed(&page, input.text, &error.to_string()),
@@ -181,6 +181,47 @@ fn protect_resource_ids(text: &str) -> String {
     out
 }
 
+/// Stands in, at the end of an include target, for a space taken out of its attribute list.
+const PROTECTED_SPACE: char = '\u{2}';
+
+/// `text` with the spaces after the commas of each include's attribute list taken out, and as
+/// many [`PROTECTED_SPACE`]s put at the end of its target: acdc rejects `[tag=a, leveloffset=+1]`,
+/// which Asciidoctor reads. The line keeps its length, so only offsets inside it move.
+fn unspace_include_attributes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\r', '\n']);
+        let open = content
+            .strip_prefix("include::")
+            .and_then(|rest| rest.find('['))
+            .map(|open| "include::".len() + open)
+            .filter(|_| content.ends_with(']') && content.contains(", "));
+        let Some(open) = open else {
+            out.push_str(line);
+            continue;
+        };
+        let mut list = String::with_capacity(content.len() - open);
+        let (mut moved, mut quoted, mut after_comma) = (0, false, false);
+        for character in content[open..].chars() {
+            match character {
+                ' ' if after_comma => {
+                    moved += 1;
+                    continue;
+                }
+                '"' => quoted = !quoted,
+                _ => {}
+            }
+            after_comma = character == ',' && !quoted;
+            list.push(character);
+        }
+        out.push_str(&content[..open]);
+        out.extend(std::iter::repeat_n(PROTECTED_SPACE, moved));
+        out.push_str(&list);
+        out.push_str(&line[content.len()..]);
+    }
+    out
+}
+
 /// `path` with `.` and `..` resolved without touching the file system, as acdc resolves the
 /// base it joins include targets onto.
 fn lexical(path: &Path) -> PathBuf {
@@ -200,11 +241,14 @@ fn lexical(path: &Path) -> PathBuf {
     out
 }
 
-/// A requested path with protected colons restored.
+/// A requested path with protected colons restored and protected spaces taken out.
 fn unprotect(path: &Path) -> PathBuf {
     let text = path.to_string_lossy();
-    if text.contains(PROTECTED_COLON) {
-        PathBuf::from(text.replace(PROTECTED_COLON, ":"))
+    if text.contains([PROTECTED_COLON, PROTECTED_SPACE]) {
+        PathBuf::from(
+            text.replace(PROTECTED_COLON, ":")
+                .replace(PROTECTED_SPACE, ""),
+        )
     } else {
         path.to_path_buf()
     }
@@ -237,7 +281,16 @@ impl Converter<'_> {
             .header
             .as_ref()
             .filter(|header| !header.title.is_empty())
-            .map(|header| self.inlines(&header.title));
+            .map(|header| {
+                // acdc splits `Main: Sub` at its last `: `; the doctitle is the whole text, and a
+                // title page partitions it again where it needs to.
+                let mut title = self.inlines(&header.title);
+                if let Some(subtitle) = &header.subtitle {
+                    title.push(Inline::Text(": ".to_owned()));
+                    title.extend(self.inlines(subtitle));
+                }
+                title
+            });
         let attributes = document
             .attributes
             .iter()
@@ -311,7 +364,10 @@ impl Converter<'_> {
                 .map(|chain| {
                     chain
                         .iter()
-                        .map(|file| file.replace(PROTECTED_COLON, ":"))
+                        .map(|file| {
+                            file.replace(PROTECTED_COLON, ":")
+                                .replace(PROTECTED_SPACE, "")
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -441,7 +497,7 @@ impl Converter<'_> {
                         .map(|item| DescriptionItem {
                             span: self.span(&item.location),
                             term: self.inlines(&item.term),
-                            content: self.inlines(&item.principal_text),
+                            content: self.prose(&item.principal_text),
                             blocks: self.blocks(&item.description),
                         })
                         .collect(),
@@ -526,7 +582,7 @@ impl Converter<'_> {
                     .checked
                     .as_ref()
                     .map(|checked| matches!(checked, acdc::ListItemCheckedStatus::Checked)),
-                content: self.inlines(&item.principal),
+                content: self.prose(&item.principal),
                 blocks: self.blocks(&item.blocks),
             })
             .collect()
@@ -549,7 +605,7 @@ impl Converter<'_> {
                         ..BlockMeta::default()
                     },
                     kind: BlockKind::Paragraph {
-                        inlines: self.inlines(&paragraph.content),
+                        inlines: self.prose(&paragraph.content),
                     },
                 }],
             }
@@ -580,7 +636,7 @@ impl Converter<'_> {
                         ..BlockMeta::default()
                     },
                     kind: BlockKind::Paragraph {
-                        inlines: self.inlines(&paragraph.content),
+                        inlines: self.prose(&paragraph.content),
                     },
                 }],
             }
@@ -606,7 +662,7 @@ impl Converter<'_> {
             image
         } else {
             BlockKind::Paragraph {
-                inlines: self.inlines(&paragraph.content),
+                inlines: self.prose(&paragraph.content),
             }
         };
         Block { meta, kind }
@@ -781,6 +837,11 @@ impl Converter<'_> {
         out.into_iter().flat_map(split_inline_images).collect()
     }
 
+    /// The text of a paragraph or list item: as [`Self::inlines`], less its line comments.
+    fn prose(&self, nodes: &[acdc::InlineNode<'_>]) -> Vec<Inline> {
+        drop_line_comments(self.inlines(nodes))
+    }
+
     fn inline(&self, node: &acdc::InlineNode<'_>) -> Vec<Inline> {
         let wrap = |roles: Option<&str>, content: Vec<Inline>, make: fn(Vec<Inline>) -> Inline| {
             let inner = make(content);
@@ -919,10 +980,19 @@ impl Converter<'_> {
                 source: stem.content.to_owned(),
             },
             acdc::InlineMacro::IndexTerm(term) => {
-                if !term.is_visible() {
-                    return Vec::new();
+                let primary = self.inlines(term.term());
+                let mut terms = vec![Inline::plain_text(&primary)];
+                for level in [term.secondary(), term.tertiary()].into_iter().flatten() {
+                    terms.push(Inline::plain_text(&self.inlines(level)));
                 }
-                return self.inlines(term.term());
+                Inline::IndexTerm {
+                    terms,
+                    visible: if term.is_visible() {
+                        primary
+                    } else {
+                        Vec::new()
+                    },
+                }
             }
             _ => return Vec::new(),
         }]
@@ -983,6 +1053,35 @@ fn block_image_macro(source: &str) -> Option<BlockKind> {
         width,
         height,
     })
+}
+
+/// Drops the comment lines acdc leaves in text. It keeps tag directives (`// end::x[]`) for
+/// include filtering, and they stay in the paragraph, at times with the comment beside them.
+fn drop_line_comments(inlines: Vec<Inline>) -> Vec<Inline> {
+    inlines
+        .into_iter()
+        .filter_map(|inline| {
+            let Inline::Text(text) = inline else {
+                return Some(inline);
+            };
+            if !text.contains("\n//") {
+                return Some(Inline::Text(text));
+            }
+            let mut lines = text.split('\n');
+            let mut kept = lines.next().unwrap_or_default().to_owned();
+            for line in lines.filter(|line| !is_line_comment(line)) {
+                kept.push('\n');
+                kept.push_str(line);
+            }
+            (!kept.is_empty()).then_some(Inline::Text(kept))
+        })
+        .collect()
+}
+
+/// A line comment as Asciidoctor reads one: `//` not followed by a third `/`.
+fn is_line_comment(line: &str) -> bool {
+    line.strip_prefix("//")
+        .is_some_and(|rest| !rest.starts_with('/'))
 }
 
 /// Inline image macros acdc left as text because their target holds `:` or `$`.

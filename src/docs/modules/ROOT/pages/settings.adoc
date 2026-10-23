@@ -47,6 +47,13 @@ remote = "origin"                # the remote used for links to a line
 
 [git.hosts]
 "git.example.com" = "gitlab"     # github | gitlab | bitbucket | azure
+
+[pdf]
+theme = "default"                # a bundled name, a theme name or a .yml path
+themes_dir = "resources/themes"  # where <name>-theme.yml is found
+fonts_dir = "resources/fonts"
+site_url = "https://docs.example.com"
+standards = ["pdf-a-2a"]         # pdf-a-2a | pdf-ua-1
 ----
 
 == Keys
@@ -119,11 +126,38 @@ remote = "origin"                # the remote used for links to a line
 |table of strings
 |empty
 |Names the kind of a self-hosted site, host name to `"github"`, `"gitlab"`, `"bitbucket"` or `"azure"`. Host names are matched without regard to case. A table with any other kind is ignored with a warning. See xref:using-the-editor.adoc#remote-links[Links to a line on the hosting site].
+
+|`pdf.theme`
+|string
+|`"default"`
+|The theme for PDF export: a bundled name (`default`, `default-sans`, `default-for-print` or `base`), a theme name found in `pdf.themes_dir`, or a path to a `.yml` file. A page's `pdf-theme` attribute and the command line's `--theme` take precedence.
+
+|`pdf.themes_dir`
+|string
+|none
+|The directory searched for `<name>-theme.yml`, relative to the first workspace root. A page's `pdf-themesdir` attribute takes precedence.
+
+|`pdf.fonts_dir`
+|string
+|none
+|A directory of theme fonts, relative to the first workspace root. A page's `pdf-fontsdir` attribute and `--fonts-dir` take precedence. The bundled fonts are always available.
+
+|`pdf.site_url`
+|string
+|none
+|The base address of the published site. In a component book, a cross reference to a page outside the book links here. Without it, such a reference is plain text.
+
+|`pdf.standards`
+|array of strings
+|empty
+|Standards every export conforms to: `"pdf-a-2a"` and `"pdf-ua-1"`. The command line's `--standard` adds to these.
 |===
+
+See xref:pdf-export.adoc[Exporting to PDF].
 
 == What a workspace file may set
 
-A workspace file may override `editor.*` and `workspace.ignore` only.
+A workspace file may override `editor.*`, `workspace.ignore` and `pdf.*`.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.
 

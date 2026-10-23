@@ -557,3 +557,79 @@ fn includes_resolve_beside_a_page_above_the_working_directory() {
         .collect();
     assert_eq!(texts, ["Shared."]);
 }
+
+#[test]
+fn document_title_keeps_its_subtitle() {
+    // acdc splits `Main: Sub` into a title and a subtitle; the doctitle is the whole text.
+    let text = "= PLUS Suite: Data Architecture Overview\n\nBody.\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let title = dom.title.as_deref().map(Inline::plain_text);
+    assert_eq!(
+        title.as_deref(),
+        Some("PLUS Suite: Data Architecture Overview")
+    );
+}
+
+#[test]
+fn line_comments_are_not_paragraph_text() {
+    // A tag directive on a paragraph's last line is a comment, as anywhere else in it.
+    let text = "= Page\n\n// tag::lead[]\n[.lead]\nThe *lead*.\n// end::lead[]\n\nMiddle\n// tag::x[]\nline.\n// end::x[]\n// another\n\nKept /// not a comment\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let texts: Vec<String> = dom
+        .walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Paragraph { inlines } => Some(Inline::plain_text(inlines)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        texts,
+        ["The lead.", "Middle\nline.", "Kept /// not a comment"]
+    );
+}
+
+struct Tagged;
+
+impl IncludeResolver for Tagged {
+    fn read(&self, requested: &Path) -> Option<(PathBuf, String)> {
+        requested.ends_with("tagged.adoc").then(|| {
+            (
+                PathBuf::from("/tagged.adoc"),
+                "== Heading\n\n// tag::a[]\nTagged text.\n// end::a[]\n".to_owned(),
+            )
+        })
+    }
+}
+
+#[test]
+fn include_attributes_may_have_spaces() {
+    // Asciidoctor reads `[tag=a, leveloffset=+1]`; acdc only reads it without the space.
+    let text = "= Page\n\ninclude::tagged.adoc[tag=a, leveloffset=+1]\n\nAfter.\n";
+    let dom = AcdcParser.parse(&ParseInput {
+        path: Path::new("/page.adoc"),
+        text,
+        attributes: Vec::new(),
+        includes: Arc::new(Tagged),
+    });
+    assert!(dom.warnings.is_empty(), "{:?}", dom.warnings);
+    let texts: Vec<String> = dom
+        .walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Paragraph { inlines } => Some(Inline::plain_text(inlines)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["Tagged text.", "After."]);
+    let tagged = dom
+        .walk()
+        .into_iter()
+        .find(|block| block.kind_name() == "paragraph")
+        .unwrap();
+    assert_eq!(tagged.meta.span.path, Path::new("/tagged.adoc"));
+    // The page's own spans are unchanged.
+    let after = dom.walk().into_iter().last().unwrap();
+    let range = after.meta.span.range;
+    assert_eq!(&text[range.start..range.end], "After.");
+}

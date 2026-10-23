@@ -177,6 +177,8 @@ impl Builder<'_> {
                     },
                 );
             }
+            // A flow index term shows its text; a concealed one shows nothing.
+            ViewInline::IndexTerm { content, .. } => self.inlines(content, state),
             ViewInline::Span { roles, content } => {
                 let underline = roles.iter().any(|role| role == "underline");
                 self.inlines(

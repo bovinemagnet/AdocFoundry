@@ -1,0 +1,24 @@
+[package]
+name = "adoc-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-render.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+typst.workspace = true
+typst-layout.workspace = true
+typst-pdf.workspace = true
+
+[dev-dependencies]
+adoc-dom.workspace = true
+hayro-syntax.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

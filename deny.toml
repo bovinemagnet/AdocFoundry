@@ -8,6 +8,13 @@ yanked = "deny"
 # Unmaintained notices for transitive crates (mostly the GPUI tree) are reported upstream;
 # only workspace crates' direct dependencies fail the check.
 unmaintained = "workspace"
+# quick-xml 0.38 is reached only through typst-library -> hayagriva -> citationberg, which parses
+# CSL styles for Typst's `bibliography()`. adoc-pdf's generated Typst never calls it, and
+# citationberg 0.7.0, the latest, still needs quick-xml 0.38. Remove when citationberg moves on.
+ignore = [
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml via citationberg; Typst bibliographies are never used" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml via citationberg; Typst bibliographies are never used" },
+]
 
 [licenses]
 version = 2

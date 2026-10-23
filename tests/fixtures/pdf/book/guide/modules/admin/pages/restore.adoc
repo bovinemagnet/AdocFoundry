@@ -1,0 +1,3 @@
+= Restore
+
+Copy the backup into place.

@@ -1,0 +1,229 @@
+= Exporting to PDF
+Paul Snow
+:revnumber: 0.0.0
+:description: Exporting a page or a whole Antora component to PDF with asciidoctor-pdf themes: themes, fonts, running content, the index, standards and current limits.
+
+AdocFoundry exports a page, or a whole component version, as a paginated PDF.
+The PDF is typeset in process by Typst and styled by an asciidoctor-pdf theme, so a theme written for asciidoctor-pdf loads without edits.
+It needs no Ruby, Node.js, Java or network access.
+
+== Exporting a page
+
+Export Page to PDF… (`export.pdf_page`) exports the active page as an article.
+It opens a save dialog, suggesting the page's name with a `.pdf` extension.
+Unsaved edits are included, because the export reads open buffers.
+
+While the export runs, the status bar shows "Exporting PDF…".
+The application stays responsive.
+When it finishes, a notification reports the number of pages and the first warning, and has an Open button that opens the PDF.
+If it fails, the notification gives the reason.
+
+From the command line, see xref:command-line.adoc#pdf[Command line].
+
+== Exporting a component
+
+Export Component to PDF… (`export.pdf_component`) exports the component version that holds the active page as a book.
+The suggested file name is the component's name.
+
+The book follows the component's navigation.
+
+* The title page shows the `title` from `antora.yml` (or the component's name), and the version as "Version X".
+* The table of contents is on its own page.
+* When there is more than one navigation file, each becomes a part, titled by its nav list's title if it has one.
+* A nav list title that links to a page, as in `.xref:index.adoc[Architecture]`, names the part, and the linked page leads that part as its first chapter.
+* A page with no title of its own, such as an empty file listed in the navigation, takes the text of its navigation entry as its heading.
+* Each top-level navigation entry is a chapter and starts on a new page.
+* Nested entries become sections of their chapter.
+* An entry with no page is a heading at its depth.
+* Each page appears once, where the navigation first lists it.
+* The start page comes first, as a preface, when the navigation does not list it.
+* A page's own sections move down by the depth of its navigation entry, so a page nested one level deep has its `==` sections at level 3.
+
+A cross reference between two pages of the book becomes an internal link.
+A cross reference to a page outside the book links to `[pdf] site_url` when it is set, laid out as Antora publishes a site (`<site>/<component>/<version>/<module>/<page>.html`).
+Without `site_url`, it is plain text.
+
+The book's title can be overridden with a `pdf-title` attribute in the component's or playbook's `asciidoc.attributes`.
+
+== Themes
+
+Themes use asciidoctor-pdf 2.3's YAML theme language.
+They are loaded the way asciidoctor-pdf loads them:
+
+* `extends` takes a bundled name, a `./` path relative to the file, or a list, and ` !important` forces a reload.
+* Keys flatten, so `heading: h2: font-size` is `heading_h2_font_size`.
+* `$variable` references and arithmetic with `*`, `/`, `^`, `+` and `-` are evaluated, as are `round()`, `floor()` and `ceil()`.
+* Lengths accept `in`, `mm`, `cm`, `px`, `pc` and `pt`, and the relative units `em`, `rem` and `%`.
+* Colours accept hex (with or without `#`, and the three-digit shorthand), RGB, CMYK and `transparent`.
+* `font.catalog` maps families to font files, with `merge` to keep the inherited catalogue, and `font.fallbacks` lists families tried for missing glyphs.
+
+=== Bundled themes
+
+[cols="1,4"]
+|===
+|Name |Description
+
+|`default`
+|The asciidoctor-pdf default theme. This is used when nothing else is chosen.
+
+|`default-sans`
+|The default theme set in a sans-serif face.
+
+|`default-for-print`
+|The default theme with colours for print: black text, grey borders and plain links.
+
+|`base`
+|asciidoctor-pdf's minimal theme, with flat keys and PDF core fonts (Helvetica, Times and Courier, drawn with the bundled Noto and M+ faces). A theme loads it only with `extends: base`.
+|===
+
+The `*-with-font-fallbacks` names that asciidoctor-pdf ships load as the theme they extend, with a warning, because the fallback fonts are not bundled.
+
+=== Choosing a theme
+
+The first of these that is set wins.
+
+. The export's own theme: `--theme` on the command line.
+. The page's `pdf-theme` attribute.
+. The `theme` key of the `[pdf]` table in xref:settings.adoc[Settings].
+. `default`.
+
+A name that is not bundled is looked for as `<name>-theme.yml` in a themes directory.
+That is the page's `pdf-themesdir` attribute, resolved against the page, or else `[pdf] themes_dir`, resolved against the first workspace root.
+A value ending in `.yml` is a theme file.
+
+[source,asciidoc]
+----
+= Handbook
+:pdf-theme: acme
+:pdf-themesdir: resources/themes
+----
+
+For a book, the attributes (such as `pdf-theme` and `pdf-fontsdir`) come from the component's `asciidoc.attributes` in `antora.yml`, or from the playbook's, not from a page.
+Relative directories are resolved against the first page of the book.
+
+=== Fonts
+
+The bundled fonts are subsets of Noto Serif, Noto Sans and M+ 1mn, the ones asciidoctor-pdf ships.
+Typst's own fonts are not used, so the output depends only on the theme's fonts.
+
+Fonts are looked for in this order.
+
+. `--fonts-dir` on the command line.
+. The page's `pdf-fontsdir` attribute, with directories separated by `;` or `,`.
+. `[pdf] fonts_dir`, resolved against the first workspace root.
+. The bundled fonts.
+
+`GEM_FONTS_DIR` names the bundled fonts, in `pdf-fontsdir` and in a theme's `font.catalog`.
+The theme's own directory is also searched, so relative font paths in a theme work.
+A font that cannot be read is a warning.
+
+=== What a theme controls
+
+* The page: size, layout, margins and background colour.
+* The base text, and headings `h1` to `h6`.
+* The title page: logo, title, subtitle, authors and revision.
+* The table of contents: dot leaders, the levels shown (up to `toclevels`) and the indent.
+* Admonitions, code, inline code, tables, lists, description lists, quotes, verses, sidebars, examples, captions, images and thematic breaks.
+* Links, marks, `kbd`, buttons, menus, footnotes, roles and the index.
+
+A theme key that the converter does not use is ignored.
+An unknown top-level category produces a warning, and its keys are still available as variables.
+
+== Running content and the title page
+
+The `header` and `footer` keys of a theme define the running content: a three-column grid on each side of the page, with separate recto and verso columns when the theme has them.
+Running content and page numbers start on the first page of the body, numbered 1: after the title page and the table of contents in a book, or in an article with a title page. A number in `running_content_start_at` starts the running content on that page of the body instead.
+
+Text in a header or footer may use these references.
+
+* `+{page-number}+` and `+{page-count}+`
+* `+{document-title}+`
+* `+{section-title}+`, `+{chapter-title}+` and `+{part-title}+`
+* `+{section-or-chapter-title}+`
+* Any document attribute. A reference to an attribute that is not set drops that line.
+
+An article opens with its title and the body follows on the first page.
+A book, or an article with the `title-page` attribute, opens with a title page, then the table of contents.
+The table of contents appears when `toc` is set, which a book does by default.
+It lists sections down to `toclevels`, which is 2 unless you set it.
+When `toc` or `toc-placement` is `macro` or `preamble`, the table of contents is not put at the top; place it with the `toc::[]` macro.
+
+== The index
+
+Index terms are collected from the page.
+
+[source,asciidoc]
+----
+((Flow)) controls how data moves.
+(((Pipelines, Batch, Nightly)))
+indexterm:[Scheduling]
+----
+
+`((term))` is visible in the text.
+`(((primary, secondary, tertiary)))` and `indexterm:[...]` are concealed.
+
+A section with the `index` style becomes the index.
+
+[source,asciidoc]
+----
+[index]
+== Index
+----
+
+The index groups terms under a heading for each letter, then lists primary terms and their subterms with linked page numbers.
+The theme's `index_column_count` and `index_column_gap` set the columns.
+
+== Standards and metadata
+
+Two standards are available, alone or together.
+
+[cols="1,3"]
+|===
+|Name |Standard
+
+|`pdf-a-2a`
+|PDF/A-2a, for archiving.
+
+|`pdf-ua-1`
+|PDF/UA-1, for accessibility.
+|===
+
+Request them with `--standard` (repeatable) or `standards = ["pdf-a-2a"]` in the `[pdf]` table.
+The PDF is always tagged.
+A document that cannot conform fails the export with Typst's reasons, mapped to source lines.
+
+An ordinary export has no creation date, so the same input gives the same bytes.
+When a standard is requested, the date of the export is written, because PDF/A requires one.
+
+The PDF's metadata comes from the document.
+
+* The title is the document title, or the book's title.
+* The authors, description and keywords come from the author, `description` and `keywords` attributes.
+* The language and region come from `lang`, so `en-GB` is language `en` and region `GB`.
+
+PDF/UA needs a text alternative for every image.
+An image without alt text gets its file name as alt text.
+Give images real alt text for a document people will listen to.
+
+== Diagnostics
+
+Typst's errors and warnings are mapped back to the AsciiDoc file and line that produced them, so a problem reads like `install.adoc:42: unknown image format`.
+A missing image is a warning, not a failure.
+A problem with no source position is reported against the page.
+A diagram that failed to render is reported as a warning.
+A page the parser cannot read is shown in the PDF as its source, and the export warns with the file and the parser's message.
+
+== What is not supported
+
+* STEM is shown as its source in a code style, not typeset as mathematics.
+* Source blocks are highlighted by Typst's highlighter, and only when the `source-highlighter` attribute is set, which is how asciidoctor-pdf behaves.
+The editor's tree-sitter highlighting is not used.
+* There is no live PDF preview pane.
+* PDF/A-1 and PDF/UA-2 are not available.
+* asciidoctor-pdf's Ruby converter extensions are not run.
+* A front cover image is not supported beyond what the title page shows.
+* The `*-with-font-fallbacks` themes load without their fallback fonts.
+
+Output follows asciidoctor-pdf closely but is not a copy of it.
+The project compares reference pages rendered by both; see xref:developer:testing.adoc#pdf-tests[Testing].
+Developers will find the design in xref:developer:pdf.adoc[PDF export].

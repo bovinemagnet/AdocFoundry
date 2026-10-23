@@ -5,6 +5,9 @@
 //! adocfoundry-cli symbols <root> <query>
 //! adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 //! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+//! adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+//!     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
+//!     [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli --version
 //! ```
@@ -17,7 +20,8 @@ use std::{
 
 use adoc_core::{Diagnostic, DiagnosticSeverity, LineIndex};
 use adoc_engine::{
-    commands::ids, CommandArgs, CommandOutcome, Engine, EngineError, GitChange, Settings,
+    commands::ids, pdf_standard, CommandArgs, CommandOutcome, Engine, EngineError, ExportArgs,
+    ExportTarget, GitChange, Settings,
 };
 use serde::Serialize;
 
@@ -26,6 +30,9 @@ const USAGE: &str = "usage:
   adocfoundry-cli symbols <root> <query>
   adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
   adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+  adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
+      [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
+      [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli --version";
 
@@ -59,6 +66,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         "symbols" => symbols(rest),
         "follow" => follow(rest),
         "render" => render(rest),
+        "pdf" => pdf(rest),
         "git-status" => git_status(rest),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
@@ -334,6 +342,126 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
         None => print!("{html}"),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Exports a page, or a component version as a book, to PDF.
+fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
+    let (positional, options) = parse_options(
+        arguments,
+        &[
+            "root",
+            "component",
+            "theme",
+            "fonts-dir",
+            "output",
+            "standard",
+            "typst",
+        ],
+    )?;
+    let [target] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let target = adoc_index::normalize_path(Path::new(target));
+    let is_dir = target.is_dir();
+    let root = option(&options, "root").map_or_else(
+        || {
+            if is_dir {
+                // A component directory: its parent, so sibling components resolve; the parent
+                // of a relative name such as `guide` is the current directory.
+                if target.join("antora.yml").is_file() {
+                    match target.parent() {
+                        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+                        _ => PathBuf::from("."),
+                    }
+                } else {
+                    target.clone()
+                }
+            } else {
+                default_root(&target)
+            }
+        },
+        |root| adoc_index::normalize_path(Path::new(root)),
+    );
+    let standards = options
+        .iter()
+        .filter(|(name, _)| *name == "standard")
+        .map(|(_, value)| {
+            pdf_standard(value)
+                .ok_or_else(|| format!("unknown standard `{value}`: expected pdf-a-2a or pdf-ua-1"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut engine = open_engine(&root, false)?;
+    let component = match option(&options, "component") {
+        Some(spec) => Some(match spec.split_once('@') {
+            Some((version, name)) => (name.to_owned(), Some(version.to_owned())),
+            None => (spec.to_owned(), None),
+        }),
+        None if is_dir => {
+            let component = engine
+                .workspace()
+                .antora
+                .components()
+                .find(|component| component.root == target)
+                .ok_or_else(|| format!("{} is not an Antora component", target.display()))?;
+            Some((component.name.clone(), component.version.clone()))
+        }
+        None => None,
+    };
+    let (export_target, default_output) = match component {
+        Some((name, version)) => {
+            let version = version.or_else(|| {
+                engine
+                    .workspace()
+                    .antora
+                    .latest_version(&name)
+                    .and_then(|latest| latest.version.clone())
+            });
+            let output = PathBuf::from(format!("{name}.pdf"));
+            (ExportTarget::Component { name, version }, output)
+        }
+        None => {
+            let id = engine.open(&target).map_err(|error| error.to_string())?;
+            (ExportTarget::Page(id), target.with_extension("pdf"))
+        }
+    };
+    let output = option(&options, "output").map_or(default_output, PathBuf::from);
+    let summary = engine.export_blocking(
+        ExportArgs {
+            target: export_target,
+            output: output.clone(),
+            theme: option(&options, "theme").map(str::to_owned),
+            standards,
+            fonts_dir: option(&options, "fonts-dir").map(PathBuf::from),
+            typst: option(&options, "typst").map(PathBuf::from),
+        },
+        INDEX_TIMEOUT,
+    );
+    match summary {
+        Ok(summary) => {
+            for diagnostic in &summary.diagnostics {
+                match &diagnostic.location {
+                    Some((path, line)) => eprintln!(
+                        "{}:{line}: {}: {}",
+                        display_path(path, &root),
+                        severity_name(diagnostic.severity),
+                        diagnostic.message
+                    ),
+                    None => eprintln!(
+                        "{}: {}",
+                        severity_name(diagnostic.severity),
+                        diagnostic.message
+                    ),
+                }
+            }
+            println!("{} ({} pages)", output.display(), summary.pages);
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(error) => {
+            eprintln!("adocfoundry-cli: {error}");
+            Ok(ExitCode::FAILURE)
+        }
+    }
 }
 
 #[derive(Serialize)]

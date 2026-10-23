@@ -76,4 +76,9 @@ pub enum EngineEvent {
     GitPushed {
         message: String,
     },
+    /// A PDF export finished: the file written, its page count and warnings, or the error.
+    ExportFinished {
+        output: PathBuf,
+        result: Result<crate::ExportSummary, String>,
+    },
 }

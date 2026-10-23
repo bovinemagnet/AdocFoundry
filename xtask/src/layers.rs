@@ -35,6 +35,7 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-lang", "adoc-parser"),
     ("adoc-lang", "adoc-index"),
     ("adoc-lang", "adoc-antora"),
+    ("adoc-pdf", "adoc-render"),
 ];
 
 /// UI framework crates, permitted only in `adocfoundry`.
