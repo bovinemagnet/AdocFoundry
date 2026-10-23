@@ -52,10 +52,20 @@ pub(crate) const fn spec(
 }
 
 pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
-    use CommandCategory::{Document, Edit, View, Workspace};
+    use CommandCategory::{Document, Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 12] = [
+    let builtin: [(CommandSpec, Run); 13] = [
+        (
+            spec(
+                ids::NAVIGATE_DEFINITION,
+                "Go to Definition",
+                Navigate,
+                Some("f12"),
+                ActiveDocument,
+            ),
+            navigate_definition,
+        ),
         (
             spec(
                 ids::WORKSPACE_OPEN_FOLDER,
@@ -300,4 +310,23 @@ fn settings_open(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, 
         std::fs::write(&path, "").map_err(|error| EngineError::io(&path, error))?;
     }
     Ok(CommandOutcome::External(path))
+}
+
+fn navigate_definition(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Offset { id, offset } = args else {
+        return Err(invalid(ids::NAVIGATE_DEFINITION, "a document and offset"));
+    };
+    engine
+        .document(id)
+        .ok_or(EngineError::UnknownDocument(id))?;
+    match engine.definition(id, offset) {
+        Some(crate::DefinitionTarget::Location(location)) => Ok(CommandOutcome::Location(location)),
+        Some(crate::DefinitionTarget::External(path)) => Ok(CommandOutcome::External(path)),
+        None => Err(EngineError::NotFound(format!(
+            "nothing to follow at offset {offset}"
+        ))),
+    }
 }

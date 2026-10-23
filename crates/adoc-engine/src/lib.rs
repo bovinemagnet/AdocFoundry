@@ -11,6 +11,7 @@ mod edit;
 mod engine;
 mod error;
 mod event;
+mod language;
 mod preview;
 mod settings;
 mod undo;
@@ -36,4 +37,7 @@ pub use settings::{
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
 pub use workspace::WATCH_DEBOUNCE;
 
-pub use adoc_lang::{DefinitionTarget, Location, WorkspaceState};
+pub use adoc_lang::{
+    CompletionItem, CompletionItemKind, DefinitionTarget, DocumentSymbol, DocumentSymbolKind,
+    Hover, Location, WorkspaceState, WorkspaceSymbol, WorkspaceSymbolKind,
+};
