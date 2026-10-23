@@ -1,0 +1,142 @@
+= Exporting Documentation to PDF
+Paul Snow <paul@example.com>
+v1.2, 2026-10-24: First release
+:description: A reference article for comparing PDF output with asciidoctor-pdf.
+:toc:
+:sectnums:
+:imagesdir: images
+:experimental:
+
+AdocFoundry writes a paginated PDF from the same view tree its preview draws.
+This article uses every common block so that the output can be compared, page by page, with what asciidoctor-pdf produces for the same source.
+
+== Paragraphs and inline formatting
+
+A paragraph can carry *bold*, _italic_, `monospace`, #highlighted#, [.underline]#underlined# and [.line-through]#struck# text, as well as ^superscript^ and ~subscript~.
+Typography matters too: "`curly quotes`", the ellipsis..., an em dash -- like this -- and a trademark(TM).
+Characters that mean something to a typesetter, such as $, #, *, _, [, ], <, > and \, must come through unchanged.
+
+Links can point outside, such as https://asciidoctor.org[the Asciidoctor site], or inside the document, as in <<tables>> and <<_lists>>.
+A footnote is numbered automatically.footnote:[Footnotes collect at the end of the document.]
+Keyboard shortcuts read as kbd:[Ctrl+Shift+P], buttons as btn:[Save] and menus as menu:File[Export,PDF].
+
+This second paragraph is long enough to wrap over several lines, so that justification, hyphenation and the leading between lines can be compared.
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+== Lists
+
+=== Unordered and ordered
+
+* The first item
+* The second item, which is long enough to wrap onto a second line so that the hanging indent of the list can be seen
+** A nested item
+*** A third level
+* The last item
+
+//
+
+. Install the editor
+. Open a workspace
+.. Choose a folder
+.. Wait for indexing
+. Export the page
+
+=== Checklists and descriptions
+
+* [x] Theme loader
+* [x] Typst emitter
+* [ ] Visual regression
+
+//
+
+Theme:: A YAML file in the asciidoctor-pdf format.
+Typst:: The typesetter, compiled in process.
+Book::
+A whole component in navigation order, with parts and chapters.
+
+== Admonitions
+
+NOTE: A note gives extra information.
+
+TIP: A tip suggests a better way.
+
+IMPORTANT: Something not to miss.
+
+[WARNING]
+====
+A warning block can hold more than one paragraph.
+
+Like this one.
+====
+
+CAUTION: Proceed with care.
+
+== Code
+
+[source,rust]
+----
+fn main() {
+    let theme = load_theme("default"); // <1>
+    println!("{theme:?}"); // <2>
+}
+----
+<1> Loads a bundled theme.
+<2> Prints it.
+
+....
+A literal block keeps    its spacing
+  and its line breaks.
+....
+
+== Quotes, sidebars and examples
+
+[quote,Ada Lovelace,Notes on the Analytical Engine]
+____
+The Analytical Engine weaves algebraical patterns just as the Jacquard loom weaves flowers and leaves.
+____
+
+[verse,William Blake,Auguries of Innocence]
+____
+To see a World in a Grain of Sand
+And a Heaven in a Wild Flower
+____
+
+.Why a sidebar
+****
+A sidebar holds material related to the text around it, set apart from the flow.
+****
+
+.A worked example
+====
+An example block frames its content with a border.
+====
+
+[[tables]]
+== Tables
+
+.Export options
+[cols="1,2,1",options="header"]
+|===
+|Option |Meaning |Default
+
+|`--theme`
+|The theme to use, by name or path
+|`default`
+
+|`--standard`
+|PDF/A-2a or PDF/UA-1
+|none
+
+2+|A cell spanning two columns
+|Last
+|===
+
+== Images
+
+.The export pipeline
+image::pipeline.svg[Pipeline,width=60%]
+
+'''
+
+That is the end of the article.

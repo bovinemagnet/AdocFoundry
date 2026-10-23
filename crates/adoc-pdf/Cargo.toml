@@ -6,11 +6,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+adoc-render.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
+typst.workspace = true
+typst-layout.workspace = true
+typst-pdf.workspace = true
 
 [dev-dependencies]
+adoc-dom.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 
