@@ -1,0 +1,552 @@
+//! Workspace search, replace with preview, and page rename.
+//!
+//! Multi-file changes are computed as an [`EditPreview`] first; `workspace.apply_preview`
+//! applies one as a single undo group spanning every document it touches, including any file
+//! move, so one undo restores everything.
+
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Component, Path, PathBuf},
+    thread,
+};
+
+use adoc_antora::{parse_resource_id, AntoraContext, AntoraCoordinate, ResourceFamily};
+use adoc_core::{LineIndex, SourceRange};
+use adoc_index::normalize_path;
+use adoc_parser::parse;
+use regex::{Regex, RegexBuilder};
+
+use crate::{
+    document::uri_for, edit, engine::UndoMode, workspace::WorkerMessage, DocumentId, EditPreview,
+    Engine, EngineError, EngineEvent, FileEdits, FileMove, PreviewId, SearchId, SearchMatch,
+    SearchRequest, TextEdit, UndoEntry, UndoGroup,
+};
+
+fn build_regex(request: &SearchRequest) -> Result<Regex, EngineError> {
+    if request.query.is_empty() {
+        return Err(EngineError::InvalidRequest(
+            "the search query is empty".to_owned(),
+        ));
+    }
+    let pattern = if request.regex {
+        request.query.clone()
+    } else {
+        regex::escape(&request.query)
+    };
+    let pattern = if request.whole_word {
+        format!(r"\b(?:{pattern})\b")
+    } else {
+        pattern
+    };
+    RegexBuilder::new(&pattern)
+        .case_insensitive(!request.case_sensitive)
+        .multi_line(true)
+        .build()
+        .map_err(|error| EngineError::InvalidRequest(error.to_string()))
+}
+
+fn find_matches(regex: &Regex, path: &Path, text: &str) -> Vec<SearchMatch> {
+    let lines = LineIndex::new(text);
+    regex
+        .find_iter(text)
+        .filter(|found| !found.is_empty())
+        .map(|found| {
+            let (line, _) = lines.line_column(found.start());
+            let line_start = lines.offset(line, 0).unwrap_or(0);
+            let line_end = text[line_start..]
+                .find('\n')
+                .map_or(text.len(), |end| line_start + end);
+            SearchMatch {
+                path: path.to_path_buf(),
+                range: SourceRange::new(found.start(), found.end()),
+                line,
+                line_text: text[line_start..line_end].trim_end_matches('\r').to_owned(),
+            }
+        })
+        .collect()
+}
+
+impl Engine {
+    /// The text of every indexed file in `scope`, open buffers included, in path order.
+    fn searchable_files(&self, scope: Option<&Path>) -> Vec<(PathBuf, String)> {
+        let scope = scope.map(normalize_path);
+        let mut files: Vec<(PathBuf, String)> = self
+            .workspace
+            .index
+            .files()
+            .filter(|file| {
+                scope
+                    .as_ref()
+                    .is_none_or(|scope| file.path.starts_with(scope))
+            })
+            .map(|file| (file.path.clone(), file.document.text.clone()))
+            .collect();
+        files.sort_by(|left, right| left.0.cmp(&right.0));
+        files
+    }
+
+    /// Starts a workspace search on a worker thread. Results arrive as one
+    /// `SearchResults { done: true }` event once [`Engine::pump`] applies them.
+    pub fn search(&mut self, request: SearchRequest) -> Result<SearchId, EngineError> {
+        let regex = build_regex(&request)?;
+        let files = self.searchable_files(request.scope.as_deref());
+        let id = SearchId(self.next_search);
+        self.next_search += 1;
+        let sender = self.worker_sender.clone();
+        self.workers_running += 1;
+        thread::spawn(move || {
+            let results = files
+                .iter()
+                .flat_map(|(path, text)| find_matches(&regex, path, text))
+                .collect();
+            let _ = sender.send(WorkerMessage::Search { id, results });
+        });
+        Ok(id)
+    }
+
+    pub(crate) fn search_finished(&mut self, request: SearchId, results: Vec<SearchMatch>) {
+        self.emit(EngineEvent::SearchResults {
+            request,
+            results,
+            done: true,
+        });
+    }
+
+    /// Computes the edits that replace matches of `request` with `replacement`: every match, or
+    /// only those whose path and range appear in `selected`. With a regex, `$1`-style capture
+    /// references in `replacement` are expanded.
+    pub fn replace_preview(
+        &mut self,
+        request: &SearchRequest,
+        replacement: &str,
+        selected: Option<&[(PathBuf, SourceRange)]>,
+    ) -> Result<EditPreview, EngineError> {
+        let regex = build_regex(request)?;
+        let mut edits = Vec::new();
+        for (path, text) in self.searchable_files(request.scope.as_deref()) {
+            let mut file_edits = Vec::new();
+            for captures in regex.captures_iter(&text) {
+                let Some(found) = captures.get(0).filter(|found| !found.is_empty()) else {
+                    continue;
+                };
+                let range = SourceRange::new(found.start(), found.end());
+                if selected.is_some_and(|selected| {
+                    !selected.iter().any(|(selected_path, selected_range)| {
+                        normalize_path(selected_path) == path && *selected_range == range
+                    })
+                }) {
+                    continue;
+                }
+                let mut new_text = String::new();
+                if request.regex {
+                    captures.expand(replacement, &mut new_text);
+                } else {
+                    new_text.push_str(replacement);
+                }
+                file_edits.push(TextEdit::new(range, new_text));
+            }
+            if !file_edits.is_empty() {
+                edits.push(FileEdits {
+                    path,
+                    edits: file_edits,
+                });
+            }
+        }
+        let count: usize = edits.iter().map(|file| file.edits.len()).sum();
+        Ok(self.store_preview(
+            format!("Replace {count} occurrence(s) of `{}`", request.query),
+            Vec::new(),
+            edits,
+        ))
+    }
+
+    fn store_preview(
+        &mut self,
+        title: String,
+        moves: Vec<FileMove>,
+        edits: Vec<FileEdits>,
+    ) -> EditPreview {
+        let preview = EditPreview {
+            id: PreviewId(self.next_preview),
+            title,
+            moves,
+            edits,
+        };
+        self.next_preview += 1;
+        self.previews.insert(preview.id, preview.clone());
+        preview
+    }
+
+    /// A pending preview, if it has not been applied or discarded.
+    #[must_use]
+    pub fn preview(&self, id: PreviewId) -> Option<&EditPreview> {
+        self.previews.get(&id)
+    }
+
+    pub fn discard_preview(&mut self, id: PreviewId) {
+        self.previews.remove(&id);
+    }
+
+    /// Applies a preview as one undo group across every document and file move it contains.
+    pub fn apply_preview(&mut self, id: PreviewId) -> Result<UndoGroup, EngineError> {
+        let preview = self
+            .previews
+            .remove(&id)
+            .ok_or_else(|| EngineError::NotFound(format!("no preview {}", id.get())))?;
+        for file_move in &preview.moves {
+            if !file_move.from.is_file() {
+                return Err(EngineError::NotFound(format!(
+                    "{} does not exist",
+                    file_move.from.display()
+                )));
+            }
+            if file_move.to.exists() {
+                return Err(EngineError::InvalidRequest(format!(
+                    "{} already exists",
+                    file_move.to.display()
+                )));
+            }
+        }
+        let previously_active = self.active;
+
+        // Open everything and validate every edit before changing anything.
+        let mut targets: Vec<(DocumentId, Vec<TextEdit>)> = Vec::new();
+        for file in &preview.edits {
+            let document = self.open(&file.path)?;
+            let text = &self.documents[&document].text;
+            let edits = edit::validate(text, file.edits.clone())?;
+            targets.push((document, edits));
+        }
+        let group = self.new_group();
+        for (document, edits) in targets {
+            self.apply_edits(document, edits, UndoMode::Group(group))?;
+        }
+        for file_move in &preview.moves {
+            let document = self.open(&file_move.from)?;
+            if self
+                .undo_stack(document)
+                .and_then(|stack| stack.top_group())
+                != Some(group)
+            {
+                self.push_marker(document, group);
+            }
+            self.move_file(&file_move.from, &file_move.to)?;
+            self.group_moves
+                .entry(group)
+                .or_default()
+                .push(file_move.clone());
+        }
+        if let Some(active) = previously_active.filter(|id| self.documents.contains_key(id)) {
+            self.set_active(active);
+        }
+        self.refresh_open_diagnostics(None);
+        Ok(group)
+    }
+
+    /// Records an undo entry with no edits, so a document whose only change is a move takes
+    /// part in the group's undo.
+    fn push_marker(&mut self, id: DocumentId, group: UndoGroup) {
+        let version = self
+            .documents
+            .get(&id)
+            .map_or(0, |document| document.version);
+        if let Some(state) = self.states.get_mut(&id) {
+            state.undo.push(UndoEntry {
+                group,
+                inverse: Vec::new(),
+                forward: Vec::new(),
+                version_before: version,
+                version_after: version,
+                typing: None,
+            });
+        }
+    }
+
+    /// Moves a file on disk and everything the engine knows about it.
+    pub(crate) fn move_file(&mut self, from: &Path, to: &Path) -> Result<(), EngineError> {
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
+        }
+        fs::rename(from, to).map_err(|error| EngineError::io(from, error))?;
+        let from = normalize_path(from);
+        let to = normalize_path(to);
+        self.workspace.remove_document(&from);
+        if let Some(id) = self.document_for_path(&from) {
+            if let Some(document) = self.documents.get_mut(&id) {
+                document.path.clone_from(&to);
+                let text = document.text.to_string();
+                document.parsed = parse(&uri_for(&to), &text).document;
+                let parsed = document.parsed.clone();
+                self.workspace.replace_document(to.clone(), parsed);
+            }
+            self.emit(EngineEvent::DocumentMoved {
+                id,
+                from: from.clone(),
+                to: to.clone(),
+            });
+        } else if let Ok(text) = fs::read_to_string(&to) {
+            self.workspace.index.index_source(&to, &text);
+        }
+        // The page's Antora coordinate changed: re-read its component.
+        let descriptors: Vec<PathBuf> = self
+            .workspace
+            .antora
+            .components()
+            .filter(|component| {
+                from.starts_with(&component.root) || to.starts_with(&component.root)
+            })
+            .map(|component| component.root.join("antora.yml"))
+            .collect();
+        for descriptor in descriptors {
+            let _ = self.workspace.reload_descriptor(&descriptor);
+        }
+        Ok(())
+    }
+
+    /// Re-applies or reverses the file moves of `group` after its text edits were redone or
+    /// undone.
+    pub(crate) fn replay_moves(&mut self, group: UndoGroup, reverse: bool) {
+        let Some(moves) = self.group_moves.get(&group).cloned() else {
+            return;
+        };
+        if reverse {
+            for file_move in moves.iter().rev() {
+                let _ = self.move_file(&file_move.to, &file_move.from);
+            }
+        } else {
+            for file_move in &moves {
+                let _ = self.move_file(&file_move.from, &file_move.to);
+            }
+        }
+        self.refresh_open_diagnostics(None);
+    }
+
+    /// Computes moving the page of document `id` to `new_path` and rewriting every xref that
+    /// resolves to it.
+    pub fn rename_preview(
+        &mut self,
+        id: DocumentId,
+        new_path: &Path,
+    ) -> Result<EditPreview, EngineError> {
+        let document = self.document(id).ok_or(EngineError::UnknownDocument(id))?;
+        if document.untitled {
+            return Err(EngineError::InvalidRequest(
+                "an untitled document has no file to rename".to_owned(),
+            ));
+        }
+        let from = document.path.clone();
+        let to = normalize_path(new_path);
+        if to.exists() {
+            return Err(EngineError::InvalidRequest(format!(
+                "{} already exists",
+                to.display()
+            )));
+        }
+        let new_coordinate = self.page_coordinate(&to);
+
+        let mut edits: BTreeMap<PathBuf, Vec<TextEdit>> = BTreeMap::new();
+        for location in adoc_lang::references_to(&self.workspace, &from) {
+            let Some(file) = self.workspace.index.file(&location.path) else {
+                continue;
+            };
+            let text = &file.document.text;
+            let Some((range, file_part)) = xref_file_part(text, location.range) else {
+                continue;
+            };
+            let context = self.workspace.antora.context_for_path(&location.path);
+            let replacement = match (&context, &new_coordinate) {
+                (Some(context), Some(coordinate)) => antora_id(context, coordinate, file_part),
+                _ => relative_path(location.path.parent().unwrap_or_else(|| Path::new("")), &to),
+            };
+            if replacement != file_part {
+                edits
+                    .entry(location.path.clone())
+                    .or_default()
+                    .push(TextEdit::new(range, replacement));
+            }
+        }
+        let edits = edits
+            .into_iter()
+            .map(|(path, edits)| FileEdits { path, edits })
+            .collect();
+        Ok(self.store_preview(
+            format!("Rename {} to {}", from.display(), to.display()),
+            vec![FileMove { from, to }],
+            edits,
+        ))
+    }
+
+    /// The page coordinate a file at `path` would have, if it lies in a module's `pages`.
+    fn page_coordinate(&self, path: &Path) -> Option<AntoraCoordinate> {
+        self.workspace.antora.modules().find_map(|module| {
+            let pages = module.root.join(ResourceFamily::Page.directory());
+            let relative = path.strip_prefix(&pages).ok()?;
+            Some(AntoraCoordinate {
+                component: module.component.clone(),
+                version: module.version.clone(),
+                module: module.name.clone(),
+                family: ResourceFamily::Page,
+                relative_path: relative.to_path_buf(),
+            })
+        })
+    }
+}
+
+/// The range and text of the file part of the xref target in `text[reference]`: the target
+/// up to any `#fragment`.
+fn xref_file_part(text: &str, reference: SourceRange) -> Option<(SourceRange, &str)> {
+    let source = text.get(reference.start..reference.end)?;
+    let after_prefix = source.strip_prefix("xref:")?;
+    let open = after_prefix.find('[')?;
+    let raw_target = &after_prefix[..open];
+    let leading = raw_target.len() - raw_target.trim_start().len();
+    let target = raw_target.trim();
+    let file_part = target.split_once('#').map_or(target, |(file, _)| file);
+    let start = reference.start + "xref:".len() + leading;
+    Some((SourceRange::new(start, start + file_part.len()), file_part))
+}
+
+/// The shortest resource id that names `coordinate` from `context`, keeping the explicit
+/// coordinates the original target `original` used.
+fn antora_id(context: &AntoraContext, coordinate: &AntoraCoordinate, original: &str) -> String {
+    let path = slash_path(&coordinate.relative_path);
+    let original = parse_resource_id(original).ok();
+    let had_component = original.as_ref().is_some_and(|id| id.component.is_some());
+    let had_version = original.as_ref().is_some_and(|id| id.version.is_some());
+    let had_module = original.as_ref().is_some_and(|id| id.module.is_some());
+    let same_component_version =
+        coordinate.component == context.component && coordinate.version == context.version;
+    if same_component_version && !had_component {
+        if coordinate.module == context.module && !had_module {
+            path
+        } else {
+            format!("{}:{path}", coordinate.module)
+        }
+    } else {
+        // A version is written only where the original pinned one; otherwise the latest
+        // version is meant, as before.
+        let version = match &coordinate.version {
+            Some(version) if had_version => format!("{version}@"),
+            _ => String::new(),
+        };
+        format!(
+            "{version}{}:{}:{path}",
+            coordinate.component, coordinate.module
+        )
+    }
+}
+
+/// `to` relative to the directory `from`, with `/` separators.
+fn relative_path(from: &Path, to: &Path) -> String {
+    let from = normalize_path(from);
+    let from: Vec<Component> = from.components().collect();
+    let to_components: Vec<Component> = to.components().collect();
+    let common = from
+        .iter()
+        .zip(&to_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut parts: Vec<String> =
+        std::iter::repeat_n("..".to_owned(), from.len() - common).collect();
+    parts.extend(
+        to_components[common..]
+            .iter()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned()),
+    );
+    parts.join("/")
+}
+
+fn slash_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(component: &str, version: Option<&str>, module: &str) -> AntoraContext {
+        AntoraContext {
+            component: component.to_owned(),
+            version: version.map(str::to_owned),
+            module: module.to_owned(),
+            family: ResourceFamily::Page,
+        }
+    }
+
+    fn coordinate(
+        component: &str,
+        version: Option<&str>,
+        module: &str,
+        path: &str,
+    ) -> AntoraCoordinate {
+        AntoraCoordinate {
+            component: component.to_owned(),
+            version: version.map(str::to_owned),
+            module: module.to_owned(),
+            family: ResourceFamily::Page,
+            relative_path: PathBuf::from(path),
+        }
+    }
+
+    #[test]
+    fn writes_the_shortest_antora_id() {
+        let here = context("alpha", Some("1.0"), "ROOT");
+        let same = coordinate("alpha", Some("1.0"), "ROOT", "howto/setup.adoc");
+        assert_eq!(antora_id(&here, &same, "guide.adoc"), "howto/setup.adoc");
+        let other_module = coordinate("alpha", Some("1.0"), "ops", "setup.adoc");
+        assert_eq!(
+            antora_id(&here, &other_module, "guide.adoc"),
+            "ops:setup.adoc"
+        );
+        let other_component = coordinate("beta", None, "ROOT", "setup.adoc");
+        assert_eq!(
+            antora_id(&here, &other_component, "beta::guide.adoc"),
+            "beta:ROOT:setup.adoc"
+        );
+        let pinned = coordinate("alpha", Some("1.0"), "ROOT", "setup.adoc");
+        assert_eq!(
+            antora_id(
+                &context("beta", None, "ROOT"),
+                &pinned,
+                "1.0@alpha::guide.adoc"
+            ),
+            "1.0@alpha:ROOT:setup.adoc"
+        );
+    }
+
+    #[test]
+    fn writes_relative_paths_outside_antora() {
+        assert_eq!(
+            relative_path(Path::new("/docs/a"), Path::new("/docs/b/c.adoc")),
+            "../b/c.adoc"
+        );
+        assert_eq!(
+            relative_path(Path::new("/docs"), Path::new("/docs/c.adoc")),
+            "c.adoc"
+        );
+    }
+
+    #[test]
+    fn finds_the_file_part_of_an_xref_target() {
+        let text = "See xref:guide.adoc#setup[Setup].";
+        let reference = SourceRange::new(4, 32);
+        let (range, file) = xref_file_part(text, reference).unwrap();
+        assert_eq!(file, "guide.adoc");
+        assert_eq!(&text[range.start..range.end], "guide.adoc");
+    }
+
+    #[test]
+    fn rejects_empty_and_invalid_queries() {
+        assert!(build_regex(&SearchRequest::default()).is_err());
+        assert!(build_regex(&SearchRequest {
+            query: "(".to_owned(),
+            regex: true,
+            ..SearchRequest::default()
+        })
+        .is_err());
+    }
+}

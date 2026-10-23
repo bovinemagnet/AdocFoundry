@@ -1,0 +1,41 @@
+flowchart TD
+    subgraph L4["L4: front ends"]
+        app["adocfoundry<br/>(GPUI app, only GPUI importer)"]
+        cli["adocfoundry-cli"]
+        ls["adoc-ls<br/>(LSP, only LSP speaker)"]
+    end
+    subgraph L3["L3: engine"]
+        engine["adoc-engine"]
+    end
+    subgraph L2["L2"]
+        render["adoc-render"]
+    end
+    subgraph L1["L1: language crates"]
+        parser["adoc-parser"]
+        antora["adoc-antora"]
+        index["adoc-index"]
+        lang["adoc-lang"]
+    end
+    subgraph L0["L0: domain types"]
+        core["adoc-core"]
+    end
+    app --> engine
+    app --> index
+    cli --> engine
+    cli --> index
+    ls --> lang
+    ls --> index
+    ls --> parser
+    ls --> render
+    engine --> lang
+    engine --> index
+    engine --> antora
+    engine --> parser
+    lang --> index
+    lang --> antora
+    lang --> parser
+    index --> parser
+    parser --> core
+    antora --> core
+    index --> core
+    lang --> core

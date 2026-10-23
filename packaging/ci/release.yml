@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - run: brew install librsvg
+      - name: Build both architectures
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --target "$target" -p adocfoundry -p adocfoundry-cli -p adoc-ls
+          done
+      - name: Universal binaries
+        run: |
+          mkdir -p dist
+          for bin in adocfoundry adocfoundry-cli adoc-ls; do
+            lipo -create -output "dist/$bin" \
+              "target/aarch64-apple-darwin/release/$bin" "target/x86_64-apple-darwin/release/$bin"
+          done
+      - name: App bundle and DMG
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          packaging/macos/bundle.sh dist/adocfoundry "$version" dist
+          tar -C dist -czf "dist/adoc-ls-$version-macos-universal.tar.gz" adoc-ls
+          tar -C dist -czf "dist/adocfoundry-cli-$version-macos-universal.tar.gz" adocfoundry-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/*.dmg
+            dist/*.tar.gz
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo install cargo-wix --locked
+      - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry -p adocfoundry-cli -p adoc-ls
+      - name: MSI
+        run: cargo wix -p adocfoundry --no-build --nocapture --target ${{ matrix.target }} --output dist/
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          $bin = "target/${{ matrix.target }}/release"
+          Compress-Archive -Path "$bin/adocfoundry.exe","$bin/adocfoundry-cli.exe","$bin/adoc-ls.exe",LICENSE,README.md `
+            -DestinationPath "dist/AdocFoundry-$version-windows-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: |
+            dist/*.msi
+            dist/*.zip
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
+            libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev librsvg2-bin file
+      - run: cargo install cargo-deb cargo-generate-rpm --locked
+      - run: cargo build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls
+      - name: deb and rpm
+        run: |
+          mkdir -p dist
+          cargo deb -p adocfoundry --no-build --output dist/
+          cargo generate-rpm -p crates/adocfoundry --output dist/
+      - name: AppImage
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage"
+          chmod +x linuxdeploy
+          rsvg-convert -w 256 -h 256 packaging/icons/adocfoundry.svg -o io.github.bovinemagnet.AdocFoundry.png
+          APPIMAGE_EXTRACT_AND_RUN=1 OUTPUT="dist/AdocFoundry-$version-${{ matrix.arch }}.AppImage" ./linuxdeploy \
+            --appdir AppDir \
+            --executable target/release/adocfoundry \
+            --desktop-file packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop \
+            --icon-file io.github.bovinemagnet.AdocFoundry.png \
+            --output appimage
+      - name: Command-line tools
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          tar -C target/release -czf "dist/adoc-ls-$version-linux-${{ matrix.arch }}.tar.gz" adoc-ls
+          tar -C target/release -czf "dist/adocfoundry-cli-$version-linux-${{ matrix.arch }}.tar.gz" adocfoundry-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*
+
+  publish:
+    needs: [macos, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artefacts/*
+          generate_release_notes: true

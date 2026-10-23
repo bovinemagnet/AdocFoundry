@@ -1,0 +1,16 @@
+sequenceDiagram
+    actor User
+    participant Eng as Engine
+    participant Lang as adoc_lang
+    participant UI as Preview dialog
+    User->>Eng: page.rename
+    Eng->>Eng: rename_preview
+    Eng->>Lang: references_to (find every xref)
+    Lang-->>Eng: Referencing locations
+    Eng-->>UI: EditPreview (one file move + text edits)
+    UI-->>User: Show changes
+    User->>Eng: workspace.apply_preview
+    Eng->>Eng: Apply text edits and move file<br/>as ONE undo group
+    Eng-->>User: Events published
+    User->>Eng: edit.undo (on any document)
+    Eng->>Eng: Reverse all edits and move file back

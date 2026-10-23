@@ -1,0 +1,18 @@
+sequenceDiagram
+    actor User
+    participant ES as EditorState (gpui-component)
+    participant SEV as SourceEditorView
+    participant Eng as Engine
+    participant App as AppState
+    participant Views
+    User->>ES: Types
+    ES-->>SEV: InputEvent::Change
+    SEV->>SEV: Diff widget text against engine rope<br/>(common prefix/suffix, editor/sync.rs)
+    SEV->>Eng: edit.insert_text / edit.replace_range
+    activate Eng
+    Note over Eng: Engine::apply_edits<br/>1. Rope edit, version bump<br/>2. adoc-parser re-parse<br/>3. Index replace<br/>4. Diagnostics refresh for open documents<br/>5. Undo entry (typing coalesces within 500 ms)
+    Eng-->>App: DocumentChanged, DiagnosticsUpdated
+    deactivate Eng
+    App-->>Views: Re-emit as GPUI events
+    Views->>Views: Re-render
+    Note over Eng,SEV: Engine-originated changes (undo, replace, rename)<br/>flow back, and the widget is reconciled with one replacement

@@ -10,7 +10,7 @@ The architecture and phase plan live in `docs/design/DESIGN-AdocFoundry_Architec
 
 Phases, in order: (1) source editor with Antora support and link following; (2) native rendered preview; (3) WYSIWYG editing; (4) PDF export with themes. Do not start a later phase's features unless the current phase's spec says so or you are asked.
 
-**Current state:** the repository holds only the design and Phase 1 spec (`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`). There is no Cargo workspace yet, so the commands below apply once WP 1.2 (workspace bring-up and crate migration from `zed-asciidoc`) has landed. Work packages merge in this order: 1.1 → 1.2 → 1.5a → 1.3 → 1.5b → 1.7 → 1.4 → 1.6 → 1.8 → 1.9 (spec §16 lists each package's dependencies and normative test names).
+**Current state:** Phase 1 is implemented (work packages 1.1–1.9). Where the implementation departs from the spec, §20 "Implementation Notes" of the Phase 1 spec records it; read it before changing those areas. The manual checks that automated tests cannot cover (IME, frame timing, macOS and Windows runs, packages) are listed in `docs/qa/phase1.md`, and the GPUI spike's findings are in `docs/qa/spike-gpui.md`.
 
 ## Commands
 
@@ -23,6 +23,9 @@ cargo run -p adocfoundry                                 # launch the desktop ap
 cargo run -p adocfoundry-cli -- check tests/fixtures/antora-single-component
 cargo run -p adoc-ls -- --version                        # smoke-test the language server
 cargo deny check                                         # licences and advisories
+cargo xtask layers                                       # the crate ladder and confinement rules
+cargo xtask package                                      # release build and archive in dist/
+git submodule update --init                              # the grammars, needed to build the app
 ```
 
 `default-members = ["crates/adocfoundry"]`, so a bare `cargo test` or `cargo check` only covers the app crate. **Always pass `--workspace`** (or `-p <crate>`) when working on engine or language crates.
@@ -35,7 +38,7 @@ cargo test -p adoc-antora resolves_cross_component # single test by name substri
 cargo test -p adocfoundry-cli --test cli           # one integration test file
 ```
 
-The app crate needs a GPU-capable environment; CI runs `cargo test --workspace --exclude adocfoundry` and then only builds the app crate (`cargo build -p adocfoundry`). Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
+The CI and release workflows are written but kept in `packaging/ci/`, not `.github/workflows/`, so they do not run yet; macOS and Windows are verified by hand first. The app crate needs a GPU-capable environment; CI is set up to run `cargo test --workspace --exclude adocfoundry` and then only builds the app crate (`cargo build -p adocfoundry`). Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
 
 ## Architecture
 
@@ -56,8 +59,8 @@ L0  adoc-core       domain types only; no internal deps; no editor, LSP or UI ty
 - **`adoc-index`** — `WorkspaceIndex` with replacement-based updates and direct map lookups. Never add a feature that scans every document. `normalize_path` is lexical and never canonicalises, so unsaved files work.
 - **`adoc-lang`** — editor-agnostic language features operating on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, attribute resolution. This is the former `adoc-ls/src/handlers` and the non-LSP parts of its `state.rs`. Both `adoc-ls` and `adoc-engine` call it; neither re-implements it.
 - **`adoc-engine`** — the only entry point front ends use. Owns the workspace (roots, catalog, index), open documents, the command registry, undo history, settings and the file watcher, and publishes `EngineEvent`s. Every user-visible action is a `Command` with a stable `CommandId`; the UI, CLI and future MCP server invoke commands, never engine internals.
-- **`adoc-ls`** — the only crate that knows about LSP. `protocol.rs` maps `adoc-lang` results to `lsp-types`; nothing below it may import `lsp-types` or `lsp-server`.
-- **`adocfoundry`** — the only crate that imports `gpui`, `gpui-component` or any other UI framework. Views are thin: they render engine state and dispatch commands. Logic that could live in `adoc-engine` must live there.
+- **`adoc-ls`** — the only crate that knows about LSP. `protocol.rs` maps `adoc-lang` results to `lsp-types`; nothing below it may import `lsp-types` or `lsp-server`. The one listed exception (`LSP_ALLOWED` in `xtask/src/layers.rs`) is `adocfoundry` using `lsp-types` in `editor/providers.rs`, because gpui-component's editor provider traits are typed with it; keep it to that module.
+- **`adocfoundry`** — the only crate that imports `gpui`, `gpui-component` or any other UI framework. Views are thin: they render engine state and dispatch commands. Logic that could live in `adoc-engine` must live there. The editor widget reports only that its text changed, so `editor/sync.rs` recovers each edit as one replacement and sends it as `edit.insert_text`/`edit.replace_range`; engine-side changes are applied back the same way. Undo, redo and definition are bound in the editor key context after gpui-component's bindings so they reach the engine. Tabs follow the engine's active document (`EngineEvent::NavigationChanged`). App tests in `src/ui_tests.rs` run on GPUI's test platform and need no display.
 - **`adocfoundry-cli`** — headless binary over `adoc-engine`. Phase 1 subcommands: `check <root> [--format text|json] [--fail-on warning|error]`, `symbols <root> <query>`, `follow <file> <byte-offset>`; `render` and `pdf` come in later phases. Used in CI and for dogfooding.
 
 Request flow: a keystroke edits the editor buffer → `Engine::apply_edit` updates the document, runs `adoc-parser`, replaces the index entry, publishes `EngineEvent::DocumentChanged` → views re-render from engine state. Nothing in the UI holds its own copy of document semantics.

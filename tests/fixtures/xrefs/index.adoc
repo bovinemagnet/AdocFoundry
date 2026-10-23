@@ -1,0 +1,3 @@
+= Cross References
+
+See xref:other.adoc#details[Details].

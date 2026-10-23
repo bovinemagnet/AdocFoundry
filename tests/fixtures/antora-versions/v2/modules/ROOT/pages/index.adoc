@@ -1,0 +1,7 @@
+= Product 2.0
+
+Latest feature: xref:product::feature.adoc[].
+
+Pinned feature: xref:1.0@product::feature.adoc[].
+
+Same version: xref:feature.adoc[].

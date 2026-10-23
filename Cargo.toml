@@ -1,0 +1,63 @@
+[workspace]
+members = ["crates/*", "xtask"]
+# The grammar submodule carries its own binding crates, used as path dependencies.
+exclude = ["grammars"]
+default-members = ["crates/adocfoundry"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/bovinemagnet/AdocFoundry"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+# Internal crates
+adoc-antora = { path = "crates/adoc-antora" }
+adoc-core = { path = "crates/adoc-core" }
+adoc-engine = { path = "crates/adoc-engine" }
+adoc-index = { path = "crates/adoc-index" }
+adoc-lang = { path = "crates/adoc-lang" }
+adoc-parser = { path = "crates/adoc-parser" }
+adoc-render = { path = "crates/adoc-render" }
+
+# External crates: every entry pinned exactly; crates reference these, never their own versions
+dirs = "=6.0.0"
+gpui = { package = "gpui-pre", version = "=0.3.9" }
+gpui-component = { version = "=0.8.0", features = [
+    "tree-sitter",
+    "tree-sitter-bash",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-java",
+    "tree-sitter-javascript",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-sql",
+    "tree-sitter-toml",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
+gpui-kit-assets = "=0.8.0"
+gpui-platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+# Built from the grammar submodule by the grammar's own binding crates.
+tree-sitter-asciidoc = { path = "grammars/tree-sitter-asciidoc/tree-sitter-asciidoc" }
+tree-sitter-asciidoc-inline = { path = "grammars/tree-sitter-asciidoc/tree-sitter-asciidoc_inline" }
+insta = { version = "=1.49.0", features = ["json"] }
+lsp-server = "=0.10.0"
+# `proposed` is enabled by gpui-component through feature unification; enable it everywhere
+# so adoc-ls compiles the same way alone and in the workspace.
+lsp-types = { version = "=0.97.0", features = ["proposed"] }
+notify = "=8.2.0"
+regex = "=1.13.1"
+ropey = "=2.0.0-beta.1"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde-saphyr = { version = "=1.0.1", default-features = false, features = ["deserialize"] }
+serde_json = "=1.0.151"
+tempfile = "=3.27.0"
+toml = "=1.1.8"
+tree-sitter = "=0.26.13"
+url = "=2.5.8"

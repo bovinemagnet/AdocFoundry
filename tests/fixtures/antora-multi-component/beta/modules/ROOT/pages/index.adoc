@@ -1,0 +1,3 @@
+= Beta
+
+Back to xref:1.0@alpha::index.adoc[Alpha].

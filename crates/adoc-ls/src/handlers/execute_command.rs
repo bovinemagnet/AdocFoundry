@@ -1,0 +1,497 @@
+//! Handling of `workspace/executeCommand`.
+//!
+//! Editor-agnostic: this operates on a URI and returns the artefact that was produced,
+//! leaving all `lsp-types` mapping to `protocol.rs`.
+
+use std::path::PathBuf;
+
+use adoc_render::{RenderRequest, RenderSafeMode, Renderer};
+
+use adoc_lang::{
+    attributes::{antora_attributes, component_attributes},
+    render_source::source_for_render,
+};
+
+use crate::{
+    preview::{scratch_directory, PreviewError, PreviewMode, PreviewSink},
+    state::{document_path, ServerState},
+};
+
+/// Render the document at `uri` and deliver it through `sink`.
+///
+/// The open buffer is rendered rather than the file on disk, so an unsaved document
+/// previews exactly what the author sees.
+pub fn render_preview(
+    state: &ServerState,
+    renderer: &dyn Renderer,
+    sink: &dyn PreviewSink,
+    uri: &str,
+    mode: PreviewMode,
+) -> Result<PathBuf, PreviewError> {
+    let (source, request) = preview_request(state, uri)?;
+    let output = renderer.render(&request)?;
+    sink.deliver(&output, &source, mode)
+}
+
+/// The source path and render request for the document at `uri`.
+fn preview_request(
+    state: &ServerState,
+    uri: &str,
+) -> Result<(PathBuf, RenderRequest), PreviewError> {
+    let open = state
+        .documents
+        .get(uri)
+        .ok_or_else(|| PreviewError::NotOpen(uri.to_owned()))?;
+
+    let source = document_path(uri);
+    let text = source_for_render(
+        &open.document,
+        &state.workspace.antora,
+        &source,
+        &scratch_directory(),
+    );
+    let mut request = RenderRequest::from_source(source.clone(), text);
+    // Component attributes first, so the page and family attributes Antora computes itself
+    // win should `antora.yml` name one of them.
+    request.attributes.extend(
+        component_attributes(&state.workspace.antora, &source)
+            .map(|(name, value)| (name.to_owned(), value.to_owned())),
+    );
+    request
+        .attributes
+        .extend(antora_attributes(&state.workspace.antora, &source));
+    // Rewritten copies of included files sit in a scratch directory outside the
+    // component, which any jailed safe mode refuses to read.
+    request.safe_mode = RenderSafeMode::Unsafe;
+
+    Ok((source, request))
+}
+
+/// Re-render a live preview in place, without presenting it again.
+///
+/// Called when a document being previewed is saved; the artefact is overwritten so the
+/// page picks the change up on its next reload, and focus stays in the editor.
+pub fn refresh_preview(
+    state: &ServerState,
+    renderer: &dyn Renderer,
+    sink: &dyn PreviewSink,
+    uri: &str,
+) -> Result<PathBuf, PreviewError> {
+    let (source, request) = preview_request(state, uri)?;
+    let output = renderer.render(&request)?;
+    sink.refresh(&output, &source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use adoc_render::MockRenderer;
+    use std::{path::Path, sync::Mutex};
+
+    #[derive(Default)]
+    struct RecordingSink {
+        delivered: Mutex<Vec<(String, PathBuf)>>,
+        refreshed: Mutex<Vec<(String, PathBuf)>>,
+        mode: Mutex<Option<PreviewMode>>,
+    }
+
+    impl PreviewSink for RecordingSink {
+        fn deliver(
+            &self,
+            output: &adoc_render::RenderOutput,
+            source: &Path,
+            mode: PreviewMode,
+        ) -> Result<PathBuf, PreviewError> {
+            self.delivered
+                .lock()
+                .unwrap()
+                .push((output.html.clone(), source.to_path_buf()));
+            *self.mode.lock().unwrap() = Some(mode);
+            Ok(source.with_extension("html"))
+        }
+
+        fn refresh(
+            &self,
+            output: &adoc_render::RenderOutput,
+            source: &Path,
+        ) -> Result<PathBuf, PreviewError> {
+            self.refreshed
+                .lock()
+                .unwrap()
+                .push((output.html.clone(), source.to_path_buf()));
+            Ok(source.with_extension("html"))
+        }
+    }
+
+    fn state_with(uri: &str, text: &str) -> ServerState {
+        let mut state = ServerState::default();
+        state.open(uri, text, 1);
+        state
+    }
+
+    #[test]
+    fn renders_the_unsaved_buffer_rather_than_the_file_on_disk() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Unsaved Title\n");
+        let renderer = RecordingRenderer::default();
+        let sink = RecordingSink::default();
+
+        render_preview(&state, &renderer, &sink, uri, PreviewMode::Static).expect("render");
+
+        let request = renderer.last_request().expect("a request was made");
+        assert_eq!(request.source_text.as_deref(), Some("= Unsaved Title\n"));
+    }
+
+    #[test]
+    fn delivers_rendered_html_for_the_document_path() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+        let sink = RecordingSink::default();
+
+        render_preview(
+            &state,
+            &MockRenderer::new("<h1>Title</h1>"),
+            &sink,
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        let delivered = sink.delivered.lock().unwrap();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].0, "<h1>Title</h1>");
+        assert_eq!(delivered[0].1, PathBuf::from("/docs/guide.adoc"));
+    }
+
+    #[test]
+    fn reports_a_document_that_is_not_open() {
+        let state = ServerState::default();
+        let sink = RecordingSink::default();
+
+        let error = render_preview(
+            &state,
+            &MockRenderer::new("<p/>"),
+            &sink,
+            "file:///gone.adoc",
+            PreviewMode::Static,
+        )
+        .expect_err("closed documents cannot be previewed");
+
+        assert!(matches!(error, PreviewError::NotOpen(_)), "{error:?}");
+    }
+
+    #[test]
+    fn returns_the_artefact_path_from_the_sink() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+
+        let artefact = render_preview(
+            &state,
+            &MockRenderer::new("<h1>Title</h1>"),
+            &RecordingSink::default(),
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        assert_eq!(artefact, PathBuf::from("/docs/guide.html"));
+    }
+
+    #[test]
+    fn merges_antora_page_attributes_into_the_request() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let page = root.join("modules/security/pages/authentication.adoc");
+        let uri = format!("file://{}", page.display());
+
+        let mut state = ServerState::default();
+        state.index_workspace(vec![root]).expect("index fixture");
+        state.open(&uri, "= Authentication\n", 1);
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        let attributes = renderer.last_request().expect("a request").attributes;
+        assert_eq!(
+            attributes.get("page-component-name").map(String::as_str),
+            Some("demo")
+        );
+        assert_eq!(
+            attributes.get("page-module").map(String::as_str),
+            Some("security")
+        );
+        assert_eq!(
+            attributes.get("page-component-version").map(String::as_str),
+            Some("latest")
+        );
+    }
+
+    #[test]
+    fn merges_the_component_s_asciidoc_attributes_into_the_request() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let page = root.join("modules/ROOT/pages/index.adoc");
+        let uri = format!("file://{}", page.display());
+
+        let mut state = ServerState::default();
+        state.index_workspace(vec![root]).expect("index fixture");
+        state.open(&uri, "= Home\n", 1);
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        let attributes = renderer.last_request().expect("a request").attributes;
+        assert_eq!(
+            attributes.get("source-highlighter").map(String::as_str),
+            Some("highlight.js")
+        );
+        assert_eq!(attributes.get("sectanchors").map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn a_document_outside_an_antora_module_contributes_no_page_attributes() {
+        let uri = "file:///elsewhere/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        assert!(renderer
+            .last_request()
+            .expect("a request")
+            .attributes
+            .is_empty());
+    }
+
+    #[test]
+    fn resolves_antora_includes_before_rendering() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let page = root.join("modules/security/pages/authentication.adoc");
+        let uri = format!("file://{}", page.display());
+
+        let mut state = ServerState::default();
+        state.index_workspace(vec![root]).expect("index fixture");
+        state.open(
+            &uri,
+            "= Authentication\n\ninclude::partial$token-note.adoc[]\n",
+            1,
+        );
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        let source = renderer
+            .last_request()
+            .expect("a request")
+            .source_text
+            .expect("source text");
+        assert!(!source.contains("partial$"), "{source}");
+        assert!(
+            source.contains("modules/security/partials/token-note.adoc"),
+            "{source}"
+        );
+    }
+
+    #[test]
+    fn widens_the_safe_mode_jail_to_the_antora_component_root() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let page = root.join("modules/security/pages/authentication.adoc");
+        let uri = format!("file://{}", page.display());
+
+        let mut state = ServerState::default();
+        state.index_workspace(vec![root]).expect("index fixture");
+        state.open(&uri, "= Authentication\n", 1);
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        assert!(renderer
+            .last_request()
+            .expect("a request")
+            .base_dir
+            .is_none());
+    }
+
+    #[test]
+    fn a_document_outside_an_antora_module_keeps_the_default_jail() {
+        let uri = "file:///elsewhere/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        assert!(renderer
+            .last_request()
+            .expect("a request")
+            .base_dir
+            .is_none());
+    }
+
+    #[test]
+    fn sets_the_antora_family_directory_attributes() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-nested-pages");
+        let page = root.join("modules/ROOT/pages/guides/composed.adoc");
+        let uri = format!("file://{}", page.display());
+
+        let mut state = ServerState::default();
+        state
+            .index_workspace(vec![root.clone()])
+            .expect("index fixture");
+        state.open(&uri, "= Composed\n", 1);
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            &uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        let attributes = renderer.last_request().expect("a request").attributes;
+        let moduledir = attributes.get("moduledir").expect("moduledir is not set");
+        assert!(
+            moduledir.ends_with("modules/ROOT"),
+            "moduledir = {moduledir}"
+        );
+        for (name, family) in [
+            ("pagesdir", "pages"),
+            ("partialsdir", "partials"),
+            ("examplesdir", "examples"),
+            ("attachmentsdir", "attachments"),
+            ("imagesdir", "images"),
+        ] {
+            let value = attributes
+                .get(name)
+                .unwrap_or_else(|| panic!("{name} is not set: {attributes:?}"));
+            assert!(
+                value.ends_with(&format!("modules/ROOT/{family}/")),
+                "{name} = {value}"
+            );
+        }
+    }
+
+    /// Rewritten copies of included files live outside the component's jail, so any safe
+    /// mode above `unsafe` refuses to read them.
+    #[test]
+    fn renders_unsafe_so_rewritten_includes_are_readable() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+
+        let renderer = RecordingRenderer::default();
+        render_preview(
+            &state,
+            &renderer,
+            &RecordingSink::default(),
+            uri,
+            PreviewMode::Static,
+        )
+        .expect("render");
+
+        assert_eq!(
+            renderer.last_request().expect("a request").safe_mode,
+            adoc_render::RenderSafeMode::Unsafe
+        );
+    }
+
+    #[test]
+    fn a_live_preview_is_delivered_in_live_mode() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+        let sink = RecordingSink::default();
+
+        render_preview(
+            &state,
+            &MockRenderer::new("<h1>T</h1>"),
+            &sink,
+            uri,
+            PreviewMode::Live,
+        )
+        .expect("render");
+
+        assert_eq!(*sink.mode.lock().unwrap(), Some(PreviewMode::Live));
+    }
+
+    #[test]
+    fn refreshing_updates_without_redelivering() {
+        let uri = "file:///docs/guide.adoc";
+        let state = state_with(uri, "= Title\n");
+        let sink = RecordingSink::default();
+
+        refresh_preview(&state, &MockRenderer::new("<h1>T</h1>"), &sink, uri).expect("refresh");
+
+        assert!(sink.delivered.lock().unwrap().is_empty());
+        assert_eq!(sink.refreshed.lock().unwrap().len(), 1);
+    }
+
+    /// A renderer that captures the request it was given.
+    #[derive(Default)]
+    struct RecordingRenderer {
+        requests: Mutex<Vec<RenderRequest>>,
+    }
+
+    impl RecordingRenderer {
+        fn last_request(&self) -> Option<RenderRequest> {
+            self.requests.lock().unwrap().last().cloned()
+        }
+    }
+
+    impl adoc_render::Renderer for RecordingRenderer {
+        fn render(
+            &self,
+            request: &RenderRequest,
+        ) -> Result<adoc_render::RenderOutput, adoc_render::RenderError> {
+            self.requests.lock().unwrap().push(request.clone());
+            Ok(adoc_render::RenderOutput {
+                html: String::new(),
+                warnings: Vec::new(),
+            })
+        }
+    }
+}

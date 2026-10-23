@@ -1,0 +1,51 @@
+= Language server
+Paul Snow
+:revnumber: 0.0.0
+:description: adoc-ls, the Language Server Protocol server built from the AdocFoundry engine, and the Zed extension that uses it.
+
+`adoc-ls` is a language server that speaks the Language Server Protocol over standard input and output.
+It serves the same language features as the desktop editor, because both call the same editor-agnostic crate, `adoc-lang`.
+
+[source,sh]
+----
+adoc-ls --stdio
+adoc-ls --version
+----
+
+== Features
+
+* Diagnostics, as described in xref:diagnostics.adoc[Diagnostics].
+* Go to definition for xref, include and image targets and attributes.
+* Hover.
+* Completion, triggered by `:`, `$`, `#`, `/`, `<` and `{`.
+* Document symbols and workspace symbols.
+* Code actions and commands, including an HTML preview rendered through Asciidoctor, and a live preview that re-renders on save.
+
+The preview needs `asciidoctor` to be installed.
+It is optional and discovered on `PATH`, or set with `tools.asciidoctor` in xref:settings.adoc[the settings].
+Nothing else in AdocFoundry calls Asciidoctor.
+
+== Zed
+
+The Zed extension https://github.com/bovinemagnet/zed-asciidoc[zed-asciidoc] provides AsciiDoc highlighting and starts `adoc-ls` from your `PATH`.
+Install the server with:
+
+[source,sh]
+----
+cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
+----
+
+Release archives containing `adoc-ls` are also attached to each release for Linux, macOS and Windows.
+
+The server began life inside `zed-asciidoc`.
+It now ships from AdocFoundry, and `zed-asciidoc` is only the thin extension.
+
+== Other editors
+
+Any editor that can start a stdio language server for `.adoc` files can use `adoc-ls`.
+Point it at the `adoc-ls` binary with the `--stdio` argument.
+
+== Consistency with the command line
+
+A test runs `adocfoundry-cli check` and `adoc-ls` over the same fixtures and asserts that they report the same diagnostics.
+See xref:command-line.adoc[Command line] and xref:developer:testing.adoc[Testing].

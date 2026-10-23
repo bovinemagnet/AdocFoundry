@@ -1,0 +1,93 @@
+= Implementation notes
+Paul Snow
+:revnumber: 0.0.0
+:description: Where building Phase 1 departed from its specification, and why.
+
+Where building Phase 1 showed the specification to be wrong or incomplete, the implementation made the smallest change that works.
+This page summarises section 20 of `docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`, which is the authoritative record.
+
+[cols="1,2,3,3"]
+|===
+|Area |Specification |Implementation |Why
+
+|Order
+|Work package 1.1 (the spike) before 1.2
+|1.2, the workspace bring-up, first, then the spike
+|The spike calls `adoc_lang::definition_at_offset` in process, which needs the migrated crates and `adoc-lang`.
+
+|GPUI crates
+|`gpui-pre` and `gpui-component`
+|Also `gpui-pre-platform` and `gpui-kit-assets`
+|gpui-pre 0.3.9 moved the platform code into its own crate, and gpui-component 0.8 depends on `gpui-pre` under the name `gpui`. Both extra crates are confined to `adocfoundry` by `cargo xtask layers`.
+
+|LSP types
+|`lsp-types` only in `adoc-ls`
+|`adocfoundry` may also depend on it, as one listed exception
+|gpui-component's editor offers definition, hover and completion only through provider traits typed with `lsp-types`. `providers.rs` is the only module that uses them.
+
+|Grammar build
+|`cc` in the application's `build.rs`
+|The submodule's binding crates as path dependencies, built with `cc`
+|Converting the C entry point into a `tree_sitter::Language` needs `unsafe`, which is forbidden workspace-wide.
+
+|`Location`
+|Defined in `adoc-lang`
+|Defined in `adoc-core` and re-exported
+|`NavItem` in `adoc-antora` needs it, and `adoc-antora` cannot depend on `adoc-lang`.
+
+|`NavTree`
+|`component`, `version` and `items`
+|Adds `path` and `diagnostics`
+|The `adoc.antora.nav-unresolved` diagnostics need somewhere to live, and a component may list several navigation files.
+
+|`UnknownVersion`
+|A new resolution error
+|Added, but diagnostics treat it like an unknown component and do not report it
+|A version of a known component that is absent from the workspace is usually published from another branch or repository, so reporting it would be a false positive.
+
+|Engine API
+|As in section 10.3
+|Adds `with_clock`, `wait_for_workers`, `has_pending`, `document_for_path`, `workspace_diagnostics`, `nav_trees`, `outline`, `search`, `replace_preview`, `rename_preview` and `apply_preview`
+|Command implementations and front ends need them. Every mutation still goes through a command.
+
+|Events
+|As in section 10.2
+|Adds `DocumentMoved` and `DocumentChangedOnDisk`
+|Rename moves an open document's file, and the watcher must tell the UI when a dirty buffer's file changed on disk.
+
+|Folding
+|`folds.scm`
+|The query is written and checked, but not read by the widget
+|gpui-component 0.8 derives folds from multi-line syntax nodes itself.
+
+|Injections
+|Rust, Java, JS/TS, Python, Go, JSON, YAML, TOML, shell, SQL, XML/HTML and Dockerfile
+|All except XML and Dockerfile
+|gpui-component 0.8 ships no XML or Dockerfile grammar. HTML is injected.
+
+|CLI
+|`follow <file> <byte-offset>`
+|Adds `--root <dir>`, defaulting to the parent of the nearest `antora.yml`
+|Following a cross-component xref needs the other components indexed.
+
+|Editor sync
+|Widget edits sent as edits
+|The edit is recovered as the replacement between the common prefix and suffix of widget and engine text
+|gpui-component 0.8 does not expose edit ranges. Typing still arrives as single-character inserts, so undo coalescing works.
+
+|Packaging
+|Linux aarch64 cross-built with `cross`
+|Built natively on GitHub's `ubuntu-22.04-arm` runners
+|GPUI links against system Wayland, X11 and Vulkan libraries, which a native runner provides without a cross sysroot.
+
+|`xtask`
+|`layers`, `fixtures` and `package`
+|`layers` and `package`
+|The fixtures are hand-written and checked in, so nothing needs generating.
+|===
+
+== Related
+
+* xref:architecture.adoc[Architecture], for the layering exception
+* xref:desktop-app.adoc[The desktop app], for editor synchronisation
+* xref:testing.adoc[Testing], for what remains unverified

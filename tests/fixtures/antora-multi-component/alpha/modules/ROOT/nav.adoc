@@ -1,0 +1,7 @@
+.Alpha
+* xref:index.adoc[Home]
+** xref:guide.adoc[Guide]
+*** xref:guide.adoc#setup[Setup]
+** Background
+* xref:beta::index.adoc[Beta home]
+* xref:missing.adoc[Missing page]

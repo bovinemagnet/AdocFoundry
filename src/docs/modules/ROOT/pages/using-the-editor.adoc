@@ -1,0 +1,139 @@
+= Using the editor
+Paul Snow
+:revnumber: 0.0.0
+:description: The workspace, sidebar, editor, link following, search and replace, and page rename.
+
+This page describes the Phase 1 application.
+Every action described here is an engine command with a stable id, so it also appears in the command palette (kbd:[Cmd+Shift+P] or kbd:[Ctrl+Shift+P]).
+See xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the bindings.
+
+== The workspace
+
+When you open a folder, AdocFoundry discovers every `antora.yml` beneath it and indexes the AsciiDoc files on a background worker.
+The window stays usable while indexing runs.
+Plain AsciiDoc folders work too, with relative-path resolution only.
+
+.How a workspace is discovered
+[mermaid]
+----
+include::example$workspace-discovery.mmd[]
+----
+
+Folders named in `workspace.ignore` (by default `node_modules`, `.git`, `build`, `target` and `.cache`) are skipped.
+See xref:settings.adoc[Settings].
+
+AdocFoundry watches the workspace.
+A file changed on disk is re-indexed, and `antora.yml` is re-read when it changes.
+A buffer with unsaved edits is never overwritten: you are told that the file changed on disk and your buffer is kept.
+
+== The sidebar
+
+The sidebar has three tabs and an outline.
+
+Navigation::
+Each component version's navigation, nested as its `nav.adoc` files list it.
+A component that declares no `nav` in `antora.yml` shows its pages by module instead.
+
+Modules::
+Every module, with its families (pages, partials, examples, images and attachments) and their resources.
+
+Problems::
+Workspace diagnostics grouped by file, with a count in the tab title.
+Click one to open the file at that location.
+
+Outline::
+The sections of the active document.
+For a navigation file, the outline is its navigation tree.
+
+== The editor
+
+The editor is a source editor, not a preview.
+It provides:
+
+* Syntax highlighting from the AsciiDoc tree-sitter grammars.
+The inline grammar is injected into paragraphs, titles, table cells and macro targets.
+* Highlighting inside source blocks for Rust, Java, JavaScript, TypeScript, Python, Go, JSON, YAML, TOML, shell, SQL and HTML.
+XML and Dockerfile blocks are not highlighted yet.
+* Folding of sections, delimited blocks and lists, line numbers and soft wrap.
+* Diagnostics as you type.
+See xref:diagnostics.adoc[Diagnostics].
+* Hover on xref, include and image targets, anchors and `+{attributes}+`.
+* Completion after `xref:`, `include::`, `image::`, `{` and `#`.
+* Undo and redo that treat a run of typing as one step.
+Typed characters within 500 ms of each other coalesce.
+
+Tabs follow the active document, so opening a page by any route (the sidebar, link following, the palette or a rename) shows it in a tab.
+
+== Following links
+
+Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+Enter]) on a reference follows it:
+
+* An `xref:` opens the target page and places the caret on the anchor, if there is one.
+* An `include::` opens the included file.
+* An `+{attribute}+` goes to the place the attribute is defined: the document, an included file, `antora.yml` or the playbook.
+* An `image::` or an attachment opens in the system's default application.
+
+If the target cannot be resolved, the diagnostic is shown and nothing is opened.
+
+.What happens when you follow a link
+[mermaid]
+----
+include::example$link-following.mmd[]
+----
+
+=== Back and forward
+
+Every followed link is recorded.
+Go Back (`Ctrl-minus`) and Go Forward (`Ctrl-Shift-minus`) move through that history, also available from the arrows in the title bar.
+These two bindings use Ctrl on every platform, including macOS.
+
+=== Peek an include
+
+kbd:[Alt+F12] on an `include::` shows the included file read-only, without leaving the current page.
+Use Open from the peek to open it in a tab.
+
+== Find and replace
+
+Find in Workspace (kbd:[Cmd+Shift+F] or kbd:[Ctrl+Shift+F]) searches every file in the workspace.
+Regular expression, case-sensitive and whole-word options are available.
+Results arrive as the search runs, and clicking one opens it.
+
+Replace in Workspace (kbd:[Cmd+Shift+H] or kbd:[Ctrl+Shift+H]) does not change anything immediately.
+It shows a preview listing every change; nothing is written until you apply it.
+Applying the preview is one undo step across every file it touches.
+
+== Rename a page
+
+Rename Page (kbd:[F2]) renames the active page.
+AdocFoundry shows a preview that lists the file move and every xref edit needed to keep links working.
+Apply the preview to move the file and rewrite the xrefs.
+One undo moves the page back and restores every xref.
+
+.Renaming a page
+[mermaid]
+----
+include::example$rename-page.mmd[]
+----
+
+== Themes
+
+The theme follows the system by default.
+Toggle Light/Dark Theme (`Cmd-K Cmd-T` or `Ctrl-K Ctrl-T`) switches immediately, and the `editor.theme` setting fixes it to `light`, `dark` or `auto`.
+
+== The read-only second window
+
+Open Read-Only Window (`Cmd-K Cmd-N` or `Ctrl-K Ctrl-N`) opens a second window that shows the active document read-only and follows it as you edit.
+It exists to prove the multi-window path that Phase 2's detachable preview will use.
+
+== Settings and the palette
+
+Open Settings (`Cmd-,` or `Ctrl-,`) opens your user settings file, creating it if necessary.
+Saving it applies the change.
+See xref:settings.adoc[Settings].
+
+The command palette lists every command with its title.
+
+== Known limits
+
+* Input-method (IME) composition has not been verified by hand on any platform.
+* Frame timing during long typing bursts has not been captured on every platform.

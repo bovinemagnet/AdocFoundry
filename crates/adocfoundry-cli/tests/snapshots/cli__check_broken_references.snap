@@ -1,0 +1,78 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+expression: "check_json(\"broken-references\")"
+---
+[
+  {
+    "path": "index.adoc",
+    "range": {
+      "start": 43,
+      "end": 56
+    },
+    "line": 6,
+    "column": 1,
+    "severity": "warning",
+    "code": "adoc.duplicate-anchor",
+    "message": "duplicate anchor `duplicate`; first declared at byte 21"
+  },
+  {
+    "path": "index.adoc",
+    "range": {
+      "start": 69,
+      "end": 102
+    },
+    "line": 9,
+    "column": 5,
+    "severity": "warning",
+    "code": "adoc.unresolved-xref-file",
+    "message": "Unresolved AsciiDoc xref target: missing.adoc"
+  },
+  {
+    "path": "index.adoc",
+    "range": {
+      "start": 104,
+      "end": 145
+    },
+    "line": 9,
+    "column": 40,
+    "severity": "warning",
+    "code": "adoc.unresolved-anchor",
+    "message": "Unresolved AsciiDoc anchor: nowhere"
+  },
+  {
+    "path": "index.adoc",
+    "range": {
+      "start": 150,
+      "end": 160
+    },
+    "line": 9,
+    "column": 86,
+    "severity": "warning",
+    "code": "adoc.unresolved-anchor",
+    "message": "Unresolved AsciiDoc anchor: absent"
+  },
+  {
+    "path": "index.adoc",
+    "range": {
+      "start": 163,
+      "end": 195
+    },
+    "line": 11,
+    "column": 1,
+    "severity": "warning",
+    "code": "adoc.unresolved-include",
+    "message": "Unresolved AsciiDoc include target: partials/missing.adoc"
+  },
+  {
+    "path": "index.adoc",
+    "range": {
+      "start": 197,
+      "end": 217
+    },
+    "line": 13,
+    "column": 1,
+    "severity": "warning",
+    "code": "adoc.unresolved-image",
+    "message": "Unresolved AsciiDoc image target: missing.png"
+  }
+]

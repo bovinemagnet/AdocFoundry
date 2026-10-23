@@ -1,0 +1,30 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+expression: "check_json(\"antora-multi-component\")"
+---
+[
+  {
+    "path": "alpha/modules/ROOT/nav.adoc",
+    "range": {
+      "start": 141,
+      "end": 172
+    },
+    "line": 7,
+    "column": 3,
+    "severity": "warning",
+    "code": "adoc.unresolved-xref-file",
+    "message": "Unresolved AsciiDoc xref target: missing.adoc"
+  },
+  {
+    "path": "alpha/modules/ROOT/pages/index.adoc",
+    "range": {
+      "start": 99,
+      "end": 134
+    },
+    "line": 5,
+    "column": 5,
+    "severity": "info",
+    "code": "adoc.antora.resolved-via-alias",
+    "message": "Resolved through a page alias; link to 1.0@alpha:ROOT:guide.adoc instead"
+  }
+]

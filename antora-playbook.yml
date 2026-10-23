@@ -1,0 +1,40 @@
+antora:
+  extensions:
+    - require: "@antora/lunr-extension"
+      index_latest_only: true
+    - require: "@sntke/antora-mermaid-extension"
+      mermaid_library_url: https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs
+      script_stem: header-scripts
+      mermaid_initialize_options:
+        start_on_load: true
+runtime:
+  cache_dir: ./.cache/antora
+  log:
+    failure_level: warn
+site:
+  title: AdocFoundry Documentation
+  url: https://bovinemagnet.github.io/AdocFoundry
+  start_page: adocfoundry::index.adoc
+
+content:
+  sources:
+    - url: .
+      start_path: src/docs
+      branches: HEAD
+
+ui:
+  bundle:
+    url: https://gitlab.com/antora/antora-ui-default/-/jobs/artifacts/HEAD/raw/build/ui-bundle.zip?job=bundle-stable
+    snapshot: true
+
+asciidoc:
+  attributes:
+    project-name: AdocFoundry
+    source-highlighter: highlight.js
+    icons: font
+    sectanchors: ""
+    sectlinks: ""
+    experimental: ""
+
+output:
+  dir: ./build/site

@@ -1,0 +1,6 @@
+= Other Document
+
+[[details]]
+== Details
+
+Target content.

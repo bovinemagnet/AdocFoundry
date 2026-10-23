@@ -1,0 +1,27 @@
+[package]
+name = "adoc-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-antora.workspace = true
+adoc-core.workspace = true
+adoc-index.workspace = true
+adoc-lang.workspace = true
+adoc-parser.workspace = true
+dirs.workspace = true
+notify.workspace = true
+regex.workspace = true
+ropey.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,20 @@
+flowchart TD
+    start["Resource id<br/>version@component:module:family$path"] --> c1{"Component and<br/>version omitted?"}
+    c1 -->|yes| cur["Use current component version"]
+    c1 -->|no| c2{"Component given,<br/>version omitted?"}
+    c2 -->|yes| latest["Use latest version<br/>(versionless ~ highest; released above prerelease: true;<br/>numbers compared as dotted integers)"]
+    c2 -->|no| c3
+    cur --> c3{"Module omitted?"}
+    latest --> c3
+    c3 -->|yes| root["Module is ROOT"]
+    c3 -->|no| fam
+    root --> fam["Family defaults to page"]
+    fam --> exact{"Exact coordinate<br/>lookup"}
+    exact -->|found| ok["Resolved"]
+    exact -->|not found| alias{"Page alias<br/>lookup"}
+    alias -->|found| aliasok["Resolved<br/>(info: adoc.antora.resolved-via-alias)"]
+    alias -->|not found| why{"Which part<br/>is missing?"}
+    why -->|component| uc["UnknownComponent<br/>(not reported)"]
+    why -->|version| uv["UnknownVersion<br/>(not reported)"]
+    why -->|module| um["UnknownModule<br/>(warning)"]
+    why -->|resource| ur["UnknownResource<br/>(warning)"]

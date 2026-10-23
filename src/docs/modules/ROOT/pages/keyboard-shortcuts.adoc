@@ -1,0 +1,117 @@
+= Keyboard shortcuts
+Paul Snow
+:revnumber: 0.0.0
+:description: Every default key binding in AdocFoundry.
+
+Bindings come from the engine's command definitions, so the command palette and this table agree.
+In the engine, `cmd` means the platform's primary modifier: Command on macOS and Control on Linux and Windows.
+Two bindings, Go Back and Go Forward, use Control on every platform.
+
+== Commands
+
+[cols="3,2,2,3"]
+|===
+|Command |macOS |Linux and Windows |Command id
+
+|Command palette
+|Cmd-Shift-P
+|Ctrl-Shift-P
+|UI only
+
+|Open folder
+|Cmd-Shift-O
+|Ctrl-Shift-O
+|`workspace.open_folder`
+
+|Open file
+|Cmd-O
+|Ctrl-O
+|`document.open`
+
+|Save
+|Cmd-S
+|Ctrl-S
+|`document.save`
+
+|Save all
+|Cmd-Alt-S
+|Ctrl-Alt-S
+|`document.save_all`
+
+|Close
+|Cmd-W
+|Ctrl-W
+|`document.close`
+
+|Undo
+|Cmd-Z
+|Ctrl-Z
+|`edit.undo`
+
+|Redo
+|Cmd-Shift-Z
+|Ctrl-Shift-Z
+|`edit.redo`
+
+|Go to definition
+|F12
+|F12
+|`navigate.definition`
+
+|Follow link
+|Cmd-Enter, or Cmd-click
+|Ctrl-Enter, or Ctrl-click
+|`navigate.follow_link`
+
+|Go back
+|Ctrl-minus
+|Ctrl-minus
+|`navigate.back`
+
+|Go forward
+|Ctrl-Shift-minus
+|Ctrl-Shift-minus
+|`navigate.forward`
+
+|Peek include
+|Alt-F12
+|Alt-F12
+|`navigate.peek_include`
+
+|Find in workspace
+|Cmd-Shift-F
+|Ctrl-Shift-F
+|`workspace.search`
+
+|Replace in workspace
+|Cmd-Shift-H
+|Ctrl-Shift-H
+|`workspace.replace`
+
+|Rename page
+|F2
+|F2
+|`page.rename`
+
+|Open settings
+|Cmd-,
+|Ctrl-,
+|`settings.open`
+
+|Toggle light/dark theme
+|Cmd-K Cmd-T
+|Ctrl-K Ctrl-T
+|UI only
+
+|Open read-only window
+|Cmd-K Cmd-N
+|Ctrl-K Ctrl-N
+|UI only
+|===
+
+Two commands have no default binding and are available from the palette: Re-index Workspace (`workspace.reindex`) and Reload Settings (`settings.reload`).
+Apply Preview (`workspace.apply_preview`), Insert Text (`edit.insert_text`) and Replace Range (`edit.replace_range`) are driven by the user interface rather than bound to keys.
+
+Undo, redo, go to definition, follow link and peek include are bound in the editor's key context after the editor widget's own bindings, so they take precedence and go through the engine.
+
+NOTE: User-defined key bindings are not implemented.

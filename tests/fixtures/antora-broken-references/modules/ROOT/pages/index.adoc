@@ -1,0 +1,10 @@
+= Broken Antora References
+
+See xref:nomodule:page.adoc[an unknown module], xref:missing-page.adoc[an unknown page]
+and xref:partials$note.adoc[an invalid family].
+
+include::partial$absent.adoc[]
+
+include::partial$present.adoc[]
+
+image::absent.png[]

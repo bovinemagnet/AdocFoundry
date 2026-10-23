@@ -419,8 +419,8 @@ The biggest risks are supply-chain ones: every pure-Rust AsciiDoc parser and the
 
 **Open questions**
 
-- [ ] Repository strategy: move the five `adoc-*` crates into AdocFoundry and make zed-asciidoc depend on them, or keep them in zed-asciidoc and consume by git dependency? (Recommendation: move; one workspace, one CI, one release cadence.)
-- [ ] Licence for AdocFoundry: Apache-2.0 like zed-asciidoc, or MIT OR Apache-2.0 like the ArtCraft apps and most of the dependency graph?
+- [x] Repository strategy: move the five `adoc-*` crates into AdocFoundry and make zed-asciidoc depend on them, or keep them in zed-asciidoc and consume by git dependency? **Decided: moved.** The crates and fixtures were imported with their history in Phase 1, `adoc-lang` was extracted from `adoc-ls`, and zed-asciidoc is now the extension alone, installing `adoc-ls` from AdocFoundry.
+- [x] Licence for AdocFoundry: Apache-2.0 like zed-asciidoc, or MIT OR Apache-2.0 like the ArtCraft apps and most of the dependency graph? **Decided: Apache-2.0**, matching zed-asciidoc and tree-sitter-asciidoc; `deny.toml` enforces a permissive-only dependency licence list.
 - [ ] Where generated diagram images live: committed under `images/` (Antora-friendly) or in a workspace cache?
 - [ ] Should `adoc-ls` gain the engine's command layer so Zed users get rename and preview commands for free, or stay minimal?
 - [ ] STEM rendering route for preview and PDF (Typst math in both is the simplest consistent answer).

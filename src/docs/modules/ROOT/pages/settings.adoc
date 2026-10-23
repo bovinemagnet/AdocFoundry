@@ -1,0 +1,100 @@
+= Settings
+Paul Snow
+:revnumber: 0.0.0
+:description: The TOML user and workspace settings files and every key they accept.
+
+Settings are TOML.
+There are two layers, and the workspace layer is applied after the user layer.
+
+[cols="1,3"]
+|===
+|Layer |File
+
+|User
+|`adocfoundry/adocfoundry.toml` in the platform configuration directory: `~/.config` on Linux, `~/Library/Application Support` on macOS and `%APPDATA%` on Windows.
+Open Settings creates it if it is missing.
+
+|Workspace
+|`.adocfoundry.toml` at the root of the workspace.
+|===
+
+Saving either file applies it.
+Reload Settings re-reads both.
+
+== Example
+
+[source,toml]
+----
+[editor]
+font_family = "JetBrains Mono"   # falls back to the platform monospace
+font_size = 13
+soft_wrap = true
+tab_width = 2
+theme = "auto"                   # auto | light | dark
+
+[workspace]
+ignore = ["node_modules", ".git", "build", "target", ".cache"]
+
+[tools]
+asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
+----
+
+== Keys
+
+[cols="2,2,2,4"]
+|===
+|Key |Type |Default |Meaning
+
+|`editor.font_family`
+|string
+|`"JetBrains Mono"`
+|The editor font. Falls back to the platform monospace font.
+
+|`editor.font_size`
+|positive integer
+|`13`
+|The editor font size.
+
+|`editor.soft_wrap`
+|boolean
+|`true`
+|Wrap long lines.
+
+|`editor.tab_width`
+|positive integer
+|`2`
+|The width of a tab.
+
+|`editor.theme`
+|`"auto"`, `"light"` or `"dark"`
+|`"auto"`
+|The colour theme.
+
+|`workspace.ignore`
+|array of strings
+|`["node_modules", ".git", "build", "target", ".cache"]`
+|Folder names skipped during discovery and indexing.
+
+|`tools.asciidoctor`
+|string
+|`""`
+|An absolute path to `asciidoctor`. Discovered on `PATH` when empty. Used by the language server's preview.
+|===
+
+== What a workspace file may set
+
+A workspace file may override `editor.*` and `workspace.ignore` only.
+`tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
+
+== Warnings
+
+Problems with settings produce warnings and never stop the application:
+
+* An unknown key warns and is ignored.
+* A value of the wrong type or range, such as `font_size = -3` or `theme = "purple"`, warns and keeps the default.
+* A key set in the workspace file that is only allowed in the user file warns and is ignored.
+* A section that is not a table warns.
+
+Each warning names the file and the key and is shown once.
+
+A file that is not valid TOML at all (for example a missing closing bracket) is reported as a settings error instead.

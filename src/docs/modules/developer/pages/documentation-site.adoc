@@ -1,0 +1,102 @@
+= This documentation site
+Paul Snow
+:revnumber: 0.0.0
+:description: How the Antora documentation site is laid out, configured and built.
+
+This site is an Antora site.
+The application itself is a Cargo workspace, and nothing in the documentation build is needed to build or run it.
+
+== Layout
+
+The documentation is a single Antora component, `adocfoundry`, which has no version.
+It lives in `src/docs`.
+
+[source,text]
+----
+src/docs/
+├── antora.yml
+└── modules/
+    ├── ROOT/
+    │   ├── nav.adoc
+    │   ├── pages/        user guide
+    │   └── examples/     Mermaid diagrams for the user guide
+    └── developer/
+        ├── nav.adoc
+        ├── pages/        developer guide
+        └── examples/     Mermaid diagrams for the developer guide
+----
+
+`antora.yml` names the component, sets `version: ~` and lists both navigation files.
+The `ROOT` module holds the user guide and the `developer` module holds this guide.
+Cross-module links name the module, as in `xref:developer:architecture.adoc[]` and `xref:ROOT:settings.adoc[]`.
+
+Every page begins with a level-0 title, the author line and `:revnumber:`.
+
+== Playbook
+
+`antora-playbook.yml` at the repository root reads the content from the current repository, from the `src/docs` start path and the `HEAD` branch.
+It sets the site title and start page, enables the default UI bundle and defines the AsciiDoc attributes used across the pages: `project-name`, `source-highlighter` (highlight.js), `icons`, `sectanchors`, `sectlinks` and `experimental`.
+The `experimental` attribute turns on the `kbd:[]` macro used for key bindings.
+The site is written to `build/site`.
+
+The playbook is also read by AdocFoundry itself: its `asciidoc.attributes` apply to pages in the workspace.
+See xref:ROOT:antora-support.adoc[Antora support].
+
+== Extensions
+
+The component descriptor registers two Antora extensions:
+
+* `@antora/lunr-extension` builds a search index, restricted to the latest version.
+* `@sntke/antora-mermaid-extension` renders Mermaid diagrams in the browser, loading Mermaid from a CDN.
+
+== Gradle build
+
+`build.gradle` applies the `org.antora` Gradle plugin.
+It points the plugin at the playbook, sets the options `clean`, `fetch` and `stacktrace`, and lists the two extension packages.
+The plugin installs Node.js and the packages itself, so no separate Node.js installation is needed.
+
+[source,sh]
+----
+gradle25w antora
+----
+
+The generated site is in `build/site`.
+The command also reports Antora's errors and warnings, and the playbook sets the failure level to `warn`, so a broken xref or missing include fails the build.
+
+== Diagrams
+
+Diagrams are kept as `.mmd` Mermaid files in each module's `examples` directory, never inline in a page.
+A page includes one beneath a title.
+
+[source,asciidoc]
+------
+.Title of the diagram
+[mermaid]
+----
+\include::example$name.mmd[]
+----
+------
+
+Inside a page in the same module the `example$` family refers to that module's `examples` directory.
+The block style must be `mermaid`: the extension turns listing blocks with that style into diagrams, whereas a `[source,mermaid]` block is shown as highlighted source.
+A page in another module names the module, for example `developer:example$antora-resolution.mmd`.
+
+The diagrams are:
+
+[cols="1,3"]
+|===
+|Module |Files
+
+|`ROOT`
+|`workspace-discovery.mmd`, `link-following.mmd`, `rename-page.mmd`
+
+|`developer`
+|`crate-layers.mmd`, `keystroke-flow.mmd`, `event-pump.mmd`, `antora-resolution.mmd`, `release-pipeline.mmd`
+|===
+
+== Adding a page
+
+. Create the file in the module's `pages` directory with the title, author line and `:revnumber:`.
+. Add it to that module's `nav.adoc`.
+. Link to it from related pages with `xref:`.
+. Run `gradle25w antora` and fix anything it reports.

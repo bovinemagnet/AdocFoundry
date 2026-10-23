@@ -1,0 +1,17 @@
+flowchart LR
+    subgraph producers["Background producers"]
+        idx["Indexing worker"]
+        srch["Search worker"]
+        watch["notify watcher"]
+    end
+    chan[("Channels")]
+    idx --> chan
+    srch --> chan
+    watch --> chan
+    timer["AppState timer task<br/>16 ms while busy, 100 ms idle"] -->|calls| pump["Engine::pump"]
+    chan --> pump
+    pump -->|publishes EngineEvent<br/>over std::mpsc| app["AppState"]
+    app -->|re-emits as GPUI events| wv["WorkspaceView"]
+    app --> sev["SourceEditorView"]
+    app --> sv["SearchView"]
+    app --> mv["MirrorView"]

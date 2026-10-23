@@ -1,0 +1,6 @@
+name: adocfoundry
+title: AdocFoundry
+version: ~
+nav:
+  - modules/ROOT/nav.adoc
+  - modules/developer/nav.adoc

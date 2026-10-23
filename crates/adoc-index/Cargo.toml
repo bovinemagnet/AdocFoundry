@@ -1,0 +1,13 @@
+[package]
+name = "adoc-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+adoc-core.workspace = true
+adoc-parser.workspace = true
+
+[lints]
+workspace = true

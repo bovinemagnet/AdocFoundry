@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install GPUI system libraries
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - uses: EmbarkStudios/cargo-deny-action@v2
+      - run: cargo xtask layers
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install GPUI system libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+      - run: cargo test --workspace --exclude adocfoundry
+      - run: cargo build -p adocfoundry
+
+  grammar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install tree-sitter-cli --locked
+      - name: Grammar corpus tests
+        run: |
+          for grammar in tree-sitter-asciidoc tree-sitter-asciidoc_inline; do
+            (cd "grammars/tree-sitter-asciidoc/$grammar" && tree-sitter test)
+          done
+      - name: Queries compile against the grammars
+        run: |
+          sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+          cargo test -p adocfoundry queries_compile
+

@@ -1,0 +1,5 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+expression: "check_json(\"antora-nested-pages\")"
+---
+[]

@@ -1,0 +1,38 @@
+# Flatpak manifest for AdocFoundry.
+#
+# Build offline-capable sources first with flatpak-cargo-generator:
+#   python3 flatpak-cargo-generator.py ../../Cargo.lock -o cargo-sources.json
+# then: flatpak-builder --user --install build io.github.bovinemagnet.AdocFoundry.yml
+app-id: io.github.bovinemagnet.AdocFoundry
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: adocfoundry
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=home
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/adocfoundry/cargo
+modules:
+  - name: adocfoundry
+    buildsystem: simple
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --bin adocfoundry --bin adocfoundry-cli --bin adoc-ls
+      - install -Dm755 target/release/adocfoundry -t /app/bin
+      - install -Dm755 target/release/adocfoundry-cli -t /app/bin
+      - install -Dm755 target/release/adoc-ls -t /app/bin
+      - install -Dm644 packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop -t /app/share/applications
+      - install -Dm644 packaging/icons/adocfoundry.svg /app/share/icons/hicolor/scalable/apps/io.github.bovinemagnet.AdocFoundry.svg
+    sources:
+      - type: git
+        url: https://github.com/bovinemagnet/AdocFoundry.git
+        branch: main
+      - cargo-sources.json
