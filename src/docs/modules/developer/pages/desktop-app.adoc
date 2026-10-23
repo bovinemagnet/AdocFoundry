@@ -189,6 +189,13 @@ It takes positions from the editor's own layout (`EditorState::range_to_bounds`)
 Clicking a marker opens the card, which reads the old lines through `Engine::head_text` and reverts through `git.revert_hunk`.
 `git.show_markers` is read each frame.
 
+`src/editor/blame.rs` paints the blame column and watches the line-number gutter.
+It takes line positions from the editor's layout as the markers do, so the column follows scrolling, soft wrap and folding.
+It reads `Engine::blame_for` and asks for it with `Engine::request_blame`.
+With `git.blame_on_hover`, resting on the gutter for 400 ms shows the tooltip.
+`relative_time` and `describe` are unit-tested there.
+A `CommandOutcome::Url` from Open on Remote or Copy Remote Link is opened with `cx.open_url` or copied.
+
 The visual editor's bars are drawn in `visual/blocks.rs`: a block is marked when its source range intersects a hunk.
 
 The Changes panel is `sidebar::changes`.

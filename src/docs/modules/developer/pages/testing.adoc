@@ -120,6 +120,12 @@ Branch-aware versions are covered at each layer.
 * `adoc-lang`: `xref_to_version_on_other_branch_warns`, `xref_to_version_present_in_workspace_is_silent` and `no_playbook_no_version_diagnostic`.
 * `adoc-engine`: `head_change_reloads_descriptors_and_rediagnoses` and `open_in_version_resolves_same_resource_in_other_root`.
 
+Blame and remote links are covered at each layer.
+`TestRepo::add_remote(name, url)` adds a remote and `TestRepo::track_remote(remote)` records its remote-tracking branches.
+
+* `adoc-git`: `blame_attributes_committed_lines`, `blame_marks_uncommitted_lines`, `remote_link_github_ssh_and_https`, `remote_link_gitlab_self_hosted_uses_dash_blob`, `remote_link_unknown_host_is_none`, `remote_link_detached_head_uses_commit` and `remote_tracking_and_pushed_branches`, with a unit test of `blame_through` around insertions, changes and deletions.
+* `adoc-engine`: `blame_is_lazy_and_invalidated_on_save` and `remote_links_need_a_known_host_and_a_pushed_branch`.
+
 == Language server tests
 
 `crates/adoc-ls/tests/stdio.rs` starts the real `adoc-ls` binary and speaks LSP to it: initialise and shutdown, completion, hover, the preview commands and command routing.
@@ -143,6 +149,7 @@ They cover:
 * the search panel showing workspace results;
 * composed input committing the composed text;
 * the Git change markers and the Changes panel: `gutter_marks_follow_hunks`, `clicking_a_mark_shows_head_text_and_reverts`, `visual_blocks_marked_when_range_intersects_hunk` and `changes_panel_lists_changed_adoc_files_only`;
+* the blame column and hover: `blame_column_toggles_and_hover_shows_the_commit`;
 * the version badge: `status_bar_shows_the_version_and_branch`;
 * `every_command_is_in_the_palette` (in `editor/bindings.rs`), which fails when an engine command has no UI action, apart from those driven by typing and clicks.
 

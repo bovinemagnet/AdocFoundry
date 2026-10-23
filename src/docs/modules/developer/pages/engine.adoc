@@ -47,7 +47,8 @@ A `Command` has a `CommandSpec` and a `run` function.
 
 Commands are registered once in a `CommandRegistry`, and registering a duplicate id is an error.
 They are invoked with `Engine::invoke(id, args)`, where `CommandArgs` carries a document, an offset, a text edit, a path or a request.
-They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External` or `Preview`.
+They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`, `Url` or `Preview`.
+`Url(String)` carries an address for the front end to open (`cx.open_url`) or copy, so the engine needs no browser-opening crate.
 
 [cols="2,3"]
 |===
@@ -383,6 +384,22 @@ It reports "there is no change here" when the caret is in no change.
 * `git.next_change` (Go to Next Change, Alt-Down) and `git.previous_change` (Go to Previous Change, Alt-Up) move the caret to the next or previous change, wrapping round at the ends.
 They report "there are no changes" when there are none.
 * `git.show_changes` (Show Changes, View category) switches the sidebar to the Changes panel.
+
+=== Blame and remote links
+
+`Repository::blame(path, current)` and `Repository::head_blame(path)` use gix's blame (the `blame` feature) from the HEAD commit.
+`blame_through(head_blame, hunks, lines)` carries the HEAD blame over to the current text.
+A `BlameLine` is `{ line, commit: Option<short id>, author, time (Unix seconds), summary }`, and a line with no commit is not committed.
+
+`Engine::request_blame(id)` computes the HEAD blame lazily on a worker and publishes `EngineEvent::GitBlameChanged(id)` when it is ready.
+`Engine::blame_for(id)` returns the blame overlaid with the document's current hunks.
+The blame is forgotten on save, on a status refresh and on rediscovery.
+
+`git.show_blame` (Toggle Blame, View category, no default binding) shows or hides the column in the front end.
+`Engine::remote_link(id, offset)` builds the address of the line at an offset.
+It uses `Repository::is_pushed(remote, branch)` and `remote_link_for_line(remote_url, head, path, line, hosts)`, where `HostKind` is `GitHub`, `GitLab`, `Bitbucket` or `Azure` and `hosts` comes from `[git.hosts]`.
+`navigate.open_on_remote` (Open on Remote) and `navigate.copy_remote_link` (Copy Remote Link) are Navigate commands with no default binding.
+Both return `CommandOutcome::Url`, or an error when there is no such remote, the branch is not pushed or the host is not recognised.
 
 [[versions-table]]
 === Versions per branch

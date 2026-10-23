@@ -352,6 +352,16 @@ It was not adopted, and its design (steps with inverses, step maps, marks on tex
 |Not specified
 |Matching uses `globset` 0.4.20, with numeric ranges such as `{0..9}` expanded first.
 |`globset` has no numeric ranges.
+
+|Opening the remote link
+|Suggested the `open` crate
+|The engine returns `CommandOutcome::Url(String)`, and the front end opens it with `cx.open_url` or copies it.
+|The engine needs no browser-opening crate and stays testable without a display.
+
+|Where blame is read
+|Not specified
+|`blame_for` is on `Engine`, not `GitState`.
+|It overlays the HEAD blame with the current hunks, which needs the document's text.
 |===
 
 == Related

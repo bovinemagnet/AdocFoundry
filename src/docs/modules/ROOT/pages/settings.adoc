@@ -41,8 +41,11 @@ asciidoctor = ""                 # optional absolute path; discovered on PATH if
 [git]
 enabled = true                   # false: no repository is discovered
 show_markers = true              # reserved for change markers
-blame_on_hover = false           # reserved for blame
-remote = "origin"                # reserved for remote links
+blame_on_hover = false           # tooltip on a line number
+remote = "origin"                # the remote used for links to a line
+
+[git.hosts]
+"git.example.com" = "gitlab"     # github | gitlab | bitbucket | azure
 ----
 
 == Keys
@@ -99,16 +102,18 @@ remote = "origin"                # reserved for remote links
 |`git.blame_on_hover`
 |boolean
 |`false`
-|Show blame on hover. Read now and reserved for blame; it has no effect yet.
+|Show the commit that last changed a line in a tooltip when the pointer rests on its line number. See xref:using-the-editor.adoc#blame[Blame].
 
 |`git.remote`
 |string
 |`"origin"`
-|The remote used for links to the hosting service. Read now and reserved for remote links; it has no effect yet.
-|===
+|The remote used for links to a line on the hosting site.
 
-Of the `git` keys only `git.enabled` and `git.show_markers` have an effect today.
-The others are read and kept for the blame and remote links that follow.
+|`git.hosts`
+|table of strings
+|empty
+|Names the kind of a self-hosted site, host name to `"github"`, `"gitlab"`, `"bitbucket"` or `"azure"`. Host names are matched without regard to case. A table with any other kind is ignored with a warning. See xref:using-the-editor.adoc#remote-links[Links to a line on the hosting site].
+|===
 
 == What a workspace file may set
 
