@@ -338,6 +338,8 @@ pub fn element(id: ElementId, text: InlineText, on_link: &LinkHandler) -> AnyEle
     InteractiveText::new(id, styled)
         .on_click(ranges, move |index, window, cx| {
             if let Some(link) = links.get(index) {
+                // The enclosing block's click-to-source would otherwise undo the navigation.
+                cx.stop_propagation();
                 on_link(link, window, cx);
             }
         })

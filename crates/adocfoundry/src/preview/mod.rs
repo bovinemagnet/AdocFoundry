@@ -120,6 +120,17 @@ impl PreviewView {
             return;
         };
         let Some(trail) = adoc_render::block_at(&shown.view, path, offset) else {
+            // The title and header are not blocks: a caret above the first block shows the top.
+            let view = &shown.view;
+            if path == view.source
+                && view
+                    .blocks
+                    .first()
+                    .is_none_or(|block| offset < block.span.range.start)
+            {
+                self.scroll.set_offset(gpui::point(px(0.), px(0.)));
+                cx.notify();
+            }
             return;
         };
         let Some(extent) = self.extents.borrow().get(&trail).copied() else {
