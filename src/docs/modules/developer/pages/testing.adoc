@@ -110,7 +110,7 @@ Tests that need a repository build one with `adoc_git::testing::TestRepo`, avail
 It creates a temporary repository with `gix`, so no test touches a developer's checkout and none runs the `git` executable.
 
 `crates/adoc-git/tests/repository.rs` checks discovery, the head, status and line diffs.
-`crates/adoc-engine/tests/git.rs` drives the engine's Git state headlessly: discovery, status, hunks and the events.
+`crates/adoc-engine/tests/git.rs` drives the engine's Git state headlessly: discovery, status, hunks and the events, with `revert_hunk_restores_head_text_as_one_undo` and `next_change_wraps_around` for the commands.
 
 == Language server tests
 
@@ -133,7 +133,9 @@ They cover:
 * the second window mirroring the active document;
 * the preview rendering the active document, and following edits when detached;
 * the search panel showing workspace results;
-* composed input committing the composed text.
+* composed input committing the composed text;
+* the Git change markers and the Changes panel: `gutter_marks_follow_hunks`, `clicking_a_mark_shows_head_text_and_reverts`, `visual_blocks_marked_when_range_intersects_hunk` and `changes_panel_lists_changed_adoc_files_only`;
+* `every_command_is_in_the_palette` (in `editor/bindings.rs`), which fails when an engine command has no UI action, apart from those driven by typing and clicks.
 
 The last one exercises the widget's input handler on the test platform.
 It is not evidence that a real input method works.

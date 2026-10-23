@@ -372,6 +372,18 @@ A change to any file in the working tree refreshes the status as well, after the
 
 `git.refresh` (Refresh Git Status, Workspace category, no default binding) runs discovery again.
 
+`Engine::hunks_now(id)` computes a document's changes on the engine thread from its current text.
+Revert and navigation use it, so they never act on hunks a few keystrokes old.
+`Engine::head_text(id, &hunk)` gives the lines a hunk replaced.
+
+Four commands act on the hunks:
+
+* `git.revert_hunk` (Revert Change, Edit category, no default binding) replaces the change at the source caret with its `HEAD` lines as one undo step.
+It reports "there is no change here" when the caret is in no change.
+* `git.next_change` (Go to Next Change, Alt-Down) and `git.previous_change` (Go to Previous Change, Alt-Up) move the caret to the next or previous change, wrapping round at the ends.
+They report "there are no changes" when there are none.
+* `git.show_changes` (Show Changes, View category) switches the sidebar to the Changes panel.
+
 == Settings
 
 `Settings` loads the user and workspace TOML layers described in xref:ROOT:settings.adoc[Settings].

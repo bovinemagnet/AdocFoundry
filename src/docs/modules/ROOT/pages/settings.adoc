@@ -94,7 +94,7 @@ remote = "origin"                # reserved for remote links
 |`git.show_markers`
 |boolean
 |`true`
-|Show change markers in the editor. Read now and reserved for the change markers that follow; it has no effect yet.
+|Show change markers in the source and visual editors. When `false`, both hide them.
 
 |`git.blame_on_hover`
 |boolean
@@ -107,8 +107,8 @@ remote = "origin"                # reserved for remote links
 |The remote used for links to the hosting service. Read now and reserved for remote links; it has no effect yet.
 |===
 
-Of the `git` keys only `git.enabled` has an effect today.
-The others are read and kept for the change markers, blame and remote links that follow.
+Of the `git` keys only `git.enabled` and `git.show_markers` have an effect today.
+The others are read and kept for the blame and remote links that follow.
 
 == What a workspace file may set
 
