@@ -529,3 +529,147 @@ fn remote_links_need_a_known_host_and_a_pushed_branch() {
         outcome
     );
 }
+
+/// A repository with an identity and one committed page, open in an engine.
+fn committing_repository(dir: &Path) -> (TestRepo, Engine, adoc_engine::DocumentId) {
+    let test = TestRepo::init(dir);
+    test.set_identity("Ada Writer", "ada@example.com");
+    test.write(
+        "docs/modules/ROOT/pages/guide.adoc",
+        "= The Guide\n\nText.\n",
+    );
+    test.write("README.md", "readme\n");
+    test.commit_all("first");
+    let mut engine = engine();
+    engine.open_workspace(vec![dir.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine
+        .open(&dir.join("docs/modules/ROOT/pages/guide.adoc"))
+        .unwrap();
+    (test, engine, id)
+}
+
+#[test]
+fn commit_saves_dirty_documents_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_test, mut engine, id) = committing_repository(dir.path());
+    replace(&mut engine, id, "Text.", "Text, edited.");
+    assert!(engine.document(id).unwrap().dirty);
+    let page = engine.document(id).unwrap().path.clone();
+
+    let outcome = engine
+        .invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({
+                "message": "docs: edit the guide",
+                "paths": [page.to_str().unwrap()],
+            })),
+        )
+        .unwrap();
+    let adoc_engine::CommandOutcome::Committed { commit, saved } = outcome else {
+        panic!("expected a commit, got {outcome:?}");
+    };
+    assert_eq!(
+        saved,
+        std::slice::from_ref(&page),
+        "the outcome says what was saved"
+    );
+    assert!(!engine.document(id).unwrap().dirty);
+    assert_eq!(
+        std::fs::read_to_string(&page).unwrap(),
+        "= The Guide\n\nText, edited.\n"
+    );
+    // The commit holds the saved text: nothing differs from `HEAD` any more.
+    assert!(pump_until(&mut engine, |engine| engine
+        .git()
+        .status_for(&page)
+        .is_none()
+        && engine.git().hunks_for(id).is_empty()));
+    let blame = adoc_git::Repository::discover(dir.path())
+        .unwrap()
+        .unwrap()
+        .blame(&page, None)
+        .unwrap();
+    assert_eq!(blame[2].commit.as_deref(), Some(&commit[..7]));
+
+    // Nothing left to commit.
+    assert!(engine
+        .invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({ "message": "again" })),
+        )
+        .is_err());
+}
+
+#[test]
+fn save_and_commit_prefills_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_test, mut engine, id) = committing_repository(dir.path());
+    replace(&mut engine, id, "Text.", "Text, edited.");
+    let outcome = engine
+        .invoke(ids::GIT_SAVE_AND_COMMIT, CommandArgs::Document(id))
+        .unwrap();
+    let page = engine.document(id).unwrap().path.clone();
+    assert_eq!(
+        outcome,
+        adoc_engine::CommandOutcome::CommitDraft {
+            message: "docs: update The Guide".to_owned(),
+            paths: vec![page.clone()],
+        }
+    );
+    assert!(!engine.document(id).unwrap().dirty, "saved");
+    // Staged: the index holds the change, the working tree matches it.
+    assert!(pump_until(&mut engine, |engine| engine
+        .git()
+        .status_for(&page)
+        .is_some_and(|status| status.index == GitChange::Modified
+            && status.worktree == GitChange::Unmodified)));
+}
+
+#[test]
+fn stage_all_stages_the_changed_writer_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let (test, mut engine, _) = committing_repository(dir.path());
+    test.write("docs/modules/ROOT/pages/new.adoc", "= New\n");
+    test.write("README.md", "readme, changed\n");
+    engine.invoke(ids::GIT_REFRESH, CommandArgs::None).unwrap();
+    assert!(pump_until(&mut engine, |engine| engine
+        .git()
+        .status_for(&dir.path().join("README.md"))
+        .is_some()));
+    engine
+        .invoke(ids::GIT_STAGE_ALL_ADOC, CommandArgs::None)
+        .unwrap();
+    let new = dir.path().join("docs/modules/ROOT/pages/new.adoc");
+    assert!(pump_until(&mut engine, |engine| engine
+        .git()
+        .status_for(&new)
+        .is_some_and(|status| status.index == GitChange::Added)));
+    let readme = engine
+        .git()
+        .status_for(&dir.path().join("README.md"))
+        .unwrap();
+    assert_eq!(readme.index, GitChange::Unmodified, "not a writer's file");
+}
+
+#[test]
+fn push_disabled_without_git_executable() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\n");
+    test.commit_all("first");
+    let config = tempfile::tempdir().unwrap();
+    let user = config.path().join("adocfoundry.toml");
+    fs::write(&user, "[tools]\ngit = \"/no/such/git\"\n").unwrap();
+    let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert!(engine.git_executable().is_none());
+    let error = engine
+        .invoke(ids::GIT_PUSH, CommandArgs::None)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("[tools] git"), "{error}");
+}

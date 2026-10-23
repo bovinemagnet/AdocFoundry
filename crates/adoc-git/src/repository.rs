@@ -493,6 +493,21 @@ impl Repository {
         Ok(Some(walk.filter_map(Result::ok).count()))
     }
 
+    /// The full id of the commit `HEAD` points at; `None` before the first commit.
+    #[must_use]
+    pub fn head_commit_id(&self) -> Option<String> {
+        self.repo.head_id().ok().map(|id| id.to_string())
+    }
+
+    /// Whether branch `branch` tracks a branch on a remote (`branch.<name>.remote` is set).
+    #[must_use]
+    pub fn has_upstream(&self, branch: &str) -> bool {
+        self.repo
+            .config_snapshot()
+            .string(format!("branch.{branch}.remote").as_str())
+            .is_some()
+    }
+
     /// The index as on disk, or an empty one in a repository that has none yet.
     fn index_file(&self) -> Result<gix::index::File, GitError> {
         let path = self.repo.index_path();

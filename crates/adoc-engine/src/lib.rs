@@ -6,6 +6,7 @@
 mod clock;
 mod command;
 pub mod commands;
+mod commit;
 mod document;
 mod edit;
 mod engine;

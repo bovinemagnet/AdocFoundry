@@ -99,6 +99,16 @@ pub enum CommandOutcome {
     Selection(SourceRange),
     /// A web address for the front end to open or copy.
     Url(String),
+    /// A commit was made; these open documents were saved first.
+    Committed {
+        commit: String,
+        saved: Vec<PathBuf>,
+    },
+    /// A commit for the front end to offer: the message to start from and the paths staged.
+    CommitDraft {
+        message: String,
+        paths: Vec<PathBuf>,
+    },
     Cancelled,
 }
 

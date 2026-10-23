@@ -270,44 +270,43 @@ pub fn problems(engine: &Engine, roots: &[PathBuf]) -> (Vec<TreeItem>, usize) {
     (items, count)
 }
 
-/// The Antora family directories whose files the Changes panel lists whatever their type.
-const FAMILY_DIRECTORIES: &[&str] = &["images", "attachments", "examples", "partials"];
+/// One row of the Changes panel: a changed file a writer edits.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChangeRow {
+    pub path: PathBuf,
+    /// `git status --short` letters, the path from its root and, when open, the hunk count.
+    pub label: String,
+    /// Whether the file has changes staged for the next commit.
+    pub staged: bool,
+    /// A deleted file, which there is nothing to open of.
+    pub deleted: bool,
+}
 
-/// The changed files under the workspace roots that a writer edits: AsciiDoc pages and the
-/// files of Antora's resource families, grouped by repository when there is more than one. A
-/// leaf opens its file at the first change; a deleted file's leaf leads nowhere.
-pub fn changes(engine: &Engine, roots: &[PathBuf]) -> Vec<TreeItem> {
+/// The Changes panel's rows, grouped by repository (named by its folder) when there are
+/// several.
+pub fn change_rows(engine: &Engine) -> Vec<(Option<String>, Vec<ChangeRow>)> {
     let git = engine.git();
-    let repositories = git.repositories();
-    let rows = |workdir: Option<&Path>| -> Vec<TreeItem> {
-        git.statuses()
-            .filter(|(path, status)| {
-                roots.iter().any(|root| path.starts_with(root))
-                    && workdir.is_none_or(|workdir| path.starts_with(workdir))
-                    && status.worktree != GitChange::Ignored
-                    && is_writer_file(path)
-            })
-            .map(|(path, status)| {
-                let hunks = engine
-                    .document_for_path(path)
-                    .map_or(0, |id| git.hunks_for(id).len());
-                let mut label = format!("{} {}", short_status(status), display_path(path, roots));
-                if hunks > 0 {
-                    label.push_str(&format!(" ({hunks})"));
-                }
-                let deleted = matches!(status.worktree, GitChange::Deleted)
-                    || matches!(status.index, GitChange::Deleted);
-                let id = if deleted {
-                    format!("deleted:{}", path.display())
-                } else {
-                    change_id(path)
-                };
-                TreeItem::new(id, label)
-            })
-            .collect()
+    let roots = engine.roots();
+    let changed = engine.changed_writer_files();
+    let row = |(path, status): &(PathBuf, adoc_engine::FileStatus)| {
+        let hunks = engine
+            .document_for_path(path)
+            .map_or(0, |id| git.hunks_for(id).len());
+        let mut label = format!("{} {}", short_status(status), display_path(path, roots));
+        if hunks > 0 {
+            label.push_str(&format!(" ({hunks})"));
+        }
+        ChangeRow {
+            path: path.clone(),
+            label,
+            staged: status.index != GitChange::Unmodified,
+            deleted: matches!(status.worktree, GitChange::Deleted)
+                || matches!(status.index, GitChange::Deleted),
+        }
     };
+    let repositories = git.repositories();
     if repositories.len() <= 1 {
-        return rows(None);
+        return vec![(None, changed.iter().map(row).collect())];
     }
     repositories
         .iter()
@@ -316,32 +315,14 @@ pub fn changes(engine: &Engine, roots: &[PathBuf]) -> Vec<TreeItem> {
                 || repository.workdir.display().to_string(),
                 |name| name.to_string_lossy().into_owned(),
             );
-            folder(
-                repository.workdir.display().to_string(),
-                name,
-                rows(Some(&repository.workdir)),
-            )
+            let rows = changed
+                .iter()
+                .filter(|(path, _)| path.starts_with(&repository.workdir))
+                .map(row)
+                .collect();
+            (Some(name), rows)
         })
         .collect()
-}
-
-/// The id of a Changes leaf, which opens `path` at its first change.
-pub fn change_id(path: &Path) -> String {
-    format!("change:{}", path.display())
-}
-
-/// The path a Changes leaf opens, if `id` is one.
-pub fn parse_change(id: &str) -> Option<PathBuf> {
-    id.strip_prefix("change:").map(PathBuf::from)
-}
-
-fn is_writer_file(path: &Path) -> bool {
-    adoc_index::is_asciidoc_path(path)
-        || path.components().any(|component| {
-            FAMILY_DIRECTORIES
-                .iter()
-                .any(|family| component.as_os_str() == *family)
-        })
 }
 
 /// The two letters `git status --short` shows for a file.

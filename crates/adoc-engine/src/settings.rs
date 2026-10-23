@@ -62,6 +62,9 @@ impl Default for WorkspaceSettings {
 pub struct ToolSettings {
     /// An absolute path to `asciidoctor`; discovered on `PATH` when empty.
     pub asciidoctor: String,
+    /// An absolute path to `git`, which pushes (and signed commits) use; discovered on `PATH`
+    /// when empty.
+    pub git: String,
 }
 
 /// The `[git]` table.
@@ -211,6 +214,7 @@ impl Settings {
                 self.workspace.ignore = items.iter().map(string).collect::<Result<_, _>>()?;
             }
             ("tools", "asciidoctor") => self.tools.asciidoctor = string(value)?,
+            ("tools", "git") => self.tools.git = string(value)?,
             ("git", "enabled") => self.git.enabled = boolean(value)?,
             ("git", "show_markers") => self.git.show_markers = boolean(value)?,
             ("git", "blame_on_hover") => self.git.blame_on_hover = boolean(value)?,
@@ -246,7 +250,7 @@ fn is_known(section: &str, key: &str) -> bool {
             "editor",
             "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme"
         ) | ("workspace", "ignore")
-            | ("tools", "asciidoctor")
+            | ("tools", "asciidoctor" | "git")
             | (
                 "git",
                 "enabled" | "show_markers" | "blame_on_hover" | "remote" | "hosts"
