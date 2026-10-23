@@ -226,6 +226,11 @@ See xref:visual-editing.adoc[Visual editing].
 |Arrow keys, Home, End
 |UI only
 
+|Move the caret by word
+|Option-Left, Option-Right
+|Ctrl-Left, Ctrl-Right
+|UI only
+
 |Extend the selection
 |Shift with the above
 |Shift with the above

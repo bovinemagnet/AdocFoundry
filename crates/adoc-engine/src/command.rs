@@ -43,6 +43,7 @@ pub enum CommandCategory {
 pub enum CommandContext {
     Always,
     ActiveDocument,
+    /// A selection in the visual editor: the active document is shown visually or split.
     Selection,
     Antora,
 }

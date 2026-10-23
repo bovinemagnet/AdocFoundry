@@ -20,8 +20,9 @@ use crate::{
     edit,
     undo::Typing,
     workspace::{FileWatcher, WorkerMessage},
-    Clock, CommandArgs, CommandId, CommandOutcome, CommandRegistry, DocumentId, EngineError,
-    EngineEvent, OpenDocument, Settings, SystemClock, TextEdit, UndoEntry, UndoGroup, UndoStack,
+    Clock, CommandArgs, CommandContext, CommandId, CommandOutcome, CommandRegistry, DocumentId,
+    EditorMode, EngineError, EngineEvent, OpenDocument, Settings, SystemClock, TextEdit, UndoEntry,
+    UndoGroup, UndoStack,
 };
 
 /// The headless editor engine: the single owner of workspace and document state.
@@ -44,6 +45,8 @@ pub struct Engine {
     pub(crate) worker_sender: Sender<WorkerMessage>,
     pub(crate) worker_receiver: Receiver<WorkerMessage>,
     pub(crate) workers_running: usize,
+    /// Whole-workspace index jobs in flight, a subset of `workers_running`.
+    pub(crate) indexing: usize,
     pub(crate) watcher: Option<FileWatcher>,
     pub(crate) history: crate::navigation::History,
     pub(crate) previews: BTreeMap<crate::PreviewId, crate::EditPreview>,
@@ -101,6 +104,7 @@ impl Engine {
             worker_sender,
             worker_receiver,
             workers_running: 0,
+            indexing: 0,
             watcher: None,
             history: crate::navigation::History::default(),
             previews: BTreeMap::new(),
@@ -317,6 +321,24 @@ impl Engine {
     #[must_use]
     pub fn commands(&self) -> &CommandRegistry {
         &self.registry
+    }
+
+    /// Whether command `id` applies now, by its [`CommandContext`]: a document command needs an
+    /// active document, a visual editor command one shown visually or split, and an Antora command
+    /// an Antora component in the workspace. Front ends use it to offer only what applies.
+    #[must_use]
+    pub fn command_available(&self, id: CommandId) -> bool {
+        let Some(command) = self.registry.get(id) else {
+            return false;
+        };
+        match command.spec().when {
+            CommandContext::Always => true,
+            CommandContext::ActiveDocument => self.active().is_some(),
+            CommandContext::Selection => self
+                .active()
+                .is_some_and(|document| self.editor_mode(document) != EditorMode::Source),
+            CommandContext::Antora => self.workspace.antora.components().next().is_some(),
+        }
     }
 
     /// Registers an additional command, for front ends and future integrations.

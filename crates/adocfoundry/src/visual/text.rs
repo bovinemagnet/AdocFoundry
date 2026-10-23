@@ -5,9 +5,9 @@ use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
 use adoc_engine::{Atom, BlockPath, Mark, MarkSet, Piece, TextBlock, TextContext};
 use gpui::{
-    canvas, fill, px, size, AnyElement, Bounds, FontStyle, FontWeight, Hsla, IntoElement as _,
-    ParentElement as _, Pixels, Point, ScrollHandle, SharedString, Styled as _, StyledText,
-    TextLayout, TextRun, UnderlineStyle,
+    canvas, fill, px, size, AnyElement, Bounds, FontStyle, FontWeight, HighlightStyle, Hsla,
+    IntoElement as _, ParentElement as _, Pixels, Point, ScrollHandle, SharedString, Styled as _,
+    StyledText, TextLayout, TextRun, UnderlineStyle,
 };
 
 use crate::preview::inlines::InlineStyle;
@@ -375,6 +375,56 @@ pub fn bounds_of(layouts: &Layouts, path: &[usize]) -> Option<Bounds<Pixels>> {
     layouts.borrow().get(path).map(TextLayout::bounds)
 }
 
+/// `runs` with syntax highlighting laid over them: each run is split where a highlight starts or
+/// ends, and a highlighted piece takes its colour, weight and style. Both are in bytes of the
+/// same text, so the layout, the caret and the selection are unchanged.
+#[must_use]
+pub fn with_highlights(
+    runs: Vec<TextRun>,
+    highlights: &[(std::ops::Range<usize>, HighlightStyle)],
+) -> Vec<TextRun> {
+    if highlights.is_empty() {
+        return runs;
+    }
+    let mut out = Vec::with_capacity(runs.len() + highlights.len() * 2);
+    let mut start = 0;
+    for run in runs {
+        let end = start + run.len;
+        // The cut points inside this run.
+        let mut cuts: Vec<usize> = highlights
+            .iter()
+            .flat_map(|(range, _)| [range.start, range.end])
+            .filter(|cut| *cut > start && *cut < end)
+            .collect();
+        cuts.push(end);
+        cuts.sort_unstable();
+        cuts.dedup();
+        let mut from = start;
+        for to in cuts {
+            let mut piece = run.clone();
+            piece.len = to - from;
+            if let Some((_, style)) = highlights
+                .iter()
+                .find(|(range, _)| range.start <= from && to <= range.end)
+            {
+                if let Some(color) = style.color {
+                    piece.color = color;
+                }
+                if let Some(weight) = style.font_weight {
+                    piece.font.weight = weight;
+                }
+                if let Some(font_style) = style.font_style {
+                    piece.font.style = font_style;
+                }
+            }
+            out.push(piece);
+            from = to;
+        }
+        start = end;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use adoc_core::SourceRange;
@@ -441,6 +491,45 @@ mod tests {
             shown.text.len(),
             block.display.len(),
             "byte offsets are kept"
+        );
+    }
+
+    #[test]
+    fn highlights_split_runs_without_changing_the_text() {
+        let base = TextRun {
+            len: 0,
+            font: font("Mono"),
+            color: hsla(0., 0., 0., 1.),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        // "fn main()": two runs, 3 and 6 bytes; a keyword highlight over "fn".
+        let runs = vec![
+            TextRun {
+                len: 3,
+                ..base.clone()
+            },
+            TextRun {
+                len: 6,
+                ..base.clone()
+            },
+        ];
+        let keyword = HighlightStyle {
+            color: Some(hsla(0.6, 1., 0.5, 1.)),
+            font_weight: Some(FontWeight::BOLD),
+            ..HighlightStyle::default()
+        };
+        let out = with_highlights(runs, &[(0..2, keyword)]);
+        assert_eq!(out.iter().map(|run| run.len).collect::<Vec<_>>(), [2, 1, 6]);
+        assert_eq!(out[0].color, hsla(0.6, 1., 0.5, 1.));
+        assert_eq!(out[0].font.weight, FontWeight::BOLD);
+        assert_eq!(out[1].color, base.color);
+        assert_eq!(out.iter().map(|run| run.len).sum::<usize>(), 9);
+        // No highlights: the runs as they were.
+        assert_eq!(
+            with_highlights(vec![TextRun { len: 4, ..base }], &[]).len(),
+            1
         );
     }
 }

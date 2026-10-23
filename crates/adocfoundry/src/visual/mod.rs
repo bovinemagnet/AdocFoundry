@@ -8,11 +8,15 @@
 
 mod blocks;
 mod format;
-mod input;
+pub(crate) mod input;
 mod text;
 mod toolbar;
 
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::Arc,
+};
 
 use adoc_core::SourceRange;
 use adoc_engine::{
@@ -101,6 +105,9 @@ pub struct VisualView {
     scroll: ScrollHandle,
     layouts: Layouts,
     reveal: Rc<Cell<bool>>,
+    /// Highlighted code, kept between frames so a block is highlighted again only when its
+    /// text changes.
+    pub(crate) highlights: Rc<RefCell<crate::preview::HighlightCache>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -136,6 +143,7 @@ impl VisualView {
             scroll: ScrollHandle::new(),
             layouts: Layouts::default(),
             reveal: Rc::default(),
+            highlights: Rc::default(),
             _subscriptions: vec![subscription],
         };
         if let Some(first) = view
@@ -152,7 +160,7 @@ impl VisualView {
         self.document
     }
 
-    #[cfg(test)]
+    /// The selection, in source offsets.
     pub fn selection(&self) -> Selection {
         self.selection
     }
@@ -441,22 +449,42 @@ impl VisualView {
         };
         match next {
             Some(next) => text.source_offset(next, text.marks_at(next)),
-            None => {
-                let blocks = self.text_blocks();
-                let index = blocks.iter().position(|(other, _, _)| *other == path)?;
-                let neighbour = if forward {
-                    blocks.get(index + 1)
-                } else {
-                    index.checked_sub(1).and_then(|index| blocks.get(index))
-                }?;
-                let block = &neighbour.2;
-                Some(if forward {
-                    block.range.start
-                } else {
-                    block.range.end
-                })
-            }
+            None => self.neighbour_edge(&path, forward),
         }
+    }
+
+    /// The caret moved by one word: to the end of the word at or after it, or the start of the
+    /// one before, through the shown text so it never lands in a mark's delimiters; from a
+    /// block's edge, to the neighbouring block's.
+    fn word_step(&self, forward: bool) -> Option<usize> {
+        let (path, text) = self.block_at(self.selection.head)?;
+        let display = text.display_offset(self.selection.head)?;
+        let next = if forward {
+            adoc_engine::next_word_end(&text.display, display)
+        } else {
+            adoc_engine::previous_word_start(&text.display, display)
+        };
+        if next == display {
+            return self.neighbour_edge(&path, forward);
+        }
+        text.source_offset(next, text.marks_at(next))
+    }
+
+    /// The start of the next text block, or the end of the previous one.
+    fn neighbour_edge(&self, path: &[usize], forward: bool) -> Option<usize> {
+        let blocks = self.text_blocks();
+        let index = blocks.iter().position(|(other, _, _)| other == path)?;
+        let neighbour = if forward {
+            blocks.get(index + 1)
+        } else {
+            index.checked_sub(1).and_then(|index| blocks.get(index))
+        }?;
+        let block = &neighbour.2;
+        Some(if forward {
+            block.range.start
+        } else {
+            block.range.end
+        })
     }
 
     /// The caret moved to the start or end of its line as drawn (a line of code, or a
@@ -610,6 +638,7 @@ impl VisualView {
         path: &[usize],
         position: gpui::Point<gpui::Pixels>,
         extend: bool,
+        clicks: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -630,8 +659,41 @@ impl VisualView {
             return;
         };
         self.goal_x = None;
-        self.dragging = true;
-        self.move_to(Some(offset), extend, cx);
+        match clicks {
+            // A double click selects the word, a triple click the block.
+            2 | 3 => {
+                let Some((_, block)) = self.block_at(offset) else {
+                    return;
+                };
+                let range = if clicks == 2 {
+                    let Some(display) = block.display_offset(offset) else {
+                        return;
+                    };
+                    let word = adoc_engine::word_at(&block.display, display);
+                    let (Some(start), Some(end)) = (
+                        block.source_offset(word.start, block.marks_at(word.start)),
+                        block.source_offset(word.end, block.marks_at(word.end)),
+                    ) else {
+                        return;
+                    };
+                    start..end
+                } else {
+                    block.range.start..block.range.end
+                };
+                self.dragging = false;
+                self.set_selection(
+                    Selection {
+                        anchor: range.start,
+                        head: range.end,
+                    },
+                    cx,
+                );
+            }
+            _ => {
+                self.dragging = true;
+                self.move_to(Some(offset), extend, cx);
+            }
+        }
     }
 
     fn mouse_drag(

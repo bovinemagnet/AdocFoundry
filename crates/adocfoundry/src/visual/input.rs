@@ -29,11 +29,32 @@ actions!(
         SelectHome,
         SelectEnd,
         SelectAll,
+        WordLeft,
+        WordRight,
+        SelectWordLeft,
+        SelectWordRight,
         Copy,
         Cut,
         Paste,
     ]
 );
+
+#[cfg(target_os = "macos")]
+const WORD_LEFT: &str = "alt-left";
+#[cfg(target_os = "macos")]
+const WORD_RIGHT: &str = "alt-right";
+#[cfg(target_os = "macos")]
+const SELECT_WORD_LEFT: &str = "alt-shift-left";
+#[cfg(target_os = "macos")]
+const SELECT_WORD_RIGHT: &str = "alt-shift-right";
+#[cfg(not(target_os = "macos"))]
+const WORD_LEFT: &str = "ctrl-left";
+#[cfg(not(target_os = "macos"))]
+const WORD_RIGHT: &str = "ctrl-right";
+#[cfg(not(target_os = "macos"))]
+const SELECT_WORD_LEFT: &str = "ctrl-shift-left";
+#[cfg(not(target_os = "macos"))]
+const SELECT_WORD_RIGHT: &str = "ctrl-shift-right";
 
 /// Binds the visual editor's keys.
 pub fn bind(cx: &mut App) {
@@ -54,6 +75,11 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("shift-home", SelectHome, context),
         KeyBinding::new("shift-end", SelectEnd, context),
         KeyBinding::new("secondary-a", SelectAll, context),
+        // Option on macOS, Ctrl elsewhere, as the source editor binds them.
+        KeyBinding::new(WORD_LEFT, WordLeft, context),
+        KeyBinding::new(WORD_RIGHT, WordRight, context),
+        KeyBinding::new(SELECT_WORD_LEFT, SelectWordLeft, context),
+        KeyBinding::new(SELECT_WORD_RIGHT, SelectWordRight, context),
         KeyBinding::new("secondary-c", Copy, context),
         KeyBinding::new("secondary-x", Cut, context),
         KeyBinding::new("secondary-v", Paste, context),
@@ -181,6 +207,26 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
     }))
     .on_action(cx.listener(|this, _: &SelectRight, _, cx| {
         let target = this.step(true);
+        this.goal_x = None;
+        this.move_to(target, true, cx);
+    }))
+    .on_action(cx.listener(|this, _: &WordLeft, _, cx| {
+        let target = this.word_step(false);
+        this.goal_x = None;
+        this.move_to(target, false, cx);
+    }))
+    .on_action(cx.listener(|this, _: &WordRight, _, cx| {
+        let target = this.word_step(true);
+        this.goal_x = None;
+        this.move_to(target, false, cx);
+    }))
+    .on_action(cx.listener(|this, _: &SelectWordLeft, _, cx| {
+        let target = this.word_step(false);
+        this.goal_x = None;
+        this.move_to(target, true, cx);
+    }))
+    .on_action(cx.listener(|this, _: &SelectWordRight, _, cx| {
+        let target = this.word_step(true);
         this.goal_x = None;
         this.move_to(target, true, cx);
     }))

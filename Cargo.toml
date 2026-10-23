@@ -79,6 +79,7 @@ tree-sitter = "=0.26.13"
 typst = "=0.15.1"
 typst-layout = "=0.15.1"
 typst-pdf = "=0.15.1"
+unicode-segmentation = "=1.13.3"
 url = "=2.5.8"
 
 [patch.crates-io]

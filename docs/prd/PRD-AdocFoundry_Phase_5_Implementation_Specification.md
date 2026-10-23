@@ -277,7 +277,16 @@ Open questions, to settle before the package that needs them:
 - [ ] **WP 5.3:** whether to keep the `adoc-dom` workarounds for #32 and #33 after acdc-parser releases fixes, or drop them on upgrade.
 - [ ] **After WP 5.8, in `zed-asciidoc`:** download the `adoc-ls` release archive for the platform (Zed extensions can fetch GitHub release assets), and fall back to `PATH`. That repository's change, not this one's.
 
-Implementation notes: none yet. Departures are recorded here as each package lands, with what the spec said, what was built and why, as in the earlier phases.
+Implementation notes, as each package lands:
+
+| Area | Specification | Implementation | Why |
+|---|---|---|---|
+| Windows in WP 5.1 | the first Windows run, with whatever fails fixed in the package | CI runs Windows; no Windows-specific fix was needed to type-check on macOS, and a local cross-check stopped at a C build script (`stacker`) that needs the Windows SDK | Windows is checked by the first CI run on GitHub; anything it finds is fixed then. |
+| Command availability (#17) | a command spec declares the modes it applies to | the existing `CommandContext::Selection`, which only the visual editor's commands use, now means "the active document is shown visually or split"; `Engine::command_available` evaluates every context, and the palette lists only available commands | No new field: the context already named the visual editor's commands. The palette also stops listing document commands with no document open. |
+| Problems rows (#18) | messages wrap, with the full text in a tooltip | every sidebar row is one line, cut off with an ellipsis, with the full text in a tooltip; test `long_diagnostics_show_in_full_on_hover` | The sidebar trees are virtual lists with one fixed row height, where a wrapped row would overlap the next. |
+| Revealing the active tab (#13) | the strip scrolls the active tab into view | the reveal is requested on two consecutive frames | GPUI places a tracked item from the previous frame's layout, which a change of tabs or widths has just made stale. |
+| Word movement (#14) | word boundaries in the model | `adoc-model`'s `next_word_end`, `previous_word_start` and `word_at` over the block's shown text (UAX #29 through `unicode-segmentation` 1.13.3, already in the tree); also `caret_moves_by_word` | A word move at the start of a marked word stops before the mark's delimiter, as character movement does. |
+| Code highlighting (#16) | the source editor's highlighter | the preview's tree-sitter highlighter, laid over the editable block's runs; the visual editor keeps its cache between frames, emptied past 256 entries | The cache was rebuilt every frame, so read-only blocks were highlighted again on every render too. |
 
 ## 13. Implementation Sequence
 

@@ -12,6 +12,7 @@ See xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the bindings.
 
 When you open a folder, AdocFoundry discovers every `antora.yml` beneath it and indexes the AsciiDoc files on a background worker.
 The window stays usable while indexing runs.
+The status bar shows "Indexing…" only while the whole workspace is being indexed or file changes are being applied, not after every keystroke.
 Plain AsciiDoc folders work too, with relative-path resolution only.
 
 .How a workspace is discovered
@@ -42,6 +43,8 @@ Every module, with its families (pages, partials, examples, images and attachmen
 Problems::
 Workspace diagnostics grouped by file, with a count in the tab title.
 Click one to open the file at that location.
+A row too long for the sidebar ends with an ellipsis, and hovering it shows the full text in a tooltip.
+This applies to every panel in the sidebar.
 
 Outline::
 The sections of the active document.
@@ -68,6 +71,7 @@ See xref:diagnostics.adoc[Diagnostics].
 Typed characters within 500 ms of each other coalesce.
 
 Tabs follow the active document, so opening a page by any route (the sidebar, link following, the palette or a rename) shows it in a tab.
+With the preview docked, the tab strip scrolls to keep the active page's tab in view, including when a page becomes active by following a link or through the outline.
 
 == Following links
 
@@ -137,6 +141,14 @@ Saving it applies the change.
 See xref:settings.adoc[Settings].
 
 The command palette lists every command with its title.
+Commands that apply only to the visual editor, such as Bold, Italic and the list and block commands, are listed only while the active page is shown in Visual or Split mode.
+Commands that need an open page are hidden when none is open, and Antora-only commands are hidden when the workspace has no Antora component.
+
+== The line and column in the status bar
+
+The status bar shows the caret's line and column as `Ln, Col`.
+In Visual mode, and in Split mode while the visual side has focus, they follow the visual editor's caret.
+Otherwise they follow the source editor's caret.
 
 == The branch in the status bar
 

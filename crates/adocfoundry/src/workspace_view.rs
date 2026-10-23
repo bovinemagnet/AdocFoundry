@@ -25,6 +25,7 @@ use gpui_component::{
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
     tab::{Tab, TabBar},
+    tooltip::Tooltip,
     tree::{tree, TreeState},
     v_flex, ActiveTheme as _, Disableable as _, IconName, Sizable as _, Theme, ThemeMode, TitleBar,
     WindowExt as _,
@@ -83,6 +84,10 @@ pub struct WorkspaceView {
     /// The visual editor of each document shown in visual or split mode.
     visuals: HashMap<DocumentId, Entity<VisualView>>,
     active_tab: usize,
+    /// The tab strip's scroll, so the active tab can be kept in view.
+    tab_scroll: gpui::ScrollHandle,
+    /// Frames still to request the active tab's reveal on; see [`Self::reveal_active_tab`].
+    tab_reveals: std::cell::Cell<u8>,
     sidebar_tab: SidebarTab,
     navigation: Entity<TreeState>,
     families: Entity<TreeState>,
@@ -105,6 +110,43 @@ pub struct WorkspaceView {
     )>,
     revealed: Option<NavigationPosition>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// A sidebar row's label: one line, cut off with an ellipsis where the panel is too narrow,
+/// with the whole text in a tooltip. The tree's rows have one fixed height, so they cannot wrap.
+fn tree_label(tree: &'static str, index: usize, label: SharedString) -> impl IntoElement {
+    let full = label.clone();
+    div()
+        .id(("tree-label", index))
+        .debug_selector(move || format!("{tree}-row-{index}"))
+        .flex_1()
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .child(label)
+        .tooltip(move |window, cx| {
+            #[cfg(test)]
+            LAST_TREE_TOOLTIP.with(|last| *last.borrow_mut() = Some(full.clone()));
+            Tooltip::new(full.clone()).build(window, cx)
+        })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The text of the last sidebar tooltip built, for tests.
+    pub(crate) static LAST_TREE_TOOLTIP: std::cell::RefCell<Option<SharedString>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The engine's commands the palette offers: those that apply now, so the visual editor's are
+/// listed only while the active document is shown visually.
+pub(crate) fn palette_commands(engine: &adoc_engine::Engine) -> Vec<&adoc_engine::CommandSpec> {
+    engine
+        .commands()
+        .all()
+        .filter(|spec| engine.command_available(spec.id))
+        .collect()
 }
 
 /// What the notification says about a finished export: the file and its pages with the first
@@ -150,6 +192,8 @@ impl WorkspaceView {
             tabs: Vec::new(),
             visuals: HashMap::new(),
             active_tab: 0,
+            tab_scroll: gpui::ScrollHandle::new(),
+            tab_reveals: std::cell::Cell::new(0),
             sidebar_tab: SidebarTab::Navigation,
             navigation: cx.new(|cx| TreeState::new(cx)),
             families: cx.new(|cx| TreeState::new(cx)),
@@ -231,7 +275,11 @@ impl WorkspaceView {
             EngineEvent::CommandFailed { command, error } => {
                 window.push_notification(format!("{command}: {error}"), cx);
             }
-            EngineEvent::PreviewLayoutChanged => self.place_preview(cx),
+            EngineEvent::PreviewLayoutChanged => {
+                self.place_preview(cx);
+                // Docking or detaching the preview changes the strip's width.
+                self.reveal_active_tab(cx);
+            }
             EngineEvent::GitPushed { message } => window.push_notification(message.clone(), cx),
             EngineEvent::ExportFinished { output, result } => {
                 Self::export_finished(output, result, window, cx);
@@ -445,6 +493,14 @@ impl WorkspaceView {
         self.problem_count = count;
         self.problems
             .update(cx, |tree, cx| tree.set_items(items, cx));
+    }
+
+    /// Shows the Problems panel.
+    #[cfg(test)]
+    pub fn show_problems_for_test(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_tab = SidebarTab::Problems;
+        self.problems_stale = true;
+        cx.notify();
     }
 
     /// The labels of the Changes panel's rows, in order.
@@ -818,6 +874,8 @@ impl WorkspaceView {
             }
         };
         self.active_tab = index;
+        // However the document became active, its tab is brought into view.
+        self.reveal_active_tab(cx);
 
         let position = self.app.read(cx).engine.navigation_position().cloned();
         let path = self
@@ -1704,12 +1762,8 @@ impl WorkspaceView {
         // actions are handled; the visual editor's run once the palette has closed and handed
         // focus back, from `on_confirm`.
         let mut visual_actions: Vec<Option<Box<dyn gpui::Action>>> = Vec::new();
-        let mut items: Vec<CommandItem> = self
-            .app
-            .read(cx)
-            .engine
-            .commands()
-            .all()
+        let mut items: Vec<CommandItem> = palette_commands(&self.app.read(cx).engine)
+            .into_iter()
             .filter_map(|spec| {
                 let action = action_for(spec.id)?;
                 let item = CommandItem::new()
@@ -1788,9 +1842,11 @@ impl WorkspaceView {
                     .child(
                         h_flex()
                             .gap_2()
+                            .w_full()
+                            .min_w_0()
                             .text_sm()
                             .child(icon)
-                            .child(item.label.clone()),
+                            .child(tree_label(id, index, item.label.clone())),
                     )
                     .on_click(move |_, window, cx| {
                         let Some(target) = sidebar::parse_target(&item.id) else {
@@ -1873,7 +1929,34 @@ impl WorkspaceView {
             .child(div().flex_1().min_h_0().child(content))
     }
 
-    fn render_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Scrolls the tab strip to the active tab over the next two frames. GPUI places a tracked
+    /// item from the previous frame's layout, which a change of tabs or widths has just made
+    /// stale, so the request is made again once a frame has been laid out after the change.
+    fn reveal_active_tab(&self, cx: &mut Context<Self>) {
+        self.tab_reveals.set(2);
+        cx.notify();
+    }
+
+    /// Whether the active tab lies within the tab strip's visible width.
+    #[cfg(test)]
+    pub(crate) fn active_tab_visible_for_test(&self) -> Option<bool> {
+        let viewport = self.tab_scroll.bounds();
+        // Item bounds are laid out unscrolled; a tab wider than the strip shows its start.
+        let tab = self.tab_scroll.bounds_for_item(self.active_tab)?;
+        let left = tab.left() + self.tab_scroll.offset().x;
+        let right = (left + tab.size.width).min(left + viewport.size.width);
+        Some(left >= viewport.left() - px(1.) && right <= viewport.right() + px(1.))
+    }
+
+    fn render_tabs(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let reveals = self.tab_reveals.get();
+        if reveals > 0 {
+            self.tab_reveals.set(reveals - 1);
+            self.tab_scroll.scroll_to_item(self.active_tab);
+            if reveals > 1 {
+                window.request_animation_frame();
+            }
+        }
         let engine = &self.app.read(cx).engine;
         let tabs: Vec<Tab> = self
             .tabs
@@ -1895,6 +1978,7 @@ impl WorkspaceView {
             })
             .collect();
         TabBar::new("editor-tabs")
+            .track_scroll(&self.tab_scroll)
             .selected_index(self.active_tab)
             .children(tabs)
             .on_click(cx.listener(|this, index: &usize, window, cx| {
@@ -1910,7 +1994,37 @@ impl WorkspaceView {
             }))
     }
 
-    fn render_status(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The zero-based line and column (in characters, as the source editor counts them) of the
+    /// caret the user is working with: the visual editor's in Visual mode, or in Split mode while
+    /// it has focus, otherwise the source editor's.
+    pub(crate) fn caret_line_column(&self, window: &Window, cx: &App) -> Option<(u32, u32)> {
+        let editor = self.active_editor()?.read(cx);
+        let id = editor.document();
+        let engine = &self.app.read(cx).engine;
+        let visual = self
+            .visuals
+            .get(&id)
+            .filter(|visual| match engine.editor_mode(id) {
+                EditorMode::Visual => true,
+                EditorMode::Split => visual.read(cx).focus_handle(cx).is_focused(window),
+                EditorMode::Source => false,
+            });
+        let Some(visual) = visual else {
+            return Some(editor.cursor_line_column(cx));
+        };
+        let text = &engine.document(id)?.text;
+        let offset = visual.read(cx).selection().head.min(text.len());
+        let line = text.byte_to_line_idx(offset, ropey::LineType::LF_CR);
+        let start = text.line_to_byte_idx(line, ropey::LineType::LF_CR);
+        let column = text.byte_to_char_idx(offset) - text.byte_to_char_idx(start);
+        Some((
+            u32::try_from(line).unwrap_or(u32::MAX),
+            u32::try_from(column).unwrap_or(u32::MAX),
+        ))
+    }
+
+    fn render_status(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let caret = self.caret_line_column(window, cx);
         let engine = &self.app.read(cx).engine;
         let roots = engine.roots().to_vec();
         let (location, path, file) = match self.active_editor() {
@@ -1918,8 +2032,8 @@ impl WorkspaceView {
                 let editor = editor.read(cx);
                 let id = editor.document();
                 let document = engine.document(id);
-                let (line, column) = editor.cursor_line_column(cx);
-                let position = Some(format!("Ln {}, Col {}", line + 1, column + 1));
+                let position =
+                    caret.map(|(line, column)| format!("Ln {}, Col {}", line + 1, column + 1));
                 let path = document.map(|document| sidebar::display_path(&document.path, &roots));
                 (
                     position,
@@ -1942,7 +2056,7 @@ impl WorkspaceView {
             .unwrap_or_default();
         // The component version of the active page: `product@2.0 · main`.
         let badge = file.as_deref().and_then(|path| engine.version_badge(path));
-        let indexing = engine.has_pending();
+        let indexing = engine.is_indexing();
         StatusBar::new()
             .left(
                 div()
@@ -1992,7 +2106,7 @@ impl Focusable for WorkspaceView {
 }
 
 impl Render for WorkspaceView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.refresh_outline(cx);
         let (can_back, can_forward, title) = {
             let engine = &self.app.read(cx).engine;
@@ -2015,7 +2129,7 @@ impl Render for WorkspaceView {
                 center.child(
                     h_flex()
                         .items_center()
-                        .child(div().flex_1().min_w_0().child(self.render_tabs(cx)))
+                        .child(div().flex_1().min_w_0().child(self.render_tabs(window, cx)))
                         .child(self.render_modes(cx)),
                 )
             })
@@ -2177,6 +2291,6 @@ impl Render for WorkspaceView {
                         ),
                 ),
             )
-            .child(self.render_status(cx))
+            .child(self.render_status(window, cx))
     }
 }

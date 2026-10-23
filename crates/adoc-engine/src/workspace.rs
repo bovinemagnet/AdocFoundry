@@ -180,6 +180,7 @@ impl Engine {
         let roots = self.roots.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
+        self.indexing += 1;
         thread::spawn(move || {
             let mut state = WorkspaceState::new();
             let message = match state.index_roots(&roots) {
@@ -204,6 +205,18 @@ impl Engine {
             || self.rendered.has_scheduled()
             || self.visual.has_due()
             || self.git.has_pending()
+            || self
+                .watcher
+                .as_ref()
+                .is_some_and(|watcher| !watcher.pending.is_empty())
+    }
+
+    /// True while the workspace is being indexed: a whole-workspace index is running, or
+    /// file-system changes wait to be applied. Unlike [`Engine::has_pending`], the re-parse,
+    /// preview and model settles that follow typing do not count.
+    #[must_use]
+    pub fn is_indexing(&self) -> bool {
+        self.indexing > 0
             || self
                 .watcher
                 .as_ref()
@@ -249,6 +262,7 @@ impl Engine {
                 state,
                 files,
             } => {
+                self.indexing = self.indexing.saturating_sub(1);
                 if roots != self.roots {
                     return; // A newer workspace replaced the one this worker indexed.
                 }
@@ -309,6 +323,7 @@ impl Engine {
             WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),
             WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
             WorkerMessage::IndexFailed { error } => {
+                self.indexing = self.indexing.saturating_sub(1);
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,
                     error,

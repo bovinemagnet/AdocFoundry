@@ -1450,6 +1450,113 @@ fn clicking_text_places_the_caret(cx: &mut TestAppContext) {
     );
 }
 
+/// Clicks `count` times at the shown text index `index` of the text block at `path`.
+fn click_text(
+    visual: &Entity<crate::visual::VisualView>,
+    path: &[usize],
+    index: usize,
+    count: usize,
+    cx: &mut VisualTestContext,
+) {
+    let position = cx.update(|_, cx| {
+        let layouts = visual.read(cx).layouts().borrow();
+        let layout = layouts.get(&path.to_vec()).expect("the block is laid out");
+        layout
+            .position_for_index(index)
+            .expect("the index is laid out")
+            + gpui::point(px(1.), px(2.))
+    });
+    let button = gpui::MouseButton::Left;
+    cx.simulate_event(gpui::MouseDownEvent {
+        button,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: count,
+        first_mouse: false,
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        button,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: count,
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn visual_code_blocks_are_highlighted(cx: &mut TestAppContext) {
+    let code = "fn main() {\n    let answer = 42;\n}";
+    let text = format!("= Page\n\n[source,rust]\n----\n{code}\n----\n");
+    let (_, _, visual, _, mut cx) = visual_workspace(&text, cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let editable = cx.update(|_, cx| {
+        let shown = visual.read(cx).shown().cloned().unwrap();
+        shown.model.walk().into_iter().any(|(_, node)| {
+            matches!(node.kind, adoc_engine::NodeKind::Code { .. }) && node.is_editable()
+        })
+    });
+    assert!(
+        editable,
+        "the code block is edited in place, not drawn read-only"
+    );
+    // The editable block's text was highlighted as Rust, with styles to lay over it.
+    let styles = cx.update(|_, cx| {
+        visual
+            .read(cx)
+            .highlights
+            .borrow()
+            .iter()
+            .find(|((_, language, text), _)| language == "rust" && text == code)
+            .map(|(_, styles)| styles.len())
+    });
+    assert!(styles.is_some_and(|count| count > 0), "{styles:?}");
+}
+
+#[gpui::test]
+fn double_click_selects_a_word(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    let plain = text.find("plain").unwrap();
+    click_text(&visual, &[1], "Some pl".len(), 2, &mut cx);
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(
+        (selection.start(), selection.end()),
+        (plain, plain + "plain".len())
+    );
+    // A triple click selects the paragraph.
+    click_text(&visual, &[1], "Some pl".len(), 3, &mut cx);
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    let paragraph = text.find("Some").unwrap();
+    assert_eq!(
+        (selection.start(), selection.end()),
+        (paragraph, paragraph + "Some plain words.".len())
+    );
+}
+
+#[gpui::test]
+fn caret_moves_by_word(cx: &mut TestAppContext) {
+    use crate::visual::input::{SelectWordLeft, WordLeft, WordRight};
+
+    let text = "= Page\n\nSome *plain*, words.\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("Some").unwrap(), &mut cx);
+    let head = |cx: &mut VisualTestContext| cx.update(|_, cx| visual.read(cx).selection().head);
+    cx.dispatch_action(WordRight);
+    assert_eq!(head(&mut cx), text.find(" *plain").unwrap());
+    // Past the strong mark's delimiters: the word ends inside them, never in a delimiter.
+    cx.dispatch_action(WordRight);
+    assert_eq!(head(&mut cx), text.find("*,").unwrap());
+    cx.dispatch_action(WordRight);
+    assert_eq!(head(&mut cx), text.find(".\n").unwrap());
+    cx.dispatch_action(WordLeft);
+    assert_eq!(head(&mut cx), text.find("words").unwrap());
+    cx.dispatch_action(SelectWordLeft);
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(selection.anchor, text.find("words").unwrap());
+    // At the start of the marked word the caret stays outside the mark, before its `*`.
+    assert_eq!(selection.head, text.find("*plain").unwrap());
+}
+
 #[gpui::test]
 fn ime_composition_commits_once(cx: &mut TestAppContext) {
     use gpui::EntityInputHandler as _;
@@ -1885,6 +1992,111 @@ fn the_link_dialog_takes_the_target_as_typed(cx: &mut TestAppContext) {
         text_of(&app, id, &mut cx),
         "= Page\n\nSome https://example.com[plain] words.\n"
     );
+}
+
+#[gpui::test]
+fn active_tab_stays_visible_with_the_preview_docked(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let pages: Vec<PathBuf> = (1..=8)
+        .map(|number| {
+            let page = adoc_index::normalize_path(
+                &directory
+                    .path()
+                    .join(format!("a-rather-long-page-name-number-{number}.adoc")),
+            );
+            std::fs::write(&page, format!("= Page {number}\n\nText.\n")).unwrap();
+            page
+        })
+        .collect();
+    let (app, workspace, mut cx) = previewing(pages.clone(), cx);
+    // Activate the last page from elsewhere, as following a link or the outline does.
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.open(pages.last().unwrap()).unwrap();
+            app.engine.set_active(id);
+            app.drain(cx);
+        });
+    });
+    // Two frames, as the platform would draw them.
+    for _ in 0..2 {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    let visible = cx.update(|_, cx| workspace.read(cx).active_tab_visible_for_test());
+    assert_eq!(visible, Some(true));
+}
+
+#[gpui::test]
+fn status_bar_follows_the_visual_caret(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst paragraph.\n\nSecond é paragraph.\n";
+    let (_app, workspace, visual, _id, mut cx) = visual_workspace(text, cx);
+    // After the `é`, a two-byte character: line 5, column 9 counted in characters.
+    let offset = text.find('é').unwrap() + 'é'.len_utf8();
+    place_caret(&visual, offset, &mut cx);
+    let position = cx.update(|window, cx| workspace.read(cx).caret_line_column(window, cx));
+    assert_eq!(position, Some((4, 8)));
+}
+
+#[gpui::test]
+fn long_diagnostics_show_in_full_on_hover(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let target = "a-target-page-whose-name-is-much-longer-than-the-sidebar-is-wide.adoc";
+    std::fs::write(&page, format!("= Page\n\nSee xref:{target}[the target].\n")).unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_problems_for_test(cx)));
+    let draw = |cx: &mut VisualTestContext| {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    };
+    // The file is row 0 and its first diagnostic row 1.
+    let mut row = None;
+    for _ in 0..400 {
+        cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
+        draw(&mut cx);
+        row = cx.debug_bounds("problems-row-1");
+        if row.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let row = row.expect("a diagnostic row");
+    cx.simulate_mouse_move(row.center(), None, gpui::Modifiers::default());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    draw(&mut cx);
+    let shown = crate::workspace_view::LAST_TREE_TOOLTIP.with(|last| last.borrow().clone());
+    let shown = shown.expect("the row shows a tooltip");
+    assert!(shown.contains(target), "{shown}");
+}
+
+#[gpui::test]
+fn palette_hides_visual_commands_in_source_mode(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n";
+    let (app, _, _visual, id, mut cx) = visual_workspace(text, cx);
+    let offered = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            crate::workspace_view::palette_commands(&app.read(cx).engine)
+                .iter()
+                .map(|spec| spec.id)
+                .collect::<Vec<_>>()
+        })
+    };
+    assert!(offered(&mut cx).contains(&ids::EDIT_TOGGLE_STRONG));
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            app.engine
+                .invoke(ids::VIEW_SHOW_SOURCE, CommandArgs::Document(id))
+                .unwrap();
+        });
+    });
+    cx.run_until_parked();
+    let source = offered(&mut cx);
+    assert!(!source.contains(&ids::EDIT_TOGGLE_STRONG));
+    assert!(!source.contains(&ids::EDIT_TOGGLE_BULLET_LIST));
+    assert!(source.contains(&ids::VIEW_SHOW_VISUAL));
 }
 
 #[gpui::test]

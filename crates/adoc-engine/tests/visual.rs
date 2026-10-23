@@ -568,3 +568,29 @@ fn tables_and_images_are_edited_through_commands() {
     .unwrap();
     assert!(text(&engine, id).starts_with("Intro.\n\nimage::b.png[B]\n\n|===\n"));
 }
+
+#[test]
+fn visual_commands_are_unavailable_in_source_mode() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    let id = engine
+        .open(&page(directory.path(), "page.adoc", "= Page\n\nWords.\n"))
+        .unwrap();
+    // Source mode: the visual editor's commands are not offered; document commands are.
+    assert!(!engine.command_available(ids::EDIT_TOGGLE_STRONG));
+    assert!(!engine.command_available(ids::VISUAL_SPLIT_BLOCK));
+    assert!(engine.command_available(ids::VIEW_SHOW_VISUAL));
+    assert!(engine.command_available(ids::DOCUMENT_SAVE));
+    show_visual(&mut engine, id);
+    assert!(engine.command_available(ids::EDIT_TOGGLE_STRONG));
+    engine
+        .invoke(ids::VIEW_SHOW_SPLIT, CommandArgs::Document(id))
+        .unwrap();
+    assert!(engine.command_available(ids::EDIT_TOGGLE_STRONG));
+    engine
+        .invoke(ids::VIEW_SHOW_SOURCE, CommandArgs::Document(id))
+        .unwrap();
+    assert!(!engine.command_available(ids::EDIT_TOGGLE_STRONG));
+    // Unknown commands are not available.
+    assert!(!engine.command_available(adoc_engine::CommandId::new("no.such_command")));
+}

@@ -15,9 +15,11 @@ mod step;
 mod table;
 mod text;
 mod tree;
+mod words;
 
 pub use block::{BlockType, NewBlock};
 pub use mapping::{apply_edits, invert, Assoc, Mapping, SourceEdit};
 pub use step::{Step, StepError, StepResult};
 pub use text::Segment;
 pub use tree::*;
+pub use words::{next_word_end, previous_word_start, word_at};
