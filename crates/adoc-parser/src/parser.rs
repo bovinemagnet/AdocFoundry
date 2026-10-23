@@ -340,6 +340,13 @@ image::diagram.png[Architecture]\n";
     }
 
     #[test]
+    fn ignores_escaped_references() {
+        // Asciidoctor shows a reference with a backslash before it as written.
+        assert!(reference_targets("Type \\<<id>> or \\xref:other.adoc[] here.\n").is_empty());
+        assert_eq!(reference_targets("\\<<a>> then <<b>>\n"), ["b"]);
+    }
+
+    #[test]
     fn treats_plus_signs_that_open_no_passthrough_as_text() {
         // A spaced `+`, a word-internal `+` and an escaped `\+` open no passthrough.
         assert_eq!(reference_targets("1 + 2 <<a>> 3 + 4\n"), ["a"]);
