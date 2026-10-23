@@ -8,9 +8,11 @@ use adoc_engine::{
     commands::ids, Access, CommandArgs, Node, NodeKind, ReadOnly, RowSection, TextBlock,
     VisualDocument,
 };
-use adoc_render::{AdmonitionKind, ListKind};
+use adoc_render::{
+    AdmonitionKind, ColumnWidth, ListKind, ViewBlock, ViewCell, ViewKind, ViewTable,
+};
 use gpui::{
-    div, prelude::FluentBuilder as _, px, AnyElement, Context, FontWeight, Hsla,
+    div, prelude::FluentBuilder as _, px, relative, AnyElement, Context, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
     ParentElement as _, Styled as _, Window,
 };
@@ -112,6 +114,50 @@ impl VisualView {
     }
 
     fn node(
+        &self,
+        path: &mut Vec<usize>,
+        node: &Node,
+        draw: &Draw<'_>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let element = self.node_body(path, node, draw, cx);
+        // A block's title (`.Title`) is shown above it and edited in the source. Sections and
+        // headings are their titles; read-only blocks are drawn with theirs by the preview.
+        let titled = !matches!(
+            node.kind,
+            NodeKind::Title
+                | NodeKind::Section { .. }
+                | NodeKind::Heading { .. }
+                | NodeKind::ListItem { .. }
+                | NodeKind::Row { .. }
+                | NodeKind::Cell
+                | NodeKind::Term
+                | NodeKind::Description
+                | NodeKind::Include { .. }
+                | NodeKind::Conditional { .. }
+                | NodeKind::Verbatim { .. }
+        ) && !(matches!(node.kind, NodeKind::Image { .. }) && !node.is_editable());
+        let title = node
+            .origin
+            .as_deref()
+            .filter(|_| titled)
+            .and_then(|origin| {
+                let block = adoc_render::block_by_trail(&draw.document.view, origin)?;
+                preview::blocks::title(block, origin, &draw.context)
+            });
+        match title {
+            Some(title) => {
+                let selector = format!("visual-title-{}", joined(path));
+                v_flex()
+                    .child(div().debug_selector(move || selector).child(title))
+                    .child(element)
+                    .into_any_element()
+            }
+            None => element,
+        }
+    }
+
+    fn node_body(
         &self,
         path: &mut Vec<usize>,
         node: &Node,
@@ -325,6 +371,47 @@ impl VisualView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let palette = &draw.context.palette;
+        let view = &draw.document.view;
+        // The view tree's table gives the column widths, each cell's span and the blocks of
+        // cells that are not edited here; used only while its rows match the model's.
+        let shape = table
+            .origin
+            .as_deref()
+            .and_then(|origin| adoc_render::block_by_trail(view, origin))
+            .and_then(|block| match &block.kind {
+                ViewKind::Table(shape) => Some(shape),
+                _ => None,
+            })
+            .filter(|shape| {
+                let rows: Vec<&Vec<ViewCell>> = view_rows(shape).collect();
+                rows.len() == table.children.len()
+                    && rows
+                        .iter()
+                        .zip(&table.children)
+                        .all(|(cells, row)| cells.len() == row.children.len())
+            });
+        // Without `cols`, every column is as wide as the others.
+        let columns = match table.kind {
+            NodeKind::Table { columns, .. } => columns,
+            _ => 0,
+        };
+        let weights: Vec<f32> = match shape {
+            Some(shape) if !shape.columns.is_empty() => shape
+                .columns
+                .iter()
+                .map(|column| match column.width {
+                    ColumnWidth::Proportional(width) | ColumnWidth::Percentage(width) => {
+                        width as f32
+                    }
+                    ColumnWidth::Auto => 1.,
+                })
+                .collect(),
+            _ => vec![1.; columns],
+        };
+        let total = weights.iter().sum::<f32>().max(1.);
+        let mut view_cells = shape.map(|shape| view_rows(shape).flatten());
+        let mut trail = table.origin.clone().unwrap_or_default();
+        let mut nested = 0;
         let mut rows = Vec::new();
         for (row_index, row) in table.children.iter().enumerate() {
             path.push(row_index);
@@ -334,17 +421,53 @@ impl VisualView {
                     section: RowSection::Header
                 }
             );
+            let mut column = 0;
             let mut cells = Vec::new();
             for (cell_index, cell) in row.children.iter().enumerate() {
                 path.push(cell_index);
-                let content = if cell.text.is_some() {
-                    self.text(path, cell, draw, cx)
-                } else {
-                    self.read_only(cell, draw)
+                let shown = view_cells.as_mut().and_then(Iterator::next);
+                let first = nested;
+                nested += shown.map_or(0, |shown| shown.blocks.len());
+                let content = match (&cell.text, shown) {
+                    (Some(_), _) => self.text(path, cell, draw, cx),
+                    (None, Some(shown)) => {
+                        let blocks: Vec<&ViewBlock> = shown.blocks.iter().collect();
+                        let cell_path = joined(path);
+                        v_flex()
+                            .gap_1()
+                            .children(
+                                preview::blocks::offset_children(
+                                    &blocks,
+                                    first,
+                                    &mut trail,
+                                    view,
+                                    &draw.context,
+                                )
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, block)| {
+                                    let selector = format!("visual-cell-{cell_path}-block-{index}");
+                                    div().debug_selector(move || selector).child(block)
+                                }),
+                            )
+                            .into_any_element()
+                    }
+                    (None, None) => self.read_only(cell, draw),
                 };
+                let span = shown.map_or(1, |shown| shown.colspan.max(1));
+                let weight = weights.iter().skip(column).take(span).sum::<f32>();
+                column += span;
+                let selector = format!("visual-cell-{}", joined(path));
                 cells.push(
                     div()
-                        .flex_1()
+                        .debug_selector(move || selector)
+                        .map(|cell| {
+                            if weight > 0. {
+                                cell.w(relative(weight / total))
+                            } else {
+                                cell.flex_1()
+                            }
+                        })
                         .min_w_0()
                         .p_1()
                         .border_1()
@@ -354,10 +477,10 @@ impl VisualView {
                 );
                 path.pop();
             }
-            rows.push(h_flex().items_stretch().children(cells));
+            rows.push(h_flex().w_full().items_stretch().children(cells));
             path.pop();
         }
-        v_flex().children(rows).into_any_element()
+        v_flex().w_full().children(rows).into_any_element()
     }
 
     fn include(
@@ -580,4 +703,17 @@ fn selected_range(block: &TextBlock, start: usize, end: usize) -> Option<std::op
     let to = block.display_offset_towards(end.min(block.range.end), true)?;
     (from < to || (start < block.range.start && end > block.range.end && block.is_empty()))
         .then_some(from..to)
+}
+
+/// A table's rows in reading order: header, body, footer.
+fn view_rows(table: &ViewTable) -> impl Iterator<Item = &Vec<ViewCell>> {
+    table.header.iter().chain(&table.rows).chain(&table.footer)
+}
+
+/// A node path as it appears in element selectors: `1-0-2`.
+fn joined(path: &[usize]) -> String {
+    path.iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join("-")
 }

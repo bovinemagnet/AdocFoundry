@@ -281,6 +281,24 @@ impl VisualView {
         self.set_selection(Selection::caret(offset), cx);
     }
 
+    /// Moves the caret to source offset `offset` when navigating there: into the text of the
+    /// innermost block holding it, or nowhere when that block has none (a diagram, a
+    /// passthrough), so that split mode does not send the source after a later block.
+    pub fn go_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let has_text = self.shown.as_ref().is_some_and(|shown| {
+            shown
+                .model
+                .walk()
+                .into_iter()
+                .rev()
+                .find(|(_, node)| node.range.start <= offset && offset <= node.range.end)
+                .is_some_and(|(_, node)| node.text.is_some())
+        });
+        if has_text {
+            self.place_caret(offset, cx);
+        }
+    }
+
     /// Runs a visual command on the selection; the command's selection becomes the view's.
     fn run(
         &mut self,

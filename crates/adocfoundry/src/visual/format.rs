@@ -8,7 +8,7 @@ use gpui_component::{
     v_flex, WindowExt as _,
 };
 
-use super::VisualView;
+use super::{Selection, VisualView};
 
 impl VisualView {
     /// Toggles `mark` on the selection; with nothing selected, on the text typed next.
@@ -63,6 +63,7 @@ impl VisualView {
         });
         let text_input = cx.new(|cx| InputState::new(window, cx).default_value(text));
         let view = cx.weak_entity();
+        let first = target_input.clone();
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let (target_input, text_input, view) =
                 (target_input.clone(), text_input.clone(), view.clone());
@@ -101,6 +102,8 @@ impl VisualView {
                     true
                 })
         });
+        // Typing goes to the target straight away.
+        first.update(cx, |input, cx| input.focus(window, cx));
     }
 
     /// Asks for an image's target and alt text, then inserts it after the caret's block, or
@@ -135,6 +138,7 @@ impl VisualView {
         });
         let alt_input = cx.new(|cx| InputState::new(window, cx).default_value(alt));
         let view = cx.weak_entity();
+        let first = target_input.clone();
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let (target_input, alt_input, view) =
                 (target_input.clone(), alt_input.clone(), view.clone());
@@ -165,7 +169,9 @@ impl VisualView {
                         view.update(cx, |view, cx| {
                             let command = match existing {
                                 Some(at) => {
-                                    view.place_caret(at, cx);
+                                    // At the image itself: the caret's usual snap to the next
+                                    // text block would leave the image behind.
+                                    view.set_selection(Selection::caret(at), cx);
                                     ids::EDIT_EDIT_IMAGE
                                 }
                                 None => ids::EDIT_INSERT_IMAGE,
@@ -176,5 +182,7 @@ impl VisualView {
                     true
                 })
         });
+        // Typing goes to the target straight away.
+        first.update(cx, |input, cx| input.focus(window, cx));
     }
 }

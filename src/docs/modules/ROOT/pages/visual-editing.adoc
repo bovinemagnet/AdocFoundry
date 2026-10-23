@@ -250,6 +250,10 @@ A table without `cols` takes its column count from its first row.
 These commands work only on tables whose cells the editor can address.
 A table with spans or cell specifiers (`2+|`, `.2+|`, `a|`) is edited in the source editor, as are widths written with `*`.
 
+Column widths follow `cols`.
+A cell spanning columns (`2+|`) takes the width of the columns it spans.
+A cell spanning rows (`.2+|`) is drawn in the row where it starts only, as in the preview, so the cells below it start at the left.
+
 == Images
 
 Insert menu, then Image… asks for a target and alt text and adds a block image after the block at the caret.
@@ -288,6 +292,8 @@ It is drawn with the preview's renderer, and anything with a dashed border or a 
 An *Edit partial* button opens the included file in a tab.
 You cannot edit inside an include from the including page.
 * Diagrams, STEM, passthroughs, attribute entries, extension and unknown macros, and tables with AsciiDoc (`a`) cells are shown as the preview shows them.
+* A block's title (the `.Title` line above a table, image, code block, list or admonition) is drawn above the block as the preview draws it, for example "Table 1. Spans".
+The title is not editable in the visual editor; edit it in the source editor.
 * Conditionals (`ifdef`, `ifndef` and `ifeval`) are shown collapsed, with the directive named.
 The directives and the branch that is not in use are kept exactly as written.
 * A block is also read-only when the editor and the parser read its text differently.

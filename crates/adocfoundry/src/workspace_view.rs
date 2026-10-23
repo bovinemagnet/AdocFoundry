@@ -467,7 +467,7 @@ impl WorkspaceView {
                 let range = SourceRange::new(position.offset, position.offset);
                 self.tabs[index].update(cx, |editor, cx| editor.reveal(range, window, cx));
                 if let Some(visual) = self.visuals.get(&active).cloned() {
-                    visual.update(cx, |visual, cx| visual.place_caret(position.offset, cx));
+                    visual.update(cx, |visual, cx| visual.go_to(position.offset, cx));
                 }
                 self.revealed = Some(position);
                 self.focus_active_editor(window, cx);
@@ -598,7 +598,7 @@ impl WorkspaceView {
             editor.update(cx, |editor, cx| editor.reveal(range, window, cx));
         }
         if let Some(visual) = self.visuals.get(&id).cloned() {
-            visual.update(cx, |visual, cx| visual.place_caret(range.start, cx));
+            visual.update(cx, |visual, cx| visual.go_to(range.start, cx));
             self.focus_active_editor(window, cx);
         }
     }

@@ -131,7 +131,11 @@ fn text(
     )
 }
 
-fn title(block: &ViewBlock, trail: &[usize], context: &BlockContext<'_>) -> Option<AnyElement> {
+pub(crate) fn title(
+    block: &ViewBlock,
+    trail: &[usize],
+    context: &BlockContext<'_>,
+) -> Option<AnyElement> {
     if block.title.is_empty() {
         return None;
     }
@@ -494,7 +498,7 @@ fn block_element(
 
 /// Blocks nested in list items and cells are numbered across the whole list, as
 /// `ViewBlock::child_refs` numbers them.
-fn offset_children(
+pub(crate) fn offset_children(
     blocks: &[&ViewBlock],
     first: usize,
     trail: &mut Vec<usize>,
