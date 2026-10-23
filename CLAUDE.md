@@ -36,13 +36,20 @@ Targeted runs:
 cargo test -p adoc-engine                          # one crate
 cargo test -p adoc-antora resolves_cross_component # single test by name substring
 cargo test -p adocfoundry-cli --test cli           # one integration test file
+cargo test -p adoc-model --test roundtrip          # the visual editor's round-trip properties
+cargo test -p adocfoundry-cli --test fidelity      # render vs Asciidoctor; skips itself without asciidoctor
+cargo test --release -p adoc-engine --test perf -- --ignored --nocapture   # timing probe (ignored by default)
 ```
+
+The CLI and engine integration tests use `insta` snapshots (`tests/snapshots/`); review a changed snapshot rather than overwriting it blindly.
+
+The user and developer documentation is an Antora site in `src/docs` (modules `ROOT` and `developer`). Gradle exists only to build it: `gradle25w antora` builds the site to `build/site` and reports errors. Nothing in Gradle is needed to build or run the app.
 
 The CI and release workflows are written but kept in `packaging/ci/`, not `.github/workflows/`, so they do not run yet; macOS and Windows are verified by hand first. The app crate needs a GPU-capable environment; CI is set up to run `cargo test --workspace --exclude adocfoundry` and then only builds the app crate (`cargo build -p adocfoundry`). Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
 
 ## Architecture
 
-The workspace is a layered crate ladder. A crate may depend only on crates in the layers below it. The dependency direction is enforced by `cargo xtask layers` in CI; do not add a dependency that violates it.
+The workspace is a layered crate ladder. A crate may depend only on crates in the layers below it, apart from the same-layer pairs listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs` (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`). The dependency direction is enforced by `cargo xtask layers` in CI; do not add a dependency that violates it. A new crate needs an entry in `LAYERS` there (`adoc-pdf` is already reserved at L2).
 
 ```
 L4  adocfoundry (GPUI app)   adocfoundry-cli (headless)   adoc-ls (LSP, stdio)
@@ -84,7 +91,8 @@ Preview flow: while the preview is visible the engine requests its target (the p
 - `unsafe_code = "forbid"` workspace-wide; avoid global mutable state; `anyhow` only in binaries, typed errors in libraries.
 - Edition 2021 (matching the migrated crates); the toolchain is pinned in `rust-toolchain.toml`. Crates take dependency versions from `[workspace.dependencies]`, never their own.
 - All external dependencies are pinned exactly (`=1.0.229` style) and new ones must pass `cargo deny` (MIT, Apache-2.0, BSD-2/3, MPL-2.0, Unlicense, Zlib, OFL-1.1 for fonts; GPL and LGPL are denied).
-- If the GPUI spike (WP 1.1) fails, the UI is rebuilt on egui/eframe. Keep that a one-crate swap: nothing below `adocfoundry` may know which framework is in use.
+- `vendor/evalexpr` is a home-grown Apache-2.0 stand-in, patched in through `[patch.crates-io]`, for the AGPL `evalexpr` that acdc-parser pulls in (see `vendor/README.md`). Do not remove the patch while acdc-parser still depends on it.
+- Keep the UI framework a one-crate swap (egui/eframe was the fallback had the GPUI spike failed): nothing below `adocfoundry` may know which framework is in use.
 - **Never** depend on Zed's `editor`, `text`, `rope`, `multi_buffer`, `language` or `project` crates: they are GPL-3.0. The permitted GPUI crates are `gpui`/`gpui-pre`, `gpui-component`, `gpui-base` and their platform crates (Apache-2.0).
 - No Node.js, no JVM, no Ruby required at runtime. External tools (`asciidoctor`, `dot`, `plantuml`, `mmdc`) are optional and discovered, never assumed.
 - Use `Path`/`PathBuf` for filesystem work and `adoc_index::normalize_path`; do not canonicalise paths that may not exist. Antora resource IDs always use `/`.
@@ -95,7 +103,7 @@ Preview flow: while the preview is visible the engine requests its target (the p
 
 Unit tests live in `#[cfg(test)] mod tests` next to the code. Integration tests: `crates/adoc-engine/tests/` drives the engine headlessly through commands; `crates/adocfoundry-cli/tests/cli.rs` drives the binary via `CARGO_BIN_EXE_adocfoundry-cli`; `crates/adoc-ls/tests/stdio.rs` drives the language server through an initialise/shutdown lifecycle.
 
-Shared fixtures are in `tests/fixtures/`, grouped by scenario (`simple/`, `includes/`, `xrefs/`, `antora-single-component/`, `antora-multi-component/`, `antora-versions/`), reached with `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/...")` — never absolute developer-machine paths. Keep fixtures small and readable; add one alongside every resolver, parser, engine or command behaviour change.
+Shared fixtures are in `tests/fixtures/`, grouped by scenario (`simple/`, `includes/`, `xrefs/`, `antora-single-component/`, `antora-multi-component/`, `antora-versions/`, and `render/` for the fidelity harness), reached with `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/...")` — never absolute developer-machine paths. Keep fixtures small and readable; add one alongside every resolver, parser, engine or command behaviour change.
 
 Tests that spawn a real process must take the crate-private `spawn_guard()` mutex in `adoc-render` (the `ETXTBSY` workaround). Do not remove the guard or add unguarded spawning tests.
 
@@ -108,6 +116,5 @@ A pull request is done when: `cargo fmt --check`, `cargo clippy --workspace --al
 - Prefer extending an existing crate over adding a new one; a new crate needs a line in the ladder above and in the layering check.
 - When a dependency is needed, check `Cargo.lock` for one already in the tree before adding another, pin it exactly, and run `cargo deny check`.
 - Do not refactor crates outside the package you are working on unless the spec says the package includes that refactor.
-- In WP 1.2, change the migrated crates only as much as compiling in the new workspace requires; later packages do the rewrites.
 - If the spike or a package shows the spec is wrong, update the spec in the same PR and say so in the description.
-- Commit messages: short imperative (`Add cross-component resolution to adoc-antora`). One package per PR, titled `WP 1.x: <package name>`; the PR description lists the spec section, tests added and the commands run.
+- Commit messages: short imperative (`Add cross-component resolution to adoc-antora`). One package per PR, titled `WP <phase>.<n>: <package name>`; the PR description lists the spec section, tests added and the commands run.
