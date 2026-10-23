@@ -1,0 +1,6 @@
+# A theme another theme extends, through a relative path.
+base:
+  font-color: 222222
+  border-color: [204, 204, 204]
+brand:
+  primary: 0B5FFF
