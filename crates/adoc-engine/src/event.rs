@@ -43,4 +43,12 @@ pub enum EngineEvent {
         error: String,
     },
     SettingsChanged,
+    /// A new preview of `id` is available from `Engine::rendered_preview`.
+    PreviewReady {
+        id: DocumentId,
+        version: u64,
+    },
+    /// The preview was shown, hidden, detached, docked, pinned or unpinned, or scroll sync
+    /// was toggled.
+    PreviewLayoutChanged,
 }

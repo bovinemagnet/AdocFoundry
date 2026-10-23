@@ -31,6 +31,10 @@ pub mod ids {
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
+    pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
+    pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
+    pub const VIEW_TOGGLE_SCROLL_SYNC: CommandId = CommandId::new("view.toggle_scroll_sync");
+    pub const PREVIEW_PIN: CommandId = CommandId::new("preview.pin");
 }
 
 type Run = fn(&mut Engine, CommandArgs) -> Result<CommandOutcome, EngineError>;
@@ -55,7 +59,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 21] = [
+    let builtin: [(CommandSpec, Run); 25] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -254,6 +258,40 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
             spec(ids::SETTINGS_RELOAD, "Reload Settings", View, None, Always),
             settings_reload,
         ),
+        (
+            spec(
+                ids::VIEW_TOGGLE_PREVIEW,
+                "Toggle Preview",
+                View,
+                Some("cmd-k v"),
+                Always,
+            ),
+            view_toggle_preview,
+        ),
+        (
+            spec(
+                ids::VIEW_DETACH_PREVIEW,
+                "Detach Preview",
+                View,
+                None,
+                Always,
+            ),
+            view_detach_preview,
+        ),
+        (
+            spec(
+                ids::VIEW_TOGGLE_SCROLL_SYNC,
+                "Toggle Preview Scroll Sync",
+                View,
+                None,
+                Always,
+            ),
+            view_toggle_scroll_sync,
+        ),
+        (
+            spec(ids::PREVIEW_PIN, "Pin Preview", View, None, Always),
+            preview_pin,
+        ),
     ];
     for (spec, run) in builtin {
         register(registry, spec, run);
@@ -368,6 +406,54 @@ fn workspace_open_folder(
     engine
         .open_workspace(vec![path])
         .map(|()| CommandOutcome::Done)
+}
+
+fn view_toggle_preview(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    layout.visible = !layout.visible;
+    engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
+}
+
+/// Moves the preview into its own window, or back beside the editor.
+fn view_detach_preview(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    layout.detached = !layout.detached || !layout.visible;
+    layout.visible = true;
+    engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
+}
+
+fn view_toggle_scroll_sync(
+    engine: &mut Engine,
+    _: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    layout.scroll_sync = !layout.scroll_sync;
+    engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
+}
+
+/// Pins the preview to the given document, or the active one; unpins when already pinned.
+fn preview_pin(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    if layout.pinned.is_some() {
+        layout.pinned = None;
+    } else {
+        let id = match args {
+            CommandArgs::Document(id) => id,
+            _ => engine
+                .active()
+                .ok_or_else(|| EngineError::NotFound("no document to pin".to_owned()))?,
+        };
+        if engine.document(id).is_none() {
+            return Err(EngineError::UnknownDocument(id));
+        }
+        layout.pinned = Some(id);
+        layout.visible = true;
+    }
+    engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
 }
 
 fn workspace_reindex(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {

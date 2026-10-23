@@ -173,9 +173,12 @@ version = "0.1.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
+ "adoc-diagrams",
+ "adoc-dom",
  "adoc-index",
  "adoc-lang",
  "adoc-parser",
+ "adoc-render",
  "dirs 6.0.0",
  "insta",
  "notify",

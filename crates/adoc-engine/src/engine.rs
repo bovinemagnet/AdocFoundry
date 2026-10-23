@@ -53,6 +53,7 @@ pub struct Engine {
     /// Documents whose typed edits are parsed but not yet in the index, with the time after
     /// which `pump` indexes them.
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
+    pub(crate) rendered: crate::rendered::PreviewState,
 }
 
 /// Typed characters re-parse their document at once but re-index it, and refresh diagnostics,
@@ -104,6 +105,7 @@ impl Engine {
             next_search: 1,
             group_moves: BTreeMap::new(),
             pending_index: BTreeMap::new(),
+            rendered: crate::rendered::PreviewState::default(),
         }
     }
 
@@ -201,6 +203,11 @@ impl Engine {
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
         self.pending_index.remove(&id);
+        self.forget_preview(id);
+        if self.rendered.layout.pinned == Some(id) {
+            self.rendered.layout.pinned = None;
+            self.emit(EngineEvent::PreviewLayoutChanged);
+        }
         if !document.untitled {
             match fs::read_to_string(&document.path) {
                 Ok(text) => {
@@ -214,6 +221,7 @@ impl Engine {
             self.active = self.documents.keys().next_back().copied();
             self.emit(EngineEvent::NavigationChanged);
         }
+        self.sync_preview_target();
         self.emit(EngineEvent::DocumentClosed(id));
         Ok(())
     }
@@ -258,6 +266,7 @@ impl Engine {
         if self.documents.contains_key(&id) && self.active != Some(id) {
             self.active = Some(id);
             self.emit(EngineEvent::NavigationChanged);
+            self.sync_preview_target();
         }
     }
 
@@ -467,6 +476,7 @@ impl Engine {
             version: version_after,
             edits: forward.clone(),
         });
+        self.preview_source_changed(&path);
         if untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
         } else if !defer_index {

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -55,6 +55,76 @@ fn collect(
             &include.target,
         ) {
             collect(index, antora, context, &target, visited, depth + 1);
+        }
+    }
+}
+
+/// Where each include in the files composed into a page leads, keyed the way a parser running
+/// from the page asks for it: the including file's requested path's directory joined with the
+/// target as written, normalised. Nested includes are keyed beneath their parent's requested
+/// path, not its real one, because the parser only knows the former.
+///
+/// `document` is the page's current parse, which may be newer than the index.
+#[must_use]
+pub fn include_map(
+    index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
+    path: &Path,
+    document: &Document,
+) -> BTreeMap<PathBuf, PathBuf> {
+    let context = antora.context_for_path(path);
+    let mut map = BTreeMap::new();
+    let mut visited = BTreeSet::new();
+    visited.insert(normalize_path(path));
+    map_includes(
+        index,
+        antora,
+        context.as_ref(),
+        (path, path),
+        document,
+        &mut map,
+        &mut visited,
+        0,
+    );
+    map
+}
+
+#[allow(clippy::too_many_arguments)]
+fn map_includes(
+    index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
+    context: Option<&AntoraContext>,
+    (requested, real): (&Path, &Path),
+    document: &Document,
+    map: &mut BTreeMap<PathBuf, PathBuf>,
+    visited: &mut BTreeSet<PathBuf>,
+    depth: usize,
+) {
+    if depth > MAX_INCLUDE_DEPTH {
+        return;
+    }
+    let directory = requested.parent().unwrap_or_else(|| Path::new(""));
+    for include in &document.includes {
+        let Some(target) = resolve_target(index, antora, context, real, document, &include.target)
+        else {
+            continue;
+        };
+        let key = normalize_path(&directory.join(&include.target));
+        map.insert(key.clone(), target.clone());
+        if !visited.insert(target.clone()) {
+            continue;
+        }
+        if let Some(file) = index.file(&target) {
+            map_includes(
+                index,
+                antora,
+                context,
+                (&key, &target),
+                &file.document,
+                map,
+                visited,
+                depth + 1,
+            );
         }
     }
 }
@@ -115,4 +185,48 @@ fn substitute_intrinsic_directories(
     }
 
     (substituted != target && !substituted.contains('{')).then(|| PathBuf::from(substituted))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use adoc_antora::discover_antora_workspace;
+    use adoc_index::WorkspaceIndex;
+
+    use super::include_map;
+
+    #[test]
+    fn include_map_keys_nested_includes_by_requested_path() {
+        let root = adoc_index::normalize_path(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/antora-nested-includes"),
+        );
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+        let pages = root.join("modules/ROOT/pages");
+        let partials = root.join("modules/ROOT/partials");
+        let page = pages.join("outer.adoc");
+        let document = &index.file(&page).unwrap().document;
+
+        let map = include_map(&index, &antora, &page, document);
+        // Both levels are asked for from the page's directory: the parser does not know that
+        // `partial$level-one.adoc` really lives in `partials/`.
+        assert_eq!(
+            map.get(&pages.join("partial$level-one.adoc")),
+            Some(&partials.join("level-one.adoc"))
+        );
+        assert_eq!(
+            map.get(&pages.join("partial$level-two.adoc")),
+            Some(&partials.join("level-two.adoc"))
+        );
+        assert_eq!(map.len(), 2);
+
+        let cyclic = pages.join("cyclic.adoc");
+        let document = &index.file(&cyclic).unwrap().document;
+        assert_eq!(include_map(&index, &antora, &cyclic, document).len(), 2);
+    }
 }
