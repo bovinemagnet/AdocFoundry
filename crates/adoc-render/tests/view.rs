@@ -595,8 +595,12 @@ fn html_stem_is_an_image_with_alt_text() {
         html.contains(&format!("<img src=\"{block}\" alt=\"sum_(i=1)^n i\">")),
         "{html}"
     );
+    let inline =
+        url::Url::from_file_path(std::path::absolute("/cache/inline.svg").unwrap()).unwrap();
     assert!(
-        html.contains("<img class=\"stem\" src=\"file:///cache/inline.svg\" alt=\"x^2\">"),
+        html.contains(&format!(
+            "<img class=\"stem\" src=\"{inline}\" alt=\"x^2\">"
+        )),
         "{html}"
     );
     let pending = to_html(
