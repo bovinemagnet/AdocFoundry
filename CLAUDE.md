@@ -50,7 +50,7 @@ The CLI and engine integration tests use `insta` snapshots (`tests/snapshots/`);
 
 The user and developer documentation is an Antora site in `src/docs` (modules `ROOT` and `developer`). Gradle exists only to build it: `gradle25w antora` builds the site to `build/site` and reports errors. Nothing in Gradle is needed to build or run the app.
 
-CI (`.github/workflows/ci.yml`) runs on pull requests and pushes to `main`: lint, `cargo deny` and `cargo xtask layers` on Ubuntu; `cargo test --workspace --exclude adocfoundry` on Ubuntu, macOS and Windows (Ubuntu with asciidoctor and asciidoctor-pdf, so `fidelity` and `pdf_regression` run); the app crate's tests on macOS, where GPUI's test platform needs no display; and veraPDF over the reference PDFs. `release.yml` builds the packages on `v*` tags; nothing is code-signed until Phase 6. Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
+CI (`.github/workflows/ci.yml`) runs on pull requests, pushes to `main` and `v*` tags: lint, `cargo deny` and `cargo xtask layers` on Ubuntu; `cargo test --workspace --exclude adocfoundry` on Ubuntu, macOS and Windows (Ubuntu with asciidoctor and asciidoctor-pdf, so `fidelity` and `pdf_regression` run); the app crate's tests on macOS, where GPUI's test platform needs no display; and veraPDF over the reference PDFs. `release.yml` builds the packages on `v*` tags; nothing is code-signed until Phase 6. Never add a test to `crates/adocfoundry` that needs a display when the same behaviour can be tested in `adoc-engine`.
 
 ## Architecture
 
