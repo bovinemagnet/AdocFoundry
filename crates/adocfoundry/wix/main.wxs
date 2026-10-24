@@ -32,7 +32,7 @@
       <Directory Id="$(var.PlatformProgramFilesFolder)" Name="PFiles">
         <Directory Id="APPLICATIONFOLDER" Name="AdocFoundry">
           <Component Id="License" Guid="*">
-            <File Id="LicenseFile" Name="LICENSE.txt" DiskId="1" Source="..\..\LICENSE" KeyPath="yes"/>
+            <File Id="LicenseFile" Name="LICENSE.txt" DiskId="1" Source="$(sys.SOURCEFILEDIR)..\..\..\LICENSE" KeyPath="yes"/>
           </Component>
           <Directory Id="Bin" Name="bin">
             <Component Id="Path" Guid="0F4D3B1A-6C57-4E7E-A1C9-28B6E3D2C9F1" KeyPath="yes">
@@ -84,6 +84,7 @@
     <UI>
       <UIRef Id="WixUI_FeatureTree"/>
     </UI>
-    <WixVariable Id="WixUILicenseRtf" Value="wix\License.rtf"/>
+    <!-- Paths from this file's directory, wherever the WiX tools run from. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)License.rtf"/>
   </Product>
 </Wix>
