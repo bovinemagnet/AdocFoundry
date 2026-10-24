@@ -2,7 +2,7 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-10-24
 
 The first release: the four phases of the editor, and the release-readiness work of Phase 5.
 
