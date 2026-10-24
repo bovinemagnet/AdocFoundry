@@ -35,7 +35,7 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 == Continuous integration
 
-`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`.
+`.github/workflows/ci.yml` runs on pull requests, on pushes to `main` and on `v*` tags, so a tagged release is tested as well as built.
 
 [cols="1,4"]
 |===
