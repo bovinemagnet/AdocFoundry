@@ -20,10 +20,12 @@ mod git;
 #[cfg(not(feature = "git"))]
 #[path = "git_off.rs"]
 mod git;
+mod inspect;
 mod language;
 mod navigation;
 mod preview;
 mod rendered;
+pub mod report;
 mod search;
 mod settings;
 #[cfg(feature = "typst")]
@@ -47,6 +49,7 @@ pub use event::EngineEvent;
 pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
 #[cfg(feature = "git")]
 pub use git::{GitRepository, GitState, GIT_SETTLE};
+pub use inspect::resource_id_string;
 pub use navigation::NavigationPosition;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
@@ -59,8 +62,10 @@ pub use settings::{
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
 
+pub use adoc_index::{is_asciidoc_path, normalize_path};
 #[cfg(feature = "typst")]
 pub use adoc_pdf::PdfStandard;
+pub use adoc_render::{to_html, to_text, HtmlOptions, ViewTree};
 /// A PDF standard the output must conform to.
 #[cfg(not(feature = "typst"))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

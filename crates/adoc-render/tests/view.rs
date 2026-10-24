@@ -600,3 +600,13 @@ fn html_stem_is_an_image_with_alt_text() {
     );
     assert!(pending.contains("\\$sum_(i=1)^n i\\$"), "{pending}");
 }
+
+#[test]
+fn text_is_what_a_reader_sees() {
+    let text = "= Guide\n\n== Install\n\nRun *this* first.\n\n* one\n* two\n\n[source,sh]\n----\nmake\n----\n\n|===\n|A |B\n|===\n";
+    let view = view_of(Path::new("/docs/guide.adoc"), text, &LocalResolver);
+    assert_eq!(
+        adoc_render::to_text(&view),
+        "Guide\n\nInstall\n\nRun this first.\n\n- one\n- two\n\nmake\n\nA | B\n"
+    );
+}

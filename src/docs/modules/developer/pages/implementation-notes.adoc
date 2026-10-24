@@ -603,6 +603,31 @@ Running titles look up one memoised list of headings with a binary search instea
 |stdio tests taking `spawn_guard()`
 |the preview tests drive the protocol in process with a sink that never opens a browser, under a guard of their own (`adoc-render`'s is crate-private); the others drive the binary (`tests/engine.rs`)
 |Over stdio the preview opens the system browser.
+
+|Shared reports (WP 5.7)
+|`check` and `git_status` as the CLI's JSON
+|the CLI's diagnostics and Git status reports moved into the engine (`report.rs`: `check_report`, `git_status_report`), and the CLI prints them; `check` answers `{ diagnostics, failed }`, `diagnostics` being the CLI's array
+|One implementation, so the two cannot drift; the CLI's snapshots did not change.
+
+|Engine queries (WP 5.7)
+|—
+|`inspect.rs`: `resolve_target` (a macro as written or a bare xref target, read with the page's attributes), `resource_id` and `resolve_resource_id`; `adoc-render` gains `to_text` for `render_page`
+|`adoc-mcp` may depend only on the engine and `adoc-core`, so what it needs from the catalog comes through the engine.
+
+|Write tools (WP 5.7)
+|not listed, and refused if called
+|removed from the tool router without `--allow-write`, so a call is the protocol's unknown-tool error; `edit_page` is all or nothing (edits already made in a failing call are undone); `rename_page` saves every file it changed
+|`workspace.apply_preview` leaves its edits in buffers, which a server with no editor would never save.
+
+|Limits (WP 5.7)
+|large results truncated, with the total stated
+|lists at 500 items and texts at 200,000 bytes, with `truncated: { shown, total }`; paths are absolute or relative to the first root, and links are followed only through the part of a path that exists
+|A path to a file not yet written, such as a rename's target or an export's output, is still checked.
+
+|Runtime (WP 5.7)
+|a current-thread tokio runtime
+|tokio with `rt`, `macros`, `io-std` and `time`; each tool call locks the engine for its duration
+|rmcp's service needs timers. One call at a time matches the engine's single thread.
 |===
 
 == Git

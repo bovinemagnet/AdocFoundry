@@ -217,6 +217,18 @@ With PDF export, typeset STEM in the preview and Git:
 cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --features typst,git
 ```
 
+## MCP server
+
+`adoc-mcp <root>… [--allow-write]` serves an Antora workspace to MCP clients (assistants and tools) over stdio, through the same engine as the app. Its tools read pages (by path or resource id, with unsaved edits), list components and navigation, resolve xref, include and image targets, check the workspace (the same diagnostics as `adocfoundry-cli check --format json`), find symbols, search, render a page as text or HTML and report Git status. With `--allow-write` it also edits pages, renames them (rewriting the xrefs, nav entries and includes that name them) and exports PDF; without it those tools are not offered. Every page is also a `file://` resource, and `antora:{resource_id}` reads one by its Antora id. Paths outside the roots are refused, there is no network, and long results are cut with the total stated.
+
+```json
+{
+  "mcpServers": {
+    "adocfoundry": { "command": "adoc-mcp", "args": ["/path/to/docs"] }
+  }
+}
+```
+
 ## Not implemented yet
 
 - In PDF export: source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
@@ -243,7 +255,7 @@ cargo xtask package     # release build and archive for this platform in dist/
 The workspace is a ladder of crates, each depending only on those below it:
 
 ```text
-adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)
+adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
 adoc-engine              documents, commands, undo, workspace, watcher, settings, search, preview, visual model
 adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   view tree and HTML; diagrams; the editable model; Git; PDF
 adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang

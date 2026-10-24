@@ -519,6 +519,27 @@ Further engine methods serve it:
 
 `page.rename` also rewrites includes: an Antora include keeps its family and coordinates, a relative one stays relative, and one written through an attribute is left as written.
 
+== Reports and inspection
+
+Headless front ends need answers that are not editor features.
+Two engine modules provide them.
+
+`report.rs` builds the reports that `adocfoundry-cli` prints:
+
+* `check_report` returns the workspace's diagnostics and whether they meet a failure level.
+* `git_status_report` returns each root's branch and changed AsciiDoc files.
+
+The CLI prints these, and `adoc-mcp` returns them, so the two cannot drift.
+
+`inspect.rs` answers questions about the catalog:
+
+* `resolve_target` resolves a macro as written, or a bare xref target, read with the page's attributes.
+* `resource_id` gives the Antora resource id of a file.
+* `resolve_resource_id` finds the file for a resource id.
+* `resource_id_string` writes a resource id as `version@component:module:family$path`.
+
+`adoc-mcp` may depend only on the engine and `adoc-core`, so what it needs from the catalog comes through these methods.
+
 == Engine features
 
 The engine has two Cargo features, `typst` and `git`.

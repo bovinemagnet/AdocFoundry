@@ -24,6 +24,7 @@ adoc-dom = { path = "crates/adoc-dom" }
 adoc-engine = { path = "crates/adoc-engine", default-features = false }
 adoc-git = { path = "crates/adoc-git" }
 adoc-index = { path = "crates/adoc-index" }
+adoc-mcp = { path = "crates/adoc-mcp" }
 adoc-lang = { path = "crates/adoc-lang" }
 adoc-math = { path = "crates/adoc-math" }
 adoc-model = { path = "crates/adoc-model" }
@@ -75,6 +76,10 @@ ropey = "=2.0.0-beta.1"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde-saphyr = { version = "=1.3.0", default-features = false, features = ["deserialize"] }
 serde_json = "=1.0.154"
+# The MCP server: its server side and stdio transport only, no HTTP; see crates/adoc-mcp.
+rmcp = { version = "=3.7.0", default-features = false, features = ["server", "macros", "transport-io"] }
+schemars = "=1.2.3"
+tokio = { version = "=1.54.1", features = ["rt", "macros", "io-std", "time"] }
 sha2 = "=0.10.9"
 tempfile = "=3.27.0"
 toml = "=1.1.8"

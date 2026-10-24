@@ -30,6 +30,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adocfoundry", 4),
     ("adocfoundry-cli", 4),
     ("adoc-ls", 4),
+    ("adoc-mcp", 4),
 ];
 
 /// Same-layer dependencies that are permitted, as `(dependent, dependency)`.

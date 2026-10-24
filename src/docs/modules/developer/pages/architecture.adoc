@@ -46,7 +46,7 @@ include::example$crate-layers.mmd[]
 
 |L2
 |`adoc-render`
-|A framework-free view tree (`ViewTree`, built from a `Dom` by `build_view` through a `ViewResolver`), a standalone HTML backend, and the optional external Asciidoctor renderer used by the language server's preview. The engine and the application use the view tree; the command-line `render` uses the HTML backend.
+|A framework-free view tree (`ViewTree`, built from a `Dom` by `build_view` through a `ViewResolver`), a standalone HTML backend, and the optional external Asciidoctor renderer used by the language server's preview. The engine and the application use the view tree; the command-line `render` uses the HTML backend. `to_text` writes the view tree as plain text, for `adoc-mcp`'s `render_page`.
 
 |L2
 |`adoc-diagrams`
@@ -66,7 +66,7 @@ include::example$crate-layers.mmd[]
 
 |L3
 |`adoc-engine`
-|Documents, commands, undo, workspace, file watcher, settings, Git state, search and rename, the preview, visual model and export services, and the `EngineEvent` stream. The only entry point front ends use.
+|Documents, commands, undo, workspace, file watcher, settings, Git state, search and rename, the preview, visual model and export services, and the `EngineEvent` stream. The only entry point front ends use. `report.rs` holds the diagnostics and Git status reports, and `inspect.rs` the target and resource-id queries; see xref:engine.adoc#reports-and-inspection[the engine].
 
 |L4
 |`adocfoundry`
@@ -79,6 +79,10 @@ include::example$crate-layers.mmd[]
 |L4
 |`adoc-ls`
 |The language server. The only crate that speaks the Language Server Protocol. It runs on `adoc-engine`, which it depends on without the `typst` and `git` features by default; `cargo xtask layers` checks that the default build compiles neither Typst nor Git.
+
+|L4
+|`adoc-mcp`
+|The MCP server. It depends only on `adoc-engine` (with `typst` and `git`) and `adoc-core`. It uses `rmcp` 3.7.0 with only its `server`, `macros` and `transport-io` features, so it has no HTTP transport, which the network rule in `cargo xtask layers` checks. It runs on a current-thread tokio runtime (`rt`, `macros`, `io-std` and `time`), and each tool locks the engine for its call. Path confinement is `paths::confine`. See xref:ROOT:mcp-server.adoc[MCP server].
 |===
 
 The application sees `adoc-model` types only through the engine's re-exports.

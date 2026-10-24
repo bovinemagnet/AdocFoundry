@@ -246,3 +246,47 @@ fn references_and_anchor_renames_reach_every_page() {
     assert_eq!(files, [("index.adoc".into(), 2), ("other.adoc".into(), 1)]);
     assert!(engine.anchor_rename_edits(id, 2, "install").is_none());
 }
+
+#[test]
+fn targets_and_resource_ids_resolve_without_an_open_page() {
+    let root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-single-component");
+    let engine = open_workspace(&root);
+    let index = adoc_index::normalize_path(&root.join("modules/ROOT/pages/index.adoc"));
+    let authentication =
+        adoc_index::normalize_path(&root.join("modules/security/pages/authentication.adoc"));
+
+    let Some(adoc_engine::DefinitionTarget::Location(location)) =
+        engine.resolve_target(&index, "xref:security:authentication.adoc[]")
+    else {
+        panic!("the xref resolves");
+    };
+    assert_eq!(location.path, authentication);
+    assert!(engine
+        .resolve_target(&index, "security:authentication.adoc")
+        .is_some());
+    assert!(engine
+        .resolve_target(&index, "include::partial$welcome.adoc[]")
+        .is_some());
+    assert!(engine.resolve_target(&index, "missing.adoc").is_none());
+
+    assert_eq!(
+        engine.resource_id(&authentication).as_deref(),
+        Some("latest@demo:security:page$authentication.adoc")
+    );
+    assert_eq!(
+        engine
+            .resolve_resource_id("latest@demo:security:page$authentication.adoc", None)
+            .unwrap(),
+        authentication
+    );
+    assert_eq!(
+        engine
+            .resolve_resource_id("security:authentication.adoc", Some(&index))
+            .unwrap(),
+        authentication
+    );
+    assert!(engine
+        .resolve_resource_id("authentication.adoc", None)
+        .is_err());
+}

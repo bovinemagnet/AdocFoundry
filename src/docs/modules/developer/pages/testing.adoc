@@ -210,6 +210,22 @@ The preview tests run in process, in `src/protocol.rs`, with a sink that never o
 Tests that spawn a real process must take the crate-private `spawn_guard()` mutex in `adoc-render`, which works around `ETXTBSY`.
 Do not remove the guard or add an unguarded spawning test.
 
+[#mcp-server-tests]
+== MCP server tests
+
+`crates/adoc-mcp/tests/stdio.rs` starts the real `adoc-mcp` binary and speaks newline-delimited JSON-RPC to it over stdio.
+The tests are:
+
+* `lists_read_only_tools_by_default`
+* `reads_a_page_by_resource_id`
+* `check_matches_the_cli`
+* `search_finds_matches`
+* `render_page_as_text`
+* `write_tools_need_allow_write`
+* `edit_page_applies_through_commands`
+* `rename_page_updates_xrefs`
+* `paths_outside_the_roots_are_refused`
+
 == Application tests
 
 Application tests are in `crates/adocfoundry/src/ui_tests.rs`.

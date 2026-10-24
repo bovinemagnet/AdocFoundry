@@ -11,7 +11,6 @@ adoc-dom.workspace = true
 adoc-engine = { workspace = true, features = ["typst", "git"] }
 adoc-index.workspace = true
 adoc-render.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
