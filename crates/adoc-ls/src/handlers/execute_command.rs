@@ -1,11 +1,14 @@
-//! Handling of `workspace/executeCommand`.
+//! Handling of `workspace/executeCommand`'s preview commands.
 //!
 //! Editor-agnostic: this operates on a URI and returns the artefact that was produced,
-//! leaving all `lsp-types` mapping to `protocol.rs`.
+//! leaving all `lsp-types` mapping to `protocol.rs`. A page renders through Asciidoctor when
+//! it is configured or on `PATH`, as it always has, and otherwise through the engine's view
+//! tree, with diagrams and, in builds with Typst, typeset STEM.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
-use adoc_render::{RenderRequest, RenderSafeMode, Renderer};
+use adoc_engine::Engine;
+use adoc_render::{RenderOutput, RenderRequest, RenderSafeMode, Renderer};
 
 use adoc_lang::{
     attributes::{antora_attributes, component_attributes},
@@ -14,52 +17,81 @@ use adoc_lang::{
 
 use crate::{
     preview::{scratch_directory, PreviewError, PreviewMode, PreviewSink},
-    state::{document_path, ServerState},
+    state::document_path,
 };
 
-/// Render the document at `uri` and deliver it through `sink`.
+/// How long the engine may take to render a page and its diagrams.
+const RENDER_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Render the document at `uri` with `renderer` and deliver it through `sink`.
 ///
 /// The open buffer is rendered rather than the file on disk, so an unsaved document
 /// previews exactly what the author sees.
 pub fn render_preview(
-    state: &ServerState,
+    engine: &Engine,
     renderer: &dyn Renderer,
     sink: &dyn PreviewSink,
     uri: &str,
     mode: PreviewMode,
 ) -> Result<PathBuf, PreviewError> {
-    let (source, request) = preview_request(state, uri)?;
+    let (source, request) = preview_request(engine, uri)?;
     let output = renderer.render(&request)?;
     sink.deliver(&output, &source, mode)
 }
 
-/// The source path and render request for the document at `uri`.
-fn preview_request(
-    state: &ServerState,
+/// Render the document at `uri` through the engine's view tree and deliver it through `sink`.
+pub fn render_preview_with_engine(
+    engine: &mut Engine,
+    sink: &dyn PreviewSink,
     uri: &str,
-) -> Result<(PathBuf, RenderRequest), PreviewError> {
-    let open = state
-        .documents
-        .get(uri)
-        .ok_or_else(|| PreviewError::NotOpen(uri.to_owned()))?;
+    mode: PreviewMode,
+) -> Result<PathBuf, PreviewError> {
+    let (source, output) = engine_output(engine, uri)?;
+    sink.deliver(&output, &source, mode)
+}
 
+/// The engine's rendering of the document at `uri`, as a standalone page.
+fn engine_output(engine: &mut Engine, uri: &str) -> Result<(PathBuf, RenderOutput), PreviewError> {
     let source = document_path(uri);
-    let text = source_for_render(
-        &open.document,
-        &state.workspace.antora,
-        &source,
-        &scratch_directory(),
+    let id = engine
+        .document_for_path(&source)
+        .ok_or_else(|| PreviewError::NotOpen(uri.to_owned()))?;
+    let preview = engine
+        .render_blocking(id, RENDER_TIMEOUT)
+        .ok_or_else(|| PreviewError::NotRendered(source.clone()))?;
+    let html = adoc_render::to_html(
+        &preview.view,
+        &adoc_render::HtmlOptions { standalone: true },
     );
+    Ok((
+        source,
+        RenderOutput {
+            html,
+            warnings: Vec::new(),
+        },
+    ))
+}
+
+/// The source path and render request for the document at `uri`.
+fn preview_request(engine: &Engine, uri: &str) -> Result<(PathBuf, RenderRequest), PreviewError> {
+    let source = document_path(uri);
+    let open = engine
+        .document_for_path(&source)
+        .and_then(|id| engine.document(id))
+        .ok_or_else(|| PreviewError::NotOpen(uri.to_owned()))?;
+    let antora = &engine.workspace().antora;
+
+    let text = source_for_render(&open.parsed, antora, &source, &scratch_directory());
     let mut request = RenderRequest::from_source(source.clone(), text);
     // Component attributes first, so the page and family attributes Antora computes itself
     // win should `antora.yml` name one of them.
     request.attributes.extend(
-        component_attributes(&state.workspace.antora, &source)
+        component_attributes(antora, &source)
             .map(|(name, value)| (name.to_owned(), value.to_owned())),
     );
     request
         .attributes
-        .extend(antora_attributes(&state.workspace.antora, &source));
+        .extend(antora_attributes(antora, &source));
     // Rewritten copies of included files sit in a scratch directory outside the
     // component, which any jailed safe mode refuses to read.
     request.safe_mode = RenderSafeMode::Unsafe;
@@ -67,18 +99,24 @@ fn preview_request(
     Ok((source, request))
 }
 
-/// Re-render a live preview in place, without presenting it again.
+/// Re-render a live preview in place, without presenting it again, with `renderer` or, when
+/// there is none, the engine.
 ///
 /// Called when a document being previewed is saved; the artefact is overwritten so the
 /// page picks the change up on its next reload, and focus stays in the editor.
 pub fn refresh_preview(
-    state: &ServerState,
-    renderer: &dyn Renderer,
+    engine: &mut Engine,
+    renderer: Option<&dyn Renderer>,
     sink: &dyn PreviewSink,
     uri: &str,
 ) -> Result<PathBuf, PreviewError> {
-    let (source, request) = preview_request(state, uri)?;
-    let output = renderer.render(&request)?;
+    let (source, output) = match renderer {
+        Some(renderer) => {
+            let (source, request) = preview_request(engine, uri)?;
+            (source, renderer.render(&request)?)
+        }
+        None => engine_output(engine, uri)?,
+    };
     sink.refresh(&output, &source)
 }
 
@@ -123,10 +161,18 @@ mod tests {
         }
     }
 
-    fn state_with(uri: &str, text: &str) -> ServerState {
-        let mut state = ServerState::default();
-        state.open(uri, text, 1);
-        state
+    fn state_with(uri: &str, text: &str) -> Engine {
+        let mut engine = Engine::new(adoc_engine::Settings::default());
+        engine.open_text(&document_path(uri), text);
+        engine
+    }
+
+    fn workspace_with(root: PathBuf, uri: &str, text: &str) -> Engine {
+        let mut engine = Engine::new(adoc_engine::Settings::default());
+        engine.open_workspace(vec![root]).expect("index fixture");
+        assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+        engine.open_text(&document_path(uri), text);
+        engine
     }
 
     #[test]
@@ -165,7 +211,7 @@ mod tests {
 
     #[test]
     fn reports_a_document_that_is_not_open() {
-        let state = ServerState::default();
+        let state = Engine::new(adoc_engine::Settings::default());
         let sink = RecordingSink::default();
 
         let error = render_preview(
@@ -204,9 +250,7 @@ mod tests {
         let page = root.join("modules/security/pages/authentication.adoc");
         let uri = format!("file://{}", page.display());
 
-        let mut state = ServerState::default();
-        state.index_workspace(vec![root]).expect("index fixture");
-        state.open(&uri, "= Authentication\n", 1);
+        let state = workspace_with(root, &uri, "= Authentication\n");
 
         let renderer = RecordingRenderer::default();
         render_preview(
@@ -240,9 +284,7 @@ mod tests {
         let page = root.join("modules/ROOT/pages/index.adoc");
         let uri = format!("file://{}", page.display());
 
-        let mut state = ServerState::default();
-        state.index_workspace(vec![root]).expect("index fixture");
-        state.open(&uri, "= Home\n", 1);
+        let state = workspace_with(root, &uri, "= Home\n");
 
         let renderer = RecordingRenderer::default();
         render_preview(
@@ -291,12 +333,10 @@ mod tests {
         let page = root.join("modules/security/pages/authentication.adoc");
         let uri = format!("file://{}", page.display());
 
-        let mut state = ServerState::default();
-        state.index_workspace(vec![root]).expect("index fixture");
-        state.open(
+        let state = workspace_with(
+            root,
             &uri,
             "= Authentication\n\ninclude::partial$token-note.adoc[]\n",
-            1,
         );
 
         let renderer = RecordingRenderer::default();
@@ -328,9 +368,7 @@ mod tests {
         let page = root.join("modules/security/pages/authentication.adoc");
         let uri = format!("file://{}", page.display());
 
-        let mut state = ServerState::default();
-        state.index_workspace(vec![root]).expect("index fixture");
-        state.open(&uri, "= Authentication\n", 1);
+        let state = workspace_with(root, &uri, "= Authentication\n");
 
         let renderer = RecordingRenderer::default();
         render_preview(
@@ -378,11 +416,7 @@ mod tests {
         let page = root.join("modules/ROOT/pages/guides/composed.adoc");
         let uri = format!("file://{}", page.display());
 
-        let mut state = ServerState::default();
-        state
-            .index_workspace(vec![root.clone()])
-            .expect("index fixture");
-        state.open(&uri, "= Composed\n", 1);
+        let state = workspace_with(root.clone(), &uri, "= Composed\n");
 
         let renderer = RecordingRenderer::default();
         render_preview(
@@ -461,10 +495,16 @@ mod tests {
     #[test]
     fn refreshing_updates_without_redelivering() {
         let uri = "file:///docs/guide.adoc";
-        let state = state_with(uri, "= Title\n");
+        let mut state = state_with(uri, "= Title\n");
         let sink = RecordingSink::default();
 
-        refresh_preview(&state, &MockRenderer::new("<h1>T</h1>"), &sink, uri).expect("refresh");
+        refresh_preview(
+            &mut state,
+            Some(&MockRenderer::new("<h1>T</h1>")),
+            &sink,
+            uri,
+        )
+        .expect("refresh");
 
         assert!(sink.delivered.lock().unwrap().is_empty());
         assert_eq!(sink.refreshed.lock().unwrap().len(), 1);

@@ -232,12 +232,13 @@ dependencies = [
  "adoc-engine",
  "adoc-index",
  "adoc-lang",
- "adoc-parser",
  "adoc-render",
+ "crossbeam-channel",
  "lsp-server",
  "lsp-types",
  "serde",
  "serde_json",
+ "tempfile",
  "url",
 ]
 

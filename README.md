@@ -196,10 +196,25 @@ adocfoundry-cli git-status <root> [--format text|json]
 
 ## Language server
 
-`adoc-ls --stdio` serves the same diagnostics, definition, hover, completion, document and workspace symbols, and an HTML preview through Asciidoctor, to any LSP editor. The Zed extension [zed-asciidoc](https://github.com/bovinemagnet/zed-asciidoc) starts it from `PATH`:
+`adoc-ls --stdio` runs the same engine as the app and serves any LSP editor:
+
+- Diagnostics (the same codes and severities as the Problems panel, republished for every open page a change affects), definition, hover, completion, and document and workspace symbols.
+- References: on a page, the pages that link to it and the includes that include it; on an anchor or a reference to one, every reference to that anchor.
+- Renaming: renaming an `.adoc` file in the editor first rewrites the xrefs and nav entries that name it (`workspace/willRenameFiles`); renaming an anchor id renames it and its references.
+- Commands: `adoc.renderPreview`, `adoc.renderLivePreview` and `adoc.stopLivePreview` open an HTML preview, through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, else through the engine, with diagrams and typeset STEM; `adoc.checkWorkspace` publishes every file's diagnostics; `adoc.exportPdf { uri, component?, output, theme?, standards? }` writes a PDF, in builds with Typst.
+
+Settings come from the files the app reads: the user settings file and the workspace's `.adocfoundry.toml`. Git is off unless the user settings file sets `[git] enabled = true`.
+
+The Zed extension [zed-asciidoc](https://github.com/bovinemagnet/zed-asciidoc) starts it from `PATH`. The default build is lean, without Typst or Git:
 
 ```sh
 cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
+```
+
+With PDF export, typeset STEM in the preview and Git:
+
+```sh
+cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --features typst,git
 ```
 
 ## Not implemented yet

@@ -209,3 +209,40 @@ fn typing_defers_reindexing_until_typing_pauses() {
         .unwrap();
     assert!(indexed(&engine).starts_with("yx= Page"));
 }
+
+#[test]
+fn a_client_buffer_opens_without_a_file() {
+    let mut engine = Engine::new(Settings::default());
+    let path = Path::new("/nowhere/page.adoc");
+    let id = engine.open_text(path, "= Page\n\nSee <<missing>>.\n");
+    let document = engine.document(id).unwrap();
+    assert_eq!(document.text_string(), "= Page\n\nSee <<missing>>.\n");
+    assert!(!document.diagnostics.is_empty(), "diagnosed like any page");
+
+    // Opening it again takes the client's text as an edit.
+    assert_eq!(engine.open_text(path, "= Page\n"), id);
+    assert_eq!(engine.document(id).unwrap().text_string(), "= Page\n");
+    assert!(engine.undo(id), "the new text is an ordinary edit");
+}
+
+#[test]
+fn references_and_anchor_renames_reach_every_page() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/references");
+    let mut engine = open_workspace(&root);
+    let index = root.join("index.adoc");
+    let id = engine.open(&index).unwrap();
+    let text = fs::read_to_string(&index).unwrap();
+
+    let anchor = text.find("[[setup]]").unwrap() + 3;
+    let found = engine.references(id, anchor);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(engine.references(id, 2).len(), 2, "the page's own xrefs");
+
+    let edits = engine.anchor_rename_edits(id, anchor, "install").unwrap();
+    let files: Vec<_> = edits
+        .iter()
+        .map(|file| (file.path.file_name().unwrap().to_owned(), file.edits.len()))
+        .collect();
+    assert_eq!(files, [("index.adoc".into(), 2), ("other.adoc".into(), 1)]);
+    assert!(engine.anchor_rename_edits(id, 2, "install").is_none());
+}

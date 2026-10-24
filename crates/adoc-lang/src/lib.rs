@@ -10,6 +10,7 @@ pub mod diagnostics;
 pub mod hover;
 pub mod images;
 pub mod includes;
+pub mod references;
 pub mod render_source;
 pub mod symbols;
 mod workspace;
@@ -17,7 +18,7 @@ mod workspace;
 use std::path::{Path, PathBuf};
 
 use adoc_antora::ResourceFamily;
-use adoc_core::{Diagnostic, Document, ReferenceKind, SourceRange};
+use adoc_core::{Diagnostic, Document, SourceRange};
 use adoc_index::normalize_path;
 use adoc_parser::parse;
 
@@ -235,11 +236,23 @@ pub fn workspace_symbols(ws: &WorkspaceState, query: &str) -> Vec<WorkspaceSymbo
 #[must_use]
 pub fn references_to(ws: &WorkspaceState, target: &Path) -> Vec<Location> {
     let target = normalize_path(target);
-    let mut found: Vec<Location> = ws
-        .index
-        .references()
+    let Some(file_name) = target.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+    // An xref may name the page by one of its `page-aliases` instead.
+    let mut names = vec![file_name.to_owned()];
+    if let Some(resource) = ws.antora.resource_for_path(&target) {
+        names.extend(resource.aliases.iter().filter_map(|alias| {
+            Path::new(&alias.path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        }));
+    }
+    names.sort();
+    names.dedup();
+    let mut found: Vec<Location> = names
         .iter()
-        .filter(|location| location.reference.kind == ReferenceKind::Xref)
+        .flat_map(|name| ws.index.xrefs_naming(name))
         .filter(|location| {
             let file_part = location
                 .reference

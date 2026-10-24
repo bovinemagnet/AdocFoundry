@@ -54,6 +54,10 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo test -p adocfoundry
       - run: cargo build -p adocfoundry
+      # The language server alone, lean and with every feature; the default build must not
+      # compile Typst or Git (checked by `cargo xtask layers`).
+      - run: cargo build -p adoc-ls
+      - run: cargo build -p adoc-ls --all-features
 
   pdf-standards:
     # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1.

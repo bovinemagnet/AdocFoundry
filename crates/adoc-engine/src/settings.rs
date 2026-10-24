@@ -109,7 +109,7 @@ pub struct PdfSettings {
     /// The site cross references out of an exported book link to.
     pub site_url: Option<String>,
     /// Standards every export conforms to: `pdf-a-2a`, `pdf-ua-1`.
-    pub standards: Vec<adoc_pdf::PdfStandard>,
+    pub standards: Vec<crate::PdfStandard>,
 }
 
 impl Default for PdfSettings {
@@ -126,10 +126,10 @@ impl Default for PdfSettings {
 
 /// A PDF standard by its settings and command-line name.
 #[must_use]
-pub fn pdf_standard(name: &str) -> Option<adoc_pdf::PdfStandard> {
+pub fn pdf_standard(name: &str) -> Option<crate::PdfStandard> {
     match name {
-        "pdf-a-2a" | "a-2a" => Some(adoc_pdf::PdfStandard::A2a),
-        "pdf-ua-1" | "ua-1" => Some(adoc_pdf::PdfStandard::Ua1),
+        "pdf-a-2a" | "a-2a" => Some(crate::PdfStandard::A2a),
+        "pdf-ua-1" | "ua-1" => Some(crate::PdfStandard::Ua1),
         _ => None,
     }
 }
@@ -145,6 +145,10 @@ pub struct Settings {
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
     workspace_file: Option<PathBuf>,
+    /// Whether a settings file set `[git] enabled`, rather than leaving the default.
+    git_enabled_set: bool,
+    /// Git is off unless a settings file turns it on, as in the language server.
+    git_opt_in: bool,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -180,6 +184,7 @@ impl Settings {
         let mut fresh = Self {
             user_file: self.user_file.clone(),
             workspace_file: self.workspace_file.clone(),
+            git_opt_in: self.git_opt_in,
             ..Self::default()
         };
         if let Some(path) = fresh.user_file.clone() {
@@ -191,6 +196,9 @@ impl Settings {
             if let Some(table) = read_table(&path)? {
                 fresh.apply(&table, Layer::Workspace, &path);
             }
+        }
+        if fresh.git_opt_in && !fresh.git_enabled_set {
+            fresh.git.enabled = false;
         }
         *self = fresh;
         Ok(())
@@ -204,6 +212,17 @@ impl Settings {
     #[must_use]
     pub fn workspace_file(&self) -> Option<&Path> {
         self.workspace_file.as_deref()
+    }
+
+    /// Makes Git opt-in: off unless a settings file sets `[git] enabled = true`, now and on
+    /// every reload. For front ends where Git is not expected, such as the language server.
+    #[must_use]
+    pub fn with_git_opt_in(mut self) -> Self {
+        self.git_opt_in = true;
+        if !self.git_enabled_set {
+            self.git.enabled = false;
+        }
+        self
     }
 
     /// Points the workspace layer at a new root; call [`Settings::reload`] afterwards.
@@ -257,7 +276,10 @@ impl Settings {
             }
             ("tools", "asciidoctor") => self.tools.asciidoctor = string(value)?,
             ("tools", "git") => self.tools.git = string(value)?,
-            ("git", "enabled") => self.git.enabled = boolean(value)?,
+            ("git", "enabled") => {
+                self.git.enabled = boolean(value)?;
+                self.git_enabled_set = true;
+            }
             ("git", "show_markers") => self.git.show_markers = boolean(value)?,
             ("git", "blame_on_hover") => self.git.blame_on_hover = boolean(value)?,
             ("git", "remote") => self.git.remote = string(value)?,
@@ -269,7 +291,7 @@ impl Settings {
                 for (host, kind) in table {
                     let kind = kind
                         .as_str()
-                        .filter(|kind| adoc_git::HostKind::from_name(kind).is_some())
+                        .filter(|kind| is_host_kind(kind))
                         .ok_or("expected \"github\", \"gitlab\", \"bitbucket\" or \"azure\"")?;
                     hosts.insert(host.to_lowercase(), kind.to_owned());
                 }
@@ -295,6 +317,15 @@ impl Settings {
     fn warn(&mut self, source: &str, name: &str, problem: &str) {
         self.warnings.push(format!("{source}: `{name}`: {problem}"));
     }
+}
+
+/// Whether `kind` names a kind of Git hosting site `[git] hosts` may give.
+fn is_host_kind(kind: &str) -> bool {
+    #[cfg(feature = "git")]
+    let known = adoc_git::HostKind::from_name(kind).is_some();
+    #[cfg(not(feature = "git"))]
+    let known = matches!(kind, "github" | "gitlab" | "bitbucket" | "azure");
+    known
 }
 
 fn is_known(section: &str, key: &str) -> bool {
@@ -433,7 +464,7 @@ mod tests {
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.pdf.theme, "acme");
         assert_eq!(settings.pdf.themes_dir.as_deref(), Some("resources/themes"));
-        assert_eq!(settings.pdf.standards, vec![adoc_pdf::PdfStandard::A2a]);
+        assert_eq!(settings.pdf.standards, vec![crate::PdfStandard::A2a]);
         assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
     }
 

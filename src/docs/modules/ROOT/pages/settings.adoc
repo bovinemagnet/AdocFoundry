@@ -95,7 +95,7 @@ standards = ["pdf-a-2a"]         # pdf-a-2a | pdf-ua-1
 |`tools.asciidoctor`
 |string
 |`""`
-|An absolute path to `asciidoctor`. Discovered on `PATH` when empty. Used by the language server's preview only. The application's preview renders in process and does not use it.
+|An absolute path to `asciidoctor`. Discovered on `PATH` when empty. Used by the language server's preview only; the language server falls back to the engine's own preview when it is empty and `asciidoctor` is not on `PATH`. The application's preview renders in process and does not use it.
 
 |`tools.git`
 |string
@@ -105,7 +105,7 @@ standards = ["pdf-a-2a"]         # pdf-a-2a | pdf-ua-1
 |`git.enabled`
 |boolean
 |`true`
-|Discover the Git repository of each workspace root, and show its branch and track its changes. When `false`, nothing is discovered and the workspace behaves as if it were outside a repository.
+|Discover the Git repository of each workspace root, and show its branch and track its changes. When `false`, nothing is discovered and the workspace behaves as if it were outside a repository. The language server leaves Git off unless the user file sets this to `true`.
 
 |`git.show_markers`
 |boolean

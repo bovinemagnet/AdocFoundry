@@ -38,11 +38,11 @@ include::example$crate-layers.mmd[]
 
 |L1
 |`adoc-index`
-|`WorkspaceIndex`, with replacement-based updates and direct map lookups. It never scans every document. Path normalisation is lexical and never canonicalises, so unsaved files work.
+|`WorkspaceIndex`, with replacement-based updates and direct map lookups. It never scans every document. Path normalisation is lexical and never canonicalises, so unsaved files work. Reverse maps from the file name an xref or include names, and from each fragment, to the references (`xrefs_naming`, `includes_naming`, `references_with_fragment`) keep reference lookups from visiting every document.
 
 |L1
 |`adoc-lang`
-|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it.
+|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it. It also finds references (`references_at`, `page_references`, `includes_of`) and renames anchors (`rename_anchor`).
 
 |L2
 |`adoc-render`
@@ -78,7 +78,7 @@ include::example$crate-layers.mmd[]
 
 |L4
 |`adoc-ls`
-|The language server. The only crate that speaks the Language Server Protocol.
+|The language server. The only crate that speaks the Language Server Protocol. It runs on `adoc-engine`, which it depends on without the `typst` and `git` features by default; `cargo xtask layers` checks that the default build compiles neither Typst nor Git.
 |===
 
 The application sees `adoc-model` types only through the engine's re-exports.

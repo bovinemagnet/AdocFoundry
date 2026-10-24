@@ -58,20 +58,25 @@ pub enum EngineEvent {
     },
     /// The document is now shown as source, visual or both.
     EditorModeChanged(DocumentId),
+    #[cfg(feature = "git")]
     /// The repository holding workspace root `root` was found, or its `HEAD` moved to another
     /// branch or commit.
     GitHeadChanged {
         root: PathBuf,
         head: crate::Head,
     },
+    #[cfg(feature = "git")]
     /// The status of the files in the repository holding `root` changed, or was found.
     GitStatusChanged {
         root: PathBuf,
     },
+    #[cfg(feature = "git")]
     /// New line changes of an open document against `HEAD` are in `Engine::git`.
     GitHunksChanged(DocumentId),
+    #[cfg(feature = "git")]
     /// The blame of an open document is ready from `Engine::blame_for`, or was forgotten.
     GitBlameChanged(DocumentId),
+    #[cfg(feature = "git")]
     /// A push finished; `message` says what was pushed where.
     GitPushed {
         message: String,

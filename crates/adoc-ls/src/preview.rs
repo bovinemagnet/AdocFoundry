@@ -16,6 +16,8 @@ use adoc_render::{RenderError, RenderOutput};
 #[derive(Debug)]
 pub enum PreviewError {
     NotOpen(String),
+    /// The engine did not finish rendering the page in time.
+    NotRendered(PathBuf),
     Render(RenderError),
     Io(io::Error),
     LaunchFailed {
@@ -28,6 +30,7 @@ impl fmt::Display for PreviewError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotOpen(uri) => write!(formatter, "document is not open: {uri}"),
+            Self::NotRendered(path) => write!(formatter, "{} did not render", path.display()),
             Self::Render(error) => error.fmt(formatter),
             Self::Io(error) => error.fmt(formatter),
             Self::LaunchFailed { program, status } => write!(
@@ -43,7 +46,7 @@ impl std::error::Error for PreviewError {
         match self {
             Self::Render(error) => Some(error),
             Self::Io(error) => Some(error),
-            Self::NotOpen(_) | Self::LaunchFailed { .. } => None,
+            Self::NotOpen(_) | Self::NotRendered(_) | Self::LaunchFailed { .. } => None,
         }
     }
 }

@@ -6,6 +6,7 @@
 mod clock;
 mod command;
 pub mod commands;
+#[cfg(feature = "git")]
 mod commit;
 mod document;
 mod edit;
@@ -13,6 +14,11 @@ mod engine;
 mod error;
 mod event;
 mod export;
+#[cfg(feature = "git")]
+mod git;
+// Without Git, the engine behaves as with `[git] enabled = false`.
+#[cfg(not(feature = "git"))]
+#[path = "git_off.rs"]
 mod git;
 mod language;
 mod navigation;
@@ -20,8 +26,10 @@ mod preview;
 mod rendered;
 mod search;
 mod settings;
+#[cfg(feature = "typst")]
 mod stem;
 mod undo;
+#[cfg(feature = "git")]
 mod versions;
 mod visual;
 mod workspace;
@@ -37,6 +45,7 @@ pub use engine::{Engine, INDEX_SETTLE};
 pub use error::EngineError;
 pub use event::EngineEvent;
 pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
+#[cfg(feature = "git")]
 pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use navigation::NavigationPosition;
 pub use preview::{
@@ -47,9 +56,20 @@ pub use settings::{
     pdf_standard, EditorSettings, GitSettings, PdfSettings, Settings, ThemePreference,
     ToolSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
+#[cfg(feature = "typst")]
 pub use stem::StemProvider;
 
+#[cfg(feature = "typst")]
 pub use adoc_pdf::PdfStandard;
+/// A PDF standard the output must conform to.
+#[cfg(not(feature = "typst"))]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PdfStandard {
+    /// PDF/A-2a: archival, tagged.
+    A2a,
+    /// PDF/UA-1: accessible.
+    Ua1,
+}
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
 pub use visual::{EditorMode, VisualArgs, VisualDocument, VisualValue, MODEL_SETTLE};
 pub use workspace::WATCH_DEBOUNCE;
@@ -58,6 +78,7 @@ pub use adoc_antora::{
     compare_component_versions, AntoraCoordinate, AntoraResourceId, NavError, NavItem, NavTree,
     ResourceFamily,
 };
+#[cfg(feature = "git")]
 pub use adoc_git::{BlameLine, Change as GitChange, FileStatus, Head, Hunk, HunkKind};
 pub use adoc_lang::{
     CompletionItem, CompletionItemKind, DefinitionTarget, DocumentSymbol, DocumentSymbolKind,

@@ -202,6 +202,9 @@ Staging, committing and pushing are covered at each layer.
 
 `crates/adoc-ls/tests/stdio.rs` starts the real `adoc-ls` binary and speaks LSP to it: initialise and shutdown, completion, hover, the preview commands and command routing.
 
+`crates/adoc-ls/tests/engine.rs` drives the binary over stdio through the engine-backed features: open, change and close, diagnostics, references, file renames, anchor renames and the workspace check.
+The preview tests run in process, in `src/protocol.rs`, with a sink that never opens a browser. They take a guard of their own, because the `spawn_guard()` in `adoc-render` is crate-private.
+
 `crates/adoc-ls/tests/parity.rs` runs the command-line checker and the language server over the fixtures and asserts that they report the same diagnostics.
 
 Tests that spawn a real process must take the crate-private `spawn_guard()` mutex in `adoc-render`, which works around `ETXTBSY`.

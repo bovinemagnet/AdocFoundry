@@ -507,6 +507,25 @@ Rename finds every xref that resolves to the page using the index and the resolv
 The engine delegates definition, hover, completion and diagnostics to `adoc-lang`.
 That is why the editor, the command-line checker and the language server give identical answers.
 
+`adoc-ls` is a front end of the engine.
+It opens workspace folders with the engine, and keeps client buffers in it with `Engine::open_text(path, text)`, which works for a file that does not exist.
+Each incremental change becomes one `edit.replace_range`.
+Further engine methods serve it:
+
+* `Engine::references(id, offset)` returns the references to the page or anchor at an offset.
+* `Engine::anchor_rename_edits(id, offset, new_id)` returns the edits that rename an anchor and every reference to it.
+* `Engine::asciidoctor_executable()` returns the Asciidoctor in use, from `tools.asciidoctor` or `PATH`.
+* `Settings::with_git_opt_in()` leaves Git off unless the user settings file sets `[git] enabled = true`. It is kept across settings reloads.
+
+`page.rename` also rewrites includes: an Antora include keeps its family and coordinates, a relative one stays relative, and one written through an attribute is left as written.
+
+== Engine features
+
+The engine has two Cargo features, `typst` and `git`.
+Both are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
+Without `git`, the engine behaves as with `[git] enabled = false`.
+Without `typst`, the export commands are not registered and `export_blocking` fails.
+
 == Navigation history
 
 Back and forward history is engine state, so every front end and the command-line tests share it.

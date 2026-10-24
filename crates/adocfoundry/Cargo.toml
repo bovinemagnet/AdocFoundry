@@ -7,7 +7,7 @@ repository.workspace = true
 
 [dependencies]
 adoc-core.workspace = true
-adoc-engine.workspace = true
+adoc-engine = { workspace = true, features = ["typst", "git"] }
 adoc-index.workspace = true
 adoc-render.workspace = true
 gpui.workspace = true

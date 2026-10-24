@@ -433,3 +433,17 @@ fn stem_renders_to_svg_and_is_cached() {
     assert!(engine.wait_for_workers(WAIT));
     assert_eq!(ready_versions(&events, id), [0]);
 }
+
+#[test]
+fn asciidoctor_is_the_configured_one_when_set() {
+    let directory = tempfile::tempdir().unwrap();
+    let tool = directory.path().join("asciidoctor");
+    std::fs::write(&tool, "").unwrap();
+    let mut settings = Settings::default();
+    settings.tools.asciidoctor = tool.display().to_string();
+    assert_eq!(Engine::new(settings).asciidoctor_executable(), Some(tool));
+
+    let mut settings = Settings::default();
+    settings.tools.asciidoctor = directory.path().join("missing").display().to_string();
+    assert_eq!(Engine::new(settings).asciidoctor_executable(), None);
+}

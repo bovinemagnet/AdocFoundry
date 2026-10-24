@@ -294,6 +294,42 @@ fn cargo_metadata(root: &Path) -> Result<serde_json::Value, String> {
     serde_json::from_slice(&output.stdout).map_err(|error| format!("cargo metadata: {error}"))
 }
 
+/// What the language server's default build must not compile: Typst and Git come only with its
+/// `typst` and `git` features.
+const LEAN_EXCLUDED: &[&str] = &["adoc-pdf", "adoc-math", "adoc-git", "typst", "gix"];
+
+/// The packages `cargo build -p <package>` compiles with its default features, from
+/// `cargo tree`; `cargo metadata` resolves features for the whole workspace at once.
+fn default_build_packages(root: &Path, package: &str) -> Result<BTreeSet<String>, String> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .current_dir(root)
+        .args(["tree", "--locked", "-p", package, "-e", "normal,build"])
+        .args(["--prefix", "none", "--format", "{p}"])
+        .output()
+        .map_err(|error| format!("cargo tree: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo tree: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// A violation for each crate of [`LEAN_EXCLUDED`] in the language server's default build.
+fn lean_violations(packages: &BTreeSet<String>) -> Vec<String> {
+    LEAN_EXCLUDED
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("adoc-ls builds {name} by default; only its features may bring it"))
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -319,6 +355,7 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
         violations.extend(check_sources(&manifest.name, &sources));
     }
     violations.extend(network_violations(&cargo_metadata(root)?));
+    violations.extend(lean_violations(&default_build_packages(root, "adoc-ls")?));
     Ok(violations)
 }
 
@@ -483,6 +520,23 @@ libc = "=0.2.0"
         assert_eq!(
             network_violations(&graph),
             ["adoc-engine reaches network client ureq; only adocfoundry may"]
+        );
+    }
+
+    #[test]
+    fn default_build_has_no_typst_or_git() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-ls").unwrap();
+        assert!(packages.contains("adoc-engine"), "{packages:?}");
+        assert_eq!(lean_violations(&packages), Vec::<String>::new());
+
+        let full: BTreeSet<String> = ["adoc-engine", "typst", "gix"].map(str::to_owned).into();
+        assert_eq!(
+            lean_violations(&full),
+            [
+                "adoc-ls builds typst by default; only its features may bring it",
+                "adoc-ls builds gix by default; only its features may bring it",
+            ]
         );
     }
 

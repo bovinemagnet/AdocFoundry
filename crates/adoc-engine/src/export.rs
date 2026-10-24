@@ -3,26 +3,36 @@
 //! its diagrams rendered, and once none is pending the document is typeset and written on
 //! another worker. The result arrives as [`EngineEvent::ExportFinished`].
 
+use std::path::PathBuf;
+
+use adoc_core::DiagnosticSeverity;
+
+use crate::{DocumentId, PdfStandard};
+
+// The export itself needs Typst; without it only the request and result types remain.
+#[cfg(feature = "typst")]
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::Path,
     thread,
     time::{Duration, Instant},
 };
 
-use adoc_core::DiagnosticSeverity;
+#[cfg(feature = "typst")]
 use adoc_dom::{BlockKind, Dom};
+#[cfg(feature = "typst")]
 use adoc_pdf::{
-    Book, BookItem, Document, LoadedTheme, PageView, PdfOptions, PdfSeverity, PdfStandard,
-    ThemeSource,
+    Book, BookItem, Document, LoadedTheme, PageView, PdfOptions, PdfSeverity, ThemeSource,
 };
+#[cfg(feature = "typst")]
 use adoc_render::{DiagramView, ViewBlock, ViewInline, ViewKind, ViewTree};
 
+#[cfg(feature = "typst")]
 use crate::{
     commands::{ids, register, spec},
     workspace::WorkerMessage,
-    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
-    Engine, EngineError, EngineEvent, NavItem,
+    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, Engine,
+    EngineError, EngineEvent, NavItem,
 };
 
 /// What to export.
@@ -80,7 +90,22 @@ impl std::fmt::Display for ExportDiagnostic {
     }
 }
 
+#[cfg(not(feature = "typst"))]
+impl crate::Engine {
+    /// Without Typst there is no export: every request fails as an unknown command.
+    pub fn export_blocking(
+        &mut self,
+        _: ExportArgs,
+        _: std::time::Duration,
+    ) -> Result<ExportSummary, crate::EngineError> {
+        Err(crate::EngineError::UnknownCommand(
+            crate::commands::ids::EXPORT_PDF_PAGE,
+        ))
+    }
+}
+
 /// The pages of an export and how they are arranged.
+#[cfg(feature = "typst")]
 #[derive(Clone, Debug)]
 enum Plan {
     Article(PathBuf),
@@ -91,6 +116,7 @@ enum Plan {
     },
 }
 
+#[cfg(feature = "typst")]
 #[derive(Clone, Debug)]
 enum PlanItem {
     Part(String),
@@ -106,6 +132,7 @@ enum PlanItem {
     },
 }
 
+#[cfg(feature = "typst")]
 impl Plan {
     fn paths(&self) -> Vec<PathBuf> {
         match self {
@@ -121,6 +148,7 @@ impl Plan {
     }
 }
 
+#[cfg(feature = "typst")]
 enum Stage {
     Parsing,
     /// Diagrams still rendering, by checksum.
@@ -128,6 +156,7 @@ enum Stage {
     Typesetting,
 }
 
+#[cfg(feature = "typst")]
 struct Job {
     args: ExportArgs,
     plan: Plan,
@@ -137,6 +166,7 @@ struct Job {
     keep_result: bool,
 }
 
+#[cfg(feature = "typst")]
 #[derive(Default)]
 pub(crate) struct ExportState {
     jobs: BTreeMap<u64, Job>,
@@ -144,6 +174,7 @@ pub(crate) struct ExportState {
     next: u64,
 }
 
+#[cfg(feature = "typst")]
 pub(crate) fn register_export(registry: &mut CommandRegistry) {
     register(
         registry,
@@ -169,6 +200,7 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
     );
 }
 
+#[cfg(feature = "typst")]
 fn export_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
     let CommandArgs::Export(args) = args else {
         return Err(EngineError::InvalidArguments {
@@ -180,6 +212,7 @@ fn export_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutco
     Ok(CommandOutcome::Done)
 }
 
+#[cfg(feature = "typst")]
 impl Engine {
     /// Whether an export is under way.
     #[must_use]
@@ -662,6 +695,7 @@ impl Engine {
     }
 }
 
+#[cfg(feature = "typst")]
 fn resolve(dir: &str, base: Option<&Path>) -> PathBuf {
     let path = Path::new(dir);
     match base {
@@ -671,6 +705,7 @@ fn resolve(dir: &str, base: Option<&Path>) -> PathBuf {
 }
 
 /// The views arranged as the plan says.
+#[cfg(feature = "typst")]
 fn assemble(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Document {
     let mut views: HashMap<PathBuf, ViewTree> = views.into_iter().collect();
     match plan {
@@ -724,6 +759,7 @@ fn assemble(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Document {
 }
 
 /// Typesets `document` and writes the PDF (and the Typst, when asked).
+#[cfg(feature = "typst")]
 fn typeset(
     document: &Document,
     theme: &LoadedTheme,
@@ -762,6 +798,7 @@ fn typeset(
 }
 
 /// A warning for each page the parser could not read, which is shown as its source.
+#[cfg(feature = "typst")]
 fn unread_pages(doms: &[(PathBuf, Dom)]) -> Vec<ExportDiagnostic> {
     doms.iter()
         .filter(|(_, dom)| {
@@ -784,6 +821,7 @@ fn unread_pages(doms: &[(PathBuf, Dom)]) -> Vec<ExportDiagnostic> {
 }
 
 /// A warning for each diagram that could not be rendered and is shown as its source.
+#[cfg(feature = "typst")]
 fn failed_diagrams(document: &Document) -> Vec<ExportDiagnostic> {
     fn walk(blocks: &[ViewBlock], out: &mut Vec<ExportDiagnostic>) {
         for block in blocks {

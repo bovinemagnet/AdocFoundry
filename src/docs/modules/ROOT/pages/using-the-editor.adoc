@@ -114,9 +114,10 @@ Applying the preview is one undo step across every file it touches.
 == Rename a page
 
 Rename Page (kbd:[F2]) renames the active page.
-AdocFoundry shows a preview that lists the file move and every xref edit needed to keep links working.
-Apply the preview to move the file and rewrite the xrefs.
-One undo moves the page back and restores every xref.
+AdocFoundry shows a preview that lists the file move and every xref, navigation and include edit needed to keep links working.
+Apply the preview to move the file and rewrite the xrefs, nav entries and includes of the file.
+An include written through an attribute is left as written.
+One undo moves the page back and restores every edit.
 
 .Renaming a page
 [mermaid]

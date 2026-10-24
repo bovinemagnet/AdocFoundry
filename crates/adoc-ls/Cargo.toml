@@ -5,12 +5,19 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# PDF export (`adoc.exportPdf`) and typeset STEM in the preview, through Typst.
+typst = ["adoc-engine/typst"]
+# Git state for the engine, when `[git] enabled` turns it on.
+git = ["adoc-engine/git"]
+
 [dependencies]
 adoc-core.workspace = true
+adoc-engine.workspace = true
 adoc-index.workspace = true
 adoc-lang.workspace = true
-adoc-parser.workspace = true
 adoc-render.workspace = true
+crossbeam-channel.workspace = true
 lsp-server.workspace = true
 lsp-types.workspace = true
 serde.workspace = true
@@ -18,7 +25,9 @@ serde_json.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-adoc-engine.workspace = true
+# The tests drive a server with every feature, so export and typeset STEM are covered.
+adoc-engine = { workspace = true, features = ["typst", "git"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

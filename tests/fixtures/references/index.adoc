@@ -1,0 +1,8 @@
+= Index
+
+[[setup]]
+== Setup
+
+See <<setup>> and xref:other.adoc[the other page].
+
+include::shared.adoc[]

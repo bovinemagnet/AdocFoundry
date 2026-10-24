@@ -20,7 +20,8 @@ adoc-antora = { path = "crates/adoc-antora" }
 adoc-core = { path = "crates/adoc-core" }
 adoc-diagrams = { path = "crates/adoc-diagrams" }
 adoc-dom = { path = "crates/adoc-dom" }
-adoc-engine = { path = "crates/adoc-engine" }
+# Front ends choose its features: `typst` (PDF export, typeset STEM) and `git`.
+adoc-engine = { path = "crates/adoc-engine", default-features = false }
 adoc-git = { path = "crates/adoc-git" }
 adoc-index = { path = "crates/adoc-index" }
 adoc-lang = { path = "crates/adoc-lang" }
@@ -62,6 +63,8 @@ tree-sitter-asciidoc = { path = "grammars/tree-sitter-asciidoc/tree-sitter-ascii
 tree-sitter-asciidoc-inline = { path = "grammars/tree-sitter-asciidoc/tree-sitter-asciidoc_inline" }
 insta = { version = "=1.49.0", features = ["json"] }
 lsp-server = "=0.10.0"
+# The channel lsp-server hands messages over, for waiting with a timeout.
+crossbeam-channel = "=0.5.16"
 # `proposed` is enabled by gpui-component through feature unification; enable it everywhere
 # so adoc-ls compiles the same way alone and in the workspace.
 merman = { version = "=0.9.2", default-features = false, features = ["all-diagrams", "complete-svg"] }

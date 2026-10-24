@@ -356,6 +356,15 @@ impl AntoraCatalog {
             .map(|(_, module)| module)
     }
 
+    /// The resource whose file is `source_path`.
+    #[must_use]
+    pub fn resource_for_path(&self, source_path: &Path) -> Option<&AntoraResource> {
+        let source_path = normalize_path(source_path);
+        self.resources
+            .values()
+            .find(|resource| resource.source_path == source_path)
+    }
+
     #[must_use]
     pub fn context_for_path(&self, source_path: &Path) -> Option<AntoraContext> {
         let source_path = normalize_path(source_path);
