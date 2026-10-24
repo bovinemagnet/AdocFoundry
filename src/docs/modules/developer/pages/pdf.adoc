@@ -126,6 +126,17 @@ Wrapping a paragraph in a block from its own show rule cut its links off from th
 These follow asciidoctor-pdf's `arrange_block` and `arrange_heading`.
 `layout()` would measure the exact width, but links laid out inside it lose their place in a tagged PDF.
 
+
+`keep()` measures a block only when the emitter cannot tell from the block's text that it fits on a page.
+The emitter estimates the block's lines: each line of code or verse, a line per 60 characters of a paragraph, and one for the spacing around each nested block.
+It writes `fits: true` for blocks of 20 lines or fewer.
+Those become plain unbreakable blocks without measuring.
+Images, diagrams, tables and maths are always measured.
+Running titles look up one list of headings with their pages, which Typst works out once, by binary search, instead of filtering every heading on every page.
+Together these took a 1,833-page book from a 17.1 GB peak and 55 s to 9.3 GB and 12.6 s.
+`cargo test --release -p adoc-engine --test perf book_memory_probe -- --ignored --nocapture`, run under `/usr/bin/time`, measures a synthetic 300-page book.
+
+
 With this model, the reference article lands within 1.7 pt of asciidoctor-pdf on every line, and negative theme margins work.
 
 Footnotes are collected and placed at the bottom of the last page of the article or chapter.
@@ -138,7 +149,8 @@ Image widths are parsed as numbers before they are written.
 The article's title and the title page's title are level 1 headings in the PDF structure, because PDF/UA-1 requires the first heading to be level 1.
 
 Lists are drawn with Typst's `enum`, each item's marker given as its number, so that a tagged PDF marks them as lists (`L`, `LI`, `Lbl`, `LBody`) for screen readers.
-Description lists are drawn as blocks.
+Description lists are Typst's `terms`, so a tagged PDF marks them as lists, with a hanging indent putting each term at the margin.
+Horizontal description lists stay a grid.
 
 == The world, fonts and errors
 

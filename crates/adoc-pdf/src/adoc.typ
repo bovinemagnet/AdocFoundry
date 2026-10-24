@@ -184,10 +184,15 @@
 //
 // Measured at the page's content width: `layout` would give the exact width, but links laid out
 // inside it lose their place in a tagged PDF's structure.
-#let keep(body) = context {
-  let margin = doc.page.margin
-  let height = measure(body, width: doc.page.width - margin.left - margin.right).height
-  block(breakable: height > doc.page.height - margin.top - margin.bottom, width: 100%, body)
+#let keep(body, fits: false) = if fits {
+  // The emitter could tell from the block's text that it fits on a page: no need to measure.
+  block(breakable: false, width: 100%, body)
+} else {
+  context {
+    let margin = doc.page.margin
+    let height = measure(body, width: doc.page.width - margin.left - margin.right).height
+    block(breakable: height > doc.page.height - margin.top - margin.bottom, width: 100%, body)
+  }
 }
 
 #let alignment(name, default: left) = {
@@ -196,14 +201,14 @@
 
 // A block with its caption ("Table 1. Title") above or below it, `caption_margin_inside`
 // apart.
-#let adoc-captioned(caption, body, below: false) = {
+#let adoc-captioned(caption, body, below: false, fits: false) = {
   let inside = pick("caption_margin_inside", default: 4pt)
   let outside = pick("caption_margin_outside", default: 0pt)
   // A paragraph, so it is spaced as Prawn spaces lines of text.
   let caption = align(alignment(pick("caption_text_align", "caption_align", default: "left")),
     par(styled(("caption",), caption)))
   if not below { v(outside, weak: true) }
-  keep(grid(
+  keep(fits: fits, grid(
     columns: 1fr,
     row-gutter: inside,
     ..if below { (body, caption) } else { (caption, body) },
@@ -290,15 +295,28 @@
   )
 }
 
+// A description list: each term on its own line, its description indented below. It is
+// Typst's terms, so the PDF tags it as a list, with the hanging indent putting the term at the
+// margin. Terms are not made bold by Typst: the theme's term style decides.
 #let adoc-dlist(items) = {
   let indent = pick("description_list_description_indent", default: 15pt)
   let spacing = pick("description_list_term_spacing", default: 4pt)
-  for (index, (term, description)) in items.enumerate() {
-    if index > 0 { v(prose-bottom) }
-    block(sticky: description != none, inset: (bottom: if description != none { spacing } else { 0pt }),
-      styled(("description_list_term",), term))
-    if description != none { pad(left: indent, description) }
-  }
+  set strong(delta: 0)
+  terms(
+    tight: false,
+    indent: 0pt,
+    hanging-indent: indent,
+    spacing: prose-bottom,
+    separator: [],
+    ..items.map(((term, description)) => terms.item(
+      styled(("description_list_term",), term),
+      if description == none { [] } else {
+        v(spacing)
+        set strong(delta: 300)
+        description
+      },
+    )),
+  )
 }
 
 #let adoc-hlist(items) = grid(
@@ -308,14 +326,14 @@
   ..items.map(((term, description)) => (styled(("description_list_term",), term), if description == none { [] } else { description })).flatten(),
 )
 
-#let adoc-admonition(kind, label, body) = {
+#let adoc-admonition(kind, label, body, fits: false) = {
   let padding = inset(pick("admonition_padding", default: (4pt, 12pt, 4pt, 12pt)))
   let label-padding = inset(pick("admonition_label_padding", default: pick("admonition_padding", default: (4pt, 12pt, 4pt, 12pt))))
   let rule = border(pick("admonition_column_rule_width", default: 0.5pt), pick("admonition_column_rule_color", "base_border_color"))
   let label = styled(("admonition_label_" + kind, "admonition_label"), transform(pick("admonition_label_" + kind + "_text_transform", "admonition_label_text_transform"), label))
   let label-align = alignment(pick("admonition_label_text_align", default: "center"), default: center)
   let valign = pick("admonition_label_vertical_align", default: "middle")
-  keep(block(
+  keep(fits: fits, block(
     width: 100%,
     fill: pick("admonition_background_color"),
     stroke: border(pick("admonition_border_width"), pick("admonition_border_color")),
@@ -333,11 +351,11 @@
 }
 
 // A listing, source or literal block.
-#let adoc-code(body) = {
+#let adoc-code(body, fits: false) = {
   let size = resolve-size(pick("code_font_size", default: base-size), base-size)
   let ratio = pick("code_line_height", default: 1.2)
   let conum-color = pick("conum_font_color", "codespan_font_color", default: base-color)
-  keep(block(
+  keep(fits: fits, block(
     width: 100%,
     fill: pick("code_background_color"),
     stroke: border(pick("code_border_width", default: 0.5pt), pick("code_border_color")),
@@ -386,9 +404,9 @@
   par(styled((prefix + "_cite",), [— ] + parts.join(", ")))
 }
 
-#let adoc-quote(body, attribution, citation, prefix: "quote") = {
+#let adoc-quote(body, attribution, citation, prefix: "quote", fits: false) = {
   let size = resolve-size(pick(prefix + "_font_size", default: base-size), base-size)
-  keep(block(
+  keep(fits: fits, block(
     width: 100%,
     stroke: (left: border(pick(prefix + "_border_left_width", default: 4pt), pick(prefix + "_border_color", "base_border_color"))),
     inset: inset(pick(prefix + "_padding", default: (3pt, 12pt, 3pt, 14pt))),
@@ -403,7 +421,7 @@
 
 // A sidebar or example: a framed container with an optional title inside (sidebar) or a
 // caption above (example, emitted by the caller).
-#let adoc-container(prefix, title, body) = keep(block(
+#let adoc-container(prefix, title, body, fits: false) = keep(fits: fits, block(
   width: 100%,
   fill: pick(prefix + "_background_color"),
   stroke: border(pick(prefix + "_border_width", default: 0.5pt), pick(prefix + "_border_color", "base_border_color")),
@@ -483,13 +501,17 @@
 
 #let adoc-unsupported(source) = adoc-code(raw(source, block: true))
 
-// Footnotes, gathered at the end of the document as asciidoctor-pdf places them.
+// Footnotes, gathered at the end of the document as asciidoctor-pdf places them. Every item has
+// the item spacing below it, the last one too, and it is that margin that meets the page's
+// bottom margin, as asciidoctor-pdf aligns the block.
 #let adoc-footnotes(items) = {
   if items.len() == 0 { return }
+  let spacing = pick("footnotes_item_spacing", default: 3pt)
   place(bottom, float: true, clearance: block-bottom, {
     set text(size: resolve-size(pick("footnotes_font_size", default: base-size * 0.75), base-size), fill: pick("footnotes_font_color", default: base-color))
     set par(justify: false)
-    stack(spacing: pick("footnotes_item_spacing", default: 3pt), ..items.map(((number, dest, body)) => [#adoc-link(dest, [\[#number\]]) #body]))
+    stack(spacing: spacing, ..items.map(((number, dest, body)) => [#adoc-link(dest, [\[#number\]]) #body]))
+    v(spacing)
   })
 }
 
@@ -626,16 +648,29 @@
   )
 }
 
+// The headings a running title can name at `levels`, each with the page it starts on, in
+// document order. It does not depend on the page asking, so Typst works it out once for every
+// page instead of filtering the document's headings again on each.
+#let running-headings(levels) = (
+  query(heading)
+    .filter(h => h.level >= levels.at(0) and h.level <= levels.at(1) and h.bookmarked == true)
+    .map(h => (h.location().page(), h.body))
+)
+
 // The heading that a running title names on the page being drawn: the first that starts on
 // it, else the last before it, as asciidoctor-pdf indexes sections by the page they start on.
 #let running-title(levels) = {
   if levels == none { return [] }
   let page-number = here().page()
-  let found = query(heading).filter(h => h.level >= levels.at(0) and h.level <= levels.at(1) and h.bookmarked == true)
-  let on-page = found.filter(h => h.location().page() == page-number)
-  if on-page.len() > 0 { return on-page.first().body }
-  let before = found.filter(h => h.location().page() < page-number)
-  if before.len() > 0 { before.last().body } else { [] }
+  let found = running-headings(levels)
+  // The first heading starting on this page or after it.
+  let (low, high) = (0, found.len())
+  while low < high {
+    let middle = calc.div-euclid(low + high, 2)
+    if found.at(middle).at(0) < page-number { low = middle + 1 } else { high = middle }
+  }
+  if low < found.len() and found.at(low).at(0) == page-number { return found.at(low).at(1) }
+  if low > 0 { found.at(low - 1).at(1) } else { [] }
 }
 
 // The header or footer of the page being drawn, from the theme's `<periphery>_*` keys and the

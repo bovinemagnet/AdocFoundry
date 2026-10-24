@@ -323,7 +323,8 @@ fn writes_the_book() {
 fn pages_the_parser_cannot_read_are_reported() {
     let (directory, root, mut engine) = book_workspace("");
     let page = root.join("guide/modules/ROOT/pages/unreadable.adoc");
-    fs::write(&page, "= Unreadable\n\ninclude::install.adoc[foo=bar]\n").unwrap();
+    // A line range acdc cannot read makes it reject the page.
+    fs::write(&page, "= Unreadable\n\ninclude::install.adoc[lines=abc]\n").unwrap();
     let id = engine.open(&page).unwrap();
     let (summary, _) = export(&mut engine, directory.path(), ExportTarget::Page(id));
     let reported = summary.diagnostics.iter().find(|diagnostic| {

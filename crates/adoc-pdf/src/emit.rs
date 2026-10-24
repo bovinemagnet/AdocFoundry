@@ -291,7 +291,8 @@ impl<'a> Emitter<'a> {
                     let body = this.out.split_off(start);
                     let _ = writeln!(
                         this.out,
-                        "#adoc-captioned([{caption}], [{}], below: {below})\n",
+                        "#adoc-captioned({}[{caption}], [{}], below: {below})\n",
+                        fits_argument(block),
                         body.trim_end()
                     );
                 }
@@ -462,7 +463,7 @@ impl<'a> Emitter<'a> {
                     _ => {
                         let entries: Vec<String> = entries
                             .iter()
-                            .map(|(term, description)| format!("([{term}\n\n], {description})"))
+                            .map(|(term, description)| format!("([{term}], {description})"))
                             .collect();
                         let _ = writeln!(self.out, "#adoc-dlist(({},))\n", entries.join(", "));
                     }
@@ -487,7 +488,8 @@ impl<'a> Emitter<'a> {
                 };
                 let _ = writeln!(
                     self.out,
-                    "#adoc-admonition({}, {}, {body})\n",
+                    "#adoc-admonition({}{}, {}, {body})\n",
+                    fits_argument(block),
                     string(admonition_name(*kind)),
                     string(admonition_label(*kind))
                 );
@@ -506,12 +508,18 @@ impl<'a> Emitter<'a> {
                 };
                 let _ = writeln!(
                     self.out,
-                    "#adoc-code(raw({}, block: true{lang}))\n",
+                    "#adoc-code({}raw({}, block: true{lang}))\n",
+                    fits_argument(block),
                     string(&code)
                 );
             }
             ViewKind::Literal(text) => {
-                let _ = writeln!(self.out, "#adoc-code(raw({}, block: true))\n", string(text));
+                let _ = writeln!(
+                    self.out,
+                    "#adoc-code({}raw({}, block: true))\n",
+                    fits_argument(block),
+                    string(text)
+                );
             }
             ViewKind::Quote {
                 attribution,
@@ -521,7 +529,8 @@ impl<'a> Emitter<'a> {
                 let body = self.content(blocks);
                 let _ = writeln!(
                     self.out,
-                    "#adoc-quote({body}, {}, {})\n",
+                    "#adoc-quote({}{body}, {}, {})\n",
+                    fits_argument(block),
                     optional_string(attribution.as_deref()),
                     optional_string(citation.as_deref())
                 );
@@ -534,7 +543,8 @@ impl<'a> Emitter<'a> {
                 let lines: Vec<String> = text.split('\n').map(verbatim_line).collect();
                 let _ = writeln!(
                     self.out,
-                    "#adoc-quote([{}], {}, {}, prefix: \"verse\")\n",
+                    "#adoc-quote({}[{}], {}, {}, prefix: \"verse\")\n",
+                    fits_argument(block),
                     lines.join("#linebreak()"),
                     optional_string(attribution.as_deref()),
                     optional_string(citation.as_deref())
@@ -545,11 +555,19 @@ impl<'a> Emitter<'a> {
                     .caption_text(block)
                     .map_or_else(|| "none".to_owned(), |title| format!("[{title}]"));
                 let body = self.content(blocks);
-                let _ = writeln!(self.out, "#adoc-container(\"sidebar\", {title}, {body})\n");
+                let fits = fits_argument(block);
+                let _ = writeln!(
+                    self.out,
+                    "#adoc-container({fits}\"sidebar\", {title}, {body})\n"
+                );
             }
             ViewKind::Example(blocks) => {
                 let body = self.content(blocks);
-                let _ = writeln!(self.out, "#adoc-container(\"example\", none, {body})\n");
+                let fits = fits_argument(block);
+                let _ = writeln!(
+                    self.out,
+                    "#adoc-container({fits}\"example\", none, {body})\n"
+                );
             }
             ViewKind::Open(blocks) => {
                 let body = self.content(blocks);
@@ -1142,6 +1160,78 @@ fn admonition_label(kind: AdmonitionKind) -> &'static str {
 }
 
 /// Listing text with each callout's circled number at the end of its line.
+/// Lines a block's estimate may reach and still be kept whole without measuring it: well under a
+/// page even at a large base font size or on small paper.
+const FITS_LINES: usize = 20;
+
+/// `fits: true, ` for a block that its text shows fits on a page, so the template keeps it
+/// whole without measuring it; empty otherwise, and the block is measured.
+fn fits_argument(block: &ViewBlock) -> &'static str {
+    if estimated_lines(block).is_some_and(|lines| lines <= FITS_LINES) {
+        "fits: true, "
+    } else {
+        ""
+    }
+}
+
+/// The lines a block can take at most, estimated generously from its text: each line of code
+/// or verse, a line for every 60 characters of a paragraph, and one for the spacing around each
+/// block. `None` when its height cannot be told from its text: images, diagrams, media, tables,
+/// maths, raw and unsupported content.
+fn estimated_lines(block: &ViewBlock) -> Option<usize> {
+    const CHARACTERS_PER_LINE: usize = 60;
+    fn text_lines(text: &str) -> usize {
+        text.lines()
+            .map(|line| 1 + line.chars().count() / CHARACTERS_PER_LINE)
+            .sum::<usize>()
+            .max(1)
+    }
+    fn inline_lines(inlines: &[ViewInline]) -> usize {
+        1 + ViewInline::plain_text(inlines).chars().count() / CHARACTERS_PER_LINE
+    }
+    fn blocks_lines(blocks: &[ViewBlock]) -> Option<usize> {
+        blocks
+            .iter()
+            .map(|block| estimated_lines(block).map(|lines| lines + 1))
+            .sum()
+    }
+    match &block.kind {
+        ViewKind::Paragraph(content) => Some(inline_lines(content)),
+        ViewKind::Heading { title, .. } => Some(inline_lines(title) + 1),
+        ViewKind::Section { title, blocks, .. } => {
+            Some(inline_lines(title) + 1 + blocks_lines(blocks)?)
+        }
+        ViewKind::List { items, .. } => items
+            .iter()
+            .map(|item| Some(inline_lines(&item.content) + blocks_lines(&item.blocks)?))
+            .sum(),
+        ViewKind::DescriptionList(items) => items
+            .iter()
+            .map(|item| {
+                Some(
+                    inline_lines(&item.term)
+                        + inline_lines(&item.content)
+                        + blocks_lines(&item.blocks)?,
+                )
+            })
+            .sum(),
+        ViewKind::CalloutList(items) => items
+            .iter()
+            .map(|item| Some(inline_lines(&item.content) + blocks_lines(&item.blocks)?))
+            .sum(),
+        ViewKind::Admonition { blocks, .. }
+        | ViewKind::Quote { blocks, .. }
+        | ViewKind::Sidebar(blocks)
+        | ViewKind::Example(blocks)
+        | ViewKind::Open(blocks) => Some(blocks_lines(blocks)? + 2),
+        ViewKind::Code { text, .. } | ViewKind::Literal(text) | ViewKind::Verse { text, .. } => {
+            Some(text_lines(text) + 1)
+        }
+        ViewKind::ThematicBreak => Some(1),
+        _ => None,
+    }
+}
+
 fn with_callouts(text: &str, callouts: &[adoc_render::Callout]) -> String {
     if callouts.is_empty() {
         return text.to_owned();

@@ -633,3 +633,120 @@ fn include_attributes_may_have_spaces() {
     let range = after.meta.span.range;
     assert_eq!(&text[range.start..range.end], "After.");
 }
+
+#[test]
+fn unknown_include_attributes_are_ignored() {
+    // Asciidoctor ignores attributes an include does not use; acdc rejects them.
+    let text =
+        "= Page\n\ninclude::tagged.adoc[tag=a,subs=\"attributes+\", leveloffset=+1]\n\nAfter.\n";
+    let dom = AcdcParser.parse(&ParseInput {
+        path: Path::new("/page.adoc"),
+        text,
+        attributes: Vec::new(),
+        includes: Arc::new(Tagged),
+    });
+    assert!(dom.warnings.is_empty(), "{:?}", dom.warnings);
+    let texts: Vec<String> = dom
+        .walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Paragraph { inlines } => Some(Inline::plain_text(inlines)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["Tagged text.", "After."]);
+    let after = dom.walk().into_iter().last().unwrap();
+    assert_eq!(
+        &text[after.meta.span.range.start..after.meta.span.range.end],
+        "After."
+    );
+}
+
+#[test]
+fn tabbed_section_titles_parse() {
+    // A tab between a title's `=` and its text is a separator, as a space is; inside a listing
+    // it is kept as written.
+    let text =
+        "= Page\n\n== One\n\n=== Two\n\n====\tDeep\n\n===\tBack\n\n----\n==\tnot a title\n----\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    assert!(dom.warnings.is_empty(), "{:?}", dom.warnings);
+    let titles: Vec<String> = dom
+        .walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Section { title, .. } => Some(Inline::plain_text(title)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(titles, ["One", "Two", "Deep", "Back"]);
+    let listing = dom
+        .walk()
+        .into_iter()
+        .find_map(|block| match &block.kind {
+            BlockKind::Listing { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(listing, "==\tnot a title");
+}
+
+struct Partial;
+
+impl IncludeResolver for Partial {
+    fn read(&self, requested: &Path) -> Option<(PathBuf, String)> {
+        requested.ends_with("partial.adoc").then(|| {
+            (
+                PathBuf::from("/partial.adoc"),
+                "// tag::a[]\n----\ncode\n// tag::b[]\nmore\n// end::b[]\n----\n// end::a[]\n"
+                    .to_owned(),
+            )
+        })
+    }
+}
+
+fn listings(dom: &adoc_dom::Dom) -> Vec<String> {
+    dom.walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Listing { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn tagged_includes_drop_other_tag_directives() {
+    // As Asciidoctor: including by tag drops every tag directive line; a whole file keeps them.
+    let text = "= Page\n\ninclude::partial.adoc[tag=a]\n\ninclude::partial.adoc[]\n";
+    let dom = AcdcParser.parse(&ParseInput {
+        path: Path::new("/page.adoc"),
+        text,
+        attributes: Vec::new(),
+        includes: Arc::new(Partial),
+    });
+    assert_eq!(
+        listings(&dom),
+        ["code\nmore", "code\n// tag::b[]\nmore\n// end::b[]"]
+    );
+}
+
+#[test]
+fn callout_items_drop_tag_directives() {
+    let text = "= Page\n\n[source,ruby]\n----\nputs 1 # <1>\n----\n<1> Prints.\n// end::x[]\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let items: Vec<String> = dom
+        .walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::CalloutList { items } => Some(
+                items
+                    .iter()
+                    .map(|item| Inline::plain_text(&item.content))
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(items, ["Prints."]);
+}

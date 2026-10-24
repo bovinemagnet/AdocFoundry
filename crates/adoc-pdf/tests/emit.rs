@@ -45,6 +45,8 @@ fn emits_every_block_kind() {
     let path = common::fixtures().join("render/blocks.adoc");
     let pages = common::article(common::view_of(&path));
     let typst = to_typst(&pages, &common::default_theme(), &PdfOptions::default());
+    // Which blocks are known to fit on a page is checked on its own.
+    let source = typst.source.replace("fits: true, ", "");
     for call in [
         "#heading(level: 2",
         "#adoc-list(",
@@ -60,11 +62,7 @@ fn emits_every_block_kind() {
         "#adoc-open(",
         "#adoc-break()",
     ] {
-        assert!(
-            typst.source.contains(call),
-            "no {call} in\n{}",
-            typst.source
-        );
+        assert!(source.contains(call), "no {call} in\n{source}");
     }
     // And it typesets.
     assert!(!compiled_text(&typst).is_empty());
@@ -280,4 +278,39 @@ fn passthrough_is_text() {
     let text: String = pages.concat();
     assert!(squeeze(&text).contains("#setpage(width:10pt)"));
     assert!(squeeze(&text).contains("#pagebreak()#pagebreak()"));
+}
+
+#[test]
+fn only_blocks_that_may_not_fit_are_measured() {
+    // A block asciidoctor-pdf keeps together is measured only when its text cannot show that
+    // it fits on a page: measuring every block cost most of a book's memory.
+    let long_code: String = (1..=200).map(|line| format!("line {line}\n")).collect();
+    let text = format!(
+        "= Page\n\nNOTE: A short note.\n\n----\nshort code\n----\n\n----\n{long_code}----\n\n====\nAn example with a picture.\n\nimage::missing.png[]\n====\n"
+    );
+    let view = common::view_of_text(std::path::Path::new("/doc/page.adoc"), &text);
+    let typst = to_typst(
+        &common::article(view),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    let calls = |name: &str| -> Vec<String> {
+        typst
+            .source
+            .lines()
+            .filter(|line| line.starts_with(name))
+            .map(str::to_owned)
+            .collect()
+    };
+    let fits = |call: &str| call.contains("(fits: true, ");
+    let admonitions = calls("#adoc-admonition(");
+    assert!(fits(&admonitions[0]), "{admonitions:?}");
+    let code = calls("#adoc-code(");
+    assert!(fits(&code[0]), "{code:?}");
+    assert!(!fits(&code[1]), "the long listing is measured");
+    let containers = calls("#adoc-container(");
+    assert!(
+        !fits(&containers[0]),
+        "an image's height is not known from text"
+    );
 }

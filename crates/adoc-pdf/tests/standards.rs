@@ -233,6 +233,20 @@ fn the_tag_tree_reads_in_order() {
             assert_eq!(children, ["Lbl", "LBody"], "list item {index}");
         }
     }
+    // The checklist and the description list of section 2.2 are both lists.
+    let checklists = tree
+        .iter()
+        .position(|(_, _, title)| title == "2.2. Checklists and descriptions")
+        .unwrap();
+    let admonitions = tree
+        .iter()
+        .position(|(_, _, title)| title == "3. Admonitions")
+        .unwrap();
+    let lists_in_section = tree[checklists..admonitions]
+        .iter()
+        .filter(|(_, kind, _)| kind == "L")
+        .count();
+    assert_eq!(lists_in_section, 2, "{:?}", &tree[checklists..admonitions]);
     assert!(kinds.contains(&"Table") && kinds.contains(&"TH") && kinds.contains(&"TD"));
     assert!(tree
         .iter()

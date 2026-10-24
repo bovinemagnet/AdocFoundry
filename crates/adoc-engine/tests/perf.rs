@@ -80,3 +80,67 @@ fn keystroke_on_a_5000_line_document() {
         diagnostics.len()
     );
 }
+
+/// A book's export, for its time and peak memory: 300 pages of sections, admonitions, code and
+/// tables in one component's navigation. Run it under `/usr/bin/time -l` (macOS) or
+/// `/usr/bin/time -v` (Linux) to read the peak; a 1,833-page documentation book peaked at
+/// 9.3 GB and took 13 s once blocks known to fit stopped being measured and running titles
+/// stopped filtering every heading on every page.
+#[test]
+#[ignore = "memory probe"]
+fn book_memory_probe() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("probe");
+    let pages = root.join("modules/ROOT/pages");
+    fs::create_dir_all(&pages).unwrap();
+    fs::write(
+        root.join("antora.yml"),
+        "name: probe\ntitle: Probe\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    let mut nav = String::new();
+    for page in 0..300 {
+        let mut text = format!("= Page {page}\n\nAn introduction to page {page}.\n\n");
+        for section in 0..10 {
+            let _ = write!(
+                text,
+                "== Section {section}\n\nA paragraph of the section, long enough to wrap onto a second line of the page.\n\n\
+                 NOTE: A note in section {section}.\n\n[source,rust]\n----\nfn section_{section}() {{}}\n----\n\n\
+                 |===\n|Key |Value\n|one |1\n|two |2\n|===\n\n"
+            );
+        }
+        fs::write(pages.join(format!("page-{page}.adoc")), text).unwrap();
+        let _ = writeln!(nav, "* xref:page-{page}.adoc[Page {page}]");
+    }
+    fs::write(root.join("modules/ROOT/nav.adoc"), nav).unwrap();
+
+    let mut settings = Settings::load(None, None).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(120)));
+    let started = Instant::now();
+    let summary = engine
+        .export_blocking(
+            adoc_engine::ExportArgs {
+                target: adoc_engine::ExportTarget::Component {
+                    name: "probe".to_owned(),
+                    version: Some("1.0".to_owned()),
+                },
+                output: directory.path().join("probe.pdf"),
+                theme: None,
+                standards: Vec::new(),
+                fonts_dir: None,
+                typst: None,
+            },
+            std::time::Duration::from_secs(600),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    eprintln!(
+        "book of {} pages exported in {:.1} s",
+        summary.pages,
+        started.elapsed().as_secs_f64()
+    );
+}

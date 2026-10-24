@@ -110,7 +110,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
                         map.insert(requested.clone(), (path, Arc::from(text.as_str())));
                     }
                     Ok(acdc::IncludeSource::from_reader(Cursor::new(
-                        unspace_include_attributes(&protect_resource_ids(&text)).into_bytes(),
+                        for_acdc(&text).into_bytes(),
                     )))
                 }
                 None => Err(acdc::IncludeSourceError::new(
@@ -135,7 +135,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         Ok(options) => options,
         Err(error) => return failed(&page, input.text, &error.to_string()),
     };
-    let protected = unspace_include_attributes(&protect_resource_ids(input.text));
+    let protected = for_acdc(input.text);
     let parsed = match acdc::parse(&protected, &options) {
         Ok(parsed) => parsed,
         Err(error) => return failed(&page, input.text, &error.to_string()),
@@ -184,10 +184,29 @@ fn protect_resource_ids(text: &str) -> String {
 /// Stands in, at the end of an include target, for a space taken out of its attribute list.
 const PROTECTED_SPACE: char = '\u{2}';
 
-/// `text` with the spaces after the commas of each include's attribute list taken out, and as
-/// many [`PROTECTED_SPACE`]s put at the end of its target: acdc rejects `[tag=a, leveloffset=+1]`,
-/// which Asciidoctor reads. The line keeps its length, so only offsets inside it move.
-fn unspace_include_attributes(text: &str) -> String {
+/// `text` rewritten where acdc rejects what Asciidoctor reads, keeping every line's length so
+/// spans are unchanged: include attribute lists tidied, and tabs after section title markers.
+fn for_acdc(text: &str) -> String {
+    untab_section_titles(&tidy_include_attributes(&protect_resource_ids(text)))
+}
+
+/// The include attributes acdc reads; Asciidoctor ignores any other.
+const INCLUDE_ATTRIBUTES: &[&str] = &[
+    "encoding",
+    "indent",
+    "leveloffset",
+    "lines",
+    "opts",
+    "tag",
+    "tags",
+];
+
+/// `text` with each include's attribute list tidied: the spaces after its commas and every
+/// attribute acdc does not read (`subs=`, positional values) taken out, and as many
+/// [`PROTECTED_SPACE`]s put at the end of its target. acdc rejects `[tag=a, leveloffset=+1]`
+/// and `[subs="attributes+"]`, which Asciidoctor reads. The line keeps its length, so only
+/// offsets inside it move.
+fn tidy_include_attributes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
         let content = line.trim_end_matches(['\r', '\n']);
@@ -195,31 +214,97 @@ fn unspace_include_attributes(text: &str) -> String {
             .strip_prefix("include::")
             .and_then(|rest| rest.find('['))
             .map(|open| "include::".len() + open)
-            .filter(|_| content.ends_with(']') && content.contains(", "));
+            .filter(|_| content.ends_with(']'));
         let Some(open) = open else {
             out.push_str(line);
             continue;
         };
-        let mut list = String::with_capacity(content.len() - open);
-        let (mut moved, mut quoted, mut after_comma) = (0, false, false);
-        for character in content[open..].chars() {
-            match character {
-                ' ' if after_comma => {
-                    moved += 1;
-                    continue;
-                }
-                '"' => quoted = !quoted,
-                _ => {}
-            }
-            after_comma = character == ',' && !quoted;
-            list.push(character);
+        let list = &content[open + 1..content.len() - 1];
+        let kept: Vec<&str> = split_attributes(list)
+            .into_iter()
+            .map(str::trim_start)
+            .filter(|entry| {
+                entry
+                    .split_once('=')
+                    .is_some_and(|(name, _)| INCLUDE_ATTRIBUTES.contains(&name.trim()))
+            })
+            .collect();
+        let tidied = kept.join(",");
+        if tidied.len() == list.len() {
+            out.push_str(line);
+            continue;
         }
         out.push_str(&content[..open]);
-        out.extend(std::iter::repeat_n(PROTECTED_SPACE, moved));
-        out.push_str(&list);
+        out.extend(std::iter::repeat_n(
+            PROTECTED_SPACE,
+            list.len() - tidied.len(),
+        ));
+        out.push('[');
+        out.push_str(&tidied);
+        out.push(']');
         out.push_str(&line[content.len()..]);
     }
     out
+}
+
+/// An attribute list's entries, split at commas outside double quotes.
+fn split_attributes(list: &str) -> Vec<&str> {
+    let mut entries = Vec::new();
+    let (mut start, mut quoted) = (0, false);
+    for (index, character) in list.char_indices() {
+        match character {
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                entries.push(&list[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < list.len() || !entries.is_empty() {
+        entries.push(&list[start..]);
+    }
+    entries
+}
+
+/// `text` with the tab between a section title's `=` markers and its text made a space, outside
+/// verbatim blocks: acdc misreads `===<tab>Title`, which Asciidoctor reads as a section.
+fn untab_section_titles(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut verbatim: Option<&str> = None;
+    for line in text.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\r', '\n']);
+        if let Some(delimiter) = verbatim {
+            if content == delimiter {
+                verbatim = None;
+            }
+            out.push_str(line);
+            continue;
+        }
+        if is_verbatim_delimiter(content) {
+            verbatim = Some(content);
+            out.push_str(line);
+            continue;
+        }
+        let markers = content.bytes().take_while(|byte| *byte == b'=').count();
+        if (1..=6).contains(&markers) && content[markers..].starts_with('\t') {
+            out.push_str(&content[..markers]);
+            out.push(' ');
+            out.push_str(&line[markers + 1..]);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// A delimiter line of a block whose content is not parsed: listing, literal, passthrough or
+/// comment, four or more of the same character.
+fn is_verbatim_delimiter(line: &str) -> bool {
+    line.len() >= 4
+        && ['-', '.', '+', '/']
+            .into_iter()
+            .any(|delimiter| line.chars().all(|character| character == delimiter))
 }
 
 /// `path` with `.` and `..` resolved without touching the file system, as acdc resolves the
@@ -512,7 +597,7 @@ impl Converter<'_> {
                         .map(|item| CalloutItem {
                             span: self.span(&item.location),
                             number: item.callout.number,
-                            content: self.inlines(&item.principal),
+                            content: self.prose(&item.principal),
                             blocks: self.blocks(&item.blocks),
                         })
                         .collect(),
@@ -837,7 +922,7 @@ impl Converter<'_> {
         out.into_iter().flat_map(split_inline_images).collect()
     }
 
-    /// The text of a paragraph or list item: as [`Self::inlines`], less its line comments.
+    /// The text of a paragraph, list item or callout: as [`Self::inlines`], less its line comments.
     fn prose(&self, nodes: &[acdc::InlineNode<'_>]) -> Vec<Inline> {
         drop_line_comments(self.inlines(nodes))
     }
