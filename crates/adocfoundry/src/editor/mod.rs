@@ -14,7 +14,7 @@ pub mod sync;
 use std::{cell::RefCell, rc::Rc};
 
 use adoc_core::{DiagnosticSeverity, SourceRange};
-use adoc_engine::{commands::ids, CommandArgs, DocumentId, EngineEvent};
+use adoc_engine::{commands::ids, CommandArgs, CommandId, CommandOutcome, DocumentId, EngineEvent};
 use gpui::{
     div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
@@ -238,6 +238,35 @@ impl SourceEditorView {
     /// The caret's byte offset.
     pub fn cursor(&self, cx: &gpui::App) -> usize {
         self.state.read(cx).cursor()
+    }
+
+    /// The selection, as byte offsets.
+    pub fn selection(&self, cx: &gpui::App) -> std::ops::Range<usize> {
+        self.state.read(cx).selected_range()
+    }
+
+    /// Toggles mark `command` (`edit.toggle_strong` and the like) over the selection, through
+    /// the engine, and keeps the marked text selected.
+    pub fn toggle_mark(&mut self, command: CommandId, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = self.selection(cx);
+        let document = self.document;
+        let outcome = self.app.update(cx, |app, cx| {
+            app.invoke(
+                command,
+                CommandArgs::Range {
+                    id: document,
+                    range: SourceRange::new(selection.start, selection.end),
+                },
+                cx,
+            )
+        });
+        if let Ok(CommandOutcome::Selection(selection)) = outcome {
+            self.reconcile(window, cx);
+            self.state.update(cx, |state, cx| {
+                let len = state.text().len();
+                state.set_selected_range(selection.start.min(len)..selection.end.min(len), cx);
+            });
+        }
     }
 
     /// Places the caret at `range` and focuses the editor.

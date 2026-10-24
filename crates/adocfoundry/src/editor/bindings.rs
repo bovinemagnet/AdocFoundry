@@ -12,6 +12,11 @@ actions!(
         Save,
         SaveAll,
         CloseDocument,
+        CloseOthers,
+        CloseLeft,
+        CloseRight,
+        CloseClean,
+        CloseAll,
         Undo,
         Redo,
         GoToDefinition,
@@ -116,6 +121,11 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::DOCUMENT_SAVE => KeyBinding::new(keys, Save, workspace),
         ids::DOCUMENT_SAVE_ALL => KeyBinding::new(keys, SaveAll, workspace),
         ids::DOCUMENT_CLOSE => KeyBinding::new(keys, CloseDocument, workspace),
+        ids::DOCUMENT_CLOSE_OTHERS => KeyBinding::new(keys, CloseOthers, workspace),
+        ids::DOCUMENT_CLOSE_LEFT => KeyBinding::new(keys, CloseLeft, workspace),
+        ids::DOCUMENT_CLOSE_RIGHT => KeyBinding::new(keys, CloseRight, workspace),
+        ids::DOCUMENT_CLOSE_CLEAN => KeyBinding::new(keys, CloseClean, workspace),
+        ids::DOCUMENT_CLOSE_ALL => KeyBinding::new(keys, CloseAll, workspace),
         ids::EDIT_UNDO => KeyBinding::new(keys, Undo, editor),
         ids::EDIT_REDO => KeyBinding::new(keys, Redo, editor),
         ids::NAVIGATE_DEFINITION => KeyBinding::new(keys, GoToDefinition, editor),
@@ -177,6 +187,11 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::DOCUMENT_SAVE => Box::new(Save),
         ids::DOCUMENT_SAVE_ALL => Box::new(SaveAll),
         ids::DOCUMENT_CLOSE => Box::new(CloseDocument),
+        ids::DOCUMENT_CLOSE_OTHERS => Box::new(CloseOthers),
+        ids::DOCUMENT_CLOSE_LEFT => Box::new(CloseLeft),
+        ids::DOCUMENT_CLOSE_RIGHT => Box::new(CloseRight),
+        ids::DOCUMENT_CLOSE_CLEAN => Box::new(CloseClean),
+        ids::DOCUMENT_CLOSE_ALL => Box::new(CloseAll),
         ids::EDIT_UNDO => Box::new(Undo),
         ids::EDIT_REDO => Box::new(Redo),
         ids::NAVIGATE_DEFINITION => Box::new(GoToDefinition),
@@ -295,9 +310,16 @@ pub fn bind(engine: &Engine, cx: &mut App) {
         let Some(keys) = spec.default_binding.map(platform_binding) else {
             continue;
         };
+        // The marks work in the source editor too, on its selection.
+        let editor = Some(EDITOR_CONTEXT);
         match spec.id {
             ids::EDIT_UNDO => bindings.push(KeyBinding::new(&keys, Undo, visual)),
             ids::EDIT_REDO => bindings.push(KeyBinding::new(&keys, Redo, visual)),
+            ids::EDIT_TOGGLE_STRONG => bindings.push(KeyBinding::new(&keys, ToggleStrong, editor)),
+            ids::EDIT_TOGGLE_EMPHASIS => {
+                bindings.push(KeyBinding::new(&keys, ToggleEmphasis, editor));
+            }
+            ids::EDIT_TOGGLE_CODE => bindings.push(KeyBinding::new(&keys, ToggleCode, editor)),
             _ => {}
         }
     }

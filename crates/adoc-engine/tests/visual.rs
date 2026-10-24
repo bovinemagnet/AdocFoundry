@@ -576,21 +576,69 @@ fn visual_commands_are_unavailable_in_source_mode() {
     let id = engine
         .open(&page(directory.path(), "page.adoc", "= Page\n\nWords.\n"))
         .unwrap();
-    // Source mode: the visual editor's commands are not offered; document commands are.
-    assert!(!engine.command_available(ids::EDIT_TOGGLE_STRONG));
+    // Source mode: the visual editor's own commands are not offered; document commands are,
+    // and so are the marks, which the source editor toggles too.
+    assert!(!engine.command_available(ids::EDIT_TOGGLE_BULLET_LIST));
     assert!(!engine.command_available(ids::VISUAL_SPLIT_BLOCK));
+    assert!(engine.command_available(ids::EDIT_TOGGLE_STRONG));
     assert!(engine.command_available(ids::VIEW_SHOW_VISUAL));
     assert!(engine.command_available(ids::DOCUMENT_SAVE));
     show_visual(&mut engine, id);
-    assert!(engine.command_available(ids::EDIT_TOGGLE_STRONG));
+    assert!(engine.command_available(ids::EDIT_TOGGLE_BULLET_LIST));
     engine
         .invoke(ids::VIEW_SHOW_SPLIT, CommandArgs::Document(id))
         .unwrap();
-    assert!(engine.command_available(ids::EDIT_TOGGLE_STRONG));
+    assert!(engine.command_available(ids::EDIT_TOGGLE_BULLET_LIST));
     engine
         .invoke(ids::VIEW_SHOW_SOURCE, CommandArgs::Document(id))
         .unwrap();
-    assert!(!engine.command_available(ids::EDIT_TOGGLE_STRONG));
+    assert!(!engine.command_available(ids::EDIT_TOGGLE_BULLET_LIST));
     // Unknown commands are not available.
     assert!(!engine.command_available(adoc_engine::CommandId::new("no.such_command")));
+}
+
+#[test]
+fn marks_toggle_a_source_selection() {
+    // Bold, italic, code and highlight work in the source editor too, on its selection.
+    let directory = tempfile::tempdir().unwrap();
+    let path = page(directory.path(), "page.adoc", "= Page\n\nA bold word.\n");
+    let (mut engine, _clock) = engine_with_clock();
+    let id = engine.open(&path).unwrap();
+    assert_eq!(engine.editor_mode(id), EditorMode::Source);
+    assert!(engine.command_available(ids::EDIT_TOGGLE_STRONG));
+
+    let bold = SourceRange::new(10, 14);
+    let outcome = engine
+        .invoke(
+            ids::EDIT_TOGGLE_STRONG,
+            CommandArgs::Range { id, range: bold },
+        )
+        .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nA *bold* word.\n");
+    assert_eq!(outcome, CommandOutcome::Selection(SourceRange::new(11, 15)));
+
+    // Toggled again from that selection, the mark goes; one undo brings it back.
+    engine
+        .invoke(
+            ids::EDIT_TOGGLE_STRONG,
+            CommandArgs::Range {
+                id,
+                range: SourceRange::new(11, 15),
+            },
+        )
+        .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nA bold word.\n");
+    assert!(engine.undo(id));
+    assert_eq!(text(&engine, id), "= Page\n\nA *bold* word.\n");
+
+    engine
+        .invoke(
+            ids::EDIT_TOGGLE_CODE,
+            CommandArgs::Range {
+                id,
+                range: SourceRange::new(17, 21),
+            },
+        )
+        .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nA *bold* `word`.\n");
 }

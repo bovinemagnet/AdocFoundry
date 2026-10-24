@@ -73,6 +73,45 @@ Typed characters within 500 ms of each other coalesce.
 Tabs follow the active document, so opening a page by any route (the sidebar, link following, the palette or a rename) shows it in a tab.
 With the preview docked, the tab strip scrolls to keep the active page's tab in view, including when a page becomes active by following a link or through the outline.
 
+Each tab has an X button that closes it, asking first if the page has unsaved changes.
+Tabs are in the order the pages were opened.
+Right-click a tab for a menu that acts on that tab, not necessarily the active one:
+
+* *Close* closes the tab.
+* *Close Others* closes every other tab.
+* *Close Left* and *Close Right* close the tabs to its left or right.
+* *Close Clean* closes every tab without unsaved changes.
+* *Close All* closes every tab.
+
+Items that would close nothing are greyed out, such as Close Left on the first tab.
+Right-clicking the empty part of the tab bar offers only Close Clean and Close All.
+The same commands are in the palette and act on the active tab; see xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for their keys.
+When any of the tabs to be closed has unsaved changes, you are asked once, naming them (for example "a.adoc and b.adoc have unsaved changes."): Discard closes them all and Cancel closes none.
+Close Clean never asks, since it leaves unsaved tabs open.
+
+The ← and → buttons at the start of the tab bar are Go Back and Go Forward through the places you have followed links to.
+Each is greyed out when there is nowhere to go.
+
+[[formatting-text]]
+== Formatting text in the source editor
+
+Bold (`Cmd-B` or `Ctrl-B`), Italic (`Cmd-I` or `Ctrl-I`) and Code (`Cmd-E` or `Ctrl-E`) toggle a mark around the selection in the source editor, with the same keys as the visual editor.
+Highlight has no key and is in the command palette.
+They work in Source mode and on the source side of Split mode.
+
+* The constrained form (`+*bold*+`, `+_italic_+`, `+`code`+` and `+#highlight#+`) is used where it is valid.
+Where it cannot be, such as part of a word (`+un**break**able+`), the unconstrained form (`+**+`, `+__+`, `+``+` and `+##+`) is used.
+* Spaces at the edges of the selection stay outside the mark.
+* If the selection is already marked, with its delimiters just inside or just outside it, the command removes the mark.
+Another mark's delimiters do not count, so bolding an italic word gives `+_**word**_+`.
+* A selection over several lines marks each line on its own, because a mark never runs across lines, which might be list items or block delimiters.
+Blank lines are skipped.
+If every line is already marked, all are unmarked; otherwise only the unmarked lines are marked.
+* With nothing selected, an empty pair of delimiters is inserted with the caret between them, ready to type.
+
+The marked text stays selected afterwards, so pressing the key again undoes the mark.
+Each toggle is one undo step.
+
 == Following links
 
 Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+Enter]) on a reference follows it:
@@ -93,7 +132,7 @@ include::example$link-following.mmd[]
 === Back and forward
 
 Every followed link is recorded.
-Go Back (`Ctrl-minus`) and Go Forward (`Ctrl-Shift-minus`) move through that history, also available from the arrows in the title bar.
+Go Back (`Ctrl-minus`) and Go Forward (`Ctrl-Shift-minus`) move through that history, also available from the arrows in the title bar and at the start of the tab bar.
 These two bindings use Ctrl on every platform, including macOS.
 
 === Peek an include
@@ -142,7 +181,8 @@ Saving it applies the change.
 See xref:settings.adoc[Settings].
 
 The command palette lists every command with its title.
-Commands that apply only to the visual editor, such as Bold, Italic and the list and block commands, are listed only while the active page is shown in Visual or Split mode.
+Bold, Italic, Code and Highlight are listed in every mode.
+The other commands that apply only to the visual editor, such as the list and block commands and Insert Link, are listed only while the active page is shown in Visual or Split mode.
 Commands that need an open page are hidden when none is open, and Antora-only commands are hidden when the workspace has no Antora component.
 
 == The line and column in the status bar

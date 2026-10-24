@@ -87,6 +87,87 @@ fn open_edit_save_round_trip() {
     assert!(engine.document(id).is_none());
 }
 
+/// Opens `count` untitled documents, in tab order.
+fn open_tabs(engine: &mut Engine, count: usize) -> Vec<DocumentId> {
+    (0..count).map(|_| engine.open_untitled()).collect()
+}
+
+fn open_ids(engine: &Engine) -> Vec<DocumentId> {
+    engine.documents().map(|document| document.id).collect()
+}
+
+#[test]
+fn close_others_left_right_clean_and_all() {
+    let mut engine = Engine::new(Settings::default());
+    let tabs = open_tabs(&mut engine, 5);
+    let [a, b, c, d, e] = tabs[..] else {
+        unreachable!()
+    };
+    insert(&mut engine, b, 0, "unsaved");
+
+    // What each command would close, in tab order, so a front end can ask about unsaved ones.
+    assert_eq!(engine.closed_by(ids::DOCUMENT_CLOSE, c), vec![c]);
+    assert_eq!(
+        engine.closed_by(ids::DOCUMENT_CLOSE_OTHERS, c),
+        vec![a, b, d, e]
+    );
+    assert_eq!(engine.closed_by(ids::DOCUMENT_CLOSE_LEFT, c), vec![a, b]);
+    assert_eq!(engine.closed_by(ids::DOCUMENT_CLOSE_RIGHT, c), vec![d, e]);
+    assert_eq!(
+        engine.closed_by(ids::DOCUMENT_CLOSE_CLEAN, c),
+        vec![a, c, d, e]
+    );
+    assert_eq!(engine.closed_by(ids::DOCUMENT_CLOSE_ALL, c), tabs);
+
+    engine
+        .invoke(ids::DOCUMENT_CLOSE_RIGHT, CommandArgs::Document(c))
+        .unwrap();
+    assert_eq!(open_ids(&engine), vec![a, b, c]);
+    engine
+        .invoke(ids::DOCUMENT_CLOSE_LEFT, CommandArgs::Document(b))
+        .unwrap();
+    assert_eq!(open_ids(&engine), vec![b, c]);
+    engine
+        .invoke(ids::DOCUMENT_CLOSE_CLEAN, CommandArgs::None)
+        .unwrap();
+    assert_eq!(
+        open_ids(&engine),
+        vec![b],
+        "the unsaved document stays open"
+    );
+
+    let [f, g] = open_tabs(&mut engine, 2)[..] else {
+        unreachable!()
+    };
+    engine
+        .invoke(ids::DOCUMENT_CLOSE_OTHERS, CommandArgs::Document(f))
+        .unwrap();
+    assert_eq!(open_ids(&engine), vec![f]);
+    assert_eq!(engine.active(), Some(f));
+    let _ = g;
+    engine
+        .invoke(ids::DOCUMENT_CLOSE_ALL, CommandArgs::None)
+        .unwrap();
+    assert!(open_ids(&engine).is_empty());
+    assert_eq!(engine.active(), None);
+}
+
+#[test]
+fn closing_the_tabs_of_an_unknown_document_closes_nothing() {
+    let mut engine = Engine::new(Settings::default());
+    let [a, b] = open_tabs(&mut engine, 2)[..] else {
+        unreachable!()
+    };
+    engine
+        .invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(b))
+        .unwrap();
+    assert!(engine.closed_by(ids::DOCUMENT_CLOSE_OTHERS, b).is_empty());
+    assert!(engine
+        .invoke(ids::DOCUMENT_CLOSE_OTHERS, CommandArgs::Document(b))
+        .is_err());
+    assert_eq!(open_ids(&engine), vec![a]);
+}
+
 #[test]
 fn undo_redo_single_group() {
     let mut engine = Engine::new(Settings::default());

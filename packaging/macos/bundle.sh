@@ -26,12 +26,13 @@ for tool in ${tools[@]+"${tools[@]}"}; do
 done
 sed "s/@VERSION@/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 
-# An .icns from the SVG master, at every size macOS asks for.
+# An .icns from the 1024-pixel master, at every size macOS asks for.
+master="$here/../icons/adocfoundry.png"
 iconset="$out/AdocFoundry.iconset"
 rm -rf "$iconset" && mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-  rsvg-convert -w "$size" -h "$size" "$here/../icons/adocfoundry.svg" -o "$iconset/icon_${size}x${size}.png"
-  rsvg-convert -w "$((size * 2))" -h "$((size * 2))" "$here/../icons/adocfoundry.svg" -o "$iconset/icon_${size}x${size}@2x.png"
+  sips -z "$size" "$size" "$master" --out "$iconset/icon_${size}x${size}.png" > /dev/null
+  sips -z "$((size * 2))" "$((size * 2))" "$master" --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AdocFoundry.icns"
 rm -rf "$iconset"

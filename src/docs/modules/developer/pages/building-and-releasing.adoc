@@ -89,7 +89,7 @@ include::example$release-pipeline.mmd[]
 |===
 
 Code signing is planned for Phase 6: a macOS Developer ID with notarisation, and a Windows certificate.
-The first release, 0.1.0, is unsigned: the macOS app is ad-hoc signed and the Windows installer has no signature.
+Releases are unsigned until Phase 6: the macOS app is ad-hoc signed and the Windows installer has no signature.
 
 === The macOS bundle script
 
@@ -123,9 +123,31 @@ The packages for macOS and Windows have not been installed and run by hand yet; 
 == cargo xtask package
 
 `cargo xtask package` is a local dry run for the host platform.
-It builds the four binaries (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`) in release mode, with `adoc-ls` built with its features,, stages them in `dist/` with the licence and README (and, on Linux, the desktop entry and icon), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
+It builds the four binaries (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`) in release mode, with `adoc-ls` built with its features,, stages them in `dist/` with the licence and README (and, on Linux, the desktop entry and the icon as `io.github.bovinemagnet.AdocFoundry.png`), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
 The version is read from `workspace.package.version` in the root `Cargo.toml`.
 The installers themselves come from the release workflow.
+
+== The app icon
+
+The icon is a raster image in `packaging/icons/`: `adocfoundry.png` (1024 × 1024, the master, with transparent corners), `adocfoundry-256.png` (256 × 256) and `adocfoundry.ico` (16 to 256 px, for Windows).
+The source artwork is `src/icons/adoc_foundry_icon.png`.
+There is no SVG, and `librsvg` is not needed.
+
+[cols="1,3"]
+|===
+|Platform |Use
+
+|macOS
+|`packaging/macos/bundle.sh` makes the `.icns` from the 1024 master with `sips`, which is built into macOS.
+
+|Linux
+|The deb, rpm and Flatpak install the 256 PNG as `share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png`.
+The AppImage uses the same PNG, and `cargo xtask package` puts it in the archive as `io.github.bovinemagnet.AdocFoundry.png`.
+
+|Windows
+|`crates/adocfoundry/build.rs` embeds `adocfoundry.ico` in `adocfoundry.exe` as icon resource 1, where GPUI looks for the window icon, using the `embed-resource` crate.
+The MSI (`crates/adocfoundry/wix/main.wxs`) gives the Start-menu shortcut and the Programs and Features entry the same icon.
+|===
 
 == Release records
 
@@ -134,7 +156,7 @@ The installers themselves come from the release workflow.
 The manual checks for a release are in `docs/qa/phase5.md`.
 Every item of `docs/qa/phase1.md` to `docs/qa/phase4.md` is also re-run on all three platforms.
 
-The documentation site stays unversioned and shows `0.1.0` as its display version, set in `src/docs/antora.yml`.
+The documentation site stays unversioned and shows `0.2.0` as its display version, set in `src/docs/antora.yml`.
 
 == Conventions for contributions
 

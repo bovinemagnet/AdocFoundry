@@ -4,7 +4,7 @@ Forge your documentation in real time.
 
 AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way, written in Rust for macOS, Linux and Windows. It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
 
-The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes, then (5) release readiness: fixes, typeset STEM, `adoc-ls` on the engine, an MCP server and packages. **All five phases are implemented**; the first release, 0.1.0, awaits its tag and its manual QA on each platform ([`docs/qa/phase5.md`](docs/qa/phase5.md)). The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md) [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md).
+The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes, then (5) release readiness: fixes, typeset STEM, `adoc-ls` on the engine, an MCP server and packages. **All five phases are implemented** and released, the current release being 0.2.0; the manual QA on each platform continues in [`docs/qa/phase5.md`](docs/qa/phase5.md). The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md) [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md).
 
 ## What works
 
@@ -29,6 +29,8 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Diagnostics as you type for unresolved xrefs, anchors, includes and images, duplicate anchors, unknown Antora modules and resources, invalid resource IDs and invalid component descriptors. Diagnostics are conservative: warnings rather than errors, and nothing for dynamic constructs such as `include::{attr}/x.adoc[]`.
 - Hover and completion for xref, include and image targets, anchors and `{attributes}`.
 - Undo and redo that treat a run of typing as one step.
+- Tabs close from their X, or from a right-click menu that acts on the tab clicked: Close, Close Others, Close Left, Close Right, Close Clean (the tabs without unsaved changes) and Close All, asking once about any unsaved changes. Arrows at the start of the tab bar go back and forward.
+- Bold, Italic and Code (Cmd/Ctrl-B, -I, -E) and Highlight wrap the selection in its delimiters, or remove them when it is already marked: the constrained form (`*bold*`) where it is valid, else the unconstrained one (`un**break**able`), each line of a selection on its own.
 
 **Link following**
 
@@ -122,11 +124,13 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Save / Save all / Close | Cmd-S / Cmd-Alt-S / Cmd-W | Ctrl-S / Ctrl-Alt-S / Ctrl-W |
 | Undo / Redo | Cmd-Z / Cmd-Shift-Z | Ctrl-Z / Ctrl-Shift-Z |
 | Follow link | Cmd-click, F12, Cmd-Enter | Ctrl-click, F12, Ctrl-Enter |
+| Close others / left / right | Cmd-Alt-T / Cmd-K E / Cmd-K T | Ctrl-Alt-T / Ctrl-K E / Ctrl-K T |
+| Close clean / all | Cmd-K U / Cmd-K Cmd-W | Ctrl-K U / Ctrl-K Ctrl-W |
 | Back / Forward | Ctrl-minus / Ctrl-Shift-minus | Ctrl-minus / Ctrl-Shift-minus |
 | Peek include | Alt-F12 | Alt-F12 |
 | Toggle preview | Cmd-K V | Ctrl-K V |
 | Show source / visual / split | Cmd-K S / Cmd-K W / Cmd-K D | Ctrl-K S / Ctrl-K W / Ctrl-K D |
-| Bold / Italic / Code (visual) | Cmd-B / Cmd-I / Cmd-E | Ctrl-B / Ctrl-I / Ctrl-E |
+| Bold / Italic / Code | Cmd-B / Cmd-I / Cmd-E | Ctrl-B / Ctrl-I / Ctrl-E |
 | Insert link (visual) | Cmd-Shift-L | Ctrl-Shift-L |
 | Bulleted / numbered / checklist (visual) | Cmd-Shift-U / -N / -X | Ctrl-Shift-U / -N / -X |
 | Indent / outdent list item (visual) | Tab / Shift-Tab | Tab / Shift-Tab |

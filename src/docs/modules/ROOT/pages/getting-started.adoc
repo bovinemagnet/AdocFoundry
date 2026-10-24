@@ -12,7 +12,7 @@ Every package carries the application and the `adocfoundry-cli`, `adoc-ls` and `
 The `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` binaries are also published as archives of their own.
 AdocFoundry needs no Ruby, Node.js or Java at run time.
 
-`adocfoundry --version` prints the version, for example `adocfoundry 0.1.0`, and exits.
+`adocfoundry --version` prints the version, for example `adocfoundry 0.2.0`, and exits.
 
 === macOS
 

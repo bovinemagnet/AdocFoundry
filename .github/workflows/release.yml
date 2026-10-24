@@ -21,7 +21,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
-      - run: brew install librsvg
       - name: Build both architectures
         run: |
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
@@ -109,7 +108,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
-            libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev librsvg2-bin file
+            libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev file
       - run: cargo install cargo-deb cargo-generate-rpm --locked
       - run: cargo build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       - name: deb and rpm
@@ -122,7 +121,7 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage"
           chmod +x linuxdeploy
-          rsvg-convert -w 256 -h 256 packaging/icons/adocfoundry.svg -o io.github.bovinemagnet.AdocFoundry.png
+          cp packaging/icons/adocfoundry-256.png io.github.bovinemagnet.AdocFoundry.png
           APPIMAGE_EXTRACT_AND_RUN=1 OUTPUT="dist/AdocFoundry-$version-${{ matrix.arch }}.AppImage" ./linuxdeploy \
             --appdir AppDir \
             --executable target/release/adocfoundry \
