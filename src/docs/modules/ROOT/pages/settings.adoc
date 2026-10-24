@@ -145,7 +145,7 @@ standards = ["pdf-a-2a"]         # pdf-a-2a | pdf-ua-1
 |`pdf.site_url`
 |string
 |none
-|The base address of the published site. In a component book, a cross reference to a page outside the book links here. Without it, such a reference is plain text.
+|The base address of the published site. In an export, a cross reference to a page the PDF does not hold links to that page's address on the site. When it is not set, the playbook's `site.url` is used. Without either, such a reference is plain text.
 
 |`pdf.standards`
 |array of strings

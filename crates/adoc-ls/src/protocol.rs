@@ -1502,8 +1502,14 @@ mod tests {
 
     #[test]
     fn answers_workspace_symbol_requests_from_the_index() {
+        // A real file URI on this platform, which the symbol's location is built from.
+        let page = file_uri(&std::env::temp_dir().join("docs").join("page.adoc"));
         let mut server = server();
-        open(&mut server, PAGE, "= Guide\n\n== Authentication Flow\n");
+        open(
+            &mut server,
+            page.as_str(),
+            "= Guide\n\n== Authentication Flow\n",
+        );
 
         let Some(WorkspaceSymbolResponse::Flat(symbols)) =
             server.workspace_symbol_response(&WorkspaceSymbolParams {
@@ -1519,7 +1525,7 @@ mod tests {
         assert_eq!(symbol.name, "Authentication Flow");
         assert_eq!(symbol.kind, SymbolKind::NAMESPACE);
         assert_eq!(symbol.container_name.as_deref(), Some("Guide"));
-        assert_eq!(symbol.location.uri.as_str(), PAGE);
+        assert_eq!(symbol.location.uri, page);
         assert_eq!(symbol.location.range.start.line, 2);
     }
 

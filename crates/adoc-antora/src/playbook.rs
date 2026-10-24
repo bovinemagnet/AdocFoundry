@@ -22,6 +22,9 @@ pub struct Playbook {
     pub asciidoc_attributes: BTreeMap<String, String>,
     /// `content.sources`, in order.
     pub sources: Vec<ContentSource>,
+    /// `site.url`: where the site is published, which references out of an exported PDF lead
+    /// to.
+    pub site_url: Option<String>,
 }
 
 /// One of the playbook's content sources: a repository and the branches Antora takes from it.
@@ -162,8 +165,14 @@ impl Playbook {
 
 #[derive(Debug, Deserialize)]
 struct RawPlaybook {
+    site: Option<RawSite>,
     asciidoc: Option<RawAsciidoc>,
     content: Option<RawContent>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSite {
+    url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -254,6 +263,10 @@ pub fn parse_playbook(path: &Path, source: &str) -> Result<Playbook, DescriptorE
         path: path.to_path_buf(),
         asciidoc_attributes,
         sources,
+        site_url: raw
+            .site
+            .and_then(|site| site.url)
+            .filter(|url| !url.trim().is_empty()),
     })
 }
 
@@ -285,6 +298,21 @@ mod tests {
             playbook.soft_attributes().collect::<Vec<_>>(),
             [("release", "One")]
         );
+    }
+
+    #[test]
+    fn reads_the_site_url() {
+        let playbook = parse_playbook(
+            Path::new("antora-playbook.yml"),
+            "site:\n  title: Docs\n  url: https://docs.example.com/\n",
+        )
+        .unwrap();
+        assert_eq!(
+            playbook.site_url.as_deref(),
+            Some("https://docs.example.com/")
+        );
+        let without = parse_playbook(Path::new("p.yml"), "site:\n  title: Docs\n").unwrap();
+        assert_eq!(without.site_url, None);
     }
 
     fn versions_fixture() -> Playbook {

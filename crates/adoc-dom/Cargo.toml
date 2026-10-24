@@ -10,5 +10,8 @@ acdc-parser.workspace = true
 asciidoc-parser.workspace = true
 adoc-core.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

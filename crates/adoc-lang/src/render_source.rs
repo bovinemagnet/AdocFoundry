@@ -279,7 +279,9 @@ mod tests {
     #[test]
     fn rewrites_a_family_qualified_include_to_an_absolute_path() {
         let page = fixture_root().join("modules/security/pages/authentication.adoc");
-        let partial = fixture_root().join("modules/security/partials/token-note.adoc");
+        let partial = adoc_index::normalize_path(
+            &fixture_root().join("modules/security/partials/token-note.adoc"),
+        );
 
         let source = rendered(
             &page,
@@ -321,7 +323,9 @@ mod tests {
     #[test]
     fn rewrites_every_include_without_disturbing_later_offsets() {
         let page = fixture_root().join("modules/security/pages/authentication.adoc");
-        let partial = fixture_root().join("modules/security/partials/token-note.adoc");
+        let partial = adoc_index::normalize_path(
+            &fixture_root().join("modules/security/partials/token-note.adoc"),
+        );
 
         let source = rendered(
             &page,

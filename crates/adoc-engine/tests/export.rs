@@ -185,6 +185,45 @@ fn xrefs_out_of_the_book_use_the_site_url() {
 }
 
 #[test]
+fn a_page_s_xrefs_to_other_pages_keep_their_coordinates() {
+    // A page exported alone links every page it names to its place on the site, with the
+    // component, version and module, as a book links the pages it does not hold.
+    let expected = [
+        "#adoc-link(\"https://docs.example.com/guide/1.0/configure.html#_options\", [#\"the options\"])",
+        "#adoc-link(\"https://docs.example.com/other/index.html\", [#\"other component\"])",
+    ];
+    let (directory, root, mut engine) =
+        book_workspace("[pdf]\nsite_url = \"https://docs.example.com/\"\n");
+    let page = engine
+        .open(&root.join("guide/modules/ROOT/pages/install.adoc"))
+        .unwrap();
+    let (_, typst) = export(&mut engine, directory.path(), ExportTarget::Page(page));
+    for link in expected {
+        assert!(typst.contains(link), "{link} in {typst}");
+    }
+
+    // The playbook's `site.url` serves when the settings name no site.
+    let (directory, root, _) = book_workspace("");
+    fs::write(
+        root.join("antora-playbook.yml"),
+        "site:\n  title: Docs\n  url: https://docs.example.com\n",
+    )
+    .unwrap();
+    let mut settings = Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let page = engine
+        .open(&root.join("guide/modules/ROOT/pages/install.adoc"))
+        .unwrap();
+    let (_, typst) = export(&mut engine, directory.path(), ExportTarget::Page(page));
+    for link in expected {
+        assert!(typst.contains(link), "{link} in {typst}");
+    }
+}
+
+#[test]
 fn diagrams_render_before_compiling() {
     let (directory, _root, mut engine) = book_workspace("");
     let (summary, typst) = export(&mut engine, directory.path(), book());

@@ -22,6 +22,8 @@ const TEMPLATE: &str = include_str!("adoc.typ");
 pub(crate) const MATH: &str = include_str!("math.typ");
 
 /// Where running content and page numbering start: the first page of the body, numbered 1.
+/// The body's start: running content and the page count begin here. Typst numbers a page by
+/// its counter after the updates on it, so this page is 1 in the viewer as in the footer.
 const RUNNING_START: &str = "#metadata(none) <adoc-running-start>#counter(page).update(1)\n";
 
 /// A PDF standard the output must conform to.
@@ -40,9 +42,9 @@ pub struct PdfOptions {
     /// Where relative font paths in the theme are found, in order (asciidoctor-pdf's
     /// `pdf-fontsdir`); `GEM_FONTS_DIR` stands for the bundled fonts.
     pub fonts_dirs: Vec<PathBuf>,
-    /// The site cross references out of a book link to.
+    /// The site cross references out of the document link to.
     pub site_url: Option<String>,
-    /// The address of each page outside the document a reference may lead to, for a book;
+    /// The address of each page a reference out of the document may lead to; without a site,
     /// references to any other page are left as text.
     pub page_urls: HashMap<PathBuf, String>,
     /// The date written into the PDF (year, month, day), for reproducible output; none by
@@ -100,7 +102,7 @@ pub struct Typst {
     /// Virtual path, real file.
     pub files: Vec<(String, PathBuf)>,
     pub map: SourceMap,
-    /// Images that could not be found, with where they were written.
+    /// Images that could not be shown, missing or unreadable, and where they were written.
     pub missing: Vec<(String, adoc_render::SourceSpan)>,
     /// Formulas that could not be typeset, why, and where they were written.
     pub unconverted: Vec<(String, adoc_render::SourceSpan)>,
@@ -188,8 +190,10 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         }
         if facts.toc_at_top() {
             let min_level = if book && has_parts(document) { 1 } else { 2 };
+            // Front matter is labelled in roman numerals, as asciidoctor-pdf labels it; the
+            // contents are pages of their own, so the body starts on a page of its own too.
             emitter.push(&format!(
-                "#adoc-toc(min-level: {min_level})\n\n#pagebreak(weak: true)\n\n"
+                "#page(numbering: \"i\")[#adoc-toc(min-level: {min_level})]\n\n"
             ));
         }
         emitter.push(RUNNING_START);

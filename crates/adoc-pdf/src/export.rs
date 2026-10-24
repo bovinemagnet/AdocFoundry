@@ -316,9 +316,9 @@ fn typeset(
         hints: Vec::new(),
         source: None,
     }));
-    diagnostics.extend(typst.missing.iter().map(|(target, span)| PdfDiagnostic {
+    diagnostics.extend(typst.missing.iter().map(|(message, span)| PdfDiagnostic {
         severity: PdfSeverity::Warning,
-        message: format!("image not found: {target}"),
+        message: message.clone(),
         hints: Vec::new(),
         source: Some(span.clone()),
     }));

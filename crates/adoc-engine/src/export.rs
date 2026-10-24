@@ -549,7 +549,7 @@ impl Engine {
             Document::Book(book) => book.attributes.clone(),
         };
         let theme = self.export_theme(&args, &attributes, first_page.as_deref());
-        let options = self.export_options(&args, &attributes, first_page.as_deref(), &document);
+        let options = self.export_options(&args, &attributes, first_page.as_deref());
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         thread::spawn(move || {
@@ -610,7 +610,6 @@ impl Engine {
         args: &ExportArgs,
         attributes: &BTreeMap<String, String>,
         page: Option<&Path>,
-        document: &Document,
     ) -> PdfOptions {
         let page_dir = page.and_then(Path::parent);
         let root = self.roots.first().map(PathBuf::as_path);
@@ -643,11 +642,17 @@ impl Engine {
                 standards.push(*standard);
             }
         }
-        let site_url = self.settings.pdf.site_url.clone();
-        let page_urls = match (&site_url, document) {
-            (Some(site), Document::Book(_)) => self.page_urls(site),
-            _ => HashMap::new(),
-        };
+        // The settings' site, else the playbook's.
+        let site_url = self.settings.pdf.site_url.clone().or_else(|| {
+            self.workspace
+                .antora
+                .playbook()
+                .and_then(|playbook| playbook.site_url.clone())
+        });
+        let page_urls = site_url
+            .as_deref()
+            .map(|site| self.page_urls(site))
+            .unwrap_or_default();
         PdfOptions {
             standards,
             fonts_dirs,

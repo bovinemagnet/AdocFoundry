@@ -1,4 +1,7 @@
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    path::{Component, Path, PathBuf},
+};
 
 use adoc_antora::{AntoraCatalog, AntoraContext, ResourceFamily};
 
@@ -413,8 +416,12 @@ fn path_candidates(
     // the same correction when parsing a resource id. Strip it so a prefix that merely
     // looks absolute (`include::/etc/`) still resolves relative to the current document
     // instead of escaping the workspace; the label above keeps what was typed, leading
-    // separator included, so the inserted text is unaffected.
-    let relative_directory = typed_directory.trim_start_matches('/');
+    // separator included, so the inserted text is unaffected. A drive (`C:\`) is dropped the
+    // same way on Windows.
+    let relative_directory: PathBuf = Path::new(typed_directory)
+        .components()
+        .filter(|component| !matches!(component, Component::Prefix(_) | Component::RootDir))
+        .collect();
     let directory = adoc_index::normalize_path(&base.join(relative_directory));
 
     let mut candidates = Vec::new();

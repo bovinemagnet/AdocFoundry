@@ -510,7 +510,10 @@ fn file_urls_are_absolute_for_relative_paths() {
     let html = to_html(&view, &HtmlOptions::default());
     for path in ["docs/images/a.png", "cache/d.svg"] {
         let absolute = std::path::absolute(path).unwrap();
-        let expected = format!("<img src=\"file://{}\"", absolute.display());
+        let expected = format!(
+            "<img src=\"{}\"",
+            url::Url::from_file_path(&absolute).unwrap()
+        );
         assert!(html.contains(&expected), "{path}: {html}");
     }
 }
@@ -586,8 +589,10 @@ fn html_stem_is_an_image_with_alt_text() {
         &view_of(Path::new("/page.adoc"), text, &Rendered),
         &HtmlOptions::default(),
     );
+    // `/cache` is on the current drive on Windows.
+    let block = url::Url::from_file_path(std::path::absolute("/cache/block.svg").unwrap()).unwrap();
     assert!(
-        html.contains("<img src=\"file:///cache/block.svg\" alt=\"sum_(i=1)^n i\">"),
+        html.contains(&format!("<img src=\"{block}\" alt=\"sum_(i=1)^n i\">")),
         "{html}"
     );
     assert!(
@@ -609,4 +614,48 @@ fn text_is_what_a_reader_sees() {
         adoc_render::to_text(&view),
         "Guide\n\nInstall\n\nRun this first.\n\n- one\n- two\n\nmake\n\nA | B\n"
     );
+}
+
+#[test]
+fn special_sections_are_numbered_as_asciidoctor_numbers_them() {
+    let text = "= Book\n:doctype: book\n:sectnums:\n:toc:\n\n[preface]\n== Preface\n\nBefore.\n\n=== In the Preface\n\nMore.\n\n== Chapter One\n\nBody.\n\n=== A Section\n\nMore.\n\n== Chapter Two\n\nBody.\n\n[appendix]\n== Extra Material\n\nAfter.\n\n=== In the Appendix\n\nMore.\n\n[appendix]\n== More Material\n\nAfter.\n\n[glossary]\n== Glossary\n\nTerms.\n\n[bibliography]\n== References\n\nBooks.\n";
+    let view = view_of(Path::new("/docs/book.adoc"), text, &LocalResolver);
+    let mut numbers = Vec::new();
+    let mut stack: Vec<&adoc_render::ViewBlock> = view.blocks.iter().rev().collect();
+    while let Some(block) = stack.pop() {
+        if let ViewKind::Section { number, title, .. } = &block.kind {
+            numbers.push((number.clone(), ViewInline::plain_text(title)));
+        }
+        stack.extend(block.child_refs().into_iter().rev());
+    }
+    let expected: Vec<(Option<String>, String)> = [
+        (None, "Preface"),
+        (None, "In the Preface"),
+        (Some("1."), "Chapter One"),
+        (Some("1.1."), "A Section"),
+        (Some("2."), "Chapter Two"),
+        (Some("Appendix A:"), "Extra Material"),
+        (Some("A.1."), "In the Appendix"),
+        (Some("Appendix B:"), "More Material"),
+        (None, "Glossary"),
+        (None, "References"),
+    ]
+    .into_iter()
+    .map(|(number, title)| (number.map(str::to_owned), title.to_owned()))
+    .collect();
+    assert_eq!(numbers, expected);
+    let toc: Vec<_> = view
+        .toc
+        .iter()
+        .map(|entry| (entry.number.clone(), entry.title.clone()))
+        .collect();
+    assert_eq!(toc, expected, "the table of contents agrees");
+
+    let caption =
+        "= Article\n:sectnums:\n:appendix-caption: Annex\n\n== Body\n\n[appendix]\n== Extra\n";
+    let view = view_of(Path::new("/docs/article.adoc"), caption, &LocalResolver);
+    let ViewKind::Section { number, .. } = &view.blocks[1].kind else {
+        panic!("{:?}", view.blocks[1].kind);
+    };
+    assert_eq!(number.as_deref(), Some("Annex A:"));
 }

@@ -368,6 +368,14 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
         imagesdir: dom.attributes.get("imagesdir").cloned(),
         numbered: dom.attributes.contains_key("sectnums"),
         counters: Vec::new(),
+        numbering: Numbering::Numbered,
+        saved_counters: None,
+        appendices: 0,
+        appendix_caption: dom
+            .attributes
+            .get("appendix-caption")
+            .cloned()
+            .unwrap_or_else(|| "Appendix".to_owned()),
         figures: 0,
         tables: 0,
         examples: 0,
@@ -438,6 +446,13 @@ struct Builder<'r> {
     imagesdir: Option<String>,
     numbered: bool,
     counters: Vec<u32>,
+    /// How the sections being built are numbered, from the special section they are in.
+    numbering: Numbering,
+    /// The other sections' count while an appendix counts its own.
+    saved_counters: Option<Vec<u32>>,
+    appendices: u32,
+    /// `appendix-caption`: `Appendix` unless the page sets another.
+    appendix_caption: String,
     figures: u32,
     tables: u32,
     examples: u32,
@@ -445,6 +460,32 @@ struct Builder<'r> {
     footnotes: Vec<ViewFootnote>,
     toc: Vec<TocEntry>,
     toc_levels: u8,
+}
+
+/// The section styles Asciidoctor does not number, besides `appendix`, which it letters.
+const SPECIAL_SECTIONS: &[&str] = &[
+    "abstract",
+    "acknowledgments",
+    "bibliography",
+    "colophon",
+    "dedication",
+    "glossary",
+    "index",
+    "partintro",
+    "preface",
+];
+
+/// How sections are numbered where the builder is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Numbering {
+    Numbered,
+    /// Inside a special section.
+    Unnumbered,
+    /// Inside appendix `letter`, a section at `level`.
+    Appendix {
+        letter: char,
+        level: u8,
+    },
 }
 
 impl Builder<'_> {
@@ -469,21 +510,57 @@ impl Builder<'_> {
         Some(format!("{label} {counter}."))
     }
 
-    fn section_number(&mut self, level: u8) -> Option<String> {
+    /// The number of a section at `level` with block style `style`, and how the sections inside
+    /// it are numbered, as Asciidoctor numbers them: special sections (a preface, glossary,
+    /// bibliography and the like) and what they hold are not numbered, and an appendix is
+    /// lettered (`Appendix A:`, then `A.1.`) outside the count of the other sections.
+    fn section_number(&mut self, level: u8, style: Option<&str>) -> (Option<String>, Numbering) {
         if !self.numbered || level == 0 {
-            return None;
+            return (None, self.numbering);
         }
-        let depth = usize::from(level);
-        self.counters.resize(depth, 0);
-        self.counters[depth - 1] += 1;
-        Some(
-            self.counters
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(".")
-                + ".",
-        )
+        match self.numbering {
+            Numbering::Unnumbered => return (None, Numbering::Unnumbered),
+            Numbering::Appendix { letter, level: top } => {
+                let depth = usize::from(level.saturating_sub(top));
+                self.counters.resize(depth.max(1), 0);
+                self.counters[depth.max(1) - 1] += 1;
+                let parts: Vec<String> = self.counters.iter().map(ToString::to_string).collect();
+                return (
+                    Some(format!("{letter}.{}.", parts.join("."))),
+                    self.numbering,
+                );
+            }
+            Numbering::Numbered => {}
+        }
+        match style {
+            Some("appendix") => {
+                let letter = char::from(b'A' + (self.appendices % 26) as u8);
+                self.appendices += 1;
+                // The appendix's sections count from zero; the chapters' count resumes after.
+                let saved = std::mem::take(&mut self.counters);
+                self.saved_counters = Some(saved);
+                let number = if self.appendix_caption.is_empty() {
+                    format!("{letter}.")
+                } else {
+                    format!("{} {letter}:", self.appendix_caption)
+                };
+                (Some(number), Numbering::Appendix { letter, level })
+            }
+            Some(style) if SPECIAL_SECTIONS.contains(&style) => (None, Numbering::Unnumbered),
+            _ => {
+                let depth = usize::from(level);
+                self.counters.resize(depth, 0);
+                self.counters[depth - 1] += 1;
+                let number = self
+                    .counters
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(".")
+                    + ".";
+                (Some(number), Numbering::Numbered)
+            }
+        }
     }
 
     fn block(&mut self, block: &Block) -> ViewBlock {
@@ -495,7 +572,7 @@ impl Builder<'_> {
                 title,
                 blocks,
             } => {
-                let number = self.section_number(*level);
+                let (number, inside) = self.section_number(*level, block.meta.style.as_deref());
                 let title = self.inlines(title);
                 if *level <= self.toc_levels {
                     if let Some(id) = &block.meta.id {
@@ -507,11 +584,20 @@ impl Builder<'_> {
                         });
                     }
                 }
+                let outside = std::mem::replace(&mut self.numbering, inside);
+                let blocks = self.blocks(blocks);
+                self.numbering = outside;
+                // Leaving an appendix: the other sections' count resumes where it was.
+                if matches!(inside, Numbering::Appendix { level: top, .. } if top == *level) {
+                    if let Some(saved) = self.saved_counters.take() {
+                        self.counters = saved;
+                    }
+                }
                 ViewKind::Section {
                     level: *level,
                     number,
                     title,
-                    blocks: self.blocks(blocks),
+                    blocks,
                 }
             }
             BlockKind::Heading { level, title } => ViewKind::Heading {

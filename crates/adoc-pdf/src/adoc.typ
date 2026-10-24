@@ -629,8 +629,9 @@
       },
     )
   }
+  // Labelled `i` in a PDF viewer, as asciidoctor-pdf labels its front matter.
   page(
-    numbering: none,
+    numbering: "i",
     fill: pick("title_page_background_color", "page_background_color"),
     {
       if logo != none and pick("title_page_logo_display") != "none" {

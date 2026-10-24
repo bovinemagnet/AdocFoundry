@@ -705,9 +705,21 @@ fn finish_export(
     let chosen = output.to_path_buf();
     cx.simulate_new_path_selection(move |_| Some(chosen));
     cx.run_until_parked();
-    // The status bar shows "Exporting PDF…" while this holds.
-    assert!(cx.update(|_, cx| app.read(cx).engine.is_exporting()));
-    let mut finished = None;
+    let finished_event = |events: &std::sync::mpsc::Receiver<adoc_engine::EngineEvent>| {
+        events.try_iter().find_map(|event| match event {
+            adoc_engine::EngineEvent::ExportFinished { result, .. } => Some(result),
+            _ => None,
+        })
+    };
+    // The export started: it is running (the status bar shows "Exporting PDF…" while it is),
+    // or a small page has already finished.
+    let exporting = cx.update(|_, cx| app.read(cx).engine.is_exporting());
+    let mut finished = if exporting {
+        None
+    } else {
+        finished_event(events)
+    };
+    assert!(exporting || finished.is_some(), "no export started");
     assert!(drain_until(app, cx, |_| {
         finished = finished.take().or_else(|| {
             events.try_iter().find_map(|event| match event {
@@ -828,30 +840,35 @@ fn export_errors_name_the_file_and_line(cx: &mut TestAppContext) {
     let app = app_with(engine, cx);
     let (_workspace, mut cx) = workspace_window(&app, vec![themed.clone(), imaged.clone()], cx);
 
-    for (page, expected) in [
-        (
-            &themed,
-            format!("{}: error: line 2", dir.join("broken-theme.yml").display()),
-        ),
-        (
-            &imaged,
-            format!("{}:5: failed to decode image", imaged.display()),
-        ),
-    ] {
+    // A broken theme fails the export.
+    let open = |page: &Path, cx: &mut VisualTestContext| {
         cx.update(|_, cx| {
             app.update(cx, |app, _| {
                 let id = app.engine.open(page).unwrap();
                 app.engine.set_active(id);
             });
         });
-        cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
-        let output = page.with_extension("pdf");
-        let result = finish_export(&app, &events, &output, &mut cx);
-        let message = crate::workspace_view::export_message(&output, &result);
-        assert!(message.starts_with("PDF export failed: "), "{message}");
-        assert!(message.contains(&expected), "{message}");
-        assert!(!output.exists());
-    }
+    };
+    open(&themed, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
+    let output = themed.with_extension("pdf");
+    let result = finish_export(&app, &events, &output, &mut cx);
+    let message = crate::workspace_view::export_message(&output, &result);
+    assert!(message.starts_with("PDF export failed: "), "{message}");
+    let expected = format!("{}: error: line 2", dir.join("broken-theme.yml").display());
+    assert!(message.contains(&expected), "{message}");
+    assert!(!output.exists());
+
+    // An image that cannot be read is shown as its alt text, with a warning naming its line.
+    open(&imaged, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
+    let output = imaged.with_extension("pdf");
+    let result = finish_export(&app, &events, &output, &mut cx);
+    let message = crate::workspace_view::export_message(&output, &result);
+    assert!(message.starts_with("Exported imaged.pdf"), "{message}");
+    let expected = format!("{}:5: image could not be read: bad.png", imaged.display());
+    assert!(message.contains(&expected), "{message}");
+    assert!(output.exists());
 }
 
 fn copy_dir(from: &Path, to: &Path) {

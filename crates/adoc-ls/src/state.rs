@@ -13,9 +13,10 @@ pub fn document_path(uri: &str) -> PathBuf {
 mod tests {
     #[test]
     fn converts_percent_encoded_file_uris() {
-        assert_eq!(
-            super::document_path("file:///docs/My%20Guide.adoc"),
-            std::path::Path::new("/docs/My Guide.adoc")
-        );
+        // A URI as a client on this platform sends it, with the space percent-encoded.
+        let path = std::env::temp_dir().join("docs").join("My Guide.adoc");
+        let uri = url::Url::from_file_path(&path).unwrap().to_string();
+        assert!(uri.contains("My%20Guide.adoc"), "{uri}");
+        assert_eq!(super::document_path(&uri), path);
     }
 }

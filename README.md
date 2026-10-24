@@ -171,7 +171,7 @@ remote = "origin"                # the remote that links to the hosting site use
 theme = "default"                # a bundled theme, a name in themes_dir, or a .yml file
 # themes_dir = "resources/themes"  # relative to the workspace root, like -a pdf-themesdir
 # fonts_dir = "resources/fonts"    # like -a pdf-fontsdir; the bundled fonts are searched after it
-# site_url = "https://docs.example.com"  # where references out of an exported book lead
+# site_url = "https://docs.example.com"  # where references out of an export lead; else the playbook's site.url
 standards = []                   # "pdf-a-2a", "pdf-ua-1"
 ```
 
