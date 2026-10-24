@@ -201,9 +201,9 @@ fn head_content_and_remote_url() {
         Some("committed\n")
     );
     assert_eq!(repo.head_content(Path::new("absent.adoc")).unwrap(), None);
-    assert!(repo
-        .head_content(Path::new("/elsewhere/page.adoc"))
-        .is_err());
+    // Outside the repository: beside its directory, absolute on every platform.
+    let outside = dir.path().parent().unwrap().join("elsewhere/page.adoc");
+    assert!(repo.head_content(&outside).is_err());
     assert_eq!(repo.remote_url("origin").unwrap(), None);
 }
 

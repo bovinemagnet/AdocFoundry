@@ -705,9 +705,21 @@ fn finish_export(
     let chosen = output.to_path_buf();
     cx.simulate_new_path_selection(move |_| Some(chosen));
     cx.run_until_parked();
-    // The status bar shows "Exporting PDF…" while this holds.
-    assert!(cx.update(|_, cx| app.read(cx).engine.is_exporting()));
-    let mut finished = None;
+    let finished_event = |events: &std::sync::mpsc::Receiver<adoc_engine::EngineEvent>| {
+        events.try_iter().find_map(|event| match event {
+            adoc_engine::EngineEvent::ExportFinished { result, .. } => Some(result),
+            _ => None,
+        })
+    };
+    // The export started: it is running (the status bar shows "Exporting PDF…" while it is),
+    // or a small page has already finished.
+    let exporting = cx.update(|_, cx| app.read(cx).engine.is_exporting());
+    let mut finished = if exporting {
+        None
+    } else {
+        finished_event(events)
+    };
+    assert!(exporting || finished.is_some(), "no export started");
     assert!(drain_until(app, cx, |_| {
         finished = finished.take().or_else(|| {
             events.try_iter().find_map(|event| match event {
