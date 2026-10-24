@@ -126,6 +126,9 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 OUTPUT="dist/AdocFoundry-$version-${{ matrix.arch }}.AppImage" ./linuxdeploy \
             --appdir AppDir \
             --executable target/release/adocfoundry \
+            --executable target/release/adocfoundry-cli \
+            --executable target/release/adoc-ls \
+            --executable target/release/adoc-mcp \
             --desktop-file packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop \
             --icon-file io.github.bovinemagnet.AdocFoundry.png \
             --output appimage
@@ -195,6 +198,13 @@ jobs:
           else
             python3 packaging/smoke-test.py "$BIN"
           fi
+      # The AppImage carries the tools as the deb does.
+      - name: Smoke test (AppImage)
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x artefacts/*.AppImage
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/artefacts/*.AppImage --appimage-extract >/dev/null)
+          python3 packaging/smoke-test.py "$RUNNER_TEMP/squashfs-root/usr/bin" --no-app
 
   publish:
     needs: [smoke]

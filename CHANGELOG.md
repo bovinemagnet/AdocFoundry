@@ -2,7 +2,7 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## 0.1.0 — unreleased
+## 0.1.0 — 2026-10-24
 
 The first release: the four phases of the editor, and the release-readiness work of Phase 5.
 
@@ -40,3 +40,7 @@ The first release: the four phases of the editor, and the release-readiness work
 - Diagrams and STEM render locally, in Rust or through tools on `PATH`; `cargo xtask layers` checks that no crate but the app's can reach an HTTP client (#3).
 - CI on Linux, macOS and Windows, with the asciidoctor-pdf comparison and veraPDF validation (#27).
 - Packages for macOS (DMG, signed ad hoc), Windows (MSI and zip, unsigned) and Linux (AppImage, deb, rpm), each with the app and the three command-line tools, smoke-tested on each platform. Developer ID signing and notarisation follow in a later release.
+
+### Known issues
+
+- The AppImage holds only the app; take `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` from their own archives or the deb or rpm. Fixed in the release workflow for the next release.
