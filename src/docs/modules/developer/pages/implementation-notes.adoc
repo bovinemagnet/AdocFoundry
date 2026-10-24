@@ -628,6 +628,26 @@ Running titles look up one memoised list of headings with a binary search instea
 |a current-thread tokio runtime
 |tokio with `rt`, `macros`, `io-std` and `time`; each tool call locks the engine for its duration
 |rmcp's service needs timers. One call at a time matches the engine's single thread.
+
+|Packages (WP 5.8)
+|each package carries the app and the three tools
+|the DMG puts `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` beside the app in `Contents/MacOS` and is signed ad hoc when no Developer ID is set; the MSI, zip, deb, rpm and Flatpak gain `adoc-mcp`; `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` also ship as archives of their own; every build passes `--features adoc-ls/typst,adoc-ls/git`
+|A bundle's `Contents/MacOS` is where macOS expects helper binaries, and linking them onto `PATH` keeps them signed with the app.
+
+|Smoke test (WP 5.8)
+|every binary's `--version`, the app on a fixture, a CLI export, both servers' initialise and shutdown
+|`packaging/smoke-test.py`, run by the release workflow's `smoke` job on each platform's downloaded artefacts (the mounted DMG, the unpacked zip, the unpacked deb) before `publish`; the app gains `--version`; on Linux the app's launch is left to manual QA
+|A hosted Linux runner has no GPU for the app's Vulkan renderer.
+
+|Flatpak (WP 5.8)
+|checked against the release
+|the Linux release job checks that the manifest installs the four binaries and builds `adoc-ls` with its features
+|Building the Flatpak itself needs flatpak-builder and a vendored source list, outside the workflow.
+
+|Documentation version (WP 5.8)
+|the documentation site's version
+|the site stays unversioned, showing `0.1.0` as its display version
+|A versioned component would move every page's URL.
 |===
 
 == Git

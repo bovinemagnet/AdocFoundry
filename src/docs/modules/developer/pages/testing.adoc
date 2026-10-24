@@ -267,9 +267,9 @@ That leaves most of each 16 ms frame to the widget.
 [[manual-qa]]
 == Manual QA
 
-`docs/qa/phase1.md` is a checklist for what automated tests cannot cover.
-It is run on macOS 13+, Windows 10+ (x64 and ARM64) and Ubuntu 22.04+ (AppImage) before a release, and covers the sidebar, the editor, link following, search and rename, themes, settings, the second window and the packages.
-Its results table is currently empty.
+`docs/qa/phase1.md` to `docs/qa/phase5.md` are checklists for what automated tests cannot cover, one for each phase.
+They are run on macOS 13+, Windows 10+ (x64 and ARM64) and Ubuntu 22.04+ before a release, from the release's artefacts, and each records its runs in a results table.
+`phase1.md` covers the sidebar, the editor, link following, search and rename, themes, settings, the second window and the packages; `phase5.md` covers the release packages, typeset STEM, the language and MCP servers in real clients, and the fixes from the tracker.
 
 [[platform-status]]
 == Platform status

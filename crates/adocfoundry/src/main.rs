@@ -20,6 +20,10 @@ use adoc_engine::{Engine, Settings};
 use gpui::AppContext as _;
 
 fn main() {
+    if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
+        println!("adocfoundry {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let mut arguments = std::env::args_os().skip(1).map(PathBuf::from);
     let folder = arguments.next();
     let files: Vec<PathBuf> = arguments.collect();

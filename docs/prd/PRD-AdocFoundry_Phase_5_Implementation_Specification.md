@@ -272,7 +272,7 @@ Out of scope:
 
 Open questions, to settle before the package that needs them:
 
-- [ ] **WP 5.8:** the first version number. `0.1.0` unless decided otherwise.
+- [x] **WP 5.8:** the first version number: `0.1.0`, the workspace's version.
 - [ ] **WP 5.7:** whether `export_pdf` counts as a write, as decided here, or may run read-only when `output` is outside the roots.
 - [ ] **WP 5.3:** whether to keep the `adoc-dom` workarounds for #32 and #33 after acdc-parser releases fixes, or drop them on upgrade.
 - [ ] **After WP 5.8, in `zed-asciidoc`:** download the `adoc-ls` release archive for the platform (Zed extensions can fetch GitHub release assets), and fall back to `PATH`. That repository's change, not this one's.
@@ -312,6 +312,10 @@ Implementation notes, as each package lands:
 | Write tools (WP 5.7) | not listed, and refused if called | removed from the tool router without `--allow-write`, so a call is the protocol's unknown-tool error; `edit_page` is all or nothing (edits already made in a failing call are undone); `rename_page` saves every file it changed | `workspace.apply_preview` leaves its edits in buffers, which a server with no editor would never save. |
 | Limits (WP 5.7) | large results truncated, with the total stated | lists at 500 items and texts at 200,000 bytes, with `truncated: { shown, total }`; paths are absolute or relative to the first root, and links are followed only through the part of a path that exists | A path to a file not yet written, such as a rename's target or an export's output, is still checked. |
 | Runtime (WP 5.7) | a current-thread tokio runtime | tokio with `rt`, `macros`, `io-std` and `time`; each tool call locks the engine for its duration | rmcp's service needs timers. One call at a time matches the engine's single thread. |
+| Packages (WP 5.8) | each package carries the app and the three tools | the DMG puts `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` beside the app in `Contents/MacOS` and is signed ad hoc when no Developer ID is set; the MSI, zip, deb, rpm and Flatpak gain `adoc-mcp`; `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` also ship as archives of their own; every build passes `--features adoc-ls/typst,adoc-ls/git` | A bundle's `Contents/MacOS` is where macOS expects helper binaries, and linking them onto `PATH` keeps them signed with the app. |
+| Smoke test (WP 5.8) | every binary's `--version`, the app on a fixture, a CLI export, both servers' initialise and shutdown | `packaging/smoke-test.py`, run by the release workflow's `smoke` job on each platform's downloaded artefacts (the mounted DMG, the unpacked zip, the unpacked deb) before `publish`; the app gains `--version`; on Linux the app's launch is left to manual QA | A hosted Linux runner has no GPU for the app's Vulkan renderer. |
+| Flatpak (WP 5.8) | checked against the release | the Linux release job checks that the manifest installs the four binaries and builds `adoc-ls` with its features | Building the Flatpak itself needs flatpak-builder and a vendored source list, outside the workflow. |
+| Documentation version (WP 5.8) | the documentation site's version | the site stays unversioned, showing `0.1.0` as its display version | A versioned component would move every page's URL. |
 
 ## 13. Implementation Sequence
 

@@ -25,10 +25,11 @@ modules:
     buildsystem: simple
     build-commands:
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
-      - cargo --offline build --release --bin adocfoundry --bin adocfoundry-cli --bin adoc-ls
+      - cargo --offline build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       - install -Dm755 target/release/adocfoundry -t /app/bin
       - install -Dm755 target/release/adocfoundry-cli -t /app/bin
       - install -Dm755 target/release/adoc-ls -t /app/bin
+      - install -Dm755 target/release/adoc-mcp -t /app/bin
       - install -Dm644 packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop -t /app/share/applications
       - install -Dm644 packaging/icons/adocfoundry.svg /app/share/icons/hicolor/scalable/apps/io.github.bovinemagnet.AdocFoundry.svg
     sources:

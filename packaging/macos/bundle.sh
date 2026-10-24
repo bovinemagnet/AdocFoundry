@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
-# Builds AdocFoundry.app and a DMG from a universal binary.
+# Builds AdocFoundry.app and a DMG from a universal binary, with the command-line tools beside
+# the app in Contents/MacOS.
 #
-# usage: packaging/macos/bundle.sh <universal-binary> <version> <output-dir>
+# usage: packaging/macos/bundle.sh <universal-binary> <version> <output-dir> [<tool>...]
 #
 # Signs and notarises when APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_TEAM_ID and
-# APPLE_APP_PASSWORD are set; otherwise the bundle is left unsigned.
+# APPLE_APP_PASSWORD are set; otherwise the bundle is signed ad hoc, which Apple silicon needs
+# to run it (Developer ID signing and notarisation come in Phase 6).
 set -euo pipefail
 
 binary="$1"
 version="$2"
 out="$3"
+shift 3
+tools=("$@")
 here="$(cd "$(dirname "$0")" && pwd)"
 
 app="$out/AdocFoundry.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/adocfoundry"
+# macOS's bash 3.2 treats an empty array as unset under `set -u`.
+for tool in ${tools[@]+"${tools[@]}"}; do
+  cp "$tool" "$app/Contents/MacOS/"
+done
 sed "s/@VERSION@/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
 
 # An .icns from the SVG master, at every size macOS asks for.
@@ -30,6 +38,8 @@ rm -rf "$iconset"
 
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app"
+else
+  codesign --force --deep --sign - "$app"
 fi
 
 dmg="$out/AdocFoundry-$version-macos-universal.dmg"

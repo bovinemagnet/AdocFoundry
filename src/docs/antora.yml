@@ -1,6 +1,8 @@
 name: adocfoundry
 title: AdocFoundry
 version: ~
+# The release the site describes, shown in place of a version.
+display_version: '0.1.0'
 nav:
   - modules/ROOT/nav.adoc
   - modules/developer/nav.adoc

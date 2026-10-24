@@ -10,7 +10,7 @@ use std::{
     process::Command,
 };
 
-const BINARIES: &[&str] = &["adocfoundry", "adocfoundry-cli", "adoc-ls"];
+const BINARIES: &[&str] = &["adocfoundry", "adocfoundry-cli", "adoc-ls", "adoc-mcp"];
 
 fn workspace_version(root: &Path) -> Result<String, String> {
     let text = fs::read_to_string(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
@@ -50,6 +50,8 @@ pub fn run_package(root: &Path) -> Result<PathBuf, String> {
     for binary in BINARIES {
         build.args(["-p", binary]);
     }
+    // The packaged language server is the full one, as the release workflow builds it.
+    build.args(["--features", "adoc-ls/typst,adoc-ls/git"]);
     run(&mut build)?;
 
     let name = archive_name(&version);

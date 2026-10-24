@@ -54,6 +54,10 @@
               <File Id="exe2" Name="adoc-ls.exe" DiskId="1" KeyPath="yes"
                     Source="$(var.CargoTargetBinDir)\adoc-ls.exe"/>
             </Component>
+            <Component Id="binary3" Guid="*">
+              <File Id="exe3" Name="adoc-mcp.exe" DiskId="1" KeyPath="yes"
+                    Source="$(var.CargoTargetBinDir)\adoc-mcp.exe"/>
+            </Component>
           </Directory>
         </Directory>
       </Directory>
@@ -67,6 +71,7 @@
       <ComponentRef Id="binary0"/>
       <ComponentRef Id="binary1"/>
       <ComponentRef Id="binary2"/>
+      <ComponentRef Id="binary3"/>
       <Feature Id="Environment" Title="PATH Environment Variable"
                Description="Add the install location of the command-line tools to PATH."
                Level="1" Absent="allow">
