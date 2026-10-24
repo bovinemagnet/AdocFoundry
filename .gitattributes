@@ -1,2 +1,9 @@
 # Windows batch files need CRLF line endings.
 *.bat text eol=crlf
+
+# Fixtures and snapshots are compared byte for byte, offsets included, so they are checked out
+# exactly as committed (LF) on every platform, binaries untouched. Pages with CRLF endings, as
+# Windows writes them, are built by the tests that need them
+# (`spans_are_the_same_with_crlf_line_endings`).
+tests/fixtures/** -text
+crates/*/tests/snapshots/*.snap -text
