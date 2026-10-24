@@ -95,6 +95,12 @@ Images and attachments are found in a module's `images` and `attachments` direct
 When both hold a file with the same name, the standard directory wins.
 See xref:antora-support.adoc[Antora support].
 
+== Section numbers
+
+With `:sectnums:`, sections are numbered as Asciidoctor numbers them, in the preview, the HTML from the command line and PDF export alike.
+Special sections, such as a `[preface]`, `[glossary]` or `[bibliography]`, and the sections inside them are not numbered and do not count towards the chapters.
+An `[appendix]` is lettered `Appendix A:`, with its sections `A.1.`; `appendix-caption` changes the word.
+
 == Source blocks
 
 A source block with a language is highlighted with the same tree-sitter grammars as the editor.

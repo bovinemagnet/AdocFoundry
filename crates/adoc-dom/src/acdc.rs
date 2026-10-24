@@ -77,9 +77,38 @@ pub(crate) fn unsupported_page(page: &Path, text: &str) -> Block {
     }
 }
 
-/// Requested include path → the file the resolver actually read and its text, so spans name
-/// real files and end on character boundaries in them.
-type ResolvedIncludes = Arc<Mutex<HashMap<PathBuf, (PathBuf, Arc<str>)>>>;
+/// Requested include path → the file the resolver actually read, its text and where its `\r`s
+/// were, so spans name real files and end on character boundaries in them.
+type ResolvedIncludes = Arc<Mutex<HashMap<PathBuf, Resolved>>>;
+
+/// An included file as read: its real path, its text and where its `\r`s were.
+type Resolved = (PathBuf, Arc<str>, Arc<[usize]>);
+
+/// `text` with each `\r\n` as `\n`, as acdc reads line ends, and where each `\r` was removed:
+/// the offset of its `\n` in the text without them. acdc's offsets are in the text without
+/// them; [`original_offset`] maps one back to the file's.
+fn without_crs(text: &str) -> (String, Vec<usize>) {
+    if !text.contains("\r\n") {
+        return (text.to_owned(), Vec::new());
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut removed = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("\r\n") {
+        out.push_str(&rest[..at]);
+        removed.push(out.len());
+        out.push('\n');
+        rest = &rest[at + 2..];
+    }
+    out.push_str(rest);
+    (out, removed)
+}
+
+/// The file's offset of acdc's `offset`: past every removed `\r` before it, and past the one
+/// at it too when `inclusive` (the offset of a character a span ends with).
+fn original_offset(removed: &[usize], offset: usize, inclusive: bool) -> usize {
+    offset + removed.partition_point(|&at| if inclusive { at <= offset } else { at < offset })
+}
 
 fn parse(input: &ParseInput<'_>) -> Dom {
     let page = input.path.to_path_buf();
@@ -106,11 +135,15 @@ fn parse(input: &ParseInput<'_>) -> Dom {
             let asked = unprotect(&asked);
             match resolver.read(&asked) {
                 Some((path, text)) => {
+                    let (lf, removed) = without_crs(&text);
                     if let Ok(mut map) = resolved.lock() {
-                        map.insert(requested.clone(), (path, Arc::from(text.as_str())));
+                        map.insert(
+                            requested.clone(),
+                            (path, Arc::from(text.as_str()), Arc::from(removed)),
+                        );
                     }
                     Ok(acdc::IncludeSource::from_reader(Cursor::new(
-                        for_acdc(&text).into_bytes(),
+                        for_acdc(&lf).into_bytes(),
                     )))
                 }
                 None => Err(acdc::IncludeSourceError::new(
@@ -135,7 +168,8 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         Ok(options) => options,
         Err(error) => return failed(&page, input.text, &error.to_string()),
     };
-    let protected = for_acdc(input.text);
+    let (lf, page_crs) = without_crs(input.text);
+    let protected = for_acdc(&lf);
     let parsed = match acdc::parse(&protected, &options) {
         Ok(parsed) => parsed,
         Err(error) => return failed(&page, input.text, &error.to_string()),
@@ -145,6 +179,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         parsed: &parsed,
         page,
         page_text: input.text,
+        page_crs,
         resolved,
         verbatim: std::cell::Cell::new(false),
     };
@@ -354,7 +389,9 @@ struct Converter<'p> {
     parsed: &'p acdc::ParseResult,
     page: PathBuf,
     page_text: &'p str,
-    resolved: HashMap<PathBuf, (PathBuf, Arc<str>)>,
+    /// Where the page's `\r`s were, for [`original_offset`].
+    page_crs: Vec<usize>,
+    resolved: HashMap<PathBuf, Resolved>,
     /// Set while converting verbatim content, which takes no replacements.
     verbatim: std::cell::Cell<bool>,
 }
@@ -417,7 +454,7 @@ impl Converter<'_> {
             Some(file) => self
                 .resolved
                 .get(&file)
-                .map_or(file, |(path, _)| path.clone()),
+                .map_or(file, |(path, _, _)| path.clone()),
         }
     }
 
@@ -429,18 +466,26 @@ impl Converter<'_> {
     fn span_of_source_location(&self, source: &acdc::SourceLocation) -> SourceSpan {
         let location = &source.location;
         // acdc's end offset is the start of the last character; spans end after it.
-        let text = match &source.file {
-            None => Some(self.page_text),
-            Some(file) => self.resolved.get(file).map(|(_, text)| &**text),
+        let (text, removed): (Option<&str>, &[usize]) = match &source.file {
+            None => (Some(self.page_text), &self.page_crs),
+            Some(file) => match self.resolved.get(file) {
+                Some((_, text, removed)) => (Some(&**text), &**removed),
+                None => (None, &[]),
+            },
         };
-        let last = location.absolute_end.max(location.absolute_start);
+        let start = original_offset(removed, location.absolute_start, false);
+        let last = original_offset(
+            removed,
+            location.absolute_end.max(location.absolute_start),
+            true,
+        );
         let end = text
             .and_then(|text| text.get(last..))
             .and_then(|rest| rest.chars().next())
             .map_or(last, |character| last + character.len_utf8());
         SourceSpan {
             path: self.real_path(source.file.clone()),
-            range: SourceRange::new(location.absolute_start, end),
+            range: SourceRange::new(start, end),
             line: location.start.line,
             include_chain: location
                 .start
@@ -499,9 +544,12 @@ impl Converter<'_> {
         let range = self.span_of_source_location(&source).range;
         let text = match &source.file {
             None => self.page_text,
-            Some(file) => self.resolved.get(file).map_or("", |(_, text)| &**text),
+            Some(file) => self.resolved.get(file).map_or("", |(_, text, _)| &**text),
         };
-        text.get(range.start..range.end).unwrap_or("").to_owned()
+        // As acdc read it, with `\n` line ends.
+        text.get(range.start..range.end)
+            .unwrap_or("")
+            .replace("\r\n", "\n")
     }
 
     // --- blocks ----------------------------------------------------------------------------

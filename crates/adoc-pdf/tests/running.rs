@@ -190,3 +190,111 @@ fn footnotes_sit_where_asciidoctor_pdf_puts_them() {
         "the footnote's top is {top:.2} pt, asciidoctor-pdf's {ASCIIDOCTOR_PDF_TOP} pt"
     );
 }
+
+/// The label a PDF viewer shows for each page, from the catalogue's `/PageLabels`.
+fn page_labels(bytes: &[u8], pages: usize) -> Vec<String> {
+    use hayro_syntax::object::{Array, Dict, Name, Object, String as PdfString};
+
+    fn roman(mut number: u32) -> String {
+        let mut out = String::new();
+        for (value, symbol) in [
+            (1000, "m"),
+            (900, "cm"),
+            (500, "d"),
+            (400, "cd"),
+            (100, "c"),
+            (90, "xc"),
+            (50, "l"),
+            (40, "xl"),
+            (10, "x"),
+            (9, "ix"),
+            (5, "v"),
+            (4, "iv"),
+            (1, "i"),
+        ] {
+            while number >= value {
+                out.push_str(symbol);
+                number -= value;
+            }
+        }
+        out
+    }
+
+    let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).unwrap();
+    let catalog: Dict = pdf.xref().get(pdf.xref().root_id()).unwrap();
+    let Some(tree) = catalog.get::<Dict>(b"PageLabels") else {
+        return (1..=pages).map(|page| page.to_string()).collect();
+    };
+    let nums: Array = tree.get(b"Nums").expect("a flat number tree");
+    let entries: Vec<Object> = nums.iter::<Object>().collect();
+    let ranges: Vec<(usize, Dict)> = entries
+        .chunks(2)
+        .filter_map(|pair| match (&pair[0], &pair[1]) {
+            (Object::Number(start), Object::Dict(label)) => {
+                Some((start.as_f64() as usize, label.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    (0..pages)
+        .map(|page| {
+            let Some((start, label)) = ranges.iter().rev().find(|(start, _)| *start <= page) else {
+                return String::new();
+            };
+            let prefix = label
+                .get::<PdfString>(b"P")
+                .map(|prefix| String::from_utf8_lossy(prefix.as_bytes()).into_owned())
+                .unwrap_or_default();
+            let first = label
+                .get::<Object>(b"St")
+                .and_then(|value| match value {
+                    Object::Number(number) => Some(number.as_f64() as u32),
+                    _ => None,
+                })
+                .unwrap_or(1);
+            let number = first + (page - start) as u32;
+            let style = label.get::<Name>(b"S").map(|name| name.as_str().to_owned());
+            let shown = match style.as_deref() {
+                Some("D") => number.to_string(),
+                Some("r") => roman(number),
+                Some("R") => roman(number).to_uppercase(),
+                _ => String::new(),
+            };
+            prefix + &shown
+        })
+        .collect()
+}
+
+#[test]
+fn page_labels_match_the_printed_numbers() {
+    // As asciidoctor-pdf labels pages: the front matter in roman numerals, then the body from
+    // 1, the number its footer prints.
+    let theme = common::default_theme();
+    for (header, front) in [
+        (":title-page:\n:toc:", vec!["i", "ii"]),
+        (":title-page:", vec!["i"]),
+        (":toc:", vec![]),
+        ("", vec![]),
+    ] {
+        let text = article(header);
+        let view = common::view_of_text(Path::new("/doc/handbook.adoc"), &text);
+        let output = adoc_pdf::export(&common::article(view), &theme, &PdfOptions::default())
+            .unwrap_or_else(|error| panic!("{error}"));
+        let labels = page_labels(&output.bytes, output.pages);
+        assert_eq!(labels[..front.len()], front, "{header:?}: {labels:?}");
+        let pages = pages_of(&text, &theme);
+        for (index, page) in pages.iter().enumerate().skip(front.len()) {
+            let printed: String = footer(page).iter().map(|run| run.text.as_str()).collect();
+            assert_eq!(
+                labels[index],
+                (index - front.len() + 1).to_string(),
+                "{header:?}: {labels:?}"
+            );
+            assert!(
+                printed.contains(&labels[index]),
+                "{header:?}: page {index} prints {printed:?}, labelled {}",
+                labels[index]
+            );
+        }
+    }
+}

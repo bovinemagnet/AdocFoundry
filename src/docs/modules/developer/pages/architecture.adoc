@@ -31,6 +31,7 @@ include::example$crate-layers.mmd[]
 |L1
 |`adoc-dom`
 |The full AST behind the `DocumentParser` trait, with `acdc-parser` as the parser and `asciidoc-parser` as a second implementation for comparison. It is the only crate that names a parser crate, so the parser stays swappable, and it applies typographic replacements to plain text.
+acdc reads line ends as `\n`, so a page or include written with CRLF is given to it without its `\r` characters, and acdc's offsets are mapped back to the file's; spans in a Windows file cover the same text as in a Unix one.
 
 |L1
 |`adoc-antora`
@@ -38,7 +39,7 @@ include::example$crate-layers.mmd[]
 
 |L1
 |`adoc-index`
-|`WorkspaceIndex`, with replacement-based updates and direct map lookups. It never scans every document. Path normalisation is lexical and never canonicalises, so unsaved files work. Reverse maps from the file name an xref or include names, and from each fragment, to the references (`xrefs_naming`, `includes_naming`, `references_with_fragment`) keep reference lookups from visiting every document.
+|`WorkspaceIndex`, with replacement-based updates and direct map lookups. It never scans every document. Path normalisation is lexical and never canonicalises, so unsaved files work; it keeps the leading `..` of a relative path and stops at the root of an absolute one. Reverse maps from the file name an xref or include names, and from each fragment, to the references (`xrefs_naming`, `includes_naming`, `references_with_fragment`) keep reference lookups from visiting every document.
 
 |L1
 |`adoc-lang`

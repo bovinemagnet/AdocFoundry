@@ -57,13 +57,31 @@ fn world_reaches_only_listed_files() {
 
 #[test]
 fn errors_map_to_asciidoc_lines() {
+    // An image that reads well when the page is written but not when it is typeset: the one
+    // way left for a page's own content to make Typst fail.
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("broken.png"), "this is not a PNG").unwrap();
+    // A 1×1 PNG.
+    const PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 100, 96, 248, 95, 15,
+        0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    let good = dir.path().join("good.png");
+    std::fs::write(&good, PNG).unwrap();
+    let broken = dir.path().join("broken.png");
+    std::fs::write(&broken, "this is not a PNG").unwrap();
     let page = dir.path().join("page.adoc");
-    let text = "= Page\n\nA paragraph.\n\nimage::broken.png[Broken]\n";
+    let text = "= Page\n\nA paragraph.\n\nimage::good.png[Good]\n";
     std::fs::write(&page, text).unwrap();
     let pages = common::article(common::view_of(&page));
-    let error = export(&pages, &common::default_theme(), &PdfOptions::default()).unwrap_err();
+    let theme = common::default_theme();
+    let mut typst: Typst = to_typst(&pages, &theme, &PdfOptions::default());
+    for (_, file) in &mut typst.files {
+        if *file == good {
+            *file = broken.clone();
+        }
+    }
+    let error = compile(&typst, &theme, &PdfOptions::default()).unwrap_err();
     let diagnostic = error
         .diagnostics()
         .iter()
@@ -76,6 +94,49 @@ fn errors_map_to_asciidoc_lines() {
     assert_eq!(source.path, page);
     assert_eq!(source.line, 5, "{error}");
     assert!(error.to_string().contains("page.adoc:5:"), "{error}");
+}
+
+#[test]
+fn an_unreadable_image_is_a_warning_like_a_missing_one() {
+    // As asciidoctor-pdf: the image's alt text is shown and the export goes on.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("corrupt.png"), "this is not a PNG").unwrap();
+    std::fs::write(
+        dir.path().join("corrupt.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"><",
+    )
+    .unwrap();
+    let page = dir.path().join("page.adoc");
+    let text = "= Page\n\nimage::corrupt.png[Corrupt]\n\nInline image:corrupt.svg[Icon] here.\n\nText after.\n";
+    std::fs::write(&page, text).unwrap();
+    let pages = common::article(common::view_of(&page));
+    let theme = common::default_theme();
+    let output = export(&pages, &theme, &PdfOptions::default()).unwrap();
+    for (name, line) in [("corrupt.png", 3), ("corrupt.svg", 5)] {
+        let diagnostic = output
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.message.contains(name))
+            .unwrap_or_else(|| panic!("{name}: {:?}", output.diagnostics));
+        assert_eq!(diagnostic.severity, PdfSeverity::Warning);
+        assert!(
+            diagnostic.message.contains("could not be read"),
+            "{}",
+            diagnostic.message
+        );
+        assert_eq!(
+            diagnostic.source.as_ref().map(|source| source.line),
+            Some(line)
+        );
+    }
+    let typst = to_typst(&pages, &theme, &PdfOptions::default());
+    let text = adoc_pdf::typeset_text(&typst, &theme, &PdfOptions::default())
+        .unwrap()
+        .join(" ");
+    assert!(
+        text.contains("Corrupt") && text.contains("Text after."),
+        "{text}"
+    );
 }
 
 #[test]

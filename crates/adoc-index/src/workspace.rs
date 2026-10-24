@@ -93,11 +93,16 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     for component in path.components() {
         match component {
             Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push(component.as_os_str());
+            Component::ParentDir => match normalized.components().next_back() {
+                // `a/..` is nothing.
+                Some(Component::Normal(_)) => {
+                    normalized.pop();
                 }
-            }
+                // Above the root is the root.
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                // A relative path keeps every leading `..`.
+                _ => normalized.push(component.as_os_str()),
+            },
             Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
                 normalized.push(component.as_os_str());
             }
@@ -130,6 +135,26 @@ mod tests {
             normalize_path(Path::new("docs/./pages/../index.adoc")),
             Path::new("docs/index.adoc")
         );
+    }
+
+    #[test]
+    fn keeps_leading_parent_components() {
+        for (path, expected) in [
+            ("../a", "../a"),
+            ("../../a", "../../a"),
+            ("../../../a/b", "../../../a/b"),
+            ("a/../../b", "../b"),
+            ("../a/../b", "../b"),
+            // Above the root is the root.
+            ("/..", "/"),
+            ("/a/../../b", "/b"),
+        ] {
+            assert_eq!(
+                normalize_path(Path::new(path)),
+                Path::new(expected),
+                "{path}"
+            );
+        }
     }
 
     #[test]

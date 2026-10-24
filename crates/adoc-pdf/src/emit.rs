@@ -33,7 +33,7 @@ pub struct Emitted {
     /// Virtual path, real file.
     pub files: Vec<(String, PathBuf)>,
     pub map: SourceMap,
-    /// Images that could not be found, with where they were written.
+    /// Images that could not be shown, missing or unreadable, and where they were written.
     pub missing: Vec<(String, SourceSpan)>,
     /// Formulas that could not be typeset, why, and where they were written.
     pub unconverted: Vec<(String, SourceSpan)>,
@@ -658,9 +658,26 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    fn block_image(&mut self, image: &ViewImage, span: &SourceSpan) {
+    /// The image's file, when it can be shown: a missing or unreadable image is recorded, to be
+    /// shown as its alt text, as asciidoctor-pdf does.
+    fn usable_image<'i>(&mut self, image: &'i ViewImage, span: &SourceSpan) -> Option<&'i Path> {
         let Some(path) = &image.path else {
-            self.missing.push((image.target.clone(), span.clone()));
+            self.missing
+                .push((format!("image not found: {}", image.target), span.clone()));
+            return None;
+        };
+        if let Some(problem) = image_problem(path) {
+            self.missing.push((
+                format!("image could not be read: {} ({problem})", image.target),
+                span.clone(),
+            ));
+            return None;
+        }
+        Some(path)
+    }
+
+    fn block_image(&mut self, image: &ViewImage, span: &SourceSpan) {
+        let Some(path) = self.usable_image(image, span) else {
             let _ = writeln!(self.out, "#adoc-missing-image({})\n", string(&image.alt));
             return;
         };
@@ -867,7 +884,7 @@ impl<'a> Emitter<'a> {
             ViewInline::Anchor(id) => {
                 let _ = write!(out, "#metadata(none)#{}", self.label(id));
             }
-            ViewInline::Image(image) => match &image.path {
+            ViewInline::Image(image) => match self.usable_image(image, &self.span.clone()) {
                 Some(path) => {
                     let path = self.file(path);
                     let size = image
@@ -1068,6 +1085,33 @@ fn collect_labels(key: &str, blocks: &[ViewBlock], labels: &mut HashSet<String>)
 
 /// An image's alt text, or, as Asciidoctor defaults it, its file name without the extension
 /// and with `-` and `_` as spaces, so every image carries a text alternative.
+/// Why the image at `path` cannot be shown, if it cannot: decoded as Typst decodes it when it
+/// lays the page out (memoised, so the work is not repeated), where a failure would fail the
+/// whole document.
+fn image_problem(path: &Path) -> Option<String> {
+    // `::typst`, the crate, not this crate's `typst` module.
+    use ::typst::{
+        foundations::Bytes,
+        visualize::{ImageFormat, RasterImage, SvgImage, VectorFormat},
+    };
+    let data = match std::fs::read(path) {
+        Ok(data) => data,
+        Err(error) => return Some(error.to_string()),
+    };
+    let format = ImageFormat::detect(&data);
+    let data = Bytes::new(data);
+    match format {
+        Some(ImageFormat::Raster(format)) => RasterImage::plain(data, format)
+            .err()
+            .map(|error| error.to_string()),
+        Some(ImageFormat::Vector(VectorFormat::Svg)) => {
+            SvgImage::new(data).err().map(|error| format!("{error:?}"))
+        }
+        Some(ImageFormat::Vector(VectorFormat::Pdf)) => None,
+        None => Some("an unrecognised image format".to_owned()),
+    }
+}
+
 fn alt_text(image: &ViewImage) -> String {
     if !image.alt.trim().is_empty() {
         return image.alt.clone();

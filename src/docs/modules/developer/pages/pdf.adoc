@@ -184,6 +184,8 @@ Typst's errors and warnings carry spans in the generated source.
 `SourceMap` maps each to the innermost AsciiDoc span that produced it, so a diagnostic reads `install.adoc:42: unknown image format`.
 An error with no mapping is reported against the page.
 A missing image is a diagnostic, not a failure.
+So is an image that cannot be decoded: the page is written with Typst's own image decoder checking each image, and one that fails is shown as its alt text with the warning `image could not be read: <target> (<reason>)`, instead of Typst's "failed to decode image" error failing the export.
+The template labels the pages for the PDF: roman numerals for the front matter (the title page and a table of contents on its own pages) and arabic numbers from 1 for the body, so the labels match the printed footer numbers; a document without front matter is labelled from 1.
 
 `PdfStandard::A2a` and `Ua1` are passed to `typst-pdf`.
 A document date is written only when a standard is requested, the given one or else today's in UTC, so an ordinary export gives the same bytes for the same input.
@@ -208,6 +210,8 @@ A `Book` is a title, a subtitle, attributes and a list of `BookItem` values: a `
 Chapters start a new page.
 Cross references to a page in the book become links to its labels.
 References to pages outside it become links to `[pdf] site_url`, built from `PdfOptions::page_urls`, or stay text without one.
+When the site address is not set, the engine takes it from the playbook's `site.url`.
+A single page exported alone links references to other pages the same way, with the component, version and module in the address (`ROOT` and `~` left out).
 
 == The export service
 

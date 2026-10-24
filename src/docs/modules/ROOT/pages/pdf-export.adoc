@@ -13,6 +13,10 @@ Export Page to PDF… (`export.pdf_page`) exports the active page as an article.
 It opens a save dialog, suggesting the page's name with a `.pdf` extension.
 Unsaved edits are included, because the export reads open buffers.
 
+A cross reference from the page to another page links to that page's address on the published site (`<site>/<component>/<version>/<module>/<page>.html`, without `ROOT` or `~`).
+The site address is `[pdf] site_url`, else the `site.url` of the Antora playbook (`antora-playbook.yml` at the workspace root).
+Without either, such a reference is plain text.
+
 While the export runs, the status bar shows "Exporting PDF…".
 The application stays responsive.
 When it finishes, a notification reports the number of pages and the first warning, and has an Open button that opens the PDF.
@@ -40,8 +44,9 @@ The book follows the component's navigation.
 * A page's own sections move down by the depth of its navigation entry, so a page nested one level deep has its `==` sections at level 3.
 
 A cross reference between two pages of the book becomes an internal link.
-A cross reference to a page outside the book links to `[pdf] site_url` when it is set, laid out as Antora publishes a site (`<site>/<component>/<version>/<module>/<page>.html`).
-Without `site_url`, it is plain text.
+A cross reference to a page outside the book links to the site address when there is one, laid out as Antora publishes a site (`<site>/<component>/<version>/<module>/<page>.html`).
+The address is `[pdf] site_url`, else the playbook's `site.url`.
+Without either, it is plain text.
 
 The book's title can be overridden with a `pdf-title` attribute in the component's or playbook's `asciidoc.attributes`.
 
@@ -134,6 +139,10 @@ An unknown top-level category produces a warning, and its keys are still availab
 The `header` and `footer` keys of a theme define the running content: a three-column grid on each side of the page, with separate recto and verso columns when the theme has them.
 Running content and page numbers start on the first page of the body, numbered 1: after the title page and the table of contents in a book, or in an article with a title page. A number in `running_content_start_at` starts the running content on that page of the body instead.
 
+The page numbers a PDF viewer shows follow the same scheme.
+The front matter (a title page, and a table of contents on its own pages) is labelled with roman numerals i, ii, and so on, and the body from 1, matching the printed footer numbers and asciidoctor-pdf.
+A document without front matter is labelled 1, 2, and so on.
+
 Text in a header or footer may use these references.
 
 * `+{page-number}+` and `+{page-count}+`
@@ -223,6 +232,7 @@ The export warns with `STEM not typeset: <reason>` and the file and line.
 
 Typst's errors and warnings are mapped back to the AsciiDoc file and line that produced them, so a problem reads like `install.adoc:42: unknown image format`.
 A missing image is a warning, not a failure.
+So is an image that exists but cannot be read, such as a corrupt or unrecognised file: its alt text is shown and the export warns `image could not be read: <target> (<reason>)` with the file and line, as asciidoctor-pdf warns `could not embed image`.
 A problem with no source position is reported against the page.
 A diagram that failed to render is reported as a warning.
 A page the parser cannot read is shown in the PDF as its source, and the export warns with the file and the parser's message.

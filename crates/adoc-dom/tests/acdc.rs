@@ -789,3 +789,50 @@ fn stem_notation_follows_the_stem_attribute() {
         [false, false, true, false, true]
     );
 }
+
+/// The text a block's span covers, in the page or the partial it came from.
+fn covered(block: &adoc_dom::Block, page: &str, partial: &str) -> (u32, String) {
+    let span = &block.meta.span;
+    let text = if span.path.ends_with("included.adoc") {
+        partial
+    } else {
+        page
+    };
+    let covered = text.get(span.range.start..span.range.end).unwrap_or("?");
+    (span.line, covered.replace("\r\n", "\n"))
+}
+
+#[test]
+fn spans_are_the_same_with_crlf_line_endings() {
+    // Files written on Windows end their lines with CRLF; every span must still cover the
+    // same text, or click-to-source, scroll sync and visual edits land a byte per line off.
+    let lf_page = std::fs::read_to_string(fixture("blocks.adoc")).unwrap();
+    let lf_partial = std::fs::read_to_string(fixture("partials/included.adoc")).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("partials")).unwrap();
+    let crlf = |text: &str| text.replace("\r\n", "\n").replace('\n', "\r\n");
+    let page = directory.path().join("blocks.adoc");
+    std::fs::write(&page, crlf(&lf_page)).unwrap();
+    std::fs::write(
+        directory.path().join("partials/included.adoc"),
+        crlf(&lf_partial),
+    )
+    .unwrap();
+    let crlf_page = std::fs::read_to_string(&page).unwrap();
+    let crlf_partial =
+        std::fs::read_to_string(directory.path().join("partials/included.adoc")).unwrap();
+
+    let lf = parse_fixture("blocks.adoc");
+    let windows = AcdcParser.parse(&ParseInput::new(&page, &crlf_page));
+    let lf_blocks = lf.walk();
+    let windows_blocks = windows.walk();
+    assert_eq!(lf_blocks.len(), windows_blocks.len());
+    for (lf_block, windows_block) in lf_blocks.iter().zip(&windows_blocks) {
+        assert_eq!(
+            covered(windows_block, &crlf_page, &crlf_partial),
+            covered(lf_block, &lf_page, &lf_partial),
+            "{}",
+            lf_block.kind_name()
+        );
+    }
+}

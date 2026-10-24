@@ -828,30 +828,35 @@ fn export_errors_name_the_file_and_line(cx: &mut TestAppContext) {
     let app = app_with(engine, cx);
     let (_workspace, mut cx) = workspace_window(&app, vec![themed.clone(), imaged.clone()], cx);
 
-    for (page, expected) in [
-        (
-            &themed,
-            format!("{}: error: line 2", dir.join("broken-theme.yml").display()),
-        ),
-        (
-            &imaged,
-            format!("{}:5: failed to decode image", imaged.display()),
-        ),
-    ] {
+    // A broken theme fails the export.
+    let open = |page: &Path, cx: &mut VisualTestContext| {
         cx.update(|_, cx| {
             app.update(cx, |app, _| {
                 let id = app.engine.open(page).unwrap();
                 app.engine.set_active(id);
             });
         });
-        cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
-        let output = page.with_extension("pdf");
-        let result = finish_export(&app, &events, &output, &mut cx);
-        let message = crate::workspace_view::export_message(&output, &result);
-        assert!(message.starts_with("PDF export failed: "), "{message}");
-        assert!(message.contains(&expected), "{message}");
-        assert!(!output.exists());
-    }
+    };
+    open(&themed, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
+    let output = themed.with_extension("pdf");
+    let result = finish_export(&app, &events, &output, &mut cx);
+    let message = crate::workspace_view::export_message(&output, &result);
+    assert!(message.starts_with("PDF export failed: "), "{message}");
+    let expected = format!("{}: error: line 2", dir.join("broken-theme.yml").display());
+    assert!(message.contains(&expected), "{message}");
+    assert!(!output.exists());
+
+    // An image that cannot be read is shown as its alt text, with a warning naming its line.
+    open(&imaged, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::ExportPagePdf);
+    let output = imaged.with_extension("pdf");
+    let result = finish_export(&app, &events, &output, &mut cx);
+    let message = crate::workspace_view::export_message(&output, &result);
+    assert!(message.starts_with("Exported imaged.pdf"), "{message}");
+    let expected = format!("{}:5: image could not be read: bad.png", imaged.display());
+    assert!(message.contains(&expected), "{message}");
+    assert!(output.exists());
 }
 
 fn copy_dir(from: &Path, to: &Path) {
