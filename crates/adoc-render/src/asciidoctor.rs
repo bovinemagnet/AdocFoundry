@@ -145,7 +145,9 @@ mod tests {
     };
 
     use super::{MockRenderer, Renderer, SystemAsciidoctor};
-    use crate::{RenderError, RenderRequest, RenderSafeMode};
+    #[cfg(unix)]
+    use crate::RenderSafeMode;
+    use crate::{RenderError, RenderRequest};
 
     /// Serializes every test that spawns a process.
     ///
@@ -230,6 +232,7 @@ mod tests {
 
     /// A safe-mode jail refuses includes outside its base directory, so an Antora page
     /// pulling in a sibling module's partial renders only when `--base-dir` widens it.
+    #[cfg(unix)]
     #[test]
     fn passes_base_dir_only_when_the_request_sets_one() {
         use std::{fs, os::unix::fs::PermissionsExt};
