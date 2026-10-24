@@ -646,7 +646,7 @@ Running titles look up one memoised list of headings with a binary search instea
 
 |Documentation version (WP 5.8)
 |the documentation site's version
-|the site stays unversioned, showing `0.1.0` as its display version
+|the site stays unversioned, showing the current release as its display version
 |A versioned component would move every page's URL.
 |===
 

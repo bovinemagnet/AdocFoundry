@@ -89,7 +89,7 @@ include::example$release-pipeline.mmd[]
 |===
 
 Code signing is planned for Phase 6: a macOS Developer ID with notarisation, and a Windows certificate.
-The first release, 0.1.0, is unsigned: the macOS app is ad-hoc signed and the Windows installer has no signature.
+Releases are unsigned until Phase 6: the macOS app is ad-hoc signed and the Windows installer has no signature.
 
 === The macOS bundle script
 
@@ -156,7 +156,7 @@ The MSI (`crates/adocfoundry/wix/main.wxs`) gives the Start-menu shortcut and th
 The manual checks for a release are in `docs/qa/phase5.md`.
 Every item of `docs/qa/phase1.md` to `docs/qa/phase4.md` is also re-run on all three platforms.
 
-The documentation site stays unversioned and shows `0.1.0` as its display version, set in `src/docs/antora.yml`.
+The documentation site stays unversioned and shows `0.2.0` as its display version, set in `src/docs/antora.yml`.
 
 == Conventions for contributions
 
