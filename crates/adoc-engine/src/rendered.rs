@@ -497,13 +497,20 @@ impl Engine {
         self.publish_preview(id);
     }
 
-    /// The view of `dom`, with the diagrams it still needs, which are started.
-    pub(crate) fn view_of(&mut self, path: &Path, dom: &Dom) -> (ViewTree, Vec<DiagramRequest>) {
+    /// The view of `dom`, with the diagrams it still needs, which are started. Formulas are
+    /// rendered as images only for views that draw them (`formulas`); a PDF typesets its own.
+    pub(crate) fn view_of(
+        &mut self,
+        path: &Path,
+        dom: &Dom,
+        formulas: bool,
+    ) -> (ViewTree, Vec<DiagramRequest>) {
         let diagrams = self.diagrams();
         let resolver = EngineResolver {
             workspace: &self.workspace,
             diagrams: &diagrams,
             failed: &self.rendered.failed,
+            formulas,
             wanted: RefCell::default(),
         };
         let view = build_view(path, dom, &resolver);
@@ -520,7 +527,7 @@ impl Engine {
             return;
         };
         let (path, dom) = (parsed.path.clone(), parsed.dom.clone());
-        let (view, wanted) = self.view_of(&path, &dom);
+        let (view, wanted) = self.view_of(&path, &dom, true);
         let Some(parsed) = self.rendered.parsed.get(&id) else {
             return;
         };
@@ -547,7 +554,7 @@ impl Engine {
                     Some(root) => DiagramCache::for_workspace(root),
                     None => DiagramCache::new(std::env::temp_dir().join("adocfoundry-diagrams")),
                 };
-                Arc::new(Diagrams::new(cache))
+                Arc::new(Diagrams::new(cache).with_provider(Box::new(crate::StemProvider)))
             })
             .clone()
     }
@@ -602,6 +609,8 @@ struct EngineResolver<'e> {
     workspace: &'e WorkspaceState,
     diagrams: &'e Diagrams,
     failed: &'e BTreeMap<String, String>,
+    /// Whether formulas are rendered as images for this view.
+    formulas: bool,
     /// Diagrams to render, gathered while building because the view is built immutably.
     wanted: RefCell<Vec<DiagramRequest>>,
 }
@@ -684,6 +693,12 @@ impl ViewResolver for EngineResolver<'_> {
         };
         if let Some(path) = self.diagrams.cached(&request) {
             return DiagramView::Svg(path);
+        }
+        if !self.formulas && kind.starts_with("stem-") {
+            return DiagramView::Pending {
+                kind: kind.to_owned(),
+                source: source.to_owned(),
+            };
         }
         let failed = |message: String| DiagramView::Failed {
             kind: kind.to_owned(),

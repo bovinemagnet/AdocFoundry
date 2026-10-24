@@ -140,6 +140,8 @@ The fixtures are in `tests/fixtures/pdf/`: `reference/`, `book/` and `themes/`.
 Page counts must be equal.
 After blurring, the mean absolute grey difference of each page must be at most 0.02, and the bounding boxes of the ink must agree to within 6 pt.
 Books are not compared, because asciidoctor-pdf cannot assemble an Antora component.
+The reference article ends with a Formulas section.
+asciidoctor-pdf has no native STEM and shows the source in a code box, so that page is held to the same mean difference and edge limits, with the right edge of the ink left out.
 Failing pages are written as PNG pairs under `target/pdf-regression/`.
 The test is skipped, with a message, when `asciidoctor-pdf` is not on the `PATH`.
 

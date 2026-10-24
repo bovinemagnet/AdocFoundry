@@ -553,3 +553,50 @@ fn file_urls_percent_encode_reserved_characters() {
 fn file_urls_name_windows_drives() {
     assert_eq!(image_src(r"C:\my docs\a.png"), "file:///C:/my%20docs/a.png");
 }
+
+#[test]
+fn html_stem_is_an_image_with_alt_text() {
+    // A rendered formula is an image whose alternative text is the formula as written; one not
+    // yet rendered keeps MathJax's delimiters.
+    let text = "= Page\n:stem:\n\n[stem]\n++++\nsum_(i=1)^n i\n++++\n\nInline stem:[x^2].\n";
+    struct Rendered;
+    impl ViewResolver for Rendered {
+        fn xref(&self, from: &Path, target: &str) -> ResolvedLink {
+            LocalResolver.xref(from, target)
+        }
+        fn image(&self, _: &Path, _: &str, _: Option<&str>) -> Option<PathBuf> {
+            None
+        }
+        fn diagram(
+            &self,
+            kind: &str,
+            _: &str,
+            attributes: &BTreeMap<String, String>,
+        ) -> DiagramView {
+            assert_eq!(kind, adoc_render::stem_kind(false));
+            let name = if attributes.contains_key("inline") {
+                "inline"
+            } else {
+                "block"
+            };
+            DiagramView::Svg(PathBuf::from(format!("/cache/{name}.svg")))
+        }
+    }
+    let html = to_html(
+        &view_of(Path::new("/page.adoc"), text, &Rendered),
+        &HtmlOptions::default(),
+    );
+    assert!(
+        html.contains("<img src=\"file:///cache/block.svg\" alt=\"sum_(i=1)^n i\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<img class=\"stem\" src=\"file:///cache/inline.svg\" alt=\"x^2\">"),
+        "{html}"
+    );
+    let pending = to_html(
+        &view_of(Path::new("/page.adoc"), text, &LocalResolver),
+        &HtmlOptions::default(),
+    );
+    assert!(pending.contains("\\$sum_(i=1)^n i\\$"), "{pending}");
+}

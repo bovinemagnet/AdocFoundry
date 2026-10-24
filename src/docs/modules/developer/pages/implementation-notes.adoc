@@ -484,6 +484,32 @@ Not in Phase 4, by decision: typeset STEM, a live Typst preview, PDF/A-1 and PDF
 This section summarises section 12 of `docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`, as each package lands.
 
 [cols="1,2,3,3"]
+
+|The emitted call (WP 5.5)
+|`#adoc-stem(block: …, "<maths>", alt: "<source>")`
+|`#adoc-stem("<maths>", "<source>", block: …)`, the source a positional argument
+|Both are string literals either way; `math.typ` holds the function and the helper scope, ahead of the template.
+
+|STEM fonts and sizes (WP 5.5)
+|STIX Two Math for equations
+|STIX Two Math 2.13 (OFL-1.1) bundled and set for equations only, the text around them unchanged; the preview's formulas render at 15 pt (block) and 13 pt (inline)
+|The size of the preview's body text, so a formula reads at the size of the text beside it.
+
+|Formulas in the preview (WP 5.5)
+|block STEM drawn as its SVG; inline in a tooltip
+|the SVG is drawn on a white card, black on white in either theme; an inline formula's source is styled as code, with the typeset formula in a tooltip
+|Typst draws maths in black, which a dark theme would hide.
+
+|Formulas in export (WP 5.5)
+|—
+|the export's view tree asks for no formula images, since the PDF typesets them itself
+|Rendering each formula to SVG for a PDF that never uses it doubled the work.
+
+|STEM in `pdf_regression` (WP 5.5)
+|the formulas compared for layout, with a threshold for that region
+|the reference article ends with a Formulas section; its page is held to the same mean difference (0.02) and edge limits, with the right edge of the ink left out
+|asciidoctor-pdf shows the formula's source in a full-width code box where ours is typeset, so only the right edge differs; it was within 0.0113 mean and 0 pt on the other edges in every theme.
+
 |===
 |Area |Specification |Implementation |Why
 

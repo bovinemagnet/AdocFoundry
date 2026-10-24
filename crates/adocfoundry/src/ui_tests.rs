@@ -404,6 +404,41 @@ fn preview_renders_the_active_document(cx: &mut TestAppContext) {
     assert!(cx.update(|_, cx| workspace.read(cx).preview().read(cx).shown().is_none()));
 }
 
+#[gpui::test]
+fn preview_draws_block_stem_as_an_image(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Maths\n\n[stem]\n++++\nsqrt(4) = 2\n++++\n").unwrap();
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+
+    cx.simulate_keystrokes("secondary-k v");
+    let rendered = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let preview = workspace.read(cx).preview().read(cx);
+            preview.shown().is_some_and(|shown| {
+                shown.view.blocks.iter().any(|block| {
+                    matches!(
+                        &block.kind,
+                        adoc_render::ViewKind::Stem {
+                            rendered: adoc_render::DiagramView::Svg(_),
+                            ..
+                        }
+                    )
+                })
+            })
+        })
+    };
+    assert!(drain_until(&app, &mut cx, rendered), "the formula renders");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("stem-image").is_some());
+}
+
 fn detached_paragraphs(
     workspace: &Entity<WorkspaceView>,
     cx: &mut VisualTestContext,

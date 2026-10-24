@@ -483,7 +483,7 @@ impl Engine {
         let mut views = Vec::new();
         let mut waiting = BTreeSet::new();
         for (path, dom) in &doms {
-            let (view, wanted) = self.view_of(path, dom);
+            let (view, wanted) = self.view_of(path, dom, false);
             waiting.extend(wanted.iter().map(adoc_diagrams::DiagramRequest::checksum));
             views.push((path.clone(), view));
         }

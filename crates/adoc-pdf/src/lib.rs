@@ -13,8 +13,8 @@ mod world;
 pub use document::{to_typst, Book, BookItem, Document, PdfOptions, PdfStandard, Typst};
 pub use emit::{EmitOptions, PageView, SourceMap};
 pub use export::{
-    compile, export, typeset_pages, typeset_text, PdfDiagnostic, PdfError, PdfOutput, PdfSeverity,
-    TextRun, TypesetPage,
+    compile, export, render_math_svg, typeset_pages, typeset_text, PdfDiagnostic, PdfError,
+    PdfOutput, PdfSeverity, TextRun, TypesetPage,
 };
 
 pub use theme::{

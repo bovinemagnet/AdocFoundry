@@ -512,7 +512,21 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 );
             }
         },
-        ViewKind::Stem { latex, source } => {
+        ViewKind::Stem {
+            rendered: DiagramView::Svg(path),
+            source,
+            ..
+        } => {
+            let _ = writeln!(out, "<div{id} class=\"{}\">", classes("stemblock", block));
+            block_title(out, block);
+            let _ = writeln!(
+                out,
+                "<div class=\"content\">\n<img src=\"{}\" alt=\"{}\">\n</div>\n</div>",
+                escape(&file_url(path)),
+                escape(source.trim())
+            );
+        }
+        ViewKind::Stem { latex, source, .. } => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("stemblock", block));
             block_title(out, block);
             let (open, close) = if *latex {
@@ -721,7 +735,19 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
                     .join("&#160;&#8250; ")
             );
         }
-        ViewInline::Stem { latex, source } => {
+        ViewInline::Stem {
+            rendered: Some(path),
+            source,
+            ..
+        } => {
+            let _ = write!(
+                out,
+                "<img class=\"stem\" src=\"{}\" alt=\"{}\">",
+                escape(&file_url(path)),
+                escape(source.trim())
+            );
+        }
+        ViewInline::Stem { latex, source, .. } => {
             let (open, close) = if *latex {
                 ("\\(", "\\)")
             } else {

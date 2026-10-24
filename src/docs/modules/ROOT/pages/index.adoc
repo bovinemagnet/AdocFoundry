@@ -88,7 +88,7 @@ It provides:
 The following are not implemented yet:
 
 * Settings for the paths of the Graphviz, PlantUML and D2 tools, which are found on the `PATH` only.
-* Typeset STEM in the preview and in PDF, which show the maths source.
+* Inline STEM typeset in the preview's line of text, which shows its source with the formula in a tooltip.
 * Editing included content in place, deleting a selection across blocks in the visual editor, spell checking, Git integration and plugins.
 * XML and Dockerfile highlighting inside source blocks, because the editor component has no grammar for them yet.
 * Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.

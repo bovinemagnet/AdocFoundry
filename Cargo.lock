@@ -180,6 +180,7 @@ dependencies = [
  "adoc-git",
  "adoc-index",
  "adoc-lang",
+ "adoc-math",
  "adoc-model",
  "adoc-parser",
  "adoc-pdf",
@@ -271,6 +272,7 @@ name = "adoc-pdf"
 version = "0.1.0"
 dependencies = [
  "adoc-dom",
+ "adoc-math",
  "adoc-render",
  "hayro-syntax",
  "regex",
@@ -281,6 +283,7 @@ dependencies = [
  "typst",
  "typst-layout",
  "typst-pdf",
+ "typst-svg",
 ]
 
 [[package]]

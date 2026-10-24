@@ -260,3 +260,24 @@ fn the_tag_tree_reads_in_order() {
     let first_list = kinds.iter().position(|kind| *kind == "L").unwrap();
     assert!(position("2. Lists") < first_list && first_list < position("6. Tables"));
 }
+
+#[test]
+fn stem_alt_text_is_the_source() {
+    // A screen reader reads a formula as it was written.
+    let view = common::view_of_text(
+        Path::new("/doc/maths.adoc"),
+        "= Maths\n:stem:\n\n[stem]\n++++\nsum_(i=1)^n i^2\n++++\n",
+    );
+    let output = export(
+        &common::article(view),
+        &common::default_theme(),
+        &options(&[PdfStandard::Ua1]),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let tree = tag_tree(&output.bytes);
+    assert!(
+        tree.iter()
+            .any(|(_, kind, alt)| kind == "Formula" && alt == "sum_(i=1)^n i^2"),
+        "{tree:?}"
+    );
+}

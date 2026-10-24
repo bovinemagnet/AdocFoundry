@@ -241,6 +241,55 @@ pub fn typeset_text(
         .collect())
 }
 
+/// One formula typeset on its own, as SVG, for the preview and the HTML backend: `math` in
+/// `size`-point type, displayed (`block`) or inline, on a transparent page that fits it.
+///
+/// # Errors
+///
+/// When Typst cannot typeset it.
+pub fn render_math_svg(
+    math: &adoc_math::TypstMath,
+    block: bool,
+    size: f64,
+) -> Result<String, PdfError> {
+    let size = if size.is_finite() && size > 0.0 {
+        size
+    } else {
+        12.0
+    };
+    let source = format!(
+        "{}\n#set page(width: auto, height: auto, margin: 1pt, fill: none)\n#set text(size: {size}pt, font: \"Noto Serif\")\n#adoc-stem({}, \"\", block: {block})\n",
+        crate::document::MATH,
+        crate::typst::string(math.as_str()),
+    );
+    let world = PdfWorld::new(source, crate::fonts::bundled_set(), &[], None);
+    let Warned { output, .. } = typst::compile::<PagedDocument>(&world);
+    // Formulas render one at a time for as long as the app runs: let old entries go.
+    typst::comemo::evict(30);
+    let document = output.map_err(|errors| {
+        PdfError::Compile(
+            errors
+                .iter()
+                .map(|error| PdfDiagnostic {
+                    severity: PdfSeverity::Error,
+                    message: error.message.to_string(),
+                    hints: Vec::new(),
+                    source: None,
+                })
+                .collect(),
+        )
+    })?;
+    let page = document.pages().first().ok_or_else(|| {
+        PdfError::Compile(vec![PdfDiagnostic {
+            severity: PdfSeverity::Error,
+            message: "the formula typeset to nothing".to_owned(),
+            hints: Vec::new(),
+            source: None,
+        }])
+    })?;
+    Ok(typst_svg::svg(page, &typst_svg::SvgOptions::default()))
+}
+
 /// Lays the document out, with every warning found on the way.
 fn typeset(
     typst: &Typst,
@@ -273,6 +322,17 @@ fn typeset(
         hints: Vec::new(),
         source: Some(span.clone()),
     }));
+    diagnostics.extend(
+        typst
+            .unconverted
+            .iter()
+            .map(|(reason, span)| PdfDiagnostic {
+                severity: PdfSeverity::Warning,
+                message: format!("STEM not typeset: {reason}"),
+                hints: Vec::new(),
+                source: Some(span.clone()),
+            }),
+    );
 
     let today = options
         .date

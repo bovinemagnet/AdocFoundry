@@ -224,6 +224,12 @@ Each diagram block the view needs becomes a job on its own worker.
 When one finishes, the preview is built again from the cached parse and republished, so a slow diagram never delays the page.
 Diagrams are cached on disk by checksum under the first workspace root, in `.cache/adocfoundry/diagrams/`.
 
+STEM goes through the same path.
+The engine registers a `StemProvider`, a `DiagramProvider` for the kinds `stem-asciimath` and `stem-latex`, with its diagram cache.
+Formulas render to SVG on a worker with `adoc_pdf::render_math_svg` at 15 pt (block) and 13 pt (inline), and are cached by checksum like diagrams.
+The view tree's `ViewKind::Stem` carries a `DiagramView` (pending, an SVG path or failed), and `ViewInline::Stem` carries an optional SVG path.
+The export's view tree asks for no formula images, because the PDF typesets them itself.
+
 [[the-export-service]]
 == The export service
 

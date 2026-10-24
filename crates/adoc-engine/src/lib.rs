@@ -20,6 +20,7 @@ mod preview;
 mod rendered;
 mod search;
 mod settings;
+mod stem;
 mod undo;
 mod versions;
 mod visual;
@@ -46,6 +47,7 @@ pub use settings::{
     pdf_standard, EditorSettings, GitSettings, PdfSettings, Settings, ThemePreference,
     ToolSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
+pub use stem::StemProvider;
 
 pub use adoc_pdf::PdfStandard;
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};

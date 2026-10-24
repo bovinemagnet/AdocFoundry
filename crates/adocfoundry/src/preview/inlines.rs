@@ -4,8 +4,9 @@ use std::{ops::Range, path::PathBuf, rc::Rc};
 
 use adoc_render::{ResolvedLink, ViewInline};
 use gpui::{
-    px, AnyElement, App, ElementId, Font, FontStyle, FontWeight, Hsla, InteractiveText,
-    IntoElement as _, SharedString, StyledText, TextRun, UnderlineStyle, Window,
+    div, img, px, AnyElement, App, AppContext as _, Context, ElementId, Font, FontStyle,
+    FontWeight, Hsla, InteractiveText, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, StyledText, TextRun, UnderlineStyle, Window,
 };
 
 /// What a click on a stretch of inline text does.
@@ -42,6 +43,8 @@ pub struct InlineText {
     pub text: String,
     pub runs: Vec<TextRun>,
     pub links: Vec<(Range<usize>, Link)>,
+    /// Inline formulas shown as their source, with the typeset image their tooltip shows.
+    pub formulas: Vec<(Range<usize>, PathBuf)>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -274,13 +277,22 @@ impl Builder<'_> {
                     ..state
                 },
             ),
-            ViewInline::Stem { source, .. } => self.push(
-                source,
-                State {
-                    mono: true,
-                    ..state
-                },
-            ),
+            ViewInline::Stem {
+                source, rendered, ..
+            } => {
+                let start = self.out.text.len();
+                self.push(
+                    source,
+                    State {
+                        mono: true,
+                        ..state
+                    },
+                );
+                if let Some(path) = rendered {
+                    let end = self.out.text.len();
+                    self.out.formulas.push((start..end, path.clone()));
+                }
+            }
         }
     }
 }
@@ -326,26 +338,52 @@ fn layout_with(inlines: &[ViewInline], style: &InlineStyle, state: State) -> Inl
     builder.out
 }
 
-/// The element for laid-out text; link ranges call `on_link`.
+/// A typeset inline formula, shown when its source is hovered.
+struct FormulaTooltip(PathBuf);
+
+impl Render for FormulaTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        // Black on white, readable in either theme.
+        div()
+            .p_1()
+            .rounded(px(4.))
+            .bg(gpui::white())
+            .child(img(self.0.clone()))
+    }
+}
+
+/// The element for laid-out text; link ranges call `on_link`, and an inline formula shows its
+/// typeset image in a tooltip.
 pub fn element(id: ElementId, text: InlineText, on_link: &LinkHandler) -> AnyElement {
     if text.text.is_empty() {
         return gpui::Empty.into_any_element();
     }
     let styled = StyledText::new(text.text).with_runs(text.runs);
-    if text.links.is_empty() {
+    if text.links.is_empty() && text.formulas.is_empty() {
         return styled.into_any_element();
     }
     let (ranges, links): (Vec<_>, Vec<_>) = text.links.into_iter().unzip();
     let on_link = on_link.clone();
-    InteractiveText::new(id, styled)
-        .on_click(ranges, move |index, window, cx| {
+    let formulas = text.formulas;
+    let mut element = InteractiveText::new(id, styled);
+    if !ranges.is_empty() {
+        element = element.on_click(ranges, move |index, window, cx| {
             if let Some(link) = links.get(index) {
                 // The enclosing block's click-to-source would otherwise undo the navigation.
                 cx.stop_propagation();
                 on_link(link, window, cx);
             }
-        })
-        .into_any_element()
+        });
+    }
+    if !formulas.is_empty() {
+        element = element.tooltip(move |index, _, cx| {
+            formulas
+                .iter()
+                .find(|(range, _)| range.contains(&index))
+                .map(|(_, path)| cx.new(|_| FormulaTooltip(path.clone())).into())
+        });
+    }
+    element.into_any_element()
 }
 
 #[cfg(test)]

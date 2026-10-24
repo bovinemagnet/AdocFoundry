@@ -103,6 +103,7 @@ fn emits_every_inline_kind() {
         "#adoc-kbd((\"Ctrl\", \"T\",))",
         "#adoc-button(\"OK\")",
         "#adoc-menu((\"File\", \"Save\",))",
+        "#adoc-stem(\"x^(2)\", \"x^2\", block: false)",
     ] {
         assert!(
             typst.source.contains(call),
@@ -118,7 +119,8 @@ fn emits_every_inline_kind() {
         "areference",
         "Ctrl",
         "[heart]",
-        "x^2",
+        // The formula `x^2`, typeset: a mathematical italic x.
+        "\u{1d465}2",
     ] {
         assert!(text.contains(expected), "no {expected} in {text}");
     }

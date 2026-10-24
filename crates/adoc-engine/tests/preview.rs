@@ -377,3 +377,59 @@ fn render_blocking_waits_for_diagrams() {
     ));
     assert!(engine.rendered_preview(id).is_none(), "released afterwards");
 }
+
+#[test]
+fn stem_renders_to_svg_and_is_cached() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(
+        &page,
+        "= Page\n:stem:\n\n[stem]\n++++\nsum_(i=1)^n i\n++++\n\nInline stem:[x^2] here.\n",
+    )
+    .unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    let cache = DiagramCache::new(directory.path().join("cache"));
+    engine.set_diagrams(
+        Diagrams::with_providers(cache, Vec::new())
+            .with_provider(Box::new(adoc_engine::StemProvider)),
+    );
+    let events = engine.subscribe();
+    let id = engine.open(&page).unwrap();
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    assert_eq!(
+        ready_versions(&events, id),
+        [0, 0],
+        "pending, then rendered"
+    );
+
+    let blocks = blocks(&engine, id);
+    let rendered = blocks
+        .iter()
+        .find_map(|block| match &block.kind {
+            ViewKind::Stem { rendered, .. } => Some(rendered.clone()),
+            _ => None,
+        })
+        .expect("the formula block");
+    let DiagramView::Svg(svg) = rendered else {
+        panic!("{rendered:?}");
+    };
+    assert!(svg.starts_with(directory.path().join("cache")));
+    assert!(fs::read_to_string(&svg).unwrap().starts_with("<svg"));
+    let inline = blocks.iter().find_map(|block| match &block.kind {
+        ViewKind::Paragraph(content) => content.iter().find_map(|inline| match inline {
+            ViewInline::Stem { rendered, .. } => Some(rendered.clone()),
+            _ => None,
+        }),
+        _ => None,
+    });
+    assert!(matches!(inline, Some(Some(_))), "{inline:?}");
+
+    // Cached: shown at once next time, with no second render.
+    engine.release_preview(id);
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    assert_eq!(ready_versions(&events, id), [0]);
+}

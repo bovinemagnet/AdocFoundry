@@ -205,6 +205,20 @@ PDF/UA needs a text alternative for every image.
 An image without alt text gets its file name as alt text.
 Give images real alt text for a document people will listen to.
 
+[[stem]]
+== STEM
+
+Block and inline STEM are typeset as mathematics.
+The notation follows the `:stem:` attribute: `latexmath` or `tex` means LaTeX, and anything else means AsciiMath.
+The `[latexmath]` and `[asciimath]` block styles and the `latexmath:[...]` and `asciimath:[...]` macros choose the notation explicitly.
+
+Equations are set in STIX Two Math, which is bundled.
+It is used for equations only; the text around them keeps the theme's fonts.
+Each formula's source is its alternative text, so a tagged PDF (PDF/UA-1) carries it.
+
+A formula that cannot be converted, or that holds anything but maths, is shown as its source in a code style.
+The export warns with `STEM not typeset: <reason>` and the file and line.
+
 == Diagnostics
 
 Typst's errors and warnings are mapped back to the AsciiDoc file and line that produced them, so a problem reads like `install.adoc:42: unknown image format`.
@@ -215,7 +229,6 @@ A page the parser cannot read is shown in the PDF as its source, and the export 
 
 == What is not supported
 
-* STEM is shown as its source in a code style, not typeset as mathematics.
 * Source blocks are highlighted by Typst's highlighter, and only when the `source-highlighter` attribute is set, which is how asciidoctor-pdf behaves.
 The editor's tree-sitter highlighting is not used.
 * There is no live PDF preview pane.

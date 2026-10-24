@@ -152,8 +152,9 @@ fn rasterise(pdf: &Path) -> Vec<Raster> {
 }
 
 /// How far apart two pages are: the mean grey difference of the blurred pages, 0 to 1, and the
-/// largest difference between the edges of their ink, in points.
-fn distance(ours: &Raster, theirs: &Raster) -> (f32, f32) {
+/// largest difference between the edges of their ink, in points. Without `right`, the right edge
+/// is left out.
+fn distance(ours: &Raster, theirs: &Raster, right: bool) -> (f32, f32) {
     let (a, b) = (ours.blurred(), theirs.blurred());
     let w = ours.width.min(theirs.width);
     let h = ours.height.min(theirs.height);
@@ -168,7 +169,9 @@ fn distance(ours: &Raster, theirs: &Raster) -> (f32, f32) {
         (Some(a), Some(b)) => a
             .iter()
             .zip(b)
-            .map(|(a, b)| (a - b).abs())
+            .enumerate()
+            .filter(|&(edge, _)| right || edge != 2)
+            .map(|(_, (a, b))| (a - b).abs())
             .fold(0.0, f32::max),
         (None, None) => 0.0,
         _ => f32::INFINITY,
@@ -311,7 +314,11 @@ fn pages_match_asciidoctor_pdf() {
             ));
         }
         for (index, (a, b)) in ours.iter().zip(&theirs).enumerate() {
-            let (mean, edges) = distance(a, b);
+            // The last page holds the formulas, typeset here and shown as source in a code box
+            // by asciidoctor-pdf, which has no STEM of its own. Their right edge is the formula's,
+            // so that page is compared for layout without it.
+            let formulas = index + 1 == theirs.len();
+            let (mean, edges) = distance(a, b, !formulas);
             eprintln!(
                 "{} page {}: mean difference {mean:.4}, ink edges within {edges:.1}pt",
                 reference.name,

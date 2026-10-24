@@ -16,6 +16,11 @@ use crate::theme::{FontFile, LoadedTheme};
 
 /// The fonts asciidoctor-pdf bundles, by file name.
 const BUNDLED: &[(&str, &[u8])] = &[
+    // Not asciidoctor-pdf's: the maths font STEM is typeset in (OFL-1.1, `fonts/LICENSE-stix`).
+    (
+        "STIXTwoMath-Regular.otf",
+        include_bytes!("../fonts/STIXTwoMath-Regular.otf"),
+    ),
     (
         "notoserif-regular-subset.ttf",
         include_bytes!("../fonts/notoserif-regular-subset.ttf"),
@@ -87,6 +92,19 @@ fn bundled(name: &str) -> Option<Font> {
         .iter()
         .find(|(bundled, _)| *bundled == name)
         .map(|(_, font)| font.clone())
+}
+
+/// The bundled fonts, each under its own family name: enough for a formula typeset on its own.
+pub(crate) fn bundled_set() -> FontSet {
+    let mut set = FontSet::default();
+    for (name, _) in BUNDLED {
+        if let Some(font) = bundled(name) {
+            let info = font.info().clone();
+            set.fonts.push(font);
+            set.infos.push(info);
+        }
+    }
+    set
 }
 
 /// Fonts and the book entries they are selected by, index for index.
