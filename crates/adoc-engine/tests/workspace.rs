@@ -191,3 +191,38 @@ fn open_workspace_rejects_missing_roots() {
         .open_workspace(vec![PathBuf::from("/definitely/not/here")])
         .is_err());
 }
+
+#[test]
+fn typing_does_not_report_indexing() {
+    let root = fixture("antora-single-component");
+    let mut engine = engine_without_user_settings();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    // A whole-workspace index is indexing.
+    assert!(engine.is_indexing());
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert!(!engine.is_indexing());
+
+    let page = fs::read_dir(root.join("modules/ROOT/pages"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "adoc")
+        })
+        .unwrap();
+    let id = engine.open(&page).unwrap();
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EDIT_INSERT_TEXT,
+            adoc_engine::CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(0, 0),
+                text: "x".to_owned(),
+            },
+        )
+        .unwrap();
+    // The edit settles a re-parse and a preview, which is pending work but not indexing.
+    assert!(engine.has_pending());
+    assert!(!engine.is_indexing());
+}

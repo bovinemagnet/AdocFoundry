@@ -10,12 +10,13 @@ adoc-antora.workspace = true
 adoc-core.workspace = true
 adoc-diagrams.workspace = true
 adoc-dom.workspace = true
-adoc-git.workspace = true
+adoc-git = { workspace = true, optional = true }
 adoc-index.workspace = true
 adoc-lang.workspace = true
 adoc-model.workspace = true
 adoc-parser.workspace = true
-adoc-pdf.workspace = true
+adoc-math = { workspace = true, optional = true }
+adoc-pdf = { workspace = true, optional = true }
 adoc-render.workspace = true
 dirs.workspace = true
 notify.workspace = true
@@ -24,6 +25,13 @@ ropey.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+
+[features]
+default = ["typst", "git"]
+# PDF export and typeset STEM, through Typst.
+typst = ["dep:adoc-pdf", "dep:adoc-math"]
+# Git state, changes and commits, through gix.
+git = ["dep:adoc-git"]
 
 [dev-dependencies]
 adoc-git = { workspace = true, features = ["test-support"] }

@@ -7,7 +7,7 @@ Forge your documentation in real time.
 
 AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way.
 It is written in Rust for macOS, Linux and Windows.
-It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
+It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`), a language server (`adoc-ls`) for other editors, and an MCP server (`adoc-mcp`) for assistants.
 
 Nothing else is needed at run time: no Ruby, Node.js or Java.
 
@@ -88,7 +88,7 @@ It provides:
 The following are not implemented yet:
 
 * Settings for the paths of the Graphviz, PlantUML and D2 tools, which are found on the `PATH` only.
-* Typeset STEM in the preview and in PDF, which show the maths source.
+* Inline STEM typeset in the preview's line of text, which shows its source with the formula in a tooltip.
 * Editing included content in place, deleting a selection across blocks in the visual editor, spell checking, Git integration and plugins.
 * XML and Dockerfile highlighting inside source blocks, because the editor component has no grammar for them yet.
 * Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
@@ -110,4 +110,5 @@ See xref:developer:testing.adoc#manual-qa[the manual QA record] for the checklis
 * xref:diagnostics.adoc[Diagnostics] -- every diagnostic code and what it means.
 * xref:command-line.adoc[Command line] -- `adocfoundry-cli` for scripts and CI.
 * xref:language-server.adoc[Language server] -- `adoc-ls` for Zed and other editors.
+* xref:mcp-server.adoc[MCP server] -- `adoc-mcp` for assistants and other MCP clients.
 * xref:developer:index.adoc[Developer guide] -- architecture, testing and releasing.

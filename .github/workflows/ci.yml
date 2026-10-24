@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install GPUI system libraries
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - uses: EmbarkStudios/cargo-deny-action@v2
+      - run: cargo xtask layers
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install GPUI system libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+      # asciidoctor and asciidoctor-pdf are CI-only: the fidelity and PDF regression tests compare
+      # against them and skip themselves without them. Nothing needs Ruby at runtime.
+      - uses: ruby/setup-ruby@v1
+        if: runner.os == 'Linux'
+        with:
+          ruby-version: '3.3'
+      - name: Install asciidoctor and asciidoctor-pdf
+        if: runner.os == 'Linux'
+        run: gem install --no-document asciidoctor -v 2.0.26 && gem install --no-document asciidoctor-pdf -v 2.3.15
+      - run: cargo test --workspace --exclude adocfoundry
+      # The app's tests run on GPUI's test platform; on macOS it builds without a display server.
+      - name: App tests
+        if: runner.os == 'macOS'
+        run: cargo test -p adocfoundry
+      - run: cargo build -p adocfoundry
+      # The language server alone, lean and with every feature; the default build must not
+      # compile Typst or Git (checked by `cargo xtask layers`).
+      - run: cargo build -p adoc-ls
+      - run: cargo build -p adoc-ls --all-features
+
+  pdf-standards:
+    # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p adocfoundry-cli
+      - name: Export the reference PDFs
+        run: |
+          mkdir -p out
+          cli=target/release/adocfoundry-cli
+          $cli pdf tests/fixtures/pdf/reference/article.adoc --standard pdf-a-2a --output out/article-a.pdf
+          $cli pdf tests/fixtures/pdf/reference/article.adoc --standard pdf-ua-1 --output out/article-ua.pdf
+          cp -R tests/fixtures/pdf/book /tmp/book
+          (cd /tmp/book && "$GITHUB_WORKSPACE/$cli" pdf guide --standard pdf-a-2a --standard pdf-ua-1 --output "$GITHUB_WORKSPACE/out/book.pdf")
+      - name: Validate with veraPDF
+        run: |
+          verapdf() { docker run --rm -v "$PWD/out:/data" verapdf/cli:v1.30.3 --format text "$@"; }
+          result=$( { verapdf --flavour 2a /data/article-a.pdf /data/book.pdf; verapdf --flavour ua1 /data/article-ua.pdf /data/book.pdf; } || true )
+          echo "$result"
+          if echo "$result" | grep -q '^FAIL'; then exit 1; fi
+          test "$(echo "$result" | grep -c '^PASS')" -eq 4
+
+  grammar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install tree-sitter-cli --locked
+      - name: Grammar corpus tests
+        run: |
+          for grammar in tree-sitter-asciidoc tree-sitter-asciidoc_inline; do
+            (cd "grammars/tree-sitter-asciidoc/$grammar" && tree-sitter test)
+          done
+      - name: Queries compile against the grammars
+        run: |
+          sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
+          cargo test -p adocfoundry queries_compile
+

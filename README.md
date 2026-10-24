@@ -4,7 +4,7 @@ Forge your documentation in real time.
 
 AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way, written in Rust for macOS, Linux and Windows. It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
 
-The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes. **All four phases are implemented.** The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md).
+The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes, then (5) release readiness: fixes, typeset STEM, `adoc-ls` on the engine, an MCP server and packages. **All five phases are implemented**; the first release, 0.1.0, awaits its tag and its manual QA on each platform ([`docs/qa/phase5.md`](docs/qa/phase5.md)). The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md) [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md).
 
 ## What works
 
@@ -46,7 +46,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
 - Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
 - Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render when `dot`, `plantuml` or `d2` is on `PATH`, and otherwise show their source with the reason. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
-- STEM blocks show their maths as styled source.
+- STEM is typeset: block formulas are drawn as images, and an inline formula shows its source with the typeset formula in a tooltip. A formula that cannot be converted shows as its source.
 
 **Visual editing**
 
@@ -75,6 +75,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Typeset in process by Typst, with no Asciidoctor, Ruby, Java or network; unsaved edits are exported, diagrams are rendered first, and Typst's errors point at the AsciiDoc line that caused them.
 - Styled by asciidoctor-pdf themes, loaded as asciidoctor-pdf loads them (`extends`, `$variables`, arithmetic, units, colours, the font catalogue), so an existing theme works without edits. The bundled `default`, `default-sans`, `default-for-print` and `base` themes use the same Noto and M+ fonts asciidoctor-pdf ships; on the reference article, every line lands within 2 pt of asciidoctor-pdf's.
 - Headers and footers with recto and verso columns, page numbers and section titles; a title page with logo, authors and revision; dot leaders in the table of contents; an index from `((terms))` in an `[index]` section; PDF/A-2a and PDF/UA-1 on request.
+- STEM typeset from AsciiMath or LaTeX (following `:stem:`) in STIX Two Math, with the source as each formula's alternative text; a formula that cannot be converted, or uses anything but maths, is shown as its source with a warning naming its line.
 
 **Find, replace and rename**
 
@@ -88,7 +89,13 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 ## Installing
 
-There are no published releases yet. The release workflow in `packaging/ci/` (not active until macOS and Windows have been tested by hand) builds a macOS universal DMG, Windows MSI and portable zip (x64 and ARM64) and Linux AppImage, deb and rpm (x86_64 and aarch64); there is also a Flatpak manifest in `packaging/flatpak/`. On Linux, `cargo xtask package`, `cargo deb -p adocfoundry` and `cargo generate-rpm -p crates/adocfoundry` build the same packages locally. Nothing else is needed at run time: no Ruby, Node.js or Java.
+Releases are on the [GitHub releases page](https://github.com/bovinemagnet/AdocFoundry/releases). Every package carries the app and the `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` binaries; `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` are also published as archives of their own. Nothing else is needed at run time: no Ruby, Node.js or Java.
+
+- **macOS** (universal): open `AdocFoundry-<version>-macos-universal.dmg` and drag AdocFoundry to Applications. The first release is signed ad hoc, not with a Developer ID, so macOS asks before opening it the first time: Control-click the app, choose Open, and confirm. The command-line tools are in `AdocFoundry.app/Contents/MacOS`; link them onto your `PATH`, for example `ln -s /Applications/AdocFoundry.app/Contents/MacOS/adoc-ls /usr/local/bin/`.
+- **Windows** (x64 and ARM64): run the MSI, which can add the tools to `PATH`, or unpack the portable zip. The first release is not signed, so SmartScreen asks before running it: choose More info, then Run anyway.
+- **Linux** (x86_64 and aarch64): the AppImage (`chmod +x`, then run it), the deb (`sudo apt install ./AdocFoundry-….deb`) or the rpm (`sudo dnf install ./adocfoundry-….rpm`). A Flatpak manifest is in `packaging/flatpak/`.
+
+The release workflow (`.github/workflows/release.yml`, run on `v*` tags) builds these and smoke-tests each platform's downloads (`packaging/smoke-test.py`). On Linux, `cargo xtask package`, `cargo deb -p adocfoundry` and `cargo generate-rpm -p crates/adocfoundry` build the same packages locally.
 
 To build from source you need Rust (stable, via rustup) and, on Linux, the libraries GPUI uses:
 
@@ -195,17 +202,44 @@ adocfoundry-cli git-status <root> [--format text|json]
 
 ## Language server
 
-`adoc-ls --stdio` serves the same diagnostics, definition, hover, completion, document and workspace symbols, and an HTML preview through Asciidoctor, to any LSP editor. The Zed extension [zed-asciidoc](https://github.com/bovinemagnet/zed-asciidoc) starts it from `PATH`:
+`adoc-ls --stdio` runs the same engine as the app and serves any LSP editor:
+
+- Diagnostics (the same codes and severities as the Problems panel, republished for every open page a change affects), definition, hover, completion, and document and workspace symbols.
+- References: on a page, the pages that link to it and the includes that include it; on an anchor or a reference to one, every reference to that anchor.
+- Renaming: renaming an `.adoc` file in the editor first rewrites the xrefs and nav entries that name it (`workspace/willRenameFiles`); renaming an anchor id renames it and its references.
+- Commands: `adoc.renderPreview`, `adoc.renderLivePreview` and `adoc.stopLivePreview` open an HTML preview, through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, else through the engine, with diagrams and typeset STEM; `adoc.checkWorkspace` publishes every file's diagnostics; `adoc.exportPdf { uri, component?, output, theme?, standards? }` writes a PDF, in builds with Typst.
+
+Settings come from the files the app reads: the user settings file and the workspace's `.adocfoundry.toml`. Git is off unless the user settings file sets `[git] enabled = true`.
+
+The Zed extension [zed-asciidoc](https://github.com/bovinemagnet/zed-asciidoc) starts it from `PATH`. The default build is lean, without Typst or Git:
 
 ```sh
 cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
 ```
 
+With PDF export, typeset STEM in the preview and Git:
+
+```sh
+cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --features typst,git
+```
+
+## MCP server
+
+`adoc-mcp <root>… [--allow-write]` serves an Antora workspace to MCP clients (assistants and tools) over stdio, through the same engine as the app. Its tools read pages (by path or resource id, with unsaved edits), list components and navigation, resolve xref, include and image targets, check the workspace (the same diagnostics as `adocfoundry-cli check --format json`), find symbols, search, render a page as text or HTML and report Git status. With `--allow-write` it also edits pages, renames them (rewriting the xrefs, nav entries and includes that name them) and exports PDF; without it those tools are not offered. Every page is also a `file://` resource, and `antora:{resource_id}` reads one by its Antora id. Paths outside the roots are refused, there is no network, and long results are cut with the total stated.
+
+```json
+{
+  "mcpServers": {
+    "adocfoundry": { "command": "adoc-mcp", "args": ["/path/to/docs"] }
+  }
+}
+```
+
 ## Not implemented yet
 
-- In PDF export: typeset STEM (it shows as its source), source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
+- In PDF export: source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
-- Typeset STEM: the preview and PDF export show the maths source.
+- Typeset inline STEM in the preview's text flow: it shows as its source, typeset in a tooltip.
 - Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
 - Editing included content in place, spell checking, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
@@ -227,7 +261,7 @@ cargo xtask package     # release build and archive for this platform in dist/
 The workspace is a ladder of crates, each depending only on those below it:
 
 ```text
-adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)
+adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
 adoc-engine              documents, commands, undo, workspace, watcher, settings, search, preview, visual model
 adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   view tree and HTML; diagrams; the editable model; Git; PDF
 adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang

@@ -46,39 +46,47 @@ pub(crate) enum WorkerMessage {
         checksum: String,
         result: Result<PathBuf, String>,
     },
+    #[cfg(feature = "git")]
     GitDiscovered {
         generation: u64,
         found: Vec<(crate::GitRepository, Vec<adoc_git::FileStatus>)>,
         errors: Vec<String>,
     },
+    #[cfg(feature = "git")]
     GitRefreshed {
         generation: u64,
         workdir: PathBuf,
         refresh: u64,
         result: Result<crate::git::Snapshot, String>,
     },
+    #[cfg(feature = "git")]
     GitHunks {
         id: crate::DocumentId,
         version: u64,
         hunks: Result<Vec<adoc_git::Hunk>, String>,
     },
+    #[cfg(feature = "git")]
     BranchVersions {
         generation: u64,
         versions: Option<adoc_antora::BranchVersions>,
     },
+    #[cfg(feature = "git")]
     GitBlame {
         id: crate::DocumentId,
         generation: u64,
         blame: Result<Vec<adoc_git::BlameLine>, String>,
     },
+    #[cfg(feature = "git")]
     Pushed {
         workdir: PathBuf,
         result: Result<String, String>,
     },
+    #[cfg(feature = "typst")]
     ExportParsed {
         job: u64,
         doms: Vec<(PathBuf, adoc_dom::Dom)>,
     },
+    #[cfg(feature = "typst")]
     ExportFinished {
         job: u64,
         result: Result<crate::ExportSummary, String>,
@@ -127,6 +135,7 @@ impl FileWatcher {
 
     /// Also watches a repository's `.git` directory for the files that change on a commit, a
     /// branch switch or staging. Watching is a convenience: a failure is ignored.
+    #[cfg(feature = "git")]
     pub(crate) fn watch_git_dir(&mut self, git_dir: &Path) {
         let _ = self._watcher.watch(git_dir, RecursiveMode::NonRecursive);
         let refs = git_dir.join("refs");
@@ -180,6 +189,7 @@ impl Engine {
         let roots = self.roots.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
+        self.indexing += 1;
         thread::spawn(move || {
             let mut state = WorkspaceState::new();
             let message = match state.index_roots(&roots) {
@@ -204,6 +214,18 @@ impl Engine {
             || self.rendered.has_scheduled()
             || self.visual.has_due()
             || self.git.has_pending()
+            || self
+                .watcher
+                .as_ref()
+                .is_some_and(|watcher| !watcher.pending.is_empty())
+    }
+
+    /// True while the workspace is being indexed: a whole-workspace index is running, or
+    /// file-system changes wait to be applied. Unlike [`Engine::has_pending`], the re-parse,
+    /// preview and model settles that follow typing do not count.
+    #[must_use]
+    pub fn is_indexing(&self) -> bool {
+        self.indexing > 0
             || self
                 .watcher
                 .as_ref()
@@ -249,6 +271,7 @@ impl Engine {
                 state,
                 files,
             } => {
+                self.indexing = self.indexing.saturating_sub(1);
                 if roots != self.roots {
                     return; // A newer workspace replaced the one this worker indexed.
                 }
@@ -267,6 +290,7 @@ impl Engine {
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
                 // The playbook may have changed with the files.
+                #[cfg(feature = "git")]
                 if !self.git.repositories().is_empty() {
                     self.refresh_branch_versions();
                 }
@@ -284,31 +308,40 @@ impl Engine {
             WorkerMessage::DiagramRendered { checksum, result } => {
                 self.diagram_rendered(&checksum, result);
             }
+            #[cfg(feature = "git")]
             WorkerMessage::GitDiscovered {
                 generation,
                 found,
                 errors,
             } => self.git_discovered(generation, found, errors),
+            #[cfg(feature = "git")]
             WorkerMessage::GitRefreshed {
                 generation,
                 workdir,
                 refresh,
                 result,
             } => self.git_refreshed(generation, &workdir, refresh, result),
+            #[cfg(feature = "git")]
             WorkerMessage::GitHunks { id, version, hunks } => self.git_hunks(id, version, hunks),
+            #[cfg(feature = "git")]
             WorkerMessage::BranchVersions {
                 generation,
                 versions,
             } => self.branch_versions_found(generation, versions),
+            #[cfg(feature = "git")]
             WorkerMessage::GitBlame {
                 id,
                 generation,
                 blame,
             } => self.git_blamed(id, generation, blame),
+            #[cfg(feature = "git")]
             WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
+            #[cfg(feature = "typst")]
             WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),
+            #[cfg(feature = "typst")]
             WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
             WorkerMessage::IndexFailed { error } => {
+                self.indexing = self.indexing.saturating_sub(1);
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,
                     error,

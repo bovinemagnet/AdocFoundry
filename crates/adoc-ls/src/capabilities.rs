@@ -1,17 +1,52 @@
 use lsp_types::{
-    CodeActionProviderCapability, CompletionOptions, ExecuteCommandOptions,
+    CodeActionProviderCapability, CompletionOptions, ExecuteCommandOptions, FileOperationFilter,
+    FileOperationPattern, FileOperationPatternKind, FileOperationRegistrationOptions,
     HoverProviderCapability, OneOf, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions,
+    WorkspaceFileOperationsServerCapabilities, WorkspaceServerCapabilities,
 };
 
 use crate::handlers::code_actions::{
     RENDER_LIVE_PREVIEW_COMMAND, RENDER_PREVIEW_COMMAND, STOP_LIVE_PREVIEW_COMMAND,
 };
 
+/// Exports the page, or its component version as a book, to PDF. Only in builds with Typst.
+pub const EXPORT_PDF_COMMAND: &str = "adoc.exportPdf";
+
+/// Publishes the diagnostics of every file in the workspace, open or not.
+pub const CHECK_WORKSPACE_COMMAND: &str = "adoc.checkWorkspace";
+
+/// The commands this build runs.
+#[must_use]
+pub(crate) fn commands(can_export: bool) -> Vec<String> {
+    let mut commands = vec![
+        RENDER_PREVIEW_COMMAND.to_owned(),
+        RENDER_LIVE_PREVIEW_COMMAND.to_owned(),
+        STOP_LIVE_PREVIEW_COMMAND.to_owned(),
+        CHECK_WORKSPACE_COMMAND.to_owned(),
+    ];
+    if can_export {
+        commands.push(EXPORT_PDF_COMMAND.to_owned());
+    }
+    commands
+}
+
 #[must_use]
 pub(crate) fn server_capabilities(
     encoding: crate::position::PositionEncoding,
+    can_export: bool,
 ) -> ServerCapabilities {
+    // A page renamed in the client gets its xrefs and nav entries rewritten first.
+    let pages = FileOperationRegistrationOptions {
+        filters: vec![FileOperationFilter {
+            scheme: Some("file".to_owned()),
+            pattern: FileOperationPattern {
+                glob: "**/*.adoc".to_owned(),
+                matches: Some(FileOperationPatternKind::File),
+                options: None,
+            },
+        }],
+    };
     ServerCapabilities {
         position_encoding: Some(encoding.lsp_kind()),
         text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -42,14 +77,19 @@ pub(crate) fn server_capabilities(
             ..CompletionOptions::default()
         }),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        references_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Left(true)),
+        workspace: Some(WorkspaceServerCapabilities {
+            workspace_folders: None,
+            file_operations: Some(WorkspaceFileOperationsServerCapabilities {
+                will_rename: Some(pages),
+                ..WorkspaceFileOperationsServerCapabilities::default()
+            }),
+        }),
         execute_command_provider: Some(ExecuteCommandOptions {
             // A client may drop a code action whose command is missing from this list —
             // Zed does — so every command a code action carries belongs here.
-            commands: vec![
-                RENDER_PREVIEW_COMMAND.to_owned(),
-                RENDER_LIVE_PREVIEW_COMMAND.to_owned(),
-                STOP_LIVE_PREVIEW_COMMAND.to_owned(),
-            ],
+            commands: commands(can_export),
             ..ExecuteCommandOptions::default()
         }),
         ..ServerCapabilities::default()
@@ -68,7 +108,7 @@ mod tests {
     /// does — so the two lists have to stay in step. Nothing is logged when they do not.
     #[test]
     fn every_code_action_command_is_advertised() {
-        let capabilities = server_capabilities(PositionEncoding::Utf16);
+        let capabilities = server_capabilities(PositionEncoding::Utf16, false);
         let advertised = capabilities
             .execute_command_provider
             .expect("execute command provider")
@@ -87,7 +127,7 @@ mod tests {
 
     #[test]
     fn advertises_completion_with_its_trigger_characters() {
-        let capabilities = server_capabilities(PositionEncoding::Utf16);
+        let capabilities = server_capabilities(PositionEncoding::Utf16, false);
         let completion = capabilities
             .completion_provider
             .expect("completion provider");
@@ -104,7 +144,7 @@ mod tests {
 
     #[test]
     fn advertises_hover() {
-        let capabilities = server_capabilities(PositionEncoding::Utf16);
+        let capabilities = server_capabilities(PositionEncoding::Utf16, false);
 
         assert_eq!(
             capabilities.hover_provider,
@@ -114,7 +154,7 @@ mod tests {
 
     #[test]
     fn advertises_workspace_symbols() {
-        let capabilities = server_capabilities(PositionEncoding::Utf16);
+        let capabilities = server_capabilities(PositionEncoding::Utf16, false);
 
         assert_eq!(
             capabilities.workspace_symbol_provider,

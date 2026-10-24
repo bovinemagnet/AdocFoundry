@@ -366,9 +366,13 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
         register(registry, spec, run);
     }
     crate::visual::register_visual(registry);
-    crate::git::register_git(registry);
-    crate::versions::register_versions(registry);
-    crate::commit::register_commit(registry);
+    #[cfg(feature = "git")]
+    {
+        crate::git::register_git(registry);
+        crate::versions::register_versions(registry);
+        crate::commit::register_commit(registry);
+    }
+    #[cfg(feature = "typst")]
     crate::export::register_export(registry);
 }
 

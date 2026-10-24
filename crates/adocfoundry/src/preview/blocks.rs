@@ -448,9 +448,36 @@ fn block_element(
             })
             .children(title(block, trail, context))
             .into_any_element(),
-        ViewKind::Stem { source, .. } => v_flex()
+        ViewKind::Stem {
+            source, rendered, ..
+        } => v_flex()
             .children(title(block, trail, context))
-            .child(preformatted(source, context))
+            .child(match rendered {
+                // Typeset black on a white card, readable in either theme, as images are.
+                DiagramView::Svg(path) => h_flex()
+                    .w_full()
+                    .justify_center()
+                    .child(
+                        div()
+                            .debug_selector(|| "stem-image".to_owned())
+                            .p_1()
+                            .rounded(context.radius)
+                            .bg(gpui::white())
+                            .child(img(path.clone()).max_w_full()),
+                    )
+                    .into_any_element(),
+                DiagramView::Failed { message, .. } => v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(palette.muted)
+                            .child(message.clone()),
+                    )
+                    .child(preformatted(source, context))
+                    .into_any_element(),
+                DiagramView::Pending { .. } => preformatted(source, context),
+            })
             .into_any_element(),
         ViewKind::Passthrough(content) => preformatted(content, context),
         ViewKind::ThematicBreak => div().h(px(1.)).my_2().bg(palette.border).into_any_element(),

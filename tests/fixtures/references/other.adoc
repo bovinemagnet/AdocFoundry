@@ -1,0 +1,3 @@
+= Other
+
+Back to xref:index.adoc#setup[setup], or xref:index.adoc[the index].

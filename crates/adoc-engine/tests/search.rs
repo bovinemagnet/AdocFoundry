@@ -322,3 +322,47 @@ fn rename_rejects_an_existing_target() {
         )
         .is_err());
 }
+
+#[test]
+fn rename_rewrites_includes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    copy_tree(&fixture("antora-single-component"), &root);
+    copy_tree(&fixture("references"), &root.join("loose"));
+    let mut engine = open_workspace(&root);
+
+    // An Antora include keeps its family and coordinates.
+    let partials = root.join("modules/security/partials");
+    let note = engine.open(&partials.join("token-note.adoc")).unwrap();
+    let preview = engine
+        .rename_preview(note, &partials.join("notes/token.adoc"))
+        .unwrap();
+    let edits: Vec<_> = preview
+        .edits
+        .iter()
+        .flat_map(|file| {
+            file.edits
+                .iter()
+                .map(|edit| (relative(&file.path, &root), edit.replacement.clone()))
+        })
+        .collect();
+    assert_eq!(
+        edits,
+        [(
+            "modules/security/pages/authentication.adoc".to_owned(),
+            "partial$notes/token.adoc".to_owned()
+        )]
+    );
+
+    // A relative include stays relative.
+    let shared = engine.open(&root.join("loose/shared.adoc")).unwrap();
+    let preview = engine
+        .rename_preview(shared, &root.join("loose/common/shared.adoc"))
+        .unwrap();
+    let file = &preview.edits[0];
+    assert_eq!(relative(&file.path, &root), "loose/index.adoc");
+    assert_eq!(file.edits[0].replacement, "common/shared.adoc");
+    let text = fs::read_to_string(&file.path).unwrap();
+    let range = file.edits[0].range;
+    assert_eq!(&text[range.start..range.end], "shared.adoc");
+}

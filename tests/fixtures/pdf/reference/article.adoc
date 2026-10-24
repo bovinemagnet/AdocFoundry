@@ -6,6 +6,7 @@ v1.2, 2026-10-24: First release
 :sectnums:
 :imagesdir: images
 :experimental:
+:stem:
 
 AdocFoundry writes a paginated PDF from the same view tree its preview draws.
 This article uses every common block so that the output can be compared, page by page, with what asciidoctor-pdf produces for the same source.
@@ -136,6 +137,15 @@ An example block frames its content with a border.
 
 .The export pipeline
 image::pipeline.svg[Pipeline,width=60%]
+
+== Formulas
+
+The area of a circle is stem:[A = pi r^2], and a quadratic's roots are:
+
+[stem]
+++++
+x = (-b +- sqrt(b^2 - 4ac)) / (2a)
+++++
 
 '''
 

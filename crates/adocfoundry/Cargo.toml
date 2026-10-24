@@ -7,7 +7,7 @@ repository.workspace = true
 
 [dependencies]
 adoc-core.workspace = true
-adoc-engine.workspace = true
+adoc-engine = { workspace = true, features = ["typst", "git"] }
 adoc-index.workspace = true
 adoc-render.workspace = true
 gpui.workspace = true
@@ -39,7 +39,7 @@ extended-description = """\
 A desktop editor for AsciiDoc documentation laid out the Antora way: navigation, \
 cross-component link following, diagnostics, a native preview, visual editing, \
 workspace search and page rename. \
-Includes adocfoundry-cli and the adoc-ls language server."""
+Includes adocfoundry-cli, the adoc-ls language server and the adoc-mcp MCP server."""
 section = "editors"
 priority = "optional"
 depends = "$auto"
@@ -47,6 +47,7 @@ assets = [
     ["target/release/adocfoundry", "usr/bin/", "755"],
     ["target/release/adocfoundry-cli", "usr/bin/", "755"],
     ["target/release/adoc-ls", "usr/bin/", "755"],
+    ["target/release/adoc-mcp", "usr/bin/", "755"],
     ["../../packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop", "usr/share/applications/", "644"],
     ["../../packaging/icons/adocfoundry.svg", "usr/share/icons/hicolor/scalable/apps/io.github.bovinemagnet.AdocFoundry.svg", "644"],
 ]
@@ -57,6 +58,7 @@ assets = [
     { source = "target/release/adocfoundry", dest = "/usr/bin/adocfoundry", mode = "755" },
     { source = "target/release/adocfoundry-cli", dest = "/usr/bin/adocfoundry-cli", mode = "755" },
     { source = "target/release/adoc-ls", dest = "/usr/bin/adoc-ls", mode = "755" },
+    { source = "target/release/adoc-mcp", dest = "/usr/bin/adoc-mcp", mode = "755" },
     { source = "packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop", dest = "/usr/share/applications/io.github.bovinemagnet.AdocFoundry.desktop", mode = "644" },
     { source = "packaging/icons/adocfoundry.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.bovinemagnet.AdocFoundry.svg", mode = "644" },
 ]

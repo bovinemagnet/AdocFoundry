@@ -20,7 +20,7 @@ Phase 5 must provide:
 - **Typeset STEM:** AsciiMath and LaTeX converted to Typst maths, typeset natively in PDFs and as SVG in the preview and the HTML backend.
 - **`adoc-ls` on `adoc-engine`:** Zed and other LSP clients get the app's diagnostics, page rename with link updates, references, typeset previews and PDF export.
 - **`adoc-mcp`:** a stdio MCP server over the engine, so assistants and tools can read, check, search, render and (when allowed) edit an Antora workspace through the engine's commands.
-- **A first release:** signed packages for the three platforms, and the manual QA of Phases 1 to 5 recorded.
+- **A first release:** packages for the three platforms, and the manual QA of Phases 1 to 5 recorded. Code signing waits for Phase 6.
 
 ## 2. Decisions
 
@@ -39,7 +39,7 @@ Phase 5 must provide:
 | MCP | a new L4 crate and binary, `adoc-mcp`, on `rmcp` 3.7.0 (Apache-2.0) with only its server and stdio transport features, on a current-thread tokio runtime (tokio is already in the tree) | No HTTP transport is compiled in; the network confinement rule checks it. |
 | MCP writes | read-only by default; `--allow-write` enables tools that edit, rename or export, each going through engine commands | An assistant cannot change a workspace unless the user started the server to allow it, and every change is an ordinary command. |
 | Network | a confinement rule in `cargo xtask layers`: HTTP clients (`reqwest` and its forks, `ureq`, `hyper`, `isahc`, `curl`) may appear only in `adocfoundry`'s tree, where `gpui-kit-assets` brings one | Closes #3: diagrams, STEM and everything below the app render locally. |
-| Release signing | macOS: Developer ID signing and notarisation in `release.yml`, from repository secrets. Windows: unsigned for the first release, with the SmartScreen step documented | Needs the user's Apple credentials (§12). A Windows certificate can come later without changing the packages. |
+| Release signing | none in Phase 5: macOS is ad-hoc signed (as `bundle.sh` does without an identity), Windows is unsigned; the README documents the Gatekeeper and SmartScreen steps. Developer ID signing and notarisation, and a Windows certificate, are Phase 6 | No credentials are needed to release. Signing can be added later without changing the packages' contents. |
 | First version | tagged from the workspace version, `0.1.0`, unless decided otherwise before WP 5.8 | `xtask package` and `release.yml` already read the workspace version. |
 
 ## 3. Architecture
@@ -243,7 +243,7 @@ Documentation: a user page on running `adoc-mcp` with MCP clients, in the client
 ## 11. Release (WP 5.8)
 
 - **Packages from `release.yml` on a `v*` tag:**
-  - macOS: a universal DMG, signed and notarised;
+  - macOS: a universal DMG, ad-hoc signed (Developer ID signing and notarisation are Phase 6);
   - Windows: an MSI and a zip, x64 and ARM64;
   - Linux: an AppImage, a deb and an rpm, x64 and arm64.
 
@@ -266,19 +266,56 @@ Out of scope:
 - Typesetting inline STEM in the preview's text flow, which needs inline boxes in the preview's layout.
 - Editing STEM visually.
 - An HTTP transport for MCP.
-- A Windows code-signing certificate.
+- Code signing: macOS Developer ID signing and notarisation, and a Windows certificate (Phase 6).
 - Auto-update.
 - Publishing to package managers (Homebrew, winget, Flathub).
 
 Open questions, to settle before the package that needs them:
 
-- [ ] **WP 5.8:** Apple Developer ID and notarisation credentials, stored as repository secrets.
-- [ ] **WP 5.8:** the first version number. `0.1.0` unless decided otherwise.
+- [x] **WP 5.8:** the first version number: `0.1.0`, the workspace's version.
 - [ ] **WP 5.7:** whether `export_pdf` counts as a write, as decided here, or may run read-only when `output` is outside the roots.
 - [ ] **WP 5.3:** whether to keep the `adoc-dom` workarounds for #32 and #33 after acdc-parser releases fixes, or drop them on upgrade.
 - [ ] **After WP 5.8, in `zed-asciidoc`:** download the `adoc-ls` release archive for the platform (Zed extensions can fetch GitHub release assets), and fall back to `PATH`. That repository's change, not this one's.
 
-Implementation notes: none yet. Departures are recorded here as each package lands, with what the spec said, what was built and why, as in the earlier phases.
+Implementation notes, as each package lands:
+
+| Area | Specification | Implementation | Why |
+|---|---|---|---|
+| Windows in WP 5.1 | the first Windows run, with whatever fails fixed in the package | CI runs Windows; no Windows-specific fix was needed to type-check on macOS, and a local cross-check stopped at a C build script (`stacker`) that needs the Windows SDK | Windows is checked by the first CI run on GitHub; anything it finds is fixed then. |
+| Command availability (#17) | a command spec declares the modes it applies to | the existing `CommandContext::Selection`, which only the visual editor's commands use, now means "the active document is shown visually or split"; `Engine::command_available` evaluates every context, and the palette lists only available commands | No new field: the context already named the visual editor's commands. The palette also stops listing document commands with no document open. |
+| Problems rows (#18) | messages wrap, with the full text in a tooltip | every sidebar row is one line, cut off with an ellipsis, with the full text in a tooltip; test `long_diagnostics_show_in_full_on_hover` | The sidebar trees are virtual lists with one fixed row height, where a wrapped row would overlap the next. |
+| Revealing the active tab (#13) | the strip scrolls the active tab into view | the reveal is requested on two consecutive frames | GPUI places a tracked item from the previous frame's layout, which a change of tabs or widths has just made stale. |
+| Word movement (#14) | word boundaries in the model | `adoc-model`'s `next_word_end`, `previous_word_start` and `word_at` over the block's shown text (UAX #29 through `unicode-segmentation` 1.13.3, already in the tree); also `caret_moves_by_word` | A word move at the start of a marked word stops before the mark's delimiter, as character movement does. |
+| Description lists (#31) | `terms`, styled to keep asciidoctor-pdf's layout | Typst's `terms` with a hanging indent of `description_list_description_indent`, the term spacing above each description and `strong` neutralised in terms; the emitter no longer ends a term with a paragraph break | A break inside a term split its tag, which PDF/UA rejects. No line of the reference article moved. Horizontal description lists stay a grid, tagged `Div`. |
+| Tag directives (#33) | drop them from tagged includes and callout items | callout items drop their comment lines as paragraphs do; tagged includes needed nothing: acdc already drops every directive of a tag-filtered region | The corpus's remaining directive lines are in literal paragraphs of pages rendered whole, where Asciidoctor shows them too. Tests: `tagged_includes_drop_other_tag_directives`, `callout_items_drop_tag_directives`. |
+| Footnotes (#35) | match asciidoctor-pdf's footnote block | the last footnote keeps `footnotes_item_spacing` below it, the margin that meets the page's bottom margin | As asciidoctor-pdf's `ink_footnotes`; the reference article's footnote is now 0.56 pt from asciidoctor-pdf's, from 3.6 pt. |
+| Book memory (#34) | measure the template's share, then reduce ours | the emitter marks blocks its text shows fit on a page (`fits: true`, at most 20 estimated lines) so `keep()` measures only the rest; running titles look up one memoised list of headings with a binary search instead of filtering every heading on every page | The 1,833-page corpus book: peak 17.1 GB to 9.3 GB, 55 s to 12.6 s; the 617-page one: 8.5 GB to 5.9 GB. `book_memory_probe` exports a synthetic 300-page component. No line or page changed. |
+| LaTeX helpers (WP 5.4) | `mitex`'s conversion, then the safety check | `mitex` writes calls to its own Typst package's helpers (`pmatrix`, `mitexmathbf`, …) and `\\text` as `#textmath[…]`; `adoc-math` turns `\\text`, `\\sqrt[n]` and `\\operatorname` into plain maths and lists the helpers it allows (`HELPERS`), which the evaluator defines; a LaTeX command outside them fails the check and shows as source | No Typst package is reachable, and the helpers are the part of mitex's package documentation commonly uses. |
+| mitex's advisory (WP 5.4) | `cargo deny` decides | RUSTSEC-2026-0235 (`rkyv` 0.7 through `mitex-spec`) ignored with its reason | rkyv reads only the specification compiled into mitex, never document data. |
+| STEM notation (WP 5.4) | check that `latex` follows `:stem:` | acdc gave `[stem]` blocks LaTeX whatever `:stem:` said, and read `[latexmath]` passthrough blocks as passthrough; `adoc-dom` now sets the notation from the style and `:stem:` | As Asciidoctor. |
+| Code highlighting (#16) | the source editor's highlighter | the preview's tree-sitter highlighter, laid over the editable block's runs; the visual editor keeps its cache between frames, emptied past 256 entries | The cache was rebuilt every frame, so read-only blocks were highlighted again on every render too. |
+| The emitted call (WP 5.5) | `#adoc-stem(block: …, "<maths>", alt: "<source>")` | `#adoc-stem("<maths>", "<source>", block: …)`, the source a positional argument | Both are string literals either way; `math.typ` holds the function and the helper scope, ahead of the template. |
+| STEM fonts and sizes (WP 5.5) | STIX Two Math for equations | STIX Two Math 2.13 (OFL-1.1) bundled and set for equations only, the text around them unchanged; the preview's formulas render at 15 pt (block) and 13 pt (inline) | The size of the preview's body text, so a formula reads at the size of the text beside it. |
+| Formulas in the preview (WP 5.5) | block STEM drawn as its SVG; inline in a tooltip | the SVG is drawn on a white card, black on white in either theme; an inline formula's source is styled as code, with the typeset formula in a tooltip | Typst draws maths in black, which a dark theme would hide. |
+| Formulas in export (WP 5.5) | — | the export's view tree asks for no formula images, since the PDF typesets them itself | Rendering each formula to SVG for a PDF that never uses it doubled the work. |
+| STEM in `pdf_regression` (WP 5.5) | the formulas compared for layout, with a threshold for that region | the reference article ends with a Formulas section; its page is held to the same mean difference (0.02) and edge limits, with the right edge of the ink left out | asciidoctor-pdf shows the formula's source in a full-width code box where ours is typeset, so only the right edge differs; it was within 0.0113 mean and 0 pt on the other edges in every theme. |
+| Reverse map (WP 5.6) | `adoc-index` keeps a reverse map from targets to references | the index maps the file name an xref or include names (`setup.adoc` for `admin:setup.adoc`) and each fragment to the references, and `adoc-lang` resolves those candidates, the target page's `page-aliases` included | Resolving a target needs the Antora catalog, which sits beside `adoc-index` on L1, not below it. A request visits only the references that name the file. |
+| Renames (WP 5.6) | `page.rename`'s edits cover xrefs, nav entries and includes | `rename_preview` now also rewrites includes: an Antora include keeps its family and coordinates (`partial$notes/token.adoc`), a relative one stays relative, and one written through an attribute is left as written; `textDocument/rename` on anything but an anchor is refused | The app's page rename gains the include edits too. A client renames a file through `willRenameFiles`. |
+| Git in `adoc-ls` (WP 5.6) | Git stays off unless `[git] enabled` is set | `Settings::with_git_opt_in`, kept across reloads | `open_workspace` reloads settings, which would otherwise turn Git back on. |
+| Diagnostics timing (WP 5.6) | published after the engine's settle | each change is an `edit.replace_range`, which indexes at once, so a notification's diagnostics are published as it is handled; between messages the server pumps the engine every 50 ms and publishes what workers and the watcher changed; `initialize` is answered once the workspace is indexed (at most 120 s) | The first requests already see every page, as the old server's synchronous indexing did. |
+| Features (WP 5.6) | `adoc.exportPdf` advertised only in builds with `typst` | the server advertises it when the engine registered its export commands, and `Engine::export_blocking` exists without Typst and fails | A workspace build unifies the engine's features, so the engine, not `adoc-ls`'s own flag, says what is there. `adoc-ls`'s features only forward. |
+| Default build (WP 5.6) | `default_build_has_no_typst_or_git` from `cargo metadata` | from `cargo tree -p adoc-ls`, also run by `cargo xtask layers` | `cargo metadata` resolves features for the whole workspace at once. |
+| Size (WP 5.6) | record the default build's size and crate count | release, macOS arm64: 32.4 MB and 237 crates by default; 88.0 MB and 535 crates with `typst,git` | The lean build still carries acdc, merman and the diagram renderers the engine's preview uses. |
+| Preview tests (WP 5.6) | stdio tests taking `spawn_guard()` | the preview tests drive the protocol in process with a sink that never opens a browser, under a guard of their own (`adoc-render`'s is crate-private); the others drive the binary (`tests/engine.rs`) | Over stdio the preview opens the system browser. |
+| Shared reports (WP 5.7) | `check` and `git_status` as the CLI's JSON | the CLI's diagnostics and Git status reports moved into the engine (`report.rs`: `check_report`, `git_status_report`), and the CLI prints them; `check` answers `{ diagnostics, failed }`, `diagnostics` being the CLI's array | One implementation, so the two cannot drift; the CLI's snapshots did not change. |
+| Engine queries (WP 5.7) | — | `inspect.rs`: `resolve_target` (a macro as written or a bare xref target, read with the page's attributes), `resource_id` and `resolve_resource_id`; `adoc-render` gains `to_text` for `render_page` | `adoc-mcp` may depend only on the engine and `adoc-core`, so what it needs from the catalog comes through the engine. |
+| Write tools (WP 5.7) | not listed, and refused if called | removed from the tool router without `--allow-write`, so a call is the protocol's unknown-tool error; `edit_page` is all or nothing (edits already made in a failing call are undone); `rename_page` saves every file it changed | `workspace.apply_preview` leaves its edits in buffers, which a server with no editor would never save. |
+| Limits (WP 5.7) | large results truncated, with the total stated | lists at 500 items and texts at 200,000 bytes, with `truncated: { shown, total }`; paths are absolute or relative to the first root, and links are followed only through the part of a path that exists | A path to a file not yet written, such as a rename's target or an export's output, is still checked. |
+| Runtime (WP 5.7) | a current-thread tokio runtime | tokio with `rt`, `macros`, `io-std` and `time`; each tool call locks the engine for its duration | rmcp's service needs timers. One call at a time matches the engine's single thread. |
+| Packages (WP 5.8) | each package carries the app and the three tools | the DMG puts `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` beside the app in `Contents/MacOS` and is signed ad hoc when no Developer ID is set; the MSI, zip, deb, rpm and Flatpak gain `adoc-mcp`; `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` also ship as archives of their own; every build passes `--features adoc-ls/typst,adoc-ls/git` | A bundle's `Contents/MacOS` is where macOS expects helper binaries, and linking them onto `PATH` keeps them signed with the app. |
+| Smoke test (WP 5.8) | every binary's `--version`, the app on a fixture, a CLI export, both servers' initialise and shutdown | `packaging/smoke-test.py`, run by the release workflow's `smoke` job on each platform's downloaded artefacts (the mounted DMG, the unpacked zip, the unpacked deb) before `publish`; the app gains `--version`; on Linux the app's launch is left to manual QA | A hosted Linux runner has no GPU for the app's Vulkan renderer. |
+| Flatpak (WP 5.8) | checked against the release | the Linux release job checks that the manifest installs the four binaries and builds `adoc-ls` with its features | Building the Flatpak itself needs flatpak-builder and a vendored source list, outside the workflow. |
+| Documentation version (WP 5.8) | the documentation site's version | the site stays unversioned, showing `0.1.0` as its display version | A versioned component would move every page's URL. |
 
 ## 13. Implementation Sequence
 
@@ -291,7 +328,7 @@ Implementation notes: none yet. Departures are recorded here as each package lan
 | 5.5 | Typeset STEM in PDF, preview and HTML | 5.4 |
 | 5.6 | `adoc-ls` on the engine: diagnostics, references, rename, commands, with today's command ids, Asciidoctor preview and a lean default build kept | 5.5 |
 | 5.7 | `adoc-mcp` | 5.5 |
-| 5.8 | Release: packages, signing, smoke tests, the QA backlog (#30), changelog | 5.2, 5.3, 5.6, 5.7 |
+| 5.8 | Release: packages (unsigned; signing is Phase 6), smoke tests, the QA backlog (#30), changelog | 5.2, 5.3, 5.6, 5.7 |
 
 ## 14. Definition of Done for Phase 5
 

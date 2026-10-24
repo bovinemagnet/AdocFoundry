@@ -224,6 +224,12 @@ Each diagram block the view needs becomes a job on its own worker.
 When one finishes, the preview is built again from the cached parse and republished, so a slow diagram never delays the page.
 Diagrams are cached on disk by checksum under the first workspace root, in `.cache/adocfoundry/diagrams/`.
 
+STEM goes through the same path.
+The engine registers a `StemProvider`, a `DiagramProvider` for the kinds `stem-asciimath` and `stem-latex`, with its diagram cache.
+Formulas render to SVG on a worker with `adoc_pdf::render_math_svg` at 15 pt (block) and 13 pt (inline), and are cached by checksum like diagrams.
+The view tree's `ViewKind::Stem` carries a `DiagramView` (pending, an SVG path or failed), and `ViewInline::Stem` carries an optional SVG path.
+The export's view tree asks for no formula images, because the PDF typesets them itself.
+
 [[the-export-service]]
 == The export service
 
@@ -500,6 +506,46 @@ Rename finds every xref that resolves to the page using the index and the resolv
 
 The engine delegates definition, hover, completion and diagnostics to `adoc-lang`.
 That is why the editor, the command-line checker and the language server give identical answers.
+
+`adoc-ls` is a front end of the engine.
+It opens workspace folders with the engine, and keeps client buffers in it with `Engine::open_text(path, text)`, which works for a file that does not exist.
+Each incremental change becomes one `edit.replace_range`.
+Further engine methods serve it:
+
+* `Engine::references(id, offset)` returns the references to the page or anchor at an offset.
+* `Engine::anchor_rename_edits(id, offset, new_id)` returns the edits that rename an anchor and every reference to it.
+* `Engine::asciidoctor_executable()` returns the Asciidoctor in use, from `tools.asciidoctor` or `PATH`.
+* `Settings::with_git_opt_in()` leaves Git off unless the user settings file sets `[git] enabled = true`. It is kept across settings reloads.
+
+`page.rename` also rewrites includes: an Antora include keeps its family and coordinates, a relative one stays relative, and one written through an attribute is left as written.
+
+== Reports and inspection
+
+Headless front ends need answers that are not editor features.
+Two engine modules provide them.
+
+`report.rs` builds the reports that `adocfoundry-cli` prints:
+
+* `check_report` returns the workspace's diagnostics and whether they meet a failure level.
+* `git_status_report` returns each root's branch and changed AsciiDoc files.
+
+The CLI prints these, and `adoc-mcp` returns them, so the two cannot drift.
+
+`inspect.rs` answers questions about the catalog:
+
+* `resolve_target` resolves a macro as written, or a bare xref target, read with the page's attributes.
+* `resource_id` gives the Antora resource id of a file.
+* `resolve_resource_id` finds the file for a resource id.
+* `resource_id_string` writes a resource id as `version@component:module:family$path`.
+
+`adoc-mcp` may depend only on the engine and `adoc-core`, so what it needs from the catalog comes through these methods.
+
+== Engine features
+
+The engine has two Cargo features, `typst` and `git`.
+Both are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
+Without `git`, the engine behaves as with `[git] enabled = false`.
+Without `typst`, the export commands are not registered and `export_blocking` fails.
 
 == Navigation history
 

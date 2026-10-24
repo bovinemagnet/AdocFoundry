@@ -50,6 +50,52 @@ impl Engine {
         )
     }
 
+    /// The references to what is at `offset` in document `id`: to the anchor there, or to the
+    /// page (the xrefs that link to it and the includes that include it).
+    #[must_use]
+    pub fn references(&self, id: DocumentId, offset: usize) -> Vec<adoc_lang::Location> {
+        let Some(document) = self.document(id) else {
+            return Vec::new();
+        };
+        adoc_lang::references::references_at(
+            &self.workspace,
+            &document.path,
+            &document.parsed.text,
+            offset,
+        )
+    }
+
+    /// The edits that rename the anchor at `offset` in document `id`, and every reference to
+    /// it, to `new_id`, by file. `None` when there is no anchor there or `new_id` is not an id.
+    #[must_use]
+    pub fn anchor_rename_edits(
+        &self,
+        id: DocumentId,
+        offset: usize,
+        new_id: &str,
+    ) -> Option<Vec<crate::FileEdits>> {
+        let document = self.document(id)?;
+        let edits = adoc_lang::references::rename_anchor(
+            &self.workspace,
+            &document.path,
+            &document.parsed.text,
+            offset,
+            new_id,
+        )?;
+        let mut files: Vec<crate::FileEdits> = Vec::new();
+        for (location, text) in edits {
+            let edit = crate::TextEdit::new(location.range, text);
+            match files.last_mut() {
+                Some(file) if file.path == location.path => file.edits.push(edit),
+                _ => files.push(crate::FileEdits {
+                    path: location.path,
+                    edits: vec![edit],
+                }),
+            }
+        }
+        Some(files)
+    }
+
     /// The outline of document `id`: the navigation tree for an Antora navigation file,
     /// otherwise its sections.
     #[must_use]

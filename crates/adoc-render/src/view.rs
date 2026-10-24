@@ -181,6 +181,8 @@ pub enum ViewKind {
     Stem {
         latex: bool,
         source: String,
+        /// The formula typeset as an image, rendered like a diagram, for the preview and HTML.
+        rendered: DiagramView,
     },
     Passthrough(String),
     ThematicBreak,
@@ -238,6 +240,8 @@ pub enum ViewInline {
     Stem {
         latex: bool,
         source: String,
+        /// The formula typeset as an image, once it has been rendered.
+        rendered: Option<PathBuf>,
     },
     Raw(String),
     /// An index term: its terms, primary first, and what the text shows (nothing for a
@@ -301,6 +305,17 @@ pub trait ViewResolver {
         source: &str,
         attributes: &BTreeMap<String, String>,
     ) -> DiagramView;
+}
+
+/// The diagram kind a formula is rendered as: `stem-latex` or `stem-asciimath`, with the
+/// attribute `inline` set for an inline formula.
+#[must_use]
+pub fn stem_kind(latex: bool) -> &'static str {
+    if latex {
+        "stem-latex"
+    } else {
+        "stem-asciimath"
+    }
 }
 
 /// Resolves only what needs no workspace: images relative to the page, nothing else.
@@ -632,6 +647,9 @@ impl Builder<'_> {
             BlockKind::Stem { latex, source } => ViewKind::Stem {
                 latex: *latex,
                 source: source.clone(),
+                rendered: self
+                    .resolver
+                    .diagram(stem_kind(*latex), source, &BTreeMap::new()),
             },
             BlockKind::Passthrough { content } => ViewKind::Passthrough(content.clone()),
             BlockKind::ThematicBreak => ViewKind::ThematicBreak,
@@ -753,6 +771,14 @@ impl Builder<'_> {
             Inline::Stem { latex, source } => ViewInline::Stem {
                 latex: *latex,
                 source: source.clone(),
+                rendered: match self.resolver.diagram(
+                    stem_kind(*latex),
+                    source,
+                    &BTreeMap::from([("inline".to_owned(), "true".to_owned())]),
+                ) {
+                    DiagramView::Svg(path) => Some(path),
+                    _ => None,
+                },
             },
             Inline::Passthrough(text) => ViewInline::Raw(text.clone()),
             Inline::IndexTerm { terms, visible } => ViewInline::IndexTerm {

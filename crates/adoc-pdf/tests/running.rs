@@ -164,3 +164,29 @@ fn attribute_references_in_running_content_resolve() {
     );
     assert!(!footer_text.contains("dropped"), "{footer_text:?}");
 }
+
+#[test]
+fn footnotes_sit_where_asciidoctor_pdf_puts_them() {
+    // asciidoctor-pdf 2.3.15 tops the reference article's footnote line at 779.20 pt on page 4;
+    // at the footnote size (8 pt), Noto Serif's line top is its ascent, 8.55 pt, above its
+    // baseline. Before the last item kept its spacing below it, the footnote sat 3.6 pt low.
+    const ASCIIDOCTOR_PDF_TOP: f64 = 779.20;
+    const BASELINE_TO_TOP: f64 = 8.55;
+    let path = common::fixtures().join("pdf/reference/article.adoc");
+    let document = common::article(common::view_of(&path));
+    let typst = to_typst(&document, &common::default_theme(), &PdfOptions::default());
+    let pages = typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let footnote = pages
+        .last()
+        .unwrap()
+        .runs
+        .iter()
+        .find(|run| run.text.contains("Footnotes"))
+        .expect("the footnote is on the last page");
+    let top = footnote.y - BASELINE_TO_TOP;
+    assert!(
+        (top - ASCIIDOCTOR_PDF_TOP).abs() <= 1.0,
+        "the footnote's top is {top:.2} pt, asciidoctor-pdf's {ASCIIDOCTOR_PDF_TOP} pt"
+    );
+}

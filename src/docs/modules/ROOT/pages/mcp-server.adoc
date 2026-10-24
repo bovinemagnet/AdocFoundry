@@ -1,0 +1,147 @@
+= MCP server
+Paul Snow
+:revnumber: 0.0.0
+:description: adoc-mcp, a Model Context Protocol server that lets assistants read, check and, if allowed, edit an Antora documentation workspace.
+
+`adoc-mcp` is a Model Context Protocol (MCP) server.
+It speaks MCP over standard input and output.
+It runs on the AdocFoundry engine, so an MCP client such as an assistant gets the same answers as the desktop editor, the xref:command-line.adoc[command line] and the xref:language-server.adoc[language server].
+
+[source,sh]
+----
+adoc-mcp <root>… [--allow-write]
+adoc-mcp --version
+----
+
+== Running it
+
+Give it one or more roots.
+A root is a directory.
+A relative root is taken from the current directory.
+
+The server indexes the workspace before it serves anything.
+Settings come from the user settings file and each workspace's `.adocfoundry.toml`, as in the application.
+See xref:settings.adoc[Settings].
+
+By default the server only reads.
+The write tools are offered only with `--allow-write`.
+
+== Configuring a client
+
+Most MCP clients take a list of servers as JSON.
+Add AdocFoundry like this:
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "adocfoundry": { "command": "adoc-mcp", "args": ["/path/to/docs"] }
+  }
+}
+----
+
+To allow writing, add the flag:
+
+[source,json]
+----
+"args": ["/path/to/docs", "--allow-write"]
+----
+
+== Read-only tools
+
+These tools are always offered.
+
+[cols="2,3,4"]
+|===
+|Tool |Arguments |Result
+
+|`list_components`
+|None.
+|Each component version: name, version, title, display version, start page and nav files.
+
+|`get_nav`
+|`component`, `version?`
+|The navigation trees. Each entry has its title, resource id and page path.
+
+|`read_page`
+|`path` or `resource_id`, `from?`
+|The page's text, title, attributes and includes. Each include has its target and the file it resolves to. If the engine holds unsaved edits, the text is the engine's buffer. A `resource_id` is `version@component:module:family$path`. `from` names the page that a partial id is read from.
+
+|`resolve`
+|`target`, `from`
+|What an xref, include or image target resolves to from a page, or that it does not. The target is a macro as written, such as `include::partial$x.adoc[]`, or a bare xref target.
+
+|`check`
+|`scope?`, `fail_on?`
+|The workspace's diagnostics, the same array that `adocfoundry-cli check --format json` prints, and `failed`. `failed` is true when any diagnostic meets `fail_on`, which is `error` (the default) or `warning`.
+
+|`symbols`
+|`query`
+|Workspace symbols.
+
+|`search`
+|`query`, `regex?`, `case_sensitive?`, `whole_word?`, `scope?`
+|Matches, each with its path, line and line text.
+
+|`render_page`
+|`path`, `format?`
+|The page as the engine renders it: plain text (`text`, the default) or HTML (`html`).
+
+|`git_status`
+|None.
+|Each root's branch and changed AsciiDoc files, as `adocfoundry-cli git-status --format json` gives them.
+|===
+
+== Write tools
+
+These tools are offered only with `--allow-write`.
+Without it they are not listed, and calling one fails as an unknown tool.
+
+[cols="2,3,4"]
+|===
+|Tool |Arguments |Result
+
+|`edit_page`
+|`path`, `edits`, `save?`
+|Applies the edits in order. Each edit is `{ old_text, new_text }` or `{ range: { start, end }, new_text }`, and goes through the engine's `edit.replace_range` command. `old_text` must occur exactly once. If any edit fails, none of that call's edits stay. With `save: true` the page is written to disk. Otherwise the edits stay in the engine's buffer, and `read_page` shows them.
+
+|`rename_page`
+|`path`, `new_name`
+|Moves the page and rewrites the xrefs, nav entries and includes that name it. Then it saves every file it changed. `new_name` is a file name or a path relative to the page's directory.
+
+|`export_pdf`
+|`path` or `component`, `output`, `theme?`, `standards?`
+|Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-2a` and `pdf-ua-1`. It returns the output, the page count and any warnings.
+|===
+
+See xref:pdf-export.adoc[Exporting to PDF] for themes and standards.
+
+== Resources
+
+Every page is a resource.
+Its URI is a `file://` URI, and its media type is `text/asciidoc`.
+
+A resource template, `+antora:{resource_id}+`, reads a page or a partial by its Antora id.
+
+== Limits and safety
+
+* Every path, absolute or relative to the first root, must lie inside a root. The check is lexical and also follows symbolic links. Otherwise the call is refused.
+* The server uses no network.
+* Project scripts are never run.
+* Lists are cut at 500 items, and texts at 200,000 bytes. When that happens the result carries `truncated: { shown, total }`, which states the total.
+* A tool error carries the engine's message.
+
+== Installing
+
+[source,sh]
+----
+cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-mcp
+----
+
+Release archives will come with the Phase 5 release work.
+
+== Consistency with the command line
+
+The `check` tool and `git_status` tool use the same reports as `adocfoundry-cli`.
+A test asserts that `check` matches the command line.
+See xref:developer:testing.adoc#mcp-server-tests[Testing].

@@ -35,8 +35,7 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 == Continuous integration
 
-`packaging/ci/ci.yml` is written to run on pull requests and on pushes to `main`.
-It is not active yet: the workflows are kept out of `.github/workflows/` until macOS and Windows have been verified by hand, and moving them there enables them.
+`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`.
 
 [cols="1,4"]
 |===
@@ -47,6 +46,11 @@ It is not active yet: the workflows are kept out of `.github/workflows/` until m
 
 |`test`
 |On Ubuntu, macOS 14 and Windows: `cargo test --workspace --exclude adocfoundry`, then `cargo build -p adocfoundry`. Building needs no display.
+On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15, so the fidelity test and `pdf_regression` run instead of skipping. These tools are needed only by CI, never at runtime.
+On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
+
+|`pdf-standards`
+|On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both standards too. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
 
 |`grammar`
 |Builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
@@ -54,8 +58,9 @@ It is not active yet: the workflows are kept out of `.github/workflows/` until m
 
 == Release workflow
 
-`packaging/ci/release.yml` is written to run when a tag matching `v*` is pushed, or on demand. Like the CI workflow, it is not active yet.
-Each platform job builds `adocfoundry`, `adocfoundry-cli` and `adoc-ls` in release mode.
+`.github/workflows/release.yml` runs when a tag matching `v*` is pushed, or on demand.
+Each platform job builds `adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` in release mode, with `adoc-ls` built with `--features adoc-ls/typst,adoc-ls/git`.
+Every package carries all four binaries, and `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` are also published as archives of their own.
 
 .The release pipeline
 [mermaid]
@@ -68,29 +73,68 @@ include::example$release-pipeline.mmd[]
 |Job |Output
 
 |`macos`
-|Builds `aarch64-apple-darwin` and `x86_64-apple-darwin`, joins them with `lipo` into universal binaries, and runs `packaging/macos/bundle.sh` to make the `.app` and the DMG. Signing and notarisation use the `APPLE_*` secrets when they are set. The `adoc-ls` and `adocfoundry-cli` binaries are archived separately.
+|Builds `aarch64-apple-darwin` and `x86_64-apple-darwin`, joins them with `lipo` into universal binaries, and runs `packaging/macos/bundle.sh` to make the `.app` and the DMG, with the tools beside the app in `Contents/MacOS`. Signing and notarisation use the `APPLE_*` secrets when they are set. The three tools are archived separately.
 
 |`windows`
-|For x64 and ARM64: an MSI from `cargo wix`, and a portable zip with the three executables, the licence and the README.
+|For x64 and ARM64: an MSI from `cargo wix`, and a portable zip with the four executables, the licence and the README.
 
 |`linux`
-|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy`, and archives of `adoc-ls` and `adocfoundry-cli`.
+|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy`, and archives of `adoc-ls`, `adocfoundry-cli` and `adoc-mcp`. It also checks the Flatpak manifest (see below).
+
+|`smoke`
+|Runs `packaging/smoke-test.py` on each platform's downloaded artefacts before `publish` (see below).
 
 |`publish`
 |On a tag, downloads every artefact and attaches it to a GitHub release with generated release notes.
 |===
 
+Code signing is planned for Phase 6: a macOS Developer ID with notarisation, and a Windows certificate.
+The first release, 0.1.0, is unsigned: the macOS app is ad-hoc signed and the Windows installer has no signature.
+
+=== The macOS bundle script
+
+[source,sh]
+----
+packaging/macos/bundle.sh <binary> <version> <out> [<tool>...]
+----
+
+The script copies each `<tool>` into `Contents/MacOS` beside the app, so that macOS finds the helper binaries where it expects them and users can link them onto `PATH` without breaking the signature.
+When `APPLE_SIGNING_IDENTITY` is not set, it signs the bundle ad hoc.
+
+=== The smoke test
+
+The `smoke` job runs `packaging/smoke-test.py <bin-dir> [--no-app]` on each platform's downloaded artefacts before `publish`: the mounted DMG on macOS, the unpacked zip on Windows and the unpacked deb on Linux.
+It checks:
+
+* every binary's `--version`
+* a PDF export of the reference article by `adocfoundry-cli`
+* the initialise and shutdown of `adoc-ls` and `adoc-mcp`
+* that the application stays up for 15 seconds on a fixture workspace
+
+The application is not launched on Linux, because the hosted runners have no GPU for its Vulkan renderer (`--no-app`); it is checked by hand there.
+
+=== The Flatpak manifest
+
 A Flatpak manifest is kept in `packaging/flatpak/`.
-It is not built by the workflow.
+The workflow does not build it, but the Linux job checks that the manifest installs the four binaries and builds `adoc-ls` with its features.
 
 The packages for macOS and Windows have not been installed and run by hand yet; see xref:testing.adoc#platform-status[platform status].
 
 == cargo xtask package
 
 `cargo xtask package` is a local dry run for the host platform.
-It builds the three binaries in release mode, stages them in `dist/` with the licence and README (and, on Linux, the desktop entry and icon), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
+It builds the four binaries (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`) in release mode, with `adoc-ls` built with its features,, stages them in `dist/` with the licence and README (and, on Linux, the desktop entry and icon), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
 The version is read from `workspace.package.version` in the root `Cargo.toml`.
 The installers themselves come from the release workflow.
+
+== Release records
+
+`CHANGELOG.md` at the repository root records each release.
+
+The manual checks for a release are in `docs/qa/phase5.md`.
+Every item of `docs/qa/phase1.md` to `docs/qa/phase4.md` is also re-run on all three platforms.
+
+The documentation site stays unversioned and shows `0.1.0` as its display version, set in `src/docs/antora.yml`.
 
 == Conventions for contributions
 

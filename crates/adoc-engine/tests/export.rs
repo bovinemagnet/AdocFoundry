@@ -323,7 +323,8 @@ fn writes_the_book() {
 fn pages_the_parser_cannot_read_are_reported() {
     let (directory, root, mut engine) = book_workspace("");
     let page = root.join("guide/modules/ROOT/pages/unreadable.adoc");
-    fs::write(&page, "= Unreadable\n\ninclude::install.adoc[foo=bar]\n").unwrap();
+    // A line range acdc cannot read makes it reject the page.
+    fs::write(&page, "= Unreadable\n\ninclude::install.adoc[lines=abc]\n").unwrap();
     let id = engine.open(&page).unwrap();
     let (summary, _) = export(&mut engine, directory.path(), ExportTarget::Page(id));
     let reported = summary.diagnostics.iter().find(|diagnostic| {
@@ -336,5 +337,31 @@ fn pages_the_parser_cannot_read_are_reported() {
     assert!(
         reported.message.contains("shown as its source"),
         "{reported}"
+    );
+}
+
+#[test]
+fn unconvertible_stem_is_reported() {
+    let (directory, root, mut engine) = book_workspace("");
+    let page = root.join("guide/modules/ROOT/pages/maths.adoc");
+    fs::write(
+        &page,
+        "= Maths\n\nA typeset formula: latexmath:[\\frac{a}{b}].\n\n[latexmath]\n++++\n\\href{https://example.com}{x}\n++++\n",
+    )
+    .unwrap();
+    let id = engine.open(&page).unwrap();
+    let (summary, typst) = export(&mut engine, directory.path(), ExportTarget::Page(id));
+    assert!(typst.contains("#adoc-stem(\"frac(a ,b )\""), "{typst}");
+    let reported = summary
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message.starts_with("STEM not typeset"))
+        .unwrap_or_else(|| panic!("{:?}", summary.diagnostics));
+    assert_eq!(
+        reported
+            .location
+            .as_ref()
+            .map(|(path, line)| (path.as_path(), *line)),
+        Some((page.as_path(), 5))
     );
 }

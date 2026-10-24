@@ -324,7 +324,7 @@ impl Engine {
     }
 
     /// Computes moving the page of document `id` to `new_path` and rewriting every xref that
-    /// resolves to it.
+    /// resolves to it and every include that includes it.
     pub fn rename_preview(
         &mut self,
         id: DocumentId,
@@ -367,6 +367,44 @@ impl Engine {
                     .push(TextEdit::new(range, replacement));
             }
         }
+        for location in adoc_lang::references::includes_of(&self.workspace, &from) {
+            let target = location.include.target.as_str();
+            // A target written through an attribute is left as written.
+            if target.contains('{') {
+                continue;
+            }
+            let Some(file) = self.workspace.index.file(&location.path) else {
+                continue;
+            };
+            let Some(range) = include_target_range(&file.document.text, location.include.range)
+            else {
+                continue;
+            };
+            let antora = parse_resource_id(target)
+                .ok()
+                .filter(|_| target.contains('$'))
+                .and_then(|id| {
+                    let context = self.workspace.antora.context_for_path(&location.path)?;
+                    let family = id.family?;
+                    let coordinate = self.coordinate_in(&to, family)?;
+                    Some(with_family(
+                        antora_id(&context, &coordinate, target),
+                        family,
+                    ))
+                });
+            let replacement = antora.unwrap_or_else(|| {
+                relative_path(location.path.parent().unwrap_or_else(|| Path::new("")), &to)
+            });
+            if replacement != target {
+                edits
+                    .entry(location.path.clone())
+                    .or_default()
+                    .push(TextEdit::new(range, replacement));
+            }
+        }
+        for file_edits in edits.values_mut() {
+            file_edits.sort_by_key(|edit| edit.range.start);
+        }
         let edits = edits
             .into_iter()
             .map(|(path, edits)| FileEdits { path, edits })
@@ -380,14 +418,22 @@ impl Engine {
 
     /// The page coordinate a file at `path` would have, if it lies in a module's `pages`.
     fn page_coordinate(&self, path: &Path) -> Option<AntoraCoordinate> {
+        self.coordinate_in(path, ResourceFamily::Page)
+    }
+
+    /// The coordinate a file at `path` would have in `family`, if it lies in that family's
+    /// directory of a module.
+    fn coordinate_in(&self, path: &Path, family: ResourceFamily) -> Option<AntoraCoordinate> {
         self.workspace.antora.modules().find_map(|module| {
-            let pages = module.root.join(ResourceFamily::Page.directory());
-            let relative = path.strip_prefix(&pages).ok()?;
+            let relative = family
+                .directories()
+                .iter()
+                .find_map(|directory| path.strip_prefix(module.root.join(directory)).ok())?;
             Some(AntoraCoordinate {
                 component: module.component.clone(),
                 version: module.version.clone(),
                 module: module.name.clone(),
-                family: ResourceFamily::Page,
+                family,
                 relative_path: relative.to_path_buf(),
             })
         })
@@ -406,6 +452,24 @@ fn xref_file_part(text: &str, reference: SourceRange) -> Option<(SourceRange, &s
     let file_part = target.split_once('#').map_or(target, |(file, _)| file);
     let start = reference.start + "xref:".len() + leading;
     Some((SourceRange::new(start, start + file_part.len()), file_part))
+}
+
+/// The range of the target in `text[directive]`, an `include::target[…]` line.
+fn include_target_range(text: &str, directive: SourceRange) -> Option<SourceRange> {
+    let source = text.get(directive.start..directive.end)?;
+    let after_prefix = source.strip_prefix("include::")?;
+    let target = &after_prefix[..after_prefix.find('[')?];
+    let start = directive.start + "include::".len();
+    Some(SourceRange::new(start, start + target.len()))
+}
+
+/// `id` with `family$` before its path: `partial$notes/token.adoc` from `notes/token.adoc`, or
+/// `security:partial$token.adoc` from `security:token.adoc`.
+fn with_family(id: String, family: ResourceFamily) -> String {
+    match id.rsplit_once(':') {
+        Some((coordinates, path)) => format!("{coordinates}:{family}${path}"),
+        None => format!("{family}${id}"),
+    }
 }
 
 /// The shortest resource id that names `coordinate` from `context`, keeping the explicit

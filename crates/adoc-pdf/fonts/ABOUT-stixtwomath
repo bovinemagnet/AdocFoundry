@@ -1,0 +1,4 @@
+STIXTwoMath-Regular.otf is STIX Two Math 2.13, unmodified, from the STIX Fonts project
+(https://github.com/stipub/stixfonts, tag v2.13, fonts/static_otf/STIXTwoMath-Regular.otf).
+It is licensed under the SIL Open Font License 1.1 (LICENSE-stix). AdocFoundry uses it to
+typeset STEM: an OpenType font with a MATH table, which Typst needs for equations.

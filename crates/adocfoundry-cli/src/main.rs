@@ -18,12 +18,13 @@ use std::{
     time::Duration,
 };
 
-use adoc_core::{Diagnostic, DiagnosticSeverity, LineIndex};
+use adoc_core::{DiagnosticSeverity, LineIndex};
 use adoc_engine::{
-    commands::ids, pdf_standard, CommandArgs, CommandOutcome, Engine, EngineError, ExportArgs,
-    ExportTarget, GitChange, Settings,
+    commands::ids,
+    pdf_standard,
+    report::{display_path, severity_name, ChangedFile},
+    CommandArgs, CommandOutcome, Engine, EngineError, ExportArgs, ExportTarget, Settings,
 };
-use serde::Serialize;
 
 const USAGE: &str = "usage:
   adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
@@ -118,43 +119,6 @@ fn open_engine(root: &Path, git: bool) -> Result<Engine, String> {
     Ok(engine)
 }
 
-/// `path` relative to `root` when it lies beneath it, with `/` separators.
-fn display_path(path: &Path, root: &Path) -> String {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    relative
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn severity_name(severity: DiagnosticSeverity) -> &'static str {
-    match severity {
-        DiagnosticSeverity::Information => "info",
-        DiagnosticSeverity::Warning => "warning",
-        DiagnosticSeverity::Error => "error",
-    }
-}
-
-#[derive(Serialize)]
-struct JsonRange {
-    start: usize,
-    end: usize,
-}
-
-#[derive(Serialize)]
-struct JsonDiagnostic {
-    path: String,
-    range: JsonRange,
-    /// One-based.
-    line: usize,
-    /// One-based, in bytes.
-    column: usize,
-    severity: &'static str,
-    code: &'static str,
-    message: String,
-}
-
 fn check(arguments: &[String]) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format", "fail-on"])?;
     let [root] = positional.as_slice() else {
@@ -173,28 +137,8 @@ fn check(arguments: &[String]) -> Result<ExitCode, String> {
 
     let root = adoc_index::normalize_path(Path::new(root));
     let engine = open_engine(&root, false)?;
-    let mut failed = false;
-    let mut entries = Vec::new();
-    for (path, diagnostics) in engine.workspace_diagnostics() {
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        let lines = LineIndex::new(&text);
-        for diagnostic in diagnostics {
-            failed |= fails(&diagnostic, threshold);
-            let (line, column) = lines.line_column(diagnostic.range.start);
-            entries.push(JsonDiagnostic {
-                path: display_path(&path, &root),
-                range: JsonRange {
-                    start: diagnostic.range.start,
-                    end: diagnostic.range.end,
-                },
-                line: line + 1,
-                column: column + 1,
-                severity: severity_name(diagnostic.severity),
-                code: diagnostic.code.as_str(),
-                message: diagnostic.message,
-            });
-        }
-    }
+    let entries = engine.check_report(&root, None);
+    let failed = entries.iter().any(|entry| entry.meets(threshold));
     if json {
         let output = serde_json::to_string_pretty(&entries).map_err(|error| error.to_string())?;
         println!("{output}");
@@ -211,15 +155,6 @@ fn check(arguments: &[String]) -> Result<ExitCode, String> {
     } else {
         ExitCode::SUCCESS
     })
-}
-
-fn fails(diagnostic: &Diagnostic, threshold: DiagnosticSeverity) -> bool {
-    let rank = |severity| match severity {
-        DiagnosticSeverity::Information => 0,
-        DiagnosticSeverity::Warning => 1,
-        DiagnosticSeverity::Error => 2,
-    };
-    rank(diagnostic.severity) >= rank(threshold)
 }
 
 fn symbols(arguments: &[String]) -> Result<ExitCode, String> {
@@ -464,22 +399,6 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
     }
 }
 
-#[derive(Serialize)]
-struct JsonGitStatus {
-    /// `main`, `detached @ <id>` or `no commits yet`.
-    head: String,
-    files: Vec<JsonChangedFile>,
-}
-
-#[derive(Serialize)]
-struct JsonChangedFile {
-    path: String,
-    index: &'static str,
-    worktree: &'static str,
-    /// Changed line runs against `HEAD`; absent for a file that is no longer there.
-    hunks: Option<usize>,
-}
-
 /// The branch of the repository holding `root`, and its changed AsciiDoc files with the number
 /// of changed line runs in each.
 fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
@@ -494,57 +413,15 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
     };
     let root = adoc_index::normalize_path(Path::new(root));
     let mut engine = open_engine(&root, true)?;
-    let Some(repository) = engine.git().repository_for(&root).cloned() else {
-        return Err(format!("{} is not in a Git repository", root.display()));
-    };
-    let changed: Vec<(PathBuf, GitChange, GitChange)> = engine
-        .git()
-        .statuses()
-        .filter(|(path, status)| {
-            path.starts_with(&root)
-                && adoc_index::is_asciidoc_path(path)
-                && status.worktree != GitChange::Ignored
-        })
-        .map(|(path, status)| {
-            (
-                path.to_path_buf(),
-                status.index.clone(),
-                status.worktree.clone(),
-            )
-        })
-        .collect();
-    let mut opened = Vec::new();
-    for (path, _, _) in &changed {
-        opened.push(if path.is_file() {
-            Some(engine.open(path).map_err(|error| error.to_string())?)
-        } else {
-            None
-        });
-    }
-    let deadline = std::time::Instant::now() + INDEX_TIMEOUT;
-    while engine.has_pending() && std::time::Instant::now() < deadline {
-        engine.pump();
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    let head = repository.head.to_string();
-    let files: Vec<JsonChangedFile> = changed
-        .iter()
-        .zip(opened)
-        .map(|((path, index, worktree), id)| JsonChangedFile {
-            path: display_path(path, &root),
-            index: change_name(index),
-            worktree: change_name(worktree),
-            hunks: id.map(|id| engine.git().hunks_for(id).len()),
-        })
-        .collect();
+    let report = engine
+        .git_status_report(&root, INDEX_TIMEOUT)
+        .map_err(|error| error.to_string())?;
     if json {
-        let output = serde_json::to_string_pretty(&JsonGitStatus { head, files })
-            .map_err(|error| error.to_string())?;
+        let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
         println!("{output}");
     } else {
-        println!("branch {head}");
-        for file in &files {
+        println!("branch {}", report.head);
+        for file in &report.files {
             let hunks = file
                 .hunks
                 .map_or_else(String::new, |count| format!(" ({count} changed)"));
@@ -554,21 +431,8 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn change_name(change: &GitChange) -> &'static str {
-    match change {
-        GitChange::Unmodified => "unmodified",
-        GitChange::Added => "added",
-        GitChange::Modified => "modified",
-        GitChange::Deleted => "deleted",
-        GitChange::Renamed(_) => "renamed",
-        GitChange::Untracked => "untracked",
-        GitChange::Ignored => "ignored",
-        GitChange::Conflicted => "conflicted",
-    }
-}
-
 /// The two letters `git status --short` shows for a file.
-fn short_status(file: &JsonChangedFile) -> String {
+fn short_status(file: &ChangedFile) -> String {
     match file.worktree {
         "untracked" => "??".to_owned(),
         "ignored" => "!!".to_owned(),

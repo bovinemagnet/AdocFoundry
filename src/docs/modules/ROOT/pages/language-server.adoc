@@ -4,7 +4,7 @@ Paul Snow
 :description: adoc-ls, the Language Server Protocol server built from the AdocFoundry engine, and the Zed extension that uses it.
 
 `adoc-ls` is a language server that speaks the Language Server Protocol over standard input and output.
-It serves the same language features as the desktop editor, because both call the same editor-agnostic crate, `adoc-lang`.
+It runs on the AdocFoundry engine, so it gives the same answers as the desktop editor and the Problems panel.
 
 [source,sh]
 ----
@@ -12,28 +12,91 @@ adoc-ls --stdio
 adoc-ls --version
 ----
 
+The binary name, `--stdio` and the three command ids that existing clients hold in code actions are unchanged.
+Its capabilities are a superset of before.
+
+== How it works
+
+The server keeps an engine instead of its own state.
+
+* Workspace folders from `initialize` are opened in the engine. The server answers `initialize` once indexing finishes, after at most 120 seconds.
+* `didOpen` opens the client's buffer in the engine. The file need not exist.
+* Each incremental change becomes one edit to the engine document.
+* `didClose` closes the engine document, which reverts to the file on disk.
+
+Between messages the server lets the engine catch up every 50 ms and publishes what changed, such as the results of workers and the file watcher.
+
 == Features
 
-* Diagnostics, as described in xref:diagnostics.adoc[Diagnostics].
+* Diagnostics, as described in xref:diagnostics.adoc[Diagnostics]. They are the engine's, with the same codes and severities as the Problems panel. The server publishes them for the changed page and for every other open page whose diagnostics changed.
 * Go to definition for xref, include and image targets and attributes.
 * Hover.
 * Completion, triggered by `:`, `$`, `#`, `/`, `<` and `{`.
 * Document symbols and workspace symbols.
-* Code actions and commands, including an HTML preview rendered through Asciidoctor, and a live preview that re-renders on save.
+* Find references (`textDocument/references`).
+* Rename an anchor (`textDocument/rename`).
+* Update links when a file is renamed (`workspace/willRenameFiles`).
+* Code actions and commands, described below.
 
-The preview needs `asciidoctor` to be installed.
-It is optional and discovered on `PATH`, or set with `tools.asciidoctor` in xref:settings.adoc[the settings].
-Nothing else in AdocFoundry calls Asciidoctor.
+Hover, definition, completion and symbols behave as before.
 
-== Zed
+=== Find references
 
-The Zed extension https://github.com/bovinemagnet/zed-asciidoc[zed-asciidoc] provides AsciiDoc highlighting and starts `adoc-ls` from your `PATH`.
-Install the server with:
+On a page, find references lists the xrefs that link to it, including links through its `page-aliases`.
+It also lists the include directives that include it.
+Those may be relative, written through a declared attribute, or Antora resource ids such as `partial$x.adoc`.
+
+On an anchor (`[[id]]` or `[#id]`), or on a reference to one, it lists every reference to that anchor.
+
+=== Rename
+
+Rename on an anchor id renames the anchor and every reference to it.
+Anywhere else the server refuses with an error.
+To rename a page, rename its file.
+
+The server registers `workspace/willRenameFiles` for `+**/*.adoc+` files.
+It returns the edits to the xrefs, nav entries and includes that name the file, and the client moves the file.
+Includes written through an attribute are left as written.
+
+== Commands
+
+`adoc.renderPreview`, `adoc.renderLivePreview` and `adoc.stopLivePreview` render an HTML preview, once or re-rendered on save, and stop the live preview.
+They render through Asciidoctor whenever `tools.asciidoctor` is set in the user settings file or `asciidoctor` is on `PATH`.
+Otherwise they render through the engine's view tree, with diagrams and, in builds with Typst, typeset STEM.
+See xref:settings.adoc[the settings].
+
+`adoc.checkWorkspace` publishes the diagnostics of every file with problems, open or not.
+It returns `{ files, problems }`.
+
+`adoc.exportPdf` exports a page to PDF, or with `component: true` its component version as a book.
+It takes `{ uri, component?, output, theme?, standards? }` and reports with `window/showMessage`.
+It is advertised only when the server is built with Typst.
+
+== Settings
+
+The server reads the same files as the application: the user settings file and the workspace's `.adocfoundry.toml`.
+Git is off unless the user settings file sets `[git] enabled = true`.
+
+== Builds
+
+The default build is lean, with no Typst and no Git.
+On macOS arm64 it is 32.4 MB and 237 crates.
+Build with `--features typst,git` to add PDF export, typeset STEM and Git.
+That build is 88.0 MB and 535 crates.
 
 [source,sh]
 ----
 cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls
+cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --features typst,git
 ----
+
+`cargo xtask layers` checks that the default build compiles neither Typst nor Git.
+
+== Zed
+
+The Zed extension https://github.com/bovinemagnet/zed-asciidoc[zed-asciidoc] provides AsciiDoc highlighting and starts `adoc-ls` from your `PATH`.
+It starts the server from `PATH`, so install it as described in <<_builds,Builds>>.
+Making the extension download the release archive is a follow-up in that repository.
 
 Release archives containing `adoc-ls` are also attached to each release for Linux, macOS and Windows.
 

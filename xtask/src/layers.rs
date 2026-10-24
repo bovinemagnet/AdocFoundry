@@ -2,12 +2,14 @@
 //!
 //! Every crate under `crates/` must appear in [`LAYERS`]. A crate may depend only on crates in a
 //! lower layer, except for the same-layer pairs listed in [`SAME_LAYER_ALLOWED`]. UI framework
-//! crates are confined to the app crate and LSP crates to the language server.
+//! crates are confined to the app crate and LSP crates to the language server, and nothing but
+//! the app may reach a network client, directly or through its dependencies.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 /// The layer of every workspace crate. A new crate needs a line here.
@@ -18,6 +20,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-antora", 1),
     ("adoc-index", 1),
     ("adoc-lang", 1),
+    ("adoc-math", 1),
     ("adoc-render", 2),
     ("adoc-diagrams", 2),
     ("adoc-model", 2),
@@ -27,6 +30,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adocfoundry", 4),
     ("adocfoundry-cli", 4),
     ("adoc-ls", 4),
+    ("adoc-mcp", 4),
 ];
 
 /// Same-layer dependencies that are permitted, as `(dependent, dependency)`.
@@ -57,6 +61,22 @@ pub const LSP_CRATES: &[&str] = &["lsp-types", "lsp-server"];
 /// definition, hover and completion only through provider traits typed with `lsp-types`, so the
 /// app uses those types in one translation module; it never speaks the protocol.
 pub const LSP_ALLOWED: &[(&str, &str)] = &[("adocfoundry", "lsp-types")];
+
+/// HTTP client crates. Rendering, diagrams and every engine feature work locally; only the app
+/// reaches one, through `gpui-kit-assets`.
+pub const NETWORK_CRATES: &[&str] = &[
+    "reqwest",
+    "gpui-pre-reqwest",
+    "ureq",
+    "hyper",
+    "isahc",
+    "curl",
+    "attohttpc",
+    "surf",
+];
+
+/// Workspace crates that may reach a network client.
+pub const NETWORK_ALLOWED: &[&str] = &["adocfoundry"];
 
 /// External AsciiDoc parser crates, permitted only in `adoc-dom` so the parser stays swappable.
 pub const PARSER_CRATES: &[&str] = &["acdc-parser", "asciidoc-parser"];
@@ -194,6 +214,123 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
     violations
 }
 
+/// Every workspace crate outside [`NETWORK_ALLOWED`] that reaches a network client through
+/// normal or build dependencies, from `cargo metadata`'s resolved graph. Dev-dependencies are
+/// not shipped and are not followed.
+pub fn network_violations(metadata: &serde_json::Value) -> Vec<String> {
+    let names: BTreeMap<&str, &str> = metadata["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|package| Some((package["id"].as_str()?, package["name"].as_str()?)))
+        .collect();
+    let dependencies: BTreeMap<&str, Vec<&str>> = metadata["resolve"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            let shipped = node["deps"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|dependency| {
+                    dependency["dep_kinds"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .any(|kind| kind["kind"].as_str() != Some("dev"))
+                })
+                .filter_map(|dependency| dependency["pkg"].as_str())
+                .collect();
+            Some((node["id"].as_str()?, shipped))
+        })
+        .collect();
+
+    let mut violations = Vec::new();
+    for member in metadata["workspace_members"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+    {
+        let name = names.get(member).copied().unwrap_or(member);
+        if NETWORK_ALLOWED.contains(&name) {
+            continue;
+        }
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![member];
+        let mut reached = BTreeSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if let Some(dependency) = names.get(id).filter(|name| NETWORK_CRATES.contains(name)) {
+                reached.insert(*dependency);
+            }
+            stack.extend(dependencies.get(id).into_iter().flatten());
+        }
+        violations.extend(
+            reached.into_iter().map(|client| {
+                format!("{name} reaches network client {client}; only adocfoundry may")
+            }),
+        );
+    }
+    violations
+}
+
+/// The workspace's resolved dependency graph, from `cargo metadata`.
+fn cargo_metadata(root: &Path) -> Result<serde_json::Value, String> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .current_dir(root)
+        .args(["metadata", "--format-version", "1", "--locked"])
+        .output()
+        .map_err(|error| format!("cargo metadata: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo metadata: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("cargo metadata: {error}"))
+}
+
+/// What the language server's default build must not compile: Typst and Git come only with its
+/// `typst` and `git` features.
+const LEAN_EXCLUDED: &[&str] = &["adoc-pdf", "adoc-math", "adoc-git", "typst", "gix"];
+
+/// The packages `cargo build -p <package>` compiles with its default features, from
+/// `cargo tree`; `cargo metadata` resolves features for the whole workspace at once.
+fn default_build_packages(root: &Path, package: &str) -> Result<BTreeSet<String>, String> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .current_dir(root)
+        .args(["tree", "--locked", "-p", package, "-e", "normal,build"])
+        .args(["--prefix", "none", "--format", "{p}"])
+        .output()
+        .map_err(|error| format!("cargo tree: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo tree: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// A violation for each crate of [`LEAN_EXCLUDED`] in the language server's default build.
+fn lean_violations(packages: &BTreeSet<String>) -> Vec<String> {
+    LEAN_EXCLUDED
+        .iter()
+        .filter(|name| packages.contains(**name))
+        .map(|name| format!("adoc-ls builds {name} by default; only its features may bring it"))
+        .collect()
+}
+
 /// Runs every check over the workspace rooted at `root`.
 pub fn run(root: &Path) -> Result<Vec<String>, String> {
     let crates = root.join("crates");
@@ -218,6 +355,8 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
         collect_sources(&directory.join("src"), &mut sources);
         violations.extend(check_sources(&manifest.name, &sources));
     }
+    violations.extend(network_violations(&cargo_metadata(root)?));
+    violations.extend(lean_violations(&default_build_packages(root, "adoc-ls")?));
     Ok(violations)
 }
 
@@ -339,6 +478,67 @@ libc = "=0.2.0"
         files.insert(PathBuf::from("c.rs"), "fn fine() {}".to_owned());
         assert_eq!(check_sources("adoc-lang", &files).len(), 2);
         assert!(check_sources("adoc-ls", &files).is_empty());
+    }
+
+    /// A package and its dependencies as `(dependency, kind)`, `None` for a normal dependency.
+    type Package<'a> = (&'a str, &'a [(&'a str, Option<&'a str>)]);
+
+    /// A `cargo metadata` document with workspace `members` and `packages`, and nothing else.
+    fn metadata(members: &[&str], packages: &[Package<'_>]) -> serde_json::Value {
+        let id = |name: &str| format!("{name} 0.1.0 (registry)");
+        serde_json::json!({
+            "packages": packages.iter().map(|(name, _)| serde_json::json!({ "id": id(name), "name": name })).collect::<Vec<_>>(),
+            "workspace_members": members.iter().map(|name| id(name)).collect::<Vec<_>>(),
+            "resolve": { "nodes": packages.iter().map(|(name, dependencies)| serde_json::json!({
+                "id": id(name),
+                "deps": dependencies.iter().map(|(dependency, kind)| serde_json::json!({
+                    "pkg": id(dependency),
+                    "dep_kinds": [{ "kind": kind }],
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>() },
+        })
+    }
+
+    #[test]
+    fn network_clients_are_confined_to_the_app() {
+        let graph = metadata(
+            &["adocfoundry", "adoc-engine", "adoc-diagrams"],
+            &[
+                ("adocfoundry", &[("gpui-kit-assets", None)]),
+                ("gpui-kit-assets", &[("gpui-pre-reqwest", None)]),
+                ("gpui-pre-reqwest", &[("hyper", None)]),
+                ("hyper", &[]),
+                // Through another crate, and through a build dependency.
+                ("adoc-engine", &[("fetcher", None)]),
+                ("fetcher", &[("ureq", Some("build"))]),
+                ("ureq", &[]),
+                // A dev-dependency is not shipped.
+                ("adoc-diagrams", &[("mock-server", Some("dev"))]),
+                ("mock-server", &[("reqwest", None)]),
+                ("reqwest", &[]),
+            ],
+        );
+        assert_eq!(
+            network_violations(&graph),
+            ["adoc-engine reaches network client ureq; only adocfoundry may"]
+        );
+    }
+
+    #[test]
+    fn default_build_has_no_typst_or_git() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let packages = default_build_packages(&root, "adoc-ls").unwrap();
+        assert!(packages.contains("adoc-engine"), "{packages:?}");
+        assert_eq!(lean_violations(&packages), Vec::<String>::new());
+
+        let full: BTreeSet<String> = ["adoc-engine", "typst", "gix"].map(str::to_owned).into();
+        assert_eq!(
+            lean_violations(&full),
+            [
+                "adoc-ls builds typst by default; only its features may bring it",
+                "adoc-ls builds gix by default; only its features may bring it",
+            ]
+        );
     }
 
     #[test]

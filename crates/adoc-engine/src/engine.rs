@@ -20,8 +20,9 @@ use crate::{
     edit,
     undo::Typing,
     workspace::{FileWatcher, WorkerMessage},
-    Clock, CommandArgs, CommandId, CommandOutcome, CommandRegistry, DocumentId, EngineError,
-    EngineEvent, OpenDocument, Settings, SystemClock, TextEdit, UndoEntry, UndoGroup, UndoStack,
+    Clock, CommandArgs, CommandContext, CommandId, CommandOutcome, CommandRegistry, DocumentId,
+    EditorMode, EngineError, EngineEvent, OpenDocument, Settings, SystemClock, TextEdit, UndoEntry,
+    UndoGroup, UndoStack,
 };
 
 /// The headless editor engine: the single owner of workspace and document state.
@@ -44,6 +45,8 @@ pub struct Engine {
     pub(crate) worker_sender: Sender<WorkerMessage>,
     pub(crate) worker_receiver: Receiver<WorkerMessage>,
     pub(crate) workers_running: usize,
+    /// Whole-workspace index jobs in flight, a subset of `workers_running`.
+    pub(crate) indexing: usize,
     pub(crate) watcher: Option<FileWatcher>,
     pub(crate) history: crate::navigation::History,
     pub(crate) previews: BTreeMap<crate::PreviewId, crate::EditPreview>,
@@ -56,6 +59,7 @@ pub struct Engine {
     pub(crate) rendered: crate::rendered::PreviewState,
     pub(crate) visual: crate::visual::VisualState,
     pub(crate) git: crate::git::GitState,
+    #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
 }
 
@@ -101,6 +105,7 @@ impl Engine {
             worker_sender,
             worker_receiver,
             workers_running: 0,
+            indexing: 0,
             watcher: None,
             history: crate::navigation::History::default(),
             previews: BTreeMap::new(),
@@ -111,6 +116,7 @@ impl Engine {
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
             git: crate::git::GitState::default(),
+            #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
         }
     }
@@ -128,6 +134,32 @@ impl Engine {
         let id = self.insert_document(path, &text, false);
         self.set_active(id);
         Ok(id)
+    }
+
+    /// Opens the page at `path` with `text` as its buffer, as a language client opens its own
+    /// buffer; the file need not exist. A document already open takes `text` as one edit.
+    pub fn open_text(&mut self, path: &Path, text: &str) -> DocumentId {
+        let path = normalize_path(path);
+        if let Some(id) = self.document_for_path(&path) {
+            let document = &self.documents[&id];
+            if document.text != text {
+                let len = document.text.len();
+                let _ = self.invoke(
+                    commands::ids::EDIT_REPLACE_RANGE,
+                    CommandArgs::Text {
+                        id,
+                        range: SourceRange::new(0, len),
+                        text: text.to_owned(),
+                    },
+                );
+            }
+            return id;
+        }
+        let id = self.insert_document(path.clone(), text, false);
+        // Unsaved when it differs from the file, or there is none.
+        let saved = fs::read_to_string(&path).unwrap_or_default();
+        self.mark_saved(id, &saved);
+        id
     }
 
     /// Opens a new, empty document that has no file on disk.
@@ -317,6 +349,24 @@ impl Engine {
     #[must_use]
     pub fn commands(&self) -> &CommandRegistry {
         &self.registry
+    }
+
+    /// Whether command `id` applies now, by its [`CommandContext`]: a document command needs an
+    /// active document, a visual editor command one shown visually or split, and an Antora command
+    /// an Antora component in the workspace. Front ends use it to offer only what applies.
+    #[must_use]
+    pub fn command_available(&self, id: CommandId) -> bool {
+        let Some(command) = self.registry.get(id) else {
+            return false;
+        };
+        match command.spec().when {
+            CommandContext::Always => true,
+            CommandContext::ActiveDocument => self.active().is_some(),
+            CommandContext::Selection => self
+                .active()
+                .is_some_and(|document| self.editor_mode(document) != EditorMode::Source),
+            CommandContext::Antora => self.workspace.antora.components().next().is_some(),
+        }
     }
 
     /// Registers an additional command, for front ends and future integrations.

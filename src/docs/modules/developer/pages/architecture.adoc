@@ -38,15 +38,15 @@ include::example$crate-layers.mmd[]
 
 |L1
 |`adoc-index`
-|`WorkspaceIndex`, with replacement-based updates and direct map lookups. It never scans every document. Path normalisation is lexical and never canonicalises, so unsaved files work.
+|`WorkspaceIndex`, with replacement-based updates and direct map lookups. It never scans every document. Path normalisation is lexical and never canonicalises, so unsaved files work. Reverse maps from the file name an xref or include names, and from each fragment, to the references (`xrefs_naming`, `includes_naming`, `references_with_fragment`) keep reference lookups from visiting every document.
 
 |L1
 |`adoc-lang`
-|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it.
+|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it. It also finds references (`references_at`, `page_references`, `includes_of`) and renames anchors (`rename_anchor`).
 
 |L2
 |`adoc-render`
-|A framework-free view tree (`ViewTree`, built from a `Dom` by `build_view` through a `ViewResolver`), a standalone HTML backend, and the optional external Asciidoctor renderer used by the language server's preview. The engine and the application use the view tree; the command-line `render` uses the HTML backend.
+|A framework-free view tree (`ViewTree`, built from a `Dom` by `build_view` through a `ViewResolver`), a standalone HTML backend, and the optional external Asciidoctor renderer used by the language server's preview. The engine and the application use the view tree; the command-line `render` uses the HTML backend. `to_text` writes the view tree as plain text, for `adoc-mcp`'s `render_page`.
 
 |L2
 |`adoc-diagrams`
@@ -66,7 +66,7 @@ include::example$crate-layers.mmd[]
 
 |L3
 |`adoc-engine`
-|Documents, commands, undo, workspace, file watcher, settings, Git state, search and rename, the preview, visual model and export services, and the `EngineEvent` stream. The only entry point front ends use.
+|Documents, commands, undo, workspace, file watcher, settings, Git state, search and rename, the preview, visual model and export services, and the `EngineEvent` stream. The only entry point front ends use. `report.rs` holds the diagnostics and Git status reports, and `inspect.rs` the target and resource-id queries; see xref:engine.adoc#reports-and-inspection[the engine].
 
 |L4
 |`adocfoundry`
@@ -78,7 +78,11 @@ include::example$crate-layers.mmd[]
 
 |L4
 |`adoc-ls`
-|The language server. The only crate that speaks the Language Server Protocol.
+|The language server. The only crate that speaks the Language Server Protocol. It runs on `adoc-engine`, which it depends on without the `typst` and `git` features by default; `cargo xtask layers` checks that the default build compiles neither Typst nor Git.
+
+|L4
+|`adoc-mcp`
+|The MCP server. It depends only on `adoc-engine` (with `typst` and `git`) and `adoc-core`. It uses `rmcp` 3.7.0 with only its `server`, `macros` and `transport-io` features, so it has no HTTP transport, which the network rule in `cargo xtask layers` checks. It runs on a current-thread tokio runtime (`rt`, `macros`, `io-std` and `time`), and each tool locks the engine for its call. Path confinement is `paths::confine`. See xref:ROOT:mcp-server.adoc[MCP server].
 |===
 
 The application sees `adoc-model` types only through the engine's re-exports.
@@ -92,10 +96,17 @@ The application sees `adoc-model` types only through the engine's re-exports.
 * `adoc-core` has any dependency;
 * a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
 * an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;
+* an HTTP client crate (`reqwest` and its GPUI fork, `ureq`, `hyper`, `isahc`, `curl`, `attohttpc`, `surf`) is reachable from any crate except `adocfoundry`, directly or through its normal or build dependencies;
 * a parser crate (`acdc-parser`, `asciidoc-parser`) appears outside `adoc-dom`;
 * `adoc-lang` depends on `url`, or its sources mention `lsp_types`, `lsp_server` or `url::`.
 
 Adding a crate means adding a line to the layer table in `xtask/src/layers.rs` and to the ladder in the repository's contributor guidance.
+
+=== The network rule
+
+The network rule is checked against the resolved graph from `cargo metadata`, so a transitive dependency counts.
+The application reaches an HTTP client only through `gpui-kit-assets`.
+Everything below the application, including diagram rendering and PDF export, works locally and never contacts a server.
 
 === The one `lsp-types` exception
 

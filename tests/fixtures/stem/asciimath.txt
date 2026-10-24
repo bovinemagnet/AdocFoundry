@@ -1,0 +1,20 @@
+# AsciiMath and the Typst maths it converts to, a tab apart. Samples from Asciidoctor's and
+# AsciiMath's documentation and from real pages.
+x^2	x^(2)
+a/b	frac(a, b)
+sqrt(x+1)	sqrt(x+1)
+root(3)(x)	root(3, x)
+alpha + beta >= gamma	α + β ≥ γ
+sum_(i=1)^n i	∑_(i=1)^(n) i
+int_0^oo e^(-x) dx	∫_(0)^(∞) e^(-x) dif x
+lim_(x->0) sin x / x	lim_(x→0) frac(sin x, x)
+[[a,b],[c,d]]	mat(delim: "[", a, b; c, d)
+text(if) x > 0	"if" x > 0
+bb(R)^n	bold(R)^(n)
+RR	ℝ
+(a+b)/(c+d)	frac(a+b, c+d)
+x_1, x_2	x_(1)\, x_(2)
+hat(x) + bar(y) + vec(v)	hat(x) + overline(y) + arrow(v)
+a != b and b in A	a ≠ b space "and" space b ∈ A
+f(x) = 2x + 1	f(x) = 2 x + 1
+|x|	|x|

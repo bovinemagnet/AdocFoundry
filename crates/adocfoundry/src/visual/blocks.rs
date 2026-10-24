@@ -2,7 +2,7 @@
 //! read-only (images, diagrams, included content, verbatim source) is drawn as the preview
 //! draws it, from the view tree built with the model.
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use adoc_engine::{
     commands::ids, Access, CommandArgs, Node, NodeKind, ReadOnly, RowSection, TextBlock,
@@ -37,6 +37,9 @@ struct Draw<'a> {
     marks: crate::editor::changes::MarkColours,
 }
 
+/// Highlighted blocks kept before the cache is emptied.
+const HIGHLIGHT_CACHE_LIMIT: usize = 256;
+
 /// The whole document: each top-level node.
 pub fn document(
     view: &VisualView,
@@ -44,7 +47,11 @@ pub fn document(
     window: &mut Window,
     cx: &mut Context<VisualView>,
 ) -> Vec<AnyElement> {
-    let cache: Rc<RefCell<preview::HighlightCache>> = Rc::default();
+    // Typing adds an entry for each version of a block's text; start afresh before that grows.
+    if view.highlights.borrow().len() > HIGHLIGHT_CACHE_LIMIT {
+        view.highlights.borrow_mut().clear();
+    }
+    let cache = view.highlights.clone();
     let dark = cx.theme().mode.is_dark();
     let theme = cx.theme().highlight_theme.clone();
     let highlight =
@@ -682,7 +689,14 @@ impl VisualView {
             node.kind,
             NodeKind::Title | NodeKind::Section { .. } | NodeKind::Heading { .. } | NodeKind::Term
         );
-        let runs = text::text_runs(block, &shown, &draw.inline, bold);
+        let mut runs = text::text_runs(block, &shown, &draw.inline, bold);
+        // An editable code block is highlighted by its language, as the preview draws it.
+        if let NodeKind::Code {
+            language: Some(language),
+        } = &node.kind
+        {
+            runs = text::with_highlights(runs, &(draw.context.highlight)(language, &shown.text));
+        }
         let pending = self.pending.filter(|_| caret_here);
         let caret = caret_display
             .filter(|_| draw.focused && self.selection.is_empty() && pending.is_none())
@@ -720,6 +734,7 @@ impl VisualView {
                         &down_path,
                         event.position,
                         event.modifiers.shift,
+                        event.click_count,
                         window,
                         cx,
                     );

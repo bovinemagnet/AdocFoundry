@@ -11,3 +11,4 @@
 ** xref:diagnostics.adoc[Diagnostics]
 * xref:command-line.adoc[Command line]
 * xref:language-server.adoc[Language server]
+* xref:mcp-server.adoc[MCP server]

@@ -174,7 +174,7 @@ impl Engine {
         let (version, path, text) = (input.version, input.path.clone(), input.text.clone());
         let (dom, sources) = input.parse(parser.as_ref());
         let model = Model::build(&path, &text, &dom);
-        let (view, wanted) = self.view_of(&path, &dom);
+        let (view, wanted) = self.view_of(&path, &dom, true);
         let current = Arc::new(VisualDocument {
             document: id,
             version,
@@ -276,7 +276,7 @@ impl Engine {
                 continue;
             };
             let (path, dom) = (session.current.model.path.clone(), session.dom.clone());
-            let (view, wanted) = self.view_of(&path, &dom);
+            let (view, wanted) = self.view_of(&path, &dom, true);
             if let Some(session) = self.visual.sessions.get_mut(&id) {
                 let mut current = (*session.current).clone();
                 current.view = view;

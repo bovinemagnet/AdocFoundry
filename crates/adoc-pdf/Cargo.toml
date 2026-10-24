@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+adoc-math.workspace = true
 adoc-render.workspace = true
 regex.workspace = true
 serde.workspace = true
@@ -13,8 +14,10 @@ serde-saphyr.workspace = true
 typst.workspace = true
 typst-layout.workspace = true
 typst-pdf.workspace = true
+typst-svg.workspace = true
 
 [dev-dependencies]
+adoc-math.workspace = true
 adoc-dom.workspace = true
 hayro-syntax.workspace = true
 serde_json.workspace = true

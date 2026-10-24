@@ -57,3 +57,22 @@ fn unknown_setting_key_warns_not_fails() {
     assert!(settings.warnings[0].contains("editor.font_colour"));
     assert!(settings.warnings[1].contains("experimental.flag"));
 }
+
+#[test]
+fn opt_in_git_is_off_until_a_settings_file_turns_it_on() {
+    let directory = tempfile::tempdir().unwrap();
+    let user = directory.path().join("adocfoundry.toml");
+    fs::write(&user, "[editor]\nfont_size = 14\n").unwrap();
+    let mut settings = Settings::load(Some(&user), None).unwrap().with_git_opt_in();
+    assert!(!settings.git.enabled);
+    settings.reload().unwrap();
+    assert!(!settings.git.enabled, "still off after a reload");
+
+    fs::write(&user, "[git]\nenabled = true\n").unwrap();
+    settings.reload().unwrap();
+    assert!(settings.git.enabled);
+    assert!(
+        Settings::load(None, None).unwrap().git.enabled,
+        "on by default elsewhere"
+    );
+}

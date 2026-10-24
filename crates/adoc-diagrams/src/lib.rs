@@ -135,6 +135,13 @@ impl Diagrams {
         Self { providers, cache }
     }
 
+    /// These providers and one more, for kinds a layer above renders (formulas).
+    #[must_use]
+    pub fn with_provider(mut self, provider: Box<dyn DiagramProvider>) -> Self {
+        self.providers.push(provider);
+        self
+    }
+
     #[must_use]
     pub fn supports(&self, kind: &str) -> bool {
         self.provider(kind).is_some()

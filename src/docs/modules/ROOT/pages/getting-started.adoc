@@ -7,17 +7,45 @@ This page covers installing AdocFoundry and opening your first workspace.
 
 == Install a package
 
-Release packages are built for:
+Release packages are attached to each release at https://github.com/bovinemagnet/AdocFoundry/releases.
+Every package carries the application and the `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` binaries.
+The `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` binaries are also published as archives of their own.
+AdocFoundry needs no Ruby, Node.js or Java at run time.
 
-* macOS: a universal DMG.
-* Windows: an MSI and a portable zip, for x64 and ARM64.
-* Linux: an AppImage, a deb and an rpm, for x86_64 and aarch64.
-* Linux: a Flatpak manifest in `packaging/flatpak/` in the repository.
+`adocfoundry --version` prints the version, for example `adocfoundry 0.1.0`, and exits.
 
-The `adoc-ls` language server and `adocfoundry-cli` are also attached to each release as separate archives for every target.
+=== macOS
 
-NOTE: The macOS and Windows packages are built by continuous integration but have not yet been installed and run by hand.
-The Linux x86_64 build has been run on Wayland and, through XWayland, on X11.
+Download `AdocFoundry-<version>-macos-universal.dmg`, open it and drag AdocFoundry to Applications.
+
+The app is signed ad hoc, not with a Developer ID, which comes in a later release.
+macOS therefore asks before opening it the first time: Control-click the app, choose *Open*, then confirm.
+
+The command-line tools are in `AdocFoundry.app/Contents/MacOS`.
+Link them onto your `PATH` to use them from a terminal.
+
+[source,sh]
+----
+ln -s /Applications/AdocFoundry.app/Contents/MacOS/adoc-ls /usr/local/bin/
+----
+
+=== Windows
+
+Download the MSI, which can add the tools to your `PATH`, or the portable zip.
+Both are built for x64 and ARM64.
+
+The packages are unsigned, so SmartScreen asks before running them: choose *More info*, then *Run anyway*.
+
+=== Linux
+
+Packages are built for x86_64 and aarch64.
+
+* AppImage: make it executable with `chmod +x`, then run it.
+* deb: `sudo apt install ./AdocFoundry-<version>-….deb`
+* rpm: `sudo dnf install ./adocfoundry-<version>-….rpm`
+* Flatpak: a manifest is kept in `packaging/flatpak/` in the repository.
+
+NOTE: The Linux x86_64 build has been run on Wayland and, through XWayland, on X11.
 See xref:developer:testing.adoc#platform-status[platform status].
 
 == Build from source

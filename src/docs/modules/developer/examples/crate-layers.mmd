@@ -3,6 +3,7 @@ flowchart TD
         app["adocfoundry<br/>(GPUI app, only GPUI importer)"]
         cli["adocfoundry-cli"]
         ls["adoc-ls<br/>(LSP, only LSP speaker)"]
+        mcp["adoc-mcp<br/>(MCP over stdio)"]
     end
     subgraph L3["L3: engine"]
         engine["adoc-engine"]
@@ -20,6 +21,7 @@ flowchart TD
         antora["adoc-antora"]
         index["adoc-index"]
         lang["adoc-lang"]
+        math["adoc-math<br/>(STEM to Typst maths)"]
     end
     subgraph L0["L0: domain types"]
         core["adoc-core"]
@@ -31,10 +33,11 @@ flowchart TD
     cli --> index
     cli --> render
     cli --> dom
+    ls --> engine
     ls --> lang
     ls --> index
-    ls --> parser
     ls --> render
+    mcp --> engine
     engine --> lang
     engine --> index
     engine --> antora

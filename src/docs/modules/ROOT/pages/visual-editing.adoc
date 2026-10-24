@@ -63,9 +63,15 @@ Select text by:
 
 * dragging;
 * shift-clicking;
+* double-clicking, which selects a word;
+* triple-clicking, which selects the whole paragraph (the text block);
 * holding kbd:[Shift] with the arrow keys, kbd:[Home] or kbd:[End].
 
 kbd:[Home] and kbd:[End] go to the start and end of the line.
+kbd:[Option+Left] and kbd:[Option+Right] on macOS, or kbd:[Ctrl+Left] and kbd:[Ctrl+Right] on Linux and Windows, move the caret by word.
+Adding kbd:[Shift] extends the selection by word.
+A word move never lands inside a formatting mark's delimiters.
+At the start or end of a block, it moves to the neighbouring block.
 Select All, Copy, Cut and Paste work on the selection.
 Input-method (IME) composition is shown underlined in place and written to the page as one edit when you commit it.
 
@@ -158,6 +164,7 @@ The new block exists only on screen until you type into it, because AsciiDoc has
 Its first character writes it to the source.
 * A second Enter on a new, empty list item leaves the list.
 * In a code block, Enter inserts a new line.
+A code block with a language, such as `[source,rust]`, is syntax-highlighted as you type, as the preview highlights it.
 * At the start of a block, Enter does nothing.
 
 === Backspace at the start of a block

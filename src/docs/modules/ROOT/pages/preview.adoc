@@ -103,6 +103,9 @@ The languages are those listed in xref:using-the-editor.adoc#the-editor[the edit
 == Diagrams
 
 Diagram blocks are rendered in the preview.
+Every diagram renders on your computer.
+Mermaid runs inside AdocFoundry, and Graphviz, PlantUML and D2 use the tools installed on your `PATH`.
+Nothing is sent to an online rendering service.
 
 [cols="2,2,3"]
 |===
@@ -135,10 +138,18 @@ The `.cache` folder is skipped by workspace discovery by default.
 NOTE: Tool paths for Graphviz, PlantUML and D2 cannot be set yet.
 They are found on the `PATH` only.
 
+== STEM
+
+A block formula is typeset and drawn as an image on a white card, black on white in either theme.
+While it renders, the source shows.
+If it fails, a short message shows with the source.
+Formulas are cached like diagrams.
+See xref:pdf-export.adoc#stem[Exporting to PDF] for the notation rules.
+
 == Known limits
 
-* STEM is shown as styled maths source.
-PDF export shows it as source too; see xref:pdf-export.adoc[Exporting to PDF].
+* An inline formula is not typeset in the line of text, because the preview lays text out as styled runs, which cannot hold images.
+It stays as its source in a code style, with the typeset formula in a tooltip on hover.
 * The preview is read-only.
 To edit the rendered page, use the visual editor; see xref:visual-editing.adoc[Visual editing].
 * The preview has no settings of its own.

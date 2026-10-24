@@ -40,7 +40,9 @@ fn same(actual: &ThemeValue, expected: &Value) -> bool {
             Color::Transparent => object.contains_key("transparent"),
         },
         // `base` is read as is, so its colours are plain strings there.
-        (ThemeValue::Color(color), Value::String(text)) => color.hex().as_deref() == Some(text),
+        (ThemeValue::Color(color), Value::String(text)) => {
+            color.hex().as_deref() == Some(text.as_str())
+        }
         (ThemeValue::Map(entries), Value::Object(object)) => {
             entries.len() == object.len()
                 && entries

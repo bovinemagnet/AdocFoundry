@@ -18,6 +18,8 @@ use crate::{
 
 /// The template the generated body is typeset with.
 const TEMPLATE: &str = include_str!("adoc.typ");
+/// STEM's helpers and `adoc-stem`, ahead of the template and in a formula's own document.
+pub(crate) const MATH: &str = include_str!("math.typ");
 
 /// Where running content and page numbering start: the first page of the body, numbered 1.
 const RUNNING_START: &str = "#metadata(none) <adoc-running-start>#counter(page).update(1)\n";
@@ -100,6 +102,8 @@ pub struct Typst {
     pub map: SourceMap,
     /// Images that could not be found, with where they were written.
     pub missing: Vec<(String, adoc_render::SourceSpan)>,
+    /// Formulas that could not be typeset, why, and where they were written.
+    pub unconverted: Vec<(String, adoc_render::SourceSpan)>,
 }
 
 /// The document's facts the template reads: an article's attributes, or a book's.
@@ -251,6 +255,7 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         files,
         mut map,
         missing,
+        unconverted,
     } = emitter.finish();
 
     let mut source = String::new();
@@ -263,6 +268,7 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         theme,
         &crate::fonts::line_gaps(theme, &options.fonts_dirs),
     );
+    source.push_str(MATH);
     source.push_str(TEMPLATE);
     source.push('\n');
     source.push_str(&running);
@@ -275,6 +281,7 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         files,
         map,
         missing,
+        unconverted,
     }
 }
 
