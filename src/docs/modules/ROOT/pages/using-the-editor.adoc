@@ -73,6 +73,26 @@ Typed characters within 500 ms of each other coalesce.
 Tabs follow the active document, so opening a page by any route (the sidebar, link following, the palette or a rename) shows it in a tab.
 With the preview docked, the tab strip scrolls to keep the active page's tab in view, including when a page becomes active by following a link or through the outline.
 
+[[formatting-text]]
+== Formatting text in the source editor
+
+Bold (`Cmd-B` or `Ctrl-B`), Italic (`Cmd-I` or `Ctrl-I`) and Code (`Cmd-E` or `Ctrl-E`) toggle a mark around the selection in the source editor, with the same keys as the visual editor.
+Highlight has no key and is in the command palette.
+They work in Source mode and on the source side of Split mode.
+
+* The constrained form (`+*bold*+`, `+_italic_+`, `+`code`+` and `+#highlight#+`) is used where it is valid.
+Where it cannot be, such as part of a word (`+un**break**able+`), the unconstrained form (`+**+`, `+__+`, `+``+` and `+##+`) is used.
+* Spaces at the edges of the selection stay outside the mark.
+* If the selection is already marked, with its delimiters just inside or just outside it, the command removes the mark.
+Another mark's delimiters do not count, so bolding an italic word gives `+_**word**_+`.
+* A selection over several lines marks each line on its own, because a mark never runs across lines, which might be list items or block delimiters.
+Blank lines are skipped.
+If every line is already marked, all are unmarked; otherwise only the unmarked lines are marked.
+* With nothing selected, an empty pair of delimiters is inserted with the caret between them, ready to type.
+
+The marked text stays selected afterwards, so pressing the key again undoes the mark.
+Each toggle is one undo step.
+
 == Following links
 
 Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+Enter]) on a reference follows it:
@@ -142,7 +162,8 @@ Saving it applies the change.
 See xref:settings.adoc[Settings].
 
 The command palette lists every command with its title.
-Commands that apply only to the visual editor, such as Bold, Italic and the list and block commands, are listed only while the active page is shown in Visual or Split mode.
+Bold, Italic, Code and Highlight are listed in every mode.
+The other commands that apply only to the visual editor, such as the list and block commands and Insert Link, are listed only while the active page is shown in Visual or Split mode.
 Commands that need an open page are hidden when none is open, and Antora-only commands are hidden when the workspace has no Antora component.
 
 == The line and column in the status bar

@@ -1194,6 +1194,50 @@ impl WorkspaceView {
         }
     }
 
+    /// Toggles a mark in the source editor. The visual editor handles the same actions itself
+    /// while it has focus, so this is reached from the source editor or the palette.
+    fn toggle_source_mark(
+        &mut self,
+        command: adoc_engine::CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self.active_editor().cloned() else {
+            return;
+        };
+        let document = editor.read(cx).document();
+        if self.app.read(cx).engine.editor_mode(document) == EditorMode::Visual {
+            return;
+        }
+        editor.update(cx, |editor, cx| editor.toggle_mark(command, window, cx));
+    }
+
+    fn on_toggle_strong(&mut self, _: &ToggleStrong, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_source_mark(ids::EDIT_TOGGLE_STRONG, window, cx);
+    }
+
+    fn on_toggle_emphasis(
+        &mut self,
+        _: &ToggleEmphasis,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_source_mark(ids::EDIT_TOGGLE_EMPHASIS, window, cx);
+    }
+
+    fn on_toggle_code(&mut self, _: &ToggleCode, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_source_mark(ids::EDIT_TOGGLE_CODE, window, cx);
+    }
+
+    fn on_toggle_highlight(
+        &mut self,
+        _: &ToggleHighlight,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_source_mark(ids::EDIT_TOGGLE_HIGHLIGHT, window, cx);
+    }
+
     fn on_redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor().cloned() {
             editor.update(cx, |editor, cx| editor.undo(true, cx));
@@ -2176,6 +2220,10 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_close))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
+            .on_action(cx.listener(Self::on_toggle_strong))
+            .on_action(cx.listener(Self::on_toggle_emphasis))
+            .on_action(cx.listener(Self::on_toggle_code))
+            .on_action(cx.listener(Self::on_toggle_highlight))
             .on_action(cx.listener(Self::on_follow_link))
             .on_action(cx.listener(Self::on_go_to_definition))
             .on_action(cx.listener(Self::on_go_back))

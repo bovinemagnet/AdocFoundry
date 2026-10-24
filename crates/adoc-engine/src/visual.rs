@@ -446,42 +446,46 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
             |engine, args| visual_delete(engine, args, true),
         ),
         (
+            // The source editor toggles the mark too, so it applies in every mode.
             spec(
                 ids::EDIT_TOGGLE_STRONG,
                 "Bold",
                 Edit,
                 Some("cmd-b"),
-                Selection,
+                ActiveDocument,
             ),
             |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_STRONG, Mark::Strong),
         ),
         (
+            // The source editor toggles the mark too, so it applies in every mode.
             spec(
                 ids::EDIT_TOGGLE_EMPHASIS,
                 "Italic",
                 Edit,
                 Some("cmd-i"),
-                Selection,
+                ActiveDocument,
             ),
             |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_EMPHASIS, Mark::Emphasis),
         ),
         (
+            // The source editor toggles the mark too, so it applies in every mode.
             spec(
                 ids::EDIT_TOGGLE_CODE,
                 "Code",
                 Edit,
                 Some("cmd-e"),
-                Selection,
+                ActiveDocument,
             ),
             |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_CODE, Mark::Code),
         ),
         (
+            // The source editor toggles the mark too, so it applies in every mode.
             spec(
                 ids::EDIT_TOGGLE_HIGHLIGHT,
                 "Highlight",
                 Edit,
                 None,
-                Selection,
+                ActiveDocument,
             ),
             |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_HIGHLIGHT, Mark::Highlight),
         ),
@@ -923,13 +927,30 @@ fn visual_step(
     engine.apply_visual(args.id, &source, result, UndoMode::Group(group))
 }
 
-/// Adds `mark` to the selection, or removes it where all of the selection has it.
+/// Adds `mark` to the selection, or removes it where all of the selection has it: a visual
+/// selection through the model, or a source selection (`CommandArgs::Range`) in the text, as
+/// one undo step either way.
 fn toggle_mark(
     engine: &mut Engine,
     args: CommandArgs,
     command: crate::CommandId,
     mark: Mark,
 ) -> Result<CommandOutcome, EngineError> {
+    if let CommandArgs::Range { id, range } = args {
+        let text = engine
+            .document(id)
+            .ok_or(EngineError::UnknownDocument(id))?
+            .text_string();
+        let toggle = adoc_model::toggle_mark_in_source(&text, ordered(range), mark);
+        let edits = toggle
+            .edits
+            .into_iter()
+            .map(|edit| TextEdit::new(edit.range, edit.text))
+            .collect();
+        let group = engine.new_group();
+        engine.apply_edits(id, edits, UndoMode::Group(group))?;
+        return Ok(CommandOutcome::Selection(toggle.selection));
+    }
     let args = visual_args(command, args)?;
     let range = ordered(args.selection);
     visual_step(engine, &args, Step::ToggleMark { range, mark })

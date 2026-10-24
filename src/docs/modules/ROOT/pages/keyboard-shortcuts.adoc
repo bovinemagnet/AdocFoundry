@@ -155,6 +155,8 @@ Undo, redo, go to definition, follow link and peek include are bound in the edit
 
 These bindings apply while the visual editor has focus.
 Undo and redo are the commands above, and are shared with the source editor.
+Bold, Italic and Code, with the same keys, also work in the source editor; see xref:using-the-editor.adoc#formatting-text[Formatting text in the source editor].
+Highlight (`edit.toggle_highlight`) has no key in either editor and is in the palette.
 See xref:visual-editing.adoc[Visual editing].
 
 [cols="3,2,2,3"]

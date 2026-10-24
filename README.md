@@ -29,6 +29,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Diagnostics as you type for unresolved xrefs, anchors, includes and images, duplicate anchors, unknown Antora modules and resources, invalid resource IDs and invalid component descriptors. Diagnostics are conservative: warnings rather than errors, and nothing for dynamic constructs such as `include::{attr}/x.adoc[]`.
 - Hover and completion for xref, include and image targets, anchors and `{attributes}`.
 - Undo and redo that treat a run of typing as one step.
+- Bold, Italic and Code (Cmd/Ctrl-B, -I, -E) and Highlight wrap the selection in its delimiters, or remove them when it is already marked: the constrained form (`*bold*`) where it is valid, else the unconstrained one (`un**break**able`), each line of a selection on its own.
 
 **Link following**
 
@@ -126,7 +127,7 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Peek include | Alt-F12 | Alt-F12 |
 | Toggle preview | Cmd-K V | Ctrl-K V |
 | Show source / visual / split | Cmd-K S / Cmd-K W / Cmd-K D | Ctrl-K S / Ctrl-K W / Ctrl-K D |
-| Bold / Italic / Code (visual) | Cmd-B / Cmd-I / Cmd-E | Ctrl-B / Ctrl-I / Ctrl-E |
+| Bold / Italic / Code | Cmd-B / Cmd-I / Cmd-E | Ctrl-B / Ctrl-I / Ctrl-E |
 | Insert link (visual) | Cmd-Shift-L | Ctrl-Shift-L |
 | Bulleted / numbered / checklist (visual) | Cmd-Shift-U / -N / -X | Ctrl-Shift-U / -N / -X |
 | Indent / outdent list item (visual) | Tab / Shift-Tab | Tab / Shift-Tab |

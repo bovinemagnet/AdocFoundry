@@ -2146,9 +2146,49 @@ fn palette_hides_visual_commands_in_source_mode(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     let source = offered(&mut cx);
-    assert!(!source.contains(&ids::EDIT_TOGGLE_STRONG));
+    // Bold works in the source editor too; lists are the visual editor's alone.
+    assert!(source.contains(&ids::EDIT_TOGGLE_STRONG));
     assert!(!source.contains(&ids::EDIT_TOGGLE_BULLET_LIST));
     assert!(source.contains(&ids::VIEW_SHOW_VISUAL));
+}
+
+#[gpui::test]
+fn marks_toggle_in_the_source_editor(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n\nSome plain words.\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let plain = SourceRange::new(13, 18);
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.reveal(plain, window, cx)));
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("secondary-b");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n"
+    );
+    // The word stays selected, so pressing again takes the mark off.
+    let selection = cx.update(|_, cx| editor.read(cx).selection(cx));
+    assert_eq!(selection, 14..19);
+    cx.simulate_keystrokes("secondary-b");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nSome plain words.\n");
+
+    cx.simulate_keystrokes("secondary-i");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome _plain_ words.\n"
+    );
+    // One undo, through the engine, as for any edit.
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nSome plain words.\n");
 }
 
 #[gpui::test]

@@ -295,9 +295,16 @@ pub fn bind(engine: &Engine, cx: &mut App) {
         let Some(keys) = spec.default_binding.map(platform_binding) else {
             continue;
         };
+        // The marks work in the source editor too, on its selection.
+        let editor = Some(EDITOR_CONTEXT);
         match spec.id {
             ids::EDIT_UNDO => bindings.push(KeyBinding::new(&keys, Undo, visual)),
             ids::EDIT_REDO => bindings.push(KeyBinding::new(&keys, Redo, visual)),
+            ids::EDIT_TOGGLE_STRONG => bindings.push(KeyBinding::new(&keys, ToggleStrong, editor)),
+            ids::EDIT_TOGGLE_EMPHASIS => {
+                bindings.push(KeyBinding::new(&keys, ToggleEmphasis, editor));
+            }
+            ids::EDIT_TOGGLE_CODE => bindings.push(KeyBinding::new(&keys, ToggleCode, editor)),
             _ => {}
         }
     }
