@@ -29,6 +29,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Diagnostics as you type for unresolved xrefs, anchors, includes and images, duplicate anchors, unknown Antora modules and resources, invalid resource IDs and invalid component descriptors. Diagnostics are conservative: warnings rather than errors, and nothing for dynamic constructs such as `include::{attr}/x.adoc[]`.
 - Hover and completion for xref, include and image targets, anchors and `{attributes}`.
 - Undo and redo that treat a run of typing as one step.
+- Tabs close from their X, or from a right-click menu that acts on the tab clicked: Close, Close Others, Close Left, Close Right, Close Clean (the tabs without unsaved changes) and Close All, asking once about any unsaved changes. Arrows at the start of the tab bar go back and forward.
 - Bold, Italic and Code (Cmd/Ctrl-B, -I, -E) and Highlight wrap the selection in its delimiters, or remove them when it is already marked: the constrained form (`*bold*`) where it is valid, else the unconstrained one (`un**break**able`), each line of a selection on its own.
 
 **Link following**
@@ -123,6 +124,8 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Save / Save all / Close | Cmd-S / Cmd-Alt-S / Cmd-W | Ctrl-S / Ctrl-Alt-S / Ctrl-W |
 | Undo / Redo | Cmd-Z / Cmd-Shift-Z | Ctrl-Z / Ctrl-Shift-Z |
 | Follow link | Cmd-click, F12, Cmd-Enter | Ctrl-click, F12, Ctrl-Enter |
+| Close others / left / right | Cmd-Alt-T / Cmd-K E / Cmd-K T | Ctrl-Alt-T / Ctrl-K E / Ctrl-K T |
+| Close clean / all | Cmd-K U / Cmd-K Cmd-W | Ctrl-K U / Ctrl-K Ctrl-W |
 | Back / Forward | Ctrl-minus / Ctrl-Shift-minus | Ctrl-minus / Ctrl-Shift-minus |
 | Peek include | Alt-F12 | Alt-F12 |
 | Toggle preview | Cmd-K V | Ctrl-K V |

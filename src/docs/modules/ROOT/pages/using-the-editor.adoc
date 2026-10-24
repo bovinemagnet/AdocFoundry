@@ -73,6 +73,25 @@ Typed characters within 500 ms of each other coalesce.
 Tabs follow the active document, so opening a page by any route (the sidebar, link following, the palette or a rename) shows it in a tab.
 With the preview docked, the tab strip scrolls to keep the active page's tab in view, including when a page becomes active by following a link or through the outline.
 
+Each tab has an X button that closes it, asking first if the page has unsaved changes.
+Tabs are in the order the pages were opened.
+Right-click a tab for a menu that acts on that tab, not necessarily the active one:
+
+* *Close* closes the tab.
+* *Close Others* closes every other tab.
+* *Close Left* and *Close Right* close the tabs to its left or right.
+* *Close Clean* closes every tab without unsaved changes.
+* *Close All* closes every tab.
+
+Items that would close nothing are greyed out, such as Close Left on the first tab.
+Right-clicking the empty part of the tab bar offers only Close Clean and Close All.
+The same commands are in the palette and act on the active tab; see xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for their keys.
+When any of the tabs to be closed has unsaved changes, you are asked once, naming them (for example "a.adoc and b.adoc have unsaved changes."): Discard closes them all and Cancel closes none.
+Close Clean never asks, since it leaves unsaved tabs open.
+
+The ← and → buttons at the start of the tab bar are Go Back and Go Forward through the places you have followed links to.
+Each is greyed out when there is nowhere to go.
+
 [[formatting-text]]
 == Formatting text in the source editor
 
@@ -113,7 +132,7 @@ include::example$link-following.mmd[]
 === Back and forward
 
 Every followed link is recorded.
-Go Back (`Ctrl-minus`) and Go Forward (`Ctrl-Shift-minus`) move through that history, also available from the arrows in the title bar.
+Go Back (`Ctrl-minus`) and Go Forward (`Ctrl-Shift-minus`) move through that history, also available from the arrows in the title bar and at the start of the tab bar.
 These two bindings use Ctrl on every platform, including macOS.
 
 === Peek an include

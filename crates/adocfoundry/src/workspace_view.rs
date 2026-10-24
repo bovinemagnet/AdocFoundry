@@ -21,6 +21,7 @@ use gpui_component::{
     h_flex,
     input::{Editor, EditorState, Input, InputState},
     list::ListItem,
+    menu::{ContextMenuExt as _, PopupMenuItem},
     notification::Notification,
     resizable::{h_resizable, resizable_panel},
     status_bar::StatusBar,
@@ -88,6 +89,8 @@ pub struct WorkspaceView {
     tab_scroll: gpui::ScrollHandle,
     /// Frames still to request the active tab's reveal on; see [`Self::reveal_active_tab`].
     tab_reveals: std::cell::Cell<u8>,
+    /// The tab last right-clicked, which the tab strip's menu acts on; `None` over empty strip.
+    tab_menu_target: Rc<Cell<Option<DocumentId>>>,
     sidebar_tab: SidebarTab,
     navigation: Entity<TreeState>,
     families: Entity<TreeState>,
@@ -194,6 +197,7 @@ impl WorkspaceView {
             active_tab: 0,
             tab_scroll: gpui::ScrollHandle::new(),
             tab_reveals: std::cell::Cell::new(0),
+            tab_menu_target: Rc::default(),
             sidebar_tab: SidebarTab::Navigation,
             navigation: cx.new(|cx| TreeState::new(cx)),
             families: cx.new(|cx| TreeState::new(cx)),
@@ -1156,36 +1160,85 @@ impl WorkspaceView {
         self.invoke(ids::DOCUMENT_SAVE_ALL, CommandArgs::None, window, cx);
     }
 
-    fn on_close(&mut self, _: &CloseDocument, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.active_document(cx) else {
-            return;
-        };
-        let dirty = self
-            .app
-            .read(cx)
-            .engine
-            .document(id)
-            .is_some_and(|document| document.dirty);
-        if !dirty {
-            self.invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(id), window, cx);
+    /// Runs `command` (Close, or Close Others, Left, Right, Clean or All) on the tab of `id`,
+    /// first asking once whether to discard the unsaved changes of any tab it would close.
+    fn close_tabs(
+        &mut self,
+        command: adoc_engine::CommandId,
+        id: DocumentId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        let names: Vec<String> = engine
+            .closed_by(command, id)
+            .into_iter()
+            .filter(|closed| {
+                engine
+                    .document(*closed)
+                    .is_some_and(|document| document.dirty)
+            })
+            .map(|closed| self.document_name(closed, cx))
+            .collect();
+        if names.is_empty() {
+            self.invoke(command, CommandArgs::Document(id), window, cx);
             return;
         }
         let app = self.app.clone();
-        let name = self.document_name(id, cx);
+        let message = match &names[..] {
+            [name] => format!("{name} has unsaved changes."),
+            [rest @ .., last] => format!("{} and {last} have unsaved changes.", rest.join(", ")),
+            [] => unreachable!(),
+        };
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let app = app.clone();
             dialog
                 .title("Discard unsaved changes?")
-                .child(format!("{name} has unsaved changes."))
+                .child(message.clone())
                 .confirm()
                 .ok_text("Discard")
                 .on_ok(move |_, _, cx| {
                     app.update(cx, |app, cx| {
-                        let _ = app.invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(id), cx);
+                        let _ = app.invoke(command, CommandArgs::Document(id), cx);
                     });
                     true
                 })
         });
+    }
+
+    fn close_active(
+        &mut self,
+        command: adoc_engine::CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(id) = self.active_document(cx) {
+            self.close_tabs(command, id, window, cx);
+        }
+    }
+
+    fn on_close(&mut self, _: &CloseDocument, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_active(ids::DOCUMENT_CLOSE, window, cx);
+    }
+
+    fn on_close_others(&mut self, _: &CloseOthers, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_active(ids::DOCUMENT_CLOSE_OTHERS, window, cx);
+    }
+
+    fn on_close_left(&mut self, _: &CloseLeft, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_active(ids::DOCUMENT_CLOSE_LEFT, window, cx);
+    }
+
+    fn on_close_right(&mut self, _: &CloseRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_active(ids::DOCUMENT_CLOSE_RIGHT, window, cx);
+    }
+
+    fn on_close_clean(&mut self, _: &CloseClean, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_active(ids::DOCUMENT_CLOSE_CLEAN, window, cx);
+    }
+
+    fn on_close_all(&mut self, _: &CloseAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_active(ids::DOCUMENT_CLOSE_ALL, window, cx);
     }
 
     fn on_undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
@@ -2002,10 +2055,12 @@ impl WorkspaceView {
             }
         }
         let engine = &self.app.read(cx).engine;
+        let target = self.tab_menu_target.clone();
         let tabs: Vec<Tab> = self
             .tabs
             .iter()
-            .map(|tab| {
+            .enumerate()
+            .map(|(ix, tab)| {
                 let id = tab.read(cx).document();
                 let (name, dirty) = engine
                     .document(id)
@@ -2018,10 +2073,58 @@ impl WorkspaceView {
                         (name, document.dirty)
                     })
                     .unwrap_or_default();
-                Tab::new().label(if dirty { format!("● {name}") } else { name })
+                let target = target.clone();
+                Tab::new()
+                    .label(if dirty { format!("● {name}") } else { name })
+                    .debug_selector(move || format!("editor-tab-{ix}"))
+                    .on_mouse_down(gpui::MouseButton::Right, move |_, _, _| {
+                        target.set(Some(id));
+                    })
+                    .suffix(
+                        Button::new(("close-tab", ix))
+                            .icon(IconName::Close)
+                            .ghost()
+                            .xsmall()
+                            .tab_stop(false)
+                            .debug_selector(move || format!("tab-close-{ix}"))
+                            .tooltip("Close")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                // Not also a click on the tab, which would select another.
+                                cx.stop_propagation();
+                                this.close_tabs(ids::DOCUMENT_CLOSE, id, window, cx);
+                            })),
+                    )
             })
             .collect();
-        TabBar::new("editor-tabs")
+        let (back, forward) = (engine.can_go_back(), engine.can_go_forward());
+        let arrows = h_flex()
+            .px_1()
+            .child(
+                Button::new("tab-bar-back")
+                    .icon(IconName::ArrowLeft)
+                    .ghost()
+                    .xsmall()
+                    .disabled(!back)
+                    .tooltip("Go Back")
+                    .debug_selector(|| "tab-bar-back".to_owned())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.invoke(ids::NAVIGATE_BACK, CommandArgs::None, window, cx);
+                    })),
+            )
+            .child(
+                Button::new("tab-bar-forward")
+                    .icon(IconName::ArrowRight)
+                    .ghost()
+                    .xsmall()
+                    .disabled(!forward)
+                    .tooltip("Go Forward")
+                    .debug_selector(|| "tab-bar-forward".to_owned())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.invoke(ids::NAVIGATE_FORWARD, CommandArgs::None, window, cx);
+                    })),
+            );
+        let bar = TabBar::new("editor-tabs")
+            .prefix(arrows)
             .track_scroll(&self.tab_scroll)
             .selected_index(self.active_tab)
             .children(tabs)
@@ -2035,7 +2138,70 @@ impl WorkspaceView {
                 });
                 this.follow_active(window, cx);
                 cx.notify();
-            }))
+            }));
+        let target = self.tab_menu_target.clone();
+        let app = self.app.clone();
+        let workspace = cx.entity().downgrade();
+        div()
+            .id("editor-tab-strip")
+            // Cleared first, then set by the tab under the pointer, if any.
+            .capture_any_mouse_down({
+                let target = target.clone();
+                move |_, _, _| target.set(None)
+            })
+            .child(bar)
+            .context_menu(move |menu, _, cx| {
+                let target = target.get();
+                let engine = &app.read(cx).engine;
+                let entries: &[(&str, adoc_engine::CommandId, Box<dyn gpui::Action>)] = &[
+                    ("Close", ids::DOCUMENT_CLOSE, Box::new(CloseDocument)),
+                    (
+                        "Close Others",
+                        ids::DOCUMENT_CLOSE_OTHERS,
+                        Box::new(CloseOthers),
+                    ),
+                    ("Close Left", ids::DOCUMENT_CLOSE_LEFT, Box::new(CloseLeft)),
+                    (
+                        "Close Right",
+                        ids::DOCUMENT_CLOSE_RIGHT,
+                        Box::new(CloseRight),
+                    ),
+                    (
+                        "Close Clean",
+                        ids::DOCUMENT_CLOSE_CLEAN,
+                        Box::new(CloseClean),
+                    ),
+                    ("Close All", ids::DOCUMENT_CLOSE_ALL, Box::new(CloseAll)),
+                ];
+                // Over the empty strip, only the commands that need no tab, on the active one.
+                let tab = target.or_else(|| engine.active());
+                let Some(tab) = tab else {
+                    return menu;
+                };
+                entries
+                    .iter()
+                    .filter(|(_, command, _)| {
+                        target.is_some()
+                            || matches!(
+                                *command,
+                                ids::DOCUMENT_CLOSE_CLEAN | ids::DOCUMENT_CLOSE_ALL
+                            )
+                    })
+                    .fold(menu, |menu, (label, command, action)| {
+                        let command = *command;
+                        let workspace = workspace.clone();
+                        menu.item(
+                            PopupMenuItem::new(*label)
+                                .action(action.boxed_clone())
+                                .disabled(engine.closed_by(command, tab).is_empty())
+                                .on_click(move |_, window, cx| {
+                                    let _ = workspace.update(cx, |this, cx| {
+                                        this.close_tabs(command, tab, window, cx);
+                                    });
+                                }),
+                        )
+                    })
+            })
     }
 
     /// The zero-based line and column (in characters, as the source editor counts them) of the
@@ -2218,6 +2384,11 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_close))
+            .on_action(cx.listener(Self::on_close_others))
+            .on_action(cx.listener(Self::on_close_left))
+            .on_action(cx.listener(Self::on_close_right))
+            .on_action(cx.listener(Self::on_close_clean))
+            .on_action(cx.listener(Self::on_close_all))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_toggle_strong))

@@ -16,6 +16,11 @@ pub mod ids {
     pub const DOCUMENT_SAVE: CommandId = CommandId::new("document.save");
     pub const DOCUMENT_SAVE_ALL: CommandId = CommandId::new("document.save_all");
     pub const DOCUMENT_CLOSE: CommandId = CommandId::new("document.close");
+    pub const DOCUMENT_CLOSE_OTHERS: CommandId = CommandId::new("document.close_others");
+    pub const DOCUMENT_CLOSE_LEFT: CommandId = CommandId::new("document.close_left");
+    pub const DOCUMENT_CLOSE_RIGHT: CommandId = CommandId::new("document.close_right");
+    pub const DOCUMENT_CLOSE_CLEAN: CommandId = CommandId::new("document.close_clean");
+    pub const DOCUMENT_CLOSE_ALL: CommandId = CommandId::new("document.close_all");
     pub const EDIT_INSERT_TEXT: CommandId = CommandId::new("edit.insert_text");
     pub const EDIT_REPLACE_RANGE: CommandId = CommandId::new("edit.replace_range");
     pub const EDIT_UNDO: CommandId = CommandId::new("edit.undo");
@@ -108,7 +113,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 27] = [
+    let builtin: [(CommandSpec, Run); 32] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -269,6 +274,58 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
             ),
             document_close,
         ),
+        // Tab order is the order documents were opened in, as the app shows them; the keys are
+        // Zed's, but for Close All, whose `cmd-k w` is Show Visual here.
+        (
+            spec(
+                ids::DOCUMENT_CLOSE_OTHERS,
+                "Close Others",
+                Document,
+                Some("cmd-alt-t"),
+                ActiveDocument,
+            ),
+            |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_OTHERS, args),
+        ),
+        (
+            spec(
+                ids::DOCUMENT_CLOSE_LEFT,
+                "Close Left",
+                Document,
+                Some("cmd-k e"),
+                ActiveDocument,
+            ),
+            |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_LEFT, args),
+        ),
+        (
+            spec(
+                ids::DOCUMENT_CLOSE_RIGHT,
+                "Close Right",
+                Document,
+                Some("cmd-k t"),
+                ActiveDocument,
+            ),
+            |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_RIGHT, args),
+        ),
+        (
+            spec(
+                ids::DOCUMENT_CLOSE_CLEAN,
+                "Close Clean",
+                Document,
+                Some("cmd-k u"),
+                ActiveDocument,
+            ),
+            |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_CLEAN, args),
+        ),
+        (
+            spec(
+                ids::DOCUMENT_CLOSE_ALL,
+                "Close All",
+                Document,
+                Some("cmd-k cmd-w"),
+                ActiveDocument,
+            ),
+            |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_ALL, args),
+        ),
         (
             spec(
                 ids::EDIT_INSERT_TEXT,
@@ -417,6 +474,44 @@ fn document_close(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutco
         return Err(invalid(ids::DOCUMENT_CLOSE, "a document"));
     };
     engine.close(id).map(|()| CommandOutcome::Done)
+}
+
+/// Close Others, Left, Right, Clean and All, around the tab of `CommandArgs::Document` (Clean and
+/// All need none), discarding unsaved edits as Close does. The tab acted on stays active when the
+/// active one closes.
+fn document_close_many(
+    engine: &mut Engine,
+    command: CommandId,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let id = match args {
+        CommandArgs::Document(id) => {
+            if engine.document(id).is_none() {
+                return Err(EngineError::UnknownDocument(id));
+            }
+            Some(id)
+        }
+        CommandArgs::None
+            if matches!(command, ids::DOCUMENT_CLOSE_CLEAN | ids::DOCUMENT_CLOSE_ALL) =>
+        {
+            None
+        }
+        _ => return Err(invalid(command, "a document")),
+    };
+    let closing = match id {
+        Some(id) => engine.closed_by(command, id),
+        None => engine.closed_by_any(command),
+    };
+    let active = engine.active();
+    for closed in closing.iter().copied() {
+        engine.close(closed)?;
+    }
+    if let (Some(id), Some(active)) = (id, active) {
+        if closing.contains(&active) && engine.document(id).is_some() {
+            engine.set_active(id);
+        }
+    }
+    Ok(CommandOutcome::Done)
 }
 
 fn edit_insert_text(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {

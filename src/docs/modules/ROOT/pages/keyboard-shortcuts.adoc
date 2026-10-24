@@ -43,6 +43,31 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Ctrl-W
 |`document.close`
 
+|Close Others
+|Cmd-Alt-T
+|Ctrl-Alt-T
+|`document.close_others`
+
+|Close Left
+|Cmd-K E
+|Ctrl-K E
+|`document.close_left`
+
+|Close Right
+|Cmd-K T
+|Ctrl-K T
+|`document.close_right`
+
+|Close Clean
+|Cmd-K U
+|Ctrl-K U
+|`document.close_clean`
+
+|Close All
+|Cmd-K Cmd-W
+|Ctrl-K Ctrl-W
+|`document.close_all`
+
 |Undo
 |Cmd-Z
 |Ctrl-Z

@@ -2210,3 +2210,190 @@ fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
         "= Page\n\nSome *plain* words.\n"
     );
 }
+
+/// A workspace window with tabs for four pages, `a.adoc` to `d.adoc`, in that order.
+fn four_tabs(
+    dir: &Path,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+    Vec<adoc_engine::DocumentId>,
+) {
+    init(cx);
+    let files: Vec<PathBuf> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|name| {
+            let path = dir.join(format!("{name}.adoc"));
+            std::fs::write(&path, format!("= {name}\n")).unwrap();
+            path
+        })
+        .collect();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, files, cx);
+    cx.run_until_parked();
+    let ids = tab_documents(&app, &mut cx);
+    assert_eq!(ids.len(), 4);
+    (app, workspace, cx, ids)
+}
+
+fn tab_documents(
+    app: &Entity<AppState>,
+    cx: &mut VisualTestContext,
+) -> Vec<adoc_engine::DocumentId> {
+    cx.update(|_, cx| app.read(cx).engine.documents().map(|d| d.id).collect())
+}
+
+fn click_selector(selector: &'static str, button: gpui::MouseButton, cx: &mut VisualTestContext) {
+    let bounds = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("no element {selector}"));
+    cx.simulate_mouse_down(bounds.center(), button, gpui::Modifiers::none());
+    cx.simulate_mouse_up(bounds.center(), button, gpui::Modifiers::none());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn tabs_close_from_their_buttons_menu_and_keys(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, workspace, mut cx, ids) = four_tabs(dir.path(), cx);
+    let [a, b, c, d] = ids[..] else {
+        unreachable!()
+    };
+
+    // Each tab's X closes that tab.
+    click_selector("tab-close-1", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(tab_documents(&app, &mut cx), vec![a, c, d]);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 3);
+
+    // The menu acts on the tab right-clicked, not the active one: Close Right on `a`.
+    // Close, Close Others, then Close Right: Close Left is disabled on the first tab, and skipped.
+    click_selector("editor-tab-0", gpui::MouseButton::Right, &mut cx);
+    cx.simulate_keystrokes("down down down enter");
+    cx.run_until_parked();
+    assert_eq!(tab_documents(&app, &mut cx), vec![a]);
+
+    // The keys act on the active tab: Close Others keeps it; Close All closes the rest.
+    let _ = (b, c, d);
+    let [e, f] = open_more(&app, dir.path(), &["e", "f"], &mut cx)[..] else {
+        unreachable!()
+    };
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.engine.set_active(e);
+            app.drain(cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-alt-t");
+    cx.run_until_parked();
+    assert_eq!(tab_documents(&app, &mut cx), vec![e]);
+    let _ = f;
+    cx.simulate_keystrokes("secondary-k secondary-w");
+    cx.run_until_parked();
+    assert!(tab_documents(&app, &mut cx).is_empty());
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 0);
+}
+
+#[gpui::test]
+fn closing_tabs_with_unsaved_changes_asks_once(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, _workspace, mut cx, ids) = four_tabs(dir.path(), cx);
+    for id in [ids[1], ids[2]] {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.invoke(
+                    ids::EDIT_INSERT_TEXT,
+                    CommandArgs::Text {
+                        id,
+                        range: SourceRange::new(0, 0),
+                        text: "x".to_owned(),
+                    },
+                    cx,
+                )
+                .unwrap();
+            })
+        });
+    }
+    cx.run_until_parked();
+
+    // Close Clean leaves the unsaved tabs without asking.
+    cx.simulate_keystrokes("secondary-k u");
+    cx.run_until_parked();
+    assert_eq!(tab_documents(&app, &mut cx), vec![ids[1], ids[2]]);
+
+    // Close All asks once about both; cancelling keeps them, confirming closes them.
+    cx.simulate_keystrokes("secondary-k secondary-w");
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(tab_documents(&app, &mut cx), vec![ids[1], ids[2]]);
+    cx.simulate_keystrokes("secondary-k secondary-w");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(tab_documents(&app, &mut cx).is_empty());
+}
+
+#[gpui::test]
+fn the_tab_bar_s_arrows_go_back_and_forward(cx: &mut TestAppContext) {
+    init(cx);
+    let root = fixture("antora-multi-component");
+    let page = root.join("alpha/modules/ROOT/pages/index.adoc");
+    let mut engine = Engine::new(Settings::default());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let (document, offset) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.active().unwrap();
+        let text = &engine.document(id).unwrap().parsed.text;
+        (id, text.find("xref:beta::index.adoc").unwrap() + 6)
+    });
+    cx.update(|window, cx| {
+        crate::workspace_view::follow_link(app.clone(), document, offset, window, cx);
+    });
+    cx.run_until_parked();
+    let followed = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    assert_ne!(followed, document);
+
+    click_selector("tab-bar-back", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.active()),
+        Some(document)
+    );
+    click_selector("tab-bar-forward", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.active()),
+        Some(followed)
+    );
+}
+
+fn open_more(
+    app: &Entity<AppState>,
+    dir: &Path,
+    names: &[&str],
+    cx: &mut VisualTestContext,
+) -> Vec<adoc_engine::DocumentId> {
+    let ids = names
+        .iter()
+        .map(|name| {
+            let path = dir.join(format!("{name}.adoc"));
+            std::fs::write(&path, format!("= {name}\n")).unwrap();
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    match app.invoke(ids::DOCUMENT_OPEN, CommandArgs::Path(path), cx) {
+                        Ok(adoc_engine::CommandOutcome::Opened(id)) => id,
+                        other => panic!("{other:?}"),
+                    }
+                })
+            })
+        })
+        .collect();
+    cx.run_until_parked();
+    ids
+}

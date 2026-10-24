@@ -15,7 +15,7 @@ use adoc_parser::parse;
 use ropey::Rope;
 
 use crate::{
-    commands,
+    commands::{self, ids},
     document::{hash_text, uri_for, DocumentState},
     edit,
     undo::Typing,
@@ -265,6 +265,35 @@ impl Engine {
         self.sync_preview_target();
         self.emit(EngineEvent::DocumentClosed(id));
         Ok(())
+    }
+
+    /// The documents, in tab order, that `command` (`document.close` or one of Close Others,
+    /// Left, Right, Clean and All) would close if invoked on document `id`: none if `id` is not
+    /// open. Front ends ask this first, to confirm discarding the unsaved ones.
+    #[must_use]
+    pub fn closed_by(&self, command: CommandId, id: DocumentId) -> Vec<DocumentId> {
+        if !self.documents.contains_key(&id) {
+            return Vec::new();
+        }
+        let open = self.documents.values();
+        match command {
+            ids::DOCUMENT_CLOSE => vec![id],
+            ids::DOCUMENT_CLOSE_OTHERS => open.map(|d| d.id).filter(|other| *other != id).collect(),
+            ids::DOCUMENT_CLOSE_LEFT => open.map(|d| d.id).filter(|other| *other < id).collect(),
+            ids::DOCUMENT_CLOSE_RIGHT => open.map(|d| d.id).filter(|other| *other > id).collect(),
+            _ => self.closed_by_any(command),
+        }
+    }
+
+    /// The documents Close Clean or Close All would close, whichever tab they are invoked on.
+    #[must_use]
+    pub fn closed_by_any(&self, command: CommandId) -> Vec<DocumentId> {
+        let open = self.documents.values();
+        match command {
+            ids::DOCUMENT_CLOSE_CLEAN => open.filter(|d| !d.dirty).map(|d| d.id).collect(),
+            ids::DOCUMENT_CLOSE_ALL => open.map(|d| d.id).collect(),
+            _ => Vec::new(),
+        }
     }
 
     pub fn save(&mut self, id: DocumentId) -> Result<(), EngineError> {
