@@ -732,7 +732,7 @@ impl Converter<'_> {
             }
         } else if style == "stem" || style == "latexmath" || style == "asciimath" {
             BlockKind::Stem {
-                latex: style == "latexmath",
+                latex: self.stem_is_latex(style),
                 source: self.verbatim_text(&paragraph.content).0,
             }
         } else if style == "pass" {
@@ -816,11 +816,20 @@ impl Converter<'_> {
                 citation: citation(&delimited.metadata),
                 text: self.verbatim_text(content).0,
             },
+            // `[latexmath]` and `[asciimath]` passthrough blocks are STEM, as `[stem]` ones are.
+            acdc::DelimitedBlockType::DelimitedPass(content)
+                if matches!(style, "stem" | "latexmath" | "asciimath") =>
+            {
+                BlockKind::Stem {
+                    latex: self.stem_is_latex(style),
+                    source: self.verbatim_text(content).0,
+                }
+            }
             acdc::DelimitedBlockType::DelimitedPass(content) => BlockKind::Passthrough {
                 content: self.verbatim_text(content).0,
             },
             acdc::DelimitedBlockType::DelimitedStem(stem) => BlockKind::Stem {
-                latex: matches!(stem.notation, acdc::StemNotation::Latexmath),
+                latex: self.stem_is_latex(style),
                 source: stem.content.to_owned(),
             },
             acdc::DelimitedBlockType::DelimitedTable(table) => self.table(table),
@@ -920,6 +929,22 @@ impl Converter<'_> {
             }
         }
         out.into_iter().flat_map(split_inline_images).collect()
+    }
+
+    /// Whether STEM of `style` is LaTeX: `latexmath` and `asciimath` name their notation, and
+    /// `stem` takes the document's `:stem:`, AsciiMath unless that is `latexmath` (or `tex`).
+    fn stem_is_latex(&self, style: &str) -> bool {
+        match style {
+            "latexmath" => true,
+            "asciimath" => false,
+            _ => self
+                .parsed
+                .document()
+                .attributes
+                .get("stem")
+                .and_then(|value| value.text())
+                .is_some_and(|value| matches!(value.trim(), "latexmath" | "tex")),
+        }
     }
 
     /// The text of a paragraph, list item or callout: as [`Self::inlines`], less its line comments.

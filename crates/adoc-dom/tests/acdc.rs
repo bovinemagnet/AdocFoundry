@@ -750,3 +750,42 @@ fn callout_items_drop_tag_directives() {
         .collect();
     assert_eq!(items, ["Prints."]);
 }
+
+/// Each STEM block's and inline's notation, `true` for LaTeX, in document order.
+fn stem_notations(text: &str) -> Vec<bool> {
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let mut out = Vec::new();
+    fn inlines(inlines: &[Inline], out: &mut Vec<bool>) {
+        for inline in inlines {
+            if let Inline::Stem { latex, .. } = inline {
+                out.push(*latex);
+            }
+        }
+    }
+    for block in dom.walk() {
+        match &block.kind {
+            BlockKind::Stem { latex, .. } => out.push(*latex),
+            BlockKind::Paragraph { inlines: content } => inlines(content, &mut out),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn stem_notation_follows_the_stem_attribute() {
+    // `stem` follows `:stem:`, AsciiMath by default; `asciimath` and `latexmath` name theirs.
+    let block = "[stem]\n++++\nx^2\n++++\n\nInline stem:[x] latexmath:[y] asciimath:[z].\n\n[latexmath]\n++++\nx\n++++\n";
+    assert_eq!(
+        stem_notations(&format!("= Page\n:stem:\n\n{block}")),
+        [false, false, true, false, true]
+    );
+    assert_eq!(
+        stem_notations(&format!("= Page\n:stem: latexmath\n\n{block}")),
+        [true, true, true, false, true]
+    );
+    assert_eq!(
+        stem_notations(&format!("= Page\n:stem: asciimath\n\n{block}")),
+        [false, false, true, false, true]
+    );
+}

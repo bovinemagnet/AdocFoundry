@@ -14,6 +14,9 @@ unmaintained = "workspace"
 ignore = [
     { id = "RUSTSEC-2026-0194", reason = "quick-xml via citationberg; Typst bibliographies are never used" },
     { id = "RUSTSEC-2026-0195", reason = "quick-xml via citationberg; Typst bibliographies are never used" },
+    # rkyv 0.7 through mitex-spec: archive validation is unsound for crafted archives, but mitex
+    # only reads the specification compiled into it, never data from a document.
+    { id = "RUSTSEC-2026-0235", reason = "rkyv via mitex-spec reads only mitex's own embedded specification" },
 ]
 
 [licenses]

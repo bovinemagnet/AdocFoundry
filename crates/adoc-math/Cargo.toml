@@ -1,0 +1,15 @@
+[package]
+name = "adoc-math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+asciimath-parser.workspace = true
+mitex.workspace = true
+typst-library.workspace = true
+typst-syntax.workspace = true
+
+[lints]
+workspace = true

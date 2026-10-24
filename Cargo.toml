@@ -24,6 +24,7 @@ adoc-engine = { path = "crates/adoc-engine" }
 adoc-git = { path = "crates/adoc-git" }
 adoc-index = { path = "crates/adoc-index" }
 adoc-lang = { path = "crates/adoc-lang" }
+adoc-math = { path = "crates/adoc-math" }
 adoc-model = { path = "crates/adoc-model" }
 adoc-parser = { path = "crates/adoc-parser" }
 adoc-pdf = { path = "crates/adoc-pdf" }
@@ -76,7 +77,11 @@ tempfile = "=3.27.0"
 toml = "=1.1.8"
 tree-sitter = "=0.26.13"
 # PDF export: Typst as a library, without its bundled fonts or packages; see crates/adoc-pdf.
+asciimath-parser = "=0.5.0"
+mitex = "=0.2.4"
 typst = "=0.15.1"
+typst-library = "=0.15.1"
+typst-syntax = "=0.15.1"
 typst-layout = "=0.15.1"
 typst-pdf = "=0.15.1"
 unicode-segmentation = "=1.13.3"

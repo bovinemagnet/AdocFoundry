@@ -1,0 +1,11 @@
+# LaTeX and the Typst maths it converts to, a tab apart.
+\frac{a}{b}	frac(a ,b )
+\sqrt{x}	sqrt(x )
+\sqrt[3]{x}	root(3 ,x )
+\alpha \leq \beta	alpha  <=  beta
+\sum_{i=1}^{n} i	sum _(i = 1 )^(n ) i
+\mathbb{R}^n	bb(R )^(n )
+\text{if } x > 0	"if " x  >  0
+\text{a "quoted" #word}	"a \"quoted\" #word"
+\begin{pmatrix} a & b \\ c & d \end{pmatrix}	pmatrix( a  zws , b  zws ; c  zws , d  )
+\operatorname{rank}(A)	op("rank")\(A \)
