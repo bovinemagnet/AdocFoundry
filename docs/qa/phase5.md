@@ -28,7 +28,7 @@ Automated coverage for reference: STEM conversion and its safety check (`crates/
 
 - [ ] A page with block and inline AsciiMath and LaTeX (`:stem:` and `:stem: latexmath`) in the preview: block formulas typeset on a white card in light and dark themes, inline formulas as source with the typeset formula in a tooltip on hover.
 - [ ] The same page exported to PDF: formulas typeset in STIX Two Math, aligned with the text; a screen reader reads each formula's source. With the released CLI: inline and display formulas in AsciiMath and LaTeX typeset in STIX Two Math (embedded), on the text's baseline and centred, in a PDF/UA-1 export (2026-10-24). The screen reader still needs a person.
-- [ ] A formula that cannot be converted (`\unknowncommand`) shows as its source in the preview and the PDF, and the export's warning names its file and line. The PDF part, with the released CLI: `\\unknowncommand{x}` is shown as its source in a code box and the export warns `maths.adoc:11: warning: STEM not typeset: error: unknown command: \\unknowncommand` (2026-10-24). The preview part still needs the app.
+- [ ] A formula that cannot be converted (`\unknowncommand`) shows as its source in the preview and the PDF, and the export's warning names its file and line. The PDF part, with the released CLI: `\unknowncommand{x}` is shown as its source in a code box and the export warns `maths.adoc:11: warning: STEM not typeset: error: unknown command: \unknowncommand` (2026-10-24). The preview part still needs the app.
 
 ## Language server
 
