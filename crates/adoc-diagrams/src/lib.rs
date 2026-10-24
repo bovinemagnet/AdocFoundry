@@ -182,15 +182,20 @@ impl Diagrams {
 mod tests {
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, Mutex, MutexGuard,
+        Arc,
     };
+    #[cfg(unix)]
+    use std::sync::{Mutex, MutexGuard};
 
     use super::*;
 
     /// Serialises tests that spawn a process, as in `adoc-render`: a concurrent `fork` can
     /// inherit a script's open write descriptor and make its `execve` fail with `ETXTBSY`.
+    /// Only the Unix tests write and run scripts.
+    #[cfg(unix)]
     static SPAWN: Mutex<()> = Mutex::new(());
 
+    #[cfg(unix)]
     fn spawn_guard() -> MutexGuard<'static, ()> {
         SPAWN.lock().unwrap_or_else(|error| error.into_inner())
     }
