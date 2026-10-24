@@ -398,10 +398,12 @@ fn stem_renders_to_svg_and_is_cached() {
     engine.request_preview(id);
     engine.pump();
     assert!(engine.wait_for_workers(WAIT));
-    assert_eq!(
-        ready_versions(&events, id),
-        [0, 0],
-        "pending, then rendered"
+    // Pending first, then once for each formula that finishes: the two may finish together or
+    // apart, depending on the workers' timing.
+    let versions = ready_versions(&events, id);
+    assert!(
+        (2..=3).contains(&versions.len()) && versions.iter().all(|version| *version == 0),
+        "pending, then rendered: {versions:?}"
     );
 
     let blocks = blocks(&engine, id);
