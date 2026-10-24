@@ -123,9 +123,31 @@ The packages for macOS and Windows have not been installed and run by hand yet; 
 == cargo xtask package
 
 `cargo xtask package` is a local dry run for the host platform.
-It builds the four binaries (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`) in release mode, with `adoc-ls` built with its features,, stages them in `dist/` with the licence and README (and, on Linux, the desktop entry and icon), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
+It builds the four binaries (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`) in release mode, with `adoc-ls` built with its features,, stages them in `dist/` with the licence and README (and, on Linux, the desktop entry and the icon as `io.github.bovinemagnet.AdocFoundry.png`), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
 The version is read from `workspace.package.version` in the root `Cargo.toml`.
 The installers themselves come from the release workflow.
+
+== The app icon
+
+The icon is a raster image in `packaging/icons/`: `adocfoundry.png` (1024 × 1024, the master, with transparent corners), `adocfoundry-256.png` (256 × 256) and `adocfoundry.ico` (16 to 256 px, for Windows).
+The source artwork is `src/icons/adoc_foundry_icon.png`.
+There is no SVG, and `librsvg` is not needed.
+
+[cols="1,3"]
+|===
+|Platform |Use
+
+|macOS
+|`packaging/macos/bundle.sh` makes the `.icns` from the 1024 master with `sips`, which is built into macOS.
+
+|Linux
+|The deb, rpm and Flatpak install the 256 PNG as `share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png`.
+The AppImage uses the same PNG, and `cargo xtask package` puts it in the archive as `io.github.bovinemagnet.AdocFoundry.png`.
+
+|Windows
+|`crates/adocfoundry/build.rs` embeds `adocfoundry.ico` in `adocfoundry.exe` as icon resource 1, where GPUI looks for the window icon, using the `embed-resource` crate.
+The MSI (`crates/adocfoundry/wix/main.wxs`) gives the Start-menu shortcut and the Programs and Features entry the same icon.
+|===
 
 == Release records
 

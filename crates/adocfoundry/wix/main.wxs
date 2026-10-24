@@ -43,7 +43,7 @@
               <File Id="exe0" Name="adocfoundry.exe" DiskId="1" KeyPath="yes"
                     Source="$(var.CargoTargetBinDir)\adocfoundry.exe">
                 <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="AdocFoundry"
-                          WorkingDirectory="Bin" Advertise="yes"/>
+                          WorkingDirectory="Bin" Advertise="yes" Icon="AdocFoundry.exe"/>
               </File>
             </Component>
             <Component Id="binary1" Guid="*">
@@ -79,6 +79,9 @@
       </Feature>
     </Feature>
 
+    <!-- An advertised shortcut's icon needs the extension of the file it starts. -->
+    <Icon Id="AdocFoundry.exe" SourceFile="$(sys.SOURCEFILEDIR)..\..\..\packaging\icons\adocfoundry.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="AdocFoundry.exe"/>
     <SetProperty Id="ARPINSTALLLOCATION" Value="[APPLICATIONFOLDER]" After="CostFinalize"/>
     <Property Id="ARPHELPLINK" Value="https://github.com/bovinemagnet/AdocFoundry"/>
     <UI>

@@ -78,8 +78,8 @@ pub fn run_package(root: &Path) -> Result<PathBuf, String> {
             "io.github.bovinemagnet.AdocFoundry.desktop",
         )?;
         copy(
-            root.join("packaging/icons/adocfoundry.svg"),
-            "adocfoundry.svg",
+            root.join("packaging/icons/adocfoundry-256.png"),
+            "io.github.bovinemagnet.AdocFoundry.png",
         )?;
     }
 

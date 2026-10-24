@@ -5,6 +5,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ## Unreleased
 
 - Bold, Italic, Code and Highlight work in the source editor too, with the visual editor's keys (Cmd/Ctrl-B, -I, -E): they wrap the selection in the mark's delimiters, or remove them when the selection is already marked.
+- A new app icon, in the macOS bundle, the Linux packages and AppImage, and on Windows in the executable, the Start menu and Programs and Features.
 
 ## 0.1.0 — 2026-10-24
 

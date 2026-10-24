@@ -321,6 +321,7 @@ dependencies = [
  "adoc-git",
  "adoc-index",
  "adoc-render",
+ "embed-resource",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
