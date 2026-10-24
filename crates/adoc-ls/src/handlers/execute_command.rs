@@ -161,6 +161,14 @@ mod tests {
         }
     }
 
+    /// A page's path and the URI a client on this platform sends for it.
+    fn guide() -> (PathBuf, String) {
+        let path =
+            adoc_index::normalize_path(&std::env::temp_dir().join("docs").join("guide.adoc"));
+        let uri = url::Url::from_file_path(&path).unwrap().to_string();
+        (path, uri)
+    }
+
     fn state_with(uri: &str, text: &str) -> Engine {
         let mut engine = Engine::new(adoc_engine::Settings::default());
         engine.open_text(&document_path(uri), text);
@@ -190,7 +198,8 @@ mod tests {
 
     #[test]
     fn delivers_rendered_html_for_the_document_path() {
-        let uri = "file:///docs/guide.adoc";
+        let (path, uri) = guide();
+        let uri = uri.as_str();
         let state = state_with(uri, "= Title\n");
         let sink = RecordingSink::default();
 
@@ -206,7 +215,7 @@ mod tests {
         let delivered = sink.delivered.lock().unwrap();
         assert_eq!(delivered.len(), 1);
         assert_eq!(delivered[0].0, "<h1>Title</h1>");
-        assert_eq!(delivered[0].1, PathBuf::from("/docs/guide.adoc"));
+        assert_eq!(delivered[0].1, path);
     }
 
     #[test]
@@ -228,7 +237,8 @@ mod tests {
 
     #[test]
     fn returns_the_artefact_path_from_the_sink() {
-        let uri = "file:///docs/guide.adoc";
+        let (path, uri) = guide();
+        let uri = uri.as_str();
         let state = state_with(uri, "= Title\n");
 
         let artefact = render_preview(
@@ -240,7 +250,7 @@ mod tests {
         )
         .expect("render");
 
-        assert_eq!(artefact, PathBuf::from("/docs/guide.html"));
+        assert_eq!(artefact, path.with_extension("html"));
     }
 
     #[test]
@@ -355,8 +365,11 @@ mod tests {
             .source_text
             .expect("source text");
         assert!(!source.contains("partial$"), "{source}");
+        // The rewritten include is an absolute path, with this platform's separators.
         assert!(
-            source.contains("modules/security/partials/token-note.adoc"),
+            source
+                .replace('\\', "/")
+                .contains("modules/security/partials/token-note.adoc"),
             "{source}"
         );
     }
@@ -431,7 +444,7 @@ mod tests {
         let attributes = renderer.last_request().expect("a request").attributes;
         let moduledir = attributes.get("moduledir").expect("moduledir is not set");
         assert!(
-            moduledir.ends_with("modules/ROOT"),
+            moduledir.replace('\\', "/").ends_with("modules/ROOT"),
             "moduledir = {moduledir}"
         );
         for (name, family) in [
@@ -445,7 +458,9 @@ mod tests {
                 .get(name)
                 .unwrap_or_else(|| panic!("{name} is not set: {attributes:?}"));
             assert!(
-                value.ends_with(&format!("modules/ROOT/{family}/")),
+                value
+                    .replace('\\', "/")
+                    .ends_with(&format!("modules/ROOT/{family}/")),
                 "{name} = {value}"
             );
         }

@@ -47,7 +47,8 @@ fn check_json(fixture: &str) -> String {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    stdout(&output)
+    // Messages show paths as the platform writes them; JSON escapes a Windows `\` as `\\`.
+    stdout(&output).replace("\\\\", "/")
 }
 
 #[test]

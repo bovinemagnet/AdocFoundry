@@ -510,7 +510,10 @@ fn file_urls_are_absolute_for_relative_paths() {
     let html = to_html(&view, &HtmlOptions::default());
     for path in ["docs/images/a.png", "cache/d.svg"] {
         let absolute = std::path::absolute(path).unwrap();
-        let expected = format!("<img src=\"file://{}\"", absolute.display());
+        let expected = format!(
+            "<img src=\"{}\"",
+            url::Url::from_file_path(&absolute).unwrap()
+        );
         assert!(html.contains(&expected), "{path}: {html}");
     }
 }
@@ -586,8 +589,10 @@ fn html_stem_is_an_image_with_alt_text() {
         &view_of(Path::new("/page.adoc"), text, &Rendered),
         &HtmlOptions::default(),
     );
+    // `/cache` is on the current drive on Windows.
+    let block = url::Url::from_file_path(std::path::absolute("/cache/block.svg").unwrap()).unwrap();
     assert!(
-        html.contains("<img src=\"file:///cache/block.svg\" alt=\"sum_(i=1)^n i\">"),
+        html.contains(&format!("<img src=\"{block}\" alt=\"sum_(i=1)^n i\">")),
         "{html}"
     );
     assert!(

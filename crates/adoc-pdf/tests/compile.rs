@@ -42,7 +42,11 @@ fn world_reaches_only_listed_files() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     typst
         .source
-        .push_str(&format!("\n#read({:?})\n", manifest.display().to_string()));
+        // Typst paths use `/` on every platform.
+        .push_str(&format!(
+            "\n#read({:?})\n",
+            manifest.display().to_string().replace('\\', "/")
+        ));
     let error = compile(&typst, &theme, &PdfOptions::default()).unwrap_err();
     let PdfError::Compile(diagnostics) = error else {
         panic!("{error}")

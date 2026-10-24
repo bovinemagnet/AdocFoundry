@@ -62,7 +62,8 @@ fn unconvertible_stem_is_shown_as_source_with_a_warning() {
 #[test]
 fn every_helper_is_defined() {
     // The template defines exactly the helpers adoc-math lets converted LaTeX call.
-    let template = include_str!("../src/math.typ");
+    // A Windows checkout may have CRLF line endings.
+    let template = include_str!("../src/math.typ").replace("\r\n", "\n");
     let scope = &template[template.find("#let adoc-math-scope").unwrap()..];
     let scope = &scope[..scope.find("\n}\n").unwrap()];
     let mut defined: Vec<&str> = scope
