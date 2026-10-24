@@ -221,19 +221,29 @@ fn antora_resource_id(antora: &AntoraCatalog, path: &Path) -> Option<String> {
         context.component,
         context.module,
         context.family,
-        relative.display()
+        slashed(&relative)
     ))
+}
+
+/// A relative path with `/` between its parts, as AsciiDoc targets and Antora ids write it on
+/// every platform.
+fn slashed(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// `path` relative to the current document's directory where it sits beneath it.
 fn display_path(path: &Path, current_path: &Path) -> String {
     let path = normalize_path(path);
-    normalize_path(current_path)
+    match normalize_path(current_path)
         .parent()
         .and_then(|directory| path.strip_prefix(directory).ok())
-        .unwrap_or(&path)
-        .display()
-        .to_string()
+    {
+        Some(relative) => slashed(relative),
+        None => path.display().to_string(),
+    }
 }
 
 fn contains_offset(range: SourceRange, offset: usize) -> bool {

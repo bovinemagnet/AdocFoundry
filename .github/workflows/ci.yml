@@ -48,7 +48,8 @@ jobs:
       - name: Install asciidoctor and asciidoctor-pdf
         if: runner.os == 'Linux'
         run: gem install --no-document asciidoctor -v 2.0.26 && gem install --no-document asciidoctor-pdf -v 2.3.15
-      - run: cargo test --workspace --exclude adocfoundry
+      # Every crate runs even when one fails, so a run reports every failure.
+      - run: cargo test --workspace --exclude adocfoundry --no-fail-fast
       # The app's tests run on GPUI's test platform; on macOS it builds without a display server.
       - name: App tests
         if: runner.os == 'macOS'
