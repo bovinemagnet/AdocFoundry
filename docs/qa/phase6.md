@@ -37,9 +37,9 @@ Automated coverage for reference:
 
 ## MCP over HTTP
 
-- [ ] `adoc-mcp <docs> --http 127.0.0.1:8765` prints its address and a token. An MCP client configured with `url` and `headers` (`Authorization: Bearer <token>`) lists the tools and reads a page.
-- [ ] Without the header, or with a wrong token, the client is refused.
-- [ ] `--http 0.0.0.0:8765` is refused at start-up. Ctrl-C stops the server.
+- [x] `adoc-mcp <docs> --http 127.0.0.1:8765` prints its address and a token. An MCP client configured with `url` and `headers` (`Authorization: Bearer <token>`) lists the tools and reads a page. Checked with a Streamable HTTP client (`curl`) against the `phase-6` debug build on `tests/fixtures/references`: `initialize` answered with `serverInfo` `adoc-mcp` and a session id, `tools/list` gave the nine read-only tools, and `read_page` returned `index.adoc` (2026-10-25).
+- [x] Without the header, or with a wrong token, the client is refused: both answered 401 (2026-10-25).
+- [x] `--http 0.0.0.0:8765` is refused at start-up (exit 1, "not a loopback address"). Ctrl-C (SIGINT) stops the server (2026-10-25).
 
 ## Signed releases
 
@@ -58,5 +58,6 @@ Automated coverage for reference:
 
 | Date | Build | Platform | Result |
 |---|---|---|---|
+| 2026-10-25 | `phase-6` branch, debug | macOS 26 (arm64) | MCP over HTTP: every item passes. `cargo test --workspace` (721 tests), clippy, `cargo deny` and `cargo xtask layers` pass. CI on PR #113 passes on Ubuntu, macOS and Windows. Inline STEM, signing and updates are not yet checked by hand: signing needs the Apple and Azure secrets, updating needs two signed releases. |
 
 ## Known limitations found
