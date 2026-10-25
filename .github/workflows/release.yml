@@ -52,6 +52,13 @@ jobs:
           security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -f pkcs12 \
             -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           rm -f "$RUNNER_TEMP/certificate.p12"
+          # Apple's Developer ID G2 intermediate, which issued the certificate: without it
+          # codesign cannot build the chain to Apple's root and fails with
+          # errSecInternalComponent. Checked against its known digest before it is trusted.
+          intermediate="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl -fsSL -o "$intermediate" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $intermediate" | shasum -a 256 -c -
+          security import "$intermediate" -k "$keychain"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
       # The identity only when its certificate was imported: bundle.sh signs with whatever
