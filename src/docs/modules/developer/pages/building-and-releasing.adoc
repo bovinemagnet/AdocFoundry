@@ -229,7 +229,7 @@ The MSI (`crates/adocfoundry/wix/main.wxs`) gives the Start-menu shortcut and th
 The manual checks for a release are in `docs/qa/phase5.md`.
 Every item of `docs/qa/phase1.md` to `docs/qa/phase4.md` is also re-run on all three platforms.
 
-The documentation site stays unversioned and shows `0.2.1` as its display version, set in `src/docs/antora.yml`.
+The documentation site stays unversioned and shows `0.3.0` as its display version, set in `src/docs/antora.yml`.
 
 == Conventions for contributions
 
