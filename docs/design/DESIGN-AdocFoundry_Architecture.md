@@ -23,7 +23,7 @@ The two things that do not exist anywhere yet are the GPUI shell and `adoc-dom`;
 
 ## Goals and scope
 
-AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out the Antora way, delivered in phases that each ship a usable tool on macOS, Linux and Windows. Phases 1 to 4 build the editor; Phase 5 makes it releasable and opens it to other tools.
+AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out the Antora way, delivered in phases that each ship a usable tool on macOS, Linux and Windows. Phases 1 to 4 build the editor; Phase 5 makes it releasable and opens it to other tools; Phase 6 finishes what Phase 5 left for later.
 
 | Phase | Deliverable | Must have | Explicitly later |
 | --- | --- | --- | --- |
@@ -31,7 +31,8 @@ AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out
 | 2 | Rendered preview | Side-by-side pane; detachable preview window; follow-active-page mode; Mermaid and other diagrams rendered; scroll sync | Editing in the preview |
 | 3 | WYSIWYG editing | Edit the rendered view and write clean AsciiDoc back; source and WYSIWYG modes on the same document; lossless round-trip of what the editor does not understand | Full fidelity for every AsciiDoc construct |
 | 4 | PDF export | Paginated PDF from one page or a whole component/book; YAML themes in the spirit of asciidoctor-pdf; TOC, running headers and footers | Index generation, PDF/A |
-| 5 | Release, STEM and integrations | CI on three platforms; signed packages; fixes from the tracker; typeset STEM in PDF, preview and HTML; `adoc-ls` on the engine; an MCP server | Inline STEM in the preview's text flow, an HTTP transport for MCP, auto-update |
+| 5 | Release, STEM and integrations | CI on three platforms; packages; fixes from the tracker; typeset STEM in PDF, preview and HTML; `adoc-ls` on the engine; an MCP server | Inline STEM in the preview's text flow, an HTTP transport for MCP, code signing, auto-update |
+| 6 | Signed releases and updates | Inline STEM typeset in the text flow; MCP over Streamable HTTP on loopback with a token; Developer ID signing and notarisation, Authenticode through Azure Trusted Signing; an update check, and updating in place on macOS and Windows | Delta updates, update channels, package-manager publishing |
 
 Non-goals for now: a web or mobile build, collaborative editing, hosting or publishing the site (Antora itself does that), and bit-for-bit output parity with Asciidoctor. The editor targets the Asciidoctor dialect of AsciiDoc that Antora consumes, so Antora-built sites and AdocFoundry agree on what a document means.
 
