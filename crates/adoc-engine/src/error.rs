@@ -20,6 +20,10 @@ pub enum EngineError {
     Settings(String),
     /// A visual edit that cannot be made without changing text the user did not edit.
     Refused(String),
+    /// A file a preview edits changed after the preview was made; it must be made again.
+    PreviewStale {
+        path: PathBuf,
+    },
 }
 
 impl EngineError {
@@ -45,6 +49,11 @@ impl fmt::Display for EngineError {
             Self::NotFound(message) => formatter.write_str(message),
             Self::Settings(message) => write!(formatter, "settings: {message}"),
             Self::Refused(message) => formatter.write_str(message),
+            Self::PreviewStale { path } => write!(
+                formatter,
+                "{} changed after the preview was made; make the preview again",
+                path.display()
+            ),
         }
     }
 }

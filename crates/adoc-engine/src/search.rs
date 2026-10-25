@@ -150,6 +150,7 @@ impl Engine {
                 edits.push(FileEdits {
                     path,
                     edits: file_edits,
+                    base: text.clone(),
                 });
             }
         }
@@ -194,35 +195,45 @@ impl Engine {
             .previews
             .remove(&id)
             .ok_or_else(|| EngineError::NotFound(format!("no preview {}", id.get())))?;
-        for file_move in &preview.moves {
-            if !file_move.from.is_file() {
-                return Err(EngineError::NotFound(format!(
-                    "{} does not exist",
-                    file_move.from.display()
-                )));
-            }
-            if file_move.to.exists() {
-                return Err(EngineError::InvalidRequest(format!(
-                    "{} already exists",
-                    file_move.to.display()
-                )));
-            }
-        }
+        validate_moves(&preview.moves)?;
         let previously_active = self.active;
 
-        // Open everything and validate every edit before changing anything.
+        // Open everything and check every edit before changing anything: each file must still
+        // hold the text its edits were computed against.
         let mut targets: Vec<(DocumentId, Vec<TextEdit>)> = Vec::new();
         for file in &preview.edits {
             let document = self.open(&file.path)?;
             let text = &self.documents[&document].text;
+            if *text != file.base.as_str() {
+                return Err(EngineError::PreviewStale {
+                    path: file.path.clone(),
+                });
+            }
             let edits = edit::validate(text, file.edits.clone())?;
             targets.push((document, edits));
         }
         let group = self.new_group();
+        if let Err(error) = self.apply_group(group, targets, &preview.moves) {
+            self.roll_back(group);
+            return Err(error);
+        }
+        if let Some(active) = previously_active.filter(|id| self.documents.contains_key(id)) {
+            self.set_active(active);
+        }
+        self.refresh_open_diagnostics(None);
+        Ok(group)
+    }
+
+    fn apply_group(
+        &mut self,
+        group: UndoGroup,
+        targets: Vec<(DocumentId, Vec<TextEdit>)>,
+        moves: &[FileMove],
+    ) -> Result<(), EngineError> {
         for (document, edits) in targets {
             self.apply_edits(document, edits, UndoMode::Group(group))?;
         }
-        for file_move in &preview.moves {
+        for file_move in moves {
             let document = self.open(&file_move.from)?;
             if self
                 .undo_stack(document)
@@ -237,11 +248,19 @@ impl Engine {
                 .or_default()
                 .push(file_move.clone());
         }
-        if let Some(active) = previously_active.filter(|id| self.documents.contains_key(id)) {
-            self.set_active(active);
+        Ok(())
+    }
+
+    /// Undoes what a failed `apply_group` made of `group`, leaving nothing of it in the undo
+    /// or redo history.
+    fn roll_back(&mut self, group: UndoGroup) {
+        self.discard_group(group);
+        if let Some(moves) = self.group_moves.remove(&group) {
+            for file_move in moves.iter().rev() {
+                let _ = self.move_file(&file_move.to, &file_move.from);
+            }
         }
         self.refresh_open_diagnostics(None);
-        Ok(group)
     }
 
     /// Records an undo entry with no edits, so a document whose only change is a move takes
@@ -405,9 +424,19 @@ impl Engine {
         for file_edits in edits.values_mut() {
             file_edits.sort_by_key(|edit| edit.range.start);
         }
+        // The ranges come from the index's text, which a buffer edited since may not match yet;
+        // applying checks it still does.
         let edits = edits
             .into_iter()
-            .map(|(path, edits)| FileEdits { path, edits })
+            .map(|(path, edits)| {
+                let base = self
+                    .workspace
+                    .index
+                    .file(&path)
+                    .map(|file| file.document.text.clone())
+                    .unwrap_or_default();
+                FileEdits { path, edits, base }
+            })
             .collect();
         Ok(self.store_preview(
             format!("Rename {} to {}", from.display(), to.display()),
@@ -527,6 +556,45 @@ fn slash_path(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// Checks that every move can happen before anything changes: its source is a file, nothing is
+/// at its destination, the destination's nearest existing ancestor is a directory, and no two
+/// moves share a destination.
+fn validate_moves(moves: &[FileMove]) -> Result<(), EngineError> {
+    let mut destinations = std::collections::HashSet::new();
+    for file_move in moves {
+        if !file_move.from.is_file() {
+            return Err(EngineError::NotFound(format!(
+                "{} does not exist",
+                file_move.from.display()
+            )));
+        }
+        if file_move.to.exists() {
+            return Err(EngineError::InvalidRequest(format!(
+                "{} already exists",
+                file_move.to.display()
+            )));
+        }
+        if !destinations.insert(&file_move.to) {
+            return Err(EngineError::InvalidRequest(format!(
+                "two files would move to {}",
+                file_move.to.display()
+            )));
+        }
+        let mut ancestor = file_move.to.parent();
+        while let Some(directory) = ancestor.filter(|directory| !directory.exists()) {
+            ancestor = directory.parent();
+        }
+        if let Some(directory) = ancestor.filter(|directory| !directory.is_dir()) {
+            return Err(EngineError::InvalidRequest(format!(
+                "{} is a file, so {} cannot be made inside it",
+                directory.display(),
+                file_move.to.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

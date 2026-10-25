@@ -498,6 +498,12 @@ Nothing is changed until `workspace.apply_preview` is invoked with the preview's
 Applying a preview creates one undo group that spans every document it touches, including file moves.
 One undo therefore restores every xref and moves a renamed page back.
 
+A preview is applied as a checked transaction.
+Each `FileEdits` records in `base` the text its edits were computed against, which is also the text the confirmation dialog shows, so a buffer with unsaved edits is previewed from the buffer and not the file on disk.
+Apply returns `EngineError::PreviewStale { path }` if any listed file's text differs from its `base`, and changes nothing.
+Before anything changes, `validate_moves` checks that each source is a file, that nothing is at the destination, that the destination's nearest existing folder is a folder, and that no two files move to the same place.
+`apply_group` then applies the edits and moves; if a move fails, `roll_back` discards the group with `discard_group` and reverses the recorded moves, so no edit, move or undo or redo entry of the change remains.
+
 `workspace.search` returns immediately and delivers matches as `SearchResults` events.
 `workspace.replace` and `page.rename` return a `Preview` outcome.
 Rename finds every xref that resolves to the page using the index and the resolver.

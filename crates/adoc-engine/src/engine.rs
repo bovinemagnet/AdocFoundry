@@ -472,6 +472,21 @@ impl Engine {
         true
     }
 
+    /// Undoes `group` in every document where it is the latest entry, keeping nothing of it in
+    /// the redo history: for a change that failed part-way and must leave no trace.
+    pub(crate) fn discard_group(&mut self, group: UndoGroup) {
+        for document in self.documents_with_top_group(group, false) {
+            let Some(entry) = self
+                .states
+                .get_mut(&document)
+                .and_then(|state| state.undo.pop_undo())
+            else {
+                continue;
+            };
+            let _ = self.edit_document(document, entry.inverse, false);
+        }
+    }
+
     fn documents_with_top_group(&self, group: UndoGroup, redo: bool) -> Vec<DocumentId> {
         self.states
             .iter()

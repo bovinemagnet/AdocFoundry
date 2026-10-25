@@ -62,6 +62,9 @@ pub struct FileMove {
 pub struct FileEdits {
     pub path: PathBuf,
     pub edits: Vec<TextEdit>,
+    /// The text the edits were computed against: what a confirmation shows, and what the file
+    /// must still hold when the preview is applied.
+    pub base: String,
 }
 
 /// A multi-file change shown to the user before it is applied as one undo group.

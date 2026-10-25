@@ -1052,8 +1052,10 @@ impl WorkspaceView {
             );
         }
         for file in &preview.edits {
-            let text = std::fs::read_to_string(&file.path).unwrap_or_default();
-            let index = LineIndex::new(&text);
+            // The text the edits were computed against, which for an open page is its buffer,
+            // not the file on disk.
+            let text = &file.base;
+            let index = LineIndex::new(text);
             for edit in &file.edits {
                 let (line, _) = index.line_column(edit.range.start);
                 let old = text.get(edit.range.start..edit.range.end).unwrap_or("");

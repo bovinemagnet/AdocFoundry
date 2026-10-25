@@ -2,6 +2,13 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- A rename whose file move fails leaves nothing changed: the reference edits already made are undone, files already moved are moved back, and nothing is left in the undo history. Every move is also checked before anything changes, so a destination inside a file is refused at once (#89).
+- Applying a Replace All or rename preview is refused when a file it edits has changed since the preview was made, instead of editing the new text at the old offsets. The confirmation shows the text the edits were computed against, the buffer for an unsaved page (#91).
+
 ## 0.2.0 — 2026-10-25
 
 - Bold, Italic, Code and Highlight work in the source editor too, with the visual editor's keys (Cmd/Ctrl-B, -I, -E): they wrap the selection in the mark's delimiters, or remove them when the selection is already marked.

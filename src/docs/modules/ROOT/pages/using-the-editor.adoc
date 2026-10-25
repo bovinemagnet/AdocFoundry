@@ -150,6 +150,9 @@ Replace in Workspace (kbd:[Cmd+Shift+H] or kbd:[Ctrl+Shift+H]) does not change a
 It shows a preview listing every change; nothing is written until you apply it.
 Applying the preview is one undo step across every file it touches.
 
+The preview shows the text each file will be changed from, so for a page with unsaved edits it shows the editor's text, not the file on disk.
+Apply refuses, and changes nothing, if a listed file has changed since the preview was made; make the preview again.
+
 == Rename a page
 
 Rename Page (kbd:[F2]) renames the active page.
@@ -157,6 +160,7 @@ AdocFoundry shows a preview that lists the file move and every xref, navigation 
 Apply the preview to move the file and rewrite the xrefs, nav entries and includes of the file.
 An include written through an attribute is left as written.
 One undo moves the page back and restores every edit.
+If the rename cannot be completed, for example because the destination folder cannot be written to, everything already done is undone and nothing is left in the undo history.
 
 .Renaming a page
 [mermaid]
