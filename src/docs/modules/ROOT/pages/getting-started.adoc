@@ -18,8 +18,9 @@ AdocFoundry needs no Ruby, Node.js or Java at run time.
 
 Download `AdocFoundry-<version>-macos-universal.dmg`, open it and drag AdocFoundry to Applications.
 
-The app is signed ad hoc, not with a Developer ID, which comes in a later release.
-macOS therefore asks before opening it the first time: Control-click the app, choose *Open*, then confirm.
+Releases built with the project's signing credentials are signed with a Developer ID and notarised, so the app opens without a prompt.
+A release built without them (every release up to 0.2.1) is signed ad hoc, and macOS asks before opening it the first time: Control-click the app, choose *Open*, then confirm.
+The release notes on GitHub say which a release is.
 
 The command-line tools are in `AdocFoundry.app/Contents/MacOS`.
 Link them onto your `PATH` to use them from a terminal.
@@ -34,7 +35,8 @@ ln -s /Applications/AdocFoundry.app/Contents/MacOS/adoc-ls /usr/local/bin/
 Download the MSI, which can add the tools to your `PATH`, or the portable zip.
 Both are built for x64 and ARM64.
 
-The packages are unsigned, so SmartScreen asks before running them: choose *More info*, then *Run anyway*.
+Releases built with the project's signing credentials have Authenticode signatures on the executables and the MSI, so SmartScreen does not warn.
+Unsigned releases (every release up to 0.2.1) make SmartScreen ask before running them: choose *More info*, then *Run anyway*.
 
 === Linux
 

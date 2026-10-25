@@ -7,6 +7,8 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Added
 
 - Inline STEM is typeset in the line of text in the preview and the visual editor: each formula sits on the text's baseline at the text's size, with its source in a tooltip (#57). Inline formula images also keep their descenders and limits, which the earlier tooltip images cut off.
+- `adoc-mcp --http <addr>` serves MCP's Streamable HTTP transport at `/mcp` on a loopback address, to clients that send `Authorization: Bearer <token>` (`ADOC_MCP_TOKEN`, or a random token printed at start-up). Write tools still need `--allow-write`, and every path is still confined to the roots (#56).
+- Signed releases: with the project's signing secrets, the release workflow signs the macOS app and tools with a Developer ID and the hardened runtime, notarises and staples the app and the DMG, and signs the Windows executables and MSI with Authenticode through Azure Artifact Signing. The smoke test checks the signatures. Without the secrets, packages build unsigned as before (#54).
 
 ## 0.2.1 — 2026-10-25
 

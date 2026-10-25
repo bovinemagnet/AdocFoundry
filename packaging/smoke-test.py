@@ -3,7 +3,12 @@
 language server's and the MCP server's initialise and shutdown, and the app staying up on a
 fixture workspace.
 
-usage: packaging/smoke-test.py <directory with the binaries> [--no-app]
+usage: packaging/smoke-test.py <directory with the binaries> [--no-app] [--expect-signed]
+
+With --expect-signed it also checks the signatures: on macOS every binary passes
+`codesign --verify --strict` with the hardened runtime and a Developer ID, and the app bundle
+around them passes Gatekeeper (`spctl`); on Windows every executable's Authenticode signature
+is valid.
 
 Run from the repository root, which holds the fixtures. Exits non-zero on the first failure.
 """
@@ -33,7 +38,7 @@ def check(condition, message):
 
 
 def versions(directory):
-    for name in ["adocfoundry", "adocfoundry-cli", "adoc-ls", "adoc-mcp"]:
+    for name in BINARIES:
         output = subprocess.run(
             [binary(directory, name), "--version"],
             capture_output=True, text=True, timeout=TIMEOUT,
@@ -108,10 +113,61 @@ def app(directory):
     check(alive, "adocfoundry stays up on a fixture workspace")
 
 
+BINARIES = ["adocfoundry", "adocfoundry-cli", "adoc-ls", "adoc-mcp"]
+
+
+def run_quietly(command):
+    """`command`'s exit status and its output and errors together."""
+    output = subprocess.run(command, capture_output=True, text=True, timeout=TIMEOUT)
+    return output.returncode, output.stdout + output.stderr
+
+
+def signature_problems(directory, platform=sys.platform, run=run_quietly):
+    """What is wrong with the signatures of the binaries in `directory`: empty when every one
+    is signed as a release must be. `run` runs a command, giving its status and output."""
+    problems = []
+    if platform == "darwin":
+        for name in BINARIES:
+            path = os.path.join(directory, name)
+            status, output = run(["codesign", "--verify", "--strict", "--verbose=2", path])
+            if status != 0:
+                problems.append(f"{name}: codesign --verify failed: {output.strip()}")
+                continue
+            status, output = run(["codesign", "--display", "--verbose=2", path])
+            if "Authority=Developer ID Application" not in output:
+                problems.append(f"{name}: not signed with a Developer ID")
+            if "runtime" not in output:
+                problems.append(f"{name}: no hardened runtime")
+        # The binaries are in AdocFoundry.app/Contents/MacOS.
+        bundle = os.path.dirname(os.path.dirname(os.path.abspath(directory)))
+        status, output = run(["spctl", "--assess", "--type", "execute", "-vv", bundle])
+        if status != 0:
+            problems.append(f"Gatekeeper rejects {bundle}: {output.strip()}")
+    elif platform == "win32":
+        for name in BINARIES:
+            path = os.path.join(directory, name + ".exe")
+            status, output = run(["powershell", "-NoProfile", "-Command",
+                                  f"(Get-AuthenticodeSignature -LiteralPath '{path}').Status"])
+            if status != 0 or output.strip() != "Valid":
+                problems.append(f"{name}.exe: Authenticode signature is {output.strip() or 'missing'}")
+    else:
+        problems.append(f"no signature check on {platform}")
+    return problems
+
+
+def signatures(directory):
+    problems = signature_problems(directory)
+    for problem in problems:
+        print(f"  {problem}")
+    check(not problems, "the binaries are signed")
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     directory = sys.argv[1]
+    if "--expect-signed" in sys.argv:
+        signatures(directory)
     versions(directory)
     pdf_export(directory)
     language_server(directory)

@@ -682,6 +682,36 @@ This section summarises section 9 of `docs/prd/PRD-AdocFoundry_Phase_6_Implement
 |—
 |measured at the editor's body text size
 |Headings in the visual editor are larger, so a formula in a heading sits in a slightly narrow gap; the preview measures each text at its own size.
+
+|HTTP crates (WP 6.2)
+|`hyper` and `hyper-util` with server and HTTP/1 features; no new crate in the lock file
+|rmcp's streamable-HTTP-server feature and tokio's `signal` feature bring in `sse-stream`, `tokio-stream`, `httpdate` and `signal-hook-registry` (MIT or Apache-2.0); `http`, `http-body-util`, `bytes`, `tokio-util` and `getrandom` become direct dependencies, all already in the tree
+|rmcp's `StreamableHttpService::handle` serves a request directly, so no tower glue is needed.
+
+|The layering split (WP 6.2)
+|`hyper` allowed in `adoc-mcp` without a `client` feature
+|`hyper` and `hyper-util` count as network clients for every crate but `adocfoundry` and `adoc-mcp`; for `adoc-mcp`, `cargo tree -p adoc-mcp --target all -e features` must show no `client` feature of either
+|Features unify across the workspace in `cargo metadata`, so only `adoc-mcp`'s own build shows what it compiles.
+
+|The token (WP 6.2)
+|printed to standard error at start-up
+|only a generated token is printed; one set through `ADOC_MCP_TOKEN` is not; unknown paths get 404 before the token is checked
+|A token the user chose is already theirs to hand to a client.
+
+|Windows signing (WP 6.3)
+|Azure Trusted Signing through `azure/trusted-signing-action`
+|Azure Artifact Signing, the service's new name, through `azure/artifact-signing-action` 2.0.0
+|The same service and action, renamed.
+
+|Notarisation status (WP 6.3)
+|`notarytool submit --wait`
+|`bundle.sh` reads the submission's status from its JSON output and fails, printing Apple's log, unless it is `Accepted`
+|An `Invalid` submission must fail the release rather than ship an un-notarised DMG.
+
+|macOS tool archives (WP 6.3)
+|—
+|the tools' archives are made from the signed copies in the bundle
+|Before, they were made from the unsigned universal binaries.
 |===
 
 == Git
