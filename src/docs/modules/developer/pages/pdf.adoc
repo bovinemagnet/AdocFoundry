@@ -171,6 +171,7 @@ Horizontal description lists stay a grid.
 
 The `World` in `world.rs` serves the generated main source, the theme's fonts and the files the document uses, each at a fixed virtual path.
 There are no packages, no network and no file system access.
+`PdfOptions::access` (a `FileAccess`) further restricts the files, images and fonts, and the `World`'s `file` returns `AccessDenied` for a path it does not permit; `load_theme_within` applies the same check to theme files and those named by `extends`.
 Typst's bundled fonts (`typst-assets`) are not enabled, so the output depends only on the theme's fonts.
 Typst interns file ids for the life of the process, so virtual paths are derived from the real path to stay stable between exports.
 

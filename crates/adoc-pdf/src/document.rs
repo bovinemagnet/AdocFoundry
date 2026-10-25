@@ -7,6 +7,8 @@ use std::{
     path::PathBuf,
 };
 
+use adoc_core::FileAccess;
+
 use adoc_render::ViewInline;
 
 use crate::{
@@ -50,6 +52,8 @@ pub struct PdfOptions {
     /// The date written into the PDF (year, month, day), for reproducible output; none by
     /// default.
     pub date: Option<(i32, u8, u8)>,
+    /// Which files the export may read: images, fonts and every other file Typst asks for.
+    pub access: FileAccess,
 }
 
 /// What is exported: one page as an article, or pages in order as a book.
@@ -170,6 +174,7 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         site_url: options.site_url.clone(),
         page_urls: options.page_urls.clone(),
         toc_levels: facts.toc_levels(),
+        access: options.access.clone(),
     };
     let mut emitter = Emitter::new(&pages, &emit_options);
 
@@ -270,7 +275,7 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         &mut source,
         &facts,
         theme,
-        &crate::fonts::line_gaps(theme, &options.fonts_dirs),
+        &crate::fonts::line_gaps(theme, &options.fonts_dirs, &options.access),
     );
     source.push_str(MATH);
     source.push_str(TEMPLATE);
