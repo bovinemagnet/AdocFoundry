@@ -2451,6 +2451,90 @@ fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
     );
 }
 
+/// Clicks the element tagged with `selector`.
+fn click(selector: &'static str, cx: &mut VisualTestContext) {
+    let bounds = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is not drawn"));
+    cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn the_menu_button_opens_into_the_menus(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("app-menu-File").is_none());
+
+    // The button opens the first menu and shows every menu's name in its place.
+    click("app-menu", &mut cx);
+    assert!(cx.debug_bounds("app-menu").is_none());
+    for selector in [
+        "app-menu-File",
+        "app-menu-Edit",
+        "app-menu-Format",
+        "app-menu-View",
+        "app-menu-Go",
+        "app-menu-Git",
+        "app-menu-Help",
+    ] {
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "{selector} is not shown"
+        );
+    }
+
+    // Another name opens its menu; choosing an item runs it and folds the menus away.
+    click("app-menu-View", &mut cx);
+    let steps = cx.update(|_, cx| {
+        let menus = crate::menus::menus(&app.read(cx).engine);
+        let view = menus.iter().find(|menu| menu.name == "View").unwrap();
+        view.items
+            .iter()
+            .filter(|item| matches!(item, crate::menus::Item::Action { .. }))
+            .position(|item| {
+                matches!(item, crate::menus::Item::Action { label, .. } if label == "Toggle Preview")
+            })
+            .unwrap()
+    });
+    let visible = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| app.read(cx).engine.preview_layout().visible)
+    };
+    assert!(!visible(&mut cx));
+    for _ in 0..=steps {
+        cx.simulate_keystrokes("down");
+    }
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(visible(&mut cx), "the menu's command reached the workspace");
+    assert!(cx.debug_bounds("app-menu").is_some());
+    assert!(cx.debug_bounds("app-menu-View").is_none());
+}
+
+#[gpui::test]
+fn menu_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
+    let text = "= Page\n\nSome plain words.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("plain").unwrap();
+    place_caret(&visual, start, &mut cx);
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.select(start, start + 5, cx)));
+    cx.run_until_parked();
+    click("app-menu", &mut cx);
+    click("app-menu-Format", &mut cx);
+    // Bold is the Format menu's first item.
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSome *plain* words.\n"
+    );
+}
+
 /// A workspace window with tabs for four pages, `a.adoc` to `d.adoc`, in that order.
 fn four_tabs(
     dir: &Path,

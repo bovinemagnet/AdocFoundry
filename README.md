@@ -87,7 +87,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 **Also**
 
-- A command palette listing every command, light and dark themes, a read-only second window that follows the active document, and TOML settings.
+- A ☰ menu at the left of the title bar that opens into File, Edit, Format, View, Go, Git and Help menus, as in Zed; a command palette listing every command; light and dark themes; a read-only second window that follows the active document; and TOML settings.
 
 ## Installing
 

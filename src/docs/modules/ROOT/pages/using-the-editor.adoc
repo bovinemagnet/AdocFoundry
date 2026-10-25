@@ -5,7 +5,7 @@ Paul Snow
 
 This page describes the source editor and the workspace around it.
 The rendered preview has its own page, xref:preview.adoc[The preview], and editing the rendered page has another, xref:visual-editing.adoc[Visual editing].
-Every action described here is an engine command with a stable id, so it also appears in the command palette (kbd:[Cmd+Shift+P] or kbd:[Ctrl+Shift+P]).
+Every action described here is an engine command with a stable id, so it also appears in the command palette (kbd:[Cmd+Shift+P] or kbd:[Ctrl+Shift+P]) and, where it fits, in the xref:using-the-editor.adoc#application-menu[application menu].
 See xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the bindings.
 
 == The workspace
@@ -192,6 +192,45 @@ If the rename cannot be completed, for example because the destination folder ca
 ----
 include::example$rename-page.mmd[]
 ----
+
+[[application-menu]]
+== The application menu
+
+The ☰ button at the left of the title bar, before the Back and Forward buttons, opens the application menu.
+It is shown on macOS, Linux and Windows.
+
+Clicking it opens the File menu and replaces the button with the name of every menu: File, Edit, Format, View, Go, Git and Help.
+With a menu open, pointing at another name opens that menu, and clicking the open menu's name closes it.
+Choosing an item, pressing kbd:[Escape] or clicking elsewhere closes the menu and folds the names back into the button.
+The arrow keys move through a menu's items and kbd:[Enter] chooses one.
+
+Each item shows its key binding and runs the same command as the key and the palette entry.
+The command acts on whatever had focus before the menu opened, the source editor or the visual editor, so Bold in the Format menu marks the visual editor's selection when that is where you were working.
+
+Unlike the palette, the menus keep their shape.
+An item whose command cannot run just now is greyed out instead of hidden, for example when no page is open, when the page is not shown in Visual or Split mode, or when the workspace has no Antora component.
+A command the build lacks, such as PDF export in a build without Typst, is left out.
+
+File::
+Open, save, reload, export to PDF, close, settings and re-indexing.
+
+Edit::
+Undo, Redo, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.
+
+Format::
+The visual editor's marks, links, lists, blocks, images and tables.
+
+View::
+The command palette, the editor modes, the preview, change markers and blame, the theme and the read-only window.
+
+Go::
+Back and forward, definition, links, peeking an include, moving between changes and opening a page in another version.
+
+Git::
+Refreshing status, staging, committing, pushing and the remote links.
+
+Help::
+Check for Updates.
 
 == Themes
 
