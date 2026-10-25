@@ -177,9 +177,14 @@ theme = "default"                # a bundled theme, a name in themes_dir, or a .
 # fonts_dir = "resources/fonts"    # like -a pdf-fontsdir; the bundled fonts are searched after it
 # site_url = "https://docs.example.com"  # where references out of an export lead; else the playbook's site.url
 standards = []                   # "pdf-a-2a", "pdf-ua-1"
+
+[updates]
+check = true                     # look for a newer release at start-up, at most once a day
 ```
 
 A page's `pdf-theme`, `pdf-themesdir` and `pdf-fontsdir` attributes win over it, as they do for asciidoctor-pdf.
+
+With `updates.check` on, the app reads GitHub's releases feed for this repository through the system's `curl` at start-up, at most once a day, and says once when a newer release exists; Check for Updates in the command palette checks whenever asked. The request carries nothing but the app's version in its user agent. The last check is remembered in `update-state.toml` beside the settings file.
 
 `tools.asciidoctor` is used only by `adoc-ls`'s HTML preview; the app's preview needs no external tool. Diagram tools are found on `PATH` and cannot be set here yet.
 

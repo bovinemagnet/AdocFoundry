@@ -19,6 +19,8 @@ const IDLE_TICK: Duration = Duration::from_millis(100);
 /// and subscribe to the engine events it re-emits.
 pub struct AppState {
     pub engine: Engine,
+    /// How the releases feed is read: the system's `curl`, or a stand-in in tests.
+    pub fetch: crate::updates::Fetch,
     events: Receiver<EngineEvent>,
     _pump: Task<()>,
 }
@@ -43,6 +45,7 @@ impl AppState {
         });
         Self {
             engine,
+            fetch: crate::updates::system_fetch(),
             events,
             _pump: pump,
         }

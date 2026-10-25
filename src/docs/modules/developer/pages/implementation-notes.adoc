@@ -712,6 +712,21 @@ This section summarises section 9 of `docs/prd/PRD-AdocFoundry_Phase_6_Implement
 |—
 |the tools' archives are made from the signed copies in the bundle
 |Before, they were made from the unsigned universal binaries.
+
+|The check without a settings file (WP 6.4)
+|—
+|an engine whose settings came from no file never checks unasked: there is nowhere to remember a check
+|Every test engine, and any embedding, would otherwise read the feed and write to the user's configuration directory.
+
+|Recording a check (WP 6.4)
+|`check_due` and `should_announce`
+|`Engine::update_check_due(now)` and `Engine::record_update_check(json, now, asked)`, which parses the feed, records the check and says what to announce; `app.check_for_updates` answers `CommandOutcome::CheckForUpdates(feed)` for the app to fetch
+|The app keeps only the fetching and the notice; a check the user asks for shows a release already announced.
+
+|The notice (WP 6.4)
+|*Update*, *Release notes* and *Later*
+|one action button, *Release notes* (and *Update…* from WP 6.5); closing the notice is Later
+|gpui-component's notifications take one action.
 |===
 
 == Git

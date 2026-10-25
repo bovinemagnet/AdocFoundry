@@ -31,6 +31,7 @@ mod settings;
 #[cfg(feature = "typst")]
 mod stem;
 mod undo;
+pub mod updates;
 #[cfg(feature = "git")]
 mod versions;
 mod visual;
@@ -57,7 +58,7 @@ pub use preview::{
 pub use rendered::{PreviewLayout, RenderedPreview, PREVIEW_SETTLE};
 pub use settings::{
     pdf_standard, EditorSettings, GitSettings, PdfSettings, Settings, ThemePreference,
-    ToolSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    ToolSettings, UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;

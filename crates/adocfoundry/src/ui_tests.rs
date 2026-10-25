@@ -509,6 +509,96 @@ fn preview_draws_inline_stem_in_the_line(cx: &mut TestAppContext) {
     );
 }
 
+/// An app whose settings live in `directory` and whose releases feed names `tag`, counting
+/// the times it is read.
+fn app_with_feed(
+    directory: &std::path::Path,
+    tag: &'static str,
+    reads: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    cx: &mut TestAppContext,
+) -> Entity<AppState> {
+    let file = directory.join("settings.toml");
+    if !file.exists() {
+        std::fs::write(&file, "").unwrap();
+    }
+    let settings = Settings::load(Some(&file), None).unwrap();
+    let app = app_with(Engine::new(settings), cx);
+    let reads = reads.clone();
+    cx.update(|cx| {
+        app.update(cx, |app, _| {
+            app.fetch = std::sync::Arc::new(move |url| {
+                assert_eq!(url, adoc_engine::updates::FEED);
+                reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(format!(
+                    r#"{{"tag_name": "{tag}", "html_url": "https://example.org/{tag}"}}"#
+                ))
+            });
+        });
+    });
+    app
+}
+
+#[gpui::test]
+fn update_notice_is_shown_once(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let notices = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len())
+    };
+
+    let app = app_with_feed(directory.path(), "v99.0.0", &reads, cx);
+    let (_, mut cx_first) = workspace_window(&app, Vec::new(), cx);
+    cx_first.run_until_parked();
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(notices(&mut cx_first), 1, "the newer release is announced");
+
+    // Started again: no check is due for a day, so nothing is read or shown.
+    let again = app_with_feed(directory.path(), "v99.0.0", &reads, cx);
+    // A page is open, so the window has focus for the action.
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let (_, mut cx_second) = workspace_window(&again, vec![page], cx);
+    cx_second.run_until_parked();
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(notices(&mut cx_second), 0);
+
+    // Asked for, the check runs and shows the release again.
+    cx_second.dispatch_action(crate::editor::bindings::CheckForUpdates);
+    cx_second.run_until_parked();
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(notices(&mut cx_second), 1);
+}
+
+#[gpui::test]
+fn asking_when_up_to_date_says_so(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("settings.toml"),
+        "[updates]\ncheck = false\n",
+    )
+    .unwrap();
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let app = app_with_feed(directory.path(), "v0.0.1", &reads, cx);
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let (_, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    assert_eq!(
+        reads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "switched off"
+    );
+    cx.dispatch_action(crate::editor::bindings::CheckForUpdates);
+    cx.run_until_parked();
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len()),
+        1
+    );
+}
+
 fn detached_paragraphs(
     workspace: &Entity<WorkspaceView>,
     cx: &mut VisualTestContext,

@@ -50,6 +50,22 @@ Packages are built for x86_64 and aarch64.
 NOTE: The Linux x86_64 build has been run on Wayland and, through XWayland, on X11.
 See xref:developer:testing.adoc#platform-status[platform status].
 
+[#updates]
+=== Updates
+
+At start-up, at most once a day, AdocFoundry looks for a newer release and tells you once when there is one.
+The notice reads "AdocFoundry <version> is available." and its *Release notes* button opens the release page.
+Each release is announced once, and closing the notice dismisses it.
+
+To check at any time, run *Check for Updates* from the command palette.
+It reports "AdocFoundry is up to date." or the error.
+
+The check reads GitHub's latest release through the system's `curl`, so without `curl`, or offline, nothing is shown.
+It sends nothing but the application's version, in the user agent, and is not telemetry.
+To switch it off, set `check = false` under `[updates]` in the user settings file.
+See xref:settings.adoc[Settings].
+Installing an update in place is not yet part of AdocFoundry.
+
 == Build from source
 
 You need Rust (stable, installed with `rustup`).

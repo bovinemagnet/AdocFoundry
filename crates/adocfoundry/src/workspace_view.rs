@@ -231,6 +231,7 @@ impl WorkspaceView {
         ) {
             crate::typing_bench::start(editor, duration, window, cx);
         }
+        crate::updates::check_at_start_up(&view.app, window, cx);
         view
     }
 
@@ -1799,6 +1800,19 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    fn on_check_for_updates(
+        &mut self,
+        _: &CheckForUpdates,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(CommandOutcome::CheckForUpdates(feed)) =
+            self.invoke(ids::APP_CHECK_FOR_UPDATES, CommandArgs::None, window, cx)
+        {
+            crate::updates::check(&self.app, &feed, true, window, cx);
+        }
+    }
+
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::External(path)) =
             self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
@@ -2500,6 +2514,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_export_component_pdf))
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))
+            .on_action(cx.listener(Self::on_check_for_updates))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_mirror))
