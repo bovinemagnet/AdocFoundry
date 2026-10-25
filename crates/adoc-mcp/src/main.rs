@@ -11,7 +11,7 @@ mod server;
 
 use std::{path::PathBuf, process::ExitCode, time::Duration};
 
-use adoc_engine::{Engine, Settings};
+use adoc_engine::{Engine, FileAccess, Settings};
 use rmcp::ServiceExt as _;
 
 const USAGE: &str = "usage: adoc-mcp <root>... [--allow-write]\n       adoc-mcp --version";
@@ -57,6 +57,9 @@ fn run(arguments: &[String]) -> Result<(), String> {
     let settings = Settings::load(Settings::default_user_file().as_deref(), None)
         .map_err(|error| error.to_string())?;
     let mut engine = Engine::new(settings);
+    // Every read the engine makes for a tool stays inside the roots, as the tools' own paths
+    // do: includes, images, themes and fonts included.
+    engine.set_file_access(FileAccess::Within(roots.clone()));
     engine
         .open_workspace(roots.clone())
         .map_err(|error| error.to_string())?;

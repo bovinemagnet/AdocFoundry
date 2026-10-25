@@ -3,6 +3,8 @@
 
 use std::fmt;
 
+use adoc_core::FileAccess;
+
 use adoc_render::SourceSpan;
 use typst::{
     diag::{Severity, SourceDiagnostic, Warned},
@@ -262,7 +264,13 @@ pub fn render_math_svg(
         crate::document::MATH,
         crate::typst::string(math.as_str()),
     );
-    let world = PdfWorld::new(source, crate::fonts::bundled_set(), &[], None);
+    let world = PdfWorld::new(
+        source,
+        crate::fonts::bundled_set(),
+        &[],
+        None,
+        FileAccess::Any,
+    );
     let Warned { output, .. } = typst::compile::<PagedDocument>(&world);
     // Formulas render one at a time for as long as the app runs: let old entries go.
     typst::comemo::evict(30);
@@ -309,7 +317,7 @@ fn typeset(
             source: None,
         })
         .collect();
-    let (fonts, font_warnings) = font_set(theme, &options.fonts_dirs);
+    let (fonts, font_warnings) = font_set(theme, &options.fonts_dirs, &options.access);
     diagnostics.extend(font_warnings.into_iter().map(|message| PdfDiagnostic {
         severity: PdfSeverity::Warning,
         message,
@@ -337,7 +345,13 @@ fn typeset(
     let today = options
         .date
         .and_then(|(year, month, day)| Datetime::from_ymd(year, month, day));
-    let world = PdfWorld::new(typst.source.clone(), fonts, &typst.files, today);
+    let world = PdfWorld::new(
+        typst.source.clone(),
+        fonts,
+        &typst.files,
+        today,
+        options.access.clone(),
+    );
     let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
     // Typst memoises layout in a process-wide cache that nothing else empties; a book's is
     // gigabytes, and the app would keep it after the export.

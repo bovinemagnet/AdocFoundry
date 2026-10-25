@@ -130,6 +130,12 @@ impl Diagrams {
         Self::with_providers(cache, providers)
     }
 
+    /// Mermaid only: no external tool is ever run.
+    #[must_use]
+    pub fn in_process(cache: DiagramCache) -> Self {
+        Self::with_providers(cache, vec![Box::new(MermaidProvider)])
+    }
+
     #[must_use]
     pub fn with_providers(cache: DiagramCache, providers: Vec<Box<dyn DiagramProvider>>) -> Self {
         Self { providers, cache }

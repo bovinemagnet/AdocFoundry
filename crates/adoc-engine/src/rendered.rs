@@ -12,7 +12,7 @@ use std::{
 };
 
 use adoc_antora::{AntoraResolver, ResourceFamily};
-use adoc_core::{Location, SourceRange};
+use adoc_core::{FileAccess, Location, SourceRange};
 use adoc_diagrams::{DiagramCache, DiagramRequest, Diagrams};
 use adoc_dom::{AcdcParser, DocumentParser, Dom, IncludeResolver, ParseInput};
 use adoc_index::normalize_path;
@@ -148,6 +148,7 @@ impl OwnedInput {
 pub(crate) struct SnapshotIncludes {
     map: BTreeMap<PathBuf, PathBuf>,
     buffers: HashMap<PathBuf, String>,
+    access: FileAccess,
     read: Mutex<BTreeSet<PathBuf>>,
 }
 
@@ -155,6 +156,9 @@ impl IncludeResolver for SnapshotIncludes {
     fn read(&self, requested: &Path) -> Option<(PathBuf, String)> {
         let requested = normalize_path(requested);
         let path = self.map.get(&requested).cloned().unwrap_or(requested);
+        if !self.access.permits(&path) {
+            return None;
+        }
         let text = match self.buffers.get(&path) {
             Some(text) => text.clone(),
             None => fs::read_to_string(&path).ok()?,
@@ -394,7 +398,7 @@ impl Engine {
         if let Some(id) = self.document_for_path(path) {
             return self.parse_input(id);
         }
-        let text = fs::read_to_string(path).ok()?;
+        let text = self.file_access.read_to_string(path).ok()?;
         let parsed = adoc_parser::parse(&crate::document::uri_for(path), &text).document;
         Some(self.owned_input(path, text, 0, &parsed))
     }
@@ -450,6 +454,7 @@ impl Engine {
             includes: SnapshotIncludes {
                 map,
                 buffers,
+                access: self.file_access.clone(),
                 read: Mutex::default(),
             },
         }
@@ -578,7 +583,12 @@ impl Engine {
                     Some(root) => DiagramCache::for_workspace(root),
                     None => DiagramCache::new(std::env::temp_dir().join("adocfoundry-diagrams")),
                 };
-                let diagrams = Diagrams::new(cache);
+                // External tools read files of their own (PlantUML's `!include`, Graphviz's
+                // `image`), so a confined engine renders Mermaid only.
+                let diagrams = match self.file_access {
+                    FileAccess::Any => Diagrams::new(cache),
+                    FileAccess::Within(_) => Diagrams::in_process(cache),
+                };
                 // Without Typst, formulas stay as styled source.
                 #[cfg(feature = "typst")]
                 let diagrams = diagrams.with_provider(Box::new(crate::StemProvider));
@@ -591,6 +601,21 @@ impl Engine {
     pub fn set_document_parser(&mut self, parser: Arc<dyn DocumentParser>) {
         self.rendered.parser = Some(parser);
         self.preview_workspace_changed();
+    }
+
+    /// Confines every file the engine reads on the front end's behalf (opening, includes, and
+    /// the images, themes and fonts of an export) to `access`. External diagram tools, which
+    /// read files the engine cannot see, are not run unless access is [`FileAccess::Any`]. The
+    /// MCP server confines the engine to its roots; the default reads anything.
+    pub fn set_file_access(&mut self, access: FileAccess) {
+        self.file_access = access;
+        self.rendered.diagrams = None;
+        self.preview_workspace_changed();
+    }
+
+    #[must_use]
+    pub fn file_access(&self) -> &FileAccess {
+        &self.file_access
     }
 
     /// Replaces the diagram renderer, for tests and front ends with their own providers.
