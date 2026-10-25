@@ -25,6 +25,10 @@ pub enum EngineError {
     SaveConflict {
         path: PathBuf,
     },
+    /// A file a preview edits changed after the preview was made; it must be made again.
+    PreviewStale {
+        path: PathBuf,
+    },
 }
 
 impl EngineError {
@@ -53,6 +57,11 @@ impl fmt::Display for EngineError {
             Self::SaveConflict { path } => write!(
                 formatter,
                 "{} changed on disk since it was opened or saved; reload it or overwrite it",
+                path.display()
+            ),
+            Self::PreviewStale { path } => write!(
+                formatter,
+                "{} changed after the preview was made; make the preview again",
                 path.display()
             ),
         }

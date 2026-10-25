@@ -366,3 +366,113 @@ fn rename_rewrites_includes() {
     let range = file.edits[0].range;
     assert_eq!(&text[range.start..range.end], "shared.adoc");
 }
+
+/// A copy of the `xrefs` fixture, where `index.adoc` links to `other.adoc`, with `index.adoc`
+/// open.
+fn xrefs_copy() -> (tempfile::TempDir, PathBuf, Engine, adoc_engine::DocumentId) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    copy_tree(&fixture("xrefs"), &root);
+    let mut engine = open_workspace(&root);
+    let index = engine.open(&root.join("index.adoc")).unwrap();
+    (directory, root, engine, index)
+}
+
+fn rename_other(engine: &mut Engine, root: &Path, to: &Path) -> Result<EditPreview, String> {
+    let id = engine.open(&root.join("other.adoc")).unwrap();
+    engine
+        .invoke(
+            ids::PAGE_RENAME,
+            CommandArgs::Rename {
+                id,
+                new_path: to.to_path_buf(),
+            },
+        )
+        .map(preview)
+        .map_err(|error| error.to_string())
+}
+
+fn apply(engine: &mut Engine, preview: &EditPreview) -> Result<(), adoc_engine::EngineError> {
+    engine
+        .invoke(
+            ids::WORKSPACE_APPLY_PREVIEW,
+            CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+        )
+        .map(|_| ())
+}
+
+fn text_of(engine: &Engine, id: adoc_engine::DocumentId) -> String {
+    engine.document(id).unwrap().text.to_string()
+}
+
+#[test]
+fn a_preview_is_refused_once_a_file_it_edits_has_changed() {
+    let (_directory, root, mut engine, index) = xrefs_copy();
+    let preview = rename_other(&mut engine, &root, &root.join("renamed.adoc")).unwrap();
+    assert!(preview
+        .edits
+        .iter()
+        .any(|file| file.path == root.join("index.adoc")));
+    // What the dialog shows is the text the edits were computed against.
+    let base = &preview.edits[0].base;
+    assert!(base.contains("xref:other.adoc"), "{base}");
+
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id: index,
+                range: adoc_core::SourceRange::new(0, 0),
+                text: "// moved the offsets\n".to_owned(),
+            },
+        )
+        .unwrap();
+    let refused = apply(&mut engine, &preview);
+    assert!(
+        matches!(&refused, Err(adoc_engine::EngineError::PreviewStale { path }) if *path == root.join("index.adoc")),
+        "{refused:?}"
+    );
+    assert!(root.join("other.adoc").is_file(), "nothing moved");
+    assert!(text_of(&engine, index).starts_with("// moved the offsets\n= Cross References"));
+}
+
+#[test]
+fn a_rename_whose_move_cannot_happen_changes_nothing() {
+    let (_directory, root, mut engine, index) = xrefs_copy();
+    fs::write(root.join("blocked"), "a file, not a directory").unwrap();
+    let before = text_of(&engine, index);
+
+    let refused = rename_other(&mut engine, &root, &root.join("blocked/other.adoc"))
+        .and_then(|preview| apply(&mut engine, &preview).map_err(|error| error.to_string()));
+    assert!(refused.is_err());
+    assert_eq!(text_of(&engine, index), before);
+    assert!(!engine.document(index).unwrap().dirty);
+    assert!(root.join("other.adoc").is_file());
+    assert!(!engine.undo(index), "no partial group in the undo history");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_move_that_fails_part_way_is_rolled_back() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_directory, root, mut engine, index) = xrefs_copy();
+    let locked = root.join("locked");
+    fs::create_dir(&locked).unwrap();
+    let before = text_of(&engine, index);
+    let preview = rename_other(&mut engine, &root, &locked.join("other.adoc")).unwrap();
+
+    // The destination passes every check but cannot be written to.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    let result = apply(&mut engine, &preview);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(result.is_err());
+    assert_eq!(
+        text_of(&engine, index),
+        before,
+        "the xref edit is rolled back"
+    );
+    assert!(!engine.document(index).unwrap().dirty);
+    assert!(root.join("other.adoc").is_file());
+    assert!(!engine.undo(index), "no partial group in the undo history");
+}
