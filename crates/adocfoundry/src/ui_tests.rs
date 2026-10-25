@@ -371,7 +371,13 @@ fn preview_renders_the_active_document(cx: &mut TestAppContext) {
     // The preview follows the active document.
     cx.update(|window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.open_at(&second, SourceRange::default(), window, cx);
+            workspace.open_at(
+                &second,
+                SourceRange::default(),
+                adoc_engine::OpenDisposition::Preview,
+                window,
+                cx,
+            );
         });
     });
     assert!(drain_until(&app, &mut cx, |cx| {
@@ -2100,7 +2106,13 @@ fn sidebar_navigation_moves_the_visual_caret(cx: &mut TestAppContext) {
     let heading = text.find("== Later").unwrap();
     cx.update(|window, cx| {
         workspace.update(cx, |workspace, cx| {
-            workspace.open_at(&path, SourceRange::new(heading, heading), window, cx);
+            workspace.open_at(
+                &path,
+                SourceRange::new(heading, heading),
+                adoc_engine::OpenDisposition::Preview,
+                window,
+                cx,
+            );
         });
     });
     cx.run_until_parked();
@@ -2768,4 +2780,244 @@ fn saving_over_a_change_on_disk_asks_to_reload_or_overwrite(cx: &mut TestAppCont
     click_selector("save-conflict-overwrite", gpui::MouseButton::Left, &mut cx);
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "mine = Theirs\n");
     assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+}
+
+/// A copy of the `preview-tabs` fixture's pages.
+fn browsing_pages() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    for entry in std::fs::read_dir(fixture("preview-tabs")).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), directory.path().join(entry.file_name())).unwrap();
+    }
+    directory
+}
+
+fn browsing_page(directory: &tempfile::TempDir, name: &str) -> PathBuf {
+    adoc_index::normalize_path(&directory.path().join(format!("{name}.adoc")))
+}
+
+fn open_as(
+    workspace: &Entity<WorkspaceView>,
+    path: &Path,
+    disposition: adoc_engine::OpenDisposition,
+    cx: &mut VisualTestContext,
+) {
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_at(path, SourceRange::default(), disposition, window, cx);
+        });
+    });
+    cx.run_until_parked();
+}
+
+fn browse_to(workspace: &Entity<WorkspaceView>, path: &Path, cx: &mut VisualTestContext) {
+    open_as(workspace, path, adoc_engine::OpenDisposition::Preview, cx);
+}
+
+/// The file names of the tabs, in order, with `*` after a preview tab's.
+fn tab_names(
+    app: &Entity<AppState>,
+    workspace: &Entity<WorkspaceView>,
+    cx: &mut VisualTestContext,
+) -> Vec<String> {
+    cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        workspace
+            .read(cx)
+            .tab_documents(cx)
+            .into_iter()
+            .map(|id| {
+                let name = engine.document(id).unwrap().path.file_stem().unwrap();
+                let mark = if engine.is_preview(id) { "*" } else { "" };
+                format!("{}{mark}", name.to_string_lossy())
+            })
+            .collect()
+    })
+}
+
+fn double_click(selector: &'static str, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let position = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is not drawn"))
+        .center();
+    cx.simulate_mouse_move(position, None, gpui::Modifiers::none());
+    for count in [1, 2] {
+        cx.simulate_event(gpui::MouseDownEvent {
+            button: gpui::MouseButton::Left,
+            position,
+            modifiers: gpui::Modifiers::none(),
+            click_count: count,
+            first_mouse: false,
+        });
+        cx.simulate_event(gpui::MouseUpEvent {
+            button: gpui::MouseButton::Left,
+            position,
+            modifiers: gpui::Modifiers::none(),
+            click_count: count,
+        });
+    }
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn sidebar_selection_shows_one_preview_tab(cx: &mut TestAppContext) {
+    init(cx);
+    let root = fixture("antora-single-component");
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx
+            .new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), Vec::new(), window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    // The component is row 0, and its navigation Home and Authentication rows 1 and 2.
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("nav-row-2").is_some()
+    }));
+    click("nav-row-1", &mut cx);
+    click("nav-row-2", &mut cx);
+    assert_eq!(tab_names(&app, &workspace, &mut cx), ["authentication*"]);
+
+    // A double-click browses to the page, replacing the preview, and keeps it open.
+    double_click("nav-row-1", &mut cx);
+    assert_eq!(tab_names(&app, &workspace, &mut cx), ["index"]);
+    click("nav-row-2", &mut cx);
+    assert_eq!(
+        tab_names(&app, &workspace, &mut cx),
+        ["index", "authentication*"]
+    );
+    click("nav-row-1", &mut cx);
+    assert_eq!(
+        tab_names(&app, &workspace, &mut cx),
+        ["index", "authentication*"],
+        "browsing to an open page only activates it"
+    );
+}
+
+#[gpui::test]
+fn typing_keeps_a_preview_tab_open(cx: &mut TestAppContext) {
+    init(cx);
+    let pages = browsing_pages();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    browse_to(&workspace, &browsing_page(&pages, "installation"), &mut cx);
+    assert_eq!(tab_names(&app, &workspace, &mut cx), ["installation*"]);
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    browse_to(&workspace, &browsing_page(&pages, "configuration"), &mut cx);
+    browse_to(
+        &workspace,
+        &browsing_page(&pages, "troubleshooting"),
+        &mut cx,
+    );
+    assert_eq!(
+        tab_names(&app, &workspace, &mut cx),
+        ["installation", "troubleshooting*"]
+    );
+}
+
+#[gpui::test]
+fn preview_tabs_are_marked_and_kept_by_a_double_click(cx: &mut TestAppContext) {
+    init(cx);
+    let pages = browsing_pages();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    browse_to(&workspace, &browsing_page(&pages, "installation"), &mut cx);
+    double_click("editor-tab-0", &mut cx);
+    assert_eq!(tab_names(&app, &workspace, &mut cx), ["installation"]);
+    let kept = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    browse_to(&workspace, &browsing_page(&pages, "configuration"), &mut cx);
+    assert_eq!(
+        tab_names(&app, &workspace, &mut cx),
+        ["installation", "configuration*"]
+    );
+    let id = cx.update(|_, cx| {
+        app.read(cx)
+            .engine
+            .document_for_path(&browsing_page(&pages, "installation"))
+    });
+    assert_eq!(id, Some(kept), "kept without reopening");
+
+    // The preview tab, second, says what it is.
+    let tab = cx.debug_bounds("editor-tab-1").expect("a tab");
+    cx.simulate_mouse_move(tab.center(), None, gpui::Modifiers::default());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("preview-tab-tooltip").is_some(),
+        "a preview tab says what it is"
+    );
+}
+
+#[gpui::test]
+fn keep_open_runs_from_the_palette(cx: &mut TestAppContext) {
+    init(cx);
+    let pages = browsing_pages();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    browse_to(&workspace, &browsing_page(&pages, "installation"), &mut cx);
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.run_until_parked();
+    cx.simulate_input("Keep Open");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(tab_names(&app, &workspace, &mut cx), ["installation"]);
+}
+
+#[gpui::test]
+fn a_replaced_preview_keeps_its_tab_position(cx: &mut TestAppContext) {
+    init(cx);
+    let pages = browsing_pages();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) =
+        workspace_window(&app, vec![browsing_page(&pages, "introduction")], cx);
+    cx.run_until_parked();
+    browse_to(&workspace, &browsing_page(&pages, "installation"), &mut cx);
+    open_as(
+        &workspace,
+        &browsing_page(&pages, "troubleshooting"),
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    browse_to(&workspace, &browsing_page(&pages, "configuration"), &mut cx);
+    assert_eq!(
+        tab_names(&app, &workspace, &mut cx),
+        ["introduction", "configuration*", "troubleshooting"]
+    );
+    let active = cx.update(|_, cx| {
+        let workspace = workspace.read(cx);
+        workspace
+            .active_editor_for_test()
+            .map(|editor| editor.read(cx).document())
+    });
+    let configuration = cx.update(|_, cx| {
+        app.read(cx)
+            .engine
+            .document_for_path(&browsing_page(&pages, "configuration"))
+    });
+    assert_eq!(active, configuration);
+}
+
+#[gpui::test]
+fn without_preview_tabs_every_page_stays_open(cx: &mut TestAppContext) {
+    init(cx);
+    let pages = browsing_pages();
+    let mut settings = Settings::default();
+    settings.editor.preview_tabs = false;
+    let app = app_with(Engine::new(settings), cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    browse_to(&workspace, &browsing_page(&pages, "installation"), &mut cx);
+    browse_to(&workspace, &browsing_page(&pages, "configuration"), &mut cx);
+    assert_eq!(
+        tab_names(&app, &workspace, &mut cx),
+        ["installation", "configuration"]
+    );
 }

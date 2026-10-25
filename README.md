@@ -30,6 +30,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Hover and completion for xref, include and image targets, anchors and `{attributes}`.
 - Undo and redo that treat a run of typing as one step.
 - Tabs close from their X, or from a right-click menu that acts on the tab clicked: Close, Close Others, Close Left, Close Right, Close Clean (the tabs without unsaved changes) and Close All, asking once about any unsaved changes. Arrows at the start of the tab bar go back and forward.
+- Browsing opens pages in one preview tab, its title in italics, which the next page browsed to replaces in place, as in VS Code and Zed. Browsing means clicking a page in Navigation, Modules, search results, Problems or Changes, following a link, and Back and Forward. Editing or saving the page, double-clicking its tab or sidebar entry, or Keep Open (tab menu, File menu or palette) makes it an ordinary tab. A page with unsaved changes, or pinned in the rendered preview, is never replaced. Open File and files named at start-up always open as ordinary tabs. `preview_tabs = false` under `[editor]` keeps every page open, as before.
 - Bold, Italic and Code (Cmd/Ctrl-B, -I, -E) and Highlight wrap the selection in its delimiters, or remove them when it is already marked: the constrained form (`*bold*`) where it is valid, else the unconstrained one (`un**break**able`), each line of a selection on its own.
 
 **Link following**
@@ -154,6 +155,7 @@ font_size = 13
 soft_wrap = true
 tab_width = 2
 theme = "auto"                   # auto | light | dark
+preview_tabs = true              # false keeps every page you open in a tab of its own
 
 [workspace]
 ignore = ["node_modules", ".git", "build", "target", ".cache"]

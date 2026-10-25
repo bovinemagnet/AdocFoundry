@@ -230,7 +230,6 @@ impl SourceEditorView {
     }
 
     /// The widget's current text.
-    #[cfg(test)]
     pub fn widget_text(&self, cx: &gpui::App) -> String {
         self.state.read(cx).text().to_string()
     }

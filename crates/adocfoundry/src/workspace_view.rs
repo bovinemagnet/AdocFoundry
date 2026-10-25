@@ -8,7 +8,7 @@ use std::{cell::Cell, collections::HashMap, path::Path, rc::Rc};
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode, EngineEvent,
-    ExportArgs, ExportSummary, ExportTarget, NavigationPosition, ThemePreference,
+    ExportArgs, ExportSummary, ExportTarget, NavigationPosition, OpenDisposition, ThemePreference,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity, FocusHandle,
@@ -117,6 +117,9 @@ pub struct WorkspaceView {
     revealed: Option<NavigationPosition>,
     _subscriptions: Vec<Subscription>,
 }
+
+/// What hovering a preview tab says.
+pub(crate) const PREVIEW_TAB_TOOLTIP: &str = "Preview tab — edit or double-click to keep open.";
 
 /// A sidebar row's label: one line, cut off with an ellipsis where the panel is too narrow,
 /// with the whole text in a tooltip. The tree's rows have one fixed height, so they cannot wrap.
@@ -229,7 +232,13 @@ impl WorkspaceView {
             view.open_folder(folder, window, cx);
         }
         for file in files {
-            view.open_at(&file, SourceRange::default(), window, cx);
+            view.open_at(
+                &file,
+                SourceRange::default(),
+                OpenDisposition::Persistent,
+                window,
+                cx,
+            );
         }
         if let (Some(duration), Some(editor)) = (
             crate::typing_bench::requested(),
@@ -260,6 +269,9 @@ impl WorkspaceView {
                 self.settle_later(cx);
             }
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
+            EngineEvent::PreviewTabReplaced { old, new } => {
+                self.replace_tab(*old, *new, window, cx);
+            }
             EngineEvent::DocumentClosed(id) => {
                 self.tabs.retain(|tab| tab.read(cx).document() != *id);
                 self.visuals.remove(id);
@@ -830,8 +842,9 @@ impl WorkspaceView {
 
     /// Opens `path` with the caret on its first change against `HEAD`.
     pub fn open_first_change(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        self.keep_busy_preview(window, cx);
         let Some(CommandOutcome::Opened(id)) = self.invoke(
-            ids::DOCUMENT_OPEN,
+            ids::DOCUMENT_BROWSE,
             CommandArgs::Path(path.to_path_buf()),
             window,
             cx,
@@ -846,7 +859,13 @@ impl WorkspaceView {
             .ok()
             .and_then(|hunks| hunks.first().map(|hunk| hunk.range.start))
             .unwrap_or(0);
-        self.open_at(path, SourceRange::new(first, first), window, cx);
+        self.open_at(
+            path,
+            SourceRange::new(first, first),
+            OpenDisposition::Preview,
+            window,
+            cx,
+        );
     }
 
     fn refresh_outline(&mut self, cx: &mut Context<Self>) {
@@ -876,10 +895,7 @@ impl WorkspaceView {
         {
             Some(index) => index,
             None => {
-                let app = self.app.clone();
-                let editor = cx.new(|cx| SourceEditorView::new(app, active, false, window, cx));
-                self._subscriptions
-                    .push(cx.subscribe(&editor, Self::on_editor_event));
+                let editor = self.new_tab(active, window, cx);
                 self.tabs.push(editor);
                 self.tabs.len() - 1
             }
@@ -908,6 +924,113 @@ impl WorkspaceView {
             }
         }
         self.focus_active_editor(window, cx);
+    }
+
+    fn new_tab(
+        &mut self,
+        id: DocumentId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<SourceEditorView> {
+        let app = self.app.clone();
+        let editor = cx.new(|cx| SourceEditorView::new(app, id, false, window, cx));
+        self._subscriptions
+            .push(cx.subscribe(&editor, Self::on_editor_event));
+        editor
+    }
+
+    /// Shows document `new` in the tab of `old`, which the engine replaced in the preview tab.
+    /// The view may already have made `new` a tab of its own, at the end, when it followed the
+    /// engine before this event arrived: that tab moves to the old one's place.
+    fn replace_tab(
+        &mut self,
+        old: DocumentId,
+        new: DocumentId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.read(cx).document() == old)
+        else {
+            return;
+        };
+        let tab = match self
+            .tabs
+            .iter()
+            .position(|tab| tab.read(cx).document() == new)
+        {
+            Some(made) => self.tabs.remove(made),
+            None => self.new_tab(new, window, cx),
+        };
+        let index = index.min(self.tabs.len().saturating_sub(1));
+        self.tabs[index] = tab;
+        self.visuals.remove(&old);
+        let active = self.app.read(cx).engine.active();
+        if let Some(active) = self
+            .tabs
+            .iter()
+            .position(|tab| Some(tab.read(cx).document()) == active)
+        {
+            self.active_tab = active;
+        }
+    }
+
+    /// Keeps the page in the preview tab open while one of its editors holds what the engine
+    /// has not seen yet: IME text being composed, or source text not yet sent.
+    fn keep_busy_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let busy = {
+            let engine = &self.app.read(cx).engine;
+            let Some(id) = engine
+                .tab_order()
+                .iter()
+                .copied()
+                .find(|id| engine.is_preview(*id))
+            else {
+                return;
+            };
+            let composing = self
+                .visuals
+                .get(&id)
+                .is_some_and(|visual| visual.read(cx).is_composing());
+            let unsent = self.tabs.iter().any(|tab| {
+                let tab = tab.read(cx);
+                tab.document() == id
+                    && engine
+                        .document(id)
+                        .is_some_and(|document| document.text != tab.widget_text(cx).as_str())
+            });
+            (composing || unsent).then_some(id)
+        };
+        if let Some(id) = busy {
+            self.invoke(
+                ids::DOCUMENT_KEEP_OPEN,
+                CommandArgs::Document(id),
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn on_keep_open(&mut self, _: &KeepOpen, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.active_document(cx) {
+            self.invoke(
+                ids::DOCUMENT_KEEP_OPEN,
+                CommandArgs::Document(id),
+                window,
+                cx,
+            );
+        }
+    }
+
+    /// The documents of the tabs, in order.
+    #[cfg(test)]
+    pub fn tab_documents(&self, cx: &App) -> Vec<DocumentId> {
+        self.tabs
+            .iter()
+            .map(|tab| tab.read(cx).document())
+            .collect()
     }
 
     #[cfg(test)]
@@ -1063,20 +1186,26 @@ impl WorkspaceView {
         );
     }
 
-    /// Opens `path` and selects `range` in it.
+    /// Opens `path` as `disposition` says and selects `range` in it. Browsing shows the page
+    /// in the preview tab.
     pub fn open_at(
         &mut self,
         path: &Path,
         range: SourceRange,
+        disposition: OpenDisposition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(CommandOutcome::Opened(id)) = self.invoke(
-            ids::DOCUMENT_OPEN,
-            CommandArgs::Path(path.to_path_buf()),
-            window,
-            cx,
-        ) else {
+        let command = match disposition {
+            OpenDisposition::Persistent => ids::DOCUMENT_OPEN,
+            OpenDisposition::Preview => {
+                self.keep_busy_preview(window, cx);
+                ids::DOCUMENT_BROWSE
+            }
+        };
+        let Some(CommandOutcome::Opened(id)) =
+            self.invoke(command, CommandArgs::Path(path.to_path_buf()), window, cx)
+        else {
             return;
         };
         self.app.update(cx, |app, cx| {
@@ -1208,7 +1337,13 @@ impl WorkspaceView {
             let files = paths.await.ok()?.ok()??;
             this.update_in(cx, |this, window, cx| {
                 for file in files {
-                    this.open_at(&file, SourceRange::default(), window, cx);
+                    this.open_at(
+                        &file,
+                        SourceRange::default(),
+                        OpenDisposition::Persistent,
+                        window,
+                        cx,
+                    );
                 }
             })
             .ok()
@@ -1452,7 +1587,13 @@ impl WorkspaceView {
                 .on_ok(move |_, window, cx| {
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
-                            workspace.open_at(&path, SourceRange::default(), window, cx);
+                            workspace.open_at(
+                                &path,
+                                SourceRange::default(),
+                                OpenDisposition::Preview,
+                                window,
+                                cx,
+                            );
                         });
                     }
                     true
@@ -1580,7 +1721,13 @@ impl WorkspaceView {
         if let Some(CommandOutcome::Location(location)) =
             self.invoke(command, CommandArgs::Offset { id, offset }, window, cx)
         {
-            self.open_at(&location.path, location.range, window, cx);
+            self.open_at(
+                &location.path,
+                location.range,
+                OpenDisposition::Persistent,
+                window,
+                cx,
+            );
         }
     }
 
@@ -1823,7 +1970,13 @@ impl WorkspaceView {
         if let Some(CommandOutcome::External(path)) =
             self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
         {
-            self.open_at(&path, SourceRange::default(), window, cx);
+            self.open_at(
+                &path,
+                SourceRange::default(),
+                OpenDisposition::Persistent,
+                window,
+                cx,
+            );
         }
     }
 
@@ -2034,13 +2187,24 @@ impl WorkspaceView {
                             .child(icon)
                             .child(tree_label(id, index, item.label.clone())),
                     )
-                    .on_click(move |_, window, cx| {
+                    .on_click(move |event, window, cx| {
                         let Some(target) = sidebar::parse_target(&item.id) else {
                             return;
                         };
+                        // A double-click keeps the page open; the outline only moves the caret.
+                        let keep = event.click_count() > 1 && id != "outline";
                         if let Some(workspace) = workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
-                                workspace.open_at(&target.path, target.range, window, cx);
+                                workspace.open_at(
+                                    &target.path,
+                                    target.range,
+                                    OpenDisposition::Preview,
+                                    window,
+                                    cx,
+                                );
+                                if keep {
+                                    workspace.on_keep_open(&KeepOpen, window, cx);
+                                }
                             });
                         }
                     })
@@ -2162,12 +2326,45 @@ impl WorkspaceView {
                         (name, document.dirty)
                     })
                     .unwrap_or_default();
+                let preview = engine.is_preview(id);
                 let target = target.clone();
                 Tab::new()
+                    .aria_label(if preview {
+                        format!("{name}, preview tab")
+                    } else {
+                        name.clone()
+                    })
                     .label(if dirty { format!("● {name}") } else { name })
                     .debug_selector(move || format!("editor-tab-{ix}"))
                     .on_mouse_down(gpui::MouseButton::Right, move |_, _, _| {
                         target.set(Some(id));
+                    })
+                    // A preview tab: italic, and a double-click keeps it open.
+                    .when(preview, |tab| {
+                        tab.italic()
+                            .tooltip(|window, cx| {
+                                Tooltip::element(|_, _| {
+                                    div()
+                                        .debug_selector(|| "preview-tab-tooltip".to_owned())
+                                        .child(PREVIEW_TAB_TOOLTIP)
+                                })
+                                .build(window, cx)
+                            })
+                            // In the capture phase: the tab's contents take the bubbling one.
+                            .capture_any_mouse_down(cx.listener(
+                                move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                    if event.button == gpui::MouseButton::Left
+                                        && event.click_count > 1
+                                    {
+                                        this.invoke(
+                                            ids::DOCUMENT_KEEP_OPEN,
+                                            CommandArgs::Document(id),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                },
+                            ))
                     })
                     .suffix(
                         Button::new(("close-tab", ix))
@@ -2266,6 +2463,27 @@ impl WorkspaceView {
                 let tab = target.or_else(|| engine.active());
                 let Some(tab) = tab else {
                     return menu;
+                };
+                let menu = match target {
+                    Some(target) => {
+                        let app = app.clone();
+                        menu.item(
+                            PopupMenuItem::new("Keep Open")
+                                .action(Box::new(KeepOpen))
+                                .disabled(!engine.is_preview(target))
+                                .on_click(move |_, _, cx| {
+                                    app.update(cx, |app, cx| {
+                                        let _ = app.invoke(
+                                            ids::DOCUMENT_KEEP_OPEN,
+                                            CommandArgs::Document(target),
+                                            cx,
+                                        );
+                                    });
+                                }),
+                        )
+                        .separator()
+                    }
+                    None => menu,
                 };
                 entries
                     .iter()
@@ -2480,6 +2698,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_close_right))
             .on_action(cx.listener(Self::on_close_clean))
             .on_action(cx.listener(Self::on_close_all))
+            .on_action(cx.listener(Self::on_keep_open))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_toggle_strong))

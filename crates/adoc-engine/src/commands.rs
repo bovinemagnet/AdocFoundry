@@ -13,6 +13,8 @@ pub mod ids {
     pub const WORKSPACE_OPEN_FOLDER: CommandId = CommandId::new("workspace.open_folder");
     pub const WORKSPACE_REINDEX: CommandId = CommandId::new("workspace.reindex");
     pub const DOCUMENT_OPEN: CommandId = CommandId::new("document.open");
+    pub const DOCUMENT_BROWSE: CommandId = CommandId::new("document.browse");
+    pub const DOCUMENT_KEEP_OPEN: CommandId = CommandId::new("document.keep_open");
     pub const DOCUMENT_SAVE: CommandId = CommandId::new("document.save");
     pub const DOCUMENT_SAVE_ALL: CommandId = CommandId::new("document.save_all");
     pub const DOCUMENT_OVERWRITE: CommandId = CommandId::new("document.overwrite");
@@ -456,6 +458,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
         register(registry, spec, run);
     }
     crate::visual::register_visual(registry);
+    crate::tabs::register_tabs(registry);
     #[cfg(feature = "git")]
     {
         crate::git::register_git(registry);
@@ -480,7 +483,9 @@ fn document_open(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcom
     let CommandArgs::Path(path) = args else {
         return Err(invalid(ids::DOCUMENT_OPEN, "a path"));
     };
-    engine.open(&path).map(CommandOutcome::Opened)
+    engine
+        .open_as(&path, crate::OpenDisposition::Persistent)
+        .map(CommandOutcome::Opened)
 }
 
 fn document_save(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {

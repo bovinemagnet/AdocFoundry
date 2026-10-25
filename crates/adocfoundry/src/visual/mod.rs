@@ -115,6 +115,11 @@ pub struct VisualView {
 }
 
 impl VisualView {
+    /// Whether IME text is being composed, which the document does not hold yet.
+    pub fn is_composing(&self) -> bool {
+        self.composing.is_some()
+    }
+
     pub fn new(
         app: Entity<AppState>,
         document: DocumentId,

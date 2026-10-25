@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use adoc_core::SourceRange;
 use adoc_lang::{DefinitionTarget, Location};
 
-use crate::{CommandOutcome, DocumentId, Engine, EngineError, EngineEvent};
+use crate::{CommandOutcome, DocumentId, Engine, EngineError, EngineEvent, OpenDisposition};
 
 /// A place in the workspace the user has been.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,7 +54,7 @@ impl Engine {
         match self.definition(id, offset) {
             Some(DefinitionTarget::External(path)) => Ok(CommandOutcome::External(path)),
             Some(DefinitionTarget::Location(location)) => {
-                let target = self.open(&location.path)?;
+                let target = self.open_as(&location.path, OpenDisposition::Preview)?;
                 self.history
                     .back
                     .push(NavigationPosition { path: from, offset });
@@ -129,7 +129,7 @@ impl Engine {
     }
 
     fn arrive(&mut self, position: NavigationPosition) -> Result<CommandOutcome, EngineError> {
-        let id = self.open(&position.path)?;
+        let id = self.open_as(&position.path, OpenDisposition::Preview)?;
         self.set_active(id);
         self.history.current = Some(position);
         self.emit(EngineEvent::NavigationChanged);

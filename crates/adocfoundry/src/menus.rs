@@ -51,6 +51,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::EXPORT_PDF_PAGE),
             Command(ids::EXPORT_PDF_COMPONENT),
             Separator,
+            Command(ids::DOCUMENT_KEEP_OPEN),
             Command(ids::DOCUMENT_CLOSE),
             Command(ids::DOCUMENT_CLOSE_OTHERS),
             Command(ids::DOCUMENT_CLOSE_CLEAN),

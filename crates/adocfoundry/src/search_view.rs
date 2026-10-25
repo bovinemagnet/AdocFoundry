@@ -169,7 +169,13 @@ impl SearchView {
         };
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                workspace.open_at(&found.path, found.range, window, cx);
+                workspace.open_at(
+                    &found.path,
+                    found.range,
+                    adoc_engine::OpenDisposition::Preview,
+                    window,
+                    cx,
+                );
             });
         }
     }

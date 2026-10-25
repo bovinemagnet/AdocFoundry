@@ -30,6 +30,7 @@ mod search;
 mod settings;
 #[cfg(feature = "typst")]
 mod stem;
+mod tabs;
 mod undo;
 pub mod updates;
 #[cfg(feature = "git")]
@@ -62,6 +63,7 @@ pub use settings::{
 };
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
+pub use tabs::OpenDisposition;
 
 pub use adoc_core::FileAccess;
 pub use adoc_index::{is_asciidoc_path, normalize_path};

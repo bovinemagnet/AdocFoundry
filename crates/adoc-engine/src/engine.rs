@@ -61,6 +61,7 @@ pub struct Engine {
     pub(crate) rendered: crate::rendered::PreviewState,
     pub(crate) visual: crate::visual::VisualState,
     pub(crate) git: crate::git::GitState,
+    pub(crate) tabs: crate::tabs::Tabs,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
 }
@@ -119,6 +120,7 @@ impl Engine {
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
             git: crate::git::GitState::default(),
+            tabs: crate::tabs::Tabs::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
         }
@@ -177,7 +179,12 @@ impl Engine {
         id
     }
 
-    fn insert_document(&mut self, path: PathBuf, text: &str, untitled: bool) -> DocumentId {
+    pub(crate) fn insert_document(
+        &mut self,
+        path: PathBuf,
+        text: &str,
+        untitled: bool,
+    ) -> DocumentId {
         let id = DocumentId(self.next_document);
         self.next_document += 1;
         let parsed = parse(&uri_for(&path), text).document;
@@ -201,6 +208,7 @@ impl Engine {
                 untitled,
             },
         );
+        self.tabs.order.push(id);
         self.states.insert(
             id,
             DocumentState {
@@ -247,6 +255,10 @@ impl Engine {
             .remove(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
+        self.tabs.order.retain(|open| *open != id);
+        if self.tabs.preview == Some(id) {
+            self.tabs.preview = None;
+        }
         self.pending_index.remove(&id);
         self.forget_preview(id);
         self.forget_visual(id);
@@ -265,7 +277,7 @@ impl Engine {
             self.refresh_open_diagnostics(None);
         }
         if self.active == Some(id) {
-            self.active = self.documents.keys().next_back().copied();
+            self.active = self.tabs.order.last().copied();
             self.emit(EngineEvent::NavigationChanged);
         }
         self.sync_preview_target();
@@ -281,12 +293,13 @@ impl Engine {
         if !self.documents.contains_key(&id) {
             return Vec::new();
         }
-        let open = self.documents.values();
+        let open = self.tabs.order.iter().copied();
+        let at = self.tabs.order.iter().position(|open| *open == id);
         match command {
             ids::DOCUMENT_CLOSE => vec![id],
-            ids::DOCUMENT_CLOSE_OTHERS => open.map(|d| d.id).filter(|other| *other != id).collect(),
-            ids::DOCUMENT_CLOSE_LEFT => open.map(|d| d.id).filter(|other| *other < id).collect(),
-            ids::DOCUMENT_CLOSE_RIGHT => open.map(|d| d.id).filter(|other| *other > id).collect(),
+            ids::DOCUMENT_CLOSE_OTHERS => open.filter(|other| *other != id).collect(),
+            ids::DOCUMENT_CLOSE_LEFT => open.take(at.unwrap_or(0)).collect(),
+            ids::DOCUMENT_CLOSE_RIGHT => open.skip(at.map_or(0, |at| at + 1)).collect(),
             _ => self.closed_by_any(command),
         }
     }
@@ -369,6 +382,7 @@ impl Engine {
             state.saved_hash = hash_text(&text);
         }
         self.emit(EngineEvent::DocumentSaved(id));
+        self.keep_open(id);
         self.schedule_hunks(id, false);
         self.forget_blame(id);
         Ok(())
@@ -645,6 +659,8 @@ impl Engine {
             version: version_after,
             edits: forward.clone(),
         });
+        // An edited page is kept open, even once undone.
+        self.keep_open(id);
         self.preview_source_changed(&path);
         self.visual_source_changed(&path);
         if !untitled {
@@ -740,6 +756,7 @@ impl Engine {
         let git_was_enabled = self.settings.git.enabled;
         self.settings.reload()?;
         self.emit(EngineEvent::SettingsChanged);
+        self.settle_preview_tab();
         if self.settings.git.enabled != git_was_enabled {
             self.discover_git();
         }
