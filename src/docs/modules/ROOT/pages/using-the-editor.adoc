@@ -178,6 +178,12 @@ Rename Page (kbd:[F2]) renames the active page.
 AdocFoundry shows a preview that lists the file move and every xref, navigation and include edit needed to keep links working.
 Apply the preview to move the file and rewrite the xrefs, nav entries and includes of the file.
 An include written through an attribute is left as written.
+The moved page's own references keep naming what they named, and their edits appear in the preview with the others.
+In a plain document, xref, include and image targets are relative to the page's folder, so moving the page into `guides/` rewrites `+xref:child.adoc[]+` as `+xref:../child.adoc[]+`.
+In an Antora page, xrefs, images and `family$` includes are resource IDs relative to the module, so a move within the module changes nothing, while a move to another module, component or version qualifies them: `+xref:other.adoc[]+` becomes `+xref:ROOT:other.adoc[]+`, and `include::partial$p.adoc[]` becomes `include::ROOT:partial$p.adoc[]`.
+IDs written with `./` or `../`, and includes written as plain paths, are relative to the page's folder and are rewritten when it changes.
+A reference from the page to itself, such as `+xref:index.adoc#top[]+`, keeps pointing at the page in its new place.
+Targets written through an attribute, URLs and pure `#fragment` references are left as written.
 One undo moves the page back and restores every edit.
 If the rename cannot be completed, for example because the destination folder cannot be written to, everything already done is undone and nothing is left in the undo history.
 

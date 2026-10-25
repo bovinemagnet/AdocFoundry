@@ -528,6 +528,9 @@ Before anything changes, `validate_moves` checks that each source is a file, tha
 `workspace.search` returns immediately and delivers matches as `SearchResults` events.
 `workspace.replace` and `page.rename` return a `Preview` outcome.
 Rename finds every xref that resolves to the page using the index and the resolver.
+`Engine::rename_preview` also adds `outgoing_edits` for the moved page itself.
+It resolves each of the page's xref, include and image targets from its current place with `adoc_lang::definition_at_offset`, and rewrites those whose meaning the move would change (`rewritten`): `relative_path` for folder-relative targets and `antora_id` for resource IDs.
+Attribute-based targets, URLs and pure fragment references are left as written, and the edits belong to the same preview and undo group.
 
 == Language features
 

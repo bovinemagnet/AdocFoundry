@@ -14,6 +14,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - Saves write a temporary file and rename it over the page, keeping its permissions and any symbolic link, so a failed write cannot leave a truncated file.
 - A rename whose file move fails leaves nothing changed: the reference edits already made are undone, files already moved are moved back, and nothing is left in the undo history. Every move is also checked before anything changes, so a destination inside a file is refused at once (#89).
 - Applying a Replace All or rename preview is refused when a file it edits has changed since the preview was made, instead of editing the new text at the old offsets. The confirmation shows the text the edits were computed against, the buffer for an unsaved page (#91).
+- Renaming or moving a page rewrites its own references as well as those that name it, so its xrefs, includes and images keep naming what they named: relative to its new folder in a plain document, or qualified with the old module when an Antora page moves to another module, component or version. A reference from the page to itself now keeps pointing at it (#90).
 
 ## 0.2.0 — 2026-10-25
 
