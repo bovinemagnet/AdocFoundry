@@ -8,6 +8,8 @@ use std::{
     sync::OnceLock,
 };
 
+use adoc_core::FileAccess;
+
 use typst::{
     diag::{FileError, FileResult},
     foundations::{Bytes, Datetime, Duration},
@@ -45,6 +47,7 @@ pub(crate) struct PdfWorld {
     /// Virtual path to the file it stands for.
     files: HashMap<FileId, PathBuf>,
     today: Option<Datetime>,
+    access: FileAccess,
 }
 
 impl PdfWorld {
@@ -55,6 +58,7 @@ impl PdfWorld {
         fonts: FontSet,
         files: &[(String, PathBuf)],
         today: Option<Datetime>,
+        access: FileAccess,
     ) -> Self {
         let book = LazyHash::new(FontBook::from_infos(fonts.infos));
         Self {
@@ -66,6 +70,7 @@ impl PdfWorld {
                 .map(|(virtual_path, path)| (file_id(virtual_path), path.clone()))
                 .collect(),
             today,
+            access,
         }
     }
 }
@@ -99,6 +104,9 @@ impl World for PdfWorld {
             .files
             .get(&id)
             .ok_or_else(|| FileError::NotFound(id.vpath().get_with_slash().into()))?;
+        if !self.access.permits(path) {
+            return Err(FileError::AccessDenied);
+        }
         read(path)
     }
 

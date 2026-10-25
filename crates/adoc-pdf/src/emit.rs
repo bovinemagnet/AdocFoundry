@@ -9,6 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use adoc_core::FileAccess;
+
 use adoc_render::{
     AdmonitionKind, Align, CellStyle, ColumnWidth, DiagramView, ListKind, MediaKind, SourceSpan,
     ViewBlock, ViewCell, ViewImage, ViewInline, ViewKind, ViewTable, ViewTree,
@@ -75,6 +77,8 @@ pub struct EmitOptions {
     pub toc_levels: u8,
     /// Addresses of pages outside the document, for references to them.
     pub page_urls: HashMap<PathBuf, String>,
+    /// Which image files may be read.
+    pub access: FileAccess,
 }
 
 pub(crate) struct Emitter<'a> {
@@ -666,6 +670,13 @@ impl<'a> Emitter<'a> {
                 .push((format!("image not found: {}", image.target), span.clone()));
             return None;
         };
+        if !self.options.access.permits(path) {
+            self.missing.push((
+                format!("image is outside the workspace roots: {}", image.target),
+                span.clone(),
+            ));
+            return None;
+        }
         if let Some(problem) = image_problem(path) {
             self.missing.push((
                 format!("image could not be read: {} ({problem})", image.target),

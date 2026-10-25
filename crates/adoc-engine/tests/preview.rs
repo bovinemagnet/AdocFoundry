@@ -449,3 +449,42 @@ fn asciidoctor_is_the_configured_one_when_set() {
     settings.tools.asciidoctor = directory.path().join("missing").display().to_string();
     assert_eq!(Engine::new(settings).asciidoctor_executable(), None);
 }
+
+#[test]
+fn confined_access_reads_no_include_outside_the_roots() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = adoc_engine::normalize_path(directory.path());
+    let root = outside.join("docs");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(outside.join("outside.adoc"), "OUTSIDE-MARKER\n").unwrap();
+    std::fs::write(root.join("inside.adoc"), "Inside text.\n").unwrap();
+    let page = root.join("page.adoc");
+    std::fs::write(
+        &page,
+        "= Page\n\ninclude::inside.adoc[]\n\ninclude::../outside.adoc[]\n",
+    )
+    .unwrap();
+    let rendered = |access: adoc_engine::FileAccess| {
+        let mut engine = Engine::new(Settings::default());
+        engine.set_file_access(access);
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(WAIT));
+        let id = engine.open(&page).unwrap();
+        adoc_engine::to_text(&engine.render_blocking(id, WAIT).unwrap().view)
+    };
+
+    // The desktop app, the CLI and the language server read what their user can.
+    let any = rendered(adoc_engine::FileAccess::Any);
+    assert!(
+        any.contains("Inside text.") && any.contains("OUTSIDE-MARKER"),
+        "{any}"
+    );
+
+    let confined = rendered(adoc_engine::FileAccess::Within(vec![root.clone()]));
+    assert!(confined.contains("Inside text."), "{confined}");
+    assert!(!confined.contains("OUTSIDE-MARKER"), "{confined}");
+
+    let mut engine = Engine::new(Settings::default());
+    engine.set_file_access(adoc_engine::FileAccess::Within(vec![root.clone()]));
+    assert!(engine.open(&outside.join("outside.adoc")).is_err());
+}

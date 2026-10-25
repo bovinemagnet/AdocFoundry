@@ -83,7 +83,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L4
 |`adoc-mcp`
-|The MCP server. It depends only on `adoc-engine` (with `typst` and `git`) and `adoc-core`. It uses `rmcp` 3.7.0 with only its `server`, `macros` and `transport-io` features, so it has no HTTP transport, which the network rule in `cargo xtask layers` checks. It runs on a current-thread tokio runtime (`rt`, `macros`, `io-std` and `time`), and each tool locks the engine for its call. Path confinement is `paths::confine`. See xref:ROOT:mcp-server.adoc[MCP server].
+|The MCP server. It depends only on `adoc-engine` (with `typst` and `git`) and `adoc-core`. It uses `rmcp` 3.7.0 with only its `server`, `macros` and `transport-io` features, so it has no HTTP transport, which the network rule in `cargo xtask layers` checks. It runs on a current-thread tokio runtime (`rt`, `macros`, `io-std` and `time`), and each tool locks the engine for its call. Path confinement is `paths::confine`, and the engine is confined too through `FileAccess`. See xref:ROOT:mcp-server.adoc[MCP server].
 |===
 
 The application sees `adoc-model` types only through the engine's re-exports.

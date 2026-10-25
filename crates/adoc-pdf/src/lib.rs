@@ -18,6 +18,6 @@ pub use export::{
 };
 
 pub use theme::{
-    load_theme, Color, FontCatalog, FontFaces, FontFile, LoadedTheme, ThemeError, ThemeKeys,
-    ThemeSource, ThemeValue, ThemeWarning,
+    load_theme, load_theme_within, Color, FontCatalog, FontFaces, FontFile, LoadedTheme,
+    ThemeError, ThemeKeys, ThemeSource, ThemeValue, ThemeWarning,
 };

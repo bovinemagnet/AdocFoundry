@@ -28,6 +28,25 @@ AdocFoundry watches the workspace.
 A file changed on disk is re-indexed, and `antora.yml` is re-read when it changes.
 A buffer with unsaved edits is never overwritten: you are told that the file changed on disk and your buffer is kept.
 
+Saving a page whose file changed on disk since you opened or last saved it is refused, so an outside change is never written over without asking.
+Save All still saves every other page and reports the conflict, and Save and Commit stops in the same way.
+A dialog titled "<file> changed on disk" explains that the file changed since you opened or last saved it, and offers two buttons:
+
+Reload from Disk::
+Replaces the buffer with the version on disk, as one undo step, and leaves the page clean.
+Undo brings your edits back.
+
+Overwrite::
+Writes your buffer over the file.
+
+Closing the dialog leaves the page as it was, still unsaved.
+The same choices are in the command palette as Reload from Disk (`document.reload`) and Save, Overwriting the File on Disk (`document.overwrite`); neither has a key.
+A file deleted outside the editor is simply written again by Save.
+
+Every save writes a temporary file in the same directory and renames it over the page, keeping the file's permissions.
+For a symbolic link, the link's target is written and the link is kept.
+A failed write can no longer leave a truncated file.
+
 == The sidebar
 
 The sidebar has three tabs and an outline.
