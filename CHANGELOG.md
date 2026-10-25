@@ -12,6 +12,10 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - Updating in place: from a signed DMG or MSI, the update notice offers Update…, which downloads the package, checks it against the release's new `SHA256SUMS` and its signature against the running app's, installs it and restarts. The AppImage carries update information and its `.zsync` is published for AppImageUpdate (#55).
 - Signed releases: with the project's signing secrets, the release workflow signs the macOS app and tools with a Developer ID and the hardened runtime, notarises and staples the app and the DMG, and signs the Windows executables and MSI with Authenticode through Azure Artifact Signing. The smoke test checks the signatures. Without the secrets, packages build unsigned as before (#54).
 
+### Fixed
+
+- Commands chosen from the command palette that the workspace handles (Export Page to PDF…, Toggle Preview, Save and the rest) did nothing: the palette dispatched them from its own dialog, where the workspace never saw them. Every command now runs once the palette has closed, as the visual editor's already did.
+
 ## 0.2.1 — 2026-10-25
 
 ### Security

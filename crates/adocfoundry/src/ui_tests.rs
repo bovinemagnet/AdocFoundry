@@ -2386,6 +2386,52 @@ fn marks_toggle_in_the_source_editor(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn export_from_the_palette_writes_a_pdf(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n\nExported from the palette.\n").unwrap();
+    let output = directory.path().join("exported.pdf");
+    let mut engine = Engine::new(Settings::default());
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.run_until_parked();
+    cx.simulate_input("Export Page");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let result = finish_export(&app, &events, &output, &mut cx);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(std::fs::read(&output).unwrap().starts_with(b"%PDF-"));
+}
+
+#[gpui::test]
+fn palette_commands_reach_the_workspace(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    let visible = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| app.read(cx).engine.preview_layout().visible)
+    };
+    assert!(!visible(&mut cx));
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.run_until_parked();
+    cx.simulate_input("Toggle Preview");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(
+        visible(&mut cx),
+        "the palette's command reached the workspace"
+    );
+}
+
+#[gpui::test]
 fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
     let text = "= Page\n\nSome plain words.\n";
     let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
