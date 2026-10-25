@@ -20,6 +20,11 @@ pub enum EngineError {
     Settings(String),
     /// A visual edit that cannot be made without changing text the user did not edit.
     Refused(String),
+    /// The file changed on disk since the engine last read or wrote it; saving would lose that
+    /// change. `document.reload` takes the file's version, `document.overwrite` the buffer's.
+    SaveConflict {
+        path: PathBuf,
+    },
 }
 
 impl EngineError {
@@ -45,6 +50,11 @@ impl fmt::Display for EngineError {
             Self::NotFound(message) => formatter.write_str(message),
             Self::Settings(message) => write!(formatter, "settings: {message}"),
             Self::Refused(message) => formatter.write_str(message),
+            Self::SaveConflict { path } => write!(
+                formatter,
+                "{} changed on disk since it was opened or saved; reload it or overwrite it",
+                path.display()
+            ),
         }
     }
 }

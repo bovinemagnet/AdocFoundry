@@ -8,6 +8,11 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - The MCP server now confines what a page reads, not only the paths its tools are given. Before, rendering or exporting a page inside the roots read whatever its includes, images and PDF theme named outside them (such as `include::../outside.adoc[]`). External diagram tools are not run by the MCP server, since they read files of their own.
 
+### Fixed
+
+- Saving no longer writes over a change made to the file outside the editor. The engine refuses with a save conflict; the app asks whether to reload the file's version or overwrite it, and the CLI and MCP server return the conflict. Two commands, Reload from Disk and Save, Overwriting the File on Disk, make the choice explicitly (#88).
+- Saves write a temporary file and rename it over the page, keeping its permissions and any symbolic link, so a failed write cannot leave a truncated file.
+
 ## 0.2.0 — 2026-10-25
 
 - Bold, Italic, Code and Highlight work in the source editor too, with the visual editor's keys (Cmd/Ctrl-B, -I, -E): they wrap the selection in the mark's delimiters, or remove them when the selection is already marked.

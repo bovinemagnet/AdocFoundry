@@ -282,3 +282,131 @@ fn rejects_invalid_arguments_and_edits() {
         .any(|event| matches!(event, EngineEvent::CommandFailed { .. })));
     assert!(engine.save(id).is_err(), "untitled documents have no file");
 }
+
+/// A page on disk, opened and edited without saving.
+fn edited_page(directory: &std::path::Path) -> (Engine, DocumentId, std::path::PathBuf) {
+    let path = adoc_engine::normalize_path(&directory.join("page.adoc"));
+    fs::write(&path, "= Page\n\nOriginal.\n").unwrap();
+    let mut engine = Engine::new(Settings::default());
+    let id = engine.open(&path).unwrap();
+    insert(&mut engine, id, 0, "// edited\n");
+    (engine, id, path)
+}
+
+#[test]
+fn saving_over_a_file_changed_outside_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id, path) = edited_page(directory.path());
+    fs::write(&path, "= Page\n\nChanged outside.\n").unwrap();
+
+    let refused = engine.invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id));
+    assert!(
+        matches!(&refused, Err(adoc_engine::EngineError::SaveConflict { path: conflict }) if *conflict == path),
+        "{refused:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "= Page\n\nChanged outside.\n"
+    );
+    assert!(engine.document(id).unwrap().dirty);
+
+    // Overwriting is a decision the caller makes explicitly.
+    engine
+        .invoke(ids::DOCUMENT_OVERWRITE, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "// edited\n= Page\n\nOriginal.\n"
+    );
+    assert!(!engine.document(id).unwrap().dirty);
+    // Saved, the file is ours again: the next save needs no overwrite.
+    insert(&mut engine, id, 0, "x");
+    engine
+        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
+        .unwrap();
+}
+
+#[test]
+fn reloading_takes_the_file_on_disk_as_one_undo_step() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id, path) = edited_page(directory.path());
+    fs::write(&path, "= Page\n\nChanged outside.\n").unwrap();
+
+    engine
+        .invoke(ids::DOCUMENT_RELOAD, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nChanged outside.\n");
+    assert!(!engine.document(id).unwrap().dirty);
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(text(&engine, id), "// edited\n= Page\n\nOriginal.\n");
+}
+
+#[test]
+fn save_all_saves_the_rest_and_reports_conflicts() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, conflicted, path) = edited_page(directory.path());
+    let other = adoc_engine::normalize_path(&directory.path().join("other.adoc"));
+    fs::write(&other, "= Other\n").unwrap();
+    let other_id = engine.open(&other).unwrap();
+    insert(&mut engine, other_id, 0, "// edited\n");
+    fs::write(&path, "changed outside\n").unwrap();
+
+    let refused = engine.invoke(ids::DOCUMENT_SAVE_ALL, CommandArgs::None);
+    assert!(
+        matches!(&refused, Err(adoc_engine::EngineError::SaveConflict { path: conflict }) if *conflict == path),
+        "{refused:?}"
+    );
+    assert_eq!(fs::read_to_string(&other).unwrap(), "// edited\n= Other\n");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "changed outside\n");
+    assert!(engine.document(conflicted).unwrap().dirty);
+}
+
+#[test]
+fn saving_a_file_deleted_outside_writes_it_again() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id, path) = edited_page(directory.path());
+    fs::remove_file(&path).unwrap();
+    engine
+        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "// edited\n= Page\n\nOriginal.\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn saving_keeps_permissions_and_links_and_leaves_no_temporary_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let real = directory.path().join("real.adoc");
+    fs::write(&real, "= Real\n").unwrap();
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).unwrap();
+    let link = adoc_engine::normalize_path(&directory.path().join("link.adoc"));
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let mut engine = Engine::new(Settings::default());
+    let id = engine.open(&link).unwrap();
+    insert(&mut engine, id, 0, "// edited\n");
+    engine
+        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
+        .unwrap();
+
+    assert!(fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(fs::read_to_string(&real).unwrap(), "// edited\n= Real\n");
+    assert_eq!(
+        fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+        0o640
+    );
+    let names: Vec<_> = fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+}
