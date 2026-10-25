@@ -1,10 +1,9 @@
 //! Every path a tool is given must lie inside a workspace root, lexically and once links are
 //! followed, or the call is refused.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+
+use adoc_engine::FileAccess;
 
 /// `path`, absolute or relative to the first root, normalised; an error when it lies outside
 /// every root, or reaches outside through a symbolic link.
@@ -19,20 +18,10 @@ pub fn confine(roots: &[PathBuf], path: &str) -> Result<PathBuf, String> {
             .join(given)
     };
     let normal = adoc_engine::normalize_path(&joined);
-    let refused = || format!("{path} is outside the workspace roots");
-    let root = roots
-        .iter()
-        .find(|root| normal.starts_with(root))
-        .ok_or_else(refused)?;
-    // Links are followed only for the part that exists; the rest is checked lexically above.
-    let mut existing = normal.as_path();
-    while !existing.exists() {
-        existing = existing.parent().ok_or_else(refused)?;
-    }
-    let real = fs::canonicalize(existing).map_err(|error| format!("{path}: {error}"))?;
-    let real_root = fs::canonicalize(root).map_err(|error| format!("{path}: {error}"))?;
-    if !real.starts_with(&real_root) {
-        return Err(refused());
+    // The engine checks its own reads the same way, so a tool's path and what the page it
+    // names reads are held to one rule.
+    if !FileAccess::Within(roots.to_vec()).permits(&normal) {
+        return Err(format!("{path} is outside the workspace roots"));
     }
     Ok(normal)
 }

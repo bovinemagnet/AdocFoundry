@@ -602,7 +602,7 @@ impl Engine {
             .or_else(|| attributes.get("pdf-theme").cloned())
             .unwrap_or_else(|| self.settings.pdf.theme.clone());
         let source = ThemeSource::named(&name, themes_dir.as_deref());
-        adoc_pdf::load_theme(&source).map_err(|error| error.to_string())
+        adoc_pdf::load_theme_within(&source, &self.file_access).map_err(|error| error.to_string())
     }
 
     fn export_options(
@@ -659,6 +659,7 @@ impl Engine {
             site_url,
             page_urls,
             date: None,
+            access: self.file_access.clone(),
         }
     }
 

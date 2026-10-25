@@ -373,3 +373,86 @@ fn paths_outside_the_roots_are_refused() {
     assert!(resource.get("error").is_some(), "{resource}");
     client.stop();
 }
+
+/// A workspace root `docs` with `page.adoc`, beside files outside it that the page names.
+fn escaping_workspace(page: &str) -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = adoc_engine::normalize_path(directory.path());
+    let root = outside.join("docs");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(outside.join("outside.adoc"), "OUTSIDE-MARKER\n").unwrap();
+    std::fs::write(outside.join("theme.yml"), "extends: default\n").unwrap();
+    std::fs::copy(
+        fixture("pdf/reference/images/pipeline.svg"),
+        outside.join("outside.svg"),
+    )
+    .unwrap();
+    std::fs::write(root.join("page.adoc"), page).unwrap();
+    (directory, root)
+}
+
+#[test]
+fn includes_stay_inside_the_roots() {
+    let (_directory, root) = escaping_workspace("= Page\n\ninclude::../outside.adoc[]\n");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.join("../outside.adoc"), root.join("link.adoc")).unwrap();
+    let mut client = Client::start(&root, false);
+
+    let rendered = client
+        .call("render_page", json!({ "path": "page.adoc" }))
+        .unwrap();
+    let text = rendered["content"].as_str().unwrap();
+    assert!(!text.contains("OUTSIDE-MARKER"), "{text}");
+
+    // Through a link inside the root, too.
+    #[cfg(unix)]
+    {
+        std::fs::write(root.join("page.adoc"), "= Page\n\ninclude::link.adoc[]\n").unwrap();
+        let rendered = client
+            .call("render_page", json!({ "path": "page.adoc" }))
+            .unwrap();
+        let text = rendered["content"].as_str().unwrap();
+        assert!(!text.contains("OUTSIDE-MARKER"), "{text}");
+    }
+    client.stop();
+}
+
+#[test]
+fn pdf_export_reads_nothing_outside_the_roots() {
+    let (_directory, root) =
+        escaping_workspace("= Page\n\nimage::../outside.svg[]\n\ninclude::../outside.adoc[]\n");
+    let mut client = Client::start(&root, true);
+
+    let refused = client.call(
+        "export_pdf",
+        json!({
+            "path": "page.adoc",
+            "output": "page.pdf",
+            "theme": root.join("../theme.yml").to_string_lossy(),
+        }),
+    );
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|error| error.contains("outside")),
+        "the theme outside the roots is refused: {refused:?}"
+    );
+
+    let exported = client
+        .call(
+            "export_pdf",
+            json!({ "path": "page.adoc", "output": "page.pdf" }),
+        )
+        .unwrap();
+    let warnings = exported["warnings"].to_string();
+    assert!(
+        warnings.contains("outside"),
+        "the image is refused: {warnings}"
+    );
+    let pdf = std::fs::read(root.join("page.pdf")).unwrap();
+    assert!(
+        !pdf.windows(14).any(|window| window == b"OUTSIDE-MARKER"),
+        "the include is not in the PDF"
+    );
+    client.stop();
+}

@@ -7,6 +7,8 @@ use std::{
     sync::OnceLock,
 };
 
+use adoc_core::FileAccess;
+
 use typst::{
     foundations::Bytes,
     text::{Font, FontInfo, FontStyle, FontVariant, FontWeight},
@@ -144,7 +146,11 @@ struct Style {
 
 /// The fonts `theme` names. Relative paths resolve against `dirs` in order (asciidoctor-pdf's
 /// `pdf-fontsdir`), then the theme's directory; a file that cannot be read is a warning.
-pub(crate) fn font_set(theme: &LoadedTheme, dirs: &[PathBuf]) -> (FontSet, Vec<String>) {
+pub(crate) fn font_set(
+    theme: &LoadedTheme,
+    dirs: &[PathBuf],
+    access: &FileAccess,
+) -> (FontSet, Vec<String>) {
     let mut set = FontSet::default();
     let mut warnings = Vec::new();
     for (family, faces) in &theme.fonts {
@@ -179,7 +185,7 @@ pub(crate) fn font_set(theme: &LoadedTheme, dirs: &[PathBuf]) -> (FontSet, Vec<S
             ),
         ] {
             let Some(file) = file else { continue };
-            match load(file, dirs, theme.dir.as_deref()) {
+            match load(file, dirs, theme.dir.as_deref(), access) {
                 Some(font) => set.push(family, style, font),
                 None => warnings.push(format!(
                     "font {} for {family} not found",
@@ -244,13 +250,17 @@ pub(crate) fn font_set(theme: &LoadedTheme, dirs: &[PathBuf]) -> (FontSet, Vec<S
 
 /// Each catalogue family's line gap (`hhea.lineGap`) as a fraction of the font size, from its
 /// normal face. Prawn's line height includes it; Typst's does not, so the template adds it.
-pub(crate) fn line_gaps(theme: &LoadedTheme, dirs: &[PathBuf]) -> Vec<(String, f64)> {
+pub(crate) fn line_gaps(
+    theme: &LoadedTheme,
+    dirs: &[PathBuf],
+    access: &FileAccess,
+) -> Vec<(String, f64)> {
     let mut gaps = Vec::new();
     for (family, faces) in &theme.fonts {
         let Some(file) = faces.normal.as_ref().or(faces.bold.as_ref()) else {
             continue;
         };
-        let gap = load(file, dirs, theme.dir.as_deref())
+        let gap = load(file, dirs, theme.dir.as_deref(), access)
             .and_then(|font| line_gap(font.data()))
             .unwrap_or(0.0);
         if gap > 0.0 {
@@ -286,10 +296,15 @@ fn line_gap(data: &[u8]) -> Option<f64> {
     (units > 0).then(|| f64::from(gap) / f64::from(units))
 }
 
-fn load(file: &FontFile, dirs: &[PathBuf], theme_dir: Option<&Path>) -> Option<Font> {
+fn load(
+    file: &FontFile,
+    dirs: &[PathBuf],
+    theme_dir: Option<&Path>,
+    access: &FileAccess,
+) -> Option<Font> {
     match file {
         FontFile::Bundled(name) => bundled(name),
-        FontFile::Path(path) if path.is_absolute() => read(path),
+        FontFile::Path(path) if path.is_absolute() => read(path, access),
         FontFile::Path(path) => {
             for dir in dirs {
                 if dir.as_os_str() == "GEM_FONTS_DIR" {
@@ -298,11 +313,11 @@ fn load(file: &FontFile, dirs: &[PathBuf], theme_dir: Option<&Path>) -> Option<F
                     }
                     continue;
                 }
-                if let Some(font) = read(&dir.join(path)) {
+                if let Some(font) = read(&dir.join(path), access) {
                     return Some(font);
                 }
             }
-            if let Some(font) = theme_dir.and_then(|dir| read(&dir.join(path))) {
+            if let Some(font) = theme_dir.and_then(|dir| read(&dir.join(path), access)) {
                 return Some(font);
             }
             path.to_str().and_then(bundled)
@@ -310,7 +325,7 @@ fn load(file: &FontFile, dirs: &[PathBuf], theme_dir: Option<&Path>) -> Option<F
     }
 }
 
-fn read(path: &Path) -> Option<Font> {
-    let data = std::fs::read(path).ok()?;
+fn read(path: &Path, access: &FileAccess) -> Option<Font> {
+    let data = access.read(path).ok()?;
     Font::new(Bytes::new(data), 0)
 }

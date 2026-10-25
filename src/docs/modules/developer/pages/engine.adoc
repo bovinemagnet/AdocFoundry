@@ -490,6 +490,19 @@ It opens the same resource id in the chosen version, in the workspace root that 
 `Settings` loads the user and workspace TOML layers described in xref:ROOT:settings.adoc[Settings].
 The UI never reads the settings file itself.
 
+== File access
+
+`adoc_core::FileAccess` is the policy for which files the engine may read.
+It has two variants: `Any`, the default, and `Within(roots)`.
+`permits(path)` checks the path lexically, then checks the part of it that exists with symbolic links followed.
+
+The engine holds one policy (`Engine::set_file_access` and `Engine::file_access`) and applies it when it opens a document, to includes (`SnapshotIncludes`), and to the pages an export reads.
+`adoc-pdf` receives it through `PdfOptions::access`.
+When the policy is confined, the engine chooses `Diagrams::in_process`, so only Mermaid renders and Graphviz, PlantUML and D2 are not run, as they can read files themselves.
+
+`adoc-mcp` sets `FileAccess::Within(roots)` before it opens the workspace.
+The application, `adocfoundry-cli` and `adoc-ls` leave it at `Any`.
+
 == Search, replace and rename previews
 
 Multi-file changes are computed first as an `EditPreview`: a list of file moves and per-file edits.

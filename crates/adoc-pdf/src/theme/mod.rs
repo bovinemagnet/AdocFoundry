@@ -12,6 +12,8 @@ use std::{
     sync::OnceLock,
 };
 
+use adoc_core::FileAccess;
+
 use regex::Regex;
 
 use value::{evaluate_math, to_color};
@@ -204,7 +206,18 @@ pub struct LoadedTheme {
 
 /// Loads a theme and everything it extends.
 pub fn load_theme(source: &ThemeSource) -> Result<LoadedTheme, ThemeError> {
-    let mut loader = Loader::default();
+    load_theme_within(source, &FileAccess::Any)
+}
+
+/// Loads a theme and everything it extends, reading only the files `access` permits.
+pub fn load_theme_within(
+    source: &ThemeSource,
+    access: &FileAccess,
+) -> Result<LoadedTheme, ThemeError> {
+    let mut loader = Loader {
+        access: access.clone(),
+        ..Loader::default()
+    };
     // A theme starts from nothing but the base font size, as in asciidoctor-pdf.
     loader
         .keys
@@ -279,6 +292,8 @@ struct Loader {
     loaded: HashSet<ThemeFile>,
     /// The file being read, for warnings.
     current: Option<PathBuf>,
+    /// Which theme files may be read.
+    access: FileAccess,
 }
 
 /// The theme categories asciidoctor-pdf's converter reads.
@@ -445,10 +460,13 @@ impl Loader {
                 (text, None)
             }
             ThemeFile::Path(path) => {
-                let text = std::fs::read_to_string(path).map_err(|error| ThemeError::Read {
-                    path: path.clone(),
-                    message: error.to_string(),
-                })?;
+                let text = self
+                    .access
+                    .read_to_string(path)
+                    .map_err(|error| ThemeError::Read {
+                        path: path.clone(),
+                        message: error.to_string(),
+                    })?;
                 // Hex colours are quoted so YAML keeps them as written, as asciidoctor-pdf does
                 // for every theme outside its own directory.
                 (

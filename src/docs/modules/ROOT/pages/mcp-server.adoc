@@ -26,6 +26,16 @@ See xref:settings.adoc[Settings].
 By default the server only reads.
 The write tools are offered only with `--allow-write`.
 
+The server also keeps every file it reads on a tool's behalf inside the roots, not only the paths a tool is given.
+This covers the files a page includes (nested includes, and includes through a symbolic link that leads outside the roots), the images, theme and fonts of a PDF export, and any other file the export asks for.
+A refused include is left out of the page.
+A refused image is shown as its alt text, and the export reports a warning such as "image is outside the workspace roots".
+A refused PDF theme, or a theme that `extends` one, fails the export with an error saying the file is outside the workspace roots.
+
+Graphviz, PlantUML and D2 diagrams are not rendered, because those tools can read files themselves.
+Mermaid diagrams still render, as they are drawn inside the server.
+The application, `adocfoundry-cli` and `adoc-ls` are not restricted in this way.
+
 == Configuring a client
 
 Most MCP clients take a list of servers as JSON.

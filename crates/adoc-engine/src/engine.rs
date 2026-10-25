@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use adoc_core::SourceRange;
+use adoc_core::{FileAccess, SourceRange};
 use adoc_index::normalize_path;
 use adoc_lang::WorkspaceState;
 use adoc_parser::parse;
@@ -41,6 +41,8 @@ pub struct Engine {
     pub(crate) active: Option<DocumentId>,
     pub(crate) subscribers: Vec<Sender<EngineEvent>>,
     pub(crate) roots: Vec<PathBuf>,
+    /// Which files the engine reads on the front end's behalf; see [`Engine::set_file_access`].
+    pub(crate) file_access: FileAccess,
     pub(crate) workspace: WorkspaceState,
     pub(crate) worker_sender: Sender<WorkerMessage>,
     pub(crate) worker_receiver: Receiver<WorkerMessage>,
@@ -101,6 +103,7 @@ impl Engine {
             active: None,
             subscribers: Vec::new(),
             roots: Vec::new(),
+            file_access: FileAccess::Any,
             workspace: WorkspaceState::new(),
             worker_sender,
             worker_receiver,
@@ -130,7 +133,10 @@ impl Engine {
             self.set_active(id);
             return Ok(id);
         }
-        let text = fs::read_to_string(&path).map_err(|error| EngineError::io(&path, error))?;
+        let text = self
+            .file_access
+            .read_to_string(&path)
+            .map_err(|error| EngineError::io(&path, error))?;
         let id = self.insert_document(path, &text, false);
         self.set_active(id);
         Ok(id)
