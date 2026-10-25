@@ -3,7 +3,8 @@
 //! Every crate under `crates/` must appear in [`LAYERS`]. A crate may depend only on crates in a
 //! lower layer, except for the same-layer pairs listed in [`SAME_LAYER_ALLOWED`]. UI framework
 //! crates are confined to the app crate and LSP crates to the language server, and nothing but
-//! the app may reach a network client, directly or through its dependencies.
+//! the app may reach a network client, directly or through its dependencies. The MCP server
+//! may listen for HTTP, building only the server side of the HTTP crates.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -68,15 +69,22 @@ pub const NETWORK_CRATES: &[&str] = &[
     "reqwest",
     "gpui-pre-reqwest",
     "ureq",
-    "hyper",
     "isahc",
     "curl",
     "attohttpc",
     "surf",
 ];
 
+/// HTTP crates with a server side and a client side. Reaching one is reaching a client, except
+/// from a crate in [`NETWORK_SERVER_ALLOWED`] whose own build leaves out the client side.
+pub const HTTP_CRATES: &[&str] = &["hyper", "hyper-util"];
+
 /// Workspace crates that may reach a network client.
 pub const NETWORK_ALLOWED: &[&str] = &["adocfoundry"];
+
+/// Workspace crates that may listen for HTTP through [`HTTP_CRATES`], without their client
+/// features: the MCP server's Streamable HTTP transport.
+pub const NETWORK_SERVER_ALLOWED: &[&str] = &["adoc-mcp"];
 
 /// External AsciiDoc parser crates, permitted only in `adoc-dom` so the parser stays swappable.
 pub const PARSER_CRATES: &[&str] = &["acdc-parser", "asciidoc-parser"];
@@ -216,7 +224,8 @@ pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<Strin
 
 /// Every workspace crate outside [`NETWORK_ALLOWED`] that reaches a network client through
 /// normal or build dependencies, from `cargo metadata`'s resolved graph. Dev-dependencies are
-/// not shipped and are not followed.
+/// not shipped and are not followed. A crate in [`NETWORK_SERVER_ALLOWED`] may reach
+/// [`HTTP_CRATES`]; [`server_violations`] checks that it builds no client side of them.
 pub fn network_violations(metadata: &serde_json::Value) -> Vec<String> {
     let names: BTreeMap<&str, &str> = metadata["packages"]
         .as_array()
@@ -257,6 +266,7 @@ pub fn network_violations(metadata: &serde_json::Value) -> Vec<String> {
         if NETWORK_ALLOWED.contains(&name) {
             continue;
         }
+        let server = NETWORK_SERVER_ALLOWED.contains(&name);
         let mut seen = BTreeSet::new();
         let mut stack = vec![member];
         let mut reached = BTreeSet::new();
@@ -264,7 +274,9 @@ pub fn network_violations(metadata: &serde_json::Value) -> Vec<String> {
             if !seen.insert(id) {
                 continue;
             }
-            if let Some(dependency) = names.get(id).filter(|name| NETWORK_CRATES.contains(name)) {
+            if let Some(dependency) = names.get(id).filter(|name| {
+                NETWORK_CRATES.contains(name) || (!server && HTTP_CRATES.contains(name))
+            }) {
                 reached.insert(*dependency);
             }
             stack.extend(dependencies.get(id).into_iter().flatten());
@@ -276,6 +288,52 @@ pub fn network_violations(metadata: &serde_json::Value) -> Vec<String> {
         );
     }
     violations
+}
+
+/// The feature nodes, such as `hyper feature "server"`, of what `cargo build -p <package>`
+/// compiles on any target, from `cargo tree`; `cargo metadata` unifies features over the
+/// workspace, where the app's client turns on hyper's client side.
+fn build_features(root: &Path, package: &str) -> Result<BTreeSet<String>, String> {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .current_dir(root)
+        .args(["tree", "--locked", "-p", package, "--target", "all"])
+        .args([
+            "-e",
+            "features,normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}",
+        ])
+        .output()
+        .map_err(|error| format!("cargo tree: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo tree: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| line.trim_end_matches(" (*)").to_owned())
+        .filter(|line| line.contains(" feature \""))
+        .collect())
+}
+
+/// A violation for each client feature of [`HTTP_CRATES`] that `package`, a crate allowed to
+/// listen for HTTP, builds: `client` and every `client-…` feature.
+fn server_violations(package: &str, features: &BTreeSet<String>) -> Vec<String> {
+    features
+        .iter()
+        .filter(|node| {
+            node.split_once(" feature \"")
+                .is_some_and(|(name, feature)| {
+                    HTTP_CRATES.contains(&name) && feature.starts_with("client")
+                })
+        })
+        .map(|node| format!("{package} builds the HTTP client side ({node}); only adocfoundry may"))
+        .collect()
 }
 
 /// The workspace's resolved dependency graph, from `cargo metadata`.
@@ -356,6 +414,9 @@ pub fn run(root: &Path) -> Result<Vec<String>, String> {
         violations.extend(check_sources(&manifest.name, &sources));
     }
     violations.extend(network_violations(&cargo_metadata(root)?));
+    for package in NETWORK_SERVER_ALLOWED {
+        violations.extend(server_violations(package, &build_features(root, package)?));
+    }
     violations.extend(lean_violations(&default_build_packages(root, "adoc-ls")?));
     Ok(violations)
 }
@@ -522,6 +583,44 @@ libc = "=0.2.0"
             network_violations(&graph),
             ["adoc-engine reaches network client ureq; only adocfoundry may"]
         );
+    }
+
+    #[test]
+    fn http_servers_are_allowed_only_in_adoc_mcp() {
+        let graph = metadata(
+            &["adoc-mcp", "adoc-engine"],
+            &[
+                ("adoc-mcp", &[("hyper-util", None)]),
+                ("hyper-util", &[("hyper", None)]),
+                ("hyper", &[]),
+                ("adoc-engine", &[("hyper", None)]),
+            ],
+        );
+        assert_eq!(
+            network_violations(&graph),
+            ["adoc-engine reaches network client hyper; only adocfoundry may"]
+        );
+
+        let server: BTreeSet<String> = [
+            r#"hyper feature "server""#,
+            r#"hyper feature "http1""#,
+            r#"hyper-util feature "tokio""#,
+        ]
+        .map(str::to_owned)
+        .into();
+        assert_eq!(server_violations("adoc-mcp", &server), Vec::<String>::new());
+        let client: BTreeSet<String> = [
+            r#"hyper feature "client""#,
+            r#"hyper-util feature "client-legacy""#,
+        ]
+        .map(str::to_owned)
+        .into();
+        assert_eq!(server_violations("adoc-mcp", &client).len(), 2);
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let built = build_features(&root, "adoc-mcp").unwrap();
+        assert!(built.contains(r#"hyper feature "server""#), "{built:?}");
+        assert_eq!(server_violations("adoc-mcp", &built), Vec::<String>::new());
     }
 
     #[test]

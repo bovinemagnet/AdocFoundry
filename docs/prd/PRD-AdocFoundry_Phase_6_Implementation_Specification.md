@@ -216,6 +216,10 @@ Implementation notes, as each package lands:
 
 | Area | Specification | Implementation | Why |
 |---|---|---|---|
+| HTTP crates (WP 6.2) | `hyper` and `hyper-util` with server and HTTP/1 features; no new crate in the lock file | `hyper` (`server`, `http1`), `hyper-util` (`server`, `http1`, `tokio`), with `http`, `http-body-util`, `bytes` and `tokio-util` already in the tree; rmcp's streamable-HTTP feature brings `sse-stream`, `tokio-stream` and `httpdate`, and tokio's `signal` feature `signal-hook-registry` | rmcp's HTTP server side needs them; all are MIT or Apache-2.0 and pass `cargo deny`. rmcp's `StreamableHttpService::handle` is public, so no tower glue is needed. |
+| The layering split (WP 6.2) | `hyper` allowed in `adoc-mcp` without a `client` feature of hyper or hyper-util | `HTTP_CRATES` (`hyper`, `hyper-util`) count as clients except from `NETWORK_SERVER_ALLOWED`; `server_violations` reads `cargo tree -p adoc-mcp --target all -e features` and refuses `client` and every `client-…` feature | `cargo metadata` unifies features over the workspace, and on wasm the app's `gpui-pre-reqwest` turns on hyper's client side. |
+| The token (WP 6.2) | 32 random bytes in hex, printed to standard error | from `getrandom` 0.3.4 (already in the tree), printed as `adoc-mcp: token <token>` only when generated; a token from `ADOC_MCP_TOKEN` is never printed. Unknown paths get 404 before the token is checked | The user chose that token, so echoing it to a log would only leak it. |
+| HTTP tests (WP 6.2) | — | `tests/http.rs` speaks HTTP/1.1 over a `TcpStream`, reading chunked server-sent events | No HTTP client enters even the dev-dependencies. |
 
 ## 10. Implementation Sequence
 
