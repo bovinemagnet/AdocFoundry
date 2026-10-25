@@ -117,7 +117,8 @@ jobs:
       # The executables are signed before the MSI and the zips take them.
       - name: Sign the executables
         if: env.SIGNED == 'true'
-        uses: azure/artifact-signing-action@v2.0.0
+        # Pinned to a commit: the action handles the signing credentials.
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -136,7 +137,8 @@ jobs:
         run: cargo wix -p adocfoundry --no-build --nocapture --target ${{ matrix.target }} --output dist/
       - name: Sign the MSI
         if: env.SIGNED == 'true'
-        uses: azure/artifact-signing-action@v2.0.0
+        # Pinned to a commit: the action handles the signing credentials.
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
