@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Renaming or moving a page rewrites its own references as well as those that name it, so its xrefs, includes and images keep naming what they named: relative to its new folder in a plain document, or qualified with the old module when an Antora page moves to another module, component or version. A reference from the page to itself now keeps pointing at it (#90).
+
 ## 0.2.0 — 2026-10-25
 
 - Bold, Italic, Code and Highlight work in the source editor too, with the visual editor's keys (Cmd/Ctrl-B, -I, -E): they wrap the selection in the mark's delimiters, or remove them when the selection is already marked.

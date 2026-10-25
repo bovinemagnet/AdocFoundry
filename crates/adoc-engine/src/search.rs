@@ -14,6 +14,7 @@ use std::{
 use adoc_antora::{parse_resource_id, AntoraContext, AntoraCoordinate, ResourceFamily};
 use adoc_core::{LineIndex, SourceRange};
 use adoc_index::normalize_path;
+use adoc_lang::DefinitionTarget;
 use adoc_parser::parse;
 use regex::{Regex, RegexBuilder};
 
@@ -348,6 +349,10 @@ impl Engine {
 
         let mut edits: BTreeMap<PathBuf, Vec<TextEdit>> = BTreeMap::new();
         for location in adoc_lang::references_to(&self.workspace, &from) {
+            // The page's references to itself are rewritten with its own, below.
+            if location.path == from {
+                continue;
+            }
             let Some(file) = self.workspace.index.file(&location.path) else {
                 continue;
             };
@@ -368,6 +373,9 @@ impl Engine {
             }
         }
         for location in adoc_lang::references::includes_of(&self.workspace, &from) {
+            if location.path == from {
+                continue;
+            }
             let target = location.include.target.as_str();
             // A target written through an attribute is left as written.
             if target.contains('{') {
@@ -402,6 +410,10 @@ impl Engine {
                     .push(TextEdit::new(range, replacement));
             }
         }
+        let outgoing = self.outgoing_edits(&from, &to);
+        if !outgoing.is_empty() {
+            edits.entry(from.clone()).or_default().extend(outgoing);
+        }
         for file_edits in edits.values_mut() {
             file_edits.sort_by_key(|edit| edit.range.start);
         }
@@ -414,6 +426,112 @@ impl Engine {
             vec![FileMove { from, to }],
             edits,
         ))
+    }
+
+    /// The edits that keep the moved page's own xrefs, includes and images naming what they
+    /// named, once it is at `to`: targets relative to the page's directory change with the
+    /// directory, and Antora resource ids with the module, component or version.
+    fn outgoing_edits(&self, from: &Path, to: &Path) -> Vec<TextEdit> {
+        let Some(file) = self.workspace.index.file(from) else {
+            return Vec::new();
+        };
+        let document = &file.document;
+        let text = document.text.as_str();
+        let move_ = Move {
+            from,
+            to,
+            old: self.workspace.antora.context_for_path(from),
+            new: self.workspace.antora.context_for_path(to),
+        };
+        let mut targets: Vec<(SourceRange, &str, Written)> = Vec::new();
+        for reference in &document.references {
+            if reference.kind != adoc_core::ReferenceKind::Xref {
+                continue;
+            }
+            if let Some((range, part)) = xref_file_part(text, reference.range) {
+                targets.push((range, part, Written::Xref));
+            }
+        }
+        for include in &document.includes {
+            if let Some(range) = include_target_range(text, include.range) {
+                targets.push((range, include.target.as_str(), Written::Include));
+            }
+        }
+        for image in &document.images {
+            if let Some(range) = image_target_range(text, image.range) {
+                targets.push((range, image.target.as_str(), Written::Image));
+            }
+        }
+        let mut edits = Vec::new();
+        for (range, written, kind) in targets {
+            // A pure `#fragment`, a target written through an attribute, and a URL are left.
+            if written.is_empty() || written.contains('{') || written.contains("://") {
+                continue;
+            }
+            let resolved =
+                match adoc_lang::definition_at_offset(&self.workspace, from, text, range.start) {
+                    Some(DefinitionTarget::Location(location)) => location.path,
+                    Some(DefinitionTarget::External(path)) => path,
+                    None => continue,
+                };
+            let target = if resolved == from {
+                to.to_path_buf()
+            } else {
+                resolved
+            };
+            if let Some(replacement) = self.rewritten(&move_, written, &target, kind) {
+                if replacement != written {
+                    edits.push(TextEdit::new(range, replacement));
+                }
+            }
+        }
+        edits.sort_by_key(|edit| edit.range.start);
+        edits
+    }
+
+    /// What `written` must become to name `target` from the page's new place, or `None` when
+    /// the move does not change what it names.
+    fn rewritten(
+        &self,
+        move_: &Move<'_>,
+        written: &str,
+        target: &Path,
+        kind: Written,
+    ) -> Option<String> {
+        let relative = move_.old.is_none()
+            || written.starts_with("./")
+            || written.starts_with("../")
+            || (kind == Written::Include && !written.contains('$'));
+        if relative {
+            let (old_dir, new_dir) = (move_.from.parent()?, move_.to.parent()?);
+            if old_dir == new_dir {
+                return None;
+            }
+            let path = relative_path(new_dir, target);
+            return Some(if written.starts_with("./") && !path.starts_with("..") {
+                format!("./{path}")
+            } else {
+                path
+            });
+        }
+        let (old, new) = (move_.old.as_ref()?, move_.new.as_ref()?);
+        if (&old.component, &old.version, &old.module)
+            == (&new.component, &new.version, &new.module)
+        {
+            return None;
+        }
+        let family = match kind {
+            Written::Xref => ResourceFamily::Page,
+            Written::Image => ResourceFamily::Image,
+            Written::Include => parse_resource_id(written).ok()?.family?,
+        };
+        let coordinate = self.coordinate_in(target, family)?;
+        let id = antora_id(new, &coordinate, written);
+        Some(if kind == Written::Include {
+            with_family(id, family)
+        } else {
+            id
+        })
     }
 
     /// The page coordinate a file at `path` would have, if it lies in a module's `pages`.
@@ -460,6 +578,31 @@ fn include_target_range(text: &str, directive: SourceRange) -> Option<SourceRang
     let after_prefix = source.strip_prefix("include::")?;
     let target = &after_prefix[..after_prefix.find('[')?];
     let start = directive.start + "include::".len();
+    Some(SourceRange::new(start, start + target.len()))
+}
+
+/// A page being moved, and the Antora contexts of where it is and where it goes.
+struct Move<'a> {
+    from: &'a Path,
+    to: &'a Path,
+    old: Option<AntoraContext>,
+    new: Option<AntoraContext>,
+}
+
+/// Which macro a target is written in.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Written {
+    Xref,
+    Include,
+    Image,
+}
+
+/// The range of the target in `text[directive]`, an `image::target[…]` line.
+fn image_target_range(text: &str, directive: SourceRange) -> Option<SourceRange> {
+    let source = text.get(directive.start..directive.end)?;
+    let after_prefix = source.strip_prefix("image::")?;
+    let target = &after_prefix[..after_prefix.find('[')?];
+    let start = directive.start + "image::".len();
     Some(SourceRange::new(start, start + target.len()))
 }
 

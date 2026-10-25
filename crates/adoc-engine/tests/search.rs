@@ -366,3 +366,128 @@ fn rename_rewrites_includes() {
     let range = file.edits[0].range;
     assert_eq!(&text[range.start..range.end], "shared.adoc");
 }
+
+/// Writes each `(path, text)` under `root`.
+fn write_files(root: &Path, files: &[(&str, &str)]) {
+    for (path, text) in files {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+}
+
+fn rename_and_apply(engine: &mut Engine, from: &Path, to: &Path) {
+    let id = engine.open(from).unwrap();
+    let preview = preview(
+        engine
+            .invoke(
+                ids::PAGE_RENAME,
+                CommandArgs::Rename {
+                    id,
+                    new_path: to.to_path_buf(),
+                },
+            )
+            .unwrap(),
+    );
+    engine
+        .invoke(
+            ids::WORKSPACE_APPLY_PREVIEW,
+            CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+        )
+        .unwrap();
+}
+
+fn diagnostics_of(engine: &Engine, path: &Path) -> Vec<String> {
+    engine
+        .workspace_diagnostics()
+        .into_iter()
+        .filter(|(file, _)| file == path)
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .map(|diagnostic| format!("{:?}: {}", diagnostic.code, diagnostic.message))
+        .collect()
+}
+
+#[test]
+fn moving_a_plain_page_keeps_its_own_references_resolving() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    write_files(
+        &root,
+        &[
+            (
+                "index.adoc",
+                "= Index\n\n[[top]]\nSee xref:child.adoc[Child] and xref:index.adoc#top[the top].\n\ninclude::part.adoc[]\n\nimage::pic.svg[]\n",
+            ),
+            ("child.adoc", "= Child\n"),
+            ("part.adoc", "Part.\n"),
+            ("pic.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n"),
+        ],
+    );
+    let mut engine = open_workspace(&root);
+    let moved = root.join("guides/index.adoc");
+    rename_and_apply(&mut engine, &root.join("index.adoc"), &moved);
+
+    let text = current_text(&engine, &moved);
+    assert!(text.contains("xref:../child.adoc[Child]"), "{text}");
+    assert!(
+        text.contains("xref:index.adoc#top[the top]"),
+        "a reference to itself: {text}"
+    );
+    assert!(text.contains("include::../part.adoc[]"), "{text}");
+    assert!(text.contains("image::../pic.svg[]"), "{text}");
+    assert_eq!(diagnostics_of(&engine, &moved), Vec::<String>::new());
+}
+
+/// An Antora component `docs` with modules `ROOT` and `api`.
+fn antora_component() -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    write_files(
+        &root,
+        &[
+            ("antora.yml", "name: docs\nversion: ~\n"),
+            (
+                "modules/ROOT/pages/page.adoc",
+                "= Page\n\nSee xref:other.adoc[Other].\n\ninclude::partial$p.adoc[]\n\nimage::pic.svg[]\n",
+            ),
+            ("modules/ROOT/pages/other.adoc", "= Other\n"),
+            ("modules/ROOT/partials/p.adoc", "Partial.\n"),
+            ("modules/ROOT/images/pic.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n"),
+            ("modules/api/pages/api.adoc", "= API\n"),
+        ],
+    );
+    (directory, root)
+}
+
+fn current_text(engine: &Engine, path: &Path) -> String {
+    let id = engine.document_for_path(path).unwrap();
+    engine.document(id).unwrap().text.to_string()
+}
+
+#[test]
+fn moving_an_antora_page_to_another_module_qualifies_its_references() {
+    let (_directory, root) = antora_component();
+    let mut engine = open_workspace(&root);
+    let moved = root.join("modules/api/pages/page.adoc");
+    rename_and_apply(
+        &mut engine,
+        &root.join("modules/ROOT/pages/page.adoc"),
+        &moved,
+    );
+
+    let text = current_text(&engine, &moved);
+    assert!(text.contains("xref:ROOT:other.adoc[Other]"), "{text}");
+    assert!(text.contains("include::ROOT:partial$p.adoc[]"), "{text}");
+    assert!(text.contains("image::ROOT:pic.svg[]"), "{text}");
+}
+
+#[test]
+fn moving_an_antora_page_within_its_module_changes_nothing_in_it() {
+    let (_directory, root) = antora_component();
+    let mut engine = open_workspace(&root);
+    let page = root.join("modules/ROOT/pages/page.adoc");
+    let before = fs::read_to_string(&page).unwrap();
+    let moved = root.join("modules/ROOT/pages/guides/page.adoc");
+    rename_and_apply(&mut engine, &page, &moved);
+    assert_eq!(current_text(&engine, &moved), before);
+}
