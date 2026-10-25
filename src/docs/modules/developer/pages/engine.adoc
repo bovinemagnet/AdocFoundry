@@ -382,6 +382,14 @@ A `notify` watcher, with a 250 ms debounce, feeds the pump.
 * A modified `antora.yml` reloads that component version, and diagnostics are re-run for affected files.
 * A directory created or removed under a module re-indexes the root.
 
+Saving checks the same thing.
+`Engine::save` returns `EngineError::SaveConflict { path }` when the file's contents differ from the hash of what the engine last read or wrote (`saved_hash`), and writes nothing.
+`save_all` saves the other documents and reports the conflict, and `git.save_and_commit` stops at it.
+`Engine::overwrite` and `Engine::reload` are the two explicit choices, behind the `document.overwrite` and `document.reload` commands: `overwrite` writes the buffer regardless, and `reload` replaces the buffer with the file as one undo step and leaves the document clean.
+A file that no longer exists is written again by `save`.
+Every write goes to a temporary file in the same directory and is renamed over the page, keeping the file's permissions; a symbolic link has its target written and the link kept.
+The command-line tool and the MCP server return the conflict's message to their caller.
+
 [[git]]
 == Git
 
@@ -490,6 +498,19 @@ It opens the same resource id in the chosen version, in the workspace root that 
 `Settings` loads the user and workspace TOML layers described in xref:ROOT:settings.adoc[Settings].
 The UI never reads the settings file itself.
 
+== File access
+
+`adoc_core::FileAccess` is the policy for which files the engine may read.
+It has two variants: `Any`, the default, and `Within(roots)`.
+`permits(path)` checks the path lexically, then checks the part of it that exists with symbolic links followed.
+
+The engine holds one policy (`Engine::set_file_access` and `Engine::file_access`) and applies it when it opens a document, to includes (`SnapshotIncludes`), and to the pages an export reads.
+`adoc-pdf` receives it through `PdfOptions::access`.
+When the policy is confined, the engine chooses `Diagrams::in_process`, so only Mermaid renders and Graphviz, PlantUML and D2 are not run, as they can read files themselves.
+
+`adoc-mcp` sets `FileAccess::Within(roots)` before it opens the workspace.
+The application, `adocfoundry-cli` and `adoc-ls` leave it at `Any`.
+
 == Search, replace and rename previews
 
 Multi-file changes are computed first as an `EditPreview`: a list of file moves and per-file edits.
@@ -497,6 +518,12 @@ Nothing is changed until `workspace.apply_preview` is invoked with the preview's
 
 Applying a preview creates one undo group that spans every document it touches, including file moves.
 One undo therefore restores every xref and moves a renamed page back.
+
+A preview is applied as a checked transaction.
+Each `FileEdits` records in `base` the text its edits were computed against, which is also the text the confirmation dialog shows, so a buffer with unsaved edits is previewed from the buffer and not the file on disk.
+Apply returns `EngineError::PreviewStale { path }` if any listed file's text differs from its `base`, and changes nothing.
+Before anything changes, `validate_moves` checks that each source is a file, that nothing is at the destination, that the destination's nearest existing folder is a folder, and that no two files move to the same place.
+`apply_group` then applies the edits and moves; if a move fails, `roll_back` discards the group with `discard_group` and reverses the recorded moves, so no edit, move or undo or redo entry of the change remains.
 
 `workspace.search` returns immediately and delivers matches as `SearchResults` events.
 `workspace.replace` and `page.rename` return a `Preview` outcome.

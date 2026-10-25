@@ -62,6 +62,7 @@ pub use settings::{
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
 
+pub use adoc_core::FileAccess;
 pub use adoc_index::{is_asciidoc_path, normalize_path};
 #[cfg(feature = "typst")]
 pub use adoc_pdf::PdfStandard;

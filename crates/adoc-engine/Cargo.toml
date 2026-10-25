@@ -24,6 +24,7 @@ regex.workspace = true
 ropey.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 toml.workspace = true
 
 [features]
@@ -36,7 +37,6 @@ git = ["dep:adoc-git"]
 [dev-dependencies]
 adoc-git = { workspace = true, features = ["test-support"] }
 insta.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

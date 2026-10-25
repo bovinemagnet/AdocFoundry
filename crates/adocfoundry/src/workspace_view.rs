@@ -978,11 +978,68 @@ impl WorkspaceView {
         let outcome = self.app.update(cx, |app, cx| app.invoke(command, args, cx));
         match outcome {
             Ok(outcome) => Some(outcome),
+            Err(adoc_engine::EngineError::SaveConflict { path }) => {
+                self.offer_save_conflict(&path, window, cx);
+                None
+            }
             Err(error) => {
                 window.push_notification(error.to_string(), cx);
                 None
             }
         }
+    }
+
+    /// Asks what to do about a page that changed on disk since it was opened or saved: take the
+    /// file's version (an undoable edit), or write the buffer's over it.
+    fn offer_save_conflict(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.app.read(cx).engine.document_for_path(path) else {
+            return;
+        };
+        let name = self.document_name(id, cx);
+        let workspace = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let choice = |selector: &'static str, label: &'static str, command| {
+                let workspace = workspace.clone();
+                Button::new(selector)
+                    .label(label)
+                    .debug_selector(move || selector.to_owned())
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        if let Some(workspace) = workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.invoke(command, CommandArgs::Document(id), window, cx);
+                            });
+                        }
+                    })
+            };
+            dialog.title(format!("{name} changed on disk")).child(
+                v_flex()
+                    .gap_3()
+                    .child(
+                        "It changed since you opened or last saved it. Reload it to take \
+                             the version on disk (Undo brings your edits back), or overwrite it \
+                             with yours.",
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .justify_end()
+                            .child(choice(
+                                "save-conflict-reload",
+                                "Reload from Disk",
+                                ids::DOCUMENT_RELOAD,
+                            ))
+                            .child(
+                                choice(
+                                    "save-conflict-overwrite",
+                                    "Overwrite",
+                                    ids::DOCUMENT_OVERWRITE,
+                                )
+                                .danger(),
+                            ),
+                    ),
+            )
+        });
     }
 
     fn open_folder(
@@ -1052,8 +1109,10 @@ impl WorkspaceView {
             );
         }
         for file in &preview.edits {
-            let text = std::fs::read_to_string(&file.path).unwrap_or_default();
-            let index = LineIndex::new(&text);
+            // The text the edits were computed against, which for an open page is its buffer,
+            // not the file on disk.
+            let text = &file.base;
+            let index = LineIndex::new(text);
             for edit in &file.edits {
                 let (line, _) = index.line_column(edit.range.start);
                 let old = text.get(edit.range.start..edit.range.end).unwrap_or("");
@@ -1158,6 +1217,23 @@ impl WorkspaceView {
 
     fn on_save_all(&mut self, _: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
         self.invoke(ids::DOCUMENT_SAVE_ALL, CommandArgs::None, window, cx);
+    }
+
+    fn on_reload(&mut self, _: &Reload, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.active_document(cx) {
+            self.invoke(ids::DOCUMENT_RELOAD, CommandArgs::Document(id), window, cx);
+        }
+    }
+
+    fn on_overwrite(&mut self, _: &Overwrite, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.active_document(cx) {
+            self.invoke(
+                ids::DOCUMENT_OVERWRITE,
+                CommandArgs::Document(id),
+                window,
+                cx,
+            );
+        }
     }
 
     /// Runs `command` (Close, or Close Others, Left, Right, Clean or All) on the tab of `id`,
@@ -2383,6 +2459,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_open_file))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
+            .on_action(cx.listener(Self::on_reload))
+            .on_action(cx.listener(Self::on_overwrite))
             .on_action(cx.listener(Self::on_close))
             .on_action(cx.listener(Self::on_close_others))
             .on_action(cx.listener(Self::on_close_left))

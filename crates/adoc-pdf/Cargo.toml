@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+adoc-core.workspace = true
 adoc-math.workspace = true
 adoc-render.workspace = true
 regex.workspace = true

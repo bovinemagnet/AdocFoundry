@@ -2397,3 +2397,51 @@ fn open_more(
     cx.run_until_parked();
     ids
 }
+
+#[gpui::test]
+fn saving_over_a_change_on_disk_asks_to_reload_or_overwrite(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&dir.path().join("page.adoc"));
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let edit = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.invoke(
+                    ids::EDIT_INSERT_TEXT,
+                    CommandArgs::Text {
+                        id,
+                        range: SourceRange::new(0, 0),
+                        text: "mine ".to_owned(),
+                    },
+                    cx,
+                )
+                .unwrap();
+            })
+        });
+        cx.run_until_parked();
+    };
+
+    // Reload takes the version on disk.
+    edit(&mut cx);
+    std::fs::write(&page, "= Theirs\n").unwrap();
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    click_selector("save-conflict-reload", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(document_text(&app, &mut cx), "= Theirs\n");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Theirs\n");
+
+    // Overwrite writes the buffer over it.
+    edit(&mut cx);
+    std::fs::write(&page, "= Theirs again\n").unwrap();
+    cx.simulate_keystrokes("secondary-s");
+    cx.run_until_parked();
+    click_selector("save-conflict-overwrite", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "mine = Theirs\n");
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+}

@@ -87,10 +87,20 @@ impl Engine {
             let edit = crate::TextEdit::new(location.range, text);
             match files.last_mut() {
                 Some(file) if file.path == location.path => file.edits.push(edit),
-                _ => files.push(crate::FileEdits {
-                    path: location.path,
-                    edits: vec![edit],
-                }),
+                _ => {
+                    // The ranges come from the index's text, as rename's do.
+                    let base = self
+                        .workspace
+                        .index
+                        .file(&location.path)
+                        .map(|file| file.document.text.clone())
+                        .unwrap_or_default();
+                    files.push(crate::FileEdits {
+                        path: location.path,
+                        edits: vec![edit],
+                        base,
+                    });
+                }
             }
         }
         Some(files)
