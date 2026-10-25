@@ -14,6 +14,8 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ### Fixed
 
+- An include whose `tag=` or `tags=` names an attribute (`include::{pagesdir}/schema.adoc[tag=method-{QUERY_REF}]`) included nothing: the attribute was not substituted in the tag, as Asciidoctor does. The preview, the visual editor and PDF export now include the tagged region.
+- In the visual editor, an include whose target is written with an attribute (`include::{partialsdir}/overview.adoc[]`) showed its content and then its directive line again as raw text; consecutive includes of one file by different tags are now separate includes too.
 - Commands chosen from the command palette that the workspace handles (Export Page to PDF…, Toggle Preview, Save and the rest) did nothing: the palette dispatched them from its own dialog, where the workspace never saw them. Every command now runs once the palette has closed, as the visual editor's already did.
 
 ## 0.2.1 — 2026-10-25

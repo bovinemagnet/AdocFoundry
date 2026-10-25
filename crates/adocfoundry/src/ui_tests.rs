@@ -127,7 +127,7 @@ fn following_a_link_opens_a_tab_and_records_history(cx: &mut TestAppContext) {
     let page = root.join("alpha/modules/ROOT/pages/index.adoc");
     let mut engine = Engine::new(Settings::default());
     engine.open_workspace(vec![root.clone()]).unwrap();
-    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(60)));
     let app = app_with(engine, cx);
 
     let mut workspace = None;

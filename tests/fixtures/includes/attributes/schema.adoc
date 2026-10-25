@@ -1,0 +1,6 @@
+// tag::description-getSubjects[]
+Fetch a list of subjects.
+// end::description-getSubjects[]
+// tag::name-getSubjects[]
+The query is getSubjects.
+// end::name-getSubjects[]

@@ -314,7 +314,7 @@ impl<'a> Builder<'a> {
             self.line_text(*line)
                 .strip_prefix("include::")
                 .and_then(|rest| rest.split_once('['))
-                .is_some_and(|(written, _)| written == target)
+                .is_some_and(|(written, _)| names_target(written, target))
         });
         let range = directive.map_or(SourceRange::new(search.start, search.start), |line| {
             SourceRange::new(line.start, line.end)
@@ -1153,6 +1153,23 @@ fn dom_signature(inlines: &[Inline], marks: MarkSet, out: &mut Vec<(char, MarkSe
             Inline::Anchor { .. } | Inline::Footnote { .. } | Inline::LineBreak => {}
         }
     }
+}
+
+/// Whether an include written as `written` brought in `target`, as the include chain records
+/// it. The chain shows tags the parser carried as `path[tag=name]`, and the path a target
+/// written through attributes resolved to (`{partialsdir}/intro.adoc` as
+/// `/docs/partials//intro.adoc`), which ends with the text after its last attribute.
+fn names_target(written: &str, target: &str) -> bool {
+    let path = target
+        .strip_suffix(']')
+        .and_then(|rest| rest.rsplit_once('['))
+        .map_or(target, |(path, _)| path);
+    if written == target || written == path {
+        return true;
+    }
+    written
+        .rsplit_once('}')
+        .is_some_and(|(_, literal)| path.ends_with(literal))
 }
 
 #[cfg(test)]

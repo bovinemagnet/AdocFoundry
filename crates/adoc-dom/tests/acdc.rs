@@ -730,6 +730,57 @@ fn tagged_includes_drop_other_tag_directives() {
     );
 }
 
+/// A file with two tagged regions, as an API schema keeps its parts.
+struct Schema;
+
+impl IncludeResolver for Schema {
+    fn read(&self, requested: &Path) -> Option<(PathBuf, String)> {
+        requested.ends_with("schema.adoc").then(|| {
+            (
+                PathBuf::from("/schema.adoc"),
+                "// tag::intro-x[]\nIntro text.\n\n// end::intro-x[]\n// tag::other[]\nOther text.\n// end::other[]\n"
+                    .to_owned(),
+            )
+        })
+    }
+}
+
+#[test]
+fn attributes_in_include_tags_are_substituted() {
+    // As Asciidoctor, which substitutes attributes in the whole include line, not only its
+    // target. Each include keeps its tags in the chain, so consecutive ones stay apart.
+    let text = "= Page\n:q: x\n\ninclude::schema.adoc[tag=intro-{q}]\n\ninclude::schema.adoc[tags=other;intro-{q}, leveloffset=+1]\n\nAfter.\n";
+    let dom = AcdcParser.parse(&ParseInput {
+        path: Path::new("/page.adoc"),
+        text,
+        attributes: Vec::new(),
+        includes: Arc::new(Schema),
+    });
+    let paragraphs: Vec<(String, Vec<String>, PathBuf)> = dom
+        .walk()
+        .into_iter()
+        .filter_map(|block| match &block.kind {
+            BlockKind::Paragraph { inlines } => Some((
+                Inline::plain_text(inlines),
+                block.meta.span.include_chain.clone(),
+                block.meta.span.path.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    let texts: Vec<&str> = paragraphs.iter().map(|(text, ..)| text.as_str()).collect();
+    assert_eq!(
+        texts,
+        ["Intro text.", "Intro text.", "Other text.", "After."]
+    );
+    assert_eq!(paragraphs[0].1, ["schema.adoc[tag=intro-x]"]);
+    assert_eq!(paragraphs[1].1, ["schema.adoc[tags=other;intro-x]"]);
+    assert_eq!(paragraphs[0].2, PathBuf::from("/schema.adoc"));
+    // The page after the includes keeps its own spans.
+    let after = &dom.walk().into_iter().last().unwrap().meta.span;
+    assert_eq!(&text[after.range.start..after.range.end], "After.");
+}
+
 #[test]
 fn callout_items_drop_tag_directives() {
     let text = "= Page\n\n[source,ruby]\n----\nputs 1 # <1>\n----\n<1> Prints.\n// end::x[]\n";
