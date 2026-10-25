@@ -35,6 +35,7 @@ use gpui_component::{
 use crate::{
     app::{open_secondary_window, AppState, WindowKind},
     editor::{bindings::*, language, SourceEditorEvent, SourceEditorView},
+    menus::AppMenu,
     preview::{PreviewEvent, PreviewView},
     search_view::SearchView,
     sidebar,
@@ -105,6 +106,8 @@ pub struct WorkspaceView {
     search: Entity<SearchView>,
     show_search: bool,
     palette: Entity<CommandState>,
+    /// The ☰ application menu in the title bar.
+    app_menu: Entity<AppMenu>,
     preview: Entity<PreviewView>,
     /// The preview's own window while it is detached.
     detached: Option<(
@@ -190,8 +193,10 @@ impl WorkspaceView {
         ];
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace, window, cx));
+        let focus_handle = cx.focus_handle();
+        let app_menu = cx.new(|_| AppMenu::new(app.clone(), focus_handle.clone()));
         let mut view = Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             tabs: Vec::new(),
             visuals: HashMap::new(),
             active_tab: 0,
@@ -211,6 +216,7 @@ impl WorkspaceView {
             search,
             show_search: false,
             palette: cx.new(|cx| CommandState::new(window, cx)),
+            app_menu,
             preview,
             detached: None,
             revealed: None,
@@ -2523,6 +2529,7 @@ impl Render for WorkspaceView {
                 TitleBar::new().child(
                     h_flex()
                         .gap_1()
+                        .child(self.app_menu.clone())
                         .child(
                             Button::new("back")
                                 .ghost()

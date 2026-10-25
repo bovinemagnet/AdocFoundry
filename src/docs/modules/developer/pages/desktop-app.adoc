@@ -63,6 +63,24 @@ A command has an action only when the application defines one for its id.
 Three actions have no engine command and are bound in the application: the command palette, the theme toggle and the read-only second window.
 The palette lists every command with its title from the registry.
 
+== Menus
+
+`src/menus.rs` holds the application menu shown by the ☰ button in the title bar.
+`MENUS` is the layout: for each menu, a list of command ids, the three UI-only actions and separators.
+`AppMenu` is the title bar entity, which shows the button or, while a menu is open, the menu names.
+
+Titles come from each command's spec in the engine's registry.
+Actions come from `action_for` and `ui_action` in `editor/bindings.rs`, the same ones the keymap and the palette use, so a menu item can never run something different from its key.
+The popup is gpui-component's `PopupMenu`, given the focus handle that had focus when the menu opened as its action context.
+The action therefore reaches the source editor or the visual editor, whichever was focused.
+
+An item whose command cannot run is disabled, not hidden.
+A command the build lacks, such as the PDF export commands without the `typst` feature, is left out.
+
+The test `every_command_is_in_a_menu` fails when a command with an action is in no menu and not in the short `NOT_IN_MENUS` list.
+That list holds `document.overwrite` (Save, Overwriting the File on Disk, offered only after a conflict), `visual.split_block` (New Paragraph, bound to kbd:[Enter]), and `document.close_left` and `document.close_right` (Close Left and Close Right, which belong to the tab menu).
+A new command must therefore be added to a menu or to that list.
+
 == Windows
 
 Window creation lives in `app.rs`.
