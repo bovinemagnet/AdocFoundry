@@ -742,6 +742,9 @@ struct AppliedEdits {
 /// Writes `text` to `path` through a temporary file in the same directory, renamed over the
 /// original, so a failed write never leaves a truncated file. The original's permissions are
 /// kept, and a symbolic link is kept as a link: its target is written.
+///
+/// The temporary file has an unpredictable name and is created exclusively, never through an
+/// existing path, so a link planted in a shared directory cannot redirect the write.
 fn write_replacing(path: &Path, text: &str) -> std::io::Result<()> {
     use std::io::Write as _;
     let target = match fs::symlink_metadata(path) {
@@ -749,23 +752,17 @@ fn write_replacing(path: &Path, text: &str) -> std::io::Result<()> {
         _ => path.to_path_buf(),
     };
     let directory = target.parent().unwrap_or_else(|| Path::new("."));
-    let name = target
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let temporary = directory.join(format!(".{name}.{}.adocfoundry-save", std::process::id()));
-    let result = (|| {
-        let mut file = fs::File::create(&temporary)?;
-        file.write_all(text.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        if let Ok(metadata) = fs::metadata(&target) {
-            fs::set_permissions(&temporary, metadata.permissions())?;
-        }
-        fs::rename(&temporary, &target)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".adocfoundry-save-")
+        .tempfile_in(directory)?;
+    temporary.write_all(text.as_bytes())?;
+    if let Ok(metadata) = fs::metadata(&target) {
+        temporary
+            .as_file()
+            .set_permissions(metadata.permissions())?;
     }
-    result
+    temporary.as_file().sync_all()?;
+    // Dropping a temporary file that was not persisted removes it.
+    temporary.persist(&target).map_err(|error| error.error)?;
+    Ok(())
 }
