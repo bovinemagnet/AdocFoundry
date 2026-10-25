@@ -32,6 +32,7 @@ actions!(
         Reindex,
         OpenSettings,
         ReloadSettings,
+        CheckForUpdates,
         CommandPalette,
         ToggleTheme,
         OpenMirrorWindow,
@@ -157,6 +158,7 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::EXPORT_PDF_PAGE => KeyBinding::new(keys, ExportPagePdf, workspace),
         ids::EXPORT_PDF_COMPONENT => KeyBinding::new(keys, ExportComponentPdf, workspace),
         ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
+        ids::APP_CHECK_FOR_UPDATES => KeyBinding::new(keys, CheckForUpdates, workspace),
         ids::SETTINGS_RELOAD => KeyBinding::new(keys, ReloadSettings, workspace),
         ids::VIEW_TOGGLE_PREVIEW => KeyBinding::new(keys, TogglePreview, workspace),
         ids::VIEW_DETACH_PREVIEW => KeyBinding::new(keys, DetachPreview, workspace),
@@ -225,6 +227,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::EXPORT_PDF_PAGE => Box::new(ExportPagePdf),
         ids::EXPORT_PDF_COMPONENT => Box::new(ExportComponentPdf),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
+        ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
         ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),
         ids::VIEW_DETACH_PREVIEW => Box::new(DetachPreview),
@@ -257,35 +260,6 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::EDIT_EDIT_IMAGE => Box::new(EditImage),
         _ => return None,
     })
-}
-
-/// Whether command `id` is handled by the visual editor, and so must be dispatched from it.
-pub fn in_visual_editor(id: CommandId) -> bool {
-    matches!(
-        id,
-        ids::EDIT_TOGGLE_STRONG
-            | ids::EDIT_TOGGLE_EMPHASIS
-            | ids::EDIT_TOGGLE_CODE
-            | ids::EDIT_TOGGLE_HIGHLIGHT
-            | ids::EDIT_INSERT_LINK
-            | ids::EDIT_REMOVE_LINK
-            | ids::VISUAL_SPLIT_BLOCK
-            | ids::EDIT_INDENT_LIST_ITEM
-            | ids::EDIT_OUTDENT_LIST_ITEM
-            | ids::EDIT_TOGGLE_BULLET_LIST
-            | ids::EDIT_TOGGLE_NUMBERED_LIST
-            | ids::EDIT_TOGGLE_CHECKLIST
-            | ids::EDIT_TOGGLE_CHECKED
-            | ids::EDIT_INSERT_CODE_BLOCK
-            | ids::EDIT_INSERT_ADMONITION
-            | ids::EDIT_INSERT_TABLE
-            | ids::EDIT_INSERT_TABLE_ROW
-            | ids::EDIT_DELETE_TABLE_ROW
-            | ids::EDIT_INSERT_TABLE_COLUMN
-            | ids::EDIT_DELETE_TABLE_COLUMN
-            | ids::EDIT_INSERT_IMAGE
-            | ids::EDIT_EDIT_IMAGE
-    )
 }
 
 /// The UI-only action at `index` of [`UI_ACTIONS`].

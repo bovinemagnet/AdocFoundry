@@ -39,6 +39,7 @@ pub mod ids {
     pub const WORKSPACE_APPLY_PREVIEW: CommandId = CommandId::new("workspace.apply_preview");
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
+    pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
@@ -112,10 +113,10 @@ pub(crate) const fn spec(
 }
 
 pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
-    use CommandCategory::{Document, Edit, Navigate, View, Workspace};
+    use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 34] = [
+    let builtin: [(CommandSpec, Run); 35] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -235,6 +236,16 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 Always,
             ),
             settings_open,
+        ),
+        (
+            spec(
+                ids::APP_CHECK_FOR_UPDATES,
+                "Check for Updates",
+                Help,
+                None,
+                Always,
+            ),
+            check_for_updates,
         ),
         (
             spec(
@@ -681,6 +692,13 @@ fn workspace_reindex(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutco
 }
 
 /// Returns the user settings file, creating an empty one so it can be opened for editing.
+/// The app reads the feed: the engine makes no request.
+fn check_for_updates(_: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    Ok(CommandOutcome::CheckForUpdates(
+        crate::updates::FEED.to_owned(),
+    ))
+}
+
 fn settings_open(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
     let path = engine
         .settings()

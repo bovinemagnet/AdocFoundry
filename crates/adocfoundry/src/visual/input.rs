@@ -307,7 +307,7 @@ impl VisualView {
         let (_, block) = self.block_at(self.selection.head)?;
         let display = block.display_offset(self.selection.head)?;
         let composing = self.composing.as_deref().map(|text| (display, text));
-        Some((text::shown(&block, composing), display))
+        Some((text::shown(&block, composing, &self.formula_gaps), display))
     }
 
     /// The selection's display range in the caret's block, clipped to it.

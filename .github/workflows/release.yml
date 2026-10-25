@@ -14,6 +14,10 @@ permissions:
 jobs:
   macos:
     runs-on: macos-14
+    env:
+      # Signing and notarisation need the Developer ID secrets; without them the app is signed
+      # ad hoc, as before.
+      SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +37,23 @@ jobs:
             lipo -create -output "dist/$bin" \
               "target/aarch64-apple-darwin/release/$bin" "target/x86_64-apple-darwin/release/$bin"
           done
+      - name: Import the Developer ID certificate
+        if: env.SIGNED == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -f pkcs12 \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
       - name: App bundle and DMG
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -43,9 +64,27 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           packaging/macos/bundle.sh dist/adocfoundry "$version" dist \
             dist/adocfoundry-cli dist/adoc-ls dist/adoc-mcp
+          # The archives carry the signed tools from the bundle.
           for bin in adoc-ls adocfoundry-cli adoc-mcp; do
+            cp "dist/AdocFoundry.app/Contents/MacOS/$bin" "dist/$bin"
             tar -C dist -czf "dist/$bin-$version-macos-universal.tar.gz" "$bin"
           done
+      - name: Check the signatures
+        if: env.SIGNED == 'true'
+        run: |
+          codesign --verify --strict --deep --verbose=2 dist/AdocFoundry.app
+          spctl --assess --type execute -vv dist/AdocFoundry.app
+          xcrun stapler validate dist/AdocFoundry.app
+          xcrun stapler validate dist/*.dmg
+          spctl --assess --type open --context context:primary-signature -vv dist/*.dmg
+          echo "macOS: signed with a Developer ID, notarised and stapled" >> "$GITHUB_STEP_SUMMARY"
+      - name: Unsigned
+        if: env.SIGNED != 'true'
+        run: |
+          echo "macOS: signed ad hoc; no Developer ID secrets" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove the signing keychain
+        if: always() && env.SIGNED == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -63,6 +102,9 @@ jobs:
           - target: aarch64-pc-windows-msvc
             arch: arm64
     runs-on: windows-latest
+    env:
+      # Authenticode through Azure Artifact Signing; without its secrets nothing is signed.
+      SIGNED: ${{ secrets.AZURE_CLIENT_ID != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -72,8 +114,57 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cargo install cargo-wix --locked
       - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      # The executables are signed before the MSI and the zips take them.
+      - name: Sign the executables
+        if: env.SIGNED == 'true'
+        # Pinned to a commit: the action handles the signing credentials.
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files: |
+            ${{ github.workspace }}\target\${{ matrix.target }}\release\adocfoundry.exe
+            ${{ github.workspace }}\target\${{ matrix.target }}\release\adocfoundry-cli.exe
+            ${{ github.workspace }}\target\${{ matrix.target }}\release\adoc-ls.exe
+            ${{ github.workspace }}\target\${{ matrix.target }}\release\adoc-mcp.exe
+          file-digest: SHA256
+          timestamp-digest: SHA256
       - name: MSI
         run: cargo wix -p adocfoundry --no-build --nocapture --target ${{ matrix.target }} --output dist/
+      - name: Sign the MSI
+        if: env.SIGNED == 'true'
+        # Pinned to a commit: the action handles the signing credentials.
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-digest: SHA256
+      - name: Check the signatures
+        if: env.SIGNED == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem dist/*.msi) + @(Get-ChildItem "target/${{ matrix.target }}/release/*.exe" | Where-Object { $_.BaseName -in "adocfoundry","adocfoundry-cli","adoc-ls","adoc-mcp" })
+          foreach ($file in $files) {
+            $status = (Get-AuthenticodeSignature -LiteralPath $file.FullName).Status
+            if ($status -ne "Valid") { throw "$($file.Name): $status" }
+          }
+          "Windows ${{ matrix.arch }}: executables and MSI signed with Authenticode" >> $env:GITHUB_STEP_SUMMARY
+      - name: Unsigned
+        if: env.SIGNED != 'true'
+        shell: pwsh
+        run: |
+          "Windows ${{ matrix.arch }}: unsigned; no Azure Artifact Signing secrets" >> $env:GITHUB_STEP_SUMMARY
       - name: Portable zip
         shell: pwsh
         run: |
@@ -122,6 +213,10 @@ jobs:
           curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage"
           chmod +x linuxdeploy
           cp packaging/icons/adocfoundry-256.png io.github.bovinemagnet.AdocFoundry.png
+          # Update information for AppImageUpdate, and the .zsync it reads, published with the
+          # release.
+          update="gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-${{ matrix.arch }}.AppImage.zsync"
+          export LDAI_UPDATE_INFORMATION="$update" UPDATE_INFORMATION="$update"
           APPIMAGE_EXTRACT_AND_RUN=1 OUTPUT="dist/AdocFoundry-$version-${{ matrix.arch }}.AppImage" ./linuxdeploy \
             --appdir AppDir \
             --executable target/release/adocfoundry \
@@ -131,6 +226,8 @@ jobs:
             --desktop-file packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop \
             --icon-file io.github.bovinemagnet.AdocFoundry.png \
             --output appimage
+          # linuxdeploy writes the .zsync beside the AppImage, or in the working directory.
+          if ! ls dist/*.AppImage.zsync >/dev/null 2>&1; then mv ./*.AppImage.zsync dist/; fi
       - name: The Flatpak manifest installs what the packages carry
         run: |
           for bin in adocfoundry adocfoundry-cli adoc-ls adoc-mcp; do
@@ -163,6 +260,9 @@ jobs:
           - runner: ubuntu-22.04
             artefact: linux-x86_64
     runs-on: ${{ matrix.runner }}
+    env:
+      # Whether this platform's release job signed its binaries.
+      SIGNED: ${{ (matrix.artefact == 'macos' && secrets.APPLE_CERTIFICATE != '') || (matrix.artefact == 'windows-x64' && secrets.AZURE_CLIENT_ID != '') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -192,10 +292,12 @@ jobs:
       - name: Smoke test
         shell: bash
         run: |
+          signed=()
+          if [[ "$SIGNED" == "true" ]]; then signed=(--expect-signed); fi
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             python3 packaging/smoke-test.py "$BIN" --no-app
           else
-            python3 packaging/smoke-test.py "$BIN"
+            python3 packaging/smoke-test.py "$BIN" "${signed[@]}"
           fi
       # The AppImage carries the tools as the deb does.
       - name: Smoke test (AppImage)
@@ -214,6 +316,9 @@ jobs:
         with:
           path: artefacts
           merge-multiple: true
+      # The app checks a package against this before it installs it.
+      - name: Checksums
+        run: (cd artefacts && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
       - uses: softprops/action-gh-release@v2
         with:
           files: artefacts/*

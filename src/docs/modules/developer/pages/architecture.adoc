@@ -83,7 +83,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L4
 |`adoc-mcp`
-|The MCP server. It depends only on `adoc-engine` (with `typst` and `git`) and `adoc-core`. It uses `rmcp` 3.7.0 with only its `server`, `macros` and `transport-io` features, so it has no HTTP transport, which the network rule in `cargo xtask layers` checks. It runs on a current-thread tokio runtime (`rt`, `macros`, `io-std` and `time`), and each tool locks the engine for its call. Path confinement is `paths::confine`, and the engine is confined too through `FileAccess`. See xref:ROOT:mcp-server.adoc[MCP server].
+|The MCP server. It depends only on `adoc-engine` (with `typst` and `git`) and `adoc-core`. It uses `rmcp` 3.7.0 with its `server`, `macros`, `transport-io` and `transport-streamable-http-server` features. With `--http` it serves the Streamable HTTP transport through `hyper` and `hyper-util`, built with their server side only, on a loopback address and for requests carrying its token (`src/http.rs`). It runs on a current-thread tokio runtime (`rt`, `macros`, `io-std`, `time`, `net` and `signal`), and each tool locks the engine for its call; every HTTP session shares that engine. Path confinement is `paths::confine`, and the engine is confined too through `FileAccess`. See xref:ROOT:mcp-server.adoc[MCP server].
 |===
 
 The application sees `adoc-model` types only through the engine's re-exports.
@@ -97,7 +97,8 @@ The application sees `adoc-model` types only through the engine's re-exports.
 * `adoc-core` has any dependency;
 * a UI framework crate (`gpui`, `gpui-pre`, `gpui-pre-platform`, `gpui-component`, `gpui-base`, `gpui-kit-assets`, `egui`, `eframe`) appears outside `adocfoundry`;
 * an LSP crate (`lsp-types`, `lsp-server`) appears outside `adoc-ls`;
-* an HTTP client crate (`reqwest` and its GPUI fork, `ureq`, `hyper`, `isahc`, `curl`, `attohttpc`, `surf`) is reachable from any crate except `adocfoundry`, directly or through its normal or build dependencies;
+* an HTTP client crate (`reqwest` and its GPUI fork, `ureq`, `isahc`, `curl`, `attohttpc`, `surf`) is reachable from any crate except `adocfoundry`, directly or through its normal or build dependencies;
+* `hyper` or `hyper-util` is reachable from any crate except `adocfoundry` and `adoc-mcp`, or `adoc-mcp`'s own build turns on a `client` feature of either;
 * a parser crate (`acdc-parser`, `asciidoc-parser`) appears outside `adoc-dom`;
 * `adoc-lang` depends on `url`, or its sources mention `lsp_types`, `lsp_server` or `url::`.
 
@@ -107,6 +108,10 @@ Adding a crate means adding a line to the layer table in `xtask/src/layers.rs` a
 
 The network rule is checked against the resolved graph from `cargo metadata`, so a transitive dependency counts.
 The application reaches an HTTP client only through `gpui-kit-assets`.
+`hyper` and `hyper-util` have a server side and a client side.
+`adoc-mcp` may reach them for its HTTP listener (`NETWORK_SERVER_ALLOWED`).
+The check takes `adoc-mcp`'s features from `cargo tree -p adoc-mcp -e features` rather than from `cargo metadata`, because `cargo metadata` unifies features over the workspace.
+A `client` or `client-…` feature of either crate in that build is a violation.
 Everything below the application, including diagram rendering and PDF export, works locally and never contacts a server.
 
 === The one `lsp-types` exception

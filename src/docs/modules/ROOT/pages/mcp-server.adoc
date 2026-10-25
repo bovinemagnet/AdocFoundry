@@ -4,12 +4,12 @@ Paul Snow
 :description: adoc-mcp, a Model Context Protocol server that lets assistants read, check and, if allowed, edit an Antora documentation workspace.
 
 `adoc-mcp` is a Model Context Protocol (MCP) server.
-It speaks MCP over standard input and output.
+It speaks MCP over standard input and output, or over MCP's Streamable HTTP transport on this machine.
 It runs on the AdocFoundry engine, so an MCP client such as an assistant gets the same answers as the desktop editor, the xref:command-line.adoc[command line] and the xref:language-server.adoc[language server].
 
 [source,sh]
 ----
-adoc-mcp <root>… [--allow-write]
+adoc-mcp <root>… [--allow-write] [--http <addr>]
 adoc-mcp --version
 ----
 
@@ -55,6 +55,47 @@ To allow writing, add the flag:
 [source,json]
 ----
 "args": ["/path/to/docs", "--allow-write"]
+----
+
+[#http]
+== Serving over HTTP
+
+A client that connects to a running server, rather than starting one, uses the HTTP transport.
+Start the server with `--http` and a loopback address:
+
+[source,sh]
+----
+ADOC_MCP_TOKEN=choose-a-secret adoc-mcp /path/to/docs --http 127.0.0.1:8765
+----
+
+The server prints the address it listens on, such as `adoc-mcp: listening on \http://127.0.0.1:8765/mcp`.
+Port `0` picks any free port.
+
+The transport serves this machine only:
+
+* The address must be a loopback address: `127.0.0.1`, `[::1]` or `localhost`. Any other address is refused at start-up.
+* Every request must carry `Authorization: Bearer <token>`. A request without it, or with the wrong token, gets `401 Unauthorized`.
+* The `Host` header must name a loopback host, so a web page cannot reach the server through DNS rebinding.
+
+The token is the value of `ADOC_MCP_TOKEN`.
+If that is unset or empty, the server makes a random token and prints it once, as `adoc-mcp: token <token>`.
+
+The tools, the write flag and the path limits are the same as over standard input and output.
+Every client shares one engine.
+Ctrl-C or `SIGTERM` stops the server.
+
+Clients take the server's URL and the token's header:
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "adocfoundry": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer choose-a-secret" }
+    }
+  }
+}
 ----
 
 == Read-only tools
@@ -136,7 +177,7 @@ A resource template, `+antora:{resource_id}+`, reads a page or a partial by its 
 == Limits and safety
 
 * Every path, absolute or relative to the first root, must lie inside a root. The check is lexical and also follows symbolic links. Otherwise the call is refused.
-* The server uses no network.
+* The server makes no network requests. With `--http` it listens on a loopback address only, for requests that carry its token.
 * Project scripts are never run.
 * Lists are cut at 500 items, and texts at 200,000 bytes. When that happens the result carries `truncated: { shown, total }`, which states the total.
 * A tool error carries the engine's message.

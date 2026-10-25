@@ -132,9 +132,14 @@ fn parse(input: &ParseInput<'_>) -> Dom {
                 Ok(rest) if absolute_base != base => base.join(rest),
                 _ => requested.clone(),
             };
-            let asked = unprotect(&asked);
+            let (asked, tags) = carried_tags(&unprotect(&asked));
             match resolver.read(&asked) {
                 Some((path, text)) => {
+                    // Tags carried in the target are selected here; spans index the selection.
+                    let text = match &tags {
+                        Some(tags) => select_tagged(&text, tags),
+                        None => text,
+                    };
                     let (lf, removed) = without_crs(&text);
                     if let Ok(mut map) = resolved.lock() {
                         map.insert(
@@ -220,9 +225,144 @@ fn protect_resource_ids(text: &str) -> String {
 const PROTECTED_SPACE: char = '\u{2}';
 
 /// `text` rewritten where acdc rejects what Asciidoctor reads, keeping every line's length so
-/// spans are unchanged: include attribute lists tidied, and tabs after section title markers.
+/// spans are unchanged: tags named through attributes carried in their include's target,
+/// include attribute lists tidied, and tabs after section title markers.
 fn for_acdc(text: &str) -> String {
-    untab_section_titles(&tidy_include_attributes(&protect_resource_ids(text)))
+    untab_section_titles(&tidy_include_attributes(&protect_resource_ids(
+        &carry_attribute_tags(text),
+    )))
+}
+
+/// Brackets, in an include target, the tags the include selects: `x` [`TAG_MARK`] tags
+/// [`TAG_MARK`] `.adoc`, the tags separated by `;`.
+const TAG_MARK: char = '\u{3}';
+
+/// `text` with each include whose `tag=` or `tags=` names an attribute (`tag=name-{ref}`)
+/// rewritten to carry the tags in its target, before the file's extension.
+///
+/// Asciidoctor substitutes attributes in the whole include line; acdc substitutes them in the
+/// target only, so a tag written with an attribute selects nothing. In the target the tags are
+/// substituted with it, and the loader selects them ([`select_tagged`]). The line keeps its
+/// length, padded with [`PROTECTED_SPACE`]s. Wildcards and negated tags are left to acdc.
+fn carry_attribute_tags(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        match carried_line(line.trim_end_matches(['\r', '\n'])) {
+            Some(carried) => {
+                out.push_str(&carried);
+                out.push_str(&line[line.trim_end_matches(['\r', '\n']).len()..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// `content`, an include directive line, with its attribute-named tags carried in its target;
+/// `None` when it has none, or they cannot be carried in the same length.
+fn carried_line(content: &str) -> Option<String> {
+    let start = "include::".len();
+    let open = start + content.strip_prefix("include::")?.find('[')?;
+    if !content.ends_with(']') {
+        return None;
+    }
+    let target = &content[start..open];
+    let list = &content[open + 1..content.len() - 1];
+    let entries = split_attributes(list);
+    let (index, tags) = entries.iter().enumerate().find_map(|(index, entry)| {
+        let (name, value) = entry.trim().split_once('=')?;
+        let value = value.trim().trim_matches('"');
+        (matches!(name.trim(), "tag" | "tags")
+            && value.contains('{')
+            && !value.contains(['*', '!', TAG_MARK]))
+        .then(|| (index, value.replace(',', ";")))
+    })?;
+    // Before the extension, so the file keeps its type.
+    let name = target.rfind('/').map_or(0, |slash| slash + 1);
+    let dot = name + target[name..].rfind('.')?;
+    if target[dot..].contains('{') {
+        return None;
+    }
+    let rest: Vec<&str> = entries
+        .iter()
+        .enumerate()
+        .filter(|(other, _)| *other != index)
+        .map(|(_, entry)| entry.trim_start())
+        .collect();
+    let head = format!("include::{}{TAG_MARK}{tags}", &target[..dot]);
+    let tail = format!("{TAG_MARK}{}[{}]", &target[dot..], rest.join(","));
+    let padding = content.len().checked_sub(head.len() + tail.len())?;
+    let mut carried = head;
+    carried.extend(std::iter::repeat_n(PROTECTED_SPACE, padding));
+    carried.push_str(&tail);
+    Some(carried)
+}
+
+/// `path` without the tags it carries ([`carry_attribute_tags`]), and the tags.
+fn carried_tags(path: &Path) -> (PathBuf, Option<Vec<String>>) {
+    let text = path.to_string_lossy();
+    let Some((before, rest)) = text.split_once(TAG_MARK) else {
+        return (path.to_path_buf(), None);
+    };
+    let Some((tags, after)) = rest.split_once(TAG_MARK) else {
+        return (path.to_path_buf(), None);
+    };
+    let tags = tags
+        .replace(PROTECTED_SPACE, "")
+        .split(';')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect();
+    (PathBuf::from(format!("{before}{after}")), Some(tags))
+}
+
+/// An include target as the user reads it: carried tags shown as an attribute list,
+/// `schema.adoc[tag=name]`.
+fn shown_target(file: &str) -> String {
+    let file = file
+        .replace(PROTECTED_COLON, ":")
+        .replace(PROTECTED_SPACE, "");
+    let (path, tags) = carried_tags(Path::new(&file));
+    match tags {
+        Some(tags) if tags.len() == 1 => format!("{}[tag={}]", path.display(), tags[0]),
+        Some(tags) => format!("{}[tags={}]", path.display(), tags.join(";")),
+        None => file,
+    }
+}
+
+/// The lines of `text` inside the regions tagged with any of `tags`, as Asciidoctor selects
+/// them: every tag directive line (`tag::name[]`, `end::name[]`) is left out.
+fn select_tagged(text: &str, tags: &[String]) -> String {
+    let mut open: Vec<String> = Vec::new();
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if let Some((end, name)) = tag_directive(line) {
+            if end {
+                if let Some(at) = open.iter().rposition(|tag| *tag == name) {
+                    open.remove(at);
+                }
+            } else {
+                open.push(name);
+            }
+            continue;
+        }
+        if open.iter().any(|tag| tags.contains(tag)) {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// The tag directive in `line`, if any: whether it ends a region, and the region's name.
+fn tag_directive(line: &str) -> Option<(bool, String)> {
+    let line = line.trim_end();
+    ["tag::", "end::"].iter().find_map(|marker| {
+        let at = line.find(marker)?;
+        let name = line[at + marker.len()..].strip_suffix("[]")?;
+        (!name.is_empty() && !name.contains(char::is_whitespace))
+            .then(|| (*marker == "end::", name.to_owned()))
+    })
 }
 
 /// The include attributes acdc reads; Asciidoctor ignores any other.
@@ -491,15 +631,7 @@ impl Converter<'_> {
                 .start
                 .file
                 .as_ref()
-                .map(|chain| {
-                    chain
-                        .iter()
-                        .map(|file| {
-                            file.replace(PROTECTED_COLON, ":")
-                                .replace(PROTECTED_SPACE, "")
-                        })
-                        .collect()
-                })
+                .map(|chain| chain.iter().map(|file| shown_target(file)).collect())
                 .unwrap_or_default(),
         }
     }

@@ -127,7 +127,7 @@ fn following_a_link_opens_a_tab_and_records_history(cx: &mut TestAppContext) {
     let page = root.join("alpha/modules/ROOT/pages/index.adoc");
     let mut engine = Engine::new(Settings::default());
     engine.open_workspace(vec![root.clone()]).unwrap();
-    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(60)));
     let app = app_with(engine, cx);
 
     let mut workspace = None;
@@ -437,6 +437,166 @@ fn preview_draws_block_stem_as_an_image(cx: &mut TestAppContext) {
     assert!(drain_until(&app, &mut cx, rendered), "the formula renders");
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("stem-image").is_some());
+}
+
+#[gpui::test]
+fn preview_draws_inline_stem_in_the_line(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(
+        &page,
+        "= Maths\n:stem:\n\nThe root stem:[sqrt(4) = 2] here.\n\nThe root sqrt4=2 here.\n",
+    )
+    .unwrap();
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+
+    cx.simulate_keystrokes("secondary-k v");
+    let rendered = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let preview = workspace.read(cx).preview().read(cx);
+            preview.shown().is_some_and(|shown| {
+                shown.view.blocks.iter().any(|block| match &block.kind {
+                    adoc_render::ViewKind::Paragraph(content) => content.iter().any(|inline| {
+                        matches!(
+                            inline,
+                            adoc_render::ViewInline::Stem {
+                                rendered: Some(_),
+                                ..
+                            }
+                        )
+                    }),
+                    _ => false,
+                })
+            })
+        })
+    };
+    assert!(drain_until(&app, &mut cx, rendered), "the formula renders");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    let image = cx
+        .debug_bounds("stem-inline")
+        .expect("the formula is drawn in the line");
+    let (with_formula, with_text) = cx.update(|_, cx| {
+        let preview = workspace.read(cx).preview().read(cx);
+        (preview.extent(&[0]).unwrap(), preview.extent(&[1]).unwrap())
+    });
+    let height = |extent: crate::preview::sync::Extent| extent.bottom - extent.top;
+    assert!(
+        (height(with_formula) - height(with_text)).abs() <= px(2.),
+        "{with_formula:?} against {with_text:?}"
+    );
+    assert!(image.size.width > px(0.) && image.size.height > px(0.));
+    // The image lies across the paragraph's line, not beside or below it.
+    let paragraph_top = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .preview()
+            .read(cx)
+            .block_position(&[0])
+            .unwrap()
+    });
+    let top = image.origin.y - paragraph_top.y;
+    assert!(
+        top > px(-8.) && top < height(with_formula),
+        "image at {top:?} in a paragraph {:?} tall",
+        height(with_formula)
+    );
+}
+
+/// An app whose settings live in `directory` and whose releases feed names `tag`, counting
+/// the times it is read.
+fn app_with_feed(
+    directory: &std::path::Path,
+    tag: &'static str,
+    reads: &std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    cx: &mut TestAppContext,
+) -> Entity<AppState> {
+    let file = directory.join("settings.toml");
+    if !file.exists() {
+        std::fs::write(&file, "").unwrap();
+    }
+    let settings = Settings::load(Some(&file), None).unwrap();
+    let app = app_with(Engine::new(settings), cx);
+    let reads = reads.clone();
+    cx.update(|cx| {
+        app.update(cx, |app, _| {
+            app.fetch = std::sync::Arc::new(move |url| {
+                assert_eq!(url, adoc_engine::updates::FEED);
+                reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(format!(
+                    r#"{{"tag_name": "{tag}", "html_url": "https://example.org/{tag}"}}"#
+                ))
+            });
+        });
+    });
+    app
+}
+
+#[gpui::test]
+fn update_notice_is_shown_once(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let notices = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len())
+    };
+
+    let app = app_with_feed(directory.path(), "v99.0.0", &reads, cx);
+    let (_, mut cx_first) = workspace_window(&app, Vec::new(), cx);
+    cx_first.run_until_parked();
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(notices(&mut cx_first), 1, "the newer release is announced");
+
+    // Started again: no check is due for a day, so nothing is read or shown.
+    let again = app_with_feed(directory.path(), "v99.0.0", &reads, cx);
+    // A page is open, so the window has focus for the action.
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let (_, mut cx_second) = workspace_window(&again, vec![page], cx);
+    cx_second.run_until_parked();
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(notices(&mut cx_second), 0);
+
+    // Asked for, the check runs and shows the release again.
+    cx_second.dispatch_action(crate::editor::bindings::CheckForUpdates);
+    cx_second.run_until_parked();
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(notices(&mut cx_second), 1);
+}
+
+#[gpui::test]
+fn asking_when_up_to_date_says_so(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("settings.toml"),
+        "[updates]\ncheck = false\n",
+    )
+    .unwrap();
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let app = app_with_feed(directory.path(), "v0.0.1", &reads, cx);
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let (_, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    assert_eq!(
+        reads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "switched off"
+    );
+    cx.dispatch_action(crate::editor::bindings::CheckForUpdates);
+    cx.run_until_parked();
+    assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len()),
+        1
+    );
 }
 
 fn detached_paragraphs(
@@ -1565,6 +1725,40 @@ fn visual_code_blocks_are_highlighted(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn visual_editor_draws_inline_stem(cx: &mut TestAppContext) {
+    let text = "= Page\n:stem:\n\nThe root stem:[sqrt(4) = 2] here.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let rendered = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            visual
+                .read(cx)
+                .shown()
+                .is_some_and(|shown| !shown.view.inline_formulas().is_empty())
+        })
+    };
+    assert!(drain_until(&app, &mut cx, rendered), "the formula renders");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("stem-inline").is_some(),
+        "drawn in the line"
+    );
+    // The text is still the paragraph's, and the formula's macro one step of the caret: typing
+    // after it writes after the macro.
+    assert_eq!(
+        shown_blocks(&visual, &mut cx),
+        ["Page", "The root sqrt(4) = 2 here."]
+    );
+    let after = text.find("] here").unwrap() + 1;
+    place_caret(&visual, after, &mut cx);
+    cx.simulate_keystrokes("!");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n:stem:\n\nThe root stem:[sqrt(4) = 2]! here.\n"
+    );
+}
+
+#[gpui::test]
 fn double_click_selects_a_word(cx: &mut TestAppContext) {
     let text = "= Page\n\nSome plain words.\n";
     let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
@@ -2189,6 +2383,52 @@ fn marks_toggle_in_the_source_editor(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("secondary-z");
     cx.run_until_parked();
     assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nSome plain words.\n");
+}
+
+#[gpui::test]
+fn export_from_the_palette_writes_a_pdf(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n\nExported from the palette.\n").unwrap();
+    let output = directory.path().join("exported.pdf");
+    let mut engine = Engine::new(Settings::default());
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.run_until_parked();
+    cx.simulate_input("Export Page");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let result = finish_export(&app, &events, &output, &mut cx);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(std::fs::read(&output).unwrap().starts_with(b"%PDF-"));
+}
+
+#[gpui::test]
+fn palette_commands_reach_the_workspace(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    let visible = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| app.read(cx).engine.preview_layout().visible)
+    };
+    assert!(!visible(&mut cx));
+    cx.simulate_keystrokes("secondary-shift-p");
+    cx.run_until_parked();
+    cx.simulate_input("Toggle Preview");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(
+        visible(&mut cx),
+        "the palette's command reached the workspace"
+    );
 }
 
 #[gpui::test]

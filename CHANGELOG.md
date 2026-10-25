@@ -2,6 +2,22 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Inline STEM is typeset in the line of text in the preview and the visual editor: each formula sits on the text's baseline at the text's size, with its source in a tooltip (#57). Inline formula images also keep their descenders and limits, which the earlier tooltip images cut off.
+- `adoc-mcp --http <addr>` serves MCP's Streamable HTTP transport at `/mcp` on a loopback address, to clients that send `Authorization: Bearer <token>` (`ADOC_MCP_TOKEN`, or a random token printed at start-up). Write tools still need `--allow-write`, and every path is still confined to the roots (#56).
+- The app checks for a newer release at start-up, at most once a day, through the system's `curl`, and says once when there is one, with its release notes a click away. Check for Updates checks on demand, and `[updates] check = false` turns the start-up check off (#55).
+- Updating in place: from a signed DMG or MSI, the update notice offers Update…, which downloads the package, checks it against the release's new `SHA256SUMS` and its signature against the running app's, installs it and restarts. The AppImage carries update information and its `.zsync` is published for AppImageUpdate (#55).
+- Signed releases: with the project's signing secrets, the release workflow signs the macOS app and tools with a Developer ID and the hardened runtime, notarises and staples the app and the DMG, and signs the Windows executables and MSI with Authenticode through Azure Artifact Signing. The smoke test checks the signatures. Without the secrets, packages build unsigned as before (#54).
+
+### Fixed
+
+- An include whose `tag=` or `tags=` names an attribute (`include::{pagesdir}/schema.adoc[tag=method-{QUERY_REF}]`) included nothing: the attribute was not substituted in the tag, as Asciidoctor does. The preview, the visual editor and PDF export now include the tagged region.
+- In the visual editor, an include whose target is written with an attribute (`include::{partialsdir}/overview.adoc[]`) showed its content and then its directive line again as raw text; consecutive includes of one file by different tags are now separate includes too.
+- Commands chosen from the command palette that the workspace handles (Export Page to PDF…, Toggle Preview, Save and the rest) did nothing: the palette dispatched them from its own dialog, where the workspace never saw them. Every command now runs once the palette has closed, as the visual editor's already did.
+
 ## 0.2.1 — 2026-10-25
 
 ### Security

@@ -270,6 +270,34 @@ fn included_content_is_read_only() {
 }
 
 #[test]
+fn includes_written_with_attributes_find_their_directives() {
+    // The directives name their targets through attributes, and two include one file by
+    // different tags: each is one include node over its own line, and none is left as text.
+    let model = build(&repository().join("tests/fixtures/includes/attributes/page.adoc"));
+    let directives: Vec<&str> = model
+        .blocks
+        .iter()
+        .filter(|node| matches!(node.kind, NodeKind::Include { .. }))
+        .map(|node| &model.source[node.range.start..node.range.end])
+        .collect();
+    assert_eq!(
+        directives,
+        [
+            "include::{partialsdir}/overview.adoc[]",
+            "include::schema.adoc[tag=description-{QUERY_REF}]",
+            "include::schema.adoc[tag=name-{QUERY_REF}]",
+        ]
+    );
+    // The header's attribute entries belong to the title.
+    let kinds: Vec<String> = model.blocks.iter().map(kind_name).collect();
+    assert_eq!(
+        kinds,
+        ["Title", "Include", "Include", "Include", "Paragraph"]
+    );
+    assert!(check_tiling(&model).is_empty());
+}
+
+#[test]
 fn conditionals_and_attribute_entries_are_read_only() {
     let text = "Before.\n\nifdef::never[]\nHidden text.\nendif::[]\n\n:set-here: value\n\nAfter.\n";
     let model = build_text(Path::new("page.adoc"), text);

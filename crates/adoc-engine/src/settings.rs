@@ -94,6 +94,19 @@ impl Default for GitSettings {
     }
 }
 
+/// The `[updates]` table: whether the app checks for a newer release at start-up.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpdateSettings {
+    /// At most once a day. The command checks whatever this says.
+    pub check: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        Self { check: true }
+    }
+}
+
 /// The `[pdf]` table: how PDF export finds its theme and fonts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfSettings {
@@ -141,6 +154,7 @@ pub struct Settings {
     pub tools: ToolSettings,
     pub git: GitSettings,
     pub pdf: PdfSettings,
+    pub updates: UpdateSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -297,6 +311,7 @@ impl Settings {
                 }
                 self.git.hosts = hosts;
             }
+            ("updates", "check") => self.updates.check = boolean(value)?,
             ("pdf", "theme") => self.pdf.theme = string(value)?,
             ("pdf", "themes_dir") => self.pdf.themes_dir = Some(string(value)?),
             ("pdf", "fonts_dir") => self.pdf.fonts_dir = Some(string(value)?),
@@ -344,6 +359,7 @@ fn is_known(section: &str, key: &str) -> bool {
                 "pdf",
                 "theme" | "themes_dir" | "fonts_dir" | "site_url" | "standards"
             )
+            | ("updates", "check")
     )
 }
 

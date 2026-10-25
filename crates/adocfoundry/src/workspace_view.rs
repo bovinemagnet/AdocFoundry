@@ -231,6 +231,7 @@ impl WorkspaceView {
         ) {
             crate::typing_bench::start(editor, duration, window, cx);
         }
+        crate::updates::check_at_start_up(&view.app, window, cx);
         view
     }
 
@@ -1799,6 +1800,19 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    fn on_check_for_updates(
+        &mut self,
+        _: &CheckForUpdates,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(CommandOutcome::CheckForUpdates(feed)) =
+            self.invoke(ids::APP_CHECK_FOR_UPDATES, CommandArgs::None, window, cx)
+        {
+            crate::updates::check(&self.app, &feed, true, window, cx);
+        }
+    }
+
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::External(path)) =
             self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
@@ -1931,29 +1945,24 @@ impl WorkspaceView {
     }
 
     fn on_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
-        // The palette dispatches an item's action from its own field, where only workspace
-        // actions are handled; the visual editor's run once the palette has closed and handed
-        // focus back, from `on_confirm`.
-        let mut visual_actions: Vec<Option<Box<dyn gpui::Action>>> = Vec::new();
+        // Every item's action runs once the palette has closed and handed focus back, from
+        // `on_confirm`. Dispatched from the palette's own field, inside the dialog layer that
+        // `Root` draws beside this view, it would reach neither the workspace nor an editor.
+        let mut actions: Vec<Box<dyn gpui::Action>> = Vec::new();
         let mut items: Vec<CommandItem> = palette_commands(&self.app.read(cx).engine)
             .into_iter()
             .filter_map(|spec| {
-                let action = action_for(spec.id)?;
-                let item = CommandItem::new()
-                    .label(spec.title)
-                    .keywords([spec.id.as_str()]);
-                Some(if in_visual_editor(spec.id) {
-                    visual_actions.push(Some(action));
-                    item
-                } else {
-                    visual_actions.push(None);
-                    item.action(action)
-                })
+                actions.push(action_for(spec.id)?);
+                Some(
+                    CommandItem::new()
+                        .label(spec.title)
+                        .keywords([spec.id.as_str()]),
+                )
             })
             .collect();
         items.extend(UI_ACTIONS.iter().enumerate().map(|(index, (title, _))| {
-            visual_actions.push(None);
-            CommandItem::new().label(*title).action(ui_action(index))
+            actions.push(ui_action(index));
+            CommandItem::new().label(*title)
         }));
         let palette = self.palette.clone();
         palette.update(cx, |palette, cx| palette.set_query("", window, cx));
@@ -1967,12 +1976,10 @@ impl WorkspaceView {
                     .max_h(px(420.))
                     .items(items.clone())
                     .on_confirm({
-                        let visual_actions: Vec<Option<Box<dyn gpui::Action>>> = visual_actions
-                            .iter()
-                            .map(|action| action.as_ref().map(|action| action.boxed_clone()))
-                            .collect();
+                        let actions: Vec<Box<dyn gpui::Action>> =
+                            actions.iter().map(|action| action.boxed_clone()).collect();
                         move |index, window, cx| {
-                            let Some(Some(action)) = visual_actions.get(index.row) else {
+                            let Some(action) = actions.get(index.row) else {
                                 return;
                             };
                             let action = action.boxed_clone();
@@ -2500,6 +2507,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_export_component_pdf))
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))
+            .on_action(cx.listener(Self::on_check_for_updates))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_mirror))

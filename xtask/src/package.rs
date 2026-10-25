@@ -103,4 +103,19 @@ mod tests {
         assert_eq!(version.split('.').count(), 3);
         assert!(archive_name(&version).starts_with(&format!("adocfoundry-{version}-")));
     }
+
+    /// The app updates itself on Windows by running a newer MSI, which must replace the
+    /// installed version: one fixed upgrade code, a new product code each build, and a major
+    /// upgrade.
+    #[test]
+    fn msi_has_a_major_upgrade() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let wix = fs::read_to_string(root.join("crates/adocfoundry/wix/main.wxs")).unwrap();
+        assert!(wix.contains("<MajorUpgrade "), "no MajorUpgrade");
+        assert!(wix.contains("UpgradeCode=\"6B1D7C52-6E31-4C1E-9F0B-3D7A2C1E5A40\""));
+        assert!(
+            wix.contains("Id=\"*\""),
+            "the product code must change with each build"
+        );
+    }
 }

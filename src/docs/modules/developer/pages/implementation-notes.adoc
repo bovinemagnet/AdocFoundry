@@ -650,6 +650,115 @@ Running titles look up one memoised list of headings with a binary search instea
 |A versioned component would move every page's URL.
 |===
 
+== Phase 6
+
+This section summarises section 9 of `docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md`, as each package lands.
+
+[cols="1,2,3,3"]
+|===
+|Area |Specification |Implementation |Why
+
+|Gap characters (WP 6.1)
+|a gap of U+2003, U+2009 and U+200A spaces joined by U+2060
+|U+00A0 and U+202F, chosen greedily to come closest to the formula's width
+|GPUI's line wrapper treats those two as non-breaking word characters and may break before any other non-word character, so the gap always moves to the next line whole.
+
+|Formula measures (WP 6.1)
+|stored beside the cached SVG
+|written into the SVG's root element (`data-baseline`), with width and height from its own attributes; inline requests carry a `baseline` attribute, so images cached before are typeset again
+|A cache hit needs no second file, and the cache needs no change.
+
+|Inline formula images (WP 6.1)
+|—
+|inline formulas are typeset with Typst's text edges at the ink's bounds, and the baseline found by typesetting again with the line ending at the baseline
+|The line's default edges cut off descenders and limits, which the earlier tooltip images lost too.
+
+|Visual editor (WP 6.1)
+|looks the formula up by the atom's source span
+|by the formula's source text, from `ViewTree::inline_formulas`
+|The view tree's inline formulas carry no source span; a STEM macro's text is the formula's source.
+
+|Gap size in the visual editor (WP 6.1)
+|—
+|measured at the editor's body text size
+|Headings in the visual editor are larger, so a formula in a heading sits in a slightly narrow gap; the preview measures each text at its own size.
+
+|HTTP crates (WP 6.2)
+|`hyper` and `hyper-util` with server and HTTP/1 features; no new crate in the lock file
+|rmcp's streamable-HTTP-server feature and tokio's `signal` feature bring in `sse-stream`, `tokio-stream`, `httpdate` and `signal-hook-registry` (MIT or Apache-2.0); `http`, `http-body-util`, `bytes`, `tokio-util` and `getrandom` become direct dependencies, all already in the tree
+|rmcp's `StreamableHttpService::handle` serves a request directly, so no tower glue is needed.
+
+|The layering split (WP 6.2)
+|`hyper` allowed in `adoc-mcp` without a `client` feature
+|`hyper` and `hyper-util` count as network clients for every crate but `adocfoundry` and `adoc-mcp`; for `adoc-mcp`, `cargo tree -p adoc-mcp --target all -e features` must show no `client` feature of either
+|Features unify across the workspace in `cargo metadata`, so only `adoc-mcp`'s own build shows what it compiles.
+
+|The token (WP 6.2)
+|printed to standard error at start-up
+|only a generated token is printed; one set through `ADOC_MCP_TOKEN` is not; unknown paths get 404 before the token is checked
+|A token the user chose is already theirs to hand to a client.
+
+|Windows signing (WP 6.3)
+|Azure Trusted Signing through `azure/trusted-signing-action`
+|Azure Artifact Signing, the service's new name, through `azure/artifact-signing-action` 2.0.0
+|The same service and action, renamed.
+
+|Notarisation status (WP 6.3)
+|`notarytool submit --wait`
+|`bundle.sh` reads the submission's status from its JSON output and fails, printing Apple's log, unless it is `Accepted`
+|An `Invalid` submission must fail the release rather than ship an un-notarised DMG.
+
+|macOS tool archives (WP 6.3)
+|—
+|the tools' archives are made from the signed copies in the bundle
+|Before, they were made from the unsigned universal binaries.
+
+|The check without a settings file (WP 6.4)
+|—
+|an engine whose settings came from no file never checks unasked: there is nowhere to remember a check
+|Every test engine, and any embedding, would otherwise read the feed and write to the user's configuration directory.
+
+|Recording a check (WP 6.4)
+|`check_due` and `should_announce`
+|`Engine::update_check_due(now)` and `Engine::record_update_check(json, now, asked)`, which parses the feed, records the check and says what to announce; `app.check_for_updates` answers `CommandOutcome::CheckForUpdates(feed)` for the app to fetch
+|The app keeps only the fetching and the notice; a check the user asks for shows a release already announced.
+
+|The notice (WP 6.4)
+|*Update*, *Release notes* and *Later*
+|one action button, *Release notes* (and *Update…* from WP 6.5); closing the notice is Later
+|gpui-component's notifications take one action.
+
+|MSI names (WP 6.5)
+|`AdocFoundry-<version>-<arch>.msi`
+|`adocfoundry-<version>-<arch>.msi`, `x86_64` or `aarch64`, as `cargo wix` names them
+|The published names, read from the 0.2.1 release.
+
+|Installer kind on Windows (WP 6.5)
+|under `Program Files` beside the MSI's registry entry
+|under `Program Files` (`ProgramW6432`, `ProgramFiles` or `ProgramFiles(x86)`)
+|The MSI installs per machine there; the portable zip is unpacked anywhere else. The installer's signature check covers the rest.
+
+|Downloading (WP 6.5)
+|progress in the notification, and cancellable
+|a "Downloading…" notice, then the outcome; `curl` gives up after 600 s
+|gpui-component's notification has no progress bar, and a download is a few tens of megabytes.
+
+|Unsaved changes (WP 6.5)
+|the app quits normally, so unsaved documents ask
+|an update is refused while any document has unsaved changes
+|The app has no quit prompt for unsaved documents to rely on.
+
+|The old bundle (WP 6.5)
+|moved to the Trash
+|deleted after the swap
+|The swap renames within the bundle's folder, so it never crosses volumes; the running app keeps its open files.
+
+|Installers (WP 6.5)
+|—
+|the macOS and Windows installers are compiled on every platform and chosen at run time
+|Every CI platform type-checks both; only the platform's own runs.
+|===
+
 == Git
 
 === Branch-aware Antora versions

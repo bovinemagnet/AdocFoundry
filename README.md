@@ -4,7 +4,7 @@ Forge your documentation in real time.
 
 AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way, written in Rust for macOS, Linux and Windows. It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
 
-The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes, then (5) release readiness: fixes, typeset STEM, `adoc-ls` on the engine, an MCP server and packages. **All five phases are implemented** and released, the current release being 0.2.1; the manual QA on each platform continues in [`docs/qa/phase5.md`](docs/qa/phase5.md). The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md) [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md).
+The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes, (5) release readiness: fixes, typeset STEM, `adoc-ls` on the engine, an MCP server and packages, then (6) inline STEM in the text flow, MCP over HTTP, signed releases and updates. **All six phases are implemented**; the current release is 0.2.1, and Phase 6 ships in the next. The manual QA on each platform continues in [`docs/qa/phase5.md`](docs/qa/phase5.md) and [`docs/qa/phase6.md`](docs/qa/phase6.md). The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md).
 
 ## What works
 
@@ -48,7 +48,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
 - Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
 - Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render when `dot`, `plantuml` or `d2` is on `PATH`, and otherwise show their source with the reason. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
-- STEM is typeset: block formulas are drawn as images, and an inline formula shows its source with the typeset formula in a tooltip. A formula that cannot be converted shows as its source.
+- STEM is typeset: block formulas are drawn as images, and inline formulas are drawn in the line of text, on its baseline and at its size, with their source in a tooltip; the visual editor draws them the same way. A formula that cannot be converted shows as its source.
 
 **Visual editing**
 
@@ -93,11 +93,11 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 Releases are on the [GitHub releases page](https://github.com/bovinemagnet/AdocFoundry/releases). Every package carries the app and the `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` binaries; `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` are also published as archives of their own. Nothing else is needed at run time: no Ruby, Node.js or Java.
 
-- **macOS** (universal): open `AdocFoundry-<version>-macos-universal.dmg` and drag AdocFoundry to Applications. The first release is signed ad hoc, not with a Developer ID, so macOS asks before opening it the first time: Control-click the app, choose Open, and confirm. The command-line tools are in `AdocFoundry.app/Contents/MacOS`; link them onto your `PATH`, for example `ln -s /Applications/AdocFoundry.app/Contents/MacOS/adoc-ls /usr/local/bin/`.
-- **Windows** (x64 and ARM64): run the MSI, which can add the tools to `PATH`, or unpack the portable zip. The first release is not signed, so SmartScreen asks before running it: choose More info, then Run anyway.
+- **macOS** (universal): open `AdocFoundry-<version>-macos-universal.dmg` and drag AdocFoundry to Applications. A release built with the project's signing credentials is signed with a Developer ID and notarised, so it opens without a prompt; one built without them (every release up to 0.2.1) is signed ad hoc, so macOS asks before opening it the first time: Control-click the app, choose Open, and confirm. The release notes say which a release is. The command-line tools are in `AdocFoundry.app/Contents/MacOS`; link them onto your `PATH`, for example `ln -s /Applications/AdocFoundry.app/Contents/MacOS/adoc-ls /usr/local/bin/`.
+- **Windows** (x64 and ARM64): run the MSI, which can add the tools to `PATH`, or unpack the portable zip. A release built with the signing credentials has Authenticode signatures on the executables and the MSI; an unsigned one (every release up to 0.2.1) makes SmartScreen ask before running it: choose More info, then Run anyway.
 - **Linux** (x86_64 and aarch64): the AppImage (`chmod +x`, then run it), the deb (`sudo apt install ./AdocFoundry-….deb`) or the rpm (`sudo dnf install ./adocfoundry-….rpm`). A Flatpak manifest is in `packaging/flatpak/`.
 
-The release workflow (`.github/workflows/release.yml`, run on `v*` tags) builds these and smoke-tests each platform's downloads (`packaging/smoke-test.py`). On Linux, `cargo xtask package`, `cargo deb -p adocfoundry` and `cargo generate-rpm -p crates/adocfoundry` build the same packages locally.
+The release workflow (`.github/workflows/release.yml`, run on `v*` tags) builds these, signs them when the signing secrets are set (see the developer documentation's Building and releasing page), and smoke-tests each platform's downloads (`packaging/smoke-test.py`), signatures included. On Linux, `cargo xtask package`, `cargo deb -p adocfoundry` and `cargo generate-rpm -p crates/adocfoundry` build the same packages locally.
 
 To build from source you need Rust (stable, via rustup) and, on Linux, the libraries GPUI uses:
 
@@ -177,9 +177,14 @@ theme = "default"                # a bundled theme, a name in themes_dir, or a .
 # fonts_dir = "resources/fonts"    # like -a pdf-fontsdir; the bundled fonts are searched after it
 # site_url = "https://docs.example.com"  # where references out of an export lead; else the playbook's site.url
 standards = []                   # "pdf-a-2a", "pdf-ua-1"
+
+[updates]
+check = true                     # look for a newer release at start-up, at most once a day
 ```
 
 A page's `pdf-theme`, `pdf-themesdir` and `pdf-fontsdir` attributes win over it, as they do for asciidoctor-pdf.
+
+With `updates.check` on, the app reads GitHub's releases feed for this repository through the system's `curl` at start-up, at most once a day, and says once when a newer release exists; Check for Updates in the command palette checks whenever asked. The request carries nothing but the app's version in its user agent. The last check is remembered in `update-state.toml` beside the settings file. An app installed from a signed DMG or MSI offers to update itself: it downloads the package, checks it against the release's `SHA256SUMS` and its signature against its own, installs it and restarts; it will not while a document has unsaved changes. The AppImage carries update information for AppImageUpdate, and the other packages are left to their package managers.
 
 `tools.asciidoctor` is used only by `adoc-ls`'s HTML preview; the app's preview needs no external tool. Diagram tools are found on `PATH` and cannot be set here yet.
 
@@ -229,7 +234,7 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --featur
 
 ## MCP server
 
-`adoc-mcp <root>… [--allow-write]` serves an Antora workspace to MCP clients (assistants and tools) over stdio, through the same engine as the app. Its tools read pages (by path or resource id, with unsaved edits), list components and navigation, resolve xref, include and image targets, check the workspace (the same diagnostics as `adocfoundry-cli check --format json`), find symbols, search, render a page as text or HTML and report Git status. With `--allow-write` it also edits pages, renames them (rewriting the xrefs, nav entries and includes that name them) and exports PDF; without it those tools are not offered. Every page is also a `file://` resource, and `antora:{resource_id}` reads one by its Antora id. Paths outside the roots are refused, and so is every file a page would read outside them: includes, images, PDF themes and fonts. External diagram tools are not run, since they read files of their own, so only Mermaid diagrams render. There is no network, and long results are cut with the total stated.
+`adoc-mcp <root>… [--allow-write] [--http <addr>]` serves an Antora workspace to MCP clients (assistants and tools) over stdio, or over Streamable HTTP on a loopback address, through the same engine as the app. Its tools read pages (by path or resource id, with unsaved edits), list components and navigation, resolve xref, include and image targets, check the workspace (the same diagnostics as `adocfoundry-cli check --format json`), find symbols, search, render a page as text or HTML and report Git status. With `--allow-write` it also edits pages, renames them (rewriting the xrefs, nav entries and includes that name them) and exports PDF; without it those tools are not offered. Every page is also a `file://` resource, and `antora:{resource_id}` reads one by its Antora id. Paths outside the roots are refused, and so is every file a page would read outside them: includes, images, PDF themes and fonts. External diagram tools are not run, since they read files of their own, so only Mermaid diagrams render. The server makes no network requests, and long results are cut with the total stated.
 
 ```json
 {
@@ -239,11 +244,23 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --featur
 }
 ```
 
+With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free one) the server listens for MCP's Streamable HTTP transport at `/mcp` instead. A non-loopback address is refused. Every request must carry `Authorization: Bearer <token>`, where the token is `ADOC_MCP_TOKEN`, or a random one printed once to standard error when that is unset. Clients that connect to a running server take its URL and header:
+
+```json
+{
+  "mcpServers": {
+    "adocfoundry": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
 ## Not implemented yet
 
 - In PDF export: source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
-- Typeset inline STEM in the preview's text flow: it shows as its source, typeset in a tooltip.
 - Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
 - Editing included content in place, spell checking, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.

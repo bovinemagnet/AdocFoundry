@@ -226,6 +226,15 @@ The tests are:
 * `rename_page_updates_xrefs`
 * `paths_outside_the_roots_are_refused`
 
+`crates/adoc-mcp/tests/http.rs` starts the binary with `--http 127.0.0.1:0` and a token in `ADOC_MCP_TOKEN`, and speaks HTTP/1.1 to it over a plain socket, so the tests bring no HTTP client into the tree.
+It reads the address the server prints, then posts JSON-RPC and reads the response as JSON or server-sent events.
+The tests are:
+
+* `serves_over_http_with_a_token`
+* `requests_without_the_token_are_refused`
+* `http_binds_loopback_only`
+* `write_tools_need_allow_write_over_http`
+
 == Application tests
 
 Application tests are in `crates/adocfoundry/src/ui_tests.rs`.

@@ -102,6 +102,9 @@ pub enum CommandOutcome {
     Selection(SourceRange),
     /// A web address for the front end to open or copy.
     Url(String),
+    /// The front end is to read the releases feed at this address and hand it to
+    /// `Engine::record_update_check`: the engine makes no request itself.
+    CheckForUpdates(String),
     /// A commit was made; these open documents were saved first.
     Committed {
         commit: String,

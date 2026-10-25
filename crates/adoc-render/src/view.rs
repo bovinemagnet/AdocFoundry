@@ -240,8 +240,8 @@ pub enum ViewInline {
     Stem {
         latex: bool,
         source: String,
-        /// The formula typeset as an image, once it has been rendered.
-        rendered: Option<PathBuf>,
+        /// The formula typeset as an image, with its measures, once it has been rendered.
+        rendered: Option<crate::FormulaImage>,
     },
     Raw(String),
     /// An index term: its terms, primary first, and what the text shows (nothing for a
@@ -307,8 +307,8 @@ pub trait ViewResolver {
     ) -> DiagramView;
 }
 
-/// The diagram kind a formula is rendered as: `stem-latex` or `stem-asciimath`, with the
-/// attribute `inline` set for an inline formula.
+/// The diagram kind a formula is rendered as: `stem-latex` or `stem-asciimath`, with
+/// [`inline_stem_attributes`] for an inline formula.
 #[must_use]
 pub fn stem_kind(latex: bool) -> &'static str {
     if latex {
@@ -316,6 +316,17 @@ pub fn stem_kind(latex: bool) -> &'static str {
     } else {
         "stem-asciimath"
     }
+}
+
+/// The attributes an inline formula is requested with: `inline`, and `baseline`, which asks
+/// for the baseline recorded in the image. Both are part of the cache key, so an image cached
+/// before baselines were recorded is typeset again.
+#[must_use]
+pub fn inline_stem_attributes() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("baseline".to_owned(), "true".to_owned()),
+        ("inline".to_owned(), "true".to_owned()),
+    ])
 }
 
 /// Resolves only what needs no workspace: images relative to the page, nothing else.
@@ -860,9 +871,9 @@ impl Builder<'_> {
                 rendered: match self.resolver.diagram(
                     stem_kind(*latex),
                     source,
-                    &BTreeMap::from([("inline".to_owned(), "true".to_owned())]),
+                    &inline_stem_attributes(),
                 ) {
-                    DiagramView::Svg(path) => Some(path),
+                    DiagramView::Svg(path) => crate::formula_image(&path),
                     _ => None,
                 },
             },

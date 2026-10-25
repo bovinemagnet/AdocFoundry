@@ -1,0 +1,11 @@
+= Attributes in includes
+:partialsdir: partials
+:QUERY_REF: getSubjects
+
+include::{partialsdir}/overview.adoc[]
+
+include::schema.adoc[tag=description-{QUERY_REF}]
+
+include::schema.adoc[tag=name-{QUERY_REF}]
+
+After.

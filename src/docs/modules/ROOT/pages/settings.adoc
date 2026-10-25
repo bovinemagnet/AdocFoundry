@@ -54,6 +54,9 @@ themes_dir = "resources/themes"  # where <name>-theme.yml is found
 fonts_dir = "resources/fonts"
 site_url = "https://docs.example.com"
 standards = ["pdf-a-2a"]         # pdf-a-2a | pdf-ua-1
+
+[updates]
+check = true                     # look for a newer release at start-up
 ----
 
 == Keys
@@ -151,6 +154,11 @@ standards = ["pdf-a-2a"]         # pdf-a-2a | pdf-ua-1
 |array of strings
 |empty
 |Standards every export conforms to: `"pdf-a-2a"` and `"pdf-ua-1"`. The command line's `--standard` adds to these.
+
+|`updates.check`
+|boolean
+|`true`
+|Look for a newer release at start-up, at most once a day, and tell you once when there is one. The app reads GitHub's latest release for the repository through the system's `curl`; without `curl`, or offline, nothing happens. The request sends only the app's version in its user agent. When `false`, the app never checks unasked. Check for Updates in the command palette checks whatever this says. See xref:getting-started.adoc#updates[Updates].
 |===
 
 See xref:pdf-export.adoc[Exporting to PDF].
@@ -160,6 +168,7 @@ See xref:pdf-export.adoc[Exporting to PDF].
 A workspace file may override `editor.*`, `workspace.ignore` and `pdf.*`.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.
+`updates.*` is also accepted only in the user file, so a repository cannot make the editor reach the network.
 
 == Warnings
 

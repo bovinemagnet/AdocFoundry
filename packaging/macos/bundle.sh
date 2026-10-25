@@ -4,9 +4,11 @@
 #
 # usage: packaging/macos/bundle.sh <universal-binary> <version> <output-dir> [<tool>...]
 #
-# Signs and notarises when APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_TEAM_ID and
-# APPLE_APP_PASSWORD are set; otherwise the bundle is signed ad hoc, which Apple silicon needs
-# to run it (Developer ID signing and notarisation come in Phase 6).
+# With APPLE_SIGNING_IDENTITY set (a Developer ID Application identity in a keychain), every
+# executable is signed with the hardened runtime and a secure timestamp; with APPLE_ID,
+# APPLE_TEAM_ID and APPLE_APP_PASSWORD set too, the app and then the DMG are notarised and the
+# tickets stapled to both, so Gatekeeper accepts them offline. Without an identity the bundle
+# is signed ad hoc, which Apple silicon needs to run it.
 set -euo pipefail
 
 binary="$1"
@@ -37,8 +39,42 @@ done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/AdocFoundry.icns"
 rm -rf "$iconset"
 
+# Submits $1 for notarisation and waits; fails unless Apple accepts it, printing the log.
+notarise() {
+  local result status id
+  result="$(xcrun notarytool submit "$1" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+    --password "$APPLE_APP_PASSWORD" --wait --output-format json)"
+  status="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("status", ""))' <<< "$result")"
+  if [[ "$status" != "Accepted" ]]; then
+    id="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("id", ""))' <<< "$result")"
+    echo "notarisation of $1: ${status:-no status}" >&2
+    [[ -n "$id" ]] && xcrun notarytool log "$id" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+      --password "$APPLE_APP_PASSWORD" >&2
+    return 1
+  fi
+}
+
+notarising=""
+if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && -n "${APPLE_ID:-}" ]]; then
+  notarising=1
+fi
+
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-  codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app"
+  # Inside out, without --deep: each tool, then the app, whose seal covers them.
+  for tool in ${tools[@]+"${tools[@]}"}; do
+    codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" \
+      "$app/Contents/MacOS/$(basename "$tool")"
+  done
+  codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app"
+  codesign --verify --strict --deep --verbose=2 "$app"
+  if [[ -n "$notarising" ]]; then
+    zip="$out/AdocFoundry-notarise.zip"
+    ditto -c -k --keepParent "$app" "$zip"
+    notarise "$zip"
+    rm -f "$zip"
+    # Stapled to the app too, so a copy dragged out of the DMG opens offline.
+    xcrun stapler staple "$app"
+  fi
 else
   codesign --force --deep --sign - "$app"
 fi
@@ -47,10 +83,11 @@ dmg="$out/AdocFoundry-$version-macos-universal.dmg"
 rm -f "$dmg"
 hdiutil create -volname AdocFoundry -srcfolder "$app" -ov -format UDZO "$dmg"
 
-if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && -n "${APPLE_ID:-}" ]]; then
+if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
-  xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-    --password "$APPLE_APP_PASSWORD" --wait
-  xcrun stapler staple "$dmg"
+  if [[ -n "$notarising" ]]; then
+    notarise "$dmg"
+    xcrun stapler staple "$dmg"
+  fi
 fi
 echo "$dmg"

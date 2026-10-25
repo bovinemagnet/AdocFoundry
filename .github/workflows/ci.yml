@@ -25,6 +25,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - uses: EmbarkStudios/cargo-deny-action@v2
       - run: cargo xtask layers
+      # The release smoke test's signature checks, which otherwise run only on a signed release.
+      - run: python3 -m unittest discover -s packaging -p 'test_*.py'
 
   test:
     strategy:

@@ -5,7 +5,9 @@ mod common;
 use std::path::Path;
 
 use adoc_math::{to_typst, Notation};
-use adoc_pdf::{export, render_math_svg, to_typst as emit, typeset_text, PdfOptions, PdfStandard};
+use adoc_pdf::{
+    export, render_math, render_math_svg, to_typst as emit, typeset_text, PdfOptions, PdfStandard,
+};
 
 const PAGE: &str = "= Maths\n:stem:\n\nThe sum is stem:[sum_(i=1)^n i] here.\n\n[stem]\n++++\nalpha^2 + beta^2 = gamma^2\n++++\n\n[latexmath]\n++++\n\\frac{a}{b} + \\sqrt{x}\n++++\n";
 
@@ -100,4 +102,31 @@ fn a_formula_renders_to_svg() {
         render_math_svg(&math, true, 12.0)
             .unwrap_or_else(|error| panic!("{latex} as {}: {error}", math.as_str()));
     }
+}
+
+#[test]
+fn inline_math_records_its_baseline() {
+    let rendered = |source: &str| {
+        let math = to_typst(Notation::AsciiMath, source).unwrap();
+        render_math(&math, false, 13.0).unwrap_or_else(|error| panic!("{source}: {error}"))
+    };
+    let square = rendered("x^2");
+    let sum = rendered("sum_(i=1)^n i");
+    for formula in [&square, &sum] {
+        assert!(
+            formula.baseline > 0.0 && formula.baseline < formula.height,
+            "baseline {} inside height {}",
+            formula.baseline,
+            formula.height
+        );
+        assert!(formula.width > 0.0);
+        assert!(formula.svg.starts_with("<svg"));
+    }
+    // The limits below the sum are inside the image, so it reaches further below the baseline.
+    assert!(
+        sum.height - sum.baseline > square.height - square.baseline + 2.0,
+        "sum {sum:?} against square {square:?}",
+        sum = (sum.height, sum.baseline),
+        square = (square.height, square.baseline),
+    );
 }
