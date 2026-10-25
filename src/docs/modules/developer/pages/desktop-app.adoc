@@ -197,6 +197,15 @@ Edits in either editor reach the other through the engine: the source editor app
 Opening a tab follows the engine's active document.
 Link following, back and forward and palette commands therefore all arrive the same way, and the views do not hold a second record of which page is open.
 
+The engine also owns the tab order (`Engine::tab_order`) and which tab is the preview tab (`is_preview`).
+`Engine::open_as(path, OpenDisposition::Preview | Persistent)` opens a page either way, and the commands `document.browse` (open as a preview, driven by clicks and with no action of its own) and `document.keep_open` (Keep Open) are the front end's way in.
+Every text change goes through `edit_document`, which keeps the document open, and so does saving.
+Replacing the preview tab reads the new file first, so a file that cannot be read leaves the tab as it was.
+The new document takes the old one's place in the tab order, the engine emits `EngineEvent::PreviewTabReplaced { old, new }` and then closes the old one.
+Close Left and Close Right follow the tab order.
+Only a front end that shows tabs calls `Engine::enable_preview_tabs`: the app does in `AppState::new`, so the CLI, the language server and the MCP server keep every document they open.
+In the app, `WorkspaceView::open_at` takes an `OpenDisposition`, and `replace_tab` moves the new page's tab into the old one's slot.
+
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 

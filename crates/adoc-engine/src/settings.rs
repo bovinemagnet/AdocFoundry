@@ -29,6 +29,8 @@ pub struct EditorSettings {
     pub soft_wrap: bool,
     pub tab_width: u32,
     pub theme: ThemePreference,
+    /// Browsing to a page shows it in one reusable preview tab until it is edited or kept open.
+    pub preview_tabs: bool,
 }
 
 impl Default for EditorSettings {
@@ -39,6 +41,7 @@ impl Default for EditorSettings {
             soft_wrap: true,
             tab_width: 2,
             theme: ThemePreference::Auto,
+            preview_tabs: true,
         }
     }
 }
@@ -276,6 +279,7 @@ impl Settings {
                 self.editor.soft_wrap = value.as_bool().ok_or("expected true or false")?;
             }
             ("editor", "tab_width") => self.editor.tab_width = positive(value)?,
+            ("editor", "preview_tabs") => self.editor.preview_tabs = boolean(value)?,
             ("editor", "theme") => {
                 self.editor.theme = match value.as_str() {
                     Some("auto") => ThemePreference::Auto,
@@ -348,7 +352,7 @@ fn is_known(section: &str, key: &str) -> bool {
         (section, key),
         (
             "editor",
-            "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme"
+            "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme" | "preview_tabs"
         ) | ("workspace", "ignore")
             | ("tools", "asciidoctor" | "git")
             | (
@@ -482,6 +486,36 @@ mod tests {
         assert_eq!(settings.pdf.themes_dir.as_deref(), Some("resources/themes"));
         assert_eq!(settings.pdf.standards, vec![crate::PdfStandard::A2a]);
         assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+    }
+
+    #[test]
+    fn preview_tabs_default_on_and_follow_the_layers() {
+        assert!(Settings::default().editor.preview_tabs);
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(&user, "[editor]\npreview_tabs = false\n").unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert!(!settings.editor.preview_tabs);
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+
+        // The workspace file overrides the user's.
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[editor]\npreview_tabs = true\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(settings.editor.preview_tabs);
+
+        // An invalid value warns and keeps the value beneath it.
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[editor]\npreview_tabs = \"sometimes\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(!settings.editor.preview_tabs);
+        assert_eq!(settings.warnings.len(), 1);
     }
 
     #[test]

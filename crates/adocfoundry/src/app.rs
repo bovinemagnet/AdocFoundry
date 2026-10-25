@@ -29,6 +29,8 @@ impl EventEmitter<EngineEvent> for AppState {}
 
 impl AppState {
     pub fn new(mut engine: Engine, cx: &mut Context<Self>) -> Self {
+        // The app shows documents as tabs, so browsing may reuse a preview tab.
+        engine.enable_preview_tabs();
         let events = engine.subscribe();
         let pump = cx.spawn(async move |this, cx| loop {
             let busy = this

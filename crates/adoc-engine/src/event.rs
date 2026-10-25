@@ -17,6 +17,13 @@ pub enum EngineEvent {
     },
     DocumentSaved(DocumentId),
     DocumentClosed(DocumentId),
+    /// Document `new` took the preview tab's place from `old`, which is closed next.
+    PreviewTabReplaced {
+        old: DocumentId,
+        new: DocumentId,
+    },
+    /// The document left the preview tab and stays open as an ordinary tab.
+    DocumentKept(DocumentId),
     /// The file behind an open document was moved, by a rename or its undo.
     DocumentMoved {
         id: DocumentId,

@@ -93,7 +93,7 @@ Tabs follow the active document, so opening a page by any route (the sidebar, li
 With the preview docked, the tab strip scrolls to keep the active page's tab in view, including when a page becomes active by following a link or through the outline.
 
 Each tab has an X button that closes it, asking first if the page has unsaved changes.
-Tabs are in the order the pages were opened.
+Tabs are in the order the pages were opened, apart from a preview tab, which takes the place of the one it replaces.
 Right-click a tab for a menu that acts on that tab, not necessarily the active one:
 
 * *Close* closes the tab.
@@ -110,6 +110,50 @@ Close Clean never asks, since it leaves unsaved tabs open.
 
 The ← and → buttons at the start of the tab bar are Go Back and Go Forward through the places you have followed links to.
 Each is greyed out when there is nowhere to go.
+
+[[preview-tabs]]
+=== Preview tabs
+
+Browsing to a page opens it in a preview tab, a temporary tab whose title is in italics.
+Its tooltip reads "Preview tab — edit or double-click to keep open." and its accessible label is "<name>, preview tab".
+Browsing to another page reuses that tab, in the same place in the tab strip, so casual reading does not fill the tab bar.
+There is at most one preview tab.
+
+You are browsing when you:
+
+* click once in Navigation or Modules,
+* choose a search result, a Problems entry or a row in the Changes panel,
+* use Follow Link or Go to Definition on an xref or an include,
+* use Back or Forward,
+* click a link or a block in the rendered preview, or
+* choose Open in a Peek Include.
+
+These open pages as ordinary tabs instead: the Open File dialog, files named on the command line, new untitled pages, Open Settings, and Edit partial in the visual editor.
+An Outline entry only moves the caret.
+
+Browsing to a page that already has a tab only activates that tab.
+A page with an ordinary tab is never made a preview tab.
+
+A preview tab becomes an ordinary tab, for good, when:
+
+* its page is edited in any way, whether by typing in the source, visual editing, formatting or any other edit command,
+* its page is saved,
+* you double-click its tab, or its entry in Navigation or Modules, or
+* you choose *Keep Open*, from the tab's context menu, the File menu or the command palette.
+
+Undoing back to the saved text, or saving, does not make the tab a preview tab again.
+Keeping a tab open does not reopen the page: its caret, its mode (source, visual or split) and its undo history stay as they were.
+
+A preview tab is kept open instead of being replaced when its page has unsaved changes, has text being composed through an input method, or is pinned in the rendered preview with Pin Preview.
+A rendered preview that follows the active page follows the newly browsed page.
+
+Keep Open is not Pin Preview, which fixes the rendered preview on one page, and it is not pinning tabs, which is a separate proposed feature.
+
+Set `editor.preview_tabs` to `false` to turn preview tabs off; see xref:settings.adoc[Settings].
+Every page you open then stays open until you close it.
+Turning the setting off keeps the current preview tab open as an ordinary tab and closes nothing.
+Turning it on leaves existing tabs as they are.
+The setting applies when settings are reloaded, without restarting.
 
 [[formatting-text]]
 == Formatting text in the source editor

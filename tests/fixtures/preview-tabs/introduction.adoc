@@ -1,0 +1,3 @@
+= Introduction
+
+Read xref:installation.adoc[Installation] next.
