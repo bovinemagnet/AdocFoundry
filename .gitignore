@@ -33,3 +33,4 @@ rustc-ice-*.txt
 /package-lock.json
 # Diagram caches, written beside any workspace opened in the app
 .cache/
+.DS_Store
