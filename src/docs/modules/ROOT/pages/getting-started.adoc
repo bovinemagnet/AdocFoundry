@@ -54,7 +54,8 @@ See xref:developer:testing.adoc#platform-status[platform status].
 === Updates
 
 At start-up, at most once a day, AdocFoundry looks for a newer release and tells you once when there is one.
-The notice reads "AdocFoundry <version> is available." and its *Release notes* button opens the release page.
+The notice reads "AdocFoundry <version> is available."
+Its button is *Release notes*, which opens the release page, or *Update…* where AdocFoundry can install the update itself (see below).
 Each release is announced once, and closing the notice dismisses it.
 
 To check at any time, run *Check for Updates* from the command palette.
@@ -64,7 +65,34 @@ The check reads GitHub's latest release through the system's `curl`, so without 
 It sends nothing but the application's version, in the user agent, and is not telemetry.
 To switch it off, set `check = false` under `[updates]` in the user settings file.
 See xref:settings.adoc[Settings].
-Installing an update in place is not yet part of AdocFoundry.
+
+==== Installing an update
+
+*Update…* appears when the app was installed from the DMG (an app bundle on macOS) or the MSI (under `Program Files` on Windows), and the release publishes `SHA256SUMS`.
+It asks first, in a dialog with *Release notes* and *Update*.
+While any document has unsaved changes, the update is refused and you are asked to save first.
+
+macOS::
+AdocFoundry downloads the universal DMG with the system's `curl` and checks it against the release's `SHA256SUMS`.
+It mounts the DMG read-only and checks the new app with `codesign --verify --strict --deep` and Gatekeeper (`spctl`), and that its Team ID is that of the running app.
+It then copies the new app beside the running one, swaps the two, quits and relaunches.
+
+Windows::
+AdocFoundry downloads `adocfoundry-<version>-<arch>.msi` (`x86_64` or `aarch64`) and checks it against `SHA256SUMS`.
+It checks that the Authenticode signature is valid and from the same signer as the running executable.
+It then quits and runs `msiexec /i … /passive`, and the MSI's major upgrade replaces the installed version.
+
+Linux AppImage::
+The AppImage carries update information, and each release publishes the matching `.zsync` file, so AppImageUpdate (or AppImageLauncher) can update it.
+The notice says so.
+AdocFoundry does not run AppImageUpdate itself.
+
+deb, rpm, Flatpak, the portable zip and builds from source::
+The notice only points to the release.
+Update the deb, rpm and Flatpak with their package managers.
+
+NOTE: A build that is not signed with a Developer ID on macOS, or not Authenticode-signed on Windows, cannot check signatures, so it only points to the release.
+Every release up to 0.2.1 is ad hoc signed on macOS and unsigned on Windows.
 
 == Build from source
 

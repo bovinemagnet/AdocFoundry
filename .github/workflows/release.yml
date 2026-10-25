@@ -211,6 +211,10 @@ jobs:
           curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage"
           chmod +x linuxdeploy
           cp packaging/icons/adocfoundry-256.png io.github.bovinemagnet.AdocFoundry.png
+          # Update information for AppImageUpdate, and the .zsync it reads, published with the
+          # release.
+          update="gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-${{ matrix.arch }}.AppImage.zsync"
+          export LDAI_UPDATE_INFORMATION="$update" UPDATE_INFORMATION="$update"
           APPIMAGE_EXTRACT_AND_RUN=1 OUTPUT="dist/AdocFoundry-$version-${{ matrix.arch }}.AppImage" ./linuxdeploy \
             --appdir AppDir \
             --executable target/release/adocfoundry \
@@ -220,6 +224,8 @@ jobs:
             --desktop-file packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop \
             --icon-file io.github.bovinemagnet.AdocFoundry.png \
             --output appimage
+          # linuxdeploy writes the .zsync beside the AppImage, or in the working directory.
+          if ! ls dist/*.AppImage.zsync >/dev/null 2>&1; then mv ./*.AppImage.zsync dist/; fi
       - name: The Flatpak manifest installs what the packages carry
         run: |
           for bin in adocfoundry adocfoundry-cli adoc-ls adoc-mcp; do
@@ -308,6 +314,9 @@ jobs:
         with:
           path: artefacts
           merge-multiple: true
+      # The app checks a package against this before it installs it.
+      - name: Checksums
+        run: (cd artefacts && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
       - uses: softprops/action-gh-release@v2
         with:
           files: artefacts/*

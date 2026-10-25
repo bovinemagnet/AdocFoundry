@@ -281,6 +281,150 @@ pub fn state_file(settings_file: Option<&Path>) -> Option<PathBuf> {
         .map(|directory| directory.join(STATE_FILE))
 }
 
+/// The file each release publishes with the SHA-256 of every other, as `sha256sum` writes it.
+pub const SUMS: &str = "SHA256SUMS";
+
+/// How the running app was installed, which decides how it can be updated.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Install {
+    /// An app bundle, from the DMG.
+    MacApp,
+    /// Installed by the MSI, under Program Files.
+    WindowsMsi,
+    /// Running as an AppImage.
+    AppImage,
+    /// Anything else: a deb, an rpm, a Flatpak, a portable zip or a build from source, which
+    /// their own tools update.
+    Other,
+}
+
+/// How the app is installed, from its executable's path and the environment.
+#[must_use]
+pub fn install_kind(executable: &Path, env: &dyn Fn(&str) -> Option<String>) -> Install {
+    if env("APPIMAGE").is_some_and(|image| !image.is_empty()) {
+        return Install::AppImage;
+    }
+    let mut ancestors = executable.ancestors().skip(1);
+    let (macos, contents, bundle) = (ancestors.next(), ancestors.next(), ancestors.next());
+    let named = |path: Option<&Path>, name: &str| {
+        path.and_then(Path::file_name)
+            .is_some_and(|file| file == name)
+    };
+    if named(macos, "MacOS")
+        && named(contents, "Contents")
+        && bundle
+            .and_then(Path::extension)
+            .is_some_and(|extension| extension == "app")
+    {
+        return Install::MacApp;
+    }
+    // The MSI installs per machine under Program Files; a portable zip unpacks anywhere else.
+    let under_program_files = ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(|name| env(name))
+        .filter(|directory| !directory.is_empty())
+        .any(|directory| {
+            let directory = directory.to_lowercase();
+            executable
+                .to_string_lossy()
+                .to_lowercase()
+                .starts_with(&directory)
+        });
+    if under_program_files {
+        return Install::WindowsMsi;
+    }
+    Install::Other
+}
+
+/// What can be done about a newer release.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UpdatePlan {
+    /// Download `asset`, check it against `checksum` (SHA-256, lower-case hex) and install it.
+    InPlace { asset: Asset, checksum: String },
+    /// Point to AppImageUpdate, which reads the update information the AppImage carries.
+    AppImage { page: String },
+    /// Point to the release page.
+    Notify { page: String },
+}
+
+/// The SHA-256 that `sums` (a `SHA256SUMS` file) gives for `name`.
+#[must_use]
+pub fn checksum_for(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|line| {
+        let (hash, file) = line.trim().split_once(char::is_whitespace)?;
+        // `sha256sum` marks files read in binary mode with `*`.
+        let file = file.trim_start().trim_start_matches('*');
+        (file == name && hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| hash.to_ascii_lowercase())
+    })
+}
+
+/// The package that updates an `install` on `arch` (`std::env::consts::ARCH`), as the release
+/// workflow names them.
+fn package_name(install: Install, version: &Version, arch: &str) -> Option<String> {
+    match install {
+        Install::MacApp => Some(format!("AdocFoundry-{version}-macos-universal.dmg")),
+        Install::WindowsMsi => Some(format!("adocfoundry-{version}-{arch}.msi")),
+        Install::AppImage | Install::Other => None,
+    }
+}
+
+/// What to do about `release` for an `install` on `arch`, given the release's `SHA256SUMS`
+/// text if it has one. Without a checksum for the package, the release is only pointed to.
+#[must_use]
+pub fn plan(release: &Release, install: Install, arch: &str, sums: Option<&str>) -> UpdatePlan {
+    let page = release.page.clone();
+    if install == Install::AppImage {
+        return UpdatePlan::AppImage { page };
+    }
+    let in_place = package_name(install, &release.version, arch).and_then(|name| {
+        let asset = release.assets.iter().find(|asset| asset.name == name)?;
+        let checksum = checksum_for(sums?, &name)?;
+        Some(UpdatePlan::InPlace {
+            asset: asset.clone(),
+            checksum,
+        })
+    });
+    in_place.unwrap_or(UpdatePlan::Notify { page })
+}
+
+/// Checks that the file at `path` has the SHA-256 `expected` (hex).
+///
+/// # Errors
+///
+/// When it cannot be read or its digest differs.
+pub fn verify_checksum(path: &Path, expected: &str) -> Result<(), UpdateError> {
+    use sha2::Digest as _;
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| UpdateError(format!("{}: {error}", path.display())))?;
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .map_err(|error| UpdateError(format!("{}: {error}", path.display())))?;
+    let actual: String = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if actual.eq_ignore_ascii_case(expected.trim()) {
+        Ok(())
+    } else {
+        Err(UpdateError(format!(
+            "{} does not match its published checksum",
+            path.display()
+        )))
+    }
+}
+
+/// The Team ID in `codesign --display --verbose=2` output, unless the signature is ad hoc or
+/// has none.
+#[must_use]
+pub fn team_identifier(codesign_output: &str) -> Option<String> {
+    codesign_output.lines().find_map(|line| {
+        let team = line.trim().strip_prefix("TeamIdentifier=")?;
+        (!team.is_empty() && team != "not set").then(|| team.to_owned())
+    })
+}
+
 impl crate::Engine {
     /// Where the update state is kept for these settings.
     fn update_state_file(&self) -> Option<PathBuf> {
@@ -444,5 +588,158 @@ mod tests {
             ))),
             Some(PathBuf::from("/home/me/.config/adocfoundry").join(STATE_FILE))
         );
+    }
+
+    fn release_with(names: &[&str]) -> Release {
+        Release {
+            version: version("0.3.0"),
+            tag: "v0.3.0".to_owned(),
+            page: "https://example.org/v0.3.0".to_owned(),
+            assets: names
+                .iter()
+                .map(|name| Asset {
+                    name: (*name).to_owned(),
+                    url: format!("https://example.org/{name}"),
+                    size: 1,
+                })
+                .collect(),
+        }
+    }
+
+    const HASH: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+    #[test]
+    fn chooses_the_package_for_the_platform() {
+        let names = [
+            "AdocFoundry-0.3.0-macos-universal.dmg",
+            "adocfoundry-0.3.0-x86_64.msi",
+            "adocfoundry-0.3.0-aarch64.msi",
+            "AdocFoundry-0.3.0-x86_64.AppImage",
+            SUMS,
+        ];
+        let release = release_with(&names);
+        let sums: String = names[..4]
+            .iter()
+            .map(|name| format!("{HASH}  {name}\n"))
+            .collect();
+        let in_place = |install, arch| match plan(&release, install, arch, Some(&sums)) {
+            UpdatePlan::InPlace { asset, checksum } => {
+                assert_eq!(checksum, HASH);
+                asset.name
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(in_place(Install::MacApp, "aarch64"), names[0]);
+        assert_eq!(in_place(Install::WindowsMsi, "x86_64"), names[1]);
+        assert_eq!(in_place(Install::WindowsMsi, "aarch64"), names[2]);
+        assert_eq!(
+            plan(&release, Install::AppImage, "x86_64", Some(&sums)),
+            UpdatePlan::AppImage {
+                page: release.page.clone()
+            }
+        );
+        assert_eq!(
+            plan(&release, Install::Other, "x86_64", Some(&sums)),
+            UpdatePlan::Notify {
+                page: release.page.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn only_notifies_without_checksums() {
+        let release = release_with(&["AdocFoundry-0.3.0-macos-universal.dmg"]);
+        let notify = UpdatePlan::Notify {
+            page: release.page.clone(),
+        };
+        assert_eq!(plan(&release, Install::MacApp, "aarch64", None), notify);
+        let other = format!("{HASH}  something-else.dmg\n");
+        assert_eq!(
+            plan(&release, Install::MacApp, "aarch64", Some(&other)),
+            notify
+        );
+        // A package not published at all is only pointed to.
+        let sums = format!("{HASH}  adocfoundry-0.3.0-x86_64.msi\n");
+        assert_eq!(
+            plan(&release, Install::WindowsMsi, "x86_64", Some(&sums)),
+            notify
+        );
+
+        assert_eq!(
+            checksum_for(&format!("{}  *a.dmg\n", HASH.to_uppercase()), "a.dmg"),
+            Some(HASH.to_owned())
+        );
+        assert_eq!(checksum_for("abc  a.dmg\n", "a.dmg"), None);
+    }
+
+    #[test]
+    fn checksums_are_verified() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("package");
+        std::fs::write(&path, "test").unwrap();
+        // SHA-256 of `test`.
+        assert_eq!(verify_checksum(&path, HASH), Ok(()));
+        assert_eq!(verify_checksum(&path, &HASH.to_uppercase()), Ok(()));
+        assert!(verify_checksum(&path, &HASH.replace('9', "8")).is_err());
+        assert!(verify_checksum(&directory.path().join("missing"), HASH).is_err());
+    }
+
+    #[test]
+    fn install_kind_follows_the_executable() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| (*value).to_owned())
+            }
+        };
+        let none = env(&[]);
+        assert_eq!(
+            install_kind(
+                Path::new("/Applications/AdocFoundry.app/Contents/MacOS/adocfoundry"),
+                &none
+            ),
+            Install::MacApp
+        );
+        assert_eq!(
+            install_kind(Path::new("/usr/bin/adocfoundry"), &none),
+            Install::Other
+        );
+        assert_eq!(
+            install_kind(
+                Path::new("/tmp/.mount_AdocFoXYZ/usr/bin/adocfoundry"),
+                &env(&[("APPIMAGE", "/home/me/AdocFoundry.AppImage")])
+            ),
+            Install::AppImage
+        );
+        let windows = env(&[("ProgramFiles", r"C:\Program Files")]);
+        assert_eq!(
+            install_kind(
+                Path::new(r"C:\Program Files\AdocFoundry\bin\adocfoundry.exe"),
+                &windows
+            ),
+            Install::WindowsMsi
+        );
+        assert_eq!(
+            install_kind(
+                Path::new(r"C:\Users\me\Downloads\adocfoundry.exe"),
+                &windows
+            ),
+            Install::Other
+        );
+    }
+
+    #[test]
+    fn team_identifiers_come_from_codesign() {
+        let signed = "Executable=/Applications/AdocFoundry.app/Contents/MacOS/adocfoundry\n\
+                      Authority=Developer ID Application: Someone (AB12CD34EF)\n\
+                      TeamIdentifier=AB12CD34EF\n";
+        assert_eq!(team_identifier(signed), Some("AB12CD34EF".to_owned()));
+        assert_eq!(
+            team_identifier("Signature=adhoc\nTeamIdentifier=not set\n"),
+            None
+        );
+        assert_eq!(team_identifier("code object is not signed at all"), None);
     }
 }

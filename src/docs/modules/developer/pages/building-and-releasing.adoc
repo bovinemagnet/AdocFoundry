@@ -84,13 +84,13 @@ The four executables are signed through Azure Artifact Signing (formerly Trusted
 The job checks every signature with `Get-AuthenticodeSignature`.
 
 |`linux`
-|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy`, and archives of `adoc-ls`, `adocfoundry-cli` and `adoc-mcp`. It also checks the Flatpak manifest (see below).
+|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy` (with its update information set, `gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-<arch>.AppImage.zsync`) and its `.zsync` file, and archives of `adoc-ls`, `adocfoundry-cli` and `adoc-mcp`. It also checks the Flatpak manifest (see below).
 
 |`smoke`
 |Runs `packaging/smoke-test.py` on each platform's downloaded artefacts before `publish` (see below).
 
 |`publish`
-|On a tag, downloads every artefact and attaches it to a GitHub release with generated release notes.
+|On a tag, downloads every artefact and writes `SHA256SUMS` (`sha256sum` over every asset), and attaches the artefacts and `SHA256SUMS` to a GitHub release with generated release notes.
 |===
 
 === Signing
@@ -144,6 +144,15 @@ The secrets are repository secrets.
 
 On macOS the certificate is imported into a temporary keychain that the job deletes when it ends.
 `bundle.sh` checks notarisation's status itself and prints Apple's log when it is not `Accepted`.
+
+=== Updates
+
+The app updates itself from the published DMG and MSI, checked against `SHA256SUMS` and the installers' signatures.
+Asset names must therefore stay as they are: `AdocFoundry-<version>-macos-universal.dmg`, `adocfoundry-<version>-<arch>.msi` and `SHA256SUMS`.
+The WiX source must keep its `MajorUpgrade` and upgrade code, which the xtask test `msi_has_a_major_upgrade` checks.
+
+Debug builds read the update feed from `ADOCFOUNDRY_UPDATE_FEED` when it is set, for trying an update against a feed of your own.
+Release builds always use the GitHub feed.
 
 === The macOS bundle script
 

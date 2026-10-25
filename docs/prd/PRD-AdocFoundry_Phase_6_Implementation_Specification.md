@@ -210,7 +210,7 @@ Out of scope:
 Open questions, to settle before the package that needs them:
 
 - [ ] **WP 6.3:** the Apple Developer ID and Azure Trusted Signing accounts exist, and their secrets are in the repository. Until they are, the workflow builds unsigned, and the manual checks wait.
-- [ ] **WP 6.5:** whether a Linux AppImage should run AppImageUpdate itself, or only point to it.
+- [x] **WP 6.5:** whether a Linux AppImage should run AppImageUpdate itself, or only point to it: it only points to it, since AppImageUpdate is a separate tool the user may not have.
 
 Implementation notes, as each package lands:
 
@@ -232,6 +232,12 @@ Implementation notes, as each package lands:
 | The check without a settings file (WP 6.4) | — | an engine whose settings came from no file never checks unasked: there is nowhere to remember a check | Every test engine, and any embedding, would otherwise read the feed and write to the user's configuration directory. |
 | Recording a check (WP 6.4) | `check_due` and `should_announce` | `Engine::update_check_due(now)` and `Engine::record_update_check(json, now, asked)`, which parses, records the check and says what to announce; `app.check_for_updates` answers `CommandOutcome::CheckForUpdates(feed)`, for the app to fetch | The app keeps only the fetching and the notice; a check the user asks for shows a release already announced. |
 | The notice (WP 6.4) | **Update**, **Release notes** and **Later** | one action button, **Release notes** (and **Update…** from WP 6.5); closing the notice is Later | gpui-component's notifications take one action. |
+| MSI names (WP 6.5) | `AdocFoundry-<version>-<arch>.msi` | `adocfoundry-<version>-<arch>.msi`, `x86_64` or `aarch64`, as `cargo wix` names them | The published names, read from the 0.2.1 release. |
+| Installer kind on Windows (WP 6.5) | under `Program Files` beside the MSI's registry entry | under `Program Files` (`ProgramW6432`, `ProgramFiles` or `ProgramFiles(x86)`) | The MSI installs per machine there; the portable zip is unpacked anywhere else. The installer's signature check covers the rest. |
+| Downloading (WP 6.5) | progress in the notification, and cancellable | a "Downloading…" notice, then the outcome; `curl` gives up after 600 s | gpui-component's notification has no progress bar, and a download is a few tens of megabytes. |
+| Unsaved changes (WP 6.5) | the app quits normally, so unsaved documents ask | an update is refused while any document has unsaved changes | The app has no quit prompt for unsaved documents to rely on. |
+| The old bundle (WP 6.5) | moved to the Trash | deleted after the swap | The swap renames within the bundle's folder, so it never crosses volumes; the running app keeps its open files. |
+| Installers (WP 6.5) | — | the macOS and Windows installers are compiled on every platform and chosen at run time | Every CI platform type-checks both; only the platform's own runs. |
 
 ## 10. Implementation Sequence
 

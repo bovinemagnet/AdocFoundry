@@ -193,6 +193,7 @@ dependencies = [
  "ropey",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "toml 1.1.8+spec-1.1.0",
 ]
