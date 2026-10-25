@@ -683,7 +683,7 @@ impl VisualView {
             .then(|| block.display_offset(self.selection.head))
             .flatten();
         let composing = caret_display.zip(self.composing.as_deref());
-        let shown = text::shown(block, composing);
+        let shown = text::shown(block, composing, &self.formula_gaps);
         // Titles, headings and terms are bold throughout: runs set their own weight.
         let bold = matches!(
             node.kind,
@@ -708,6 +708,7 @@ impl VisualView {
             selection,
             caret_colour: draw.caret,
             selection_colour: draw.selection,
+            formula_backing: draw.inline.formula_backing,
             reveal: caret_here.then(|| (self.scroll.clone(), self.reveal.clone())),
         };
         let element = text::element(path.to_vec(), &shown, runs, &self.layouts, overlay);

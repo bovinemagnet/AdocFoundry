@@ -331,6 +331,7 @@ pub(crate) fn block_context<'a>(
             unresolved: theme.danger,
             mark: theme.yellow_light,
             code_background: theme.muted,
+            formula_backing: theme.mode.is_dark().then(gpui::white),
         },
         palette: blocks::Palette {
             border: theme.border,

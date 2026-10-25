@@ -437,6 +437,55 @@ fn stem_renders_to_svg_and_is_cached() {
 }
 
 #[test]
+fn inline_stem_carries_its_metrics() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(
+        &page,
+        "= Page\n:stem:\n\nThe sum stem:[sum_(i=1)^n i] here.\n",
+    )
+    .unwrap();
+    let inline_formula = |engine: &Engine, id| {
+        blocks(engine, id)
+            .iter()
+            .find_map(|block| match &block.kind {
+                ViewKind::Paragraph(content) => content.iter().find_map(|inline| match inline {
+                    ViewInline::Stem { rendered, .. } => rendered.clone(),
+                    _ => None,
+                }),
+                _ => None,
+            })
+    };
+    let rendered = || {
+        let (mut engine, _clock) = engine_with_clock();
+        engine.set_diagrams(
+            Diagrams::with_providers(
+                DiagramCache::new(directory.path().join("cache")),
+                Vec::new(),
+            )
+            .with_provider(Box::new(adoc_engine::StemProvider)),
+        );
+        let id = engine.open(&page).unwrap();
+        engine.request_preview(id);
+        engine.pump();
+        assert!(engine.wait_for_workers(WAIT));
+        inline_formula(&engine, id).expect("a rendered inline formula")
+    };
+
+    let image = rendered();
+    assert!(image.width > 0.0 && image.baseline > 0.0 && image.baseline < image.height);
+    let svg = fs::read_to_string(&image.path).unwrap();
+    let height = format!("height=\"{}pt\"", image.height);
+    assert!(
+        svg.contains(&height),
+        "{height} in {}",
+        &svg[..svg.len().min(300)]
+    );
+    // From the cache, a second engine finds the same measures without typesetting again.
+    assert_eq!(rendered(), image);
+}
+
+#[test]
 fn asciidoctor_is_the_configured_one_when_set() {
     let directory = tempfile::tempdir().unwrap();
     let tool = directory.path().join("asciidoctor");

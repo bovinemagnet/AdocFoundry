@@ -562,7 +562,17 @@ fn html_stem_is_an_image_with_alt_text() {
     // A rendered formula is an image whose alternative text is the formula as written; one not
     // yet rendered keeps MathJax's delimiters.
     let text = "= Page\n:stem:\n\n[stem]\n++++\nsum_(i=1)^n i\n++++\n\nInline stem:[x^2].\n";
-    struct Rendered;
+    // An inline formula's image carries its measures, as the STEM provider writes it.
+    let cache = tempfile::tempdir().unwrap();
+    let cache = std::path::absolute(cache.path()).unwrap();
+    let svg = adoc_render::with_baseline(
+        "<svg viewBox=\"0 0 10 12\" width=\"10pt\" height=\"12pt\"></svg>",
+        9.0,
+    );
+    for name in ["inline", "block"] {
+        std::fs::write(cache.join(format!("{name}.svg")), &svg).unwrap();
+    }
+    struct Rendered(PathBuf);
     impl ViewResolver for Rendered {
         fn xref(&self, from: &Path, target: &str) -> ResolvedLink {
             LocalResolver.xref(from, target)
@@ -582,21 +592,19 @@ fn html_stem_is_an_image_with_alt_text() {
             } else {
                 "block"
             };
-            DiagramView::Svg(PathBuf::from(format!("/cache/{name}.svg")))
+            DiagramView::Svg(self.0.join(format!("{name}.svg")))
         }
     }
     let html = to_html(
-        &view_of(Path::new("/page.adoc"), text, &Rendered),
+        &view_of(Path::new("/page.adoc"), text, &Rendered(cache.clone())),
         &HtmlOptions::default(),
     );
-    // `/cache` is on the current drive on Windows.
-    let block = url::Url::from_file_path(std::path::absolute("/cache/block.svg").unwrap()).unwrap();
+    let block = url::Url::from_file_path(cache.join("block.svg")).unwrap();
     assert!(
         html.contains(&format!("<img src=\"{block}\" alt=\"sum_(i=1)^n i\">")),
         "{html}"
     );
-    let inline =
-        url::Url::from_file_path(std::path::absolute("/cache/inline.svg").unwrap()).unwrap();
+    let inline = url::Url::from_file_path(cache.join("inline.svg")).unwrap();
     assert!(
         html.contains(&format!(
             "<img class=\"stem\" src=\"{inline}\" alt=\"x^2\">"

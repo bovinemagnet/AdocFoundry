@@ -736,14 +736,14 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
             );
         }
         ViewInline::Stem {
-            rendered: Some(path),
+            rendered: Some(image),
             source,
             ..
         } => {
             let _ = write!(
                 out,
                 "<img class=\"stem\" src=\"{}\" alt=\"{}\">",
-                escape(&file_url(path)),
+                escape(&file_url(&image.path)),
                 escape(source.trim())
             );
         }

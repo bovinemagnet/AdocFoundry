@@ -5,7 +5,8 @@
 use adoc_diagrams::{DiagramError, DiagramProvider, DiagramRequest};
 
 /// Renders `stem-asciimath` and `stem-latex` requests; the attribute `inline` makes the formula
-/// inline-sized rather than displayed.
+/// inline-sized rather than displayed, and records its baseline in the image
+/// (`adoc_render::with_baseline`) so the preview can set it on the line.
 pub struct StemProvider;
 
 impl DiagramProvider for StemProvider {
@@ -22,7 +23,20 @@ impl DiagramProvider for StemProvider {
         let math = adoc_math::to_typst(notation, &request.source)
             .map_err(|error| DiagramError::Failed(error.message))?;
         let block = !request.attributes.contains_key("inline");
-        adoc_pdf::render_math_svg(&math, block, if block { 15.0 } else { 13.0 })
-            .map_err(|error| DiagramError::Failed(error.to_string()))
+        let rendered = adoc_pdf::render_math(
+            &math,
+            block,
+            if block {
+                15.0
+            } else {
+                f64::from(adoc_render::INLINE_FORMULA_POINTS)
+            },
+        )
+        .map_err(|error| DiagramError::Failed(error.to_string()))?;
+        Ok(if block {
+            rendered.svg
+        } else {
+            adoc_render::with_baseline(&rendered.svg, rendered.baseline)
+        })
     }
 }

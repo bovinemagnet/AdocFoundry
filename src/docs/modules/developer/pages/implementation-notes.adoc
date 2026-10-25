@@ -650,6 +650,40 @@ Running titles look up one memoised list of headings with a binary search instea
 |A versioned component would move every page's URL.
 |===
 
+== Phase 6
+
+This section summarises section 9 of `docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md`, as each package lands.
+
+[cols="1,2,3,3"]
+|===
+|Area |Specification |Implementation |Why
+
+|Gap characters (WP 6.1)
+|a gap of U+2003, U+2009 and U+200A spaces joined by U+2060
+|U+00A0 and U+202F, chosen greedily to come closest to the formula's width
+|GPUI's line wrapper treats those two as non-breaking word characters and may break before any other non-word character, so the gap always moves to the next line whole.
+
+|Formula measures (WP 6.1)
+|stored beside the cached SVG
+|written into the SVG's root element (`data-baseline`), with width and height from its own attributes; inline requests carry a `baseline` attribute, so images cached before are typeset again
+|A cache hit needs no second file, and the cache needs no change.
+
+|Inline formula images (WP 6.1)
+|—
+|inline formulas are typeset with Typst's text edges at the ink's bounds, and the baseline found by typesetting again with the line ending at the baseline
+|The line's default edges cut off descenders and limits, which the earlier tooltip images lost too.
+
+|Visual editor (WP 6.1)
+|looks the formula up by the atom's source span
+|by the formula's source text, from `ViewTree::inline_formulas`
+|The view tree's inline formulas carry no source span; a STEM macro's text is the formula's source.
+
+|Gap size in the visual editor (WP 6.1)
+|—
+|measured at the editor's body text size
+|Headings in the visual editor are larger, so a formula in a heading sits in a slightly narrow gap; the preview measures each text at its own size.
+|===
+
 == Git
 
 === Branch-aware Antora versions

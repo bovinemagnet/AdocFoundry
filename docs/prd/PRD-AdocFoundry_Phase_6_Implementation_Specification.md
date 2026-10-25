@@ -216,6 +216,12 @@ Implementation notes, as each package lands:
 
 | Area | Specification | Implementation | Why |
 |---|---|---|---|
+| Gap characters (WP 6.1) | U+2003, U+2009 and U+200A, joined by U+2060 | U+00A0 and U+202F, chosen to come closest to the formula's drawn width | GPUI's line wrapper may break before any character it does not count as part of a word; those two are its non-breaking ones, so the gap moves to the next line whole. |
+| Formula measures (WP 6.1) | stored beside the cached SVG | written into the SVG's root element (`data-baseline`), its width and height read from its own attributes by `adoc_render::formula_image`; inline requests carry a `baseline` attribute, so images cached before are typeset again | A cache hit needs no second file, and the diagram cache is unchanged. |
+| Inline images (WP 6.1) | — | `render_math` typesets an inline formula with Typst's text edges at the ink's bounds, and finds its baseline by typesetting it again with the line ending at the baseline | The default edges (cap height to baseline) cut off descenders and limits, which the tooltip images of Phase 5 lost too. |
+| Visual editor (WP 6.1) | looked up by the atom's source span | by the formula's source, from `ViewTree::inline_formulas`; `Shown` maps display offsets around each gap as it does around a composition | `ViewInline::Stem` has no source span, and a STEM macro's shown text is its formula's source. |
+| Gap size (WP 6.1) | — | the preview measures each text's gap at that text's size; the visual editor at its body size | A formula in a visual-editor heading sits in a slightly narrow gap. |
+| Backing (WP 6.1) | the page colour in the light theme | no backing in the light theme | The same thing, without a colour to keep in step with the theme. |
 
 ## 10. Implementation Sequence
 

@@ -48,7 +48,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
 - Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
 - Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render when `dot`, `plantuml` or `d2` is on `PATH`, and otherwise show their source with the reason. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
-- STEM is typeset: block formulas are drawn as images, and an inline formula shows its source with the typeset formula in a tooltip. A formula that cannot be converted shows as its source.
+- STEM is typeset: block formulas are drawn as images, and inline formulas are drawn in the line of text, on its baseline and at its size, with their source in a tooltip; the visual editor draws them the same way. A formula that cannot be converted shows as its source.
 
 **Visual editing**
 
@@ -243,7 +243,6 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --featur
 
 - In PDF export: source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
-- Typeset inline STEM in the preview's text flow: it shows as its source, typeset in a tooltip.
 - Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
 - Editing included content in place, spell checking, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.

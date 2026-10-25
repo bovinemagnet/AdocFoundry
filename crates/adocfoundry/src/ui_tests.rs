@@ -439,6 +439,76 @@ fn preview_draws_block_stem_as_an_image(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("stem-image").is_some());
 }
 
+#[gpui::test]
+fn preview_draws_inline_stem_in_the_line(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(
+        &page,
+        "= Maths\n:stem:\n\nThe root stem:[sqrt(4) = 2] here.\n\nThe root sqrt4=2 here.\n",
+    )
+    .unwrap();
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+
+    cx.simulate_keystrokes("secondary-k v");
+    let rendered = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let preview = workspace.read(cx).preview().read(cx);
+            preview.shown().is_some_and(|shown| {
+                shown.view.blocks.iter().any(|block| match &block.kind {
+                    adoc_render::ViewKind::Paragraph(content) => content.iter().any(|inline| {
+                        matches!(
+                            inline,
+                            adoc_render::ViewInline::Stem {
+                                rendered: Some(_),
+                                ..
+                            }
+                        )
+                    }),
+                    _ => false,
+                })
+            })
+        })
+    };
+    assert!(drain_until(&app, &mut cx, rendered), "the formula renders");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    let image = cx
+        .debug_bounds("stem-inline")
+        .expect("the formula is drawn in the line");
+    let (with_formula, with_text) = cx.update(|_, cx| {
+        let preview = workspace.read(cx).preview().read(cx);
+        (preview.extent(&[0]).unwrap(), preview.extent(&[1]).unwrap())
+    });
+    let height = |extent: crate::preview::sync::Extent| extent.bottom - extent.top;
+    assert!(
+        (height(with_formula) - height(with_text)).abs() <= px(2.),
+        "{with_formula:?} against {with_text:?}"
+    );
+    assert!(image.size.width > px(0.) && image.size.height > px(0.));
+    // The image lies across the paragraph's line, not beside or below it.
+    let paragraph_top = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .preview()
+            .read(cx)
+            .block_position(&[0])
+            .unwrap()
+    });
+    let top = image.origin.y - paragraph_top.y;
+    assert!(
+        top > px(-8.) && top < height(with_formula),
+        "image at {top:?} in a paragraph {:?} tall",
+        height(with_formula)
+    );
+}
+
 fn detached_paragraphs(
     workspace: &Entity<WorkspaceView>,
     cx: &mut VisualTestContext,
@@ -1562,6 +1632,40 @@ fn visual_code_blocks_are_highlighted(cx: &mut TestAppContext) {
             .map(|(_, styles)| styles.len())
     });
     assert!(styles.is_some_and(|count| count > 0), "{styles:?}");
+}
+
+#[gpui::test]
+fn visual_editor_draws_inline_stem(cx: &mut TestAppContext) {
+    let text = "= Page\n:stem:\n\nThe root stem:[sqrt(4) = 2] here.\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let rendered = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            visual
+                .read(cx)
+                .shown()
+                .is_some_and(|shown| !shown.view.inline_formulas().is_empty())
+        })
+    };
+    assert!(drain_until(&app, &mut cx, rendered), "the formula renders");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("stem-inline").is_some(),
+        "drawn in the line"
+    );
+    // The text is still the paragraph's, and the formula's macro one step of the caret: typing
+    // after it writes after the macro.
+    assert_eq!(
+        shown_blocks(&visual, &mut cx),
+        ["Page", "The root sqrt(4) = 2 here."]
+    );
+    let after = text.find("] here").unwrap() + 1;
+    place_caret(&visual, after, &mut cx);
+    cx.simulate_keystrokes("!");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n:stem:\n\nThe root stem:[sqrt(4) = 2]! here.\n"
+    );
 }
 
 #[gpui::test]

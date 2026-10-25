@@ -149,13 +149,20 @@ They are found on the `PATH` only.
 A block formula is typeset and drawn as an image on a white card, black on white in either theme.
 While it renders, the source shows.
 If it fails, a short message shows with the source.
+An inline formula (`stem:[…]`, `asciimath:[…]` or `latexmath:[…]`) is drawn as its typeset image in the line of text.
+It is sized to the text beside it and sits on that text's baseline.
+A formula taller than one and a half lines is drawn smaller, so the line keeps its height.
+Hovering over it shows its source in a tooltip.
+In the dark theme an inline formula is drawn black on a small white backing, as block formulas are.
+In the light theme it has no backing.
+Until an inline formula has rendered, or when it cannot be converted, it shows as its source in a code style.
+In the visual editor, a typeset inline formula is one step for the caret, like other macros, and copying it copies its source.
+To edit the formula itself, change its source.
 Formulas are cached like diagrams.
 See xref:pdf-export.adoc#stem[Exporting to PDF] for the notation rules.
 
 == Known limits
 
-* An inline formula is not typeset in the line of text, because the preview lays text out as styled runs, which cannot hold images.
-It stays as its source in a code style, with the typeset formula in a tooltip on hover.
 * The preview is read-only.
 To edit the rendered page, use the visual editor; see xref:visual-editing.adoc[Visual editing].
 * The preview has no settings of its own.

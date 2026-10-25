@@ -108,6 +108,9 @@ pub struct VisualView {
     /// Highlighted code, kept between frames so a block is highlighted again only when its
     /// text changes.
     pub(crate) highlights: Rc<RefCell<crate::preview::HighlightCache>>,
+    /// The typeset inline formulas as last drawn, so the text between frames is shown as it
+    /// was drawn.
+    formula_gaps: text::FormulaGaps,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -144,6 +147,7 @@ impl VisualView {
             layouts: Layouts::default(),
             reveal: Rc::default(),
             highlights: Rc::default(),
+            formula_gaps: text::FormulaGaps::new(),
             _subscriptions: vec![subscription],
         };
         if let Some(first) = view
@@ -493,7 +497,7 @@ impl VisualView {
         let (path, block) = self.block_at(self.selection.head)?;
         let display = block.display_offset(self.selection.head)?;
         let composing = self.composing.as_deref().map(|text| (display, text));
-        let shown = text::shown(&block, composing);
+        let shown = text::shown(&block, composing, &self.formula_gaps);
         let drawn = text::caret_point(&self.layouts, &path, &shown, display)
             .zip(text::bounds_of(&self.layouts, &path));
         if let Some(((point, line_height), bounds)) = drawn {
@@ -520,7 +524,7 @@ impl VisualView {
         let (path, block) = self.block_at(self.selection.head)?;
         let display = block.display_offset(self.selection.head)?;
         let composing = self.composing.as_deref().map(|text| (display, text));
-        let shown = text::shown(&block, composing);
+        let shown = text::shown(&block, composing, &self.formula_gaps);
         let (point, line_height) = text::caret_point(&self.layouts, &path, &shown, display)?;
         let x = *self.goal_x.get_or_insert(point.x);
         let target_y = if down {
@@ -587,7 +591,7 @@ impl VisualView {
             }
         }
         if let Some((_, _, other, other_block, y)) = best {
-            let other_shown = text::shown(&other_block, None);
+            let other_shown = text::shown(&other_block, None, &self.formula_gaps);
             let index = text::hit(&self.layouts, &other, gpui::point(x, y), &other_shown)?;
             return other_block.source_offset(index, other_block.marks_at(index));
         }
@@ -628,7 +632,7 @@ impl VisualView {
         .then(|| block.display_offset(self.selection.head))
         .flatten();
         let composing = caret_display.zip(self.composing.as_deref());
-        let shown = text::shown(block, composing);
+        let shown = text::shown(block, composing, &self.formula_gaps);
         let display = text::hit(&self.layouts, path, position, &shown)?;
         block.source_offset(display, block.marks_at(display))
     }
@@ -748,6 +752,21 @@ impl Render for VisualView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Repopulated as this frame's text blocks are drawn.
         self.layouts.borrow_mut().clear();
+        self.formula_gaps = self
+            .shown
+            .as_ref()
+            .map_or_else(text::FormulaGaps::new, |shown| {
+                let font = window.text_style().font();
+                shown
+                    .view
+                    .inline_formulas()
+                    .into_iter()
+                    .map(|(source, image)| {
+                        let gap = crate::preview::inlines::Gap::measure(&image, &font, window);
+                        (source, (gap, image.path))
+                    })
+                    .collect()
+            });
         let body = self
             .shown
             .clone()

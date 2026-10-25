@@ -254,13 +254,78 @@ pub fn render_math_svg(
     block: bool,
     size: f64,
 ) -> Result<String, PdfError> {
+    render_math(math, block, size).map(|rendered| rendered.svg)
+}
+
+/// A formula typeset as SVG, with the page's measures in points: what an inline formula needs to
+/// sit on the baseline of the text around it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderedMath {
+    pub svg: String,
+    pub width: f64,
+    pub height: f64,
+    /// From the top of the page; a displayed formula's is its bottom margin's top.
+    pub baseline: f64,
+}
+
+/// The page's margin around a formula, so antialiased edges are not cut.
+const MATH_MARGIN: f64 = 1.0;
+
+/// As [`render_math_svg`], with the page's size and the formula's baseline.
+///
+/// An inline formula's line reaches from its ink's top to its ink's bottom, not from the font's
+/// cap height to its baseline, so limits and descenders are inside the image. Its baseline is
+/// found by typesetting it again with the line ending at the baseline.
+///
+/// # Errors
+///
+/// When Typst cannot typeset it.
+pub fn render_math(
+    math: &adoc_math::TypstMath,
+    block: bool,
+    size: f64,
+) -> Result<RenderedMath, PdfError> {
     let size = if size.is_finite() && size > 0.0 {
         size
     } else {
         12.0
     };
+    let page = typeset_math(math, block, size, "bounds")?;
+    let height = page.frame.height().to_pt();
+    let baseline = if block {
+        height - MATH_MARGIN
+    } else {
+        typeset_math(math, block, size, "baseline")?
+            .frame
+            .height()
+            .to_pt()
+            - MATH_MARGIN
+    };
+    Ok(RenderedMath {
+        svg: typst_svg::svg(&page, &typst_svg::SvgOptions::default()),
+        width: page.frame.width().to_pt(),
+        height,
+        baseline,
+    })
+}
+
+/// The one page `math` typesets to, its lines ending at `bottom_edge`.
+fn typeset_math(
+    math: &adoc_math::TypstMath,
+    block: bool,
+    size: f64,
+    bottom_edge: &str,
+) -> Result<typst_layout::Page, PdfError> {
+    let failed = |message: String| {
+        PdfError::Compile(vec![PdfDiagnostic {
+            severity: PdfSeverity::Error,
+            message,
+            hints: Vec::new(),
+            source: None,
+        }])
+    };
     let source = format!(
-        "{}\n#set page(width: auto, height: auto, margin: 1pt, fill: none)\n#set text(size: {size}pt, font: \"Noto Serif\")\n#adoc-stem({}, \"\", block: {block})\n",
+        "{}\n#set page(width: auto, height: auto, margin: {MATH_MARGIN}pt, fill: none)\n#set text(size: {size}pt, font: \"Noto Serif\", top-edge: \"bounds\", bottom-edge: \"{bottom_edge}\")\n#adoc-stem({}, \"\", block: {block})\n",
         crate::document::MATH,
         crate::typst::string(math.as_str()),
     );
@@ -287,15 +352,11 @@ pub fn render_math_svg(
                 .collect(),
         )
     })?;
-    let page = document.pages().first().ok_or_else(|| {
-        PdfError::Compile(vec![PdfDiagnostic {
-            severity: PdfSeverity::Error,
-            message: "the formula typeset to nothing".to_owned(),
-            hints: Vec::new(),
-            source: None,
-        }])
-    })?;
-    Ok(typst_svg::svg(page, &typst_svg::SvgOptions::default()))
+    document
+        .pages()
+        .first()
+        .cloned()
+        .ok_or_else(|| failed("the formula typeset to nothing".to_owned()))
 }
 
 /// Lays the document out, with every warning found on the way.
