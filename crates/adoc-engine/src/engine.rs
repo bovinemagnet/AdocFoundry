@@ -296,10 +296,42 @@ impl Engine {
         }
     }
 
+    /// Writes document `id` to its file, unless the file changed on disk since the engine last
+    /// read or wrote it: then nothing is written and the error is [`EngineError::SaveConflict`].
     pub fn save(&mut self, id: DocumentId) -> Result<(), EngineError> {
+        self.write_document(id, false)
+    }
+
+    /// Writes document `id` to its file even when the file changed on disk, losing that change.
+    pub fn overwrite(&mut self, id: DocumentId) -> Result<(), EngineError> {
+        self.write_document(id, true)
+    }
+
+    /// Replaces document `id`'s text with its file's, as one undo step, leaving it clean.
+    pub fn reload(&mut self, id: DocumentId) -> Result<(), EngineError> {
         let document = self
             .documents
-            .get_mut(&id)
+            .get(&id)
+            .ok_or(EngineError::UnknownDocument(id))?;
+        let path = document.path.clone();
+        let text = fs::read_to_string(&path).map_err(|error| EngineError::io(&path, error))?;
+        if document.text != text.as_str() {
+            let whole = SourceRange::new(0, document.text.len());
+            let group = self.new_group();
+            self.apply_edits(
+                id,
+                vec![TextEdit::new(whole, text.clone())],
+                UndoMode::Group(group),
+            )?;
+        }
+        self.mark_saved(id, &text);
+        Ok(())
+    }
+
+    fn write_document(&mut self, id: DocumentId, overwrite: bool) -> Result<(), EngineError> {
+        let document = self
+            .documents
+            .get(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         if document.untitled {
             return Err(EngineError::NotFound(format!(
@@ -307,8 +339,22 @@ impl Engine {
                 document.path.display()
             )));
         }
+        let path = document.path.clone();
+        if !overwrite {
+            let saved = self.states.get(&id).map(|state| state.saved_hash);
+            match fs::read_to_string(&path) {
+                Ok(on_disk) if Some(hash_text(&on_disk)) == saved => {}
+                // Deleted outside: writing it again loses nothing.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                // Changed, or no longer text.
+                _ => return Err(EngineError::SaveConflict { path }),
+            }
+        }
         let text = document.text.to_string();
-        fs::write(&document.path, &text).map_err(|error| EngineError::io(&document.path, error))?;
+        write_replacing(&path, &text).map_err(|error| EngineError::io(&path, error))?;
+        let Some(document) = self.documents.get_mut(&id) else {
+            return Err(EngineError::UnknownDocument(id));
+        };
         document.dirty = false;
         if let Some(state) = self.states.get_mut(&id) {
             state.saved_hash = hash_text(&text);
@@ -691,4 +737,35 @@ struct AppliedEdits {
     inverse: Vec<TextEdit>,
     version_before: u64,
     version_after: u64,
+}
+
+/// Writes `text` to `path` through a temporary file in the same directory, renamed over the
+/// original, so a failed write never leaves a truncated file. The original's permissions are
+/// kept, and a symbolic link is kept as a link: its target is written.
+fn write_replacing(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let target = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => fs::canonicalize(path)?,
+        _ => path.to_path_buf(),
+    };
+    let directory = target.parent().unwrap_or_else(|| Path::new("."));
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temporary = directory.join(format!(".{name}.{}.adocfoundry-save", std::process::id()));
+    let result = (|| {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        if let Ok(metadata) = fs::metadata(&target) {
+            fs::set_permissions(&temporary, metadata.permissions())?;
+        }
+        fs::rename(&temporary, &target)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }

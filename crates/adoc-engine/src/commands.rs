@@ -15,6 +15,8 @@ pub mod ids {
     pub const DOCUMENT_OPEN: CommandId = CommandId::new("document.open");
     pub const DOCUMENT_SAVE: CommandId = CommandId::new("document.save");
     pub const DOCUMENT_SAVE_ALL: CommandId = CommandId::new("document.save_all");
+    pub const DOCUMENT_OVERWRITE: CommandId = CommandId::new("document.overwrite");
+    pub const DOCUMENT_RELOAD: CommandId = CommandId::new("document.reload");
     pub const DOCUMENT_CLOSE: CommandId = CommandId::new("document.close");
     pub const DOCUMENT_CLOSE_OTHERS: CommandId = CommandId::new("document.close_others");
     pub const DOCUMENT_CLOSE_LEFT: CommandId = CommandId::new("document.close_left");
@@ -113,7 +115,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, Always};
 
-    let builtin: [(CommandSpec, Run); 32] = [
+    let builtin: [(CommandSpec, Run); 34] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -263,6 +265,26 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 Always,
             ),
             document_save_all,
+        ),
+        (
+            spec(
+                ids::DOCUMENT_OVERWRITE,
+                "Save, Overwriting the File on Disk",
+                Document,
+                None,
+                ActiveDocument,
+            ),
+            document_overwrite,
+        ),
+        (
+            spec(
+                ids::DOCUMENT_RELOAD,
+                "Reload from Disk",
+                Document,
+                None,
+                ActiveDocument,
+            ),
+            document_reload,
         ),
         (
             spec(
@@ -457,16 +479,40 @@ fn document_save(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcom
     engine.save(id).map(|()| CommandOutcome::Done)
 }
 
+fn document_overwrite(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Document(id) = args else {
+        return Err(invalid(ids::DOCUMENT_OVERWRITE, "a document"));
+    };
+    engine.overwrite(id).map(|()| CommandOutcome::Done)
+}
+
+fn document_reload(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Document(id) = args else {
+        return Err(invalid(ids::DOCUMENT_RELOAD, "a document"));
+    };
+    engine.reload(id).map(|()| CommandOutcome::Done)
+}
+
 fn document_save_all(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
     let dirty: Vec<_> = engine
         .documents()
         .filter(|document| document.dirty && !document.untitled)
         .map(|document| document.id)
         .collect();
+    // A file changed outside is left for the user to decide about; the rest are saved.
+    let mut conflict = None;
     for id in dirty {
-        engine.save(id)?;
+        match engine.save(id) {
+            Err(error @ EngineError::SaveConflict { .. }) => {
+                conflict.get_or_insert(error);
+            }
+            result => result?,
+        }
     }
-    Ok(CommandOutcome::Done)
+    conflict.map_or(Ok(CommandOutcome::Done), Err)
 }
 
 fn document_close(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {

@@ -2,6 +2,13 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Saving no longer writes over a change made to the file outside the editor. The engine refuses with a save conflict; the app asks whether to reload the file's version or overwrite it, and the CLI and MCP server return the conflict. Two commands, Reload from Disk and Save, Overwriting the File on Disk, make the choice explicitly (#88).
+- Saves write a temporary file and rename it over the page, keeping its permissions and any symbolic link, so a failed write cannot leave a truncated file.
+
 ## 0.2.0 — 2026-10-25
 
 - Bold, Italic, Code and Highlight work in the source editor too, with the visual editor's keys (Cmd/Ctrl-B, -I, -E): they wrap the selection in the mark's delimiters, or remove them when the selection is already marked.
