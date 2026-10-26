@@ -165,6 +165,8 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |===
 
 Fifteen commands have no default binding and are available from the palette: Re-index Workspace (`workspace.reindex`), Reload Settings (`settings.reload`), Refresh Git Status (`git.refresh`), Revert Change (`git.revert_hunk`), Show Changes (`git.show_changes`), Toggle Blame (`git.show_blame`), Open in Another Version (`navigate.open_in_version`), Open on Remote (`navigate.open_on_remote`), Copy Remote Link (`navigate.copy_remote_link`), Stage (`git.stage`), Unstage (`git.unstage`), Stage All Changes (`git.stage_all_adoc`), Commit (`git.commit`), Push (`git.push`) and Save and Commit (`git.save_and_commit`).
+Four sidebar commands also have no default binding and are available from the palette and the View menu: Expand All in Sidebar (`sidebar.expand_all`), Collapse All in Sidebar (`sidebar.collapse_all`), Collapse Sidebar One Level (`sidebar.collapse_one_level`) and Reset Sidebar to Configured Default (`sidebar.reset_expansion`).
+See xref:using-the-editor.adoc[Using the editor].
 Two export commands also have no default binding and are available from the palette: Export Page to PDF… (`export.pdf_page`) and Export Component to PDF… (`export.pdf_component`).
 See xref:pdf-export.adoc[Exporting to PDF].
 Three document commands also have no default binding and are available from the palette: Reload from Disk (`document.reload`), Save, Overwriting the File on Disk (`document.overwrite`) and Keep Open (`document.keep_open`).

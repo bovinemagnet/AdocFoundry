@@ -244,7 +244,10 @@ fn browsing_to_an_open_page_activates_its_tab() {
     assert_eq!(engine.tab_order(), [introduction, installation]);
 
     // Opening the preview's page with Open File keeps it open.
-    assert_eq!(open(&mut engine, &page(&pages, "installation")), installation);
+    assert_eq!(
+        open(&mut engine, &page(&pages, "installation")),
+        installation
+    );
     assert!(!engine.is_preview(installation));
 
     // And browsing to the page again: the same document, not reopened.

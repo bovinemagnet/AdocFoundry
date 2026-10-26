@@ -162,6 +162,7 @@ impl Engine {
         self.settings
             .set_workspace_root(self.roots.first().map(PathBuf::as_path));
         self.reload_settings()?;
+        self.open_expansion();
         self.watcher = match FileWatcher::start(&self.roots) {
             Ok(watcher) => Some(watcher),
             Err(error) => {
@@ -247,6 +248,7 @@ impl Engine {
             + self.start_due_previews()
             + self.rebuild_due_visuals()
             + self.start_due_hunks()
+            + self.save_due_expansion()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the

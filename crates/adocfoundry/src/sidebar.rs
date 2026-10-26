@@ -4,10 +4,15 @@
 //!
 //! Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use adoc_core::{LineIndex, SourceRange};
-use adoc_engine::{DocumentId, DocumentSymbol, Engine, GitChange, NavItem, WorkspaceState};
+use adoc_engine::{
+    Branch, DocumentId, DocumentSymbol, Engine, GitChange, NavItem, SidebarPanel, WorkspaceState,
+};
 use gpui_component::tree::TreeItem;
 
 /// Where a tree item leads when clicked.
@@ -22,8 +27,15 @@ pub fn target_id(path: &Path, range: SourceRange, salt: usize) -> String {
     format!("{}|{}|{}|{}", range.start, range.end, salt, path.display())
 }
 
-/// Decodes an id made by [`target_id`]; folder ids do not decode.
+/// Ends the branch key at the start of a Navigation or Modules item's id; see [`Node::id`].
+const KEY_END: char = '\u{1f}';
+/// Joins the steps of a branch key, which titles and paths cannot contain.
+const KEY_STEP: char = '\u{1e}';
+
+/// Decodes the target of an id made by [`target_id`], or of a Navigation or Modules item that
+/// leads somewhere; folder ids do not decode.
 pub fn parse_target(id: &str) -> Option<Target> {
+    let id = id.split_once(KEY_END).map_or(id, |(_, target)| target);
     let mut parts = id.splitn(4, '|');
     let start = parts.next()?.parse().ok()?;
     let end = parts.next()?.parse().ok()?;
@@ -35,10 +47,97 @@ pub fn parse_target(id: &str) -> Option<Target> {
     })
 }
 
+/// The branch key of a Navigation or Modules item's id.
+pub fn branch_key(id: &str) -> &str {
+    id.split(KEY_END).next().unwrap_or(id)
+}
+
 fn folder(id: impl Into<String>, label: impl Into<String>, children: Vec<TreeItem>) -> TreeItem {
     TreeItem::new(format!("folder:{}", id.into()), label.into())
         .children(children)
         .expanded(true)
+}
+
+/// A row of the Navigation or Modules tree, before it is shown. Its key names the same logical
+/// row however the tree is rebuilt: the component version, then module, family or navigation
+/// entry by entry, never a row number or a position among unrelated rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Node {
+    pub key: String,
+    pub label: String,
+    pub target: Option<Target>,
+    pub children: Vec<Node>,
+}
+
+impl Node {
+    fn new(key: String, label: impl Into<String>, target: Option<Target>) -> Self {
+        Self {
+            key,
+            label: label.into(),
+            target,
+            children: Vec::new(),
+        }
+    }
+
+    /// The tree item's id: the key, then the target, so the click handler and the expansion
+    /// state each read their part.
+    pub fn id(&self) -> String {
+        match &self.target {
+            Some(target) => format!(
+                "{}{KEY_END}{}",
+                self.key,
+                target_id(&target.path, target.range, 0)
+            ),
+            None => self.key.clone(),
+        }
+    }
+}
+
+fn step(parent: &str, name: &str) -> String {
+    format!("{parent}{KEY_STEP}{name}")
+}
+
+/// The branches of `nodes`, by key, for the engine's expansion state.
+pub fn branches(nodes: &[Node]) -> Vec<Branch> {
+    nodes
+        .iter()
+        .filter(|node| !node.children.is_empty())
+        .map(|node| Branch {
+            key: node.key.clone(),
+            children: branches(&node.children),
+        })
+        .collect()
+}
+
+/// `nodes` as tree items, each branch open or closed as the engine has it for `panel`.
+pub fn tree_items(nodes: &[Node], engine: &Engine, panel: SidebarPanel) -> Vec<TreeItem> {
+    nodes
+        .iter()
+        .map(|node| {
+            let item = TreeItem::new(node.id(), node.label.clone());
+            if node.children.is_empty() {
+                item
+            } else {
+                item.children(tree_items(&node.children, engine, panel))
+                    .expanded(engine.branch_expanded(panel, &node.key))
+            }
+        })
+        .collect()
+}
+
+/// The ids of the rows from the root down to the row with id `id`, if `nodes` has one.
+pub fn path_to(nodes: &[Node], id: &str) -> Option<Vec<String>> {
+    for node in nodes {
+        let own = node.id();
+        if own == id {
+            return Some(vec![own]);
+        }
+        if let Some(mut path) = path_to(&node.children, id) {
+            path.insert(0, own);
+            return Some(path);
+        }
+    }
+    None
 }
 
 fn component_label(name: &str, title: Option<&str>, version: Option<&str>) -> String {
@@ -47,6 +146,11 @@ fn component_label(name: &str, title: Option<&str>, version: Option<&str>) -> St
         Some(version) => format!("{title} {version}"),
         None => title.to_owned(),
     }
+}
+
+/// A component version's key in `panel`.
+fn component_key(panel: &str, name: &str, version: Option<&str>) -> String {
+    format!("{panel}:{name}@{}", version.unwrap_or("~"))
 }
 
 /// The page a navigation entry links to, as a file to open.
@@ -71,31 +175,40 @@ fn adoc_antora_coordinate(
     })
 }
 
-fn nav_items(workspace: &WorkspaceState, items: &[NavItem], salt: &mut usize) -> Vec<TreeItem> {
+/// The entries of a navigation list under the row keyed `parent`. An entry is keyed by its
+/// title and what it links to; entries alike among their siblings are told apart by count.
+fn nav_items(workspace: &WorkspaceState, items: &[NavItem], parent: &str) -> Vec<Node> {
+    let mut alike: HashMap<String, usize> = HashMap::new();
     items
         .iter()
         .map(|item| {
-            *salt += 1;
-            let children = nav_items(workspace, &item.children, salt);
+            let link = item
+                .target
+                .as_ref()
+                .map(adoc_engine::resource_id_string)
+                .unwrap_or_default();
+            let name = format!("{}\u{1d}{link}", item.title);
+            let seen = alike.entry(name.clone()).or_default();
+            let key = match *seen {
+                0 => step(parent, &name),
+                n => step(parent, &format!("{name}#{n}")),
+            };
+            *seen += 1;
             // A linked entry opens its page; anything else opens its line in the nav file.
             let (path, range) = match nav_target(workspace, item) {
                 Some(path) => (path, SourceRange::new(0, 0)),
                 None => (item.source.path.clone(), item.source.range),
             };
-            let tree_item = TreeItem::new(target_id(&path, range, *salt), item.title.clone());
-            if children.is_empty() {
-                tree_item
-            } else {
-                tree_item.children(children).expanded(true)
-            }
+            let mut node = Node::new(key, item.title.clone(), Some(Target { path, range }));
+            node.children = nav_items(workspace, &item.children, &node.key);
+            node
         })
         .collect()
 }
 
 /// The navigation of every component version, falling back to its pages when it declares none.
-pub fn navigation(engine: &Engine) -> Vec<TreeItem> {
+pub fn navigation(engine: &Engine) -> Vec<Node> {
     let workspace = engine.workspace();
-    let mut salt = 0;
     let mut components: Vec<_> = workspace.antora.components().collect();
     components.sort_by(|left, right| {
         left.name
@@ -105,33 +218,25 @@ pub fn navigation(engine: &Engine) -> Vec<TreeItem> {
     components
         .into_iter()
         .map(|component| {
-            let label = component_label(
-                &component.name,
-                component.title.as_deref(),
-                component.version.as_deref(),
-            );
-            let id = format!(
-                "{}@{}",
-                component.name,
-                component.version.as_deref().unwrap_or("~")
-            );
+            let version = component.version.as_deref();
+            let label = component_label(&component.name, component.title.as_deref(), version);
+            let mut node = Node::new(component_key("nav", &component.name, version), label, None);
             let trees = engine
-                .nav_trees(&component.name, component.version.as_deref())
+                .nav_trees(&component.name, version)
                 .unwrap_or_default();
-            let children = if trees.is_empty() {
-                pages(
-                    workspace,
-                    &component.name,
-                    component.version.as_deref(),
-                    &mut salt,
-                )
+            node.children = if trees.is_empty() {
+                pages(workspace, &component.name, version, &node.key)
             } else {
+                // Each nav file's entries are keyed under it.
                 trees
                     .iter()
-                    .flat_map(|tree| nav_items(workspace, &tree.items, &mut salt))
+                    .flat_map(|tree| {
+                        let file = step(&node.key, &tree.path.display().to_string());
+                        nav_items(workspace, &tree.items, &file)
+                    })
                     .collect()
             };
-            folder(id, label, children)
+            node
         })
         .collect()
 }
@@ -140,13 +245,18 @@ fn pages(
     workspace: &WorkspaceState,
     component: &str,
     version: Option<&str>,
-    salt: &mut usize,
-) -> Vec<TreeItem> {
+    parent: &str,
+) -> Vec<Node> {
     workspace
         .antora
         .modules_of(component, version)
         .map(|module| {
-            let children = workspace
+            let mut node = Node::new(
+                step(parent, &format!("module:{}", module.name)),
+                module.name.clone(),
+                None,
+            );
+            node.children = workspace
                 .antora
                 .resources_in(
                     component,
@@ -154,81 +264,70 @@ fn pages(
                     &module.name,
                     adoc_engine::ResourceFamily::Page,
                 )
-                .map(|resource| {
-                    *salt += 1;
-                    TreeItem::new(
-                        target_id(&resource.source_path, SourceRange::new(0, 0), *salt),
-                        resource.coordinate.relative_path.display().to_string(),
-                    )
-                })
+                .map(|resource| resource_node(&node.key, resource))
                 .collect();
-            folder(
-                format!("{component}@{}:{}", version.unwrap_or("~"), module.name),
-                module.name.clone(),
-                children,
-            )
+            node
         })
         .collect()
 }
 
+fn resource_node(parent: &str, resource: &adoc_engine::AntoraResource) -> Node {
+    let relative = resource.coordinate.relative_path.display().to_string();
+    Node::new(
+        step(parent, &relative),
+        relative,
+        Some(Target {
+            path: resource.source_path.clone(),
+            range: SourceRange::new(0, 0),
+        }),
+    )
+}
+
 /// Every module of every component version, with its families and their resources.
-pub fn families(engine: &Engine) -> Vec<TreeItem> {
+pub fn families(engine: &Engine) -> Vec<Node> {
     let workspace = engine.workspace();
-    let mut salt = 0;
     let mut components: Vec<_> = workspace.antora.components().collect();
-    components.sort_by(|left, right| left.name.cmp(&right.name));
+    components.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| adoc_engine::compare_component_versions(right, left))
+    });
     components
         .into_iter()
         .map(|component| {
             let version = component.version.as_deref();
-            let modules = workspace
+            let mut node = Node::new(
+                component_key("mod", &component.name, version),
+                component_label(&component.name, component.title.as_deref(), version),
+                None,
+            );
+            node.children = workspace
                 .antora
                 .modules_of(&component.name, version)
                 .map(|module| {
-                    let families = adoc_engine::ResourceFamily::ALL
+                    let mut module_node =
+                        Node::new(step(&node.key, &module.name), module.name.clone(), None);
+                    module_node.children = adoc_engine::ResourceFamily::ALL
                         .into_iter()
                         .filter_map(|family| {
-                            let resources: Vec<TreeItem> = workspace
+                            let key = step(&module_node.key, &family.to_string());
+                            let resources: Vec<Node> = workspace
                                 .antora
                                 .resources_in(&component.name, version, &module.name, family)
-                                .map(|resource| {
-                                    salt += 1;
-                                    TreeItem::new(
-                                        target_id(
-                                            &resource.source_path,
-                                            SourceRange::new(0, 0),
-                                            salt,
-                                        ),
-                                        resource.coordinate.relative_path.display().to_string(),
-                                    )
-                                })
+                                .map(|resource| resource_node(&key, resource))
                                 .collect();
                             (!resources.is_empty()).then(|| {
-                                folder(
-                                    format!("{}:{}:{family}", component.name, module.name),
-                                    format!("{family} ({})", resources.len()),
-                                    resources,
-                                )
+                                let mut family_node =
+                                    Node::new(key, format!("{family} ({})", resources.len()), None);
+                                family_node.children = resources;
+                                family_node
                             })
                         })
                         .collect();
-                    folder(
-                        format!(
-                            "{}@{}:{}",
-                            component.name,
-                            version.unwrap_or("~"),
-                            module.name
-                        ),
-                        module.name.clone(),
-                        families,
-                    )
+                    module_node
                 })
                 .collect();
-            folder(
-                format!("{}@{}", component.name, version.unwrap_or("~")),
-                component_label(&component.name, component.title.as_deref(), version),
-                modules,
-            )
+            node
         })
         .collect()
 }
@@ -397,5 +496,91 @@ mod tests {
             })
         );
         assert_eq!(parse_target("folder:demo@1.0"), None);
+    }
+
+    fn fixture_engine(root: &Path) -> Engine {
+        let mut engine = Engine::new(adoc_engine::Settings::default());
+        engine.open_workspace(vec![root.to_path_buf()]).unwrap();
+        assert!(engine.wait_for_workers(std::time::Duration::from_secs(30)));
+        engine
+    }
+
+    fn keys(nodes: &[Node], out: &mut Vec<String>) {
+        for node in nodes {
+            out.push(node.key.clone());
+            keys(&node.children, out);
+        }
+    }
+
+    fn copy_fixture(to: &Path) {
+        fn copy(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                if entry.path().is_dir() {
+                    copy(&entry.path(), &to.join(entry.file_name()));
+                } else {
+                    std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+                }
+            }
+        }
+        copy(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sidebar-expansion"),
+            to,
+        );
+    }
+
+    #[test]
+    fn branch_keys_are_unique_and_stable() {
+        let directory = tempfile::tempdir().unwrap();
+        copy_fixture(directory.path());
+        let engine = fixture_engine(directory.path());
+        for nodes in [navigation(&engine), families(&engine)] {
+            let mut all = Vec::new();
+            keys(&nodes, &mut all);
+            let unique: std::collections::BTreeSet<_> = all.iter().collect();
+            assert_eq!(unique.len(), all.len(), "{all:#?}");
+            // Two versions of one component, each its own row.
+            assert_eq!(nodes.len(), 2);
+            assert_ne!(nodes[0].key, nodes[1].key);
+        }
+
+        // The repeated Install entry is two branches, and the tree's branches nest as the nav.
+        let nav = navigation(&engine);
+        let home = &nav[0].children[0];
+        assert_eq!(home.label, "Home");
+        let installs: Vec<&Node> = home
+            .children
+            .iter()
+            .filter(|node| node.label == "Install")
+            .collect();
+        assert_eq!(installs.len(), 2);
+        assert_ne!(installs[0].key, installs[1].key);
+        assert_eq!(
+            branches(&nav[..1])[0].children[0].children.len(),
+            1,
+            "one Install has a child"
+        );
+
+        // A Modules family's key names the version.
+        let modules = families(&engine);
+        let family = &modules[0].children[0].children[0];
+        assert!(family.key.contains("guide@2.0"), "{}", family.key);
+
+        // An entry inserted before the others leaves their keys as they were.
+        let before = {
+            let mut all = Vec::new();
+            keys(&nav, &mut all);
+            all
+        };
+        let file = directory.path().join("guide-2.0/modules/ROOT/nav.adoc");
+        let text = std::fs::read_to_string(&file).unwrap();
+        std::fs::write(&file, format!("* xref:faq.adoc[New first]\n{text}")).unwrap();
+        drop(engine);
+        let engine = fixture_engine(directory.path());
+        let mut after = Vec::new();
+        keys(&navigation(&engine), &mut after);
+        assert_eq!(after.len(), before.len() + 1);
+        assert!(before.iter().all(|key| after.contains(key)));
     }
 }

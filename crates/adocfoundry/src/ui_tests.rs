@@ -3021,3 +3021,285 @@ fn without_preview_tabs_every_page_stays_open(cx: &mut TestAppContext) {
         ["installation", "configuration"]
     );
 }
+
+/// A workspace window on a copy of the `sidebar-expansion` fixture, its trees drawn.
+fn expansion_workspace(
+    settings: Settings,
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    copy_tree(&fixture("sidebar-expansion"), directory.path());
+    let root = adoc_index::normalize_path(directory.path());
+    let app = app_with(Engine::new(settings), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx
+            .new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), Vec::new(), window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("nav-row-1").is_some()
+    }));
+    (directory, app, workspace, cx)
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &to.join(entry.file_name()));
+        } else {
+            std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+        }
+    }
+}
+
+fn rows(
+    workspace: &Entity<WorkspaceView>,
+    panel: adoc_engine::SidebarPanel,
+    cx: &mut VisualTestContext,
+) -> Vec<String> {
+    cx.update(|_, cx| workspace.read(cx).tree_rows_for_test(panel, cx))
+}
+
+const NAV_AT_TWO: [&str; 10] = [
+    "Guide 2.0 +",
+    "  Home +",
+    "    Install -",
+    "    Install",
+    "  FAQ",
+    "Guide 1.0 +",
+    "  Home +",
+    "    Install -",
+    "    Install",
+    "  FAQ",
+];
+
+#[gpui::test]
+fn sidebar_trees_open_two_levels_by_default(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::{Modules, Navigation};
+    let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    assert_eq!(rows(&workspace, Navigation, &mut cx), NAV_AT_TWO);
+    // Component, then module, open; the families show, their resources do not.
+    let modules = rows(&workspace, Modules, &mut cx);
+    assert!(
+        modules.iter().all(|row| row.matches("  ").count() <= 2),
+        "{modules:#?}"
+    );
+    assert!(
+        modules
+            .iter()
+            .any(|row| row.starts_with("    page") && row.ends_with('-')),
+        "{modules:#?}"
+    );
+}
+
+#[gpui::test]
+fn sidebar_depth_follows_the_settings(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::{Modules, Navigation};
+    // Opening the folder reloads the settings, so they come from a file.
+    let settings_directory = tempfile::tempdir().unwrap();
+    let user = settings_directory.path().join("settings.toml");
+    std::fs::write(
+        &user,
+        "[sidebar.navigation]\ndefault_expansion = \"all\"\n\n\
+         [sidebar.modules]\ndefault_expansion = 0\n",
+    )
+    .unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap();
+    let (_directory, _app, workspace, mut cx) = expansion_workspace(settings, cx);
+    let navigation = rows(&workspace, Navigation, &mut cx);
+    assert!(
+        navigation.contains(&"      Linux".to_owned()),
+        "{navigation:#?}"
+    );
+    assert_eq!(
+        rows(&workspace, Modules, &mut cx),
+        ["Guide 2.0 -", "Guide 1.0 -"]
+    );
+}
+
+#[gpui::test]
+fn a_collapsed_branch_survives_a_rebuild(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::Navigation;
+    let (directory, app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    // Row 6 is version 1.0's Home.
+    click("nav-row-6", &mut cx);
+    let mut want: Vec<String> = NAV_AT_TWO.iter().map(|row| (*row).to_owned()).collect();
+    want[6] = "  Home -".to_owned();
+    want.drain(7..9);
+    assert_eq!(rows(&workspace, Navigation, &mut cx), want);
+
+    // A navigation entry added before it, the catalogue rebuilt: still closed.
+    let nav = directory.path().join("guide-1.0/modules/ROOT/nav.adoc");
+    let text = std::fs::read_to_string(&nav).unwrap();
+    std::fs::write(&nav, format!("* xref:faq.adoc[First]\n{text}")).unwrap();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let _ = app.invoke(ids::WORKSPACE_REINDEX, CommandArgs::None, cx);
+        })
+    });
+    assert!(drain_until(&app, &mut cx, |cx| {
+        rows(&workspace, Navigation, cx).contains(&"  First".to_owned())
+    }));
+    let rows = rows(&workspace, Navigation, &mut cx);
+    assert!(rows.contains(&"  Home -".to_owned()), "{rows:#?}");
+    assert!(
+        rows.contains(&"  Home +".to_owned()),
+        "2.0's Home is its own: {rows:#?}"
+    );
+}
+
+#[gpui::test]
+fn the_panel_menu_acts_on_its_panel_only(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::{Modules, Navigation};
+    let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let modules = rows(&workspace, Modules, &mut cx);
+    let tabs = cx.update(|_, cx| workspace.read(cx).tab_count());
+
+    // Right-click a row: All of Navigation, then Expand All.
+    click_selector("nav-row-1", gpui::MouseButton::Right, &mut cx);
+    cx.simulate_keystrokes("down down enter");
+    cx.run_until_parked();
+    let navigation = rows(&workspace, Navigation, &mut cx);
+    assert!(
+        navigation.contains(&"      Linux".to_owned()),
+        "{navigation:#?}"
+    );
+    assert_eq!(
+        rows(&workspace, Modules, &mut cx),
+        modules,
+        "Modules untouched"
+    );
+    assert_eq!(
+        cx.update(|_, cx| workspace.read(cx).tab_count()),
+        tabs,
+        "no page opened"
+    );
+
+    // Collapse One Level, twice: Install, then Home.
+    for _ in 0..2 {
+        click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
+        cx.simulate_keystrokes("down down down down enter");
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        rows(&workspace, Navigation, &mut cx),
+        [
+            "Guide 2.0 +",
+            "  Home -",
+            "  FAQ",
+            "Guide 1.0 +",
+            "  Home -",
+            "  FAQ"
+        ]
+    );
+
+    // Reset to Configured Default.
+    click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
+    cx.simulate_keystrokes("up enter");
+    cx.run_until_parked();
+    assert_eq!(rows(&workspace, Navigation, &mut cx), NAV_AT_TWO);
+}
+
+#[gpui::test]
+fn the_panel_space_offers_the_menu_too(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::Navigation;
+    let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let last = cx.debug_bounds("nav-row-9").expect("the last row");
+    let below = last.bottom_left() + gpui::point(px(20.), px(40.));
+    cx.simulate_mouse_down(below, gpui::MouseButton::Right, gpui::Modifiers::none());
+    cx.simulate_mouse_up(below, gpui::MouseButton::Right, gpui::Modifiers::none());
+    cx.run_until_parked();
+    // Collapse All.
+    cx.simulate_keystrokes("down down down enter");
+    cx.run_until_parked();
+    assert_eq!(
+        rows(&workspace, Navigation, &mut cx),
+        ["Guide 2.0 -", "Guide 1.0 -"]
+    );
+}
+
+#[gpui::test]
+fn each_panel_keeps_its_branches_when_switching(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::{Modules, Navigation};
+    let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    click("nav-row-0", &mut cx);
+    let navigation = rows(&workspace, Navigation, &mut cx);
+    assert_eq!(navigation[0], "Guide 2.0 -");
+    cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_modules_for_test(cx)));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    click("families-row-0", &mut cx);
+    assert_eq!(rows(&workspace, Modules, &mut cx)[0], "Guide 2.0 -");
+    assert_eq!(rows(&workspace, Navigation, &mut cx), navigation);
+}
+
+#[gpui::test]
+fn collapsing_hands_the_selection_to_the_row_still_shown(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::Navigation;
+    let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    // Expand All, then select 2.0's Linux, row 3.
+    click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
+    cx.simulate_keystrokes("down down enter");
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    click("nav-row-3", &mut cx);
+    let selected = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| workspace.read(cx).selected_row_for_test(Navigation, cx))
+    };
+    assert_eq!(selected(&mut cx).as_deref(), Some("Linux"));
+    // Collapse One Level closes Install, hiding Linux: Install is selected.
+    click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
+    cx.simulate_keystrokes("down down down down enter");
+    cx.run_until_parked();
+    assert_eq!(selected(&mut cx).as_deref(), Some("Install"));
+    // Collapse All: the version row.
+    click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
+    cx.simulate_keystrokes("down down down enter");
+    cx.run_until_parked();
+    assert_eq!(selected(&mut cx).as_deref(), Some("Guide 2.0"));
+}
+
+#[gpui::test]
+fn the_palette_opens_and_closes_the_panel_shown(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::{Modules, Navigation};
+    let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let modules = rows(&workspace, Modules, &mut cx);
+    let run = |name: &str, cx: &mut VisualTestContext| {
+        cx.simulate_keystrokes("secondary-shift-p");
+        cx.run_until_parked();
+        cx.simulate_input(name);
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+    };
+    run("Collapse All in Sidebar", &mut cx);
+    assert_eq!(
+        rows(&workspace, Navigation, &mut cx),
+        ["Guide 2.0 -", "Guide 1.0 -"]
+    );
+    assert_eq!(rows(&workspace, Modules, &mut cx), modules);
+
+    cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_modules_for_test(cx)));
+    cx.run_until_parked();
+    run("Expand All in Sidebar", &mut cx);
+    let expanded = rows(&workspace, Modules, &mut cx);
+    assert!(expanded.len() > modules.len(), "{expanded:#?}");
+    assert_eq!(
+        rows(&workspace, Navigation, &mut cx),
+        ["Guide 2.0 -", "Guide 1.0 -"],
+        "Navigation untouched"
+    );
+}

@@ -33,6 +33,15 @@ tab_width = 2
 theme = "auto"                   # auto | light | dark
 preview_tabs = true              # false: every page you open stays open
 
+[sidebar]
+remember_expansion = true        # remember opened and closed branches (user file only)
+
+[sidebar.navigation]
+default_expansion = 2            # 0 or more, or "all"
+
+[sidebar.modules]
+default_expansion = 2            # to keep the old fully open trees, use "all" in both
+
 [workspace]
 ignore = ["node_modules", ".git", "build", "target", ".cache"]
 
@@ -95,6 +104,21 @@ check = true                     # look for a newer release at start-up
 |`"auto"`, `"light"` or `"dark"`
 |`"auto"`
 |The colour theme.
+
+|`sidebar.remember_expansion`
+|boolean
+|`true`
+|Remember the branches you open and close in Navigation and Modules, for each workspace and panel, in `sidebar-state.json` beside the user settings file. When `false`, a reopened workspace starts from the defaults and earlier saved state is ignored. User file only. See xref:using-the-editor.adoc#how-far-the-trees-open[How far the trees open].
+
+|`sidebar.navigation.default_expansion`
+|integer of 0 or more, or `"all"`
+|`2`
+|How many levels of branches the Navigation tree opens, counting the component version row as level 1. `0` shows only the component versions, closed. `"all"` opens every branch, as earlier releases did. A depth greater than the tree opens everything.
+
+|`sidebar.modules.default_expansion`
+|integer of 0 or more, or `"all"`
+|`2`
+|The same for the Modules tree, whose levels are component version, module, family and resource. Set both this and the Navigation key to `"all"` to keep fully expanded trees.
 
 |`workspace.ignore`
 |array of strings
@@ -171,9 +195,11 @@ See xref:pdf-export.adoc[Exporting to PDF].
 
 == What a workspace file may set
 
-A workspace file may override `editor.*`, `workspace.ignore` and `pdf.*`.
+A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `workspace.ignore` and `pdf.*`.
+The two depths override separately.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.
+`sidebar.remember_expansion` is also accepted only in the user file, because it decides what is saved outside the repository.
 `updates.*` is also accepted only in the user file, so a repository cannot make the editor reach the network.
 
 == Warnings
@@ -182,6 +208,7 @@ Problems with settings produce warnings and never stop the application:
 
 * An unknown key warns and is ignored.
 * A value of the wrong type or range, such as `font_size = -3` or `theme = "purple"`, warns and keeps the default.
+* An invalid `default_expansion` (a negative number, a fraction, `true`, an array, or a string other than `"all"`) warns and keeps the value from the layer beneath.
 * A key set in the workspace file that is only allowed in the user file warns and is ignored.
 * A section that is not a table warns.
 

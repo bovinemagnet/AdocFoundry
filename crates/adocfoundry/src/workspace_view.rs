@@ -8,7 +8,8 @@ use std::{cell::Cell, collections::HashMap, path::Path, rc::Rc};
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode, EngineEvent,
-    ExportArgs, ExportSummary, ExportTarget, NavigationPosition, OpenDisposition, ThemePreference,
+    ExportArgs, ExportSummary, ExportTarget, NavigationPosition, OpenDisposition, SidebarPanel,
+    ThemePreference,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity, FocusHandle,
@@ -27,7 +28,7 @@ use gpui_component::{
     status_bar::StatusBar,
     tab::{Tab, TabBar},
     tooltip::Tooltip,
-    tree::{tree, TreeState},
+    tree::{tree, TreeEvent, TreeState},
     v_flex, ActiveTheme as _, Disableable as _, IconName, Sizable as _, Theme, ThemeMode, TitleBar,
     WindowExt as _,
 };
@@ -95,6 +96,10 @@ pub struct WorkspaceView {
     sidebar_tab: SidebarTab,
     navigation: Entity<TreeState>,
     families: Entity<TreeState>,
+    /// The rows of Navigation and Modules as last built, kept to show again when a bulk
+    /// operation opens or closes branches.
+    nav_nodes: Vec<sidebar::Node>,
+    family_nodes: Vec<sidebar::Node>,
     problems: Entity<TreeState>,
     problem_count: usize,
     problems_stale: bool,
@@ -116,6 +121,47 @@ pub struct WorkspaceView {
     )>,
     revealed: Option<NavigationPosition>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// The panel whose branches the tree `id` of [`WorkspaceView::render_tree`] opens and closes.
+fn expansion_panel(id: &str) -> Option<SidebarPanel> {
+    match id {
+        "nav" => Some(SidebarPanel::Navigation),
+        "families" => Some(SidebarPanel::Modules),
+        _ => None,
+    }
+}
+
+/// The menu of a Navigation or Modules panel: commands that act on the whole panel, whichever
+/// row was right-clicked, and never open a page.
+fn expansion_menu(
+    menu: gpui_component::menu::PopupMenu,
+    panel: SidebarPanel,
+    app: &Entity<AppState>,
+    cx: &App,
+) -> gpui_component::menu::PopupMenu {
+    let name = match panel {
+        SidebarPanel::Navigation => "Navigation",
+        SidebarPanel::Modules => "Modules",
+    };
+    let can_collapse = app.read(cx).engine.can_collapse_one_level(panel);
+    let item = |label: &'static str, command: adoc_engine::CommandId| {
+        let app = app.clone();
+        PopupMenuItem::new(label).on_click(move |_, _, cx| {
+            app.update(cx, |app, cx| {
+                let _ = app.invoke(command, CommandArgs::Panel(panel), cx);
+            });
+        })
+    };
+    menu.label(format!("All of {name}"))
+        .item(item("Expand All", ids::SIDEBAR_EXPAND_ALL))
+        .item(item("Collapse All", ids::SIDEBAR_COLLAPSE_ALL))
+        .item(item("Collapse One Level", ids::SIDEBAR_COLLAPSE_ONE_LEVEL).disabled(!can_collapse))
+        .separator()
+        .item(item(
+            "Reset to Configured Default",
+            ids::SIDEBAR_RESET_EXPANSION,
+        ))
 }
 
 /// What hovering a preview tab says.
@@ -190,9 +236,13 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) -> Self {
         let preview = cx.new(|cx| PreviewView::new(app.clone(), false, window, cx));
+        let navigation = cx.new(|cx| TreeState::new(cx));
+        let families = cx.new(|cx| TreeState::new(cx));
         let subscriptions = vec![
             cx.subscribe_in(&app, window, Self::on_engine_event),
             cx.subscribe(&preview, Self::on_preview_event),
+            Self::record_expansion(&navigation, SidebarPanel::Navigation, cx),
+            Self::record_expansion(&families, SidebarPanel::Modules, cx),
         ];
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace, window, cx));
@@ -207,8 +257,10 @@ impl WorkspaceView {
             tab_reveals: std::cell::Cell::new(0),
             tab_menu_target: Rc::default(),
             sidebar_tab: SidebarTab::Navigation,
-            navigation: cx.new(|cx| TreeState::new(cx)),
-            families: cx.new(|cx| TreeState::new(cx)),
+            navigation,
+            families,
+            nav_nodes: Vec::new(),
+            family_nodes: Vec::new(),
             problems: cx.new(|cx| TreeState::new(cx)),
             problem_count: 0,
             problems_stale: true,
@@ -246,6 +298,10 @@ impl WorkspaceView {
         ) {
             crate::typing_bench::start(editor, duration, window, cx);
         }
+        // With no page open nothing else takes focus, and the workspace's keys need it.
+        if window.focused(cx).is_none() {
+            window.focus(&view.focus_handle, cx);
+        }
         crate::updates::check_at_start_up(&view.app, window, cx);
         view
     }
@@ -269,6 +325,7 @@ impl WorkspaceView {
                 self.settle_later(cx);
             }
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
+            EngineEvent::ExpansionChanged(panel) => self.show_tree(*panel, cx),
             EngineEvent::PreviewTabReplaced { old, new } => {
                 self.replace_tab(*old, *new, window, cx);
             }
@@ -486,10 +543,58 @@ impl WorkspaceView {
             let engine = &self.app.read(cx).engine;
             (sidebar::navigation(engine), sidebar::families(engine))
         };
-        self.navigation
-            .update(cx, |tree, cx| tree.set_items(navigation, cx));
-        self.families
-            .update(cx, |tree, cx| tree.set_items(families, cx));
+        self.app.update(cx, |app, _| {
+            app.engine
+                .resolve_expansion(SidebarPanel::Navigation, &sidebar::branches(&navigation));
+            app.engine
+                .resolve_expansion(SidebarPanel::Modules, &sidebar::branches(&families));
+        });
+        self.nav_nodes = navigation;
+        self.family_nodes = families;
+        self.show_tree(SidebarPanel::Navigation, cx);
+        self.show_tree(SidebarPanel::Modules, cx);
+    }
+
+    /// Records the branches the user opens and closes in `tree`, a panel's.
+    fn record_expansion(
+        tree: &Entity<TreeState>,
+        panel: SidebarPanel,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe(tree, move |this, _, event: &TreeEvent, cx| {
+            let (id, expanded) = match event {
+                TreeEvent::Expanded(id) => (id, true),
+                TreeEvent::Collapsed(id) => (id, false),
+            };
+            this.app.update(cx, |app, _| {
+                app.engine
+                    .set_branch_expanded(panel, sidebar::branch_key(id), expanded);
+            });
+        })
+    }
+
+    /// Shows `panel`'s rows as last built, each branch open or closed as the engine has it,
+    /// keeping the selected row, or the nearest row above it still shown.
+    fn show_tree(&mut self, panel: SidebarPanel, cx: &mut Context<Self>) {
+        let (state, nodes) = match panel {
+            SidebarPanel::Navigation => (self.navigation.clone(), &self.nav_nodes),
+            SidebarPanel::Modules => (self.families.clone(), &self.family_nodes),
+        };
+        let items = sidebar::tree_items(nodes, &self.app.read(cx).engine, panel);
+        let selected = state
+            .read(cx)
+            .selected_item()
+            .map(|item| item.id.to_string());
+        let path = selected.and_then(|id| sidebar::path_to(nodes, &id));
+        state.update(cx, |tree, cx| {
+            tree.set_items(items, cx);
+            let shown = path
+                .iter()
+                .flatten()
+                .rev()
+                .find_map(|id| tree.index_of(&id.into()));
+            tree.set_selected_index(shown, cx);
+        });
     }
 
     /// Defers the outline and problems until no edit has arrived for [`SETTLE`].
@@ -516,6 +621,46 @@ impl WorkspaceView {
         self.problem_count = count;
         self.problems
             .update(cx, |tree, cx| tree.set_items(items, cx));
+    }
+
+    /// The rows `panel` shows, each indented two spaces a level, with `+` after an open branch
+    /// and `-` after a closed one.
+    #[cfg(test)]
+    pub fn tree_rows_for_test(&self, panel: SidebarPanel, cx: &App) -> Vec<String> {
+        let state = match panel {
+            SidebarPanel::Navigation => &self.navigation,
+            SidebarPanel::Modules => &self.families,
+        }
+        .read(cx);
+        (0..)
+            .map_while(|ix| state.entry(ix))
+            .map(|entry| {
+                let mark = match (entry.is_folder(), entry.is_expanded()) {
+                    (false, _) => "",
+                    (true, true) => " +",
+                    (true, false) => " -",
+                };
+                format!("{}{}{mark}", "  ".repeat(entry.depth()), entry.item().label)
+            })
+            .collect()
+    }
+
+    /// The label of the row selected in `panel`.
+    #[cfg(test)]
+    pub fn selected_row_for_test(&self, panel: SidebarPanel, cx: &App) -> Option<String> {
+        let state = match panel {
+            SidebarPanel::Navigation => &self.navigation,
+            SidebarPanel::Modules => &self.families,
+        }
+        .read(cx);
+        state.selected_item().map(|item| item.label.to_string())
+    }
+
+    /// Shows the Modules panel.
+    #[cfg(test)]
+    pub fn show_modules_for_test(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_tab = SidebarTab::Families;
+        cx.notify();
     }
 
     /// Shows the Problems panel.
@@ -1011,6 +1156,56 @@ impl WorkspaceView {
                 cx,
             );
         }
+    }
+
+    /// The sidebar tree a palette or menu command opens and closes: the one shown, else
+    /// Navigation.
+    fn shown_panel(&self) -> SidebarPanel {
+        match self.sidebar_tab {
+            SidebarTab::Families => SidebarPanel::Modules,
+            _ => SidebarPanel::Navigation,
+        }
+    }
+
+    fn on_sidebar_command(
+        &mut self,
+        command: adoc_engine::CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let panel = self.shown_panel();
+        self.invoke(command, CommandArgs::Panel(panel), window, cx);
+    }
+
+    fn on_expand_sidebar(
+        &mut self,
+        _: &ExpandSidebar,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_sidebar_command(ids::SIDEBAR_EXPAND_ALL, window, cx);
+    }
+
+    fn on_collapse_sidebar(
+        &mut self,
+        _: &CollapseSidebar,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_sidebar_command(ids::SIDEBAR_COLLAPSE_ALL, window, cx);
+    }
+
+    fn on_collapse_sidebar_level(
+        &mut self,
+        _: &CollapseSidebarLevel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.on_sidebar_command(ids::SIDEBAR_COLLAPSE_ONE_LEVEL, window, cx);
+    }
+
+    fn on_reset_sidebar(&mut self, _: &ResetSidebar, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_sidebar_command(ids::SIDEBAR_RESET_EXPANSION, window, cx);
     }
 
     fn on_keep_open(&mut self, _: &KeepOpen, window: &mut Window, cx: &mut Context<Self>) {
@@ -2159,7 +2354,7 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let workspace = cx.weak_entity();
-        div().id(id).size_full().child(
+        let panel_space = div().id(id).size_full().child(
             tree(state, move |index, entry, _selected, _window, cx| {
                 let item = entry.item().clone();
                 let icon = if entry.is_folder() {
@@ -2209,8 +2404,22 @@ impl WorkspaceView {
                         }
                     })
             })
+            .when_some(expansion_panel(id), |tree, panel| {
+                let app = self.app.clone();
+                tree.context_menu(move |_, _, menu, _, cx| expansion_menu(menu, panel, &app, cx))
+            })
             .text_sm(),
-        )
+        );
+        // The panel's space below its rows offers the same menu.
+        match expansion_panel(id) {
+            Some(panel) => {
+                let app = self.app.clone();
+                panel_space
+                    .context_menu(move |menu, _, cx| expansion_menu(menu, panel, &app, cx))
+                    .into_any_element()
+            }
+            None => panel_space.into_any_element(),
+        }
     }
 
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2699,6 +2908,10 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_close_clean))
             .on_action(cx.listener(Self::on_close_all))
             .on_action(cx.listener(Self::on_keep_open))
+            .on_action(cx.listener(Self::on_expand_sidebar))
+            .on_action(cx.listener(Self::on_collapse_sidebar))
+            .on_action(cx.listener(Self::on_collapse_sidebar_level))
+            .on_action(cx.listener(Self::on_reset_sidebar))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_toggle_strong))

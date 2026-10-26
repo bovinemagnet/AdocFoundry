@@ -2,6 +2,18 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- An application menu: a ☰ button at the left of the title bar opens into File, Edit, Format, View, Go, Git and Help menus, as in Zed (#116).
+- Preview tabs: browsing to a page shows it in one reusable, italic preview tab until it is edited, saved, double-clicked or kept with Keep Open; `[editor] preview_tabs = false` keeps every page open as before (#117).
+- The Navigation and Modules panels remember the branches you open and close, through re-indexing and, for each workspace, across restarts (`[sidebar] remember_expansion`, on by default). Right-clicking either panel offers Expand All, Collapse All, Collapse One Level and Reset to Configured Default (#121).
+
+### Changed
+
+- Navigation and Modules now open two levels deep instead of fully. `[sidebar.navigation]` and `[sidebar.modules]` `default_expansion` set the depth for each panel; `"all"` restores fully open trees (#121).
+
 ## 0.3.0 — 2026-10-25
 
 ### Added
