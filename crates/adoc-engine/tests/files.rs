@@ -320,3 +320,41 @@ fn text_files_open_outside_the_index_and_binary_ones_are_refused() {
     }
     assert_eq!(engine.documents().count(), before);
 }
+
+#[test]
+fn a_large_tree_lists_only_what_is_opened() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = root_of(&directory);
+    for folder in 0..50 {
+        let dir = root.join(format!("section-{folder}"));
+        fs::create_dir_all(dir.join("deeper")).unwrap();
+        for file in 0..100 {
+            fs::write(dir.join(format!("asset-{file}.json")), "{}\n").unwrap();
+        }
+    }
+    let mut engine = engine_for(&root);
+    let started = Instant::now();
+    let listing = list(&mut engine, &root);
+    // Generous: one folder's names, however loaded the machine.
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(names(&listing).len(), 50);
+    assert_eq!(
+        names(&listing)[..3],
+        ["section-0", "section-1", "section-2"]
+    );
+    assert_eq!(names(&listing)[49], "section-49", "natural order");
+    // Nothing beneath the root was listed.
+    for folder in 0..50 {
+        assert!(engine
+            .directory(&root.join(format!("section-{folder}")))
+            .is_none());
+    }
+    // Opening one lists its hundred files and its folder, and still nothing deeper.
+    let section = list(&mut engine, &root.join("section-7"));
+    assert_eq!(names(&section).len(), 101);
+    assert!(engine.directory(&root.join("section-7/deeper")).is_none());
+}
