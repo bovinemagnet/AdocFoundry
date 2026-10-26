@@ -62,6 +62,7 @@ pub struct Engine {
     pub(crate) visual: crate::visual::VisualState,
     pub(crate) git: crate::git::GitState,
     pub(crate) tabs: crate::tabs::Tabs,
+    pub(crate) expansion: crate::expansion::Expansion,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
 }
@@ -121,6 +122,7 @@ impl Engine {
             visual: crate::visual::VisualState::default(),
             git: crate::git::GitState::default(),
             tabs: crate::tabs::Tabs::default(),
+            expansion: crate::expansion::Expansion::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
         }
@@ -786,7 +788,7 @@ struct AppliedEdits {
 ///
 /// The temporary file has an unpredictable name and is created exclusively, never through an
 /// existing path, so a link planted in a shared directory cannot redirect the write.
-fn write_replacing(path: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write_replacing(path: &Path, text: &str) -> std::io::Result<()> {
     use std::io::Write as _;
     let target = match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => fs::canonicalize(path)?,

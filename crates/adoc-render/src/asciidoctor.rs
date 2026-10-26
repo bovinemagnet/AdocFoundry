@@ -244,7 +244,9 @@ mod tests {
         let executable = root.join("echo-args");
         fs::write(
             &executable,
-            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n",
+            // It reads the page first, as Asciidoctor does: exiting with the page unread would
+            // break the renderer's pipe.
+            "#!/bin/sh\ncat > /dev/null\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n",
         )
         .unwrap();
         let mut permissions = fs::metadata(&executable).unwrap().permissions();

@@ -46,6 +46,44 @@ impl Default for EditorSettings {
     }
 }
 
+/// How far a sidebar tree opens when it is first shown or reset: a number of branch levels,
+/// counting the component version row as level 1, or every branch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExpansionPolicy {
+    Depth(u32),
+    All,
+}
+
+impl ExpansionPolicy {
+    /// Whether a branch at `level` (1 for the top row) starts expanded.
+    #[must_use]
+    pub fn expands(self, level: usize) -> bool {
+        match self {
+            Self::All => true,
+            Self::Depth(depth) => level <= depth as usize,
+        }
+    }
+}
+
+/// The Navigation and Modules trees: how far each opens, and whether the branches the user
+/// opens and closes are remembered for the workspace.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SidebarSettings {
+    pub remember_expansion: bool,
+    pub navigation: ExpansionPolicy,
+    pub modules: ExpansionPolicy,
+}
+
+impl Default for SidebarSettings {
+    fn default() -> Self {
+        Self {
+            remember_expansion: true,
+            navigation: ExpansionPolicy::Depth(2),
+            modules: ExpansionPolicy::Depth(2),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkspaceSettings {
     pub ignore: Vec<String>,
@@ -158,6 +196,7 @@ pub struct Settings {
     pub git: GitSettings,
     pub pdf: PdfSettings,
     pub updates: UpdateSettings,
+    pub sidebar: SidebarSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -255,19 +294,43 @@ impl Settings {
                 continue;
             };
             for (key, value) in entries {
-                let name = format!("{section}.{key}");
-                let allowed_here = layer == Layer::User
-                    || section == "editor"
-                    || section == "pdf"
-                    || (section == "workspace" && key == "ignore");
-                if !allowed_here && is_known(section, key) {
-                    self.warn(&source, &name, "can only be set in the user settings file");
-                    continue;
-                }
-                if let Err(problem) = self.set(section, key, value) {
-                    self.warn(&source, &name, problem);
+                // `[sidebar.navigation]` and `[sidebar.modules]` are tables of their own.
+                let panel = value.as_table().filter(|_| {
+                    section == "sidebar" && matches!(key.as_str(), "navigation" | "modules")
+                });
+                match panel {
+                    Some(panel) => {
+                        let section = format!("sidebar.{key}");
+                        for (key, value) in panel {
+                            self.apply_one(&source, layer, &section, key, value);
+                        }
+                    }
+                    None => self.apply_one(&source, layer, section, key, value),
                 }
             }
+        }
+    }
+
+    fn apply_one(
+        &mut self,
+        source: &str,
+        layer: Layer,
+        section: &str,
+        key: &str,
+        value: &toml::Value,
+    ) {
+        let name = format!("{section}.{key}");
+        let allowed_here = layer == Layer::User
+            || section == "editor"
+            || section == "pdf"
+            || section.starts_with("sidebar.")
+            || (section == "workspace" && key == "ignore");
+        if !allowed_here && is_known(section, key) {
+            self.warn(source, &name, "can only be set in the user settings file");
+            return;
+        }
+        if let Err(problem) = self.set(section, key, value) {
+            self.warn(source, &name, problem);
         }
     }
 
@@ -316,6 +379,13 @@ impl Settings {
                 self.git.hosts = hosts;
             }
             ("updates", "check") => self.updates.check = boolean(value)?,
+            ("sidebar", "remember_expansion") => {
+                self.sidebar.remember_expansion = boolean(value)?;
+            }
+            ("sidebar.navigation", "default_expansion") => {
+                self.sidebar.navigation = expansion(value)?;
+            }
+            ("sidebar.modules", "default_expansion") => self.sidebar.modules = expansion(value)?,
             ("pdf", "theme") => self.pdf.theme = string(value)?,
             ("pdf", "themes_dir") => self.pdf.themes_dir = Some(string(value)?),
             ("pdf", "fonts_dir") => self.pdf.fonts_dir = Some(string(value)?),
@@ -347,13 +417,31 @@ fn is_host_kind(kind: &str) -> bool {
     known
 }
 
+/// A sidebar tree's expansion: levels, 0 or more, or `"all"`.
+fn expansion(value: &toml::Value) -> Result<ExpansionPolicy, &'static str> {
+    const EXPECTED: &str = "expected a whole number of levels, 0 or more, or \"all\"";
+    if value.as_str() == Some("all") {
+        return Ok(ExpansionPolicy::All);
+    }
+    let depth = value.as_integer().ok_or(EXPECTED)?;
+    u32::try_from(depth)
+        .map(ExpansionPolicy::Depth)
+        .map_err(|_| EXPECTED)
+}
+
 fn is_known(section: &str, key: &str) -> bool {
     matches!(
         (section, key),
-        (
-            "editor",
-            "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme" | "preview_tabs"
-        ) | ("workspace", "ignore")
+        ("sidebar", "remember_expansion")
+            | (
+                "sidebar.navigation" | "sidebar.modules",
+                "default_expansion"
+            )
+            | (
+                "editor",
+                "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme" | "preview_tabs"
+            )
+            | ("workspace", "ignore")
             | ("tools", "asciidoctor" | "git")
             | (
                 "git",
@@ -516,6 +604,68 @@ mod tests {
         let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
         assert!(!settings.editor.preview_tabs);
         assert_eq!(settings.warnings.len(), 1);
+    }
+
+    #[test]
+    fn sidebar_expansion_defaults_to_two_levels() {
+        let settings = Settings::default();
+        assert_eq!(settings.sidebar.navigation, ExpansionPolicy::Depth(2));
+        assert_eq!(settings.sidebar.modules, ExpansionPolicy::Depth(2));
+        assert!(settings.sidebar.remember_expansion);
+    }
+
+    #[test]
+    fn sidebar_expansion_loads_per_panel_and_layer() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(
+            &user,
+            "[sidebar]\nremember_expansion = false\n\n[sidebar.navigation]\ndefault_expansion = \"all\"\n\n[sidebar.modules]\ndefault_expansion = 0\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+        assert_eq!(settings.sidebar.navigation, ExpansionPolicy::All);
+        assert_eq!(settings.sidebar.modules, ExpansionPolicy::Depth(0));
+        assert!(!settings.sidebar.remember_expansion);
+
+        // The workspace overrides one panel and keeps the user's other; it may not set
+        // `remember_expansion`.
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[sidebar]\nremember_expansion = true\n\n[sidebar.modules]\ndefault_expansion = 3\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert_eq!(settings.sidebar.navigation, ExpansionPolicy::All);
+        assert_eq!(settings.sidebar.modules, ExpansionPolicy::Depth(3));
+        assert!(!settings.sidebar.remember_expansion);
+        assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
+        assert!(settings.warnings[0].contains("sidebar.remember_expansion"));
+    }
+
+    #[test]
+    fn invalid_sidebar_expansion_keeps_the_layer_beneath() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(&user, "[sidebar.navigation]\ndefault_expansion = 4\n").unwrap();
+        for bad in ["-1", "1.5", "true", "[1]", "\"some\"", "\"ALL\""] {
+            fs::write(
+                directory.path().join(WORKSPACE_SETTINGS_FILE),
+                format!("[sidebar.navigation]\ndefault_expansion = {bad}\n"),
+            )
+            .unwrap();
+            let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+            assert_eq!(
+                settings.sidebar.navigation,
+                ExpansionPolicy::Depth(4),
+                "{bad}"
+            );
+            assert_eq!(settings.warnings.len(), 1, "{bad}: {:?}", settings.warnings);
+        }
+        fs::write(&user, "[sidebar.navigation]\nbreadth = 2\n").unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.warnings.len(), 1, "an unknown key warns");
     }
 
     #[test]

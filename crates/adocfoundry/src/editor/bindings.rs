@@ -20,6 +20,11 @@ actions!(
         CloseClean,
         CloseAll,
         KeepOpen,
+        ExpandSidebar,
+        CollapseSidebar,
+        CollapseSidebarLevel,
+        ResetSidebar,
+        SidebarMenu,
         Undo,
         Redo,
         GoToDefinition,
@@ -131,6 +136,10 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::DOCUMENT_CLOSE_CLEAN => KeyBinding::new(keys, CloseClean, workspace),
         ids::DOCUMENT_CLOSE_ALL => KeyBinding::new(keys, CloseAll, workspace),
         ids::DOCUMENT_KEEP_OPEN => KeyBinding::new(keys, KeepOpen, workspace),
+        ids::SIDEBAR_EXPAND_ALL => KeyBinding::new(keys, ExpandSidebar, workspace),
+        ids::SIDEBAR_COLLAPSE_ALL => KeyBinding::new(keys, CollapseSidebar, workspace),
+        ids::SIDEBAR_COLLAPSE_ONE_LEVEL => KeyBinding::new(keys, CollapseSidebarLevel, workspace),
+        ids::SIDEBAR_RESET_EXPANSION => KeyBinding::new(keys, ResetSidebar, workspace),
         ids::EDIT_UNDO => KeyBinding::new(keys, Undo, editor),
         ids::EDIT_REDO => KeyBinding::new(keys, Redo, editor),
         ids::NAVIGATE_DEFINITION => KeyBinding::new(keys, GoToDefinition, editor),
@@ -201,6 +210,10 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::DOCUMENT_CLOSE_CLEAN => Box::new(CloseClean),
         ids::DOCUMENT_CLOSE_ALL => Box::new(CloseAll),
         ids::DOCUMENT_KEEP_OPEN => Box::new(KeepOpen),
+        ids::SIDEBAR_EXPAND_ALL => Box::new(ExpandSidebar),
+        ids::SIDEBAR_COLLAPSE_ALL => Box::new(CollapseSidebar),
+        ids::SIDEBAR_COLLAPSE_ONE_LEVEL => Box::new(CollapseSidebarLevel),
+        ids::SIDEBAR_RESET_EXPANSION => Box::new(ResetSidebar),
         ids::EDIT_UNDO => Box::new(Undo),
         ids::EDIT_REDO => Box::new(Redo),
         ids::NAVIGATE_DEFINITION => Box::new(GoToDefinition),
@@ -304,6 +317,8 @@ pub fn bind(engine: &Engine, cx: &mut App) {
             _ => {}
         }
     }
+    // The Navigation and Modules panels' menu, from the keyboard, where a tree has focus.
+    bindings.push(KeyBinding::new("shift-f10", SidebarMenu, Some("Tree")));
     let workspace = Some(WORKSPACE_CONTEXT);
     bindings.push(KeyBinding::new(
         &platform_binding("cmd-shift-p"),

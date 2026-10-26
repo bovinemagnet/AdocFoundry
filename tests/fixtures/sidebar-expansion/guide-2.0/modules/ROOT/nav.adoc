@@ -1,0 +1,5 @@
+* xref:index.adoc[Home]
+** xref:install.adoc[Install]
+*** xref:linux.adoc[Linux]
+** xref:install.adoc[Install]
+* xref:faq.adoc[FAQ]

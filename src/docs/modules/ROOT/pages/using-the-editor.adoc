@@ -69,6 +69,65 @@ Outline::
 The sections of the active document.
 For a navigation file, the outline is its navigation tree.
 
+=== How far the trees open
+
+Navigation and Modules open to two levels by default.
+Earlier releases opened every branch.
+Levels count the expandable rows as shown, starting with the component version row at level 1.
+A branch at level 2 or above opens when its level is no more than the depth, so the children of the last open level show, closed if they have children of their own.
+
+In Modules the levels are component version, module, family and resource.
+The default shows the families of each module with their resources closed.
+In Navigation, levels follow the tree as shown, including linked entries that have children; they are not the number of `*` in a nav file.
+
+A depth only sets where a tree starts, and you can open deeper branches by hand.
+To open everything, as earlier releases did, set both depths to `"all"`; see xref:settings.adoc[Settings].
+
+=== Remembering open and closed branches
+
+The branches you open and close stay as you left them when you switch between Navigation and Modules, when the workspace is indexed again, and when a navigation file or the catalogue changes.
+A branch that is new takes the configured depth, and a closed parent keeps its children hidden.
+
+By default your choices are also remembered for each workspace, and for each panel separately, in `sidebar-state.json` beside the user settings file.
+They return when you reopen the workspace or restart the app.
+Nothing is written into the documentation repository.
+Your choices win over the configured depth: with `"all"`, a branch you closed stays closed, while branches you never touched follow the current depth.
+
+With `sidebar.remember_expansion` set to `false`, a reopened workspace starts from the configured depths, and any saved state is ignored.
+Your changes still last for the session.
+A missing or damaged state file means the configured depths.
+
+=== The right-click menu
+
+Right-click a row, or the empty space, in Navigation or Modules to open a menu headed *All of Navigation* or *All of Modules*.
+It acts on the whole panel, and right-clicking never opens a page.
+With the tree focused, kbd:[Shift+F10] opens the same menu on every platform.
+The arrow keys move through the menu, kbd:[Enter] chooses an item and kbd:[Esc] closes it.
+The arrow keys in the tree itself work as before.
+
+Expand All::
+Opens every branch.
+
+Collapse All::
+Closes every branch, including those hidden under closed parents.
+The component version rows stay visible.
+
+Collapse One Level::
+Closes the deepest level of open branches that are visible and leaves shallower ones alone.
+Repeat it to close the tree level by level.
+It is disabled when nothing is open.
+
+Reset to Configured Default::
+Forgets that panel's choices and opens it as the settings say.
+
+These change the view and what is remembered, and never the TOML files.
+When a collapse hides the selected row, the nearest row above it that is still shown becomes selected.
+
+The same four commands are also in the *View* menu and the command palette.
+There they are titled Expand All in Sidebar, Collapse All in Sidebar, Collapse Sidebar One Level and Reset Sidebar to Configured Default.
+They act on whichever of Navigation or Modules the sidebar is showing, and on Navigation when it shows neither.
+They have no default keys, which makes them reachable from the keyboard.
+
 [[the-editor]]
 == The editor
 

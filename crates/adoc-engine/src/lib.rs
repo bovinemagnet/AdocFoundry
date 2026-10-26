@@ -13,6 +13,7 @@ mod edit;
 mod engine;
 mod error;
 mod event;
+mod expansion;
 mod export;
 #[cfg(feature = "git")]
 mod git;
@@ -48,6 +49,7 @@ pub use edit::TextEdit;
 pub use engine::{Engine, INDEX_SETTLE};
 pub use error::EngineError;
 pub use event::EngineEvent;
+pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE_FILE};
 pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
 #[cfg(feature = "git")]
 pub use git::{GitRepository, GitState, GIT_SETTLE};
@@ -58,8 +60,9 @@ pub use preview::{
 };
 pub use rendered::{PreviewLayout, RenderedPreview, PREVIEW_SETTLE};
 pub use settings::{
-    pdf_standard, EditorSettings, GitSettings, PdfSettings, Settings, ThemePreference,
-    ToolSettings, UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    pdf_standard, EditorSettings, ExpansionPolicy, GitSettings, PdfSettings, Settings,
+    SidebarSettings, ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings,
+    USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
@@ -84,8 +87,8 @@ pub use visual::{EditorMode, VisualArgs, VisualDocument, VisualValue, MODEL_SETT
 pub use workspace::WATCH_DEBOUNCE;
 
 pub use adoc_antora::{
-    compare_component_versions, AntoraCoordinate, AntoraResourceId, NavError, NavItem, NavTree,
-    ResourceFamily,
+    compare_component_versions, AntoraCoordinate, AntoraResource, AntoraResourceId, NavError,
+    NavItem, NavTree, ResourceFamily,
 };
 #[cfg(feature = "git")]
 pub use adoc_git::{BlameLine, Change as GitChange, FileStatus, Head, Hunk, HunkKind};

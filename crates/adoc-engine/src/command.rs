@@ -89,6 +89,8 @@ pub enum CommandArgs {
     /// A PDF export: what to export and where to write it.
     Export(crate::ExportArgs),
     Custom(serde_json::Value),
+    /// A sidebar tree, for the commands that open and close its branches.
+    Panel(crate::SidebarPanel),
 }
 
 #[derive(Clone, Debug, PartialEq)]

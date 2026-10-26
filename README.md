@@ -19,6 +19,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 - *Navigation*: each component version's navigation as its `nav.adoc` files list it, or its pages by module when it declares none.
 - *Modules*: every module with its families (pages, partials, examples, images, attachments) and their resources.
+- Both open two levels deep by default (`[sidebar.navigation]` and `[sidebar.modules]` `default_expansion`: a number of levels, or `"all"` for the old fully open trees). The branches you open and close stay that way through re-indexing and are remembered for the workspace across restarts (`[sidebar] remember_expansion`). Right-click either panel for Expand All, Collapse All, Collapse One Level and Reset to Configured Default; the View menu and the palette have them too, for the panel shown.
 - *Problems*: workspace diagnostics grouped by file; click one to go to it.
 - *Outline* of the active document; for a navigation file, its navigation tree.
 
@@ -159,6 +160,15 @@ preview_tabs = true              # false keeps every page you open in a tab of i
 
 [workspace]
 ignore = ["node_modules", ".git", "build", "target", ".cache"]
+
+[sidebar]
+remember_expansion = true        # user file only
+
+[sidebar.navigation]
+default_expansion = 2            # levels, 0 or more, or "all" to open every branch
+
+[sidebar.modules]
+default_expansion = 2
 
 [tools]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty

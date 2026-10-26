@@ -24,6 +24,9 @@ pub enum EngineEvent {
     },
     /// The document left the preview tab and stays open as an ordinary tab.
     DocumentKept(DocumentId),
+    /// A bulk operation opened or closed branches of a sidebar tree; see
+    /// `Engine::branch_expanded`.
+    ExpansionChanged(crate::SidebarPanel),
     /// The file behind an open document was moved, by a rename or its undo.
     DocumentMoved {
         id: DocumentId,

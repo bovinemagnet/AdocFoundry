@@ -15,6 +15,10 @@ pub mod ids {
     pub const DOCUMENT_OPEN: CommandId = CommandId::new("document.open");
     pub const DOCUMENT_BROWSE: CommandId = CommandId::new("document.browse");
     pub const DOCUMENT_KEEP_OPEN: CommandId = CommandId::new("document.keep_open");
+    pub const SIDEBAR_EXPAND_ALL: CommandId = CommandId::new("sidebar.expand_all");
+    pub const SIDEBAR_COLLAPSE_ALL: CommandId = CommandId::new("sidebar.collapse_all");
+    pub const SIDEBAR_COLLAPSE_ONE_LEVEL: CommandId = CommandId::new("sidebar.collapse_one_level");
+    pub const SIDEBAR_RESET_EXPANSION: CommandId = CommandId::new("sidebar.reset_expansion");
     pub const DOCUMENT_SAVE: CommandId = CommandId::new("document.save");
     pub const DOCUMENT_SAVE_ALL: CommandId = CommandId::new("document.save_all");
     pub const DOCUMENT_OVERWRITE: CommandId = CommandId::new("document.overwrite");
@@ -459,6 +463,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     }
     crate::visual::register_visual(registry);
     crate::tabs::register_tabs(registry);
+    crate::expansion::register_expansion(registry);
     #[cfg(feature = "git")]
     {
         crate::git::register_git(registry);

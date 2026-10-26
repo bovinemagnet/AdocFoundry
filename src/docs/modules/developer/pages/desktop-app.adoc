@@ -209,6 +209,20 @@ In the app, `WorkspaceView::open_at` takes an `OpenDisposition`, and `replace_ta
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 
+The engine owns the expansion settings (`ExpansionPolicy` and `SidebarSettings`) and the expansion state (`src/expansion.rs`).
+The front end builds the trees and passes their branches, as `Branch { key, children }`, to `Engine::resolve_expansion`, which gives every branch it sees its policy default once.
+After that `Engine::branch_expanded` reports a branch and `Engine::set_branch_expanded` records the user's choice.
+The bulk operations are the commands `sidebar.expand_all`, `sidebar.collapse_all`, `sidebar.collapse_one_level` and `sidebar.reset_expansion`, which take `CommandArgs::Panel(SidebarPanel)`, act on the tree resolved last and emit `EngineEvent::ExpansionChanged(panel)`.
+The app binds them to the actions `ExpandSidebar`, `CollapseSidebar`, `CollapseSidebarLevel` and `ResetSidebar`.
+The command palette and the View menu dispatch those actions, which `WorkspaceView` sends to the panel shown, while the panels' own context menu names its panel directly.
+`SidebarMenu` is bound to `shift-f10` in gpui-component's `Tree` key context, and `WorkspaceView` then opens the panel's menu as a `PopupMenu` drawn over the shown tree.
+Only chosen branches are saved, in a versioned JSON file written atomically 500 ms after the last change (`EXPANSION_SAVE_SETTLE`) and keyed by the workspace's roots; `open_workspace` loads it after writing the previous workspace's state.
+
+In the app, `sidebar.rs` builds `Node`s with stable keys taken from component@version, then module and family, or nav file and entry (title and link target, counted among alike siblings).
+Keys never use row numbers.
+A node's tree item id is its key followed by its target.
+`WorkspaceView` resolves the nodes before showing them, so a rebuilt tree never flashes fully open, records `TreeEvent::Expanded` and `TreeEvent::Collapsed`, and shows a panel again on `ExpansionChanged`, keeping the selection or its nearest shown ancestor.
+
 == Change markers and the Changes panel
 
 `src/editor/changes.rs` paints the source editor's markers over the editor.
