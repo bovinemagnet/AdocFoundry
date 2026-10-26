@@ -3303,3 +3303,24 @@ fn the_palette_opens_and_closes_the_panel_shown(cx: &mut TestAppContext) {
         "Navigation untouched"
     );
 }
+
+#[gpui::test]
+fn shift_f10_opens_the_panel_menu(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::{Modules, Navigation};
+    let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let modules = rows(&workspace, Modules, &mut cx);
+    // Clicking the version row, which leads nowhere, focuses the tree and closes the row.
+    click("nav-row-0", &mut cx);
+    assert_eq!(rows(&workspace, Navigation, &mut cx)[0], "Guide 2.0 -");
+    cx.simulate_keystrokes("shift-f10");
+    cx.run_until_parked();
+    // Expand All.
+    cx.simulate_keystrokes("down down enter");
+    cx.run_until_parked();
+    let navigation = rows(&workspace, Navigation, &mut cx);
+    assert!(
+        navigation.contains(&"      Linux".to_owned()),
+        "{navigation:#?}"
+    );
+    assert_eq!(rows(&workspace, Modules, &mut cx), modules);
+}

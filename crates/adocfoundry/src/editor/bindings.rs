@@ -24,6 +24,7 @@ actions!(
         CollapseSidebar,
         CollapseSidebarLevel,
         ResetSidebar,
+        SidebarMenu,
         Undo,
         Redo,
         GoToDefinition,
@@ -316,6 +317,8 @@ pub fn bind(engine: &Engine, cx: &mut App) {
             _ => {}
         }
     }
+    // The Navigation and Modules panels' menu, from the keyboard, where a tree has focus.
+    bindings.push(KeyBinding::new("shift-f10", SidebarMenu, Some("Tree")));
     let workspace = Some(WORKSPACE_CONTEXT);
     bindings.push(KeyBinding::new(
         &platform_binding("cmd-shift-p"),

@@ -215,6 +215,7 @@ After that `Engine::branch_expanded` reports a branch and `Engine::set_branch_ex
 The bulk operations are the commands `sidebar.expand_all`, `sidebar.collapse_all`, `sidebar.collapse_one_level` and `sidebar.reset_expansion`, which take `CommandArgs::Panel(SidebarPanel)`, act on the tree resolved last and emit `EngineEvent::ExpansionChanged(panel)`.
 The app binds them to the actions `ExpandSidebar`, `CollapseSidebar`, `CollapseSidebarLevel` and `ResetSidebar`.
 The command palette and the View menu dispatch those actions, which `WorkspaceView` sends to the panel shown, while the panels' own context menu names its panel directly.
+`SidebarMenu` is bound to `shift-f10` in gpui-component's `Tree` key context, and `WorkspaceView` then opens the panel's menu as a `PopupMenu` drawn over the shown tree.
 Only chosen branches are saved, in a versioned JSON file written atomically 500 ms after the last change (`EXPANSION_SAVE_SETTLE`) and keyed by the workspace's roots; `open_workspace` loads it after writing the previous workspace's state.
 
 In the app, `sidebar.rs` builds `Node`s with stable keys taken from component@version, then module and family, or nav file and entry (title and link target, counted among alike siblings).

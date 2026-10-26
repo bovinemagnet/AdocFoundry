@@ -128,6 +128,11 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |F2
 |`page.rename`
 
+|Open the Navigation or Modules panel's menu (in that tree)
+|Shift-F10
+|Shift-F10
+|UI only
+
 |Open settings
 |Cmd-,
 |Ctrl-,

@@ -100,6 +100,12 @@ pub struct WorkspaceView {
     /// operation opens or closes branches.
     nav_nodes: Vec<sidebar::Node>,
     family_nodes: Vec<sidebar::Node>,
+    /// The panel menu opened from the keyboard, and what closes it.
+    sidebar_menu: Option<(
+        SidebarPanel,
+        Entity<gpui_component::menu::PopupMenu>,
+        Subscription,
+    )>,
     problems: Entity<TreeState>,
     problem_count: usize,
     problems_stale: bool,
@@ -261,6 +267,7 @@ impl WorkspaceView {
             families,
             nav_nodes: Vec::new(),
             family_nodes: Vec::new(),
+            sidebar_menu: None,
             problems: cx.new(|cx| TreeState::new(cx)),
             problem_count: 0,
             problems_stale: true,
@@ -1206,6 +1213,26 @@ impl WorkspaceView {
 
     fn on_reset_sidebar(&mut self, _: &ResetSidebar, window: &mut Window, cx: &mut Context<Self>) {
         self.on_sidebar_command(ids::SIDEBAR_RESET_EXPANSION, window, cx);
+    }
+
+    /// Opens the shown panel's menu at the top of its tree, as a right-click would.
+    fn on_sidebar_menu(&mut self, _: &SidebarMenu, window: &mut Window, cx: &mut Context<Self>) {
+        let panel = match self.sidebar_tab {
+            SidebarTab::Navigation => SidebarPanel::Navigation,
+            SidebarTab::Families => SidebarPanel::Modules,
+            _ => return,
+        };
+        let app = self.app.clone();
+        let menu = gpui_component::menu::PopupMenu::build(window, cx, move |menu, _, cx| {
+            expansion_menu(menu, panel, &app, cx)
+        });
+        let closed = cx.subscribe_in(&menu, window, |this, _, _: &gpui::DismissEvent, _, cx| {
+            this.sidebar_menu = None;
+            cx.notify();
+        });
+        menu.read(cx).focus_handle(cx).focus(window, cx);
+        self.sidebar_menu = Some((panel, menu, closed));
+        cx.notify();
     }
 
     fn on_keep_open(&mut self, _: &KeepOpen, window: &mut Window, cx: &mut Context<Self>) {
@@ -2414,7 +2441,20 @@ impl WorkspaceView {
         match expansion_panel(id) {
             Some(panel) => {
                 let app = self.app.clone();
+                let keyboard_menu = self
+                    .sidebar_menu
+                    .as_ref()
+                    .filter(|(open, _, _)| *open == panel)
+                    .map(|(_, menu, _)| menu.clone());
                 panel_space
+                    .relative()
+                    .when_some(keyboard_menu, |panel_space, menu| {
+                        panel_space.child(gpui::deferred(
+                            gpui::anchored()
+                                .snap_to_window_with_margin(px(8.))
+                                .child(div().occlude().child(menu)),
+                        ))
+                    })
                     .context_menu(move |menu, _, cx| expansion_menu(menu, panel, &app, cx))
                     .into_any_element()
             }
@@ -2912,6 +2952,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_collapse_sidebar))
             .on_action(cx.listener(Self::on_collapse_sidebar_level))
             .on_action(cx.listener(Self::on_reset_sidebar))
+            .on_action(cx.listener(Self::on_sidebar_menu))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_toggle_strong))

@@ -101,6 +101,9 @@ A missing or damaged state file means the configured depths.
 
 Right-click a row, or the empty space, in Navigation or Modules to open a menu headed *All of Navigation* or *All of Modules*.
 It acts on the whole panel, and right-clicking never opens a page.
+With the tree focused, kbd:[Shift+F10] opens the same menu on every platform.
+The arrow keys move through the menu, kbd:[Enter] chooses an item and kbd:[Esc] closes it.
+The arrow keys in the tree itself work as before.
 
 Expand All::
 Opens every branch.
