@@ -101,18 +101,22 @@ impl SourceEditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (text, soft_wrap, tab_width) = {
+        let (text, soft_wrap, tab_width, language) = {
             let engine = &app.read(cx).engine;
             let text = engine
                 .document(document)
                 .map(|open| open.text.to_string())
                 .unwrap_or_default();
             let editor = &engine.settings().editor;
-            (text, editor.soft_wrap, editor.tab_width as usize)
+            let language = engine
+                .document(document)
+                .map(|open| language::for_document(&open.path, open.asciidoc))
+                .unwrap_or_else(|| language::ASCIIDOC.to_owned());
+            (text, editor.soft_wrap, editor.tab_width as usize, language)
         };
         let state = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
-                .language(language::ASCIIDOC)
+                .language(language)
                 .line_number(true)
                 .folding(true)
                 .soft_wrap(soft_wrap)

@@ -126,6 +126,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::SIDEBAR_COLLAPSE_ALL),
             Command(ids::SIDEBAR_COLLAPSE_ONE_LEVEL),
             Command(ids::SIDEBAR_RESET_EXPANSION),
+            Ui(3),
             Separator,
             Ui(1),
             Ui(2),

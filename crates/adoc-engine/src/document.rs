@@ -30,6 +30,16 @@ pub struct OpenDocument {
     pub diagnostics: Vec<Diagnostic>,
     /// True for a document created with `open_untitled` that has never been saved.
     pub untitled: bool,
+    /// False for a file that is not AsciiDoc, such as YAML or a script opened from the Files
+    /// view: it is edited as text, and never indexed, diagnosed, previewed or shown visually.
+    pub asciidoc: bool,
+}
+
+impl OpenDocument {
+    /// Whether the document is in the workspace index: an AsciiDoc file on disk.
+    pub(crate) fn indexed(&self) -> bool {
+        self.asciidoc && !self.untitled
+    }
 }
 
 pub(crate) fn uri_for(path: &std::path::Path) -> String {

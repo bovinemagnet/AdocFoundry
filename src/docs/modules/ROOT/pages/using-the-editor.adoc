@@ -49,7 +49,7 @@ A failed write can no longer leave a truncated file.
 
 == The sidebar
 
-The sidebar has three tabs and an outline.
+The sidebar has four tabs and an outline.
 
 Navigation::
 Each component version's navigation, nested as its `nav.adoc` files list it.
@@ -58,6 +58,10 @@ A component that declares no `nav` in `antora.yml` shows its pages by module ins
 
 Modules::
 Every module, with its families (pages, partials, examples, images and attachments) and their resources.
+
+Files::
+The folders and files beneath each workspace folder, as they are on disk.
+See <<the-files-view>>.
 
 Problems::
 Workspace diagnostics grouped by file, with a count in the tab title.
@@ -68,6 +72,111 @@ This applies to every panel in the sidebar.
 Outline::
 The sections of the active document.
 For a navigation file, the outline is its navigation tree.
+
+[[the-files-view]]
+=== Files
+
+Files shows the folders and files beneath each workspace folder as they are stored on disk.
+Navigation and Modules show the documentation as Antora organises it.
+Files shows where the files actually are.
+
+Every file type is shown.
+That includes files outside Antora's layout, files that no navigation mentions, files that Git ignores and files with any extension.
+Empty folders are shown too.
+Files works without an `antora.yml` and without Git.
+It shows only the folders you opened, never their parents.
+
+Each workspace folder has one top row, named after the folder.
+When two workspace folders have the same name, the folder above is added, as in `docs — /work/a`.
+Under it, folders come first and then files.
+Both are sorted by name, ignoring case, with numbers in natural order, so `file2` comes before `file10`.
+Hovering a row shows its full path.
+The footer shows the selected entry's path relative to its workspace folder.
+
+A folder's contents are read only when you open it, one level at a time.
+Nothing is read for folders you do not open, and file contents are never read just to draw the tree.
+The arrow keys move through the tree: kbd:[Right] opens a folder and kbd:[Left] closes it.
+A folder that is being read says "Loading…", and an empty folder says "Empty folder".
+A folder that cannot be read says "Permission denied — right-click to retry", or "Unavailable:" followed by the reason.
+
+==== What is hidden
+
+Ordinary dotfiles such as `.adocfoundry.toml` and `.gitignore` are shown.
+Folders and files named in `workspace.ignore` are hidden.
+By default these are `node_modules`, `.git`, `build`, `target` and `.cache`.
+A `.gitignore` file does not hide anything.
+Show Excluded Files, in the right-click menu, shows the hidden entries marked "(excluded)".
+It changes nothing else: not the settings, the index or Antora.
+
+A symbolic link is shown with a "→" after its name and is not followed.
+A link to a folder cannot be opened as a folder, so links can never lead outside the workspace or loop.
+
+==== Opening files
+
+Click a file, or select it and press kbd:[Space], to open it in a preview tab, as browsing does.
+Double-click to keep it open.
+See <<preview-tabs>>.
+A file that is already open just activates its tab.
+Selecting a script never runs it.
+
+* AsciiDoc pages open as usual, with Source, Visual and Split.
+* Other text files, such as YAML, TOML, JSON, Markdown and scripts, open as text in the source editor.
+They are highlighted when their type is known.
+They are never indexed or checked for AsciiDoc problems, and they have no visual editor or rendered preview, so the mode buttons are hidden for them.
+* Images and PDFs open in the system's own application, with no tab.
+* Every other file is tried as text.
+A file that is not text, such as a font, an archive, an office document, media or a program, is refused with a message, because it holds binary content or is not UTF-8.
+* Only Open Externally in the right-click menu opens such a file in the system's application.
+A click never hands it to the system, so selecting a file can never run or install it.
+* A symbolic link is never handed to the system by a click.
+
+==== The Files menu
+
+Right-click a file or folder for these items.
+
+Open and Open Externally::
+Open the file in a tab, or in the system's application.
+Both are for files only.
+
+Copy Path and Copy Relative Path::
+Copy the full path, or the path relative to the row's workspace folder.
+
+Reveal in Finder::
+Shows the entry in the system's file manager.
+It is called Reveal in File Explorer on Windows and Reveal in File Manager on Linux.
+
+Refresh Folder::
+Reads the folder again.
+It is for folders only.
+
+The menu also has items for the whole panel, and it shows them on the panel's empty space too.
+
+Refresh::
+Reads every open folder again.
+
+Collapse All::
+Closes every folder.
+
+Show Excluded Files::
+Shows or hides the excluded entries.
+A checkmark shows when it is on.
+
+==== Reveal in Files
+
+Reveal in Files, in the *View* menu and the command palette, shows the active document in Files.
+It has no default key.
+It switches the sidebar to Files, opens the folders above the document, and selects and scrolls to it.
+The editor keeps focus.
+A document beneath an excluded folder is shown anyway, for the moment.
+A document outside the workspace folders gets a message instead.
+
+When you switch tabs, Files selects the active document's row if it is shown.
+It does not open folders or switch the sidebar.
+
+==== Changes outside the app
+
+Files, folders and empty folders created, deleted or renamed outside the app appear and disappear in the open folders by themselves, through the file watcher.
+Folders in `workspace.ignore` are not watched.
 
 === How far the trees open
 

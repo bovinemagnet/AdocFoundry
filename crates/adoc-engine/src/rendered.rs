@@ -291,10 +291,13 @@ impl Engine {
         if !layout.visible {
             return None;
         }
-        layout
-            .pinned
-            .filter(|id| self.documents.contains_key(id))
-            .or(self.active)
+        // Only an AsciiDoc page has a rendering.
+        let page = |id: &DocumentId| {
+            self.documents
+                .get(id)
+                .is_some_and(|document| document.asciidoc)
+        };
+        layout.pinned.filter(page).or(self.active.filter(page))
     }
 
     /// Schedules a re-render of every previewed document assembled from `path`.

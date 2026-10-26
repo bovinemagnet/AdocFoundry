@@ -34,6 +34,22 @@ const SOURCE_LANGUAGES: &[&str] = &[
     "html",
 ];
 
+/// The highlighting for a document: AsciiDoc for a page, otherwise the grammar gpui-component
+/// knows by the file's extension (`toml`, `yml`, `json`, `sh` and the rest), else plain text.
+pub fn for_document(path: &std::path::Path, asciidoc: bool) -> String {
+    if asciidoc {
+        return ASCIIDOC.to_owned();
+    }
+    let extension = path
+        .extension()
+        .map(|extension| extension.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    // An unknown name is plain text.
+    gpui_component::highlighter::Language::from_str(&extension)
+        .name()
+        .to_owned()
+}
+
 pub fn register() {
     let registry = LanguageRegistry::singleton();
     registry.register(

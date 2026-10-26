@@ -15,6 +15,7 @@ mod error;
 mod event;
 mod expansion;
 mod export;
+mod files;
 #[cfg(feature = "git")]
 mod git;
 // Without Git, the engine behaves as with `[git] enabled = false`.
@@ -51,6 +52,7 @@ pub use error::EngineError;
 pub use event::EngineEvent;
 pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE_FILE};
 pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
+pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};
 #[cfg(feature = "git")]
 pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use inspect::resource_id_string;

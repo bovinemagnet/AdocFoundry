@@ -22,6 +22,9 @@ An open document (`OpenDocument`) holds:
 * the text, as a `ropey::Rope` indexed by bytes;
 * a version counter and a dirty flag;
 * the parsed `Document` and its diagnostics.
+* `asciidoc`, which is false for a file that is not AsciiDoc.
+Such a document is never put in the index or diagnosed, the rendered preview skips it, and `view.show_visual` and `view.show_split` refuse it.
+`Engine::read_text` refuses a file that is binary or not UTF-8 for every open, browse and reload.
 
 The rope in the engine is the truth.
 Front ends mirror it, they do not own it.
@@ -34,6 +37,18 @@ Re-parsing is synchronous on every edit, so the text and outline are always exac
 A typed character is the one exception for the rest: re-indexing the document and refreshing diagnostics wait until typing pauses for `INDEX_SETTLE` (150 ms), when `pump` applies them.
 On a 5,000-line document that work takes several milliseconds, too long to repeat on every keystroke.
 Every other command brings the index up to date before it runs, so search, rename, save and replace never see a stale index.
+
+== Directory listings
+
+`files.rs` is framework-free and serves the Files view.
+`Engine::request_directory`, `refresh_directory` and `refresh_directories` list a folder one level deep on a worker, which answers with `WorkerMessage::DirectoryListed`.
+`Engine::directory(dir)` gives a `Listing`: `Loading`, `Loaded(Vec<DirectoryEntry>)` or `Failed(DirectoryError::PermissionDenied | DirectoryError::Unavailable)`.
+Each `DirectoryEntry` has a `name`, a `path`, a `kind` (`EntryKind::Directory`, `File` or `Link { to_directory }`) and `excluded`.
+Entries are sorted folders first, then by natural, case-insensitive name, with the exact path breaking ties.
+`directory_with_excluded` includes the excluded entries, and `set_show_excluded` toggles them, emitting `EngineEvent::DirectoryListed(dir)` for every listed folder.
+A request outside the roots, or through a link, is refused with `EngineError::Refused`.
+Results answer a request id, so an answer to an older request, or for a workspace since closed (`open_workspace` clears the listings), is dropped.
+The watcher's debounced changes relist the listed folders that hold them (`directories_changed`).
 
 == Commands
 
