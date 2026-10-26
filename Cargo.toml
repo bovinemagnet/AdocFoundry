@@ -57,6 +57,9 @@ gpui-component = { version = "=0.8.0", features = [
     "tree-sitter-yaml",
 ] }
 gpui-kit-assets = "=0.8.0"
+# The app's image viewer: the decoders and SVG renderer GPUI already uses, at its versions.
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
+resvg = { version = "=0.46.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # Rasterises PDFs for the visual regression tests; already in the tree through Typst.
 hayro = "=0.7.1"
 hayro-syntax = "=0.7.2"

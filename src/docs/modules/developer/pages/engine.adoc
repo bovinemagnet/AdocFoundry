@@ -50,6 +50,29 @@ A request outside the roots, or through a link, is refused with `EngineError::Re
 Results answer a request id, so an answer to an older request, or for a workspace since closed (`open_workspace` clears the listings), is dropped.
 The watcher's debounced changes relist the listed folders that hold them (`directories_changed`).
 
+[[images]]
+== Images and tabs
+
+`images.rs` holds the engine's side of the image viewer, and the engine never reads an image file.
+An `ImageId` names an `OpenImage { id, path, revision }`.
+`is_image_path` is true for the case-insensitive extensions in `IMAGE_EXTENSIONS`: `png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `ico`, `tif`, `tiff`, `svg`, `avif`, `heic` and `heif`.
+
+* `open_image_as(path, disposition)` opens an image as a preview or a persistent tab.
+It refuses a path that is not a file before anything changes.
+* `close_image` closes it.
+* `reload_image` bumps the `revision` and emits `ImageChanged`; the `image.reload` command calls it.
+* `images_changed` is called from the file watcher with the paths that changed.
+* `active_image` and `set_active_image` read and set the active image.
+
+`tabs.rs` holds the tab order and the preview tab as `TabItem`, which is `Document(DocumentId)` or `Image(ImageId)`.
+`open_item(path, disposition)` is the one decision about how to open a resource: an image goes to `open_image_as`, anything else to `open_as`.
+`document.open`, `document.browse` and navigation all use it.
+`activate(item)`, `active_item()`, `close_item`, `keep_open(item)`, `closed_by(command, item)` (which returns the `TabItem`s a close command closes) and `closed_by_any` work on either kind.
+
+While an image is active, `Engine::active()` is `None`, so document commands are unavailable and cannot act on the page that was active before.
+Following an image link opens it as a preview and is recorded in back history, and going back or forward to an image reopens it.
+Images are never indexed, diagnosed or previewed.
+
 == Commands
 
 A `Command` has a `CommandSpec` and a `run` function.
@@ -58,11 +81,12 @@ A `Command` has a `CommandSpec` and a `run` function.
 * `title` is the English title shown in the palette.
 * `category` is Document, Edit, Navigate, Workspace or View.
 * `default_binding` is a `cmd-s` style string that the front end maps to its platform.
-* `when` is the context in which the command applies: `Always` or `ActiveDocument`.
+* `when` is the context in which the command applies: `Always`, `ActiveDocument`, `ActiveTab` (the close and keep-open commands, which act on a page or an image) or `ActiveImage`.
 
 Commands are registered once in a `CommandRegistry`, and registering a duplicate id is an error.
 They are invoked with `Engine::invoke(id, args)`, where `CommandArgs` carries a document, an offset, a text edit, a path or a request.
 They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`, `Url`, `Preview`, `Committed` or `CommitDraft`.
+`OpenedImage(ImageId)` reports an image opened instead of a document, and `CommandOutcome::opened(item)` builds either from a `TabItem`.
 `Url(String)` carries an address for the front end to open (`cx.open_url`) or copy, so the engine needs no browser-opening crate.
 
 [cols="2,3"]
@@ -110,6 +134,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 
 |`export.pdf_page`, `export.pdf_component`
 |Export the active page, or a component version, to PDF.
+
+|`image.reload`
+|Reload Image. It takes `CommandArgs::Image(ImageId)` and applies while an image is the active tab (`ActiveImage`). See <<images>>.
 |===
 
 There is no public way to change document text except through commands.
@@ -163,6 +190,15 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 
 |`SettingsChanged`
 |Settings were reloaded.
+
+|`PreviewTabReplaced`
+|The preview tab's item was replaced by another, a page or an image, with `old` and `new` as `TabItem`s.
+
+|`TabKept`
+|A tab stopped being the preview tab. It carries a `TabItem` and replaces `DocumentKept`.
+
+|`ImageOpened`, `ImageChanged`, `ImageClosed`
+|Image lifecycle. `ImageChanged` follows a reload or a change on disk.
 
 |`PreviewReady`
 |A rendered preview was published for a document, with the version it was rendered from.
@@ -396,6 +432,7 @@ A `notify` watcher, with a 250 ms debounce, feeds the pump.
 * A document with unsaved edits is never overwritten; the engine emits `DocumentChangedOnDisk` instead.
 * A modified `antora.yml` reloads that component version, and diagnostics are re-run for affected files.
 * A directory created or removed under a module re-indexes the root.
+* A changed file that is open as an image calls `images_changed`, which reloads it.
 
 Saving checks the same thing.
 `Engine::save` returns `EngineError::SaveConflict { path }` when the file's contents differ from the hash of what the engine last read or wrote (`saved_hash`), and writes nothing.

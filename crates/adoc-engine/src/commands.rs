@@ -3,7 +3,7 @@
 
 use crate::{
     command::FnCommand, engine::UndoMode, CommandArgs, CommandCategory, CommandContext, CommandId,
-    CommandOutcome, CommandRegistry, CommandSpec, Engine, EngineError, TextEdit,
+    CommandOutcome, CommandRegistry, CommandSpec, Engine, EngineError, TabItem, TextEdit,
 };
 
 /// Stable command ids.
@@ -15,6 +15,7 @@ pub mod ids {
     pub const DOCUMENT_OPEN: CommandId = CommandId::new("document.open");
     pub const DOCUMENT_BROWSE: CommandId = CommandId::new("document.browse");
     pub const DOCUMENT_KEEP_OPEN: CommandId = CommandId::new("document.keep_open");
+    pub const IMAGE_RELOAD: CommandId = CommandId::new("image.reload");
     pub const SIDEBAR_EXPAND_ALL: CommandId = CommandId::new("sidebar.expand_all");
     pub const SIDEBAR_COLLAPSE_ALL: CommandId = CommandId::new("sidebar.collapse_all");
     pub const SIDEBAR_COLLAPSE_ONE_LEVEL: CommandId = CommandId::new("sidebar.collapse_one_level");
@@ -120,7 +121,7 @@ pub(crate) const fn spec(
 
 pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
-    use CommandContext::{ActiveDocument, Always};
+    use CommandContext::{ActiveDocument, ActiveTab, Always};
 
     let builtin: [(CommandSpec, Run); 35] = [
         (
@@ -309,7 +310,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 "Close",
                 Document,
                 Some("cmd-w"),
-                ActiveDocument,
+                ActiveTab,
             ),
             document_close,
         ),
@@ -321,7 +322,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 "Close Others",
                 Document,
                 Some("cmd-alt-t"),
-                ActiveDocument,
+                ActiveTab,
             ),
             |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_OTHERS, args),
         ),
@@ -331,7 +332,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 "Close Left",
                 Document,
                 Some("cmd-k e"),
-                ActiveDocument,
+                ActiveTab,
             ),
             |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_LEFT, args),
         ),
@@ -341,7 +342,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 "Close Right",
                 Document,
                 Some("cmd-k t"),
-                ActiveDocument,
+                ActiveTab,
             ),
             |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_RIGHT, args),
         ),
@@ -351,7 +352,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 "Close Clean",
                 Document,
                 Some("cmd-k u"),
-                ActiveDocument,
+                ActiveTab,
             ),
             |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_CLEAN, args),
         ),
@@ -361,7 +362,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 "Close All",
                 Document,
                 Some("cmd-k cmd-w"),
-                ActiveDocument,
+                ActiveTab,
             ),
             |engine, args| document_close_many(engine, ids::DOCUMENT_CLOSE_ALL, args),
         ),
@@ -463,6 +464,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     }
     crate::visual::register_visual(registry);
     crate::tabs::register_tabs(registry);
+    crate::images::register_images(registry);
     crate::expansion::register_expansion(registry);
     #[cfg(feature = "git")]
     {
@@ -489,8 +491,8 @@ fn document_open(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcom
         return Err(invalid(ids::DOCUMENT_OPEN, "a path"));
     };
     engine
-        .open_as(&path, crate::OpenDisposition::Persistent)
-        .map(CommandOutcome::Opened)
+        .open_item(&path, crate::OpenDisposition::Persistent)
+        .map(CommandOutcome::opened)
 }
 
 fn document_save(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
@@ -537,15 +539,17 @@ fn document_save_all(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutco
 }
 
 fn document_close(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
-    let CommandArgs::Document(id) = args else {
-        return Err(invalid(ids::DOCUMENT_CLOSE, "a document"));
+    let item = match args {
+        CommandArgs::Document(id) => TabItem::Document(id),
+        CommandArgs::Image(id) => TabItem::Image(id),
+        _ => return Err(invalid(ids::DOCUMENT_CLOSE, "a document or image")),
     };
-    engine.close(id).map(|()| CommandOutcome::Done)
+    engine.close_item(item).map(|()| CommandOutcome::Done)
 }
 
-/// Close Others, Left, Right, Clean and All, around the tab of `CommandArgs::Document` (Clean and
-/// All need none), discarding unsaved edits as Close does. The tab acted on stays active when the
-/// active one closes.
+/// Close Others, Left, Right, Clean and All, around the tab of `CommandArgs::Document` or
+/// `CommandArgs::Image` (Clean and All need none), discarding unsaved edits as Close does. The
+/// tab acted on stays active when the active one closes.
 fn document_close_many(
     engine: &mut Engine,
     command: CommandId,
@@ -556,26 +560,35 @@ fn document_close_many(
             if engine.document(id).is_none() {
                 return Err(EngineError::UnknownDocument(id));
             }
-            Some(id)
+            Some(TabItem::Document(id))
+        }
+        CommandArgs::Image(id) => {
+            if engine.image(id).is_none() {
+                return Err(EngineError::NotFound(format!(
+                    "image {} is not open",
+                    id.get()
+                )));
+            }
+            Some(TabItem::Image(id))
         }
         CommandArgs::None
             if matches!(command, ids::DOCUMENT_CLOSE_CLEAN | ids::DOCUMENT_CLOSE_ALL) =>
         {
             None
         }
-        _ => return Err(invalid(command, "a document")),
+        _ => return Err(invalid(command, "a document or image")),
     };
     let closing = match id {
         Some(id) => engine.closed_by(command, id),
         None => engine.closed_by_any(command),
     };
-    let active = engine.active();
+    let active = engine.active_item();
     for closed in closing.iter().copied() {
-        engine.close(closed)?;
+        engine.close_item(closed)?;
     }
     if let (Some(id), Some(active)) = (id, active) {
-        if closing.contains(&active) && engine.document(id).is_some() {
-            engine.set_active(id);
+        if closing.contains(&active) && engine.tab_order().contains(&id) {
+            engine.activate(id);
         }
     }
     Ok(CommandOutcome::Done)

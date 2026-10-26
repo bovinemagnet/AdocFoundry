@@ -21,7 +21,7 @@ use gpui_component::{
 
 use crate::{
     app::AppState,
-    editor::bindings::{action_for, ui_action, UI_ACTIONS},
+    editor::bindings::{action_for, ui_action, IMAGE_UI_ACTIONS, UI_ACTIONS},
 };
 
 /// An entry in a menu's definition.
@@ -128,6 +128,12 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::SIDEBAR_RESET_EXPANSION),
             Ui(3),
             Separator,
+            Ui(4),
+            Ui(5),
+            Ui(6),
+            Ui(7),
+            Command(ids::IMAGE_RELOAD),
+            Separator,
             Ui(1),
             Ui(2),
         ],
@@ -230,7 +236,8 @@ pub(crate) fn menus(engine: &Engine) -> Vec<Menu> {
                     Ui(index) => Item::Action {
                         label: UI_ACTIONS[index].0.into(),
                         action: ui_action(index),
-                        disabled: false,
+                        // The zoom commands act on an image.
+                        disabled: index >= IMAGE_UI_ACTIONS && engine.active_image().is_none(),
                     },
                     Command(id) => {
                         let (Some(command), Some(action)) =

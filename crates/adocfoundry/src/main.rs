@@ -5,6 +5,8 @@
 mod app;
 mod editor;
 mod files_view;
+mod image_decode;
+mod image_view;
 mod menus;
 mod mirror_view;
 mod preview;
@@ -40,7 +42,7 @@ fn main() {
     let engine = Engine::new(settings);
 
     gpui_platform::application()
-        .with_assets(gpui_kit_assets::Assets)
+        .with_assets(Assets)
         .run(move |cx| {
             gpui_component::init(cx);
             editor::language::register();
@@ -49,4 +51,25 @@ fn main() {
             app::open_main_window(app, folder, files, cx);
             cx.activate(true);
         });
+}
+
+// The icons the app uses beyond gpui-component's own.
+gpui_kit_assets::icon_assets!(AppIcons, [Image]);
+
+/// gpui-component's icons, and the app's.
+struct Assets;
+
+impl gpui::AssetSource for Assets {
+    fn load(&self, path: &str) -> gpui::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        match AppIcons.load(path)? {
+            Some(icon) => Ok(Some(icon)),
+            None => gpui_kit_assets::Assets.load(path),
+        }
+    }
+
+    fn list(&self, path: &str) -> gpui::Result<Vec<gpui::SharedString>> {
+        let mut listed = gpui_kit_assets::Assets.list(path)?;
+        listed.extend(AppIcons.list(path)?);
+        Ok(listed)
+    }
 }

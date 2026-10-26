@@ -123,7 +123,8 @@ Selecting a script never runs it.
 * Other text files, such as YAML, TOML, JSON, Markdown and scripts, open as text in the source editor.
 They are highlighted when their type is known.
 They are never indexed or checked for AsciiDoc problems, and they have no visual editor or rendered preview, so the mode buttons are hidden for them.
-* Images and PDFs open in the system's own application, with no tab.
+* Images open in an image tab; see <<image-viewer>>.
+* PDFs open in the system's own application, with no tab.
 * Every other file is tried as text.
 A file that is not text, such as a font, an archive, an office document, media or a program, is refused with a message, because it holds binary content or is not UTF-8.
 * Only Open Externally in the right-click menu opens such a file in the system's application.
@@ -291,13 +292,17 @@ You are browsing when you:
 
 * click once in Navigation or Modules,
 * choose a search result, a Problems entry or a row in the Changes panel,
-* use Follow Link or Go to Definition on an xref or an include,
+* use Follow Link or Go to Definition on an xref, an include or an image,
+* click once on an image in the Files view, or on an image in a module's images in Modules,
 * use Back or Forward,
 * click a link or a block in the rendered preview, or
 * choose Open in a Peek Include.
 
 These open pages as ordinary tabs instead: the Open File dialog, files named on the command line, new untitled pages, Open Settings, and Edit partial in the visual editor.
 An Outline entry only moves the caret.
+
+Images share the one preview tab with pages: browsing to an image replaces a preview page, and the reverse.
+See <<image-viewer>>.
 
 Browsing to a page that already has a tab only activates that tab.
 A page with an ordinary tab is never made a preview tab.
@@ -322,6 +327,97 @@ Every page you open then stays open until you close it.
 Turning the setting off keeps the current preview tab open as an ordinary tab and closes nothing.
 Turning it on leaves existing tabs as they are.
 The setting applies when settings are reloaded, without restarting.
+
+[[image-viewer]]
+=== The image viewer
+
+An image opens in an image tab inside AdocFoundry.
+You can open one by:
+
+* selecting it in the Files view,
+* choosing it from a module's images in the Modules panel,
+* choosing Open File…,
+* naming it on the command line, or
+* following an image macro such as `image::logo.png[]` with Go to Definition or Follow Link.
+
+A PDF still opens in the system's viewer when you click it.
+Any other binary file is still refused, and opens only through Open Externally.
+
+The formats shown are:
+
+* PNG, with transparency.
+* JPEG, with its EXIF orientation respected.
+* SVG, static.
+* GIF and WebP, showing the first frame only for animated files.
+* BMP and ICO.
+* TIFF, showing the first page only.
+
+HEIC, HEIF and AVIF open in an image tab that says the image cannot be shown and offers Open Externally.
+The file's content decides the format, not its name, so a corrupt file, or a text file named `.png`, shows an error and never a blank panel or text.
+
+==== Image tabs
+
+Image tabs follow the same rules as page tabs.
+A single click shows the image in the one reusable preview tab, with its title in italics; double-click it, or choose *Keep Open*, to keep it.
+With `editor.preview_tabs` set to `false`, every tab is kept.
+Opening an image that is already open activates its tab.
+
+An image tab shows an image icon.
+Hovering over a kept image tab shows its full path, and the status bar shows the path of the active image.
+Close, Close Others, Close Left, Close Right, Close Clean and Close All work across page and image tabs together.
+An image is always clean, so Close Clean closes image tabs.
+
+An image is read-only.
+The Source, Visual and Split buttons are not shown, and Save, Undo, formatting and export do nothing to it.
+Save All saves pages and never writes image files.
+Images are never indexed, checked for problems or previewed as AsciiDoc.
+While an image is active, the rendered preview shows only a page that is pinned.
+
+==== Viewing an image
+
+A toolbar above the image shows its format, its size in pixels and the size of the file.
+For an SVG the size is its own width and height.
+The toolbar has these controls:
+
+* Zoom Out (-), the zoom percentage and Zoom In (+).
+* Fit, for Fit to Window.
+* 100%, for Actual Size.
+* Reload Image.
+* Open Externally.
+
+An image first opens whole and centred, and is never enlarged beyond its actual size.
+Fit to Window fills the canvas and follows the window when it is resized.
+A zoom you have chosen runs from 5% to 3200% in steps of 1.25 times, and is kept when the window is resized.
+Scroll or drag to pan.
+
+Actual Size is one image pixel to one screen pixel, so a screenshot appears at the size it was taken, including on HiDPI and Retina displays.
+An SVG's 100% is its own width and height in interface units.
+SVGs are drawn at up to 16 times, about 2048 pixels on the long side, so they stay sharp when zoomed.
+
+Transparent images are shown over a checkerboard that suits light and dark themes.
+
+Right-click the image for Zoom In, Zoom Out, Fit to Window, Actual Size, Reload Image, Open Externally, Copy Path, Reveal in Files, and Reveal in Finder (Reveal in File Explorer on Windows, Reveal in File Manager on Linux).
+
+Zoom In, Zoom Out, Actual Size, Fit to Window and Reload Image are also in the View menu and the command palette, which offer them only while an image is the active tab.
+See xref:keyboard-shortcuts.adoc#image-viewer[Keyboard shortcuts] for their keys.
+
+==== Loading, errors and changes
+
+An image loads in the background, and the tab shows "Loading <name>…" meanwhile.
+An error says why: the file cannot be read, is damaged or is not an image, its format is not supported, or it is too large.
+It offers Retry and Open Externally.
+A file over 256 MB, with either side over 16,384 pixels, or with more than 64 megapixels is refused with a message naming its size.
+
+When the file watcher sees an image change, the tab reloads it.
+This covers files inside the workspace folders that are not excluded.
+Use Reload Image for an image in an excluded folder or outside the workspace.
+If a reload fails, because the file was deleted or is now corrupt, the last pixels stay on screen with a banner saying they are the version that last loaded, and a Retry button.
+
+==== SVG safety
+
+An SVG shows only what it contains.
+Scripts never run and links are not followed.
+Images it links to, whether local files or web addresses, are not loaded, but images embedded as `data:` URIs are shown.
 
 [[formatting-text]]
 == Formatting text in the source editor
@@ -350,7 +446,8 @@ Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+E
 * An `xref:` opens the target page and places the caret on the anchor, if there is one.
 * An `include::` opens the included file.
 * An `+{attribute}+` goes to the place the attribute is defined: the document, an included file, `antora.yml` or the playbook.
-* An `image::` or an attachment opens in the system's default application.
+* An `image::` opens the image in an image tab; see <<image-viewer>>.
+* An attachment opens in the system's default application.
 
 If the target cannot be resolved, the diagnostic is shown and nothing is opened.
 

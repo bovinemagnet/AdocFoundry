@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use adoc_core::SourceRange;
 use adoc_lang::{DefinitionTarget, Location};
 
-use crate::{CommandOutcome, DocumentId, Engine, EngineError, EngineEvent, OpenDisposition};
+use crate::{
+    is_image_path, CommandOutcome, DocumentId, Engine, EngineError, EngineEvent, OpenDisposition,
+    TabItem,
+};
 
 /// A place in the workspace the user has been.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,7 +43,8 @@ impl Engine {
     }
 
     /// Follows the link at `offset` in document `id`: opens and activates the target and
-    /// records where the user came from. Images and attachments are returned as `External`.
+    /// records where the user came from. An image opens in an image tab; attachments are
+    /// returned as `External`.
     pub(crate) fn follow_link(
         &mut self,
         id: DocumentId,
@@ -52,6 +56,19 @@ impl Engine {
             .path
             .clone();
         match self.definition(id, offset) {
+            Some(DefinitionTarget::External(path)) if is_image_path(&path) => {
+                let image = self.open_image_as(&path, OpenDisposition::Preview)?;
+                self.history
+                    .back
+                    .push(NavigationPosition { path: from, offset });
+                self.history.forward.clear();
+                self.history.current = Some(NavigationPosition {
+                    path: adoc_index::normalize_path(&path),
+                    offset: 0,
+                });
+                self.emit(EngineEvent::NavigationChanged);
+                Ok(CommandOutcome::OpenedImage(image))
+            }
             Some(DefinitionTarget::External(path)) => Ok(CommandOutcome::External(path)),
             Some(DefinitionTarget::Location(location)) => {
                 let target = self.open_as(&location.path, OpenDisposition::Preview)?;
@@ -129,19 +146,19 @@ impl Engine {
     }
 
     fn arrive(&mut self, position: NavigationPosition) -> Result<CommandOutcome, EngineError> {
-        let id = self.open_as(&position.path, OpenDisposition::Preview)?;
-        self.set_active(id);
+        let item = self.open_item(&position.path, OpenDisposition::Preview)?;
+        self.activate(item);
         self.history.current = Some(position);
         self.emit(EngineEvent::NavigationChanged);
-        Ok(CommandOutcome::Opened(id))
+        Ok(CommandOutcome::opened(item))
     }
 
     fn active_position(&self) -> Option<NavigationPosition> {
-        let document = self.document(self.active?)?;
-        Some(NavigationPosition {
-            path: document.path.clone(),
-            offset: 0,
-        })
+        let path = match self.active_item()? {
+            TabItem::Document(id) => self.document(id)?.path.clone(),
+            TabItem::Image(id) => self.image(id)?.path.clone(),
+        };
+        Some(NavigationPosition { path, offset: 0 })
     }
 
     /// The included file at `offset`, for a read-only inline view. Only include directives

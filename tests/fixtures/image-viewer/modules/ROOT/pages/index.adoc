@@ -1,0 +1,9 @@
+= Gallery
+
+The logo:
+
+image::logo.png[Logo]
+
+The architecture:
+
+image::architecture.svg[Architecture]

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="120" height="60" viewBox="0 0 120 60">
+  <!-- Nothing here may run, navigate or load: the viewer draws the shapes only. -->
+  <script>alert("never run")</script>
+  <rect x="5" y="5" width="50" height="50" fill="#1e5ac8"/>
+  <a xlink:href="https://example.com/"><circle cx="90" cy="30" r="25" fill="#c81e1e"/></a>
+  <image x="57" y="0" width="7" height="7" xlink:href="https://example.com/remote.png"/>
+  <image x="57" y="53" width="7" height="7" xlink:href="logo.png"/>
+</svg>

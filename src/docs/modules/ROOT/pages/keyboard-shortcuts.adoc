@@ -186,6 +186,40 @@ Apply Preview (`workspace.apply_preview`), Insert Text (`edit.insert_text`) and 
 
 Undo, redo, go to definition, follow link and peek include are bound in the editor's key context after the editor widget's own bindings, so they take precedence and go through the engine.
 
+[[image-viewer]]
+== Image viewer
+
+These keys apply while an image tab is active.
+
+[cols="3,2,2,3"]
+|===
+|Command |macOS |Linux and Windows |Command id
+
+|Zoom In
+|Cmd-= or Cmd-+
+|Ctrl-= or Ctrl-+
+|UI only
+
+|Zoom Out
+|Cmd--
+|Ctrl--
+|UI only
+
+|Actual Size
+|Cmd-0
+|Ctrl-0
+|UI only
+
+|Fit to Window
+|Cmd-9
+|Ctrl-9
+|UI only
+|===
+
+Zoom In, Zoom Out, Actual Size and Fit to Window are also in the View menu and the command palette while an image is the active tab.
+Reload Image (`image.reload`) has no default binding and is available from the same places.
+See xref:using-the-editor.adoc#image-viewer[Using the editor].
+
 [[visual-editor]]
 == Visual editor
 

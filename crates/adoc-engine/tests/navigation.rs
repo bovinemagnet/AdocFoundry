@@ -119,16 +119,24 @@ fn back_forward_navigation() {
 }
 
 #[test]
-fn images_follow_externally_and_includes_peek() {
+fn images_open_in_image_tabs_and_includes_peek() {
     let root = fixture("images");
     let mut engine = open_workspace(&root);
     let guide = engine.open(&root.join("guide.adoc")).unwrap();
     let image = offset_of(&engine, guide, "image::present");
-    assert!(matches!(
-        follow(&mut engine, guide, image + 6),
-        CommandOutcome::External(path) if path.ends_with("media/present.svg")
-    ));
-    assert!(!engine.can_go_back(), "external targets add no history");
+    let CommandOutcome::OpenedImage(opened) = follow(&mut engine, guide, image + 6) else {
+        panic!("an image opens in an image tab");
+    };
+    assert!(engine
+        .image(opened)
+        .unwrap()
+        .path
+        .ends_with("media/present.svg"));
+    assert!(engine.can_go_back(), "the page is in the back history");
+    engine
+        .invoke(ids::NAVIGATE_BACK, CommandArgs::None)
+        .unwrap();
+    assert_eq!(engine.active(), Some(guide));
 
     let include = offset_of(&engine, guide, "include::chapters");
     let CommandOutcome::Location(location) = engine

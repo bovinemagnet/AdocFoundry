@@ -18,6 +18,7 @@ mod export;
 mod files;
 #[cfg(feature = "git")]
 mod git;
+mod images;
 // Without Git, the engine behaves as with `[git] enabled = false`.
 #[cfg(not(feature = "git"))]
 #[path = "git_off.rs"]
@@ -55,6 +56,7 @@ pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
 pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};
 #[cfg(feature = "git")]
 pub use git::{GitRepository, GitState, GIT_SETTLE};
+pub use images::{is_image_path, ImageId, OpenImage, IMAGE_EXTENSIONS};
 pub use inspect::resource_id_string;
 pub use navigation::NavigationPosition;
 pub use preview::{
@@ -68,7 +70,7 @@ pub use settings::{
 };
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
-pub use tabs::OpenDisposition;
+pub use tabs::{OpenDisposition, TabItem};
 
 pub use adoc_core::FileAccess;
 pub use adoc_index::{is_asciidoc_path, normalize_path};

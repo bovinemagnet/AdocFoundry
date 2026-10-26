@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{CommandId, DocumentId, SearchId, SearchMatch, TextEdit};
+use crate::{CommandId, DocumentId, ImageId, SearchId, SearchMatch, TabItem, TextEdit};
 
 /// A change in engine state that front ends react to.
 #[derive(Clone, Debug, PartialEq)]
@@ -17,13 +17,17 @@ pub enum EngineEvent {
     },
     DocumentSaved(DocumentId),
     DocumentClosed(DocumentId),
-    /// Document `new` took the preview tab's place from `old`, which is closed next.
+    /// `new` took the preview tab's place from `old`, which is closed next.
     PreviewTabReplaced {
-        old: DocumentId,
-        new: DocumentId,
+        old: TabItem,
+        new: TabItem,
     },
-    /// The document left the preview tab and stays open as an ordinary tab.
-    DocumentKept(DocumentId),
+    /// The document or image left the preview tab and stays open as an ordinary tab.
+    TabKept(TabItem),
+    ImageOpened(ImageId),
+    /// The file behind an open image may have changed: it has a new revision to read.
+    ImageChanged(ImageId),
+    ImageClosed(ImageId),
     /// A bulk operation opened or closed branches of a sidebar tree; see
     /// `Engine::branch_expanded`.
     ExpansionChanged(crate::SidebarPanel),

@@ -3356,7 +3356,12 @@ fn files_workspace(
         std::fs::write(file, text).unwrap();
     }
     std::fs::write(root.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
-    std::fs::write(root.join("logo.png"), [137u8, 80, 78, 71]).unwrap();
+    std::fs::copy(
+        fixture("image-viewer/modules/ROOT/images/logo.png"),
+        root.join("logo.png"),
+    )
+    .unwrap();
+    std::fs::write(root.join("guide.pdf"), b"%PDF-1.7\n").unwrap();
     let app = app_with(Engine::new(Settings::default()), cx);
     let mut workspace = None;
     let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
@@ -3443,6 +3448,7 @@ fn files_shows_the_folder_as_it_is_on_disk(cx: &mut TestAppContext) {
             "  .adocfoundry.toml",
             "  antora-playbook.yml",
             "  blob.bin",
+            "  guide.pdf",
             "  logo.png",
             "  README.md",
         ],
@@ -3492,12 +3498,32 @@ fn files_open_by_their_kind(cx: &mut TestAppContext) {
     });
     assert!(!preview);
 
-    // An image goes to the system, a binary file is refused: neither opens a tab.
+    // An image opens in an image tab, in the preview tab, outside Antora and the index.
     click_files_row(&files, "logo.png", 1, &mut cx);
-    let opened = crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
-    assert_eq!(opened, [root.join("logo.png")]);
+    assert_eq!(
+        image_settled(&app, &workspace, &mut cx),
+        crate::image_view::LoadState::Ready
+    );
+    let logo = root.join("logo.png");
+    let (image, preview) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        assert!(engine.document_for_path(&logo).is_none());
+        let id = engine.image_for_path(&logo).expect("opened");
+        (id, engine.is_preview(id))
+    });
+    assert!(preview);
+    assert_eq!(tabs(&mut cx), 2);
+    // Double-clicking keeps it open, as for a page.
+    click_files_row(&files, "logo.png", 2, &mut cx);
+    assert!(!cx.update(|_, cx| app.read(cx).engine.is_preview(image)));
+
+    // A PDF goes to the system; a binary file is refused: neither opens a tab.
+    let opened = || crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
+    assert!(opened().is_empty(), "the image went nowhere else");
+    click_files_row(&files, "guide.pdf", 1, &mut cx);
+    assert_eq!(opened(), [root.join("guide.pdf")]);
     click_files_row(&files, "blob.bin", 1, &mut cx);
-    assert_eq!(tabs(&mut cx), 1);
+    assert_eq!(tabs(&mut cx), 2);
     assert!(cx.update(|_, cx| app
         .read(cx)
         .engine
@@ -3596,4 +3622,514 @@ fn files_menu_copies_paths_and_collapses(cx: &mut TestAppContext) {
     cx.update(|_, cx| files.update(cx, |files, cx| files.collapse_all(cx)));
     cx.run_until_parked();
     assert_eq!(files_rows(&files, &mut cx).len(), 1);
+}
+
+// --- images ------------------------------------------------------------------------------------
+
+/// A workspace window on a copy of the `image-viewer` fixture, and its images folder.
+fn image_workspace(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    copy_tree(&fixture("image-viewer"), directory.path());
+    let root = adoc_index::normalize_path(directory.path());
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx
+            .new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), Vec::new(), window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| !app.read(cx).engine.has_pending())
+    }));
+    (
+        directory,
+        root.join("modules/ROOT/images"),
+        app,
+        workspace,
+        cx,
+    )
+}
+
+fn active_image(
+    workspace: &Entity<WorkspaceView>,
+    cx: &mut VisualTestContext,
+) -> Option<Entity<crate::image_view::ImageView>> {
+    cx.update(|_, cx| workspace.read(cx).active_image_view().cloned())
+}
+
+/// Waits until the active tab's image has loaded, or failed to.
+fn image_settled(
+    app: &Entity<AppState>,
+    workspace: &Entity<WorkspaceView>,
+    cx: &mut VisualTestContext,
+) -> crate::image_view::LoadState {
+    let mut state = None;
+    assert!(drain_until(app, cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        state = active_image(workspace, cx)
+            .map(|view| cx.update(|_, cx| view.read(cx).state().clone()))
+            .filter(|state| *state != crate::image_view::LoadState::Loading);
+        state.is_some()
+    }));
+    state.unwrap()
+}
+
+fn image_info(
+    workspace: &Entity<WorkspaceView>,
+    cx: &mut VisualTestContext,
+) -> Option<crate::image_decode::ImageInfo> {
+    let view = active_image(workspace, cx)?;
+    cx.update(|_, cx| view.read(cx).info().cloned())
+}
+
+fn open_path(
+    workspace: &Entity<WorkspaceView>,
+    path: &Path,
+    disposition: adoc_engine::OpenDisposition,
+    cx: &mut VisualTestContext,
+) {
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_at(path, SourceRange::default(), disposition, window, cx);
+        })
+    });
+    cx.run_until_parked();
+}
+
+/// The index of the Modules row labelled `label`, once every branch is open.
+fn modules_row(
+    workspace: &Entity<WorkspaceView>,
+    label: &str,
+    cx: &mut VisualTestContext,
+) -> usize {
+    let rows = rows(workspace, adoc_engine::SidebarPanel::Modules, cx);
+    rows.iter()
+        .position(|row| row.trim() == label)
+        .unwrap_or_else(|| panic!("no {label} in {rows:#?}"))
+}
+
+fn click_modules_row(
+    workspace: &Entity<WorkspaceView>,
+    label: &str,
+    count: usize,
+    cx: &mut VisualTestContext,
+) {
+    let index = modules_row(workspace, label, cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let selector: &'static str = Box::leak(format!("families-row-{index}").into_boxed_str());
+    let position = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is not drawn"))
+        .center();
+    for click_count in 1..=count {
+        cx.simulate_event(gpui::MouseDownEvent {
+            position,
+            button: gpui::MouseButton::Left,
+            modifiers: gpui::Modifiers::none(),
+            click_count,
+            first_mouse: false,
+        });
+        cx.simulate_event(gpui::MouseUpEvent {
+            position,
+            button: gpui::MouseButton::Left,
+            modifiers: gpui::Modifiers::none(),
+            click_count,
+        });
+    }
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn images_open_in_the_viewer_from_modules_and_share_the_preview_tab(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_modules_for_test(cx)));
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::SIDEBAR_EXPAND_ALL,
+                CommandArgs::Panel(adoc_engine::SidebarPanel::Modules),
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    cx.run_until_parked();
+
+    click_modules_row(&workspace, "logo.png", 1, &mut cx);
+    assert_eq!(
+        image_settled(&app, &workspace, &mut cx),
+        crate::image_view::LoadState::Ready
+    );
+    let info = image_info(&workspace, &mut cx).unwrap();
+    assert_eq!((info.format, info.width, info.height), ("PNG", 24, 16));
+    let logo = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        assert!(engine.document_for_path(&images.join("logo.png")).is_none());
+        engine.image_for_path(&images.join("logo.png")).unwrap()
+    });
+    assert!(cx.update(|_, cx| app.read(cx).engine.is_preview(logo)));
+
+    // The next image browsed to takes the preview tab's place.
+    click_modules_row(&workspace, "screenshot.jpg", 1, &mut cx);
+    image_settled(&app, &workspace, &mut cx);
+    assert_eq!(image_info(&workspace, &mut cx).unwrap().format, "JPEG");
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 1);
+
+    // A double-click keeps it; the next image opens beside it.
+    click_modules_row(&workspace, "screenshot.jpg", 2, &mut cx);
+    click_modules_row(&workspace, "logo.png", 1, &mut cx);
+    image_settled(&app, &workspace, &mut cx);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 2);
+
+    // A page browsed to replaces the image in the preview tab too.
+    click_modules_row(&workspace, "index.adoc", 1, &mut cx);
+    let items = cx.update(|_, cx| workspace.read(cx).tab_items(cx));
+    assert_eq!(items.len(), 2);
+    assert!(items[0].image().is_some() && items[1].document().is_some());
+}
+
+#[gpui::test]
+fn the_viewer_fits_zooms_and_keeps_a_chosen_zoom_through_a_resize(cx: &mut TestAppContext) {
+    let (directory, _images, app, workspace, mut cx) = image_workspace(cx);
+    // Wider than any window: it opens shrunk to fit, never past actual size.
+    let wide = directory.path().join("wide.png");
+    image::RgbaImage::from_pixel(6000, 200, image::Rgba([10, 20, 30, 255]))
+        .save(&wide)
+        .unwrap();
+    open_path(
+        &workspace,
+        &wide,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    image_settled(&app, &workspace, &mut cx);
+    let view = active_image(&workspace, &mut cx).unwrap();
+    let percent =
+        |cx: &mut VisualTestContext| cx.update(|window, cx| view.read(cx).zoom_percent(window));
+    let initial = percent(&mut cx);
+    assert!(initial < 100, "{initial}%");
+    assert!(cx.debug_bounds("image-picture").is_some());
+    assert!(!cx.update(|_, cx| view.read(cx).info().unwrap().has_alpha));
+
+    // 100% is one image pixel to a screen pixel: half as wide as the image in points here,
+    // where the test window's scale factor is two.
+    click("image-actual-size", &mut cx);
+    assert_eq!(percent(&mut cx), 100);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let picture = cx.debug_bounds("image-picture").unwrap();
+    assert_eq!(picture.size.width, px(3000.));
+
+    click("image-zoom-in", &mut cx);
+    assert_eq!(percent(&mut cx), 125);
+    cx.simulate_keystrokes("secondary--");
+    cx.run_until_parked();
+    assert_eq!(percent(&mut cx), 100, "the zoom keys work in the viewer");
+
+    // A chosen zoom stays through a resize; Fit follows it.
+    cx.simulate_resize(size(px(900.), px(700.)));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(percent(&mut cx), 100);
+    click("image-fit", &mut cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let fitted = percent(&mut cx);
+    cx.simulate_resize(size(px(1400.), px(900.)));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        percent(&mut cx) > fitted,
+        "{fitted}% then {}%",
+        percent(&mut cx)
+    );
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).zoom()),
+        crate::image_view::Zoom::Fit
+    );
+}
+
+#[gpui::test]
+fn a_transparent_image_says_so_and_a_small_one_is_not_enlarged(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    open_path(
+        &workspace,
+        &images.join("logo.png"),
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    image_settled(&app, &workspace, &mut cx);
+    let view = active_image(&workspace, &mut cx).unwrap();
+    assert!(cx.update(|_, cx| view.read(cx).info().unwrap().has_alpha));
+    assert_eq!(
+        cx.update(|window, cx| view.read(cx).zoom_percent(window)),
+        100
+    );
+    let info = cx
+        .debug_bounds("image-info")
+        .expect("the information line is drawn");
+    assert!(info.size.width > px(0.));
+}
+
+#[gpui::test]
+fn a_damaged_image_says_why_and_retry_shows_it_once_mended(cx: &mut TestAppContext) {
+    let (directory, images, app, workspace, mut cx) = image_workspace(cx);
+    let picture = directory.path().join("picture.png");
+    std::fs::copy(images.join("broken.png"), &picture).unwrap();
+    open_path(
+        &workspace,
+        &picture,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+
+    let state = image_settled(&app, &workspace, &mut cx);
+    assert!(
+        matches!(
+            state,
+            crate::image_view::LoadState::Failed(crate::image_decode::DecodeError::Corrupt(_))
+        ),
+        "{state:?}"
+    );
+    assert!(cx.debug_bounds("image-error").is_some());
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.documents().count()),
+        0
+    );
+
+    std::fs::copy(images.join("logo.png"), &picture).unwrap();
+    click("image-retry", &mut cx);
+    assert_eq!(
+        image_settled(&app, &workspace, &mut cx),
+        crate::image_view::LoadState::Ready
+    );
+    assert!(cx.debug_bounds("image-error").is_none());
+}
+
+#[gpui::test]
+fn reload_shows_the_new_pixels_and_a_deleted_file_shows_stale(cx: &mut TestAppContext) {
+    let (directory, images, app, workspace, mut cx) = image_workspace(cx);
+    let picture = directory.path().join("picture.png");
+    std::fs::copy(images.join("logo.png"), &picture).unwrap();
+    open_path(
+        &workspace,
+        &picture,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    image_settled(&app, &workspace, &mut cx);
+    assert_eq!(image_info(&workspace, &mut cx).unwrap().width, 24);
+
+    // Other bytes at the same path, even another format behind the old name.
+    std::fs::copy(images.join("screenshot.jpg"), &picture).unwrap();
+    click("image-reload", &mut cx);
+    image_settled(&app, &workspace, &mut cx);
+    let info = image_info(&workspace, &mut cx).unwrap();
+    assert_eq!((info.format, info.width, info.height), ("JPEG", 32, 20));
+
+    std::fs::remove_file(&picture).unwrap();
+    click("image-reload", &mut cx);
+    let state = image_settled(&app, &workspace, &mut cx);
+    assert!(matches!(
+        state,
+        crate::image_view::LoadState::Failed(crate::image_decode::DecodeError::Unreadable(_))
+    ));
+    assert!(
+        cx.debug_bounds("image-stale").is_some(),
+        "the last pixels are marked stale"
+    );
+    assert!(cx.debug_bounds("image-picture").is_some());
+}
+
+#[gpui::test]
+fn an_older_load_never_replaces_a_newer_one(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    open_path(
+        &workspace,
+        &images.join("logo.png"),
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    image_settled(&app, &workspace, &mut cx);
+    let view = active_image(&workspace, &mut cx).unwrap();
+    let older = cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            let older = view.generation();
+            view.reload_for_test(cx);
+            older
+        })
+    });
+    // The older load's answer arrives late, and is dropped.
+    cx.update(|_, cx| {
+        view.update(cx, |view, cx| {
+            view.finish_load(
+                older,
+                Err(crate::image_decode::DecodeError::Corrupt("late".to_owned())),
+                cx,
+            );
+        })
+    });
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).state().clone()),
+        crate::image_view::LoadState::Loading
+    );
+    assert_eq!(
+        image_settled(&app, &workspace, &mut cx),
+        crate::image_view::LoadState::Ready
+    );
+}
+
+#[gpui::test]
+fn closing_an_image_while_it_loads_leaves_no_tab(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_at(
+                &images.join("scan.tiff"),
+                SourceRange::default(),
+                adoc_engine::OpenDisposition::Persistent,
+                window,
+                cx,
+            );
+        });
+        let id = app.read(cx).engine.active_image().unwrap();
+        app.update(cx, |app, cx| {
+            app.invoke(ids::DOCUMENT_CLOSE, CommandArgs::Image(id), cx)
+                .unwrap();
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 0);
+    assert!(active_image(&workspace, &mut cx).is_none());
+}
+
+#[gpui::test]
+fn text_commands_leave_pages_alone_while_an_image_is_shown(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    let page = images.join("../pages/index.adoc");
+    open_path(
+        &workspace,
+        &page,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(0, 0),
+                    text: "// edited\n".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        })
+    });
+    let logo = images.join("logo.png");
+    let before = std::fs::read(&logo).unwrap();
+    open_path(
+        &workspace,
+        &logo,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    image_settled(&app, &workspace, &mut cx);
+
+    cx.dispatch_action(crate::editor::bindings::Save);
+    cx.dispatch_action(crate::editor::bindings::Undo);
+    cx.run_until_parked();
+    assert!(
+        cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().dirty),
+        "Save and Undo have no page to act on"
+    );
+    cx.dispatch_action(crate::editor::bindings::SaveAll);
+    cx.run_until_parked();
+    assert!(!cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().dirty));
+    assert_eq!(std::fs::read(&logo).unwrap(), before);
+    assert!(
+        cx.debug_bounds("editor-modes").is_none(),
+        "no Source, Visual or Split"
+    );
+}
+
+#[gpui::test]
+fn unsupported_and_oddly_named_images_open_in_the_viewer(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    open_path(
+        &workspace,
+        &images.join("Photo Café.PNG"),
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    assert_eq!(
+        image_settled(&app, &workspace, &mut cx),
+        crate::image_view::LoadState::Ready
+    );
+
+    let heic = images.join("photo.heic");
+    open_path(
+        &workspace,
+        &heic,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    assert_eq!(
+        image_settled(&app, &workspace, &mut cx),
+        crate::image_view::LoadState::Failed(crate::image_decode::DecodeError::Unsupported(
+            "HEIC".to_owned()
+        ))
+    );
+    // Nothing went to the system until asked.
+    let opened = || crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
+    assert!(opened().is_empty());
+    click("image-error-open-externally", &mut cx);
+    assert_eq!(opened(), [heic]);
+}
+
+#[gpui::test]
+fn following_an_image_link_shows_the_image(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    let page = images.join("../pages/index.adoc");
+    open_path(
+        &workspace,
+        &page,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    let (document, offset) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.active().unwrap();
+        let text = engine.document(id).unwrap().text_string();
+        (id, text.find("logo.png").unwrap() + 1)
+    });
+    cx.update(|window, cx| {
+        crate::workspace_view::follow_link(app.clone(), document, offset, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        image_settled(&app, &workspace, &mut cx),
+        crate::image_view::LoadState::Ready
+    );
+    assert_eq!(image_info(&workspace, &mut cx).unwrap().format, "PNG");
+    // Back returns to the page.
+    cx.dispatch_action(crate::editor::bindings::GoBack);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.active()),
+        Some(document)
+    );
 }
