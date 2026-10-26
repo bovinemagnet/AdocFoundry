@@ -54,6 +54,19 @@ Automated coverage for reference:
 - [ ] An ad-hoc or unsigned build, a deb, an rpm and a portable zip only notify, with a link to the release.
 - [ ] The AppImage's update information is found by AppImageUpdate.
 
+## Image viewer (#125)
+
+Open `tests/fixtures/image-viewer` as the workspace. Check on macOS, Windows and Linux, on a HiDPI display and a standard one.
+
+- [ ] From Modules (gallery 1.0 › ROOT › images) and from Files, a click shows `logo.png`, `screenshot.jpg` and `architecture.svg` in the image viewer, in one italic preview tab; a double-click keeps it. Nothing opens in another application.
+- [ ] `Photo Café.PNG`, `still.gif`, `still.webp`, `bitmap.bmp`, `icon.ico` and `scan.tiff` show; `oriented.jpg` stands upright (2 × 4); `broken.png` and `notes.png` say they are damaged or not an image; `photo.heic` says it cannot be shown and Open Externally opens it.
+- [ ] An image opens whole and centred and a small one is not enlarged; Fit to Window (`Cmd`/`Ctrl`+`9`) fills the canvas and follows a window resize; a chosen zoom stays through a resize; Actual Size (`Cmd`/`Ctrl`+`0`) is sharp, one image pixel to one screen pixel, on a HiDPI display.
+- [ ] Scrolling and dragging reach every edge of a large screenshot; the zoom keys work only with focus in the viewer, and the editor's own keys are untouched in a page.
+- [ ] The checkerboard behind `logo.png` is quiet in the light and the dark theme.
+- [ ] Replacing an open image in another application shows the new pixels and size; deleting it shows the last pixels marked stale.
+- [ ] Ctrl/Cmd-clicking `image::logo.png[]` in `index.adoc` opens the image; Back returns to the page.
+- [ ] With an image active, the Source, Visual and Split buttons are gone, and Save and the formatting commands do nothing; Save All saves edited pages and leaves the image file unchanged.
+
 ## Results
 
 | Date | Build | Platform | Result |

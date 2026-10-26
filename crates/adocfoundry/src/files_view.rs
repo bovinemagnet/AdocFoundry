@@ -11,7 +11,7 @@ use std::{
     rc::Rc,
 };
 
-use adoc_engine::{commands::ids, CommandArgs, DirectoryError, EngineEvent, EntryKind, Listing};
+use adoc_engine::{commands::ids, DirectoryError, EngineEvent, EntryKind, Listing};
 use gpui::{
     actions, div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
@@ -33,12 +33,10 @@ actions!(adocfoundry, [OpenFileEntry]);
 /// The key context of the Files panel, where Space opens the selected file.
 pub const FILES_CONTEXT: &str = "FilesTree";
 
-/// Files a click opens in the system's own viewer rather than as text: images and PDFs, which
-/// viewers only display. Anything else that is not text (fonts, archives, programs) opens only
-/// through Open Externally, so selecting a file can never run it.
-const EXTERNAL: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "tif", "tiff", "heic", "pdf",
-];
+/// Files a click opens in the system's own viewer rather than in AdocFoundry: PDFs, which
+/// viewers only display. Images open in an image tab. Anything else that is not text (fonts,
+/// archives, programs) opens only through Open Externally, so selecting a file can never run it.
+const EXTERNAL: &[&str] = &["pdf"];
 
 /// Whether `path` opens in the system's own application rather than as text.
 pub fn opens_externally(path: &Path) -> bool {
@@ -55,7 +53,7 @@ thread_local! {
 }
 
 /// Opens `path` in the system's own application for it.
-fn open_externally(path: &Path, cx: &App) {
+pub(crate) fn open_externally(path: &Path, cx: &App) {
     #[cfg(test)]
     {
         let _ = cx;
@@ -87,7 +85,7 @@ struct Row {
 }
 
 /// The platform's name for showing a file in its file manager.
-fn reveal_label() -> &'static str {
+pub(crate) fn reveal_label() -> &'static str {
     if cfg!(target_os = "macos") {
         "Reveal in Finder"
     } else if cfg!(target_os = "windows") {
@@ -349,8 +347,8 @@ impl FilesView {
             .collect()
     }
 
-    /// Opens the file of row `id`: in a preview tab, or kept open with `keep`; in the system's
-    /// application when it is not text.
+    /// Opens the file of row `id`: in a preview tab, or kept open with `keep`; an image in an
+    /// image tab, and a PDF in the system's application.
     fn activate(
         &mut self,
         id: &SharedString,
@@ -376,21 +374,22 @@ impl FilesView {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        workspace.update(cx, |workspace, cx| {
+        let opened = workspace.update(cx, |workspace, cx| {
             workspace.open_at(
                 &row.path,
                 adoc_core::SourceRange::default(),
                 adoc_engine::OpenDisposition::Preview,
                 window,
                 cx,
-            );
+            )
         });
-        if keep {
-            let path = row.path.clone();
+        if let (true, Some(item)) = (keep, opened) {
             self.app.update(cx, |app, cx| {
-                if let Some(id) = app.engine.document_for_path(&path) {
-                    let _ = app.invoke(ids::DOCUMENT_KEEP_OPEN, CommandArgs::Document(id), cx);
-                }
+                let _ = app.invoke(
+                    ids::DOCUMENT_KEEP_OPEN,
+                    crate::workspace_view::item_args(item),
+                    cx,
+                );
             });
         }
     }
@@ -732,9 +731,11 @@ mod tests {
     }
 
     #[test]
-    fn only_non_text_kinds_open_externally() {
-        for external in ["logo.PNG", "guide.pdf", "diagram.svg"] {
-            assert!(opens_externally(Path::new(external)), "{external}");
+    fn only_pdfs_open_externally_on_a_click() {
+        assert!(opens_externally(Path::new("guide.PDF")));
+        // Images open in an image tab.
+        for image in ["logo.PNG", "diagram.svg", "photo.heic"] {
+            assert!(!opens_externally(Path::new(image)), "{image}");
         }
         // Anything that could run or install itself stays out, with fonts and archives.
         for explicit in [

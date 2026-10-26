@@ -1,7 +1,7 @@
-//! Tab order and preview tabs. Browsing to a page shows it in one reusable preview tab, which the
-//! next page browsed to replaces, until the page is edited, saved or kept open. Only a front end
-//! that shows tabs turns preview tabs on ([`Engine::enable_preview_tabs`]), so the CLI, the
-//! language server and the MCP server keep every document they open.
+//! Tab order and preview tabs. Browsing to a page or an image shows it in one reusable preview
+//! tab, which the next one browsed to replaces, until it is edited, saved or kept open. Only a
+//! front end that shows tabs turns preview tabs on ([`Engine::enable_preview_tabs`]), so the CLI,
+//! the language server and the MCP server keep everything they open.
 
 use std::path::Path;
 
@@ -9,11 +9,55 @@ use adoc_index::normalize_path;
 
 use crate::{
     commands::{ids, register, spec},
+    images::is_image_path,
     CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
-    Engine, EngineError, EngineEvent,
+    Engine, EngineError, EngineEvent, ImageId,
 };
 
-/// How a document is opened.
+/// What a tab shows: a text document, or an image, which is never text.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TabItem {
+    Document(DocumentId),
+    Image(ImageId),
+}
+
+impl TabItem {
+    #[must_use]
+    pub fn document(self) -> Option<DocumentId> {
+        match self {
+            Self::Document(id) => Some(id),
+            Self::Image(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn image(self) -> Option<ImageId> {
+        match self {
+            Self::Image(id) => Some(id),
+            Self::Document(_) => None,
+        }
+    }
+}
+
+impl From<DocumentId> for TabItem {
+    fn from(id: DocumentId) -> Self {
+        Self::Document(id)
+    }
+}
+
+impl From<ImageId> for TabItem {
+    fn from(id: ImageId) -> Self {
+        Self::Image(id)
+    }
+}
+
+impl PartialEq<DocumentId> for TabItem {
+    fn eq(&self, other: &DocumentId) -> bool {
+        *self == Self::Document(*other)
+    }
+}
+
+/// How a document or an image is opened.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OpenDisposition {
     /// Kept open until closed: the Open File dialog, files named at start-up.
@@ -24,10 +68,10 @@ pub enum OpenDisposition {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Tabs {
-    /// The open documents in tab order.
-    pub(crate) order: Vec<DocumentId>,
-    /// The document in the preview tab.
-    pub(crate) preview: Option<DocumentId>,
+    /// The open documents and images in tab order.
+    pub(crate) order: Vec<TabItem>,
+    /// What the preview tab shows.
+    pub(crate) preview: Option<TabItem>,
     /// Whether the front end shows preview tabs.
     pub(crate) enabled: bool,
 }
@@ -39,20 +83,51 @@ impl Engine {
         self.tabs.enabled = true;
     }
 
-    fn preview_tabs_on(&self) -> bool {
+    pub(crate) fn preview_tabs_on(&self) -> bool {
         self.tabs.enabled && self.settings.editor.preview_tabs
     }
 
-    /// The open documents in tab order.
+    /// The open documents and images in tab order.
     #[must_use]
-    pub fn tab_order(&self) -> &[DocumentId] {
+    pub fn tab_order(&self) -> &[TabItem] {
         &self.tabs.order
     }
 
-    /// Whether document `id` is in the preview tab, to be replaced by the next page browsed to.
+    /// Whether `item` is in the preview tab, to be replaced by the next one browsed to.
     #[must_use]
-    pub fn is_preview(&self, id: DocumentId) -> bool {
-        self.tabs.preview == Some(id)
+    pub fn is_preview(&self, item: impl Into<TabItem>) -> bool {
+        self.tabs.preview == Some(item.into())
+    }
+
+    /// The tab the user is working in: the active document, else the active image.
+    #[must_use]
+    pub fn active_item(&self) -> Option<TabItem> {
+        self.active
+            .map(TabItem::Document)
+            .or(self.images.active.map(TabItem::Image))
+    }
+
+    /// Makes `item` the active tab.
+    pub fn activate(&mut self, item: TabItem) {
+        match item {
+            TabItem::Document(id) => self.set_active(id),
+            TabItem::Image(id) => self.set_active_image(id),
+        }
+    }
+
+    /// Opens the file at `path` as what it is: an image in an image tab, anything else as a
+    /// text document. Every way of opening a file goes through here, so a file opened from the
+    /// Files view, a module's images, the Open dialog or a link opens the same way.
+    pub fn open_item(
+        &mut self,
+        path: &Path,
+        disposition: OpenDisposition,
+    ) -> Result<TabItem, EngineError> {
+        if is_image_path(path) {
+            self.open_image_as(path, disposition).map(TabItem::Image)
+        } else {
+            self.open_as(path, disposition).map(TabItem::Document)
+        }
     }
 
     /// Opens the file at `path` as `disposition` says and activates it. A document already open
@@ -77,54 +152,89 @@ impl Engine {
         let text = self.read_text(&path)?;
         let old = self.tabs.preview.take();
         let id = self.insert_document(path, &text, false);
-        self.tabs.preview = Some(id);
+        self.take_preview_tab(old, TabItem::Document(id))?;
+        Ok(id)
+    }
+
+    /// Puts `new`, just opened at the end of the tab strip, in the preview tab in place of `old`,
+    /// which closes, unless it is a page that is edited or pinned in the rendered preview: that
+    /// stays open as an ordinary tab. `new` is activated.
+    pub(crate) fn take_preview_tab(
+        &mut self,
+        old: Option<TabItem>,
+        new: TabItem,
+    ) -> Result<(), EngineError> {
+        self.tabs.preview = Some(new);
         let Some(old) = old else {
-            self.set_active(id);
-            return Ok(id);
+            self.activate(new);
+            return Ok(());
         };
-        let replaceable = self.document(old).is_some_and(|document| !document.dirty)
-            && self.rendered.layout.pinned != Some(old);
+        let replaceable = match old {
+            TabItem::Document(old) => {
+                self.document(old).is_some_and(|document| !document.dirty)
+                    && self.rendered.layout.pinned != Some(old)
+            }
+            TabItem::Image(old) => self.image(old).is_some(),
+        };
         if !replaceable {
-            self.emit(EngineEvent::DocumentKept(old));
-            self.set_active(id);
-            return Ok(id);
+            self.emit(EngineEvent::TabKept(old));
+            self.activate(new);
+            return Ok(());
         }
-        // The new page takes the old one's place in the tab strip.
-        self.tabs.order.retain(|open| *open != id);
+        // The new tab takes the old one's place in the tab strip.
+        self.tabs.order.retain(|open| *open != new);
         let at = self
             .tabs
             .order
             .iter()
             .position(|open| *open == old)
             .unwrap_or(self.tabs.order.len());
-        self.tabs.order.insert(at, id);
-        self.emit(EngineEvent::PreviewTabReplaced { old, new: id });
-        self.set_active(id);
-        self.close(old)?;
-        Ok(id)
+        self.tabs.order.insert(at, new);
+        self.emit(EngineEvent::PreviewTabReplaced { old, new });
+        self.activate(new);
+        self.close_item(old)
     }
 
-    /// Keeps document `id` open: it leaves the preview tab, where it stays as an ordinary tab.
-    pub fn keep_open(&mut self, id: DocumentId) {
-        if self.tabs.preview == Some(id) {
-            self.tabs.preview = None;
-            self.emit(EngineEvent::DocumentKept(id));
+    /// Closes the document or image `item`.
+    pub fn close_item(&mut self, item: TabItem) -> Result<(), EngineError> {
+        match item {
+            TabItem::Document(id) => self.close(id),
+            TabItem::Image(id) => self.close_image(id),
         }
     }
 
-    /// Keeps the preview tab's document open when preview tabs have been turned off.
+    /// Keeps `item` open: it leaves the preview tab, where it stays as an ordinary tab.
+    pub fn keep_open(&mut self, item: impl Into<TabItem>) {
+        let item = item.into();
+        if self.tabs.preview == Some(item) {
+            self.tabs.preview = None;
+            self.emit(EngineEvent::TabKept(item));
+        }
+    }
+
+    /// Keeps the preview tab open when preview tabs have been turned off.
     pub(crate) fn settle_preview_tab(&mut self) {
         if !self.preview_tabs_on() {
-            if let Some(id) = self.tabs.preview {
-                self.keep_open(id);
+            if let Some(item) = self.tabs.preview {
+                self.keep_open(item);
             }
         }
+    }
+
+    /// Makes the last tab active, after the active one closed.
+    pub(crate) fn activate_last_tab(&mut self) {
+        match self.tabs.order.last().copied() {
+            Some(TabItem::Document(id)) => self.active = Some(id),
+            Some(TabItem::Image(id)) => self.images.active = Some(id),
+            None => {}
+        }
+        self.emit(EngineEvent::NavigationChanged);
     }
 }
 
 pub(crate) fn register_tabs(registry: &mut CommandRegistry) {
     use CommandCategory::Document;
-    use CommandContext::{ActiveDocument, Always};
+    use CommandContext::{ActiveTab, Always};
     register(
         registry,
         spec(
@@ -142,8 +252,8 @@ pub(crate) fn register_tabs(registry: &mut CommandRegistry) {
                 });
             };
             engine
-                .open_as(&path, OpenDisposition::Preview)
-                .map(CommandOutcome::Opened)
+                .open_item(&path, OpenDisposition::Preview)
+                .map(CommandOutcome::opened)
         },
     );
     register(
@@ -153,19 +263,20 @@ pub(crate) fn register_tabs(registry: &mut CommandRegistry) {
             "Keep Open",
             Document,
             None,
-            ActiveDocument,
+            ActiveTab,
         ),
         |engine, args| {
-            let id = match args {
-                CommandArgs::Document(id) => id,
+            let item = match args {
+                CommandArgs::Document(id) => TabItem::Document(id),
+                CommandArgs::Image(id) => TabItem::Image(id),
                 _ => engine
-                    .active()
-                    .ok_or_else(|| EngineError::NotFound("no document to keep open".to_owned()))?,
+                    .active_item()
+                    .ok_or_else(|| EngineError::NotFound("no tab to keep open".to_owned()))?,
             };
-            engine
-                .document(id)
-                .ok_or(EngineError::UnknownDocument(id))?;
-            engine.keep_open(id);
+            if !engine.tab_order().contains(&item) {
+                return Err(EngineError::NotFound(format!("{item:?} is not open")));
+            }
+            engine.keep_open(item);
             Ok(CommandOutcome::Done)
         },
     );

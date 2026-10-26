@@ -1,7 +1,8 @@
 //! The workspace window: title bar, sidebar, editor tabs, outline, search panel and status bar.
 //!
 //! Views render engine state and dispatch commands. Opening a tab follows the engine's active
-//! document, so link following, back/forward and palette commands all arrive the same way.
+//! tab, a page or an image, so link following, back/forward and palette commands all arrive the
+//! same way.
 
 use std::{cell::Cell, collections::HashMap, path::Path, rc::Rc};
 
@@ -9,7 +10,7 @@ use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode, EngineEvent,
     ExportArgs, ExportSummary, ExportTarget, NavigationPosition, OpenDisposition, SidebarPanel,
-    ThemePreference,
+    TabItem, ThemePreference,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity, FocusHandle,
@@ -36,6 +37,7 @@ use gpui_component::{
 use crate::{
     app::{open_secondary_window, AppState, WindowKind},
     editor::{bindings::*, language, SourceEditorEvent, SourceEditorView},
+    image_view::{ActualSize, FitToWindow, ImageView, ZoomIn, ZoomOut},
     menus::AppMenu,
     preview::{PreviewEvent, PreviewView},
     search_view::SearchView,
@@ -81,10 +83,41 @@ enum SidebarTab {
     Changes,
 }
 
+/// What a tab shows: a page's source editor, or an image.
+#[derive(Clone)]
+enum TabView {
+    Editor(Entity<SourceEditorView>),
+    Image(Entity<ImageView>),
+}
+
+impl TabView {
+    fn item(&self, cx: &App) -> TabItem {
+        match self {
+            Self::Editor(editor) => TabItem::Document(editor.read(cx).document()),
+            Self::Image(image) => TabItem::Image(image.read(cx).image()),
+        }
+    }
+
+    fn editor(&self) -> Option<&Entity<SourceEditorView>> {
+        match self {
+            Self::Editor(editor) => Some(editor),
+            Self::Image(_) => None,
+        }
+    }
+}
+
+/// The arguments naming `item` to the commands that act on tabs.
+pub(crate) fn item_args(item: TabItem) -> CommandArgs {
+    match item {
+        TabItem::Document(id) => CommandArgs::Document(id),
+        TabItem::Image(id) => CommandArgs::Image(id),
+    }
+}
+
 pub struct WorkspaceView {
     app: Entity<AppState>,
     focus_handle: FocusHandle,
-    tabs: Vec<Entity<SourceEditorView>>,
+    tabs: Vec<TabView>,
     /// The visual editor of each document shown in visual or split mode.
     visuals: HashMap<DocumentId, Entity<VisualView>>,
     active_tab: usize,
@@ -93,7 +126,7 @@ pub struct WorkspaceView {
     /// Frames still to request the active tab's reveal on; see [`Self::reveal_active_tab`].
     tab_reveals: std::cell::Cell<u8>,
     /// The tab last right-clicked, which the tab strip's menu acts on; `None` over empty strip.
-    tab_menu_target: Rc<Cell<Option<DocumentId>>>,
+    tab_menu_target: Rc<Cell<Option<TabItem>>>,
     sidebar_tab: SidebarTab,
     navigation: Entity<TreeState>,
     families: Entity<TreeState>,
@@ -345,8 +378,13 @@ impl WorkspaceView {
                 self.replace_tab(*old, *new, window, cx);
             }
             EngineEvent::DocumentClosed(id) => {
-                self.tabs.retain(|tab| tab.read(cx).document() != *id);
+                self.tabs
+                    .retain(|tab| tab.item(cx) != TabItem::Document(*id));
                 self.visuals.remove(id);
+                self.follow_active(window, cx);
+            }
+            EngineEvent::ImageClosed(id) => {
+                self.tabs.retain(|tab| tab.item(cx) != TabItem::Image(*id));
                 self.follow_active(window, cx);
             }
             EngineEvent::EditorModeChanged(id) => self.sync_visual(*id, window, cx),
@@ -402,8 +440,13 @@ impl WorkspaceView {
         }
     }
 
-    /// Focuses the visual editor in visual mode, else the source editor.
+    /// Focuses the visual editor in visual mode, else the source editor, or the image viewer.
     fn focus_active_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(TabView::Image(image)) = self.tabs.get(self.active_tab) {
+            let focus = image.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+            return;
+        }
         let Some(editor) = self.active_editor().cloned() else {
             return;
         };
@@ -1055,25 +1098,25 @@ impl WorkspaceView {
     /// Shows a tab for the engine's active document and reveals the last navigation target.
     fn follow_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.outline_stale = true;
-        let Some(active) = self.app.read(cx).engine.active() else {
+        let Some(item) = self.app.read(cx).engine.active_item() else {
             self.active_tab = 0;
             return;
         };
-        let index = match self
-            .tabs
-            .iter()
-            .position(|tab| tab.read(cx).document() == active)
-        {
+        let index = match self.tabs.iter().position(|tab| tab.item(cx) == item) {
             Some(index) => index,
             None => {
-                let editor = self.new_tab(active, window, cx);
-                self.tabs.push(editor);
+                let tab = self.new_tab(item, window, cx);
+                self.tabs.push(tab);
                 self.tabs.len() - 1
             }
         };
         self.active_tab = index;
         // However the document became active, its tab is brought into view.
         self.reveal_active_tab(cx);
+        let TabItem::Document(active) = item else {
+            self.focus_active_editor(window, cx);
+            return;
+        };
 
         let position = self.app.read(cx).engine.navigation_position().cloned();
         let path = self
@@ -1085,7 +1128,9 @@ impl WorkspaceView {
         if let Some(position) = position {
             if self.revealed.as_ref() != Some(&position) && path.as_ref() == Some(&position.path) {
                 let range = SourceRange::new(position.offset, position.offset);
-                self.tabs[index].update(cx, |editor, cx| editor.reveal(range, window, cx));
+                if let Some(editor) = self.tabs[index].editor().cloned() {
+                    editor.update(cx, |editor, cx| editor.reveal(range, window, cx));
+                }
                 if let Some(visual) = self.visuals.get(&active).cloned() {
                     visual.update(cx, |visual, cx| visual.go_to(position.offset, cx));
                 }
@@ -1097,52 +1142,46 @@ impl WorkspaceView {
         self.focus_active_editor(window, cx);
     }
 
-    fn new_tab(
-        &mut self,
-        id: DocumentId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<SourceEditorView> {
+    fn new_tab(&mut self, item: TabItem, window: &mut Window, cx: &mut Context<Self>) -> TabView {
         let app = self.app.clone();
-        let editor = cx.new(|cx| SourceEditorView::new(app, id, false, window, cx));
-        self._subscriptions
-            .push(cx.subscribe(&editor, Self::on_editor_event));
-        editor
+        match item {
+            TabItem::Document(id) => {
+                let editor = cx.new(|cx| SourceEditorView::new(app, id, false, window, cx));
+                self._subscriptions
+                    .push(cx.subscribe(&editor, Self::on_editor_event));
+                TabView::Editor(editor)
+            }
+            TabItem::Image(id) => TabView::Image(cx.new(|cx| ImageView::new(app, id, cx))),
+        }
     }
 
-    /// Shows document `new` in the tab of `old`, which the engine replaced in the preview tab.
-    /// The view may already have made `new` a tab of its own, at the end, when it followed the
-    /// engine before this event arrived: that tab moves to the old one's place.
+    /// Shows `new` in the tab of `old`, which the engine replaced in the preview tab. The view
+    /// may already have made `new` a tab of its own, at the end, when it followed the engine
+    /// before this event arrived: that tab moves to the old one's place.
     fn replace_tab(
         &mut self,
-        old: DocumentId,
-        new: DocumentId,
+        old: TabItem,
+        new: TabItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(index) = self
-            .tabs
-            .iter()
-            .position(|tab| tab.read(cx).document() == old)
-        else {
+        let Some(index) = self.tabs.iter().position(|tab| tab.item(cx) == old) else {
             return;
         };
-        let tab = match self
-            .tabs
-            .iter()
-            .position(|tab| tab.read(cx).document() == new)
-        {
+        let tab = match self.tabs.iter().position(|tab| tab.item(cx) == new) {
             Some(made) => self.tabs.remove(made),
             None => self.new_tab(new, window, cx),
         };
         let index = index.min(self.tabs.len().saturating_sub(1));
         self.tabs[index] = tab;
-        self.visuals.remove(&old);
-        let active = self.app.read(cx).engine.active();
+        if let TabItem::Document(old) = old {
+            self.visuals.remove(&old);
+        }
+        let active = self.app.read(cx).engine.active_item();
         if let Some(active) = self
             .tabs
             .iter()
-            .position(|tab| Some(tab.read(cx).document()) == active)
+            .position(|tab| Some(tab.item(cx)) == active)
         {
             self.active_tab = active;
         }
@@ -1157,7 +1196,8 @@ impl WorkspaceView {
                 .tab_order()
                 .iter()
                 .copied()
-                .find(|id| engine.is_preview(*id))
+                .find(|item| engine.is_preview(*item))
+                .and_then(TabItem::document)
             else {
                 return;
             };
@@ -1165,7 +1205,7 @@ impl WorkspaceView {
                 .visuals
                 .get(&id)
                 .is_some_and(|visual| visual.read(cx).is_composing());
-            let unsent = self.tabs.iter().any(|tab| {
+            let unsent = self.tabs.iter().filter_map(TabView::editor).any(|tab| {
                 let tab = tab.read(cx);
                 tab.document() == id
                     && engine
@@ -1254,18 +1294,14 @@ impl WorkspaceView {
         cx.notify();
     }
 
-    /// Shows the active document in the Files panel, without moving focus from the editor.
+    /// Shows the active document or image in the Files panel, without moving focus from it.
     fn on_reveal_in_files(
         &mut self,
         _: &RevealInFiles,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = self
-            .active_document(cx)
-            .and_then(|id| self.app.read(cx).engine.document(id))
-            .map(|document| document.path.clone())
-        else {
+        let Some(path) = self.active_item_path(cx) else {
             return;
         };
         if self.files.update(cx, |files, cx| files.reveal(&path, cx)) {
@@ -1277,23 +1313,52 @@ impl WorkspaceView {
     }
 
     fn on_keep_open(&mut self, _: &KeepOpen, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.active_document(cx) {
-            self.invoke(
-                ids::DOCUMENT_KEEP_OPEN,
-                CommandArgs::Document(id),
-                window,
-                cx,
-            );
+        if let Some(item) = self.active_item(cx) {
+            self.invoke(ids::DOCUMENT_KEEP_OPEN, item_args(item), window, cx);
         }
     }
 
-    /// The documents of the tabs, in order.
+    fn on_reload_image(&mut self, _: &ReloadImage, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::IMAGE_RELOAD, CommandArgs::None, window, cx);
+    }
+
+    /// Hands a zoom command chosen from a menu or the palette to the active image's viewer,
+    /// when focus is not in it to take it first.
+    fn zoom_active_image(
+        &mut self,
+        action: Box<dyn gpui::Action>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(TabView::Image(image)) = self.tabs.get(self.active_tab).cloned() {
+            let focus = image.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+            window.defer(cx, move |window, cx| window.dispatch_action(action, cx));
+        }
+    }
+
+    /// The documents of the tabs, in order: images are left out.
     #[cfg(test)]
     pub fn tab_documents(&self, cx: &App) -> Vec<DocumentId> {
         self.tabs
             .iter()
-            .map(|tab| tab.read(cx).document())
+            .filter_map(|tab| tab.item(cx).document())
             .collect()
+    }
+
+    /// What the tabs show, in order.
+    #[cfg(test)]
+    pub fn tab_items(&self, cx: &App) -> Vec<TabItem> {
+        self.tabs.iter().map(|tab| tab.item(cx)).collect()
+    }
+
+    /// The viewer of the active tab, when it shows an image.
+    #[cfg(test)]
+    pub fn active_image_view(&self) -> Option<&Entity<ImageView>> {
+        match self.tabs.get(self.active_tab) {
+            Some(TabView::Image(image)) => Some(image),
+            _ => None,
+        }
     }
 
     #[cfg(test)]
@@ -1307,12 +1372,38 @@ impl WorkspaceView {
     }
 
     fn active_editor(&self) -> Option<&Entity<SourceEditorView>> {
-        self.tabs.get(self.active_tab)
+        self.tabs.get(self.active_tab).and_then(TabView::editor)
     }
 
     fn active_document(&self, cx: &App) -> Option<DocumentId> {
         self.active_editor()
             .map(|editor| editor.read(cx).document())
+    }
+
+    /// What the active tab shows.
+    fn active_item(&self, cx: &App) -> Option<TabItem> {
+        self.tabs.get(self.active_tab).map(|tab| tab.item(cx))
+    }
+
+    /// The file the active tab shows, a page's or an image's.
+    fn active_item_path(&self, cx: &App) -> Option<std::path::PathBuf> {
+        let engine = &self.app.read(cx).engine;
+        match self.active_item(cx)? {
+            TabItem::Document(id) => engine.document(id).map(|document| document.path.clone()),
+            TabItem::Image(id) => engine.image(id).map(|image| image.path.clone()),
+        }
+    }
+
+    /// A tab's file name, as its tab shows it.
+    fn item_name(&self, item: TabItem, cx: &App) -> String {
+        let engine = &self.app.read(cx).engine;
+        let path = match item {
+            TabItem::Document(id) => engine.document(id).map(|document| &document.path),
+            TabItem::Image(id) => engine.image(id).map(|image| &image.path),
+        };
+        path.and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
     }
 
     fn document_name(&self, id: DocumentId, cx: &App) -> String {
@@ -1449,8 +1540,8 @@ impl WorkspaceView {
         );
     }
 
-    /// Opens `path` as `disposition` says and selects `range` in it. Browsing shows the page
-    /// in the preview tab.
+    /// Opens `path` as `disposition` says and selects `range` in it: a page in a source tab, an
+    /// image in an image tab, as the engine decides. Browsing shows it in the preview tab.
     pub fn open_at(
         &mut self,
         path: &Path,
@@ -1458,7 +1549,7 @@ impl WorkspaceView {
         disposition: OpenDisposition,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<TabItem> {
         let command = match disposition {
             OpenDisposition::Persistent => ids::DOCUMENT_OPEN,
             OpenDisposition::Preview => {
@@ -1466,16 +1557,19 @@ impl WorkspaceView {
                 ids::DOCUMENT_BROWSE
             }
         };
-        let Some(CommandOutcome::Opened(id)) =
-            self.invoke(command, CommandArgs::Path(path.to_path_buf()), window, cx)
-        else {
-            return;
+        let item = match self.invoke(command, CommandArgs::Path(path.to_path_buf()), window, cx)? {
+            CommandOutcome::Opened(id) => TabItem::Document(id),
+            CommandOutcome::OpenedImage(id) => TabItem::Image(id),
+            _ => return None,
         };
         self.app.update(cx, |app, cx| {
-            app.engine.set_active(id);
+            app.engine.activate(item);
             app.drain(cx);
         });
         self.follow_active(window, cx);
+        let TabItem::Document(id) = item else {
+            return Some(item);
+        };
         if let Some(editor) = self.active_editor().cloned() {
             editor.update(cx, |editor, cx| editor.reveal(range, window, cx));
         }
@@ -1483,6 +1577,7 @@ impl WorkspaceView {
             visual.update(cx, |visual, cx| visual.go_to(range.start, cx));
             self.focus_active_editor(window, cx);
         }
+        Some(item)
     }
 
     /// Shows a multi-file change for confirmation; applying it is one undo step.
@@ -1641,19 +1736,20 @@ impl WorkspaceView {
         }
     }
 
-    /// Runs `command` (Close, or Close Others, Left, Right, Clean or All) on the tab of `id`,
+    /// Runs `command` (Close, or Close Others, Left, Right, Clean or All) on the tab of `item`,
     /// first asking once whether to discard the unsaved changes of any tab it would close.
     fn close_tabs(
         &mut self,
         command: adoc_engine::CommandId,
-        id: DocumentId,
+        item: TabItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let engine = &self.app.read(cx).engine;
         let names: Vec<String> = engine
-            .closed_by(command, id)
+            .closed_by(command, item)
             .into_iter()
+            .filter_map(TabItem::document)
             .filter(|closed| {
                 engine
                     .document(*closed)
@@ -1662,7 +1758,7 @@ impl WorkspaceView {
             .map(|closed| self.document_name(closed, cx))
             .collect();
         if names.is_empty() {
-            self.invoke(command, CommandArgs::Document(id), window, cx);
+            self.invoke(command, item_args(item), window, cx);
             return;
         }
         let app = self.app.clone();
@@ -1680,7 +1776,7 @@ impl WorkspaceView {
                 .ok_text("Discard")
                 .on_ok(move |_, _, cx| {
                     app.update(cx, |app, cx| {
-                        let _ = app.invoke(command, CommandArgs::Document(id), cx);
+                        let _ = app.invoke(command, item_args(item), cx);
                     });
                     true
                 })
@@ -1693,8 +1789,8 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(id) = self.active_document(cx) {
-            self.close_tabs(command, id, window, cx);
+        if let Some(item) = self.active_item(cx) {
+            self.close_tabs(command, item, window, cx);
         }
     }
 
@@ -2322,6 +2418,9 @@ impl WorkspaceView {
 
     /// The active document's editor as its mode shows it: source, visual, or both.
     fn editor_area(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if let Some(TabView::Image(image)) = self.tabs.get(self.active_tab) {
+            return Some(image.clone().into_any_element());
+        }
         let editor = self.active_editor().cloned()?;
         let id = editor.read(cx).document();
         let mode = self.app.read(cx).engine.editor_mode(id);
@@ -2338,14 +2437,16 @@ impl WorkspaceView {
 
     /// Source, Visual and Split buttons for the active document.
     fn render_modes(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        // Only an AsciiDoc page has a visual editor.
-        let page = self.active_document(cx).is_none_or(|id| {
-            self.app
-                .read(cx)
-                .engine
-                .document(id)
-                .is_some_and(|document| document.asciidoc)
-        });
+        // Only an AsciiDoc page has a visual editor; an image has none of them.
+        let image = matches!(self.active_item(cx), Some(TabItem::Image(_)));
+        let page = !image
+            && self.active_document(cx).is_none_or(|id| {
+                self.app
+                    .read(cx)
+                    .engine
+                    .document(id)
+                    .is_some_and(|document| document.asciidoc)
+            });
         if !page {
             return div().into_any_element();
         }
@@ -2370,6 +2471,7 @@ impl WorkspaceView {
                 }
             };
         h_flex()
+            .debug_selector(|| "editor-modes".to_owned())
             .gap_1()
             .px_2()
             .child(button("mode-source", "Source", EditorMode::Source, cx))
@@ -2394,10 +2496,18 @@ impl WorkspaceView {
                 )
             })
             .collect();
-        items.extend(UI_ACTIONS.iter().enumerate().map(|(index, (title, _))| {
-            actions.push(ui_action(index));
-            CommandItem::new().label(*title)
-        }));
+        let image = self.app.read(cx).engine.active_image().is_some();
+        items.extend(
+            UI_ACTIONS
+                .iter()
+                .enumerate()
+                // The zoom commands only while an image is shown.
+                .filter(|(index, _)| image || *index < IMAGE_UI_ACTIONS)
+                .map(|(index, (title, _))| {
+                    actions.push(ui_action(index));
+                    CommandItem::new().label(*title)
+                }),
+        );
         let palette = self.palette.clone();
         palette.update(cx, |palette, cx| palette.set_query("", window, cx));
         let focus = palette.read(cx).focus_handle(cx);
@@ -2618,38 +2728,51 @@ impl WorkspaceView {
             .iter()
             .enumerate()
             .map(|(ix, tab)| {
-                let id = tab.read(cx).document();
-                let (name, dirty) = engine
-                    .document(id)
-                    .map(|document| {
-                        let name = document
-                            .path
-                            .file_name()
-                            .map(|name| name.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        (name, document.dirty)
-                    })
-                    .unwrap_or_default();
+                let id = tab.item(cx);
+                let name = self.item_name(id, cx);
+                let dirty = id
+                    .document()
+                    .and_then(|document| engine.document(document))
+                    .is_some_and(|document| document.dirty);
+                // An image's tab says so, and names the file in full on hover.
+                let image_path = id
+                    .image()
+                    .and_then(|image| engine.image(image))
+                    .map(|image| SharedString::from(image.path.display().to_string()));
                 let preview = engine.is_preview(id);
                 let target = target.clone();
+                let aria = match (preview, image_path.is_some()) {
+                    (true, true) => format!("{name}, image, preview tab"),
+                    (true, false) => format!("{name}, preview tab"),
+                    (false, true) => format!("{name}, image"),
+                    (false, false) => name.clone(),
+                };
                 Tab::new()
-                    .aria_label(if preview {
-                        format!("{name}, preview tab")
-                    } else {
-                        name.clone()
-                    })
+                    .aria_label(aria)
                     .label(if dirty { format!("● {name}") } else { name })
+                    .when(image_path.is_some(), |tab| {
+                        tab.icon(gpui_kit_assets::IconName::Image)
+                    })
                     .debug_selector(move || format!("editor-tab-{ix}"))
                     .on_mouse_down(gpui::MouseButton::Right, move |_, _, _| {
                         target.set(Some(id));
                     })
+                    .when(!preview, |tab| match image_path.clone() {
+                        Some(path) => tab.tooltip(move |window, cx| {
+                            Tooltip::new(path.clone()).build(window, cx)
+                        }),
+                        None => tab,
+                    })
                     // A preview tab: italic, and a double-click keeps it open.
                     .when(preview, |tab| {
+                        let path = image_path.clone();
                         tab.italic()
-                            .tooltip(|window, cx| {
-                                Tooltip::element(|_, _| {
-                                    div()
+                            .tooltip(move |window, cx| {
+                                let path = path.clone();
+                                Tooltip::element(move |_, _| {
+                                    v_flex()
                                         .debug_selector(|| "preview-tab-tooltip".to_owned())
+                                        .children(path.clone())
                                         .child(PREVIEW_TAB_TOOLTIP)
                                 })
                                 .build(window, cx)
@@ -2662,7 +2785,7 @@ impl WorkspaceView {
                                     {
                                         this.invoke(
                                             ids::DOCUMENT_KEEP_OPEN,
-                                            CommandArgs::Document(id),
+                                            item_args(id),
                                             window,
                                             cx,
                                         );
@@ -2719,11 +2842,11 @@ impl WorkspaceView {
             .selected_index(self.active_tab)
             .children(tabs)
             .on_click(cx.listener(|this, index: &usize, window, cx| {
-                let Some(id) = this.tabs.get(*index).map(|tab| tab.read(cx).document()) else {
+                let Some(item) = this.tabs.get(*index).map(|tab| tab.item(cx)) else {
                     return;
                 };
                 this.app.update(cx, |app, cx| {
-                    app.engine.set_active(id);
+                    app.engine.activate(item);
                     app.drain(cx);
                 });
                 this.follow_active(window, cx);
@@ -2764,7 +2887,7 @@ impl WorkspaceView {
                     ("Close All", ids::DOCUMENT_CLOSE_ALL, Box::new(CloseAll)),
                 ];
                 // Over the empty strip, only the commands that need no tab, on the active one.
-                let tab = target.or_else(|| engine.active());
+                let tab = target.or_else(|| engine.active_item());
                 let Some(tab) = tab else {
                     return menu;
                 };
@@ -2779,7 +2902,7 @@ impl WorkspaceView {
                                     app.update(cx, |app, cx| {
                                         let _ = app.invoke(
                                             ids::DOCUMENT_KEEP_OPEN,
-                                            CommandArgs::Document(target),
+                                            item_args(target),
                                             cx,
                                         );
                                     });
@@ -2862,7 +2985,17 @@ impl WorkspaceView {
                     document.map(|document| document.path.clone()),
                 )
             }
-            None => (None, None, None),
+            // An image: its path, as for a page.
+            None => match self.active_item(cx).and_then(TabItem::image) {
+                Some(id) => {
+                    let file = engine.image(id).map(|image| image.path.clone());
+                    let path = file
+                        .as_deref()
+                        .map(|file| sidebar::display_path(file, &roots));
+                    (None, path, file)
+                }
+                None => (None, None, None),
+            },
         };
         // The branch of the active document's repository, else of the first root's.
         let repository = file
@@ -3003,6 +3136,19 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_close_clean))
             .on_action(cx.listener(Self::on_close_all))
             .on_action(cx.listener(Self::on_keep_open))
+            .on_action(cx.listener(Self::on_reload_image))
+            .on_action(cx.listener(|this, _: &ZoomIn, window, cx| {
+                this.zoom_active_image(Box::new(ZoomIn), window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ZoomOut, window, cx| {
+                this.zoom_active_image(Box::new(ZoomOut), window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ActualSize, window, cx| {
+                this.zoom_active_image(Box::new(ActualSize), window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FitToWindow, window, cx| {
+                this.zoom_active_image(Box::new(FitToWindow), window, cx);
+            }))
             .on_action(cx.listener(Self::on_expand_sidebar))
             .on_action(cx.listener(Self::on_collapse_sidebar))
             .on_action(cx.listener(Self::on_collapse_sidebar_level))

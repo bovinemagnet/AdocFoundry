@@ -64,6 +64,7 @@ pub struct Engine {
     pub(crate) tabs: crate::tabs::Tabs,
     pub(crate) expansion: crate::expansion::Expansion,
     pub(crate) files: crate::files::Files,
+    pub(crate) images: crate::images::Images,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
 }
@@ -125,6 +126,7 @@ impl Engine {
             tabs: crate::tabs::Tabs::default(),
             expansion: crate::expansion::Expansion::default(),
             files: crate::files::Files::default(),
+            images: crate::images::Images::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
         }
@@ -235,7 +237,7 @@ impl Engine {
                 asciidoc,
             },
         );
-        self.tabs.order.push(id);
+        self.tabs.order.push(crate::TabItem::Document(id));
         self.states.insert(
             id,
             DocumentState {
@@ -284,8 +286,9 @@ impl Engine {
             .remove(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
-        self.tabs.order.retain(|open| *open != id);
-        if self.tabs.preview == Some(id) {
+        let item = crate::TabItem::Document(id);
+        self.tabs.order.retain(|open| *open != item);
+        if self.tabs.preview == Some(item) {
             self.tabs.preview = None;
         }
         self.pending_index.remove(&id);
@@ -306,40 +309,50 @@ impl Engine {
             self.refresh_open_diagnostics(None);
         }
         if self.active == Some(id) {
-            self.active = self.tabs.order.last().copied();
-            self.emit(EngineEvent::NavigationChanged);
+            self.active = None;
+            self.activate_last_tab();
         }
         self.sync_preview_target();
         self.emit(EngineEvent::DocumentClosed(id));
         Ok(())
     }
 
-    /// The documents, in tab order, that `command` (`document.close` or one of Close Others,
-    /// Left, Right, Clean and All) would close if invoked on document `id`: none if `id` is not
-    /// open. Front ends ask this first, to confirm discarding the unsaved ones.
+    /// The tabs, in order, that `command` (`document.close` or one of Close Others, Left,
+    /// Right, Clean and All) would close if invoked on the tab of `item`, a document or an
+    /// image: none if it is not open. Front ends ask this first, to confirm discarding the
+    /// unsaved ones.
     #[must_use]
-    pub fn closed_by(&self, command: CommandId, id: DocumentId) -> Vec<DocumentId> {
-        if !self.documents.contains_key(&id) {
-            return Vec::new();
-        }
+    pub fn closed_by(
+        &self,
+        command: CommandId,
+        item: impl Into<crate::TabItem>,
+    ) -> Vec<crate::TabItem> {
+        let item = item.into();
         let open = self.tabs.order.iter().copied();
-        let at = self.tabs.order.iter().position(|open| *open == id);
+        let Some(at) = self.tabs.order.iter().position(|open| *open == item) else {
+            return Vec::new();
+        };
         match command {
-            ids::DOCUMENT_CLOSE => vec![id],
-            ids::DOCUMENT_CLOSE_OTHERS => open.filter(|other| *other != id).collect(),
-            ids::DOCUMENT_CLOSE_LEFT => open.take(at.unwrap_or(0)).collect(),
-            ids::DOCUMENT_CLOSE_RIGHT => open.skip(at.map_or(0, |at| at + 1)).collect(),
+            ids::DOCUMENT_CLOSE => vec![item],
+            ids::DOCUMENT_CLOSE_OTHERS => open.filter(|other| *other != item).collect(),
+            ids::DOCUMENT_CLOSE_LEFT => open.take(at).collect(),
+            ids::DOCUMENT_CLOSE_RIGHT => open.skip(at + 1).collect(),
             _ => self.closed_by_any(command),
         }
     }
 
-    /// The documents Close Clean or Close All would close, whichever tab they are invoked on.
+    /// The tabs, in order, Close Clean or Close All would close, whichever tab they are invoked
+    /// on. An image is always clean.
     #[must_use]
-    pub fn closed_by_any(&self, command: CommandId) -> Vec<DocumentId> {
-        let open = self.documents.values();
+    pub fn closed_by_any(&self, command: CommandId) -> Vec<crate::TabItem> {
+        let open = self.tabs.order.iter().copied();
+        let clean = |item: &crate::TabItem| match item {
+            crate::TabItem::Document(id) => self.documents.get(id).is_some_and(|d| !d.dirty),
+            crate::TabItem::Image(_) => true,
+        };
         match command {
-            ids::DOCUMENT_CLOSE_CLEAN => open.filter(|d| !d.dirty).map(|d| d.id).collect(),
-            ids::DOCUMENT_CLOSE_ALL => open.map(|d| d.id).collect(),
+            ids::DOCUMENT_CLOSE_CLEAN => open.filter(clean).collect(),
+            ids::DOCUMENT_CLOSE_ALL => open.collect(),
             _ => Vec::new(),
         }
     }
@@ -432,8 +445,12 @@ impl Engine {
         self.active
     }
 
+    /// Makes document `id` the active tab, in place of any active image.
     pub fn set_active(&mut self, id: DocumentId) {
-        if self.documents.contains_key(&id) && self.active != Some(id) {
+        if self.documents.contains_key(&id)
+            && (self.active != Some(id) || self.images.active.is_some())
+        {
+            self.images.active = None;
             self.active = Some(id);
             self.emit(EngineEvent::NavigationChanged);
             self.sync_preview_target();
@@ -479,7 +496,7 @@ impl Engine {
     }
 
     /// Whether command `id` applies now, by its [`CommandContext`]: a document command needs an
-    /// active document, a visual editor command one shown visually or split, and an Antora command
+    /// active document (none is while an image is the active tab), a tab command any active tab, a visual editor command one shown visually or split, and an Antora command
     /// an Antora component in the workspace. Front ends use it to offer only what applies.
     #[must_use]
     pub fn command_available(&self, id: CommandId) -> bool {
@@ -489,6 +506,8 @@ impl Engine {
         match command.spec().when {
             CommandContext::Always => true,
             CommandContext::ActiveDocument => self.active().is_some(),
+            CommandContext::ActiveTab => self.active_item().is_some(),
+            CommandContext::ActiveImage => self.active_image().is_some(),
             CommandContext::Selection => self
                 .active()
                 .is_some_and(|document| self.editor_mode(document) != EditorMode::Source),

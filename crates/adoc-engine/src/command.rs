@@ -43,6 +43,10 @@ pub enum CommandCategory {
 pub enum CommandContext {
     Always,
     ActiveDocument,
+    /// A tab is active, a document's or an image's: closing and keeping tabs.
+    ActiveTab,
+    /// The active tab is an image.
+    ActiveImage,
     /// A selection in the visual editor: the active document is shown visually or split.
     Selection,
     Antora,
@@ -63,6 +67,8 @@ pub struct CommandSpec {
 pub enum CommandArgs {
     None,
     Document(DocumentId),
+    /// An open image, for the commands that act on tabs.
+    Image(crate::ImageId),
     Offset {
         id: DocumentId,
         offset: usize,
@@ -97,6 +103,8 @@ pub enum CommandArgs {
 pub enum CommandOutcome {
     Done,
     Opened(DocumentId),
+    /// An image opened, or activated, in an image tab.
+    OpenedImage(crate::ImageId),
     Location(Location),
     External(PathBuf),
     Preview(EditPreview),
@@ -118,6 +126,17 @@ pub enum CommandOutcome {
         paths: Vec<PathBuf>,
     },
     Cancelled,
+}
+
+impl CommandOutcome {
+    /// The outcome of opening `item`.
+    #[must_use]
+    pub fn opened(item: crate::TabItem) -> Self {
+        match item {
+            crate::TabItem::Document(id) => Self::Opened(id),
+            crate::TabItem::Image(id) => Self::OpenedImage(id),
+        }
+    }
 }
 
 pub trait Command: Send + Sync {

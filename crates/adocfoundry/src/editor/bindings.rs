@@ -26,6 +26,7 @@ actions!(
         ResetSidebar,
         SidebarMenu,
         RevealInFiles,
+        ReloadImage,
         Undo,
         Redo,
         GoToDefinition,
@@ -104,7 +105,15 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
     ("Toggle Light/Dark Theme", "secondary-k secondary-t"),
     ("Open Read-Only Window", "secondary-k secondary-n"),
     ("Reveal in Files", ""),
+    ("Zoom In", "secondary-="),
+    ("Zoom Out", "secondary--"),
+    ("Actual Size", "secondary-0"),
+    ("Fit to Window", "secondary-9"),
 ];
+
+/// The first of the [`UI_ACTIONS`] that act on the image viewer, offered only while an image is
+/// the active tab.
+pub const IMAGE_UI_ACTIONS: usize = 4;
 
 /// Translates a `cmd-s` style binding to GPUI's platform-neutral form: `cmd` is the platform's
 /// primary modifier (Command on macOS, Control elsewhere).
@@ -138,6 +147,9 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::DOCUMENT_CLOSE_CLEAN => KeyBinding::new(keys, CloseClean, workspace),
         ids::DOCUMENT_CLOSE_ALL => KeyBinding::new(keys, CloseAll, workspace),
         ids::DOCUMENT_KEEP_OPEN => KeyBinding::new(keys, KeepOpen, workspace),
+        ids::IMAGE_RELOAD => {
+            KeyBinding::new(keys, ReloadImage, Some(crate::image_view::IMAGE_CONTEXT))
+        }
         ids::SIDEBAR_EXPAND_ALL => KeyBinding::new(keys, ExpandSidebar, workspace),
         ids::SIDEBAR_COLLAPSE_ALL => KeyBinding::new(keys, CollapseSidebar, workspace),
         ids::SIDEBAR_COLLAPSE_ONE_LEVEL => KeyBinding::new(keys, CollapseSidebarLevel, workspace),
@@ -212,6 +224,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::DOCUMENT_CLOSE_CLEAN => Box::new(CloseClean),
         ids::DOCUMENT_CLOSE_ALL => Box::new(CloseAll),
         ids::DOCUMENT_KEEP_OPEN => Box::new(KeepOpen),
+        ids::IMAGE_RELOAD => Box::new(ReloadImage),
         ids::SIDEBAR_EXPAND_ALL => Box::new(ExpandSidebar),
         ids::SIDEBAR_COLLAPSE_ALL => Box::new(CollapseSidebar),
         ids::SIDEBAR_COLLAPSE_ONE_LEVEL => Box::new(CollapseSidebarLevel),
@@ -286,7 +299,11 @@ pub fn ui_action(index: usize) -> Box<dyn gpui::Action> {
         0 => Box::new(CommandPalette),
         1 => Box::new(ToggleTheme),
         2 => Box::new(OpenMirrorWindow),
-        _ => Box::new(RevealInFiles),
+        3 => Box::new(RevealInFiles),
+        4 => Box::new(crate::image_view::ZoomIn),
+        5 => Box::new(crate::image_view::ZoomOut),
+        6 => Box::new(crate::image_view::ActualSize),
+        _ => Box::new(crate::image_view::FitToWindow),
     }
 }
 
@@ -341,6 +358,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
     cx.bind_keys(bindings);
     crate::visual::bind(cx);
     crate::files_view::bind(cx);
+    crate::image_view::bind(cx);
 }
 
 #[cfg(test)]

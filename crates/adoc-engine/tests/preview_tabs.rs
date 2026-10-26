@@ -83,7 +83,13 @@ fn open_paths(engine: &Engine) -> Vec<PathBuf> {
     engine
         .tab_order()
         .iter()
-        .map(|id| engine.document(*id).unwrap().path.clone())
+        .map(|item| {
+            engine
+                .document(item.document().unwrap())
+                .unwrap()
+                .path
+                .clone()
+        })
         .collect()
 }
 
@@ -202,7 +208,7 @@ fn keep_open_promotes_the_tab_in_place() {
         .invoke(ids::DOCUMENT_KEEP_OPEN, CommandArgs::Document(installation))
         .unwrap();
     assert!(!engine.is_preview(installation));
-    assert!(events(&receiver).contains(&EngineEvent::DocumentKept(installation)));
+    assert!(events(&receiver).contains(&EngineEvent::TabKept(installation.into())));
     assert_eq!(engine.editor_mode(installation), EditorMode::Split);
     assert_eq!(engine.active(), Some(installation));
 
@@ -272,8 +278,8 @@ fn a_replaced_preview_keeps_its_place_among_the_tabs() {
     );
     let events = events(&receiver);
     let replaced = EngineEvent::PreviewTabReplaced {
-        old: installation,
-        new: configuration,
+        old: installation.into(),
+        new: configuration.into(),
     };
     let closed = EngineEvent::DocumentClosed(installation);
     let at = |event: &EngineEvent| events.iter().position(|e| e == event).unwrap();

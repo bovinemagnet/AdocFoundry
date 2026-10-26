@@ -52,7 +52,8 @@ Every answer comes from the engine, and so from `adoc-lang`, exactly as `adoc-ls
 This module is the only place the app uses `lsp-types`; see xref:architecture.adoc[Architecture].
 
 Link detection under the pointer and modifier-click handling live in the editor module.
-Opening a target activates its tab, and an external target such as an image opens in the system's default application.
+Opening a target activates its tab.
+An image target opens in an image tab, and an external target such as an attachment opens in the system's default application.
 
 == Keymap
 
@@ -204,7 +205,8 @@ Replacing the preview tab reads the new file first, so a file that cannot be rea
 The new document takes the old one's place in the tab order, the engine emits `EngineEvent::PreviewTabReplaced { old, new }` and then closes the old one.
 Close Left and Close Right follow the tab order.
 Only a front end that shows tabs calls `Engine::enable_preview_tabs`: the app does in `AppState::new`, so the CLI, the language server and the MCP server keep every document they open.
-In the app, `WorkspaceView::open_at` takes an `OpenDisposition`, and `replace_tab` moves the new page's tab into the old one's slot.
+In the app, `WorkspaceView::open_at` takes an `OpenDisposition` and returns the opened `TabItem`, and `replace_tab` moves the new tab into the old one's slot.
+The workspace's tabs are `TabView::{Editor, Image}`, following the engine's `TabItem`s.
 
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.
@@ -227,11 +229,35 @@ The Files view is the `FilesView` entity in `files_view.rs`.
 Its row ids are the root plus the native path, and a map from id to row holds the exact path.
 It holds the expanded folders, the placeholder note rows ("Loading…", "Empty folder" and the failures), Reveal in Files (`reveal`, with `forced` paths shown though excluded) and the context menus.
 It asks the engine for a folder's listing with `Engine::request_directory` when the folder is opened, and draws `Engine::directory(dir)`.
-`opens_externally` lists the image extensions and `pdf`, the only extensions a click or Space hands to `open_with_system`.
+`opens_externally` lists `pdf` only, the one extension a click or Space hands to `open_with_system`.
+Images go to the engine's `open_item`, which opens them in an image tab.
 Any other file is opened as text through the engine, which refuses a file that is binary or not UTF-8, so selecting a file can never run or install it.
 A symbolic link is never handed to the system by a click; Open Externally in the context menu is the one way to open any other file in the system's application.
 Space is bound to `OpenFileEntry` in the `FilesTree` key context.
 The editor's highlighting comes from `editor::language::for_document`: AsciiDoc for pages, gpui-component's grammar named by the file's extension, or plain text.
+
+[[image-viewer]]
+== The image viewer
+
+`image_decode.rs` is pure and needs no display, and has its own unit tests.
+`decode_file(path, Limits)` returns `Decoded { info, pixels }`, where `info` is an `ImageInfo { format, width, height, file_bytes, intrinsic, has_alpha }` and `pixels` are BGRA.
+Raster formats are decoded with the `image` crate, at the version GPUI uses.
+The limits are checked from the header before decoding, and the allocation is capped.
+SVG is rendered with `resvg`, also at GPUI's version, with an `ImageHrefResolver` that refuses every href that is not a `data:` URI, so a file can load no other file or address.
+System fonts are loaded once, for SVG text.
+Failures are a `DecodeError`: `Unreadable`, `Unsupported`, `Corrupt` or `TooLarge`.
+The file's content, not its extension, decides the format.
+
+`image_view.rs` holds `ImageView`, which decodes on a background task.
+Each load has a generation, and a result from an older generation is dropped.
+A replaced or closed image is released from the GPU with `drop_image`.
+`Zoom` is `Initial`, `Fit` or `Scale`.
+`Initial` shows the image whole and never above actual size, `Fit` follows the canvas, and `Scale` is a chosen factor that survives resizing.
+Its key context is `ImageViewer`, which carries the zoom keys.
+A failed reload keeps the last pixels and shows a banner with Retry.
+
+The fixture `tests/fixtures/image-viewer` is an Antora component with a PNG, a JPEG with EXIF orientation, a GIF, a WebP, a BMP, an ICO, a TIFF, an SVG, a corrupt PNG, a text file named `.png` and a HEIC stand-in.
+The app's image tests are in `src/ui_tests.rs`.
 
 == Change markers and the Changes panel
 
