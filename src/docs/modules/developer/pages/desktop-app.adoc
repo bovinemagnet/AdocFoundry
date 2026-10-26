@@ -223,6 +223,16 @@ Keys never use row numbers.
 A node's tree item id is its key followed by its target.
 `WorkspaceView` resolves the nodes before showing them, so a rebuilt tree never flashes fully open, records `TreeEvent::Expanded` and `TreeEvent::Collapsed`, and shows a panel again on `ExpansionChanged`, keeping the selection or its nearest shown ancestor.
 
+The Files view is the `FilesView` entity in `files_view.rs`.
+Its row ids are the root plus the native path, and a map from id to row holds the exact path.
+It holds the expanded folders, the placeholder note rows ("Loading…", "Empty folder" and the failures), Reveal in Files (`reveal`, with `forced` paths shown though excluded) and the context menus.
+It asks the engine for a folder's listing with `Engine::request_directory` when the folder is opened, and draws `Engine::directory(dir)`.
+`opens_externally` lists the image extensions and `pdf`, the only extensions a click or Space hands to `open_with_system`.
+Any other file is opened as text through the engine, which refuses a file that is binary or not UTF-8, so selecting a file can never run or install it.
+A symbolic link is never handed to the system by a click; Open Externally in the context menu is the one way to open any other file in the system's application.
+Space is bound to `OpenFileEntry` in the `FilesTree` key context.
+The editor's highlighting comes from `editor::language::for_document`: AsciiDoc for pages, gpui-component's grammar named by the file's extension, or plain text.
+
 == Change markers and the Changes panel
 
 `src/editor/changes.rs` paints the source editor's markers over the editor.

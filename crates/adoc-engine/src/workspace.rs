@@ -23,6 +23,11 @@ use crate::{Engine, EngineError, EngineEvent, TextEdit};
 pub const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
 
 pub(crate) enum WorkerMessage {
+    DirectoryListed {
+        request: u64,
+        dir: PathBuf,
+        listing: crate::Listing,
+    },
     Indexed {
         roots: Vec<PathBuf>,
         state: Box<WorkspaceState>,
@@ -163,6 +168,7 @@ impl Engine {
             .set_workspace_root(self.roots.first().map(PathBuf::as_path));
         self.reload_settings()?;
         self.open_expansion();
+        self.files.clear();
         self.watcher = match FileWatcher::start(&self.roots) {
             Ok(watcher) => Some(watcher),
             Err(error) => {
@@ -268,6 +274,11 @@ impl Engine {
     fn apply_worker_message(&mut self, message: WorkerMessage) {
         self.workers_running = self.workers_running.saturating_sub(1);
         match message {
+            WorkerMessage::DirectoryListed {
+                request,
+                dir,
+                listing,
+            } => self.directory_listed(request, dir, listing),
             WorkerMessage::Indexed {
                 roots,
                 state,
@@ -283,7 +294,7 @@ impl Engine {
                 let open: Vec<_> = self
                     .documents
                     .values()
-                    .filter(|document| !document.untitled)
+                    .filter(|document| document.indexed())
                     .map(|document| (document.path.clone(), document.parsed.clone()))
                     .collect();
                 for (path, parsed) in open {
@@ -395,6 +406,8 @@ impl Engine {
             .filter(|(path, _)| !metadata.contains(path))
             .collect();
 
+        let listed: Vec<PathBuf> = ready.iter().map(|(path, _)| path.clone()).collect();
+        self.directories_changed(&listed);
         let mut reindex = false;
         for (path, change) in &ready {
             if *change == Change::Directory {

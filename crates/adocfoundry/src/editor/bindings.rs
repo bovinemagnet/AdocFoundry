@@ -25,6 +25,7 @@ actions!(
         CollapseSidebarLevel,
         ResetSidebar,
         SidebarMenu,
+        RevealInFiles,
         Undo,
         Redo,
         GoToDefinition,
@@ -102,6 +103,7 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
     ("Command Palette", "secondary-shift-p"),
     ("Toggle Light/Dark Theme", "secondary-k secondary-t"),
     ("Open Read-Only Window", "secondary-k secondary-n"),
+    ("Reveal in Files", ""),
 ];
 
 /// Translates a `cmd-s` style binding to GPUI's platform-neutral form: `cmd` is the platform's
@@ -283,7 +285,8 @@ pub fn ui_action(index: usize) -> Box<dyn gpui::Action> {
     match index {
         0 => Box::new(CommandPalette),
         1 => Box::new(ToggleTheme),
-        _ => Box::new(OpenMirrorWindow),
+        2 => Box::new(OpenMirrorWindow),
+        _ => Box::new(RevealInFiles),
     }
 }
 
@@ -337,6 +340,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
     ));
     cx.bind_keys(bindings);
     crate::visual::bind(cx);
+    crate::files_view::bind(cx);
 }
 
 #[cfg(test)]

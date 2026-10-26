@@ -4,6 +4,7 @@
 
 mod app;
 mod editor;
+mod files_view;
 mod menus;
 mod mirror_view;
 mod preview;

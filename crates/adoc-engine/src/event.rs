@@ -27,6 +27,8 @@ pub enum EngineEvent {
     /// A bulk operation opened or closed branches of a sidebar tree; see
     /// `Engine::branch_expanded`.
     ExpansionChanged(crate::SidebarPanel),
+    /// A folder's listing for the Files view is ready, or changed; see `Engine::directory`.
+    DirectoryListed(PathBuf),
     /// The file behind an open document was moved, by a rename or its undo.
     DocumentMoved {
         id: DocumentId,

@@ -8,6 +8,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - An application menu: a ☰ button at the left of the title bar opens into File, Edit, Format, View, Go, Git and Help menus, as in Zed (#116).
 - Preview tabs: browsing to a page shows it in one reusable, italic preview tab until it is edited, saved, double-clicked or kept with Keep Open; `[editor] preview_tabs = false` keeps every page open as before (#117).
+- A Files view in the sidebar shows the folders and files on disk beneath each workspace folder, whatever their type, read lazily a folder at a time and updated by the file watcher. Text files that are not AsciiDoc open as text, outside the index; images and PDFs open in the system's viewer; other binary files are refused, and open only through Open Externally. Copy Path, Copy Relative Path, Reveal in Finder / File Explorer / File Manager, Show Excluded Files and Reveal in Files (#118).
 - The Navigation and Modules panels remember the branches you open and close, through re-indexing and, for each workspace, across restarts (`[sidebar] remember_expansion`, on by default). Right-clicking either panel offers Expand All, Collapse All, Collapse One Level and Reset to Configured Default (#121).
 
 ### Changed

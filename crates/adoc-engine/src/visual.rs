@@ -750,8 +750,14 @@ fn show(
             .active()
             .ok_or_else(|| EngineError::NotFound("no document is open".to_owned()))?,
     };
-    if engine.document(id).is_none() {
-        return Err(EngineError::UnknownDocument(id));
+    let document = engine
+        .document(id)
+        .ok_or(EngineError::UnknownDocument(id))?;
+    if !document.asciidoc && mode != EditorMode::Source {
+        return Err(EngineError::Refused(format!(
+            "{} is not AsciiDoc, so it has no visual editor",
+            document.path.display()
+        )));
     }
     engine.set_editor_mode(id, mode);
     Ok(CommandOutcome::Done)

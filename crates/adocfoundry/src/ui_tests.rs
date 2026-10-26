@@ -3324,3 +3324,276 @@ fn shift_f10_opens_the_panel_menu(cx: &mut TestAppContext) {
     );
     assert_eq!(rows(&workspace, Modules, &mut cx), modules);
 }
+
+/// A workspace window on a mixed repository, its Files panel shown and its root listed.
+fn files_workspace(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    Entity<crate::files_view::FilesView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    for (path, text) in [
+        ("README.md", "# Readme\n"),
+        (".adocfoundry.toml", "[editor]\n"),
+        ("antora-playbook.yml", "site:\n  title: Docs\n"),
+        ("docs/antora.yml", "name: docs\nversion: ~\n"),
+        ("docs/modules/ROOT/pages/index.adoc", "= Index\n"),
+        (
+            "resources/themes/company-theme.yml",
+            "base:\n  font-size: 10\n",
+        ),
+        ("node_modules/pad/index.js", "\n"),
+    ] {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    std::fs::write(root.join("blob.bin"), [0u8, 159, 146, 150]).unwrap();
+    std::fs::write(root.join("logo.png"), [137u8, 80, 78, 71]).unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx
+            .new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), Vec::new(), window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let files =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_files_for_test(cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        files_rows(&files, cx)
+            .iter()
+            .any(|row| row.ends_with("README.md"))
+    }));
+    (directory, root, app, workspace, files, cx)
+}
+
+fn files_rows(
+    files: &Entity<crate::files_view::FilesView>,
+    cx: &mut VisualTestContext,
+) -> Vec<String> {
+    cx.update(|_, cx| files.read(cx).rows_for_test(cx))
+}
+
+/// The index of the Files row labelled `label`.
+fn files_row(
+    files: &Entity<crate::files_view::FilesView>,
+    label: &str,
+    cx: &mut VisualTestContext,
+) -> usize {
+    let rows = files_rows(files, cx);
+    rows.iter()
+        .position(|row| row.trim_start() == label)
+        .unwrap_or_else(|| panic!("no {label} in {rows:#?}"))
+}
+
+fn click_files_row(
+    files: &Entity<crate::files_view::FilesView>,
+    label: &str,
+    count: usize,
+    cx: &mut VisualTestContext,
+) {
+    let index = files_row(files, label, cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let selector: &'static str = Box::leak(format!("files-row-{index}").into_boxed_str());
+    let position = cx
+        .debug_bounds(selector)
+        .expect("the row is drawn")
+        .center();
+    cx.simulate_mouse_move(position, None, gpui::Modifiers::none());
+    for click in 1..=count {
+        cx.simulate_event(gpui::MouseDownEvent {
+            button: gpui::MouseButton::Left,
+            position,
+            modifiers: gpui::Modifiers::none(),
+            click_count: click,
+            first_mouse: false,
+        });
+        cx.simulate_event(gpui::MouseUpEvent {
+            button: gpui::MouseButton::Left,
+            position,
+            modifiers: gpui::Modifiers::none(),
+            click_count: click,
+        });
+    }
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn files_shows_the_folder_as_it_is_on_disk(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, files, mut cx) = files_workspace(cx);
+    let rows = files_rows(&files, &mut cx);
+    let name = root.file_name().unwrap().to_string_lossy().into_owned();
+    assert_eq!(
+        rows,
+        [
+            name.as_str(),
+            "  docs",
+            "  resources",
+            "  .adocfoundry.toml",
+            "  antora-playbook.yml",
+            "  blob.bin",
+            "  logo.png",
+            "  README.md",
+        ],
+        "folders first; dotfiles shown; node_modules excluded"
+    );
+
+    // Opening a folder lists it, and only it.
+    click_files_row(&files, "docs", 1, &mut cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx).contains(&"    antora.yml".to_owned())
+    }));
+    let rows = files_rows(&files, &mut cx);
+    assert!(rows.contains(&"    modules".to_owned()), "{rows:#?}");
+    assert!(cx.update(|_, cx| app
+        .read(cx)
+        .engine
+        .directory(&root.join("docs/modules"))
+        .is_none()));
+
+    // Show Excluded Files, from the panel's state.
+    cx.update(|_, cx| files.update(cx, |files, cx| files.toggle_excluded(cx)));
+    cx.run_until_parked();
+    assert!(files_rows(&files, &mut cx).contains(&"  node_modules (excluded)".to_owned()));
+}
+
+#[gpui::test]
+fn files_open_by_their_kind(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, files, mut cx) = files_workspace(cx);
+    let tabs = |cx: &mut VisualTestContext| cx.update(|_, cx| workspace.read(cx).tab_count());
+
+    // A YAML file opens as text, in a preview tab, outside the index.
+    click_files_row(&files, "antora-playbook.yml", 1, &mut cx);
+    let playbook = root.join("antora-playbook.yml");
+    let (asciidoc, preview) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.document_for_path(&playbook).expect("opened");
+        (engine.document(id).unwrap().asciidoc, engine.is_preview(id))
+    });
+    assert!(!asciidoc && preview);
+    assert_eq!(tabs(&mut cx), 1);
+
+    // Double-clicking keeps it open.
+    click_files_row(&files, "antora-playbook.yml", 2, &mut cx);
+    let preview = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine.is_preview(engine.document_for_path(&playbook).unwrap())
+    });
+    assert!(!preview);
+
+    // An image goes to the system, a binary file is refused: neither opens a tab.
+    click_files_row(&files, "logo.png", 1, &mut cx);
+    let opened = crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
+    assert_eq!(opened, [root.join("logo.png")]);
+    click_files_row(&files, "blob.bin", 1, &mut cx);
+    assert_eq!(tabs(&mut cx), 1);
+    assert!(cx.update(|_, cx| app
+        .read(cx)
+        .engine
+        .document_for_path(&root.join("blob.bin"))
+        .is_none()));
+}
+
+#[gpui::test]
+fn reveal_in_files_opens_the_way_to_the_active_page(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, files, mut cx) = files_workspace(cx);
+    let page = root.join("docs/modules/ROOT/pages/index.adoc");
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_at(
+                &page,
+                SourceRange::default(),
+                adoc_engine::OpenDisposition::Persistent,
+                window,
+                cx,
+            );
+        })
+    });
+    cx.run_until_parked();
+    let focused = cx.update(|window, cx| window.focused(cx));
+    cx.dispatch_action(crate::editor::bindings::RevealInFiles);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| files.read(cx).selected_for_test(cx)) == Some(page.clone())
+    }));
+    let rows = files_rows(&files, &mut cx);
+    assert!(
+        rows.contains(&"          index.adoc".to_owned()),
+        "{rows:#?}"
+    );
+    assert_eq!(
+        cx.update(|window, cx| window.focused(cx)),
+        focused,
+        "the editor keeps focus"
+    );
+}
+
+#[gpui::test]
+fn files_menu_copies_paths_and_collapses(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, files, mut cx) = files_workspace(cx);
+    click_files_row(&files, "resources", 1, &mut cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx).contains(&"    themes".to_owned())
+    }));
+    click_files_row(&files, "themes", 1, &mut cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx).contains(&"      company-theme.yml".to_owned())
+    }));
+
+    // Copy Relative Path, the menu's fourth item for a file.
+    let index = files_row(&files, "company-theme.yml", &mut cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let selector: &'static str = Box::leak(format!("files-row-{index}").into_boxed_str());
+    click_selector(selector, gpui::MouseButton::Right, &mut cx);
+    cx.simulate_keystrokes("down down down down enter");
+    cx.run_until_parked();
+    let copied = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(
+        copied.as_deref(),
+        Some(
+            std::path::Path::new("resources/themes/company-theme.yml")
+                .display()
+                .to_string()
+                .as_str()
+        )
+    );
+    assert_eq!(
+        cx.update(|_, cx| workspace.read(cx).tab_count()),
+        0,
+        "nothing opened"
+    );
+
+    // A page opened elsewhere is selected when it is shown, without the panel taking focus.
+    let theme = root.join("resources/themes/company-theme.yml");
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_at(
+                &theme,
+                SourceRange::default(),
+                adoc_engine::OpenDisposition::Persistent,
+                window,
+                cx,
+            );
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| files.read(cx).selected_for_test(cx)),
+        Some(theme)
+    );
+
+    // Collapse All leaves the root's row.
+    cx.update(|_, cx| files.update(cx, |files, cx| files.collapse_all(cx)));
+    cx.run_until_parked();
+    assert_eq!(files_rows(&files, &mut cx).len(), 1);
+}

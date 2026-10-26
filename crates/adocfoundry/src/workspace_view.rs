@@ -76,6 +76,7 @@ const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
 enum SidebarTab {
     Navigation,
     Families,
+    Files,
     Problems,
     Changes,
 }
@@ -100,6 +101,8 @@ pub struct WorkspaceView {
     /// operation opens or closes branches.
     nav_nodes: Vec<sidebar::Node>,
     family_nodes: Vec<sidebar::Node>,
+    /// The Files panel: the folders and files on disk.
+    files: Entity<crate::files_view::FilesView>,
     /// The panel menu opened from the keyboard, and what closes it.
     sidebar_menu: Option<(
         SidebarPanel,
@@ -268,6 +271,11 @@ impl WorkspaceView {
             nav_nodes: Vec::new(),
             family_nodes: Vec::new(),
             sidebar_menu: None,
+            files: {
+                let app = app.clone();
+                let workspace = cx.weak_entity();
+                cx.new(|cx| crate::files_view::FilesView::new(app, workspace, cx))
+            },
             problems: cx.new(|cx| TreeState::new(cx)),
             problem_count: 0,
             problems_stale: true,
@@ -661,6 +669,17 @@ impl WorkspaceView {
         }
         .read(cx);
         state.selected_item().map(|item| item.label.to_string())
+    }
+
+    /// Shows the Files panel and hands it over.
+    #[cfg(test)]
+    pub fn show_files_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::files_view::FilesView> {
+        self.sidebar_tab = SidebarTab::Files;
+        cx.notify();
+        self.files.clone()
     }
 
     /// Shows the Modules panel.
@@ -1233,6 +1252,28 @@ impl WorkspaceView {
         menu.read(cx).focus_handle(cx).focus(window, cx);
         self.sidebar_menu = Some((panel, menu, closed));
         cx.notify();
+    }
+
+    /// Shows the active document in the Files panel, without moving focus from the editor.
+    fn on_reveal_in_files(
+        &mut self,
+        _: &RevealInFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self
+            .active_document(cx)
+            .and_then(|id| self.app.read(cx).engine.document(id))
+            .map(|document| document.path.clone())
+        else {
+            return;
+        };
+        if self.files.update(cx, |files, cx| files.reveal(&path, cx)) {
+            self.sidebar_tab = SidebarTab::Files;
+            cx.notify();
+        } else {
+            crate::files_view::outside_roots(&path, window, cx);
+        }
     }
 
     fn on_keep_open(&mut self, _: &KeepOpen, window: &mut Window, cx: &mut Context<Self>) {
@@ -2296,7 +2337,18 @@ impl WorkspaceView {
     }
 
     /// Source, Visual and Split buttons for the active document.
-    fn render_modes(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_modes(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        // Only an AsciiDoc page has a visual editor.
+        let page = self.active_document(cx).is_none_or(|id| {
+            self.app
+                .read(cx)
+                .engine
+                .document(id)
+                .is_some_and(|document| document.asciidoc)
+        });
+        if !page {
+            return div().into_any_element();
+        }
         let mode = self
             .active_document(cx)
             .map(|id| self.app.read(cx).engine.editor_mode(id))
@@ -2323,6 +2375,7 @@ impl WorkspaceView {
             .child(button("mode-source", "Source", EditorMode::Source, cx))
             .child(button("mode-visual", "Visual", EditorMode::Visual, cx))
             .child(button("mode-split", "Split", EditorMode::Split, cx))
+            .into_any_element()
     }
 
     fn on_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
@@ -2471,6 +2524,7 @@ impl WorkspaceView {
         let mut panels = vec![
             (SidebarTab::Navigation, "Navigation".to_owned()),
             (SidebarTab::Families, "Modules".to_owned()),
+            (SidebarTab::Files, "Files".to_owned()),
             (
                 SidebarTab::Problems,
                 format!("Problems ({})", self.problem_count),
@@ -2499,6 +2553,7 @@ impl WorkspaceView {
             SidebarTab::Families => self
                 .render_tree(&self.families.clone(), "families", cx)
                 .into_any_element(),
+            SidebarTab::Files => self.files.clone().into_any_element(),
             SidebarTab::Problems => self
                 .render_tree(&self.problems.clone(), "problems", cx)
                 .into_any_element(),
@@ -2953,6 +3008,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_collapse_sidebar_level))
             .on_action(cx.listener(Self::on_reset_sidebar))
             .on_action(cx.listener(Self::on_sidebar_menu))
+            .on_action(cx.listener(Self::on_reveal_in_files))
             .on_action(cx.listener(Self::on_undo))
             .on_action(cx.listener(Self::on_redo))
             .on_action(cx.listener(Self::on_toggle_strong))

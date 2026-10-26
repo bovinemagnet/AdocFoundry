@@ -74,10 +74,7 @@ impl Engine {
             }
             return Ok(id);
         }
-        let text = self
-            .file_access
-            .read_to_string(&path)
-            .map_err(|error| EngineError::io(&path, error))?;
+        let text = self.read_text(&path)?;
         let old = self.tabs.preview.take();
         let id = self.insert_document(path, &text, false);
         self.tabs.preview = Some(id);

@@ -63,6 +63,7 @@ pub struct Engine {
     pub(crate) git: crate::git::GitState,
     pub(crate) tabs: crate::tabs::Tabs,
     pub(crate) expansion: crate::expansion::Expansion,
+    pub(crate) files: crate::files::Files,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
 }
@@ -123,6 +124,7 @@ impl Engine {
             git: crate::git::GitState::default(),
             tabs: crate::tabs::Tabs::default(),
             expansion: crate::expansion::Expansion::default(),
+            files: crate::files::Files::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
         }
@@ -137,13 +139,32 @@ impl Engine {
             self.set_active(id);
             return Ok(id);
         }
-        let text = self
-            .file_access
-            .read_to_string(&path)
-            .map_err(|error| EngineError::io(&path, error))?;
+        let text = self.read_text(&path)?;
         let id = self.insert_document(path, &text, false);
         self.set_active(id);
         Ok(id)
+    }
+
+    /// The text of the file at `path`, refusing a file that is not text: one holding NUL bytes,
+    /// or not UTF-8, which is never decoded some other way.
+    pub(crate) fn read_text(&self, path: &Path) -> Result<String, EngineError> {
+        let not_text = || {
+            EngineError::Refused(format!(
+                "{} is not a text file AdocFoundry can edit (it is binary, or not UTF-8)",
+                path.display()
+            ))
+        };
+        let text = self
+            .file_access
+            .read_to_string(path)
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::InvalidData => not_text(),
+                _ => EngineError::io(path, error),
+            })?;
+        if text.contains('\0') {
+            return Err(not_text());
+        }
+        Ok(text)
     }
 
     /// Opens the page at `path` with `text` as its buffer, as a language client opens its own
@@ -189,9 +210,12 @@ impl Engine {
     ) -> DocumentId {
         let id = DocumentId(self.next_document);
         self.next_document += 1;
+        let asciidoc = untitled || adoc_index::is_asciidoc_path(&path);
         let parsed = parse(&uri_for(&path), text).document;
         let diagnostics = if untitled {
             parsed.diagnostics.clone()
+        } else if !asciidoc {
+            Vec::new()
         } else {
             self.workspace
                 .replace_document(path.clone(), parsed.clone());
@@ -208,6 +232,7 @@ impl Engine {
                 parsed,
                 diagnostics,
                 untitled,
+                asciidoc,
             },
         );
         self.tabs.order.push(id);
@@ -219,8 +244,10 @@ impl Engine {
             },
         );
         self.emit(EngineEvent::DocumentOpened(id));
-        if !untitled {
+        if asciidoc && !untitled {
             self.refresh_open_diagnostics(None);
+        }
+        if !untitled {
             self.schedule_hunks(id, false);
         }
         id
@@ -269,7 +296,7 @@ impl Engine {
             self.rendered.layout.pinned = None;
             self.emit(EngineEvent::PreviewLayoutChanged);
         }
-        if !document.untitled {
+        if document.indexed() {
             match fs::read_to_string(&document.path) {
                 Ok(text) => {
                     self.workspace.index.index_source(&document.path, &text);
@@ -335,10 +362,10 @@ impl Engine {
             .get(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         let path = document.path.clone();
-        let text = self
-            .file_access
-            .read_to_string(&path)
-            .map_err(|error| EngineError::io(&path, error))?;
+        let text = self.read_text(&path)?;
+        let Some(document) = self.documents.get(&id) else {
+            return Err(EngineError::UnknownDocument(id));
+        };
         if document.text != text.as_str() {
             let whole = SourceRange::new(0, document.text.len());
             let group = self.new_group();
@@ -645,8 +672,11 @@ impl Engine {
         let version_after = document.version;
         let path = document.path.clone();
         let untitled = document.untitled;
+        let indexed = document.indexed();
         if untitled {
             document.diagnostics = document.parsed.diagnostics.clone();
+        } else if !indexed {
+            // Text that is not AsciiDoc: nothing to index or diagnose.
         } else if defer_index {
             let deadline = self.clock.now() + INDEX_SETTLE;
             self.pending_index.insert(id, deadline);
@@ -670,7 +700,7 @@ impl Engine {
         }
         if untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
-        } else if !defer_index {
+        } else if indexed && !defer_index {
             self.refresh_open_diagnostics(Some(&path));
         }
         Ok(AppliedEdits {
@@ -741,7 +771,7 @@ impl Engine {
         for document in self
             .documents
             .values_mut()
-            .filter(|document| !document.untitled)
+            .filter(|document| document.indexed())
         {
             let fresh = adoc_lang::diagnostics(&self.workspace, &document.path);
             if fresh != document.diagnostics || changed == Some(document.path.as_path()) {
