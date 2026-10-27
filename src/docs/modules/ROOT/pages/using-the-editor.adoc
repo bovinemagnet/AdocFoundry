@@ -539,7 +539,21 @@ Git::
 Refreshing status, staging, committing, pushing and the remote links.
 
 Help::
-Check for Updates.
+Check for Updates and Show Diagnostics.
+
+[[reporting-a-problem]]
+== Reporting a problem
+
+*Help > Show Diagnostics*, also in the command palette as *Show Diagnostics*, opens a dialog with a report for an issue.
+It lists the version, the system, the PDF theme and fonts, the tools it found and the settings in force, and holds no page content.
+Choose *Copy* to put the report on the clipboard, then paste it into the issue.
+
+The application's report is the one `adocfoundry-cli doctor` prints, with a Display section added.
+That section gives the graphics backend (Metal on macOS, DirectX 11 on Windows, wgpu on Linux), the GPU where the platform reports one, the display server on Linux (Wayland or X11), the scale factor, and whether the editor and interface fonts are installed.
+A font that is not installed is marked `(not installed, so a fallback is used)`.
+
+The tools are asked for their versions in the background, so the dialog appears once they have answered.
+See xref:command-line.adoc#doctor[doctor] for the sections and what they mean.
 
 == Themes
 

@@ -171,7 +171,13 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::NAVIGATE_COPY_REMOTE_LINK),
         ],
     ),
-    ("Help", &[Command(ids::APP_CHECK_FOR_UPDATES)]),
+    (
+        "Help",
+        &[
+            Command(ids::APP_CHECK_FOR_UPDATES),
+            Command(ids::APP_DIAGNOSTICS),
+        ],
+    ),
 ];
 
 /// Commands with an action that no menu offers: overwriting is offered only when a file changed

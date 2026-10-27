@@ -305,3 +305,25 @@ fn corpus_themes_match_asciidoctor_pdf() {
     }
     assert!(checked > 0, "no themes in {themes}");
 }
+
+#[test]
+fn missing_fonts_names_each_font_that_is_not_found() {
+    let found = load_theme(&ThemeSource::File(fixtures().join("acme-theme.yml"))).unwrap();
+    assert_eq!(
+        adoc_pdf::missing_fonts(&found, &[], &adoc_core::FileAccess::Any),
+        Vec::<String>::new()
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lost-theme.yml");
+    std::fs::write(
+        &path,
+        "extends: default\nfont:\n  catalog:\n    merge: true\n    Lost:\n      normal: lost.ttf\n",
+    )
+    .unwrap();
+    let lost = load_theme(&ThemeSource::File(path)).unwrap();
+    assert_eq!(
+        adoc_pdf::missing_fonts(&lost, &[], &adoc_core::FileAccess::Any),
+        ["font lost.ttf for Lost not found"]
+    );
+}

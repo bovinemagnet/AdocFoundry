@@ -16,6 +16,7 @@ adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
     [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
+adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
 ----
 
@@ -225,6 +226,101 @@ branch main
 
 If `<root>` is not in a Git repository the command fails with an error and exits with 2.
 The other subcommands do not look at Git.
+
+[[doctor]]
+== doctor
+
+`doctor` prints a report of the program, the system, the PDF setup, the tools it can find and the settings in force.
+Paste it into an issue when reporting a problem.
+
+[source,sh]
+----
+adocfoundry-cli doctor
+adocfoundry-cli doctor docs
+adocfoundry-cli doctor docs --format json
+----
+
+The report reads the user settings file the application reads, `adocfoundry/adocfoundry.toml` in the platform's configuration directory.
+With `<root>`, it also reads that workspace's `.adocfoundry.toml`.
+It holds no page content.
+The command always exits with 0, even when it reports a missing tool or font.
+
+[source,text]
+----
+AdocFoundry diagnostics
+
+Program
+  Version:  adocfoundry-cli 0.3.0
+  Engine:   adoc-engine 0.3.0
+  Build:    release
+  Features: typst, git
+
+System
+  OS:           macOS 26.6.2
+  Architecture: aarch64
+
+PDF
+  Theme:           default (bundled)
+  Fonts directory: none (the bundled fonts only)
+  Font families:   Noto Serif, M+ 1mn
+  Fonts:           all found
+
+Tools
+  asciidoctor: /opt/homebrew/bin/asciidoctor (Asciidoctor 2.0.26 [https://asciidoctor.org])
+  dot:         /opt/homebrew/bin/dot (dot - graphviz version 16.1.0 (20260904.0139))
+  plantuml:    not found on PATH
+  d2:          not found on PATH
+  git:         /usr/bin/git (git version 2.54.0)
+
+Settings
+  User settings:      /Users/you/Library/Application Support/adocfoundry/adocfoundry.toml (not found)
+  Workspace settings: docs/.adocfoundry.toml (not found)
+  Workspace root:     docs
+  Git:                on
+  Warnings:           none
+----
+
+The sections, in order, are as follows.
+
+Program::
+The version of the program and of the engine, whether the build is `debug` or `release`, and the features it was built with (`typst` and `git`).
+
+System::
+The operating system and its version, and the architecture.
+
+PDF::
+The theme, resolved through `[pdf] themes_dir`, which reads `default (bundled)` or the theme file's path; the `[pdf] fonts_dir`, or `none (the bundled fonts only)`; and the font families the theme names.
+Either `Fonts: all found` follows, or one `Missing` line for each font that is not found, such as `font X for Y not found`.
+Any warnings from loading the theme appear as `Theme warning` lines.
+
+Tools::
+`asciidoctor`, `dot` (Graphviz), `plantuml`, `d2` and `git`.
+Each shows its path and the first line of its version output.
+A tool that is missing shows why: `not found on PATH`, or, for a setting that points nowhere, `not found: [tools] asciidoctor is X, which is not a file`.
+A tool that does not answer within 15 seconds is reported as not answering.
+`[tools] asciidoctor` and `[tools] git` are honoured, and the diagram tools are looked up on `PATH`.
+
+Settings::
+The paths of the user and workspace settings files, each marked `(not found)` when missing, the workspace roots, whether Git is on or off, and each settings warning, or `Warnings: none`.
+
+`--format json` prints one object of sections, each a title and its labelled lines.
+
+[source,json]
+----
+{
+  "sections": [
+    {
+      "title": "Program",
+      "lines": [
+        { "label": "Version", "value": "adocfoundry-cli 0.3.0" }
+      ]
+    }
+  ]
+}
+----
+
+The desktop application shows the same report, with its display details added.
+See xref:using-the-editor.adoc#reporting-a-problem[Reporting a problem].
 
 == Using it in CI
 

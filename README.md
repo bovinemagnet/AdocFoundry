@@ -213,6 +213,7 @@ adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
     [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
+adocfoundry-cli doctor [<root>] [--format text|json]
 ```
 
 `check` prints the workspace's diagnostics (text: `path:line:col: severity code message`) and exits with 1 when any meets `--fail-on` (default `error`), which suits CI. It reports exactly what the editor and `adoc-ls` report.
@@ -222,6 +223,8 @@ adocfoundry-cli git-status <root> [--format text|json]
 `pdf` exports a page to `<page>.pdf` beside it, or a component directory (or `--component`) as a book to `<name>.pdf`, and prints the file and its page count. Warnings print as `path:line: warning: message`; the exit code is 1 when the export fails. `--typst` also writes the generated Typst, for inspection.
 
 `git-status` prints the branch of the repository holding the root and its changed AsciiDoc files as `git status --short` does, with the number of changed line runs against `HEAD` in each (`branch main`, ` M docs/page.adoc (2 changed)`); `--format json` gives the same as an object. The other commands do not look at Git.
+
+`doctor` prints a report to paste into an issue: the version and build, the OS and architecture, the PDF theme and whether its fonts are found, each optional tool (`asciidoctor`, `dot`, `plantuml`, `d2`, `git`) with its path and version or why it is missing, and the settings files the app reads (and `<root>`'s, when given) with any warnings. In the app, Help › Show Diagnostics shows the same report, adding the graphics backend and the editor and interface fonts, with a Copy button. The bug report template asks for it.
 
 ## Language server
 

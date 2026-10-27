@@ -3,6 +3,7 @@
 //! `adocfoundry [folder [file…]]` opens the folder as a workspace and the files in tabs.
 
 mod app;
+mod diagnostics;
 mod editor;
 mod files_view;
 mod image_decode;

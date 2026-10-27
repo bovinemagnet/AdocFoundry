@@ -67,6 +67,14 @@ Open `tests/fixtures/image-viewer` as the workspace. Check on macOS, Windows and
 - [ ] Ctrl/Cmd-clicking `image::logo.png[]` in `index.adoc` opens the image; Back returns to the page.
 - [ ] With an image active, the Source, Visual and Split buttons are gone, and Save and the formatting commands do nothing; Save All saves edited pages and leaves the image file unchanged.
 
+## Doctor report (#105)
+
+Check on macOS, Windows and Linux (Wayland and X11), from a package, not a source build.
+
+- [ ] `adocfoundry-cli doctor` and `adocfoundry-cli doctor <workspace>` print every section; the OS line names the system and its version; each installed tool shows its path and version, and a missing one says "not found on PATH".
+- [ ] With `[tools] asciidoctor` set to a file that does not exist, the report says so; with `[pdf] fonts_dir` pointing nowhere and a theme that names fonts there, the PDF section lists the missing fonts.
+- [ ] Help › Show Diagnostics opens the report without freezing the window while the tools answer; the Display section names the graphics backend (and the GPU and display server on Linux) and whether the editor font is installed; Copy puts the whole report on the clipboard, and it pastes into a new GitHub issue's Diagnostics field intact.
+
 ## Results
 
 | Date | Build | Platform | Result |

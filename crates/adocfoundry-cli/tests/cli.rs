@@ -416,3 +416,36 @@ fn copy_tree(from: &Path, to: &Path) {
         }
     }
 }
+
+#[test]
+fn doctor_reports_the_program_tools_and_settings() {
+    let output = cli(&["doctor", "tests/fixtures/simple", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let titles: Vec<&str> = report["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|section| section["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["Program", "System", "PDF", "Tools", "Settings"]);
+    assert_eq!(
+        report["sections"][0]["lines"][0]["value"],
+        format!("adocfoundry-cli {}", env!("CARGO_PKG_VERSION"))
+    );
+    let tools: Vec<&str> = report["sections"][3]["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(tools, ["asciidoctor", "dot", "plantuml", "d2", "git"]);
+
+    let text = cli(&["doctor"]);
+    assert!(text.status.success());
+    assert!(stdout(&text).starts_with("AdocFoundry diagnostics\n"));
+}
