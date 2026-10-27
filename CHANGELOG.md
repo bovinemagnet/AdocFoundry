@@ -20,6 +20,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Fixed
 
 - In the source editor, inline highlighting (bold, italics, links, cross references) stopped partway down longer pages: each line of a paragraph was highlighted again on its own, using up the editor's limit on highlighted regions. A `[source]` paragraph is no longer highlighted as prose either (#130).
+- Inline highlighting now reaches about three times as far down long pages: only text holding inline markup goes to the inline grammar, so plain prose no longer counts towards that limit (#131).
 - Source highlighting now handles text after a block in a table cell, comments inside sections, links followed by `]`, and attributes or titles above a comment, from the latest AsciiDoc grammar (#129).
 
 ## 0.3.0 — 2026-10-25

@@ -107,27 +107,113 @@ mod tests {
         assert!(INJECTIONS.contains(&format!("\"{ASCIIDOC_INLINE}\"")));
     }
 
+    // Every piece of prose carries markup, as only prose with markup is injected.
     const PAGE: &str = "\
-= Page Title
+= Page Title in *bold*
 
-== Section One
+== Section One in _italics_
 
-A paragraph's first line
-and its second line.
+A paragraph's first line in `code`
+and its second line, with ^super^ script.
 
-* an item
-. a step
+Plain words and nothing else.
 
-NOTE: an admonition
+* an item for <<anchor>>
+. a step to xref:other.adoc[]
 
-.A block title
+NOTE: an admonition about {product}
+
+.A block title at https://example.com
 |===
-| a cell
+| a cell with #highlight#
 |===
 
 [source,rust]
 let starred = *value*;
 ";
+
+    /// One of each way inline markup can begin, each of which the inline grammar highlights.
+    const MARKUP: &[&str] = &[
+        "*strong*",
+        "**un**constrained",
+        "_italic_",
+        "`monospace`",
+        "#highlight#",
+        "^super^",
+        "~sub~",
+        "+passthrough+",
+        "pass:[text]",
+        "<<anchor>>",
+        "<<anchor,label>>",
+        "xref:page.adoc[label]",
+        "[.role]#text#",
+        "kbd:[Ctrl+C]",
+        "footnote:[a note]",
+        "stem:[x^2]",
+        "((term))",
+        "(((primary,secondary)))",
+        "[[id]]",
+        "{product}",
+        "{counter:step}",
+        "line +\nbreak",
+        "\\*escaped*",
+        "(C)",
+        "(R)",
+        "(TM)",
+        "...",
+        "->",
+        "=>",
+        "<-",
+        "<=",
+        "\"`double`\"",
+        "'`single`'",
+        "https://example.com",
+        "https://example.com[label]",
+        "www.example.com",
+        "user@example.com",
+    ];
+
+    fn highlighted_by_the_inline_grammar(text: &str) -> bool {
+        use tree_sitter::StreamingIterator;
+        let inline = tree_sitter_asciidoc_inline::language();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&inline).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+        let query = tree_sitter::Query::new(&inline, INLINE_HIGHLIGHTS).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut captures = cursor.captures(&query, tree.root_node(), text.as_bytes());
+        captures.next().is_some()
+    }
+
+    #[test]
+    fn every_kind_of_markup_is_highlighted_by_the_inline_grammar() {
+        for markup in MARKUP {
+            assert!(
+                highlighted_by_the_inline_grammar(&format!("A {markup} here.\n")),
+                "{markup:?} is not inline markup",
+            );
+        }
+        assert!(!highlighted_by_the_inline_grammar(
+            "Plain words and nothing else.\n"
+        ));
+    }
+
+    // Prose without markup has nothing to highlight, so injecting it would only spend
+    // gpui-component's limit on injections per document.
+    #[test]
+    fn prose_with_markup_is_injected_and_plain_prose_is_not() {
+        for markup in MARKUP {
+            let page = format!("A paragraph with {markup} in it.\n");
+            assert!(
+                !inline_injections(&page).is_empty(),
+                "{markup:?} is not injected",
+            );
+        }
+        let at = PAGE.find("Plain words").unwrap();
+        assert!(!inline_injections(PAGE)
+            .iter()
+            .any(|range| range.start <= at && at < range.end));
+    }
 
     /// The byte ranges the block grammar's injections hand to the inline grammar.
     fn inline_injections(text: &str) -> Vec<std::ops::Range<usize>> {
