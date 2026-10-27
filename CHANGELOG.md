@@ -17,6 +17,10 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - Navigation and Modules now open two levels deep instead of fully. `[sidebar.navigation]` and `[sidebar.modules]` `default_expansion` set the depth for each panel; `"all"` restores fully open trees (#121).
 
+### Fixed
+
+- In the source editor, inline highlighting (bold, italics, links, cross references) stopped partway down longer pages: each line of a paragraph was highlighted again on its own, using up the editor's limit on highlighted regions. A `[source]` paragraph is no longer highlighted as prose either.
+
 ## 0.3.0 — 2026-10-25
 
 ### Added
