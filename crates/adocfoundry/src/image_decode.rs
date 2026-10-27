@@ -198,7 +198,7 @@ fn decode_raster(
     let mut image = DynamicImage::from_decoder(decoder).map_err(corrupt)?;
     image.apply_orientation(orientation);
     let mut pixels = image.into_rgba8();
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     Ok(Decoded {
@@ -268,7 +268,7 @@ fn decode_svg(bytes: &[u8], file_bytes: u64, limits: Limits) -> Result<Decoded, 
     let mut pixels = RgbaImage::from_raw(width, height, pixmap.take())
         .ok_or_else(|| DecodeError::Corrupt("the drawing has the wrong size".to_owned()))?;
     // Premultiplied RGBA to straight BGRA.
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
         let alpha = u16::from(pixel[3]);
         for channel in &mut pixel[..3] {

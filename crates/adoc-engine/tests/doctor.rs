@@ -69,7 +69,7 @@ fn the_report_names_the_build_the_system_and_the_settings() {
         settings.value("User settings"),
         Some(user.display().to_string().as_str())
     );
-    let workspace = directory.path().join("docs/.adocfoundry.toml");
+    let workspace = directory.path().join("docs").join(".adocfoundry.toml");
     assert_eq!(
         settings.value("Workspace settings"),
         Some(workspace.display().to_string().as_str())
@@ -166,7 +166,7 @@ fn the_pdf_section_names_the_theme_and_its_missing_fonts() {
         "",
         "[pdf]\ntheme = \"lost\"\nthemes_dir = \"themes\"\nfonts_dir = \"fonts\"\n",
     );
-    let themes = directory.path().join("docs/themes");
+    let themes = directory.path().join("docs").join("themes");
     fs::create_dir(&themes).unwrap();
     fs::write(
         themes.join("lost-theme.yml"),
@@ -184,7 +184,8 @@ fn the_pdf_section_names_the_theme_and_its_missing_fonts() {
         Some(
             directory
                 .path()
-                .join("docs/fonts")
+                .join("docs")
+                .join("fonts")
                 .display()
                 .to_string()
                 .as_str()
