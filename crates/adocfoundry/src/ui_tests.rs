@@ -20,6 +20,9 @@ fn fixture(name: &str) -> PathBuf {
 fn init(cx: &mut TestAppContext) {
     cx.update(|cx| {
         gpui_component::init(cx);
+        // Dialogs and sheets then open at rest, rather than moving on the wall clock while a
+        // test clicks them.
+        cx.set_reduce_motion(true);
         crate::editor::language::register();
     });
 }
@@ -296,13 +299,16 @@ fn ime_composition_commits_the_composed_text(cx: &mut TestAppContext) {
     assert!(cx.update(|_, cx| app.read(cx).engine.document(document).unwrap().dirty));
 }
 
-/// Drains the engine until `done` holds: preview rendering runs on worker threads.
+/// Drains the engine until `done` holds: preview rendering runs on worker threads. The
+/// deadline is generous because a book's PDF export, alone under a second, can take several
+/// times as long while the other tests run alongside it.
 fn drain_until(
     app: &Entity<AppState>,
     cx: &mut VisualTestContext,
     mut done: impl FnMut(&mut VisualTestContext) -> bool,
 ) -> bool {
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
         cx.run_until_parked();
         if done(cx) {
@@ -4163,4 +4169,25 @@ fn diagnostics_show_the_report_and_copy_it(cx: &mut TestAppContext) {
     ] {
         assert!(copied.contains(line), "{line:?} is not in\n{copied}");
     }
+}
+
+// A dialog that slides in on the wall clock moves between the frame a click is aimed at and
+// the frame its release lands on, so a slow test run would miss the button.
+#[gpui::test]
+fn dialogs_take_clicks_however_late_they_come(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+
+    cx.dispatch_action(crate::editor::bindings::ShowDiagnostics);
+    cx.run_until_parked();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    click("diagnostics-copy", &mut cx);
+    assert!(cx
+        .update(|_, cx| cx.read_from_clipboard())
+        .is_some_and(|item| item.text().is_some()));
 }
