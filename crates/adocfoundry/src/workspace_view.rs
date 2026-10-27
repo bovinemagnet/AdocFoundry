@@ -2325,6 +2325,27 @@ impl WorkspaceView {
         }
     }
 
+    fn on_show_diagnostics(
+        &mut self,
+        _: &ShowDiagnostics,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(CommandOutcome::Diagnostics(doctor)) =
+            self.invoke(ids::APP_DIAGNOSTICS, CommandArgs::None, window, cx)
+        {
+            let font = self
+                .app
+                .read(cx)
+                .engine
+                .settings()
+                .editor
+                .font_family
+                .clone();
+            crate::diagnostics::show(*doctor, &font, window, cx);
+        }
+    }
+
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::External(path)) =
             self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
@@ -3189,6 +3210,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_check_for_updates))
+            .on_action(cx.listener(Self::on_show_diagnostics))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_mirror))

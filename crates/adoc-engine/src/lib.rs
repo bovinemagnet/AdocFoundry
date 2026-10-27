@@ -8,6 +8,7 @@ mod command;
 pub mod commands;
 #[cfg(feature = "git")]
 mod commit;
+mod doctor;
 mod document;
 mod edit;
 mod engine;
@@ -46,6 +47,7 @@ pub use command::{
     Command, CommandArgs, CommandCategory, CommandContext, CommandId, CommandOutcome,
     CommandRegistry, CommandSpec, RegistryError,
 };
+pub use doctor::{Doctor, DoctorLine, DoctorReport, DoctorSection, PROBE_TIMEOUT};
 pub use document::{DocumentId, OpenDocument};
 pub use edit::TextEdit;
 pub use engine::{Engine, INDEX_SETTLE};

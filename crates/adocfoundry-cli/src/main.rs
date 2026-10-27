@@ -9,6 +9,7 @@
 //!     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
 //!     [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 //! adocfoundry-cli git-status <root> [--format text|json]
+//! adocfoundry-cli doctor [<root>] [--format text|json]
 //! adocfoundry-cli --version
 //! ```
 
@@ -35,6 +36,7 @@ const USAGE: &str = "usage:
       [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
       [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
   adocfoundry-cli git-status <root> [--format text|json]
+  adocfoundry-cli doctor [<root>] [--format text|json]
   adocfoundry-cli --version";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -69,6 +71,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         "render" => render(rest),
         "pdf" => pdf(rest),
         "git-status" => git_status(rest),
+        "doctor" => doctor(rest),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
 }
@@ -452,4 +455,36 @@ fn change_letter(name: &str) -> char {
         "conflicted" => 'U',
         _ => ' ',
     }
+}
+
+/// The doctor report, for support requests: with the user settings file the app reads, and
+/// `root`'s workspace settings when given.
+fn doctor(arguments: &[String]) -> Result<ExitCode, String> {
+    let (positional, options) = parse_options(arguments, &["format"])?;
+    let json = match option(&options, "format").unwrap_or("text") {
+        "text" => false,
+        "json" => true,
+        other => return Err(format!("unknown format `{other}`")),
+    };
+    let user_file = Settings::default_user_file();
+    let settings = Settings::load(user_file.as_deref(), None).map_err(|error| error.to_string())?;
+    let mut engine = Engine::new(settings);
+    match positional.as_slice() {
+        [] => {}
+        [root] => engine
+            .open_workspace(vec![adoc_index::normalize_path(Path::new(root))])
+            .map_err(|error| error.to_string())?,
+        _ => return Err(USAGE.to_owned()),
+    }
+    let report = engine
+        .doctor()
+        .program("adocfoundry-cli", env!("CARGO_PKG_VERSION"))
+        .run();
+    if json {
+        let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+        println!("{output}");
+    } else {
+        print!("{}", report.to_text());
+    }
+    Ok(ExitCode::SUCCESS)
 }

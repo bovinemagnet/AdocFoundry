@@ -622,6 +622,23 @@ The CLI prints these, and `adoc-mcp` returns them, so the two cannot drift.
 
 `adoc-mcp` may depend only on the engine and `adoc-core`, so what it needs from the catalog comes through these methods.
 
+[[the-doctor]]
+== The doctor
+
+`doctor.rs` builds the support report that `adocfoundry-cli doctor` prints and the app's *Show Diagnostics* dialog shows.
+`Engine::doctor()` gathers, on the engine thread, what the report needs into a `Doctor`: the tool settings, the theme source and fonts directories as PDF export resolves them without a page, and the settings files and their warnings.
+
+A front end adds what only it knows with `Doctor::program(name, version)` and `Doctor::add_section(DoctorSection)`.
+`Doctor::search_path` overrides `PATH`, for tests.
+
+`Doctor::run()` can be called off the engine thread.
+It runs each tool's version command in parallel, each with a timeout of 15 seconds (`PROBE_TIMEOUT`), checks the theme's fonts with `adoc_pdf::missing_fonts`, and returns a `DoctorReport`.
+A report is sections of labelled lines; `to_text()` aligns them and it serialises to JSON.
+It holds no page content, and the engine makes no network request.
+
+The command `app.diagnostics` (*Show Diagnostics*, in the Help category) returns `CommandOutcome::Diagnostics(Box<Doctor>)`, leaving the front end to run it.
+See xref:desktop-app.adoc#diagnostics[Diagnostics] for the app's side.
+
 == Engine features
 
 The engine has two Cargo features, `typst` and `git`.

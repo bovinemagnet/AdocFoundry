@@ -1,0 +1,30 @@
+name: Bug report
+description: Something in AdocFoundry does not work as it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps, and a page or workspace that shows it if you can share one.
+      placeholder: |
+        1. Open …
+        2. …
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        In the app, choose Help › Show Diagnostics and press Copy. Without the app, run
+        `adocfoundry-cli doctor <workspace folder>`. Paste the report here; it holds the version,
+        the platform, the optional tools and the settings files, but no page content.
+      render: text
+    validations:
+      required: true

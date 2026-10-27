@@ -584,6 +584,17 @@ impl Engine {
         attributes: &BTreeMap<String, String>,
         page: Option<&Path>,
     ) -> Result<LoadedTheme, String> {
+        let source = self.theme_source(args.theme.as_deref(), attributes, page);
+        adoc_pdf::load_theme_within(&source, &self.file_access).map_err(|error| error.to_string())
+    }
+
+    /// Where the theme [`Engine::export_theme`] loads comes from.
+    pub(crate) fn theme_source(
+        &self,
+        theme: Option<&str>,
+        attributes: &BTreeMap<String, String>,
+        page: Option<&Path>,
+    ) -> ThemeSource {
         let page_dir = page.and_then(Path::parent);
         let root = self.roots.first().map(PathBuf::as_path);
         let themes_dir = attributes
@@ -596,13 +607,11 @@ impl Engine {
                     .as_deref()
                     .map(|dir| resolve(dir, root))
             });
-        let name = args
-            .theme
-            .clone()
+        let name = theme
+            .map(str::to_owned)
             .or_else(|| attributes.get("pdf-theme").cloned())
             .unwrap_or_else(|| self.settings.pdf.theme.clone());
-        let source = ThemeSource::named(&name, themes_dir.as_deref());
-        adoc_pdf::load_theme_within(&source, &self.file_access).map_err(|error| error.to_string())
+        ThemeSource::named(&name, themes_dir.as_deref())
     }
 
     fn export_options(
@@ -611,31 +620,7 @@ impl Engine {
         attributes: &BTreeMap<String, String>,
         page: Option<&Path>,
     ) -> PdfOptions {
-        let page_dir = page.and_then(Path::parent);
-        let root = self.roots.first().map(PathBuf::as_path);
-        let mut fonts_dirs: Vec<PathBuf> = match (&args.fonts_dir, attributes.get("pdf-fontsdir")) {
-            (Some(dir), _) => vec![dir.clone()],
-            (None, Some(dirs)) => dirs
-                .split([';', ','])
-                .map(str::trim)
-                .filter(|dir| !dir.is_empty())
-                .map(|dir| {
-                    if dir == "GEM_FONTS_DIR" {
-                        PathBuf::from(dir)
-                    } else {
-                        resolve(dir, page_dir)
-                    }
-                })
-                .collect(),
-            (None, None) => self
-                .settings
-                .pdf
-                .fonts_dir
-                .as_deref()
-                .map(|dir| vec![resolve(dir, root)])
-                .unwrap_or_default(),
-        };
-        fonts_dirs.push(PathBuf::from("GEM_FONTS_DIR"));
+        let fonts_dirs = self.fonts_dirs(args.fonts_dir.as_deref(), attributes, page);
         let mut standards = self.settings.pdf.standards.clone();
         for standard in &args.standards {
             if !standards.contains(standard) {
@@ -661,6 +646,42 @@ impl Engine {
             date: None,
             access: self.file_access.clone(),
         }
+    }
+
+    /// The directories the theme's fonts are looked for in: the export's own, else the page's
+    /// `pdf-fontsdir`, else `[pdf] fonts_dir`, and the bundled fonts last.
+    pub(crate) fn fonts_dirs(
+        &self,
+        fonts_dir: Option<&Path>,
+        attributes: &BTreeMap<String, String>,
+        page: Option<&Path>,
+    ) -> Vec<PathBuf> {
+        let page_dir = page.and_then(Path::parent);
+        let root = self.roots.first().map(PathBuf::as_path);
+        let mut fonts_dirs: Vec<PathBuf> = match (fonts_dir, attributes.get("pdf-fontsdir")) {
+            (Some(dir), _) => vec![dir.to_path_buf()],
+            (None, Some(dirs)) => dirs
+                .split([';', ','])
+                .map(str::trim)
+                .filter(|dir| !dir.is_empty())
+                .map(|dir| {
+                    if dir == "GEM_FONTS_DIR" {
+                        PathBuf::from(dir)
+                    } else {
+                        resolve(dir, page_dir)
+                    }
+                })
+                .collect(),
+            (None, None) => self
+                .settings
+                .pdf
+                .fonts_dir
+                .as_deref()
+                .map(|dir| vec![resolve(dir, root)])
+                .unwrap_or_default(),
+        };
+        fonts_dirs.push(PathBuf::from("GEM_FONTS_DIR"));
+        fonts_dirs
     }
 
     /// The published address of every page in the catalogue, as Antora lays out a site:

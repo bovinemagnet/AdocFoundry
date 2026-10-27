@@ -4133,3 +4133,34 @@ fn following_an_image_link_shows_the_image(cx: &mut TestAppContext) {
         Some(document)
     );
 }
+
+#[gpui::test]
+fn diagnostics_show_the_report_and_copy_it(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+
+    cx.dispatch_action(crate::editor::bindings::ShowDiagnostics);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(cx.debug_bounds("diagnostics-report").is_some());
+
+    click("diagnostics-copy", &mut cx);
+    let copied = cx
+        .update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+        .unwrap();
+    assert!(copied.starts_with("AdocFoundry diagnostics\n"), "{copied}");
+    for line in [
+        &format!("  Version:  AdocFoundry {}\n", env!("CARGO_PKG_VERSION")),
+        "\nDisplay\n  Graphics:",
+        "  Editor font:",
+        "\nTools\n  asciidoctor:",
+        "\nSettings\n",
+    ] {
+        assert!(copied.contains(line), "{line:?} is not in\n{copied}");
+    }
+}

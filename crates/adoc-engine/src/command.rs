@@ -115,6 +115,9 @@ pub enum CommandOutcome {
     /// The front end is to read the releases feed at this address and hand it to
     /// `Engine::record_update_check`: the engine makes no request itself.
     CheckForUpdates(String),
+    /// What the doctor report needs from the engine, for the front end to complete with
+    /// `Doctor::run`, off its main thread, and show.
+    Diagnostics(Box<crate::Doctor>),
     /// A commit was made; these open documents were saved first.
     Committed {
         commit: String,

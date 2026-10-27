@@ -248,6 +248,13 @@ pub(crate) fn font_set(
     (set, warnings)
 }
 
+/// The fonts `theme` names that cannot be found in `dirs` or the theme's directory, each as the
+/// warning an export gives for it. Empty when every font is found.
+#[must_use]
+pub fn missing_fonts(theme: &LoadedTheme, dirs: &[PathBuf], access: &FileAccess) -> Vec<String> {
+    font_set(theme, dirs, access).1
+}
+
 /// Each catalogue family's line gap (`hhea.lineGap`) as a fraction of the font size, from its
 /// normal face. Prawn's line height includes it; Typst's does not, so the template adds it.
 pub(crate) fn line_gaps(

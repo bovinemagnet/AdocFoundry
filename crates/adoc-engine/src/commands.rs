@@ -47,6 +47,7 @@ pub mod ids {
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
     pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
+    pub const APP_DIAGNOSTICS: CommandId = CommandId::new("app.diagnostics");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
@@ -465,6 +466,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::visual::register_visual(registry);
     crate::tabs::register_tabs(registry);
     crate::images::register_images(registry);
+    crate::doctor::register_doctor(registry);
     crate::expansion::register_expansion(registry);
     #[cfg(feature = "git")]
     {

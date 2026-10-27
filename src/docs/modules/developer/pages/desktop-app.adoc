@@ -259,6 +259,13 @@ A failed reload keeps the last pixels and shows a banner with Retry.
 The fixture `tests/fixtures/image-viewer` is an Antora component with a PNG, a JPEG with EXIF orientation, a GIF, a WebP, a BMP, an ICO, a TIFF, an SVG, a corrupt PNG, a text file named `.png` and a HEIC stand-in.
 The app's image tests are in `src/ui_tests.rs`.
 
+[[diagnostics]]
+== Diagnostics
+
+`src/diagnostics.rs` completes the engine's `app.diagnostics` command, which returns a `Doctor` (see xref:engine.adoc#the-doctor[The doctor]).
+It names the program, adds a Display section that only the app can fill, runs the doctor with `cx.background_spawn` so the probing of tools does not block the window, and shows the result in a dialog with a Copy button.
+The Display section gives the graphics backend, the GPU and display server where the platform reports them, the scale factor, and whether the editor and interface fonts are installed.
+
 == Change markers and the Changes panel
 
 `src/editor/changes.rs` paints the source editor's markers over the editor.

@@ -16,6 +16,7 @@ pub use export::{
     compile, export, render_math, render_math_svg, typeset_pages, typeset_text, PdfDiagnostic,
     PdfError, PdfOutput, PdfSeverity, RenderedMath, TextRun, TypesetPage,
 };
+pub use fonts::missing_fonts;
 
 pub use theme::{
     load_theme, load_theme_within, Color, FontCatalog, FontFaces, FontFile, LoadedTheme,
