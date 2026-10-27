@@ -234,7 +234,9 @@ adocfoundry-cli git-status <root> [--format text|json]
 
 Settings come from the files the app reads: the user settings file and the workspace's `.adocfoundry.toml`. Git is off unless the user settings file sets `[git] enabled = true`.
 
-The Zed extension [zed-asciidoc](https://github.com/bovinemagnet/zed-asciidoc) starts it from `PATH`. The default build is lean, without Typst or Git:
+The Zed extension [AsciiDoc and Antora](https://github.com/bovinemagnet/zed-asciidoc) (`asciidoc-antora`) uses an `adoc-ls` on `PATH` when there is one. Otherwise it downloads `adoc-ls` from the latest release here, for Linux, macOS and Windows on x86-64 and AArch64, and keeps it up to date. If the release cannot be fetched, it falls back to its most recent earlier download. The release archives are built with Typst and Git. Zed's `lsp.adoc-ls.binary` setting can name another binary instead.
+
+To run your own build, install it on `PATH`. The default build is lean, without Typst or Git:
 
 ```sh
 cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls

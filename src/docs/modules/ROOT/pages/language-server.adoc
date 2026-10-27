@@ -94,11 +94,17 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --featur
 
 == Zed
 
-The Zed extension https://github.com/bovinemagnet/zed-asciidoc[zed-asciidoc] provides AsciiDoc highlighting and starts `adoc-ls` from your `PATH`.
-It starts the server from `PATH`, so install it as described in <<_builds,Builds>>.
-Making the extension download the release archive is a follow-up in that repository.
+The Zed extension "AsciiDoc and Antora" (ID `asciidoc-antora`, https://github.com/bovinemagnet/zed-asciidoc[zed-asciidoc]) provides AsciiDoc highlighting and starts `adoc-ls`.
+It uses an `adoc-ls` on your `PATH` when there is one.
+Otherwise it downloads `adoc-ls` from the latest AdocFoundry release and keeps it up to date.
+The release archives cover Linux, macOS and Windows on x86-64 and AArch64.
+If the latest release cannot be fetched, the extension falls back to its most recent earlier download.
 
-Release archives containing `adoc-ls` are also attached to each release for Linux, macOS and Windows.
+The release archives are built with Typst and Git.
+The downloaded server therefore has PDF export, typeset STEM and Git, unlike the default build described in <<_builds,Builds>>.
+
+Zed's `lsp.adoc-ls.binary` setting can name another binary instead.
+To run your own build, install it on your `PATH` as described in <<_builds,Builds>>.
 
 The server began life inside `zed-asciidoc`.
 It now ships from AdocFoundry, and `zed-asciidoc` is only the thin extension.
