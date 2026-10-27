@@ -106,4 +106,108 @@ mod tests {
     fn injections_name_the_registered_inline_language() {
         assert!(INJECTIONS.contains(&format!("\"{ASCIIDOC_INLINE}\"")));
     }
+
+    const PAGE: &str = "\
+= Page Title
+
+== Section One
+
+A paragraph's first line
+and its second line.
+
+* an item
+. a step
+
+NOTE: an admonition
+
+.A block title
+|===
+| a cell
+|===
+
+[source,rust]
+let starred = *value*;
+";
+
+    /// The byte ranges the block grammar's injections hand to the inline grammar.
+    fn inline_injections(text: &str) -> Vec<std::ops::Range<usize>> {
+        use tree_sitter::StreamingIterator;
+        let block = tree_sitter_asciidoc::language();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&block).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+        let query = tree_sitter::Query::new(&block, INJECTIONS).unwrap();
+        let content = query.capture_index_for_name("injection.content").unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree.root_node(), text.as_bytes());
+        let mut ranges = Vec::new();
+        while let Some(found) = matches.next() {
+            let inline = query
+                .property_settings(found.pattern_index)
+                .iter()
+                .any(|setting| {
+                    &*setting.key == "injection.language"
+                        && setting.value.as_deref() == Some(ASCIIDOC_INLINE)
+                });
+            if inline {
+                ranges.extend(
+                    found
+                        .captures
+                        .iter()
+                        .filter(|capture| capture.index == content)
+                        .map(|capture| capture.node.byte_range()),
+                );
+            }
+        }
+        ranges
+    }
+
+    // gpui-component parses every injection separately, up to a limit per document, so an
+    // injection inside another is parsed twice and brings the limit closer.
+    #[test]
+    fn no_inline_injection_lies_inside_another() {
+        let ranges = inline_injections(PAGE);
+        for (i, outer) in ranges.iter().enumerate() {
+            for (j, inner) in ranges.iter().enumerate() {
+                assert!(
+                    i == j || inner.start >= outer.end || inner.end <= outer.start,
+                    "{:?} overlaps {:?}",
+                    &PAGE[inner.clone()],
+                    &PAGE[outer.clone()],
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_line_of_prose_is_injected() {
+        let ranges = inline_injections(PAGE);
+        for prose in [
+            "Page Title",
+            "Section One",
+            "first line",
+            "second line",
+            "an item",
+            "a step",
+            "an admonition",
+            "A block title",
+            "a cell",
+        ] {
+            let at = PAGE.find(prose).unwrap();
+            assert!(
+                ranges
+                    .iter()
+                    .any(|range| range.start <= at && at + prose.len() <= range.end),
+                "{prose:?} is not injected",
+            );
+        }
+    }
+
+    #[test]
+    fn source_paragraphs_are_not_prose() {
+        let at = PAGE.find("*value*").unwrap();
+        assert!(!inline_injections(PAGE)
+            .iter()
+            .any(|range| range.start <= at && at < range.end));
+    }
 }
