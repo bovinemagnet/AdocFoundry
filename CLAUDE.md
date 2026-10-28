@@ -113,7 +113,7 @@ Preview flow: while the preview is visible the engine requests its target (the p
 
 Unit tests live in `#[cfg(test)] mod tests` next to the code. Integration tests: `crates/adoc-engine/tests/` drives the engine headlessly through commands; `crates/adocfoundry-cli/tests/cli.rs` drives the binary via `CARGO_BIN_EXE_adocfoundry-cli`; `crates/adoc-ls/tests/stdio.rs` drives the language server through an initialise/shutdown lifecycle.
 
-Shared fixtures are in `tests/fixtures/`, grouped by scenario (`simple/`, `includes/`, `xrefs/`, `antora-single-component/`, `antora-multi-component/`, `antora-versions/`, and `render/` for the fidelity harness), reached with `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/...")` — never absolute developer-machine paths. Keep fixtures small and readable; add one alongside every resolver, parser, engine or command behaviour change.
+Shared fixtures are in `tests/fixtures/`, grouped by scenario (`simple/`, `includes/`, `xrefs/`, `antora-single-component/`, `antora-multi-component/`, `antora-versions/`, and `render/` for the fidelity harness), reached with `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/...")` — never absolute developer-machine paths. A test that opens a fixture in place turns Git off (`Settings::with_git_opt_in()`), since the fixtures lie inside the developer's checkout. Keep fixtures small and readable; add one alongside every resolver, parser, engine or command behaviour change.
 
 Tests that spawn a real process must take the crate-private `spawn_guard()` mutex in `adoc-render` (the `ETXTBSY` workaround). Do not remove the guard or add unguarded spawning tests.
 
