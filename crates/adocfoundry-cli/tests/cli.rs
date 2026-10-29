@@ -100,7 +100,7 @@ fn check_text_format_and_fail_on() {
         "warnings do not fail by default"
     );
     let text = stdout(&output);
-    assert!(text.starts_with("antora.yml:1:1: warning adoc.antora.invalid-descriptor "));
+    assert!(text.starts_with("antora.yml:1:1: warning adoc.antora.missing-key "));
 
     let output = cli(&[
         "check",

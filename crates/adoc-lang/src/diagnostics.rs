@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, path::Path};
 
 use adoc_antora::{
     parse_resource_id, AntoraCatalog, AntoraContext, AntoraResolver, DescriptorError,
-    ResolutionError, ResolutionResult, ResourceFamily, ResourceIdParseError,
+    DescriptorErrorKind, ResolutionError, ResolutionResult, ResourceFamily, ResourceIdParseError,
 };
 use adoc_core::{Diagnostic, DiagnosticCode, DiagnosticSeverity, ReferenceKind, SourceRange};
 use adoc_index::{normalize_path, workspace_diagnostics, WorkspaceIndex};
@@ -218,6 +218,10 @@ pub fn descriptor_diagnostics(issues: &[DescriptorError], path: &Path) -> Vec<Di
                 .path
                 .parent()
                 .is_some_and(|root| path.starts_with(normalize_path(root)))
+        })
+        // A missing name is reported inside the descriptor itself, on the line it belongs.
+        .filter(|issue| {
+            issue.kind != DescriptorErrorKind::MissingName || normalize_path(&issue.path) != path
         })
         .map(|issue| Diagnostic {
             code: DiagnosticCode::AntoraInvalidDescriptor,

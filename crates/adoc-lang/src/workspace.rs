@@ -1,10 +1,14 @@
 use std::{
-    io,
+    collections::BTreeMap,
+    fs, io,
     path::{Path, PathBuf},
 };
 
-use adoc_antora::{discover_antora_workspace, AntoraCatalog, DescriptorError, ReloadReport};
-use adoc_core::Document;
+use adoc_antora::{
+    check_component_descriptor, discover_antora_workspace, AntoraCatalog, DescriptorError,
+    ReloadReport,
+};
+use adoc_core::{Diagnostic, Document};
 use adoc_index::{normalize_path, WorkspaceIndex};
 
 /// The semantic state of a workspace: the document index, the Antora catalog and any problems
@@ -14,6 +18,8 @@ pub struct WorkspaceState {
     pub index: WorkspaceIndex,
     pub antora: AntoraCatalog,
     pub descriptor_issues: Vec<DescriptorError>,
+    /// Problems inside each readable `antora.yml`, by its path, at the lines they are on.
+    pub descriptor_problems: BTreeMap<PathBuf, Vec<Diagnostic>>,
 }
 
 impl WorkspaceState {
@@ -29,6 +35,20 @@ impl WorkspaceState {
         let discovery = discover_antora_workspace(roots)?;
         self.antora = discovery.catalog;
         self.descriptor_issues = discovery.issues;
+        let descriptors: Vec<PathBuf> = self
+            .antora
+            .components()
+            .map(|component| component.root.join("antora.yml"))
+            .chain(
+                self.descriptor_issues
+                    .iter()
+                    .map(|issue| issue.path.clone()),
+            )
+            .collect();
+        self.descriptor_problems.clear();
+        for descriptor in descriptors {
+            self.check_descriptor(&descriptor);
+        }
         Ok(indexed)
     }
 
@@ -50,9 +70,26 @@ impl WorkspaceState {
         let descriptor_path = normalize_path(descriptor_path);
         self.descriptor_issues
             .retain(|issue| normalize_path(&issue.path) != descriptor_path);
+        self.check_descriptor(&descriptor_path);
         self.antora
             .reload_component(&descriptor_path)
             .inspect_err(|error| self.descriptor_issues.push(error.clone()))
+    }
+
+    /// Re-reads one `antora.yml` for the problems inside it, forgetting them when it is gone.
+    fn check_descriptor(&mut self, descriptor_path: &Path) {
+        let descriptor_path = normalize_path(descriptor_path);
+        self.descriptor_problems.remove(&descriptor_path);
+        let (Ok(source), Some(root)) = (
+            fs::read_to_string(&descriptor_path),
+            descriptor_path.parent(),
+        ) else {
+            return;
+        };
+        let problems = check_component_descriptor(root, &source);
+        if !problems.is_empty() {
+            self.descriptor_problems.insert(descriptor_path, problems);
+        }
     }
 }
 
@@ -69,5 +106,6 @@ mod tests {
         assert!(files > 0);
         assert!(state.descriptor_issues.is_empty());
         assert!(state.antora.component("demo", Some("latest")).is_some());
+        assert!(state.descriptor_problems.is_empty());
     }
 }

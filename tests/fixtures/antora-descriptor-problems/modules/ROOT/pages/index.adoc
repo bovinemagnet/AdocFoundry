@@ -1,0 +1,3 @@
+= Home
+
+The {product-name} home page.

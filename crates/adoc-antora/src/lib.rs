@@ -14,7 +14,8 @@ pub use catalog::{
 };
 pub use component::ComponentDescriptor;
 pub use descriptor::{
-    parse_component_descriptor, read_component_descriptor, DescriptorError, DescriptorErrorKind,
+    check_component_descriptor, parse_component_descriptor, read_component_descriptor,
+    DescriptorError, DescriptorErrorKind,
 };
 pub use discovery::{discover_antora_workspace, DiscoveryResult};
 pub use module::Module;

@@ -15,6 +15,10 @@ pub enum DiagnosticCode {
     AntoraResolvedViaAlias,
     AntoraNavUnresolved,
     AntoraVersionNotOnBranch,
+    AntoraMissingKey,
+    AntoraUnknownKey,
+    AntoraMissingNavFile,
+    AntoraInvalidAttributeValue,
 }
 
 impl DiagnosticCode {
@@ -34,6 +38,10 @@ impl DiagnosticCode {
             Self::AntoraResolvedViaAlias => "adoc.antora.resolved-via-alias",
             Self::AntoraNavUnresolved => "adoc.antora.nav-unresolved",
             Self::AntoraVersionNotOnBranch => "adoc.antora.version-not-on-branch",
+            Self::AntoraMissingKey => "adoc.antora.missing-key",
+            Self::AntoraUnknownKey => "adoc.antora.unknown-key",
+            Self::AntoraMissingNavFile => "adoc.antora.missing-nav-file",
+            Self::AntoraInvalidAttributeValue => "adoc.antora.invalid-attribute-value",
         }
     }
 }
