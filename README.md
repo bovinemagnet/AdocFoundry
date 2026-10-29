@@ -211,7 +211,7 @@ A page's `pdf-theme`, `pdf-themesdir` and `pdf-fontsdir` attributes win over it,
 
 With `updates.check` on, the app reads GitHub's releases feed for this repository through the system's `curl` at start-up, at most once a day, and says once when a newer release exists; Check for Updates in the command palette checks whenever asked. The request carries nothing but the app's version in its user agent. The last check is remembered in `update-state.toml` beside the settings file. An app installed from a signed DMG or MSI offers to update itself: it downloads the package, checks it against the release's `SHA256SUMS` and its signature against its own, installs it and restarts; it will not while a document has unsaved changes. The AppImage carries update information for AppImageUpdate, and the other packages are left to their package managers.
 
-`tools.asciidoctor` is used only by `adoc-ls`'s HTML preview; the app's preview needs no external tool. Diagram tools are found on `PATH` and cannot be set here yet.
+`tools.asciidoctor` is used only by `adoc-ls`'s HTML preview; the app's preview needs no external tool. `dot`, `plantuml` and `d2` are the diagram tools; each is found on `PATH` when left empty, which an app started from the Dock or Finder may not share with your shell.
 
 ## Command line
 
