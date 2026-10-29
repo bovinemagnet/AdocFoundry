@@ -1,4 +1,4 @@
 [submodule "grammars/tree-sitter-asciidoc"]
 	path = grammars/tree-sitter-asciidoc
 	url = https://github.com/bovinemagnet/tree-sitter-asciidoc.git
-	branch = zed
+	branch = master

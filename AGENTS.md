@@ -10,7 +10,7 @@ AdocFoundry is a Rust workspace: a GPUI desktop editor for AsciiDoc and Antora d
   - L2 `adoc-render`: the external Asciidoctor renderer, used by `adoc-ls` preview.
   - L3 `adoc-engine`: documents, commands, undo, workspace, file watcher, settings, search and rename. The only entry point front ends use.
   - L4 `adocfoundry` (the GPUI app, the only crate importing GPUI), `adocfoundry-cli`, `adoc-ls` (the only crate speaking LSP).
-- `grammars/tree-sitter-asciidoc` is a git submodule (the `zed` branch of `bovinemagnet/tree-sitter-asciidoc`); run `git submodule update --init` after cloning.
+- `grammars/tree-sitter-asciidoc` is a git submodule (the `master` branch of `bovinemagnet/tree-sitter-asciidoc`); run `git submodule update --init` after cloning.
 - `crates/adocfoundry/languages/` holds the tree-sitter queries. tree-sitter is for highlighting, folding and injections only.
 - `tests/fixtures/` holds small AsciiDoc and Antora workspaces, grouped by scenario.
 - `docs/design/` is the architecture, `docs/prd/` the phase specifications (the source of truth for scope), `docs/qa/` the manual QA records.
