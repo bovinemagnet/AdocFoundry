@@ -495,6 +495,7 @@ Results arrive as the search runs, and clicking one opens it.
 Replace in Workspace (kbd:[Cmd+Shift+H] or kbd:[Ctrl+Shift+H]) does not change anything immediately.
 It shows a preview listing every change; nothing is written until you apply it.
 Applying the preview is one undo step across every file it touches.
+It is undone only as a whole, under the rule described in <<Rename a page>>.
 
 The preview shows the text each file will be changed from, so for a page with unsaved edits it shows the editor's text, not the file on disk.
 Apply refuses, and changes nothing, if a listed file has changed since the preview was made; make the preview again.
@@ -512,6 +513,10 @@ IDs written with `./` or `../`, and includes written as plain paths, are relativ
 A reference from the page to itself, such as `+xref:index.adoc#top[]+`, keeps pointing at the page in its new place.
 Targets written through an attribute, URLs and pure `#fragment` references are left as written.
 One undo moves the page back and restores every edit.
+A rename, like a workspace Replace, is undone and redone only as a whole.
+If one of the pages it changed has been edited since, Undo is refused with a message naming that page; undo that page's later edits first, and the change then undoes as a whole from any of its pages.
+Editing one of its pages after undoing the change means it can no longer be redone.
+A page you have closed since does not hold the undo back, because closing discarded its unsaved edits.
 If the rename cannot be completed, for example because the destination folder cannot be written to, everything already done is undone and nothing is left in the undo history.
 
 .Renaming a page

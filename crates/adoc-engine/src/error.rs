@@ -29,6 +29,12 @@ pub enum EngineError {
     PreviewStale {
         path: PathBuf,
     },
+    /// A change spanning several documents is undone and redone only as a whole, and `path`,
+    /// one of them, was edited after it (or, with `redo`, after its undo).
+    GroupBlocked {
+        path: PathBuf,
+        redo: bool,
+    },
 }
 
 impl EngineError {
@@ -62,6 +68,16 @@ impl fmt::Display for EngineError {
             Self::PreviewStale { path } => write!(
                 formatter,
                 "{} changed after the preview was made; make the preview again",
+                path.display()
+            ),
+            Self::GroupBlocked { path, redo: false } => write!(
+                formatter,
+                "{} was edited after this change to several files; undo its later edits first",
+                path.display()
+            ),
+            Self::GroupBlocked { path, redo: true } => write!(
+                formatter,
+                "{} was edited after this change to several files was undone, so it cannot be redone from here",
                 path.display()
             ),
         }
