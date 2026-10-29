@@ -1,0 +1,16 @@
+name: demo
+title: Descriptor Problems
+start_page: ROOT:index.adoc
+edition: community
+nav:
+  - modules/ROOT/nav.adoc
+  - modules/ROOT/missing-nav.adoc
+asciidoc:
+  attributes:
+    product-name: Foundry
+    release: 3
+    draft: false
+    hidden: ~
+    owners:
+      - docs
+      - support

@@ -64,6 +64,26 @@ Codes are stable strings, so you can filter on them in scripts.
 |Warning
 |An `antora.yml` cannot be read or is invalid.
 
+|`adoc.antora.missing-key`
+|Warning
+|An `antora.yml` has no `name`, or an empty one, so Antora cannot use the component, or has no `version` key.
+The problem is reported on the `name` line if there is one, otherwise on the first line.
+For a component without versions, write `version: ~`.
+
+|`adoc.antora.unknown-key`
+|Warning
+|An `antora.yml` has a top-level key Antora does not use.
+The keys it uses are `name`, `title`, `version`, `display_version`, `prerelease`, `start_page`, `nav`, `asciidoc` and `ext`.
+
+|`adoc.antora.missing-nav-file`
+|Warning
+|An entry in the `nav` key of an `antora.yml` names a file that does not exist relative to the component root.
+
+|`adoc.antora.invalid-attribute-value`
+|Warning
+|An `asciidoc.attributes` value in an `antora.yml` is a list or a mapping.
+Antora takes a string, a number, `true`, `false` or `~`, so the attribute is skipped and the rest of the descriptor still loads.
+
 |`adoc.antora.resolved-via-alias`
 |Information
 |An xref resolves only because the target page lists the id in `page-aliases`. The message suggests the current id.
@@ -88,4 +108,6 @@ See xref:command-line.adoc[Command line].
 * In the output of `adocfoundry-cli check`.
 * In any editor using xref:language-server.adoc[the language server].
 
-Diagnostics inside `antora.yml` itself are not implemented beyond reporting that it cannot be read.
+Diagnostics inside `antora.yml` itself (`adoc.antora.missing-key`, `adoc.antora.unknown-key`, `adoc.antora.missing-nav-file` and `adoc.antora.invalid-attribute-value`) appear at the line where each problem is written.
+They are read from the file on disk, not from an unsaved buffer, and are recomputed when the descriptor changes on disk.
+A descriptor that is not valid YAML gets only `adoc.antora.invalid-descriptor`.

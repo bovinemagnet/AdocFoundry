@@ -27,6 +27,7 @@ Remote repositories are never cloned and no project scripts are executed.
 Only that component version's modules and resources are replaced, and diagnostics are re-run for the files affected by resources that appeared or disappeared.
 The sidebar updates without a restart.
 A descriptor that cannot be read produces an `adoc.antora.invalid-descriptor` diagnostic.
+Problems inside a readable descriptor, such as a missing `name`, an unknown key or a `nav` file that does not exist, are reported in `antora.yml` itself; see xref:diagnostics.adoc[Diagnostics].
 
 == Resource IDs
 

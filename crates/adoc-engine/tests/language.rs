@@ -290,3 +290,81 @@ fn targets_and_resource_ids_resolve_without_an_open_page() {
         .resolve_resource_id("authentication.adoc", None)
         .is_err());
 }
+
+#[test]
+fn problems_inside_antora_yml_are_listed_and_follow_its_changes() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/antora-descriptor-problems");
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    for file in [
+        "antora.yml",
+        "modules/ROOT/nav.adoc",
+        "modules/ROOT/pages/index.adoc",
+    ] {
+        let target = root.join(file);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::copy(fixture.join(file), target).unwrap();
+    }
+    let descriptor = root.join("antora.yml");
+    let mut engine = open_workspace(&root);
+
+    let codes = |engine: &Engine| -> Vec<&'static str> {
+        engine
+            .workspace_diagnostics()
+            .into_iter()
+            .filter(|(path, _)| *path == descriptor)
+            .flat_map(|(_, found)| found.into_iter().map(|diagnostic| diagnostic.code.as_str()))
+            .collect()
+    };
+    assert_eq!(
+        codes(&engine),
+        [
+            "adoc.antora.missing-key",
+            "adoc.antora.unknown-key",
+            "adoc.antora.missing-nav-file",
+            "adoc.antora.invalid-attribute-value",
+        ]
+    );
+    // The component still loads, with the attributes Antora can use.
+    let page = engine
+        .open(&root.join("modules/ROOT/pages/index.adoc"))
+        .unwrap();
+    assert!(engine.document(page).unwrap().diagnostics.is_empty());
+
+    fs::write(
+        &descriptor,
+        "name: demo\nversion: ~\nnav: modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    engine
+        .invoke(ids::WORKSPACE_REINDEX, CommandArgs::None)
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert!(codes(&engine).is_empty(), "{:?}", codes(&engine));
+}
+
+#[test]
+fn a_descriptor_without_a_name_is_reported_once_inside_it() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/antora-invalid-descriptor");
+    let engine = open_workspace(&root);
+    let descriptor = adoc_index::normalize_path(&root.join("antora.yml"));
+    let found: Vec<_> = engine
+        .workspace_diagnostics()
+        .into_iter()
+        .filter(|(path, _)| *path == descriptor)
+        .flat_map(|(_, found)| found)
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].code.as_str(), "adoc.antora.missing-key");
+    assert!(found[0].message.contains("`name`"), "{found:?}");
+    // The component's pages still say why Antora checks are off.
+    assert!(engine
+        .workspace_diagnostics()
+        .iter()
+        .any(|(path, found)| *path != descriptor
+            && found
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::AntoraInvalidDescriptor)));
+}

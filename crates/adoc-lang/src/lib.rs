@@ -191,6 +191,9 @@ pub fn diagnostics(ws: &WorkspaceState, path: &Path) -> Vec<Diagnostic> {
         &ws.descriptor_issues,
         path,
     ));
+    if let Some(problems) = ws.descriptor_problems.get(&normalize_path(path)) {
+        found.extend(problems.iter().cloned());
+    }
     found
 }
 
@@ -204,6 +207,7 @@ pub fn workspace_diagnostics(ws: &WorkspaceState) -> Vec<(PathBuf, Vec<Diagnosti
             .iter()
             .map(|issue| normalize_path(&issue.path)),
     );
+    paths.extend(ws.descriptor_problems.keys().cloned());
     paths.sort();
     paths.dedup();
     paths

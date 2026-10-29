@@ -28,7 +28,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 - Syntax highlighting from the AsciiDoc tree-sitter grammars, with the inline grammar injected into paragraphs, titles, table cells and macro targets, and source blocks highlighted for Rust, Java, JavaScript, TypeScript, Python, Go, JSON, YAML, TOML, shell, SQL and HTML.
 - Folding of sections, delimited blocks and lists; line numbers; soft wrap.
-- Diagnostics as you type for unresolved xrefs, anchors, includes and images, duplicate anchors, unknown Antora modules and resources, invalid resource IDs and invalid component descriptors. Diagnostics are conservative: warnings rather than errors, and nothing for dynamic constructs such as `include::{attr}/x.adoc[]`.
+- Diagnostics as you type for unresolved xrefs, anchors, includes and images, duplicate anchors, unknown Antora modules and resources, invalid resource IDs and invalid component descriptors. Inside `antora.yml`, at the line concerned: a missing `name` or `version`, a key Antora does not use, a `nav` file that does not exist, and an attribute value that is a list or mapping. Diagnostics are conservative: warnings rather than errors, and nothing for dynamic constructs such as `include::{attr}/x.adoc[]`.
 - Hover and completion for xref, include and image targets, anchors and `{attributes}`.
 - Undo and redo that treat a run of typing as one step.
 - The status bar shows the page's word count and reading time (`120 words · 1 min read`), and the selection's count while there is one (`12 of 120 words`). Only prose counts: not markup, attributes, code, diagrams or formulas. The page is counted on a worker half a second after typing stops.
@@ -292,7 +292,6 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 - Editing included content in place, spell checking, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
-- Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 
 ## Developing
