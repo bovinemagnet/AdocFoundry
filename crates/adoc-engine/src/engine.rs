@@ -57,6 +57,9 @@ pub struct Engine {
     pub(crate) next_preview: u64,
     pub(crate) next_search: u64,
     pub(crate) group_moves: BTreeMap<UndoGroup, Vec<crate::FileMove>>,
+    /// The documents taking part in each applied preview's group, which is undone and redone
+    /// only as a whole.
+    pub(crate) group_documents: BTreeMap<UndoGroup, Vec<DocumentId>>,
     /// Documents whose typed edits are parsed but not yet in the index, with the time after
     /// which `pump` indexes them.
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
@@ -124,6 +127,7 @@ impl Engine {
             next_preview: 1,
             next_search: 1,
             group_moves: BTreeMap::new(),
+            group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
@@ -543,7 +547,8 @@ impl Engine {
     }
 
     /// Undoes the most recent group of `id`. When the group spans several documents, the group
-    /// is undone in all of them.
+    /// is undone in all of them, and not at all while one of them was edited after it (see
+    /// [`Engine::check_group`]).
     pub fn undo(&mut self, id: DocumentId) -> bool {
         let Some(group) = self
             .states
@@ -552,6 +557,9 @@ impl Engine {
         else {
             return false;
         };
+        if self.check_group(group, false).is_err() {
+            return false;
+        }
         for document in self.documents_with_top_group(group, false) {
             let Some(entry) = self
                 .states
@@ -573,7 +581,8 @@ impl Engine {
         true
     }
 
-    /// Redoes the most recently undone group of `id`, across every document it spans.
+    /// Redoes the most recently undone group of `id`, across every document it spans, and not
+    /// at all once one of them was edited after its undo (see [`Engine::check_group`]).
     pub fn redo(&mut self, id: DocumentId) -> bool {
         let Some(group) = self
             .states
@@ -582,6 +591,9 @@ impl Engine {
         else {
             return false;
         };
+        if self.check_group(group, true).is_err() {
+            return false;
+        }
         for document in self.documents_with_top_group(group, true) {
             let Some(entry) = self
                 .states
@@ -618,7 +630,38 @@ impl Engine {
         }
     }
 
-    fn documents_with_top_group(&self, group: UndoGroup, redo: bool) -> Vec<DocumentId> {
+    /// Whether undo (or, with `redo`, redo) may take `id`'s next group. A group from an applied
+    /// preview spans several documents and is undone and redone only as a whole: if one of
+    /// them was edited after it, so that the group is no longer that document's latest entry,
+    /// taking the group from the others would leave the pages and the references between them
+    /// disagreeing, and the group is refused, naming that document. A document closed since
+    /// is passed over: its history, and its part of the change, went with it.
+    pub(crate) fn check_group(&self, group: UndoGroup, redo: bool) -> Result<(), EngineError> {
+        let Some(documents) = self.group_documents.get(&group) else {
+            return Ok(());
+        };
+        for document in documents {
+            let Some(state) = self.states.get(document) else {
+                continue;
+            };
+            let top = if redo {
+                state.undo.redo_group()
+            } else {
+                state.undo.top_group()
+            };
+            if top != Some(group) {
+                let path = self
+                    .documents
+                    .get(document)
+                    .map(|document| document.path.clone())
+                    .unwrap_or_default();
+                return Err(EngineError::GroupBlocked { path, redo });
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn documents_with_top_group(&self, group: UndoGroup, redo: bool) -> Vec<DocumentId> {
         self.states
             .iter()
             .filter(|(_, state)| {

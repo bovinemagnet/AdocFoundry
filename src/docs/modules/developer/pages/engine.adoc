@@ -154,6 +154,7 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 
 There is no public way to change document text except through commands.
 
+[#undo-groups]
 == Undo groups and typing coalescing
 
 Each document has an undo stack of entries holding an undo group, the forward and inverse edits and the versions before and after.
@@ -163,6 +164,15 @@ Consecutive typing within 500 ms coalesces into one entry, so a burst of typing 
 * Any other insert, and every `edit.replace_range`, gets its own group.
 * Multi-file operations share one group across documents.
 `edit.undo` on any document in the group undoes the whole group, including file moves, and reports which documents changed.
+
+A group is undone or redone only as a whole, because taking back some documents would leave a moved page and the references to it disagreeing.
+When `workspace.apply_preview` succeeds, the engine records the documents taking part in the group.
+`Engine::check_group` is consulted by `edit.undo` and `edit.redo`, and by `Engine::undo` and `Engine::redo`, which return `false` when refused.
+For every participating document still open, the group must be its latest undo entry (for undo) or its latest undone entry (for redo).
+Otherwise the command fails with `EngineError::GroupBlocked { path, redo }`, naming the first such document, and nothing changes: no text and no file move.
+Undoing the later edits on that page first lets the change undo as a whole from any of its pages.
+An edit after the change was undone clears that page's redo history, so the change can no longer be redone from the other pages either.
+A participating document closed since is passed over, as its history and its part of the change went with it; closing discards unsaved edits, so the file keeps what was last saved.
 
 The engine takes an injectable clock so that coalescing is tested without sleeping.
 
@@ -607,6 +617,7 @@ Nothing is changed until `workspace.apply_preview` is invoked with the preview's
 
 Applying a preview creates one undo group that spans every document it touches, including file moves.
 One undo therefore restores every xref and moves a renamed page back.
+The undo is refused, naming the page, if a page of the change was edited afterwards; see <<undo-groups>> for the rule.
 
 A preview is applied as a checked transaction.
 Each `FileEdits` records in `base` the text its edits were computed against, which is also the text the confirmation dialog shows, so a buffer with unsaved edits is previewed from the buffer and not the file on disk.

@@ -596,3 +596,199 @@ fn a_move_that_fails_part_way_is_rolled_back() {
     assert!(root.join("other.adoc").is_file());
     assert!(!engine.undo(index), "no partial group in the undo history");
 }
+
+/// A rename of the multi-component fixture's guide, applied: the nav and the index page are
+/// rewritten and the guide moves, all as one undo group.
+struct Renamed {
+    _directory: tempfile::TempDir,
+    engine: Engine,
+    old_path: PathBuf,
+    new_path: PathBuf,
+    original_nav: String,
+    original_index: String,
+    /// The three documents taking part: the nav, the index page and the moved guide.
+    nav: adoc_engine::DocumentId,
+    index: adoc_engine::DocumentId,
+    guide: adoc_engine::DocumentId,
+}
+
+fn renamed_guide() -> Renamed {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    copy_tree(&fixture("antora-multi-component"), &root);
+    let mut engine = open_workspace(&root);
+    let pages = root.join("alpha/modules/ROOT/pages");
+    let old_path = pages.join("guide.adoc");
+    let new_path = pages.join("howto/setup-guide.adoc");
+    let nav_path = root.join("alpha/modules/ROOT/nav.adoc");
+    let index_path = pages.join("index.adoc");
+    let original_nav = fs::read_to_string(&nav_path).unwrap();
+    let original_index = fs::read_to_string(&index_path).unwrap();
+    rename_and_apply(&mut engine, &old_path, &new_path);
+    let nav = engine.document_for_path(&nav_path).unwrap();
+    let index = engine.document_for_path(&index_path).unwrap();
+    let guide = engine.document_for_path(&new_path).unwrap();
+    Renamed {
+        _directory: directory,
+        engine,
+        old_path,
+        new_path,
+        original_nav,
+        original_index,
+        nav,
+        index,
+        guide,
+    }
+}
+
+impl Renamed {
+    fn participants(&self) -> [adoc_engine::DocumentId; 3] {
+        [self.nav, self.index, self.guide]
+    }
+
+    fn note(&mut self, id: adoc_engine::DocumentId) {
+        self.engine
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: adoc_core::SourceRange::new(0, 0),
+                    text: "// a later note\n".to_owned(),
+                },
+            )
+            .unwrap();
+    }
+
+    fn undo(&mut self, id: adoc_engine::DocumentId) -> Result<CommandOutcome, String> {
+        self.engine
+            .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+            .map_err(|error| error.to_string())
+    }
+
+    fn redo(&mut self, id: adoc_engine::DocumentId) -> Result<CommandOutcome, String> {
+        self.engine
+            .invoke(ids::EDIT_REDO, CommandArgs::Document(id))
+            .map_err(|error| error.to_string())
+    }
+
+    fn text(&self, id: adoc_engine::DocumentId) -> String {
+        text_of(&self.engine, id).replace("// a later note\n", "")
+    }
+
+    /// Whether the rename is wholly in place (`Some(true)`), wholly undone (`Some(false)`), or
+    /// half done, with the page and the references to it disagreeing (`None`).
+    fn renamed(&self) -> Option<bool> {
+        let moved = self.new_path.is_file() && !self.old_path.exists();
+        let back = self.old_path.is_file() && !self.new_path.exists();
+        let guide = &self.engine.document(self.guide).unwrap().path;
+        let nav = self.text(self.nav);
+        let index = self.text(self.index);
+        if moved
+            && *guide == self.new_path
+            && nav.contains("xref:howto/setup-guide.adoc[Guide]")
+            && index.contains("xref:howto/setup-guide.adoc[old guide link]")
+        {
+            Some(true)
+        } else if back
+            && *guide == self.old_path
+            && nav == self.original_nav
+            && index == self.original_index
+        {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
+#[test]
+fn a_group_is_not_undone_while_a_participant_was_edited_after_it() {
+    for edited in 0..3 {
+        for from in 0..3 {
+            if from == edited {
+                continue;
+            }
+            let mut renamed = renamed_guide();
+            let edited = renamed.participants()[edited];
+            let from = renamed.participants()[from];
+            renamed.note(edited);
+
+            let path = renamed.engine.document(edited).unwrap().path.clone();
+            let refused = renamed.undo(from).unwrap_err();
+            assert!(
+                refused.contains(&path.display().to_string()),
+                "the edited page is named: {refused}"
+            );
+            assert_eq!(renamed.renamed(), Some(true), "nothing is undone");
+            assert!(text_of(&renamed.engine, edited).starts_with("// a later note\n"));
+
+            // Undoing the later edit first lets the whole group undo, from any participant.
+            renamed.undo(edited).unwrap();
+            assert!(!text_of(&renamed.engine, edited).contains("a later note"));
+            renamed.undo(from).unwrap();
+            assert_eq!(renamed.renamed(), Some(false), "the whole rename is undone");
+
+            renamed.redo(from).unwrap();
+            assert_eq!(renamed.renamed(), Some(true), "and redone as a whole");
+        }
+    }
+}
+
+#[test]
+fn undoing_a_rename_after_the_moved_page_was_edited() {
+    let mut renamed = renamed_guide();
+    let guide = renamed.guide;
+    renamed.note(guide);
+
+    // From the moved page itself, undo takes back its own later edit first.
+    renamed.undo(guide).unwrap();
+    assert_eq!(renamed.renamed(), Some(true));
+    assert!(!text_of(&renamed.engine, guide).contains("a later note"));
+    renamed.undo(guide).unwrap();
+    assert_eq!(renamed.renamed(), Some(false));
+    renamed.redo(guide).unwrap();
+    assert_eq!(renamed.renamed(), Some(true));
+    // The later edit is still there to redo, on top of the rename.
+    renamed.redo(guide).unwrap();
+    assert!(text_of(&renamed.engine, guide).starts_with("// a later note\n"));
+}
+
+#[test]
+fn a_group_is_not_redone_once_a_participant_was_edited_after_its_undo() {
+    for edited in 0..3 {
+        for from in 0..3 {
+            if from == edited {
+                continue;
+            }
+            let mut renamed = renamed_guide();
+            let edited = renamed.participants()[edited];
+            let from = renamed.participants()[from];
+            renamed.undo(from).unwrap();
+            assert_eq!(renamed.renamed(), Some(false));
+            // An edit discards the page's redo history.
+            renamed.note(edited);
+
+            let path = renamed.engine.document(edited).unwrap().path.clone();
+            let refused = renamed.redo(from).unwrap_err();
+            assert!(
+                refused.contains(&path.display().to_string()),
+                "the edited page is named: {refused}"
+            );
+            assert_eq!(renamed.renamed(), Some(false), "nothing is redone");
+            assert!(text_of(&renamed.engine, edited).starts_with("// a later note\n"));
+        }
+    }
+}
+
+#[test]
+fn a_closed_participant_does_not_hold_the_group_back() {
+    let mut renamed = renamed_guide();
+    let index = renamed.index;
+    let nav = renamed.nav;
+    renamed.engine.close(index).unwrap();
+
+    // The closed page's part of the change went with its history; the rest undoes as a whole.
+    renamed.undo(nav).unwrap();
+    assert!(renamed.old_path.is_file());
+    assert_eq!(text_of(&renamed.engine, nav), renamed.original_nav);
+}

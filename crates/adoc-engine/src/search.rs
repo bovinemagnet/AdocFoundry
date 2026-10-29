@@ -218,6 +218,8 @@ impl Engine {
             self.roll_back(group);
             return Err(error);
         }
+        let documents = self.documents_with_top_group(group, false);
+        self.group_documents.insert(group, documents);
         if let Some(active) = previously_active.filter(|id| self.documents.contains_key(id)) {
             self.set_active(active);
         }

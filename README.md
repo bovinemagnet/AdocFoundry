@@ -90,6 +90,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Find in the workspace, with regular expression, case and whole-word options.
 - Replace across the workspace shows every change first; applying it is one undo step.
 - Rename Page moves the file and rewrites every xref that leads to it, shown as a preview first; one undo moves the page back and restores every xref.
+- A replace or rename is undone and redone only as a whole. If one of its pages was edited afterwards, undo says which; undo that page's later edits first.
 
 **Also**
 

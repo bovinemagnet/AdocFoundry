@@ -632,6 +632,9 @@ fn edit_undo(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, E
     engine
         .document(id)
         .ok_or(EngineError::UnknownDocument(id))?;
+    if let Some(group) = engine.undo_stack(id).and_then(|stack| stack.top_group()) {
+        engine.check_group(group, false)?;
+    }
     engine.undo(id);
     Ok(CommandOutcome::Done)
 }
@@ -643,6 +646,9 @@ fn edit_redo(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, E
     engine
         .document(id)
         .ok_or(EngineError::UnknownDocument(id))?;
+    if let Some(group) = engine.undo_stack(id).and_then(|stack| stack.redo_group()) {
+        engine.check_group(group, true)?;
+    }
     engine.redo(id);
     Ok(CommandOutcome::Done)
 }
