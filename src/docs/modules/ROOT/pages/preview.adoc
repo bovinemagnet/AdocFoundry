@@ -182,6 +182,26 @@ It follows the editor theme.
 * The preview is a native approximation of Asciidoctor's output, not a copy of it.
 The project's fidelity harness compares the two over a corpus of pages; see xref:developer:testing.adoc#render-tests[Testing].
 
+[[exporting-html]]
+== Exporting to HTML
+
+Export Page to HTML… (`export.html_page`) writes the active page as a standalone HTML file.
+It is in the File menu and the command palette, and has no default key binding.
+It opens a save dialog, suggesting the page's name with an `.html` extension, in the page's folder.
+
+The file is what `adocfoundry-cli render` writes for the page: the preview's view tree as Asciidoctor-shaped HTML.
+The difference is that local images, diagrams and formula images are embedded in the file as `data:` URIs instead of `file://` addresses, so it opens in another folder, on another machine, or as an attachment to a message.
+Remote images (`http` and `https` addresses) stay links.
+A local file that cannot be read, or that is not an image (PNG, JPEG, GIF, SVG, WebP, BMP, ICO or AVIF), keeps its `file://` address.
+
+The export reads the open buffer, so unsaved edits are included.
+It waits until the render is current and every diagram has rendered, then writes the file in the background, so the application stays responsive.
+When it finishes, a notification says "Exported page.html" and has an Open button that opens the file with the system, normally in the browser.
+If it fails, the notification says "HTML export failed:" followed by the reason, and names the file.
+Closing the page before the file is written reports that it was closed.
+
+Unlike PDF export, it needs no typesetter.
+
 == Rendering from the command line
 
 `adocfoundry-cli render` writes a page as the preview renders it.

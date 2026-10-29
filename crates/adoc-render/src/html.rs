@@ -761,6 +761,62 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
     }
 }
 
+/// `html` with every local image and diagram (`src="file://…"`) embedded as a `data:` URI, so
+/// the page opens anywhere: in another folder, on another machine or attached to a message.
+/// A file that cannot be read, or is not an image, keeps its `file://` address.
+#[must_use]
+pub fn embed_local_files(html: &str) -> String {
+    const START: &str = "src=\"file://";
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(found) = rest.find(START) {
+        let address_start = found + "src=\"".len();
+        let Some(length) = rest[address_start..].find('"') else {
+            break;
+        };
+        let address = &rest[address_start..address_start + length];
+        out.push_str(&rest[..address_start]);
+        match data_uri(&unescape(address)) {
+            Some(data) => out.push_str(&data),
+            None => out.push_str(address),
+        }
+        rest = &rest[address_start + length..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The file at a `file://` address as a `data:` URI, when it is an image that can be read.
+fn data_uri(address: &str) -> Option<String> {
+    use base64::Engine as _;
+    let path = url::Url::parse(address).ok()?.to_file_path().ok()?;
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    let media_type = match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        _ => return None,
+    };
+    let bytes = std::fs::read(&path).ok()?;
+    Some(format!(
+        "data:{media_type};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+/// Undoes [`escape`].
+fn unescape(text: &str) -> String {
+    text.replace("&quot;", "\"")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
+}
+
 /// Escapes text for HTML element content and attribute values.
 #[must_use]
 pub fn escape(text: &str) -> String {
@@ -775,4 +831,48 @@ pub fn escape(text: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file_src(path: &std::path::Path) -> String {
+        format!("<img src=\"{}\" alt=\"x\">", escape(&file_url(path)))
+    }
+
+    #[test]
+    fn local_images_are_embedded() {
+        let directory = tempfile::tempdir().unwrap();
+        let png = directory.path().join("a & b.png");
+        std::fs::write(&png, [0x89, b'P', b'N', b'G']).unwrap();
+        let svg = directory.path().join("diagram.svg");
+        std::fs::write(&svg, "<svg/>").unwrap();
+        let html = format!(
+            "<p>{}</p>\n<p>{}</p>\n<img src=\"https://example.com/remote.png\">",
+            file_src(&png),
+            file_src(&svg)
+        );
+
+        let embedded = embed_local_files(&html);
+        assert!(embedded.contains("<img src=\"data:image/png;base64,iVBORw==\" alt=\"x\">"));
+        assert!(embedded.contains("src=\"data:image/svg+xml;base64,PHN2Zy8+\""));
+        assert!(embedded.contains("src=\"https://example.com/remote.png\""));
+        assert!(!embedded.contains("file://"), "{embedded}");
+    }
+
+    #[test]
+    fn files_that_cannot_be_embedded_keep_their_address() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = file_src(&directory.path().join("missing.png"));
+        let text = directory.path().join("notes.txt");
+        std::fs::write(&text, "not an image").unwrap();
+        let other = file_src(&text);
+        assert_eq!(embed_local_files(&missing), missing);
+        assert_eq!(embed_local_files(&other), other);
+        assert_eq!(
+            embed_local_files("src=\"file://unclosed"),
+            "src=\"file://unclosed"
+        );
+    }
 }

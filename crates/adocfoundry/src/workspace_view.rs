@@ -249,13 +249,20 @@ pub(crate) fn palette_commands(engine: &adoc_engine::Engine) -> Vec<&adoc_engine
 /// What the notification says about a finished export: the file and its pages with the first
 /// warning, or the error, which names the file and line it comes from.
 pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, String>) -> String {
+    let html = output
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("html"));
     match result {
         Ok(summary) => {
             let warnings = summary.diagnostics.len();
             let name = output
                 .file_name()
                 .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-            let mut message = format!("Exported {name} ({} pages)", summary.pages);
+            let mut message = if html {
+                format!("Exported {name}")
+            } else {
+                format!("Exported {name} ({} pages)", summary.pages)
+            };
             if warnings > 0 {
                 message.push_str(&format!(
                     "; {warnings} warning{}: {}",
@@ -265,6 +272,7 @@ pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, Strin
             }
             message
         }
+        Err(error) if html => format!("HTML export failed: {error}"),
         Err(error) => format!("PDF export failed: {error}"),
     }
 }
@@ -2187,6 +2195,26 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.export_page(ids::EXPORT_PDF_PAGE, "pdf", window, cx);
+    }
+
+    /// Asks where to write the active page as HTML, then exports it on the engine's workers.
+    fn on_export_page_html(
+        &mut self,
+        _: &ExportPageHtml,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.export_page(ids::EXPORT_HTML_PAGE, "html", window, cx);
+    }
+
+    fn export_page(
+        &mut self,
+        command: adoc_engine::CommandId,
+        extension: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let engine = &self.app.read(cx).engine;
         let Some(id) = engine.active() else {
             window.push_notification("Open a page to export it.", cx);
@@ -2198,8 +2226,15 @@ impl WorkspaceView {
         let directory = path.parent().map(Path::to_path_buf).unwrap_or_default();
         let name = path
             .file_stem()
-            .map(|stem| format!("{}.pdf", stem.to_string_lossy()));
-        self.export_to(ExportTarget::Page(id), &directory, name, window, cx);
+            .map(|stem| format!("{}.{extension}", stem.to_string_lossy()));
+        self.export_to(
+            command,
+            ExportTarget::Page(id),
+            &directory,
+            name,
+            window,
+            cx,
+        );
     }
 
     /// Asks where to write the active page's component as a book, then exports it.
@@ -2228,6 +2263,7 @@ impl WorkspaceView {
         let directory = engine.roots().first().cloned().unwrap_or_default();
         let suggested = Some(format!("{name}.pdf"));
         self.export_to(
+            ids::EXPORT_PDF_COMPONENT,
             ExportTarget::Component { name, version },
             &directory,
             suggested,
@@ -2238,16 +2274,13 @@ impl WorkspaceView {
 
     fn export_to(
         &mut self,
+        command: adoc_engine::CommandId,
         target: ExportTarget,
         directory: &Path,
         suggested: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let command = match target {
-            ExportTarget::Page(_) => ids::EXPORT_PDF_PAGE,
-            ExportTarget::Component { .. } => ids::EXPORT_PDF_COMPONENT,
-        };
         let chosen = cx.prompt_for_new_path(directory, suggested.as_deref());
         cx.spawn_in(window, async move |this, cx| {
             let output = chosen.await.ok()?.ok()??;
@@ -2272,7 +2305,7 @@ impl WorkspaceView {
         .detach();
     }
 
-    /// Tells the user how an export went, with a button to open the PDF.
+    /// Tells the user how an export went, with a button to open the file.
     fn export_finished(
         output: &Path,
         result: &Result<ExportSummary, String>,
@@ -3284,6 +3317,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_commit_changes))
             .on_action(cx.listener(Self::on_push))
             .on_action(cx.listener(Self::on_export_page_pdf))
+            .on_action(cx.listener(Self::on_export_page_html))
             .on_action(cx.listener(Self::on_export_component_pdf))
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))

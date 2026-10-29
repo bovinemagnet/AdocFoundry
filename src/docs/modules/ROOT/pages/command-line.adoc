@@ -113,6 +113,7 @@ Use `--root <dir>` to choose another.
 `render` writes a page as a standalone HTML file, as the xref:preview.adoc[preview] renders it.
 Without `--output` the HTML goes to standard output.
 It waits for diagrams to finish before writing.
+Images are linked by `file://` address; the application's Export Page to HTML… embeds them instead, see xref:preview.adoc#exporting-html[Exporting to HTML].
 
 [source,sh]
 ----

@@ -21,6 +21,7 @@ mod files;
 mod format_table;
 #[cfg(feature = "git")]
 mod git;
+mod html_export;
 mod images;
 // Without Git, the engine behaves as with `[git] enabled = false`.
 #[cfg(not(feature = "git"))]

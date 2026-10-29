@@ -47,7 +47,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L2
 |`adoc-render`
-|A framework-free view tree (`ViewTree`, built from a `Dom` by `build_view` through a `ViewResolver`), a standalone HTML backend, and the optional external Asciidoctor renderer used by the language server's preview. The engine and the application use the view tree; the command-line `render` uses the HTML backend. `to_text` writes the view tree as plain text, for `adoc-mcp`'s `render_page`.
+|A framework-free view tree (`ViewTree`, built from a `Dom` by `build_view` through a `ViewResolver`), a standalone HTML backend, and the optional external Asciidoctor renderer used by the language server's preview. The engine and the application use the view tree; the command-line `render` uses the HTML backend, and `embed_local_files` turns its local `file://` images into `data:` URIs for the application's HTML export. `to_text` writes the view tree as plain text, for `adoc-mcp`'s `render_page`.
 
 |L2
 |`adoc-diagrams`

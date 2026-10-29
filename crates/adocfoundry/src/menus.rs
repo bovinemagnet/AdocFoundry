@@ -50,6 +50,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Separator,
             Command(ids::EXPORT_PDF_PAGE),
             Command(ids::EXPORT_PDF_COMPONENT),
+            Command(ids::EXPORT_HTML_PAGE),
             Separator,
             Command(ids::DOCUMENT_KEEP_OPEN),
             Command(ids::DOCUMENT_CLOSE),

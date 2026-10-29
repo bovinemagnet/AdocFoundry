@@ -72,6 +72,7 @@ pub struct Engine {
     pub(crate) images: crate::images::Images,
     pub(crate) words: crate::words::WordCounts,
     pub(crate) auto_saves: crate::auto_save::AutoSaveState,
+    pub(crate) html_exports: crate::html_export::HtmlExports,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
 }
@@ -138,6 +139,7 @@ impl Engine {
             images: crate::images::Images::default(),
             words: crate::words::WordCounts::default(),
             auto_saves: crate::auto_save::AutoSaveState::default(),
+            html_exports: crate::html_export::HtmlExports::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
         }
@@ -308,6 +310,7 @@ impl Engine {
         self.forget_hunks(id);
         self.forget_word_count(id);
         self.forget_auto_save(id);
+        self.forget_html_exports(id);
         if self.rendered.layout.pinned == Some(id) {
             self.rendered.layout.pinned = None;
             self.emit(EngineEvent::PreviewLayoutChanged);

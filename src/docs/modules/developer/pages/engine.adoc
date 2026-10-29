@@ -151,6 +151,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 |`export.pdf_page`, `export.pdf_component`
 |Export the active page, or a component version, to PDF.
 
+|`export.html_page`
+|Export the active page as standalone HTML, with local images, diagrams and formula images embedded as `data:` URIs. It does not need the `typst` feature.
+
 |`image.reload`
 |Reload Image. It takes `CommandArgs::Image(ImageId)` and applies while an image is the active tab (`ActiveImage`). See <<images>>.
 |===
@@ -324,6 +327,12 @@ The engine exports a page, or a component version in navigation order, to PDF.
 The pages are parsed on a worker from their open buffers or files, their views are built on the engine thread, and their diagrams are rendered.
 Once no diagram is pending, a worker typesets with `adoc-pdf`, writes the file and reports.
 The result arrives as `EngineEvent::ExportFinished`, with an `ExportSummary` (the page count and diagnostics) or the error.
+
+`export.html_page` takes the same `CommandArgs::Export` with an `ExportTarget::Page` and an output path (the PDF options are ignored), returns at once and reports with `EngineEvent::ExportFinished` (an `ExportSummary` with one page and no diagnostics).
+It is implemented in `html_export.rs`: `Engine::render_now` starts the page's render, and the crate-private `finished_preview` tells when it is complete, diagrams included.
+The HTML comes from `adoc_render::to_html`, and `adoc_render::embed_local_files` then replaces local `file://` image addresses with `data:` URIs.
+Remote images, unreadable files and files that are not images keep their addresses.
+It exports the open buffer, and needs no Typst.
 
 `Engine::export_blocking(args, timeout)` runs the same job and waits, for the command-line `pdf`, and `Engine::is_exporting()` is true while a job is in flight.
 The settings' `[pdf]` table supplies the default theme, the themes and fonts directories, the site address and the standards.
