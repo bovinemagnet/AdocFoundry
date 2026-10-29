@@ -271,8 +271,12 @@ A result is dropped when a newer job has started for the document, or when the d
 An edit during a render therefore never flashes the old text; the replacement job follows after the settle time.
 
 The view is built from the cached parse on the engine thread by `adoc_render::build_view`, with an engine resolver that answers xrefs, includes and images through the Antora catalog and the index.
-Each diagram block the view needs becomes a job on its own worker.
+Each diagram block the view needs becomes a render request.
 When one finishes, the preview is built again from the cached parse and republished, so a slow diagram never delays the page.
+Requests are queued (`rendered.rs`): `spawn_diagram` queues a request, `start_queued_diagrams` starts up to `DIAGRAM_WORKERS` (4) at once, and each finished render starts the next.
+Mermaid runs in process but uses the same pool, and the preview, the visual editor and PDF export share this path.
+Superseded renders are not cancelled; results are cached by checksum, so a stale render that finishes only fills the cache.
+
 Diagrams are cached on disk by checksum under the first workspace root, in `.cache/adocfoundry/diagrams/`.
 
 STEM goes through the same path.

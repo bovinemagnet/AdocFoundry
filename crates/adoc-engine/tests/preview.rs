@@ -587,3 +587,69 @@ fn a_configured_diagram_tool_is_used_and_follows_the_settings() {
     let reason = message(&mut engine);
     assert!(reason.contains(&second.display().to_string()), "{reason}");
 }
+
+/// A renderer that records how many renders run at once.
+struct Concurrency {
+    running: Arc<std::sync::atomic::AtomicUsize>,
+    most: Arc<std::sync::atomic::AtomicUsize>,
+    renders: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl adoc_diagrams::DiagramProvider for Concurrency {
+    fn kinds(&self) -> &[&str] {
+        &["graphviz"]
+    }
+
+    fn render(
+        &self,
+        request: &adoc_diagrams::DiagramRequest,
+    ) -> Result<String, adoc_diagrams::DiagramError> {
+        use std::sync::atomic::Ordering;
+        let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+        self.most.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(10));
+        self.running.fetch_sub(1, Ordering::SeqCst);
+        self.renders.fetch_add(1, Ordering::SeqCst);
+        Ok(format!("<svg>{}</svg>", request.source))
+    }
+}
+
+#[test]
+fn many_diagrams_render_through_a_bounded_pool() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    let source: String = (0..50)
+        .map(|number| format!("[graphviz]\n....\ndigraph {{ a{number} }}\n....\n\n"))
+        .collect();
+    fs::write(&page, format!("= Page\n\n{source}")).unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    let most = Arc::new(AtomicUsize::new(0));
+    let renders = Arc::new(AtomicUsize::new(0));
+    engine.set_diagrams(Diagrams::with_providers(
+        DiagramCache::new(directory.path().join("cache")),
+        vec![Box::new(Concurrency {
+            running: Arc::new(AtomicUsize::new(0)),
+            most: most.clone(),
+            renders: renders.clone(),
+        })],
+    ));
+    let id = engine.open(&page).unwrap();
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+
+    assert_eq!(renders.load(Ordering::SeqCst), 50);
+    let most = most.load(Ordering::SeqCst);
+    assert!(
+        (1..=adoc_engine::DIAGRAM_WORKERS).contains(&most),
+        "{most} at once"
+    );
+    let svgs = blocks(&engine, id)
+        .into_iter()
+        .filter(|block| matches!(block.kind, ViewKind::Diagram(DiagramView::Svg(_))))
+        .count();
+    assert_eq!(svgs, 50);
+}

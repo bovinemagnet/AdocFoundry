@@ -148,6 +148,12 @@ These keys are read from the user settings file only; a workspace settings file 
 If a configured path does not exist, the diagram shows its source with the reason, for example "graphviz diagrams need `/opt/homebrew/bin/dot`, which does not exist".
 If the setting is empty and the tool is not on the `PATH`, the reason is "... which was not found on the PATH".
 Changing these settings takes effect when settings reload, and diagrams that failed are tried again.
+
+A Graphviz, PlantUML or D2 process that runs longer than 30 seconds is stopped, and the diagram shows its source with the reason, for example "`dot` did not finish within 30 seconds and was stopped".
+Set `diagram_timeout` in the `[tools]` table of your user settings file to change the limit; it is a positive number of seconds, and it is read from the user settings file only.
+A tool that writes more than 32 MB to standard output or standard error is stopped too, and the diagram shows "<program> wrote more than 33554432 bytes and was stopped".
+At most four diagrams render at once, and the rest wait in a queue, so a page with fifty diagrams does not start fifty processes.
+The preview, the visual editor and PDF export share this limit.
 See xref:settings.adoc[Settings] for the keys.
 
 == STEM
