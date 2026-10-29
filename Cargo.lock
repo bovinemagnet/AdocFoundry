@@ -10224,7 +10224,7 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-asciidoc"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -10232,7 +10232,7 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-asciidoc-inline"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "cc",
  "tree-sitter",
