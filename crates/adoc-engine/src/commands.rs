@@ -81,6 +81,7 @@ pub mod ids {
     pub const EDIT_DELETE_TABLE_ROW: CommandId = CommandId::new("edit.delete_table_row");
     pub const EDIT_INSERT_TABLE_COLUMN: CommandId = CommandId::new("edit.insert_table_column");
     pub const EDIT_DELETE_TABLE_COLUMN: CommandId = CommandId::new("edit.delete_table_column");
+    pub const EDIT_FORMAT_TABLE: CommandId = CommandId::new("edit.format_table");
     pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
     pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
     pub const GIT_REFRESH: CommandId = CommandId::new("git.refresh");
@@ -467,6 +468,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::tabs::register_tabs(registry);
     crate::images::register_images(registry);
     crate::doctor::register_doctor(registry);
+    crate::format_table::register_format_table(registry);
     crate::expansion::register_expansion(registry);
     #[cfg(feature = "git")]
     {

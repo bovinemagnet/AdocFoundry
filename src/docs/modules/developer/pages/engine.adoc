@@ -115,6 +115,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 |`edit.insert_text`, `edit.replace_range`, `edit.undo`, `edit.redo`
 |Editing and undo.
 
+|`edit.format_table`
+|Aligns the cells of the table at the caret as one edit, taking `CommandArgs::Offset` or a `Range` (its start). It refuses tables it cannot format safely with `EngineError::Refused`, and reports no table there as `EngineError::NotFound`.
+
 |`navigate.definition`, `navigate.follow_link`, `navigate.back`, `navigate.forward`, `navigate.peek_include`
 |Link following and history.
 

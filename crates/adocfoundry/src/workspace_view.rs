@@ -2061,6 +2061,18 @@ impl WorkspaceView {
         );
     }
 
+    fn on_format_table(&mut self, _: &FormatTable, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((id, offset)) = self.caret(cx) else {
+            return;
+        };
+        self.invoke(
+            ids::EDIT_FORMAT_TABLE,
+            CommandArgs::Offset { id, offset },
+            window,
+            cx,
+        );
+    }
+
     fn on_next_change(&mut self, _: &NextChange, window: &mut Window, cx: &mut Context<Self>) {
         self.go_to_change(ids::GIT_NEXT_CHANGE, window, cx);
     }
@@ -3258,6 +3270,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_reindex))
             .on_action(cx.listener(Self::on_refresh_git))
             .on_action(cx.listener(Self::on_revert_change))
+            .on_action(cx.listener(Self::on_format_table))
             .on_action(cx.listener(Self::on_next_change))
             .on_action(cx.listener(Self::on_previous_change))
             .on_action(cx.listener(Self::on_show_changes))

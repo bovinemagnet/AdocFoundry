@@ -457,6 +457,53 @@ If every line is already marked, all are unmarked; otherwise only the unmarked l
 The marked text stays selected afterwards, so pressing the key again undoes the mark.
 Each toggle is one undo step.
 
+[[format-table]]
+== Formatting a table in the source editor
+
+Format Table, in the command palette and in the Format menu of the application menu, lines up the cells of the `|===` table at the caret.
+It has no key binding.
+It pads each cell so that the `|` separators form columns:
+
+[source,asciidoc]
+----
+|===
+|Name|Value
+
+|alpha |1
+|beta|22
+|===
+----
+
+becomes
+
+[source,asciidoc]
+----
+|===
+| Name  | Value
+
+| alpha | 1
+| beta  | 22
+|===
+----
+
+The rendered page is the same before and after, because Asciidoctor strips the spaces around cell text.
+Blank lines, escaped `\|` and line endings are kept, and trailing spaces are trimmed.
+Formatting is one undo step.
+A table that is already aligned is left as it is and adds nothing to the undo history, so formatting twice changes nothing.
+
+Format Table works on tables written one row to a line, with every cell starting with a bare `|`.
+It leaves any other table unchanged and says why in a notification:
+
+* A row spread over several lines, or a line that does not start with `|`.
+* A cell specifier, such as a span (`2+|`), an alignment (`^|`) or a style (`a|`).
+* Rows with different numbers of cells.
+* Another separator or format, such as `separator=` or `format=csv`.
+* A `cols` attribute with column styles, such as `1l`, because a literal column keeps its spaces.
+* A table with no closing `|===`.
+
+Tables shown as text inside listing, literal, passthrough or comment blocks are not tables.
+With no table at the caret, the command reports that there is no table there.
+
 == Following links
 
 Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+Enter]) on a reference follows it:
@@ -550,7 +597,7 @@ Edit::
 Undo, Redo, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.
 
 Format::
-The visual editor's marks, links, lists, blocks, images and tables.
+The visual editor's marks, links, lists, blocks, images and tables, and Format Table, which aligns the table at the caret in the source editor.
 
 View::
 The command palette, the editor modes, the preview, change markers and blame, the theme and the read-only window.

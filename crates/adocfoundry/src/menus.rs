@@ -103,6 +103,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::EDIT_DELETE_TABLE_ROW),
             Command(ids::EDIT_INSERT_TABLE_COLUMN),
             Command(ids::EDIT_DELETE_TABLE_COLUMN),
+            Command(ids::EDIT_FORMAT_TABLE),
         ],
     ),
     (

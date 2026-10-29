@@ -18,6 +18,7 @@ mod event;
 mod expansion;
 mod export;
 mod files;
+mod format_table;
 #[cfg(feature = "git")]
 mod git;
 mod images;
