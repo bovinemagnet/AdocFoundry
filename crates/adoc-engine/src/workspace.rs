@@ -53,6 +53,11 @@ pub(crate) enum WorkerMessage {
         checksum: String,
         result: Result<PathBuf, String>,
     },
+    WordsCounted {
+        id: crate::DocumentId,
+        version: u64,
+        count: crate::WordCount,
+    },
     #[cfg(feature = "git")]
     GitDiscovered {
         generation: u64,
@@ -227,6 +232,7 @@ impl Engine {
             || self.rendered.has_scheduled()
             || self.visual.has_due()
             || self.git.has_pending()
+            || self.has_due_word_count()
             || self
                 .watcher
                 .as_ref()
@@ -261,6 +267,7 @@ impl Engine {
             + self.rebuild_due_visuals()
             + self.start_due_hunks()
             + self.save_due_expansion()
+            + self.start_due_word_count()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the
@@ -327,6 +334,9 @@ impl Engine {
             } => self.preview_parsed(id, generation, version, *dom, sources),
             WorkerMessage::DiagramRendered { checksum, result } => {
                 self.diagram_rendered(&checksum, result);
+            }
+            WorkerMessage::WordsCounted { id, version, count } => {
+                self.words_counted(id, version, count);
             }
             #[cfg(feature = "git")]
             WorkerMessage::GitDiscovered {

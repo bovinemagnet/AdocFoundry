@@ -40,6 +40,7 @@ pub mod updates;
 #[cfg(feature = "git")]
 mod versions;
 mod visual;
+mod words;
 mod workspace;
 
 pub use clock::{Clock, ManualClock, SystemClock};
@@ -73,6 +74,7 @@ pub use settings::{
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
 pub use tabs::{OpenDisposition, TabItem};
+pub use words::{count_words, WordCount, WORDS_PER_MINUTE, WORD_COUNT_SETTLE};
 
 pub use adoc_core::FileAccess;
 pub use adoc_index::{is_asciidoc_path, normalize_path};

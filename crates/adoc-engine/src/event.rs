@@ -74,6 +74,8 @@ pub enum EngineEvent {
     },
     /// The document is now shown as source, visual or both.
     EditorModeChanged(DocumentId),
+    /// A new word count of `id` is available from `Engine::word_count`.
+    WordCountChanged(DocumentId),
     #[cfg(feature = "git")]
     /// The repository holding workspace root `root` was found, or its `HEAD` moved to another
     /// branch or commit.

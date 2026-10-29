@@ -297,6 +297,9 @@ It reports the outcome in a notification: `Committed abc1234`, or `Saved N file(
 The `CommandOutcome::CommitDraft` from Save and Commit opens it with the message and paths filled in.
 The status bar adds `↑n` from `GitRepository::ahead`.
 
+The status bar also shows `Engine::word_count` for the active document.
+For a selection it shows the words from `count_words` over the selected text, using the visual editor's selection in Visual mode and in Split mode while the visual side has focus, and the source editor's selection otherwise.
+
 == Tree-sitter grammars
 
 `grammars/tree-sitter-asciidoc` is a git submodule tracking the `master` branch of `bovinemagnet/tree-sitter-asciidoc`.

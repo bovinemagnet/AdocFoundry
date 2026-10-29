@@ -582,6 +582,24 @@ The status bar shows the caret's line and column as `Ln, Col`.
 In Visual mode, and in Split mode while the visual side has focus, they follow the visual editor's caret.
 Otherwise they follow the source editor's caret.
 
+== The word count in the status bar
+
+The status bar shows the active page's word count and an estimated reading time, such as `120 words · 1 min read`.
+A page with one word shows `1 word`, and an empty page shows `0 words`.
+When text is selected, the bar shows the selection's words out of the page's, such as `12 of 120 words`.
+
+Only prose is counted: titles, paragraphs, list items, description lists, callout lists, table cells, admonitions, quotes, verses, sidebars, examples and footnotes.
+Markup, attribute entries, listing, source and literal blocks, diagrams, formulas, passthrough content and images are not counted, and neither is generated text such as list numbers and table captions.
+Content brought in with `include::` is counted as part of the page.
+
+A word is a run of characters between white space that holds a letter or a digit, so a hyphenated word counts once and a dash on its own does not count.
+The selection is counted the same way over the text as you typed it, so it can include words from markup.
+The reading time assumes 200 words a minute and is rounded up to whole minutes.
+
+The page is counted once it has been unchanged for half a second, so the last count stays shown while you type.
+Switching to another tab, or opening a page, counts it straight away.
+Only the active page is counted.
+
 == The branch in the status bar
 
 Inside a Git repository the status bar shows the current branch, such as `⎇ main`.
