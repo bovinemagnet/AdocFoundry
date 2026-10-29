@@ -29,11 +29,13 @@ pub(crate) enum WorkerMessage {
         listing: crate::Listing,
     },
     Indexed {
+        generation: u64,
         roots: Vec<PathBuf>,
         state: Box<WorkspaceState>,
         files: usize,
     },
     IndexFailed {
+        generation: u64,
         error: String,
     },
     Search {
@@ -197,15 +199,19 @@ impl Engine {
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         self.indexing += 1;
+        self.index_generation += 1;
+        let generation = self.index_generation;
         thread::spawn(move || {
             let mut state = WorkspaceState::new();
             let message = match state.index_roots(&roots) {
                 Ok(files) => WorkerMessage::Indexed {
+                    generation,
                     roots,
                     state: Box::new(state),
                     files,
                 },
                 Err(error) => WorkerMessage::IndexFailed {
+                    generation,
                     error: format!("indexing failed: {error}"),
                 },
             };
@@ -280,13 +286,14 @@ impl Engine {
                 listing,
             } => self.directory_listed(request, dir, listing),
             WorkerMessage::Indexed {
+                generation,
                 roots,
                 state,
                 files,
             } => {
                 self.indexing = self.indexing.saturating_sub(1);
-                if roots != self.roots {
-                    return; // A newer workspace replaced the one this worker indexed.
+                if generation != self.index_generation {
+                    return; // A newer index, of these roots or others, replaced this one.
                 }
                 self.workspace = *state;
                 self.restore_branch_versions();
@@ -353,8 +360,11 @@ impl Engine {
             WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),
             #[cfg(feature = "typst")]
             WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
-            WorkerMessage::IndexFailed { error } => {
+            WorkerMessage::IndexFailed { generation, error } => {
                 self.indexing = self.indexing.saturating_sub(1);
+                if generation != self.index_generation {
+                    return;
+                }
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,
                     error,
@@ -525,5 +535,67 @@ mod tests {
             as_opened(Path::new("/elsewhere/page.adoc"), &aliases),
             PathBuf::from("/elsewhere/page.adoc")
         );
+    }
+
+    /// Indexes `roots` as a worker would, as the result of reindex `generation`.
+    fn indexed(roots: &[PathBuf], generation: u64) -> WorkerMessage {
+        let mut state = WorkspaceState::new();
+        let files = state.index_roots(roots).unwrap();
+        WorkerMessage::Indexed {
+            generation,
+            roots: roots.to_vec(),
+            state: Box::new(state),
+            files,
+        }
+    }
+
+    #[test]
+    fn a_superseded_index_result_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = vec![dir.path().to_path_buf()];
+        fs::write(dir.path().join("old.adoc"), "= Old\n").unwrap();
+        let older = indexed(&roots, 1);
+        fs::write(dir.path().join("new.adoc"), "= New\n").unwrap();
+        let newer = indexed(&roots, 2);
+
+        let mut engine = Engine::new(crate::Settings::default().with_git_opt_in());
+        engine.roots.clone_from(&roots);
+        // Two reindexes started; the newer finishes first.
+        engine.index_generation = 2;
+        engine.workers_running = 2;
+        engine.indexing = 2;
+        engine.worker_sender.send(newer).unwrap();
+        engine.worker_sender.send(older).unwrap();
+        engine.pump();
+
+        assert!(!engine.is_indexing());
+        assert!(
+            engine
+                .workspace
+                .index
+                .file(&dir.path().join("new.adoc"))
+                .is_some(),
+            "the newer result is kept when the older finishes last"
+        );
+    }
+
+    #[test]
+    fn a_superseded_index_failure_is_not_reported() {
+        let mut engine = Engine::new(crate::Settings::default().with_git_opt_in());
+        let events = engine.subscribe();
+        engine.index_generation = 2;
+        engine.workers_running = 1;
+        engine.indexing = 1;
+        engine
+            .worker_sender
+            .send(WorkerMessage::IndexFailed {
+                generation: 1,
+                error: "indexing failed: gone".to_owned(),
+            })
+            .unwrap();
+        engine.pump();
+
+        assert!(!engine.is_indexing());
+        assert!(events.try_iter().next().is_none());
     }
 }
