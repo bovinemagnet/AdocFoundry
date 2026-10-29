@@ -642,3 +642,152 @@ fn marks_toggle_a_source_selection() {
         .unwrap();
     assert_eq!(text(&engine, id), "= Page\n\nA *bold* `word`.\n");
 }
+
+const INSERTS: [adoc_engine::CommandId; 5] = [
+    ids::EDIT_INSERT_TABLE,
+    ids::EDIT_INSERT_CODE_BLOCK,
+    ids::EDIT_INSERT_ADMONITION,
+    ids::EDIT_INSERT_LINK,
+    ids::EDIT_INSERT_IMAGE,
+];
+
+fn source_insert(
+    engine: &mut Engine,
+    command: adoc_engine::CommandId,
+    id: DocumentId,
+    range: SourceRange,
+) -> SourceRange {
+    match engine
+        .invoke(command, CommandArgs::Range { id, range })
+        .unwrap()
+    {
+        CommandOutcome::Selection(selection) => selection,
+        other => panic!("unexpected outcome {other:?}"),
+    }
+}
+
+/// Replaces the selection with typed text, as the editor would.
+fn type_over(engine: &mut Engine, id: DocumentId, selection: SourceRange, typed: &str) {
+    engine
+        .invoke(
+            ids::EDIT_REPLACE_RANGE,
+            CommandArgs::Text {
+                id,
+                range: selection,
+                text: typed.to_owned(),
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn insert_commands_are_offered_in_source_mode() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    engine
+        .open(&page(directory.path(), "page.adoc", "= Page\n"))
+        .unwrap();
+    assert_eq!(
+        engine.editor_mode(engine.active().unwrap()),
+        EditorMode::Source
+    );
+    for command in INSERTS {
+        assert!(engine.command_available(command), "{command}");
+    }
+}
+
+#[test]
+fn a_table_inserted_in_source_is_the_visual_editor_s_table() {
+    let start = "= Page\n\nA paragraph.\n";
+    let end_of_paragraph = start.len() - 1;
+    let directory = tempfile::tempdir().unwrap();
+
+    // In the source editor: insert at the caret, then type the first header cell.
+    let (mut engine, _clock) = engine_with_clock();
+    let id = engine
+        .open(&page(directory.path(), "source.adoc", start))
+        .unwrap();
+    let caret = SourceRange::new(end_of_paragraph, end_of_paragraph);
+    let selection = source_insert(&mut engine, ids::EDIT_INSERT_TABLE, id, caret);
+    type_over(&mut engine, id, selection, "Name");
+    let from_source = text(&engine, id);
+
+    // In the visual editor, the same.
+    let (mut engine, _clock) = engine_with_clock();
+    let id = engine
+        .open(&page(directory.path(), "visual.adoc", start))
+        .unwrap();
+    show_visual(&mut engine, id);
+    let selection = visual(
+        &mut engine,
+        ids::EDIT_INSERT_TABLE,
+        id,
+        caret,
+        VisualValue::Table {
+            columns: 2,
+            rows: 2,
+        },
+    )
+    .unwrap();
+    type_over(&mut engine, id, selection, "Name");
+    assert_eq!(from_source, text(&engine, id));
+    assert!(
+        from_source.contains("|===\n|Name |Column 2\n"),
+        "{from_source}"
+    );
+}
+
+#[test]
+fn each_insert_is_one_undo_step_in_source() {
+    let start = "= Page\n\nfirst line\nsecond line\n";
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    let id = engine
+        .open(&page(directory.path(), "page.adoc", start))
+        .unwrap();
+    let end = start.len();
+
+    let selection = source_insert(
+        &mut engine,
+        ids::EDIT_INSERT_ADMONITION,
+        id,
+        SourceRange::new(end, end),
+    );
+    let after = text(&engine, id);
+    assert!(after.ends_with("second line\n\nNOTE: Note.\n"), "{after}");
+    assert_eq!(&after[selection.start..selection.end], "Note.");
+    assert!(engine.undo(id));
+    assert_eq!(text(&engine, id), start);
+
+    // A code block goes around the selected lines.
+    let lines = SourceRange::new(start.find("first").unwrap(), end - 1);
+    source_insert(&mut engine, ids::EDIT_INSERT_CODE_BLOCK, id, lines);
+    assert_eq!(
+        text(&engine, id),
+        "= Page\n\n----\nfirst line\nsecond line\n----\n"
+    );
+    assert!(engine.undo(id));
+
+    // A link around the selected text, the caret at its target.
+    let word = SourceRange::new(start.find("first").unwrap(), start.find(" line").unwrap());
+    let caret = source_insert(&mut engine, ids::EDIT_INSERT_LINK, id, word);
+    type_over(&mut engine, id, caret, "https://example.com");
+    assert!(
+        text(&engine, id).contains("link:https://example.com[first] line"),
+        "{}",
+        text(&engine, id)
+    );
+    assert!(engine.undo(id));
+    assert!(engine.undo(id));
+    assert_eq!(text(&engine, id), start);
+
+    // An image at the caret, the caret at its target.
+    let caret = source_insert(
+        &mut engine,
+        ids::EDIT_INSERT_IMAGE,
+        id,
+        SourceRange::new(end, end),
+    );
+    type_over(&mut engine, id, caret, "flow.png");
+    assert!(text(&engine, id).ends_with("second line\n\nimage::flow.png[]\n"));
+}

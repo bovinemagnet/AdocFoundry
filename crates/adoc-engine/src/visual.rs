@@ -490,12 +490,13 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
             |engine, args| toggle_mark(engine, args, ids::EDIT_TOGGLE_HIGHLIGHT, Mark::Highlight),
         ),
         (
+            // The source editor inserts it too, so it applies in every mode.
             spec(
                 ids::EDIT_INSERT_LINK,
                 "Insert Link",
                 Edit,
                 Some("cmd-shift-l"),
-                Selection,
+                ActiveDocument,
             ),
             insert_link,
         ),
@@ -627,14 +628,18 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
             },
         ),
         (
+            // The source editor inserts it too, so it applies in every mode.
             spec(
                 ids::EDIT_INSERT_CODE_BLOCK,
                 "Insert Code Block",
                 Edit,
                 None,
-                Selection,
+                ActiveDocument,
             ),
             |engine, args| {
+                if let CommandArgs::Range { id, range } = args {
+                    return source_block(engine, id, range, &NewBlock::Code);
+                }
                 caret_step(engine, args, ids::EDIT_INSERT_CODE_BLOCK, |at| {
                     Step::InsertBlock {
                         at,
@@ -644,22 +649,24 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
             },
         ),
         (
+            // The source editor inserts it too, so it applies in every mode.
             spec(
                 ids::EDIT_INSERT_ADMONITION,
                 "Insert Admonition",
                 Edit,
                 None,
-                Selection,
+                ActiveDocument,
             ),
             insert_admonition,
         ),
         (
+            // The source editor inserts it too, so it applies in every mode.
             spec(
                 ids::EDIT_INSERT_TABLE,
                 "Insert Table",
                 Edit,
                 None,
-                Selection,
+                ActiveDocument,
             ),
             insert_table,
         ),
@@ -720,14 +727,24 @@ pub(crate) fn register_visual(registry: &mut CommandRegistry) {
             },
         ),
         (
+            // The source editor inserts it too, so it applies in every mode.
             spec(
                 ids::EDIT_INSERT_IMAGE,
                 "Insert Image",
                 Edit,
                 None,
-                Selection,
+                ActiveDocument,
             ),
-            |engine, args| image(engine, args, false),
+            |engine, args| {
+                if let CommandArgs::Range { id, range } = args {
+                    let image = NewBlock::Image {
+                        target: String::new(),
+                        alt: String::new(),
+                    };
+                    return source_block(engine, id, range, &image);
+                }
+                image(engine, args, false)
+            },
         ),
         (
             spec(ids::EDIT_EDIT_IMAGE, "Edit Image", Edit, None, Selection),
@@ -962,8 +979,14 @@ fn toggle_mark(
     visual_step(engine, &args, Step::ToggleMark { range, mark })
 }
 
-/// Makes the selection a link, or changes the link it is in.
+/// Makes the selection a link, or changes the link it is in; in the source editor
+/// (`CommandArgs::Range`), wraps the selection in `link:[…]` with the caret at the target.
 fn insert_link(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    if let CommandArgs::Range { id, range } = args {
+        return source_edit(engine, id, |text| {
+            Ok(adoc_model::insert_link_in_source(text, range))
+        });
+    }
     let args = visual_args(ids::EDIT_INSERT_LINK, args)?;
     let VisualValue::Link { target, text } = args.value.clone() else {
         return Err(EngineError::InvalidArguments {
@@ -988,6 +1011,40 @@ fn remove_link(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
     let args = visual_args(ids::EDIT_REMOVE_LINK, args)?;
     let at = args.selection.end;
     visual_step(engine, &args, Step::RemoveLink { at })
+}
+
+/// The source editor's insert of `block` at the caret of `range`, or around its lines.
+fn source_block(
+    engine: &mut Engine,
+    id: DocumentId,
+    range: SourceRange,
+    block: &NewBlock,
+) -> Result<CommandOutcome, EngineError> {
+    source_edit(engine, id, |text| {
+        adoc_model::insert_block_in_source(text, range, block).map_err(refused)
+    })
+}
+
+/// Applies an edit worked out from the source text as one undo step, returning the selection
+/// after it.
+fn source_edit(
+    engine: &mut Engine,
+    id: DocumentId,
+    edit: impl FnOnce(&str) -> Result<adoc_model::SourceToggle, EngineError>,
+) -> Result<CommandOutcome, EngineError> {
+    let text = engine
+        .document(id)
+        .ok_or(EngineError::UnknownDocument(id))?
+        .text_string();
+    let done = edit(&text)?;
+    let edits = done
+        .edits
+        .into_iter()
+        .map(|edit| TextEdit::new(edit.range, edit.text))
+        .collect();
+    let group = engine.new_group();
+    engine.apply_edits(id, edits, UndoMode::Group(group))?;
+    Ok(CommandOutcome::Selection(done.selection))
 }
 
 /// Runs a step at the caret (the selection's head).
@@ -1052,6 +1109,14 @@ fn insert_admonition(
     engine: &mut Engine,
     args: CommandArgs,
 ) -> Result<CommandOutcome, EngineError> {
+    if let CommandArgs::Range { id, range } = args {
+        return source_block(
+            engine,
+            id,
+            range,
+            &NewBlock::Admonition(AdmonitionKind::Note),
+        );
+    }
     let args = visual_args(ids::EDIT_INSERT_ADMONITION, args)?;
     let kind = match args.value {
         VisualValue::Admonition(kind) => kind,
@@ -1092,6 +1157,13 @@ fn toggle_list(
 }
 
 fn insert_table(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    if let CommandArgs::Range { id, range } = args {
+        let table = NewBlock::Table {
+            columns: 2,
+            rows: 2,
+        };
+        return source_block(engine, id, range, &table);
+    }
     let args = visual_args(ids::EDIT_INSERT_TABLE, args)?;
     let (columns, rows) = match args.value {
         VisualValue::Table { columns, rows } => (columns, rows),

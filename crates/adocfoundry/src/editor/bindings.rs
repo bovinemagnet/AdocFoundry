@@ -330,7 +330,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
         let Some(keys) = spec.default_binding.map(platform_binding) else {
             continue;
         };
-        // The marks work in the source editor too, on its selection.
+        // The marks and Insert Link work in the source editor too, on its selection.
         let editor = Some(EDITOR_CONTEXT);
         match spec.id {
             ids::EDIT_UNDO => bindings.push(KeyBinding::new(&keys, Undo, visual)),
@@ -340,6 +340,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
                 bindings.push(KeyBinding::new(&keys, ToggleEmphasis, editor));
             }
             ids::EDIT_TOGGLE_CODE => bindings.push(KeyBinding::new(&keys, ToggleCode, editor)),
+            ids::EDIT_INSERT_LINK => bindings.push(KeyBinding::new(&keys, InsertLink, editor)),
             _ => {}
         }
     }

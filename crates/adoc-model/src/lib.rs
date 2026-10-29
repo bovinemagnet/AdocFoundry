@@ -11,6 +11,7 @@ mod inline;
 mod mapping;
 mod scan;
 mod serialise;
+mod source_blocks;
 mod source_marks;
 mod step;
 mod table;
@@ -20,6 +21,7 @@ mod words;
 
 pub use block::{BlockType, NewBlock};
 pub use mapping::{apply_edits, invert, Assoc, Mapping, SourceEdit};
+pub use source_blocks::{insert_block_in_source, insert_link_in_source};
 pub use source_marks::{toggle_mark_in_source, SourceToggle};
 pub use step::{Step, StepError, StepResult};
 pub use text::Segment;

@@ -2477,6 +2477,44 @@ fn marks_toggle_in_the_source_editor(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn inserts_work_in_the_source_editor(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n\nSee the guide.\n").unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+
+    // Insert Link wraps the selection, leaving the caret where the target goes.
+    let guide = SourceRange::new(16, 21);
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.reveal(guide, window, cx)));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-shift-l");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nSee the link:[guide].\n"
+    );
+    assert_eq!(cx.update(|_, cx| editor.read(cx).selection(cx)), 21..21);
+
+    // Insert Table, from the end of the page, selects the first header cell to type over.
+    let end = SourceRange::new(29, 29);
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.reveal(end, window, cx)));
+    cx.run_until_parked();
+    cx.dispatch_action(crate::editor::bindings::InsertTable);
+    cx.run_until_parked();
+    let text = text_of(&app, id, &mut cx);
+    assert!(
+        text.ends_with(".\n\n|===\n|Column 1 |Column 2\n\n| |\n| |\n|===\n"),
+        "{text}"
+    );
+    let selection = cx.update(|_, cx| editor.read(cx).selection(cx));
+    assert_eq!(&text[selection], "Column 1");
+}
+
+#[gpui::test]
 fn export_from_the_palette_writes_a_pdf(cx: &mut TestAppContext) {
     init(cx);
     let directory = tempfile::tempdir().unwrap();

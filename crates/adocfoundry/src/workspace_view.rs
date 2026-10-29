@@ -1830,9 +1830,10 @@ impl WorkspaceView {
         }
     }
 
-    /// Toggles a mark in the source editor. The visual editor handles the same actions itself
-    /// while it has focus, so this is reached from the source editor or the palette.
-    fn toggle_source_mark(
+    /// Runs a mark or insert command on the source editor's selection. The visual editor
+    /// handles the same actions itself while it has focus, so this is reached from the source
+    /// editor or the palette.
+    fn source_selection_command(
         &mut self,
         command: adoc_engine::CommandId,
         window: &mut Window,
@@ -1845,11 +1846,13 @@ impl WorkspaceView {
         if self.app.read(cx).engine.editor_mode(document) == EditorMode::Visual {
             return;
         }
-        editor.update(cx, |editor, cx| editor.toggle_mark(command, window, cx));
+        editor.update(cx, |editor, cx| {
+            editor.run_on_selection(command, window, cx)
+        });
     }
 
     fn on_toggle_strong(&mut self, _: &ToggleStrong, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_source_mark(ids::EDIT_TOGGLE_STRONG, window, cx);
+        self.source_selection_command(ids::EDIT_TOGGLE_STRONG, window, cx);
     }
 
     fn on_toggle_emphasis(
@@ -1858,11 +1861,11 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_source_mark(ids::EDIT_TOGGLE_EMPHASIS, window, cx);
+        self.source_selection_command(ids::EDIT_TOGGLE_EMPHASIS, window, cx);
     }
 
     fn on_toggle_code(&mut self, _: &ToggleCode, window: &mut Window, cx: &mut Context<Self>) {
-        self.toggle_source_mark(ids::EDIT_TOGGLE_CODE, window, cx);
+        self.source_selection_command(ids::EDIT_TOGGLE_CODE, window, cx);
     }
 
     fn on_toggle_highlight(
@@ -1871,7 +1874,37 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.toggle_source_mark(ids::EDIT_TOGGLE_HIGHLIGHT, window, cx);
+        self.source_selection_command(ids::EDIT_TOGGLE_HIGHLIGHT, window, cx);
+    }
+
+    fn on_insert_table(&mut self, _: &InsertTable, window: &mut Window, cx: &mut Context<Self>) {
+        self.source_selection_command(ids::EDIT_INSERT_TABLE, window, cx);
+    }
+
+    fn on_insert_code_block(
+        &mut self,
+        _: &InsertCodeBlock,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.source_selection_command(ids::EDIT_INSERT_CODE_BLOCK, window, cx);
+    }
+
+    fn on_insert_admonition(
+        &mut self,
+        _: &InsertAdmonition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.source_selection_command(ids::EDIT_INSERT_ADMONITION, window, cx);
+    }
+
+    fn on_insert_link(&mut self, _: &InsertLink, window: &mut Window, cx: &mut Context<Self>) {
+        self.source_selection_command(ids::EDIT_INSERT_LINK, window, cx);
+    }
+
+    fn on_insert_image(&mut self, _: &InsertImage, window: &mut Window, cx: &mut Context<Self>) {
+        self.source_selection_command(ids::EDIT_INSERT_IMAGE, window, cx);
     }
 
     fn on_redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
@@ -3259,6 +3292,11 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_toggle_emphasis))
             .on_action(cx.listener(Self::on_toggle_code))
             .on_action(cx.listener(Self::on_toggle_highlight))
+            .on_action(cx.listener(Self::on_insert_table))
+            .on_action(cx.listener(Self::on_insert_code_block))
+            .on_action(cx.listener(Self::on_insert_admonition))
+            .on_action(cx.listener(Self::on_insert_link))
+            .on_action(cx.listener(Self::on_insert_image))
             .on_action(cx.listener(Self::on_follow_link))
             .on_action(cx.listener(Self::on_go_to_definition))
             .on_action(cx.listener(Self::on_go_back))

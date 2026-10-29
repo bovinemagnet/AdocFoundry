@@ -248,9 +248,15 @@ impl SourceEditorView {
         self.state.read(cx).selected_range()
     }
 
-    /// Toggles mark `command` (`edit.toggle_strong` and the like) over the selection, through
-    /// the engine, and keeps the marked text selected.
-    pub fn toggle_mark(&mut self, command: CommandId, window: &mut Window, cx: &mut Context<Self>) {
+    /// Runs `command` on the selection through the engine (a mark such as `edit.toggle_strong`,
+    /// or an insert such as `edit.insert_table`), then selects what the engine says to: the
+    /// marked text, or where typing goes next.
+    pub fn run_on_selection(
+        &mut self,
+        command: CommandId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let selection = self.selection(cx);
         let document = self.document;
         let outcome = self.app.update(cx, |app, cx| {

@@ -457,6 +457,27 @@ If every line is already marked, all are unmarked; otherwise only the unmarked l
 The marked text stays selected afterwards, so pressing the key again undoes the mark.
 Each toggle is one undo step.
 
+[[inserting-blocks]]
+=== Inserting blocks and links
+
+Insert Table, Insert Code Block, Insert Admonition, Insert Image and Insert Link also work in the source editor, in Source mode and on the source side of Split mode.
+They are in the command palette, and Insert Link keeps its key (`Cmd-Shift-L` or `Ctrl-Shift-L`).
+Each is one undo step.
+
+* Insert Table, Insert Admonition, Insert Image and Insert Code Block write the block's skeleton at the caret.
+It is the same source the visual editor writes, so inserting a table and typing into it gives the same source in either editor.
+If the caret is in the middle of a line, the line is split, and a blank line is added before and after the block where needed.
+* Insert Table writes a 2×2 table with a header row (`+|Column 1 |Column 2+`), with "Column 1" selected to type over.
+* Insert Admonition writes `+NOTE: Note.+` with "Note." selected.
+* Insert Code Block writes an empty `----` listing block with the caret inside.
+With lines selected, the block goes around those whole lines, and they stay selected.
+A selection that ends at the start of a line does not take that line.
+* Insert Image writes `+image::[]+` with the caret where the target goes.
+The visual editor asks for the target and alt text in a dialog instead.
+* Insert Link wraps the selected text as `+link:[text]+`, escaping any `]` in it, with the caret where the target goes, ready for you to type a URL.
+With nothing selected it inserts `+link:[]+`.
+The visual editor opens a dialog asking for the target and text instead.
+
 [[format-table]]
 == Formatting a table in the source editor
 
@@ -597,7 +618,9 @@ Edit::
 Undo, Redo, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.
 
 Format::
-The visual editor's marks, links, lists, blocks, images and tables, and Format Table, which aligns the table at the caret in the source editor.
+Marks, links, lists, blocks, images and tables.
+The marks, links and the table, code block, admonition and image inserts work in the source editor too; the rest are for the visual editor.
+Format Table aligns the table at the caret in the source editor.
 
 View::
 The command palette, the editor modes, the preview, change markers and blame, the theme and the read-only window.
@@ -643,7 +666,8 @@ See xref:settings.adoc[Settings].
 
 The command palette lists every command with its title.
 Bold, Italic, Code and Highlight are listed in every mode.
-The other commands that apply only to the visual editor, such as the list and block commands and Insert Link, are listed only while the active page is shown in Visual or Split mode.
+Insert Table, Insert Code Block, Insert Admonition, Insert Image and Insert Link are listed in every mode too.
+The other commands that apply only to the visual editor, such as the list commands, are listed only while the active page is shown in Visual or Split mode.
 Commands that need an open page are hidden when none is open, and Antora-only commands are hidden when the workspace has no Antora component.
 
 == The line and column in the status bar
