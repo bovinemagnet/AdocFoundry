@@ -13,7 +13,7 @@ use std::{
 
 use adoc_antora::{AntoraResolver, ResourceFamily};
 use adoc_core::{FileAccess, Location, SourceRange};
-use adoc_diagrams::{DiagramCache, DiagramRequest, Diagrams};
+use adoc_diagrams::{DiagramCache, DiagramRequest, Diagrams, ToolPaths};
 use adoc_dom::{AcdcParser, DocumentParser, Dom, IncludeResolver, ParseInput};
 use adoc_index::normalize_path;
 use adoc_lang::WorkspaceState;
@@ -589,7 +589,7 @@ impl Engine {
                 // External tools read files of their own (PlantUML's `!include`, Graphviz's
                 // `image`), so a confined engine renders Mermaid only.
                 let diagrams = match self.file_access {
-                    FileAccess::Any => Diagrams::new(cache),
+                    FileAccess::Any => Diagrams::with_tools(cache, &diagram_tools(&self.settings)),
                     FileAccess::Within(_) => Diagrams::in_process(cache),
                 };
                 // Without Typst, formulas stay as styled source.
@@ -619,6 +619,17 @@ impl Engine {
     #[must_use]
     pub fn file_access(&self) -> &FileAccess {
         &self.file_access
+    }
+
+    /// Builds the diagram renderer afresh when the settings now name other diagram tools, and
+    /// previews again, retrying the diagrams that failed.
+    pub(crate) fn diagram_tools_changed(&mut self, before: &crate::settings::ToolSettings) {
+        let now = &self.settings.tools;
+        if (&before.dot, &before.plantuml, &before.d2) != (&now.dot, &now.plantuml, &now.d2) {
+            self.rendered.diagrams = None;
+            self.rendered.failed.clear();
+            self.preview_workspace_changed();
+        }
     }
 
     /// Replaces the diagram renderer, for tests and front ends with their own providers.
@@ -773,5 +784,22 @@ impl ViewResolver for EngineResolver<'_> {
             kind: kind.to_owned(),
             source: source.to_owned(),
         }
+    }
+}
+
+/// The diagram tools `settings` names, each looked up on the PATH when its setting is empty.
+fn diagram_tools(settings: &crate::Settings) -> ToolPaths {
+    let defaults = ToolPaths::default();
+    let or = |configured: &str, default: PathBuf| {
+        if configured.is_empty() {
+            default
+        } else {
+            PathBuf::from(configured)
+        }
+    };
+    ToolPaths {
+        dot: or(&settings.tools.dot, defaults.dot),
+        plantuml: or(&settings.tools.plantuml, defaults.plantuml),
+        d2: or(&settings.tools.d2, defaults.d2),
     }
 }

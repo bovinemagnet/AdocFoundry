@@ -154,17 +154,17 @@ impl Engine {
             },
             Tool {
                 name: "dot",
-                configured: None,
+                configured: configured("[tools] dot", &settings.tools.dot),
                 version_args: &["-V"],
             },
             Tool {
                 name: "plantuml",
-                configured: None,
+                configured: configured("[tools] plantuml", &settings.tools.plantuml),
                 version_args: &["-version"],
             },
             Tool {
                 name: "d2",
-                configured: None,
+                configured: configured("[tools] d2", &settings.tools.d2),
                 version_args: &["--version"],
             },
             Tool {

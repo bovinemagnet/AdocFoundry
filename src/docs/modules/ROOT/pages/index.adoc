@@ -70,7 +70,7 @@ It adds xref:preview.adoc[the preview]:
 * Scroll sync in both directions, and click-to-source, including into partials.
 * Clickable xrefs that record back and forward history, with unresolved references marked.
 * Includes, images and attachments resolved through the Antora catalog.
-* Highlighted source blocks, and diagrams: Mermaid in process, and Graphviz, PlantUML and D2 through their tools when found on the `PATH`.
+* Highlighted source blocks, and diagrams: Mermaid in process, and Graphviz, PlantUML and D2 through their tools, from `[tools]` settings or found on the `PATH`.
 * `adocfoundry-cli render`, which writes a page as HTML as the preview renders it.
 
 == Phase 1 status
@@ -87,7 +87,6 @@ It provides:
 
 The following are not implemented yet:
 
-* Settings for the paths of the Graphviz, PlantUML and D2 tools, which are found on the `PATH` only.
 * Editing included content in place, deleting a selection across blocks in the visual editor, spell checking, Git integration and plugins.
 * XML and Dockerfile highlighting inside source blocks, because the editor component has no grammar for them yet.
 * Diagnostics inside `antora.yml` itself, beyond reporting that it cannot be read.

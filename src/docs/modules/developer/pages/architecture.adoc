@@ -51,7 +51,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L2
 |`adoc-diagrams`
-|Diagram rendering for the preview. Mermaid is rendered in process through `merman`, other kinds (Graphviz, PlantUML, D2) through external tools discovered on the `PATH`, and every result is cached on disk by checksum.
+|Diagram rendering for the preview. Mermaid is rendered in process through `merman`, other kinds (Graphviz, PlantUML, D2) through external tools run from the paths given (`ToolPaths`, from the engine's `[tools]` settings) or discovered on the `PATH`, and every result is cached on disk by checksum.
 
 |L2
 |`adoc-model`

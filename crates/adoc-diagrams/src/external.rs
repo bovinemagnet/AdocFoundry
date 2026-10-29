@@ -7,6 +7,25 @@ use std::{
 
 use crate::{DiagramError, DiagramProvider, DiagramRequest};
 
+/// The programs the external providers run: a bare name is looked up on the PATH, anything
+/// else is used as a path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolPaths {
+    pub dot: PathBuf,
+    pub plantuml: PathBuf,
+    pub d2: PathBuf,
+}
+
+impl Default for ToolPaths {
+    fn default() -> Self {
+        Self {
+            dot: PathBuf::from("dot"),
+            plantuml: PathBuf::from("plantuml"),
+            d2: PathBuf::from("d2"),
+        }
+    }
+}
+
 /// A diagram tool run as a process: the source on standard input, SVG on standard output.
 /// Optional: when the program is not found, rendering fails with [`DiagramError::ToolMissing`].
 #[derive(Clone, Debug)]
@@ -29,15 +48,21 @@ impl ExternalProvider {
     /// Graphviz (`dot`), PlantUML and D2, looked up on the PATH when used.
     #[must_use]
     pub fn defaults() -> Vec<Self> {
+        Self::for_tools(&ToolPaths::default())
+    }
+
+    /// Graphviz, PlantUML and D2 run from `tools`.
+    #[must_use]
+    pub fn for_tools(tools: &ToolPaths) -> Vec<Self> {
         let args = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect();
         vec![
-            Self::new(vec!["graphviz", "dot"], "dot", args(&["-Tsvg"])),
+            Self::new(vec!["graphviz", "dot"], &tools.dot, args(&["-Tsvg"])),
             Self::new(
                 vec!["plantuml", "uml"],
-                "plantuml",
+                &tools.plantuml,
                 args(&["-tsvg", "-pipe"]),
             ),
-            Self::new(vec!["d2"], "d2", args(&["-", "-"])),
+            Self::new(vec!["d2"], &tools.d2, args(&["-", "-"])),
         ]
     }
 
@@ -82,10 +107,16 @@ impl DiagramProvider for ExternalProvider {
     }
 }
 
+/// True when `program` names a file by its path rather than a program to look up on the PATH.
+#[must_use]
+pub fn is_path(program: &Path) -> bool {
+    program.components().count() > 1
+}
+
 /// `program` itself when it is a path to a file, otherwise the first match on the PATH.
 #[must_use]
 pub fn find_program(program: &Path) -> Option<PathBuf> {
-    if program.components().count() > 1 {
+    if is_path(program) {
         return program.is_file().then(|| program.to_path_buf());
     }
     let extensions: Vec<String> = if cfg!(windows) {

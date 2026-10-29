@@ -808,8 +808,10 @@ impl Engine {
 
     pub fn reload_settings(&mut self) -> Result<(), EngineError> {
         let git_was_enabled = self.settings.git.enabled;
+        let tools_before = self.settings.tools.clone();
         self.settings.reload()?;
         self.emit(EngineEvent::SettingsChanged);
+        self.diagram_tools_changed(&tools_before);
         self.settle_preview_tab();
         if self.settings.git.enabled != git_was_enabled {
             self.discover_git();
