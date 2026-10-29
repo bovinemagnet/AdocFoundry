@@ -239,7 +239,7 @@ Settings come from the files the app reads: the user settings file and the works
 
 The [`adoc-ls` README](crates/adoc-ls/README.md) covers installation, editor set-up, the commands, settings and diagnostic codes.
 
-The Zed extension [AsciiDoc and Antora](https://github.com/bovinemagnet/zed-asciidoc) (`asciidoc-antora`) uses an `adoc-ls` on `PATH` when there is one. Otherwise it downloads `adoc-ls` from the latest release here, for Linux, macOS and Windows on x86-64 and AArch64, and keeps it up to date. If the release cannot be fetched, it falls back to its most recent earlier download. The release archives are built with Typst and Git. Zed's `lsp.adoc-ls.binary` setting can name another binary instead.
+The Zed extension [AsciiDoc and Antora](https://github.com/bovinemagnet/zed-asciidoc-antora) (`asciidoc-antora`) uses an `adoc-ls` on `PATH` when there is one. Otherwise it downloads `adoc-ls` from the latest release here, for Linux, macOS and Windows on x86-64 and AArch64, and keeps it up to date. If the release cannot be fetched, it falls back to its most recent earlier download. The release archives are built with Typst and Git. Zed's `lsp.adoc-ls.binary` setting can name another binary instead.
 
 To run your own build, install it on `PATH`. The default build is lean, without Typst or Git:
 

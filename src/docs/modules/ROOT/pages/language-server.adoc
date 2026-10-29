@@ -94,7 +94,7 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --featur
 
 == Zed
 
-The Zed extension "AsciiDoc and Antora" (ID `asciidoc-antora`, https://github.com/bovinemagnet/zed-asciidoc[zed-asciidoc]) provides AsciiDoc highlighting and starts `adoc-ls`.
+The Zed extension "AsciiDoc and Antora" (ID `asciidoc-antora`, https://github.com/bovinemagnet/zed-asciidoc-antora[zed-asciidoc-antora]) provides AsciiDoc highlighting and starts `adoc-ls`.
 It uses an `adoc-ls` on your `PATH` when there is one.
 Otherwise it downloads `adoc-ls` from the latest AdocFoundry release and keeps it up to date.
 The release archives cover Linux, macOS and Windows on x86-64 and AArch64.
