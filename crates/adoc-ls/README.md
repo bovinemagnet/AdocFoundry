@@ -43,7 +43,7 @@ The workspace is the client's workspace folders, or its root URI when it sends n
 
 ### Zed
 
-The [AsciiDoc and Antora](https://github.com/bovinemagnet/zed-asciidoc) extension (`asciidoc-antora`) starts `adoc-ls` for you. It uses an `adoc-ls` on `PATH` when there is one, and otherwise downloads it from the latest release. Zed's `lsp.adoc-ls.binary` setting can name another binary instead.
+The [AsciiDoc and Antora](https://github.com/bovinemagnet/zed-asciidoc-antora) extension (`asciidoc-antora`) starts `adoc-ls` for you. It uses an `adoc-ls` on `PATH` when there is one, and otherwise downloads it from the latest release. Zed's `lsp.adoc-ls.binary` setting can name another binary instead.
 
 ### Neovim
 
