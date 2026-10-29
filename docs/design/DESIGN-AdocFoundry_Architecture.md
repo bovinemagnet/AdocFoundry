@@ -62,7 +62,7 @@ The common thread in both ArtCraft apps is a headless engine with a swappable fr
 | `adoc-index` | `WorkspaceIndex` with replacement updates and direct lookups (never full scans) | The workspace index behind the sidebar, diagnostics and go-to-definition |
 | `adoc-render` | `Renderer` trait; `SystemAsciidoctor` spawning the Ruby CLI; `MockRenderer` | Phase 2 adds a `NativeRenderer` behind the same trait, exactly as the repo's preview design note (DESIGN-Preview\_Pipeline\_and\_Native\_Rendering, Aug 2026) already proposes |
 | `adoc-ls` | LSP server over stdio: symbols, diagnostics, definition, completion, hover, workspace symbols, preview code actions | Stays as a sibling product for Zed, VS Code and others. The desktop app calls the handler layer in-process, not over LSP |
-| tree-sitter grammars (`bovinemagnet/tree-sitter-asciidoc`, block + inline, pinned rev `74a3e23`) | Highlighting, outline, folding, source-block injections; two fork-only changes carried on the fork's `master` branch | Phase 1 syntax highlighting and folding in the GPUI editor |
+| tree-sitter grammars (`bovinemagnet/tree-sitter-asciidoc`, block + inline, pinned rev `58c60c6`, release v0.10.0) | Highlighting, outline, folding, source-block injections; two fork-only changes carried on the fork's `master` branch | Phase 1 syntax highlighting and folding in the GPUI editor |
 
 The repository's own conventions carry over: no LSP types below `adoc-ls`, byte offsets everywhere, conservative diagnostics, pinned dependencies, `unsafe_code = "forbid"`. One convention has to be relaxed: "no custom HTML rendering engine" was right for a language server and is exactly what Phases 2 and 3 add, in a separate crate ladder so the language server never depends on it.
 
