@@ -233,6 +233,7 @@ impl Engine {
             || self.visual.has_due()
             || self.git.has_pending()
             || self.has_due_word_count()
+            || self.has_due_auto_save()
             || self
                 .watcher
                 .as_ref()
@@ -268,6 +269,7 @@ impl Engine {
             + self.start_due_hunks()
             + self.save_due_expansion()
             + self.start_due_word_count()
+            + self.save_due_documents()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the

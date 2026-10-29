@@ -1197,6 +1197,47 @@ fn status_bar_shows_the_word_count_and_the_selection_s(cx: &mut TestAppContext) 
     );
 }
 
+#[gpui::test]
+fn the_window_losing_focus_saves_with_on_focus_change(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let page = dir.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let mut settings = Settings::default().with_git_opt_in();
+    settings.editor.auto_save = adoc_engine::AutoSave::OnFocusChange;
+    let app = app_with(Engine::new(settings), cx);
+    let (_, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                adoc_engine::commands::ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(7, 7),
+                    text: "\nEdited.\n".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
+
+    // The test platform opens windows inactive; activate it, then blur it.
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    assert!(cx.update(|window, _| window.is_window_active()));
+    cx.deactivate_window();
+    assert_eq!(
+        std::fs::read_to_string(&page).unwrap(),
+        "= Page\n\nEdited.\n",
+        "saved when the window lost focus"
+    );
+}
+
 /// Drains the engine until its workers and timers are done, as the app's pump would.
 fn settle_engine(app: &Entity<AppState>, cx: &mut VisualTestContext) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

@@ -98,7 +98,9 @@ impl Engine {
     pub fn set_active_image(&mut self, id: ImageId) {
         if self.images.open.contains_key(&id) && self.images.active != Some(id) {
             self.images.active = Some(id);
-            self.active = None;
+            if let Some(left) = self.active.take() {
+                self.auto_save_left(left);
+            }
             self.emit(EngineEvent::NavigationChanged);
             self.sync_preview_target();
         }

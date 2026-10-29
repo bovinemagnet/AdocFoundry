@@ -43,6 +43,24 @@ Closing the dialog leaves the page as it was, still unsaved.
 The same choices are in the command palette as Reload from Disk (`document.reload`) and Save, Overwriting the File on Disk (`document.overwrite`); neither has a key.
 A file deleted outside the editor is simply written again by Save.
 
+[#auto-save]
+=== Auto-save
+
+Auto-save is off by default.
+Set `editor.auto_save` to choose when AdocFoundry saves for you; see xref:settings.adoc[Settings].
+
+`"after_delay"`::
+A page is saved one second after your last edit to it, so the unsaved marker on its tab clears shortly after you stop typing.
+
+`"on_focus_change"`::
+A page is saved when you leave its tab for another page or an image.
+Every edited page is saved when the AdocFoundry window loses focus, for example when you switch to another application or to a detached preview window.
+
+Auto-save uses the ordinary Save command, so the file watcher and Git state behave as after a manual save.
+Pages without unsaved edits are not written, and untitled pages that have never been saved are never auto-saved.
+A file that changed on disk is never overwritten: the save is refused with the usual "changed on disk" conflict and reported once as a notification.
+That page is not auto-saved again until you save, overwrite or reload it by hand.
+
 Every save writes a temporary file in the same directory and renames it over the page, keeping the file's permissions.
 For a symbolic link, the link's target is written and the link is kept.
 A failed write can no longer leave a truncated file.

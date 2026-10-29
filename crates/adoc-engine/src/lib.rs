@@ -3,6 +3,7 @@
 //! It owns open documents, undo history, the command registry and settings, and publishes
 //! [`EngineEvent`]s. Every user-visible action is a [`Command`] with a stable [`CommandId`].
 
+mod auto_save;
 mod clock;
 mod command;
 pub mod commands;
@@ -43,6 +44,7 @@ mod visual;
 mod words;
 mod workspace;
 
+pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use command::{
     Command, CommandArgs, CommandCategory, CommandContext, CommandId, CommandOutcome,
@@ -67,7 +69,7 @@ pub use preview::{
 };
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use settings::{
-    pdf_standard, EditorSettings, ExpansionPolicy, GitSettings, PdfSettings, Settings,
+    pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, PdfSettings, Settings,
     SidebarSettings, ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings,
     USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
