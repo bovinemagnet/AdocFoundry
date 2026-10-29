@@ -134,13 +134,13 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 |Typing, deleting, Enter, and writing the pending block. See <<the-visual-model-service>>.
 
 |`edit.toggle_strong`, `edit.toggle_emphasis`, `edit.toggle_code`, `edit.toggle_highlight`, `edit.insert_link`, `edit.remove_link`
-|Marks and links in the visual editor.
+|Marks and links in the visual editor. In the source editor, marks go through `toggle_mark_in_source` and `insert_link` through `insert_link_in_source`.
 
 |`edit.set_block_type`, `edit.toggle_bullet_list`, `edit.toggle_numbered_list`, `edit.toggle_checklist`, `edit.toggle_checked`, `edit.indent_list_item`, `edit.outdent_list_item`, `edit.insert_code_block`, `edit.insert_admonition`
-|Block and list editing in the visual editor.
+|Block and list editing in the visual editor. In the source editor, `edit.insert_code_block` and `edit.insert_admonition` go through `insert_block_in_source`.
 
 |`edit.insert_table`, `edit.insert_table_row`, `edit.delete_table_row`, `edit.insert_table_column`, `edit.delete_table_column`, `edit.insert_image`, `edit.edit_image`
-|Tables and images in the visual editor.
+|Tables and images in the visual editor. In the source editor, `edit.insert_table` and `edit.insert_image` go through `insert_block_in_source`.
 
 |`workspace.search`, `workspace.replace`, `workspace.apply_preview`, `page.rename`
 |Search, replace and rename.
@@ -415,6 +415,8 @@ When a diagram finishes rendering, the models whose views were waiting for it re
 
 A visual command takes `CommandArgs::Visual(VisualArgs)`: the document, the version the selection is in, the selection as source offsets, the `MarkSet` that typed text carries, and a `VisualValue` (text, a link, a block type, a new block, an admonition kind, a table size, or an image).
 It returns `CommandOutcome::Selection`, the selection to use afterwards.
+From the source editor the same commands take `CommandArgs::Range` instead, and the engine calls `adoc-model`'s `toggle_mark_in_source`, `insert_block_in_source` or `insert_link_in_source` on the text, as one undo step.
+The visual editor's new-block skeletons and the source inserts share `new_block_body` in `adoc-model`, so both editors write the same source.
 
 The command asks the model for the step's result, which is source edits in pre-step coordinates, the selection after, and the updated model for a local step.
 The edits are applied to the document as one edit, recorded in undo history, and `DocumentChanged` and `ModelChanged` are published.

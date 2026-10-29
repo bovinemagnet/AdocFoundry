@@ -433,11 +433,12 @@ impl<'a> Builder<'a> {
     }
 
     /// `start` moved past whitespace, and `end` to the end of its line: parser spans can be a
-    /// byte short at either end.
+    /// byte short at either end, or fall inside a character.
     fn snap(&self, start: usize, end: usize, limit: usize) -> SourceRange {
+        let start = self.source.ceil_char_boundary(start.min(limit));
         let text = self.text(SourceRange::new(start, limit));
         let start = start + (text.len() - text.trim_start().len());
-        let end = end.clamp(start, limit);
+        let end = self.source.ceil_char_boundary(end.clamp(start, limit));
         let line_end = self.source[end..limit]
             .find('\n')
             .map_or(limit, |offset| end + offset);
@@ -1196,5 +1197,24 @@ mod tests {
         assert!(is_attribute_entry(":!sectnums:"));
         assert!(!is_attribute_entry(":: not one"));
         assert!(!is_attribute_entry("NOTE: text"));
+    }
+
+    #[test]
+    fn a_span_inside_a_character_snaps_past_it() {
+        // A parser span can end, or start, inside a character such as an ellipsis.
+        let source = "* Open File…\n* Next\n";
+        let attributes = BTreeMap::new();
+        let builder = Builder {
+            page: Path::new("page.adoc"),
+            source,
+            attributes: &attributes,
+            footnotes: Cell::new(0),
+        };
+        let ellipsis = source.find('…').unwrap();
+        let line_end = source.find('\n').unwrap();
+        let range = builder.snap(0, ellipsis + 1, source.len());
+        assert_eq!((range.start, range.end), (0, line_end));
+        let range = builder.snap(ellipsis + 2, line_end, source.len());
+        assert!(source.is_char_boundary(range.start) && source.is_char_boundary(range.end));
     }
 }

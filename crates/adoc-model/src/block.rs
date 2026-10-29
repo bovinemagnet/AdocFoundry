@@ -57,6 +57,59 @@ fn unsupported(why: &'static str) -> StepError {
     StepError::Unsupported(why)
 }
 
+/// The source of a new block, and the part of it selected once it is inserted (the caret where
+/// typing goes next, or a placeholder to type over). The visual editor's new blocks and the
+/// source editor's insert commands share it, so both write the same source.
+pub(crate) fn new_block_body(
+    new: &NewBlock,
+) -> Result<(String, std::ops::Range<usize>), StepError> {
+    Ok(match new {
+        NewBlock::Paragraph { text } => {
+            let guard = if starts_block(text.lines().next().unwrap_or(""), true) {
+                "{empty}"
+            } else {
+                ""
+            };
+            let body = format!("{guard}{text}");
+            let length = body.len();
+            (body, length..length)
+        }
+        NewBlock::Code => ("----\n\n----".to_owned(), 5..5),
+        NewBlock::Admonition(kind) => {
+            let label = admonition_label(*kind);
+            let placeholder = format!("{}.", kind.label());
+            let start = label.len() + 2;
+            (
+                format!("{label}: {placeholder}"),
+                start..start + placeholder.len(),
+            )
+        }
+        NewBlock::Table { columns, rows } => {
+            let columns = (*columns).clamp(1, 20);
+            let header: Vec<String> = (1..=columns)
+                .map(|column| format!("|Column {column}"))
+                .collect();
+            let mut body = format!("|===\n{}\n", header.join(" "));
+            for _ in 0..(*rows).max(1) {
+                body.push('\n');
+                body.push_str(&Model::empty_row(columns));
+            }
+            body.push_str("\n|===");
+            (body, 6..6 + "Column 1".len())
+        }
+        NewBlock::Image { target, alt } => {
+            let target = target.trim();
+            if target.is_empty() || target.contains(char::is_whitespace) {
+                return Err(unsupported("an image target has no spaces"));
+            }
+            let body = format!("image::{target}[{}]", alt.replace(']', "\\]"));
+            let length = body.len();
+            (body, length..length)
+        }
+        NewBlock::ListItem { .. } => return Err(unsupported("a list item follows a list item")),
+    })
+}
+
 fn admonition_label(kind: AdmonitionKind) -> &'static str {
     match kind {
         AdmonitionKind::Note => "NOTE",
@@ -207,51 +260,7 @@ impl Model {
             | NewBlock::Admonition(_)
             | NewBlock::Table { .. }
             | NewBlock::Image { .. } => {
-                let (body, select) = match new {
-                    NewBlock::Paragraph { text } => {
-                        let guard = if starts_block(text.lines().next().unwrap_or(""), true) {
-                            "{empty}"
-                        } else {
-                            ""
-                        };
-                        let body = format!("{guard}{text}");
-                        let length = body.len();
-                        (body, length..length)
-                    }
-                    NewBlock::Code => ("----\n\n----".to_owned(), 5..5),
-                    NewBlock::Admonition(kind) => {
-                        let label = admonition_label(*kind);
-                        let placeholder = format!("{}.", kind.label());
-                        let start = label.len() + 2;
-                        (
-                            format!("{label}: {placeholder}"),
-                            start..start + placeholder.len(),
-                        )
-                    }
-                    NewBlock::Table { columns, rows } => {
-                        let columns = (*columns).clamp(1, 20);
-                        let header: Vec<String> = (1..=columns)
-                            .map(|column| format!("|Column {column}"))
-                            .collect();
-                        let mut body = format!("|===\n{}\n", header.join(" "));
-                        for _ in 0..(*rows).max(1) {
-                            body.push('\n');
-                            body.push_str(&Self::empty_row(columns));
-                        }
-                        body.push_str("\n|===");
-                        (body, 6..6 + "Column 1".len())
-                    }
-                    NewBlock::Image { target, alt } => {
-                        let target = target.trim();
-                        if target.is_empty() || target.contains(char::is_whitespace) {
-                            return Err(unsupported("an image target has no spaces"));
-                        }
-                        let body = format!("image::{target}[{}]", alt.replace(']', "\\]"));
-                        let length = body.len();
-                        (body, length..length)
-                    }
-                    NewBlock::ListItem { .. } => unreachable!("handled above"),
-                };
+                let (body, select) = new_block_body(new)?;
                 if node.kind == NodeKind::Title {
                     // After the header: before the first block of the body.
                     let first = self.blocks.get(1).map(|next| next.range.start);

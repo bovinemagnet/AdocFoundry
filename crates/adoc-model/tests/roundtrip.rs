@@ -261,37 +261,6 @@ fn edits_stay_inside_the_touched_block() {
     assert!(checked > 500, "only {checked} steps applied");
 }
 
-/// The original lines a line diff reports as changed or removed.
-fn changed_lines(before: &str, after: &str) -> Vec<usize> {
-    let old: Vec<&str> = before.lines().collect();
-    let new: Vec<&str> = after.lines().collect();
-    // Longest common subsequence by dynamic programming.
-    let mut table = vec![vec![0u32; new.len() + 1]; old.len() + 1];
-    for i in (0..old.len()).rev() {
-        for j in (0..new.len()).rev() {
-            table[i][j] = if old[i] == new[j] {
-                table[i + 1][j + 1] + 1
-            } else {
-                table[i + 1][j].max(table[i][j + 1])
-            };
-        }
-    }
-    let (mut i, mut j) = (0, 0);
-    let mut changed = Vec::new();
-    while i < old.len() {
-        if j < new.len() && old[i] == new[j] {
-            i += 1;
-            j += 1;
-        } else if j < new.len() && table[i][j + 1] >= table[i + 1][j] {
-            j += 1;
-        } else {
-            changed.push(i);
-            i += 1;
-        }
-    }
-    changed
-}
-
 #[test]
 fn a_long_editing_session_touches_only_edited_lines() {
     let pages = [
@@ -350,12 +319,29 @@ fn a_long_editing_session_touches_only_edited_lines() {
         assert!(rebuilt.serialise() == model.source);
         targeted.sort_unstable();
         targeted.dedup();
-        for line in changed_lines(&original, &model.source) {
+        // Every line still traced to the original is unchanged, and every original line that
+        // is not was in a block a step targeted. (A line diff cannot say which of two equal
+        // blank lines survived an edit between them, so the tracing decides.)
+        let original_lines: Vec<&str> = original.lines().collect();
+        let current: Vec<&str> = model.source.lines().collect();
+        assert_eq!(origin.len(), current.len(), "{page}: lines lost track of");
+        for (now, was) in origin.iter().enumerate() {
+            if let Some(was) = was {
+                assert_eq!(
+                    current[now],
+                    original_lines[*was],
+                    "{page}: line {} changed without being edited",
+                    was + 1
+                );
+            }
+        }
+        let kept: std::collections::BTreeSet<usize> = origin.iter().flatten().copied().collect();
+        for line in (0..original_lines.len()).filter(|line| !kept.contains(line)) {
             assert!(
                 targeted.binary_search(&line).is_ok(),
                 "{page}: line {} changed without being edited: {:?}",
                 line + 1,
-                original.lines().nth(line)
+                original_lines[line]
             );
         }
     }

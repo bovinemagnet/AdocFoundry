@@ -225,7 +225,7 @@ See xref:using-the-editor.adoc#image-viewer[Using the editor].
 
 These bindings apply while the visual editor has focus.
 Undo and redo are the commands above, and are shared with the source editor.
-Bold, Italic and Code, with the same keys, also work in the source editor; see xref:using-the-editor.adoc#formatting-text[Formatting text in the source editor].
+Bold, Italic, Code and Insert link, with the same keys, also work in the source editor; see xref:using-the-editor.adoc#formatting-text[Formatting text in the source editor].
 Highlight (`edit.toggle_highlight`) has no key in either editor and is in the palette.
 See xref:visual-editing.adoc[Visual editing].
 
@@ -314,7 +314,7 @@ See xref:visual-editing.adoc[Visual editing].
 |UI only
 |===
 
-Some visual commands have no default binding and are available from the palette or the toolbar: Highlight (`edit.toggle_highlight`), Set Block Type (`edit.set_block_type`), Remove Link (`edit.remove_link`), Check or Uncheck (`edit.toggle_checked`), Insert Image (`edit.insert_image`), Edit Image (`edit.edit_image`), Insert Table (`edit.insert_table`), Insert Table Row, Delete Table Row, Insert Table Column and Delete Table Column (`edit.insert_table_row`, `edit.delete_table_row`, `edit.insert_table_column`, `edit.delete_table_column`), Insert Code Block (`edit.insert_code_block`) and Insert Admonition (`edit.insert_admonition`).
+Some visual commands have no default binding and are available from the palette or the toolbar: Highlight (`edit.toggle_highlight`), Set Block Type (`edit.set_block_type`), Remove Link (`edit.remove_link`), Check or Uncheck (`edit.toggle_checked`), Insert Image (`edit.insert_image`, also in the source editor), Edit Image (`edit.edit_image`), Insert Table (`edit.insert_table`), Insert Table Row, Delete Table Row, Insert Table Column and Delete Table Column (`edit.insert_table_row`, `edit.delete_table_row`, `edit.insert_table_column`, `edit.delete_table_column`), Insert Code Block (`edit.insert_code_block`) and Insert Admonition (`edit.insert_admonition`).
 Type (`visual.insert_text`) and Insert Block (`visual.insert_block`) are driven by typing and by Enter rather than bound to keys.
 Highlight has no binding because Cmd-Shift-H and Ctrl-Shift-H are Replace in Workspace.
 
