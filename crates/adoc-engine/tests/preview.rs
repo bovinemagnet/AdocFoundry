@@ -25,7 +25,10 @@ fn fixture(name: &str) -> PathBuf {
 
 fn engine_with_clock() -> (Engine, ManualClock) {
     let clock = ManualClock::new();
-    let engine = Engine::with_clock(Settings::load(None, None).unwrap(), Arc::new(clock.clone()));
+    let engine = Engine::with_clock(
+        Settings::load(None, None).unwrap().with_git_opt_in(),
+        Arc::new(clock.clone()),
+    );
     (engine, clock)
 }
 

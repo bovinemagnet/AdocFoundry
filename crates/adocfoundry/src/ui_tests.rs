@@ -128,7 +128,7 @@ fn following_a_link_opens_a_tab_and_records_history(cx: &mut TestAppContext) {
     init(cx);
     let root = fixture("antora-multi-component");
     let page = root.join("alpha/modules/ROOT/pages/index.adoc");
-    let mut engine = Engine::new(Settings::default());
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
     engine.open_workspace(vec![root.clone()]).unwrap();
     assert!(engine.wait_for_workers(std::time::Duration::from_secs(60)));
     let app = app_with(engine, cx);
@@ -215,7 +215,7 @@ fn a_second_window_mirrors_the_active_document(cx: &mut TestAppContext) {
 fn the_search_panel_shows_workspace_results(cx: &mut TestAppContext) {
     init(cx);
     let root = fixture("antora-multi-component");
-    let mut engine = Engine::new(Settings::default());
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
     engine.open_workspace(vec![root]).unwrap();
     assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
     let app = app_with(engine, cx);
@@ -2684,7 +2684,7 @@ fn the_tab_bar_s_arrows_go_back_and_forward(cx: &mut TestAppContext) {
     init(cx);
     let root = fixture("antora-multi-component");
     let page = root.join("alpha/modules/ROOT/pages/index.adoc");
-    let mut engine = Engine::new(Settings::default());
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
     engine.open_workspace(vec![root.clone()]).unwrap();
     assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
     let app = app_with(engine, cx);
@@ -2870,7 +2870,7 @@ fn double_click(selector: &'static str, cx: &mut VisualTestContext) {
 fn sidebar_selection_shows_one_preview_tab(cx: &mut TestAppContext) {
     init(cx);
     let root = fixture("antora-single-component");
-    let app = app_with(Engine::new(Settings::default()), cx);
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
     let mut workspace = None;
     let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
         let view = cx

@@ -174,6 +174,7 @@ ADOC_PDF_OUT=/tmp/pdf cargo test -p adoc-pdf --test reference -- --ignored
 
 Tests that need a repository build one with `adoc_git::testing::TestRepo`, available through the `test-support` feature of `adoc-git`.
 It creates a temporary repository with `gix`, so no test touches a developer's checkout and none runs the `git` executable.
+The shared fixtures in `tests/fixtures/` lie inside the project's own checkout, so a test that opens one in place turns Git off with `Settings::with_git_opt_in()`; with Git on, the engine would discover the checkout and take its status and watch its `.git` files, making the test as slow as the developer's working tree.
 
 `crates/adoc-git/tests/repository.rs` checks discovery, the head, status and line diffs.
 `crates/adoc-engine/tests/git.rs` drives the engine's Git state headlessly: discovery, status, hunks and the events, with `revert_hunk_restores_head_text_as_one_undo` and `next_change_wraps_around` for the commands.

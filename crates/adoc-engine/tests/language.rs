@@ -6,7 +6,7 @@ use adoc_core::{DiagnosticCode, SourceRange};
 use adoc_engine::{commands::ids, CommandArgs, CommandOutcome, Engine, EngineEvent, Settings};
 
 fn open_workspace(root: &Path) -> Engine {
-    let mut engine = Engine::new(Settings::load(None, None).unwrap());
+    let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
     engine.open_workspace(vec![root.to_path_buf()]).unwrap();
     assert!(engine.wait_for_workers(Duration::from_secs(10)));
     engine

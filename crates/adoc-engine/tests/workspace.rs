@@ -30,7 +30,7 @@ fn pump_until(engine: &mut Engine, mut done: impl FnMut(&Engine) -> bool) -> boo
 }
 
 fn engine_without_user_settings() -> Engine {
-    Engine::new(Settings::load(None, None).unwrap())
+    Engine::new(Settings::load(None, None).unwrap().with_git_opt_in())
 }
 
 #[test]
