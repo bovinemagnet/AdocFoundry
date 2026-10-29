@@ -88,7 +88,7 @@ Preview flow: while the preview is visible the engine requests its target (the p
 
 ### Grammars and assets
 
-`grammars/tree-sitter-asciidoc` is a git submodule pinned to the `zed` branch of `bovinemagnet/tree-sitter-asciidoc`. tree-sitter is for highlighting, folding, outline hints and injections only — never for attribute evaluation, include expansion, Antora coordinates, cross-file references or rendering. The `.scm` queries live in `crates/adocfoundry/languages/`.
+`grammars/tree-sitter-asciidoc` is a git submodule pinned to the `master` branch of `bovinemagnet/tree-sitter-asciidoc`. tree-sitter is for highlighting, folding, outline hints and injections only — never for attribute evaluation, include expansion, Antora coordinates, cross-file references or rendering. The `.scm` queries live in `crates/adocfoundry/languages/`.
 
 ## Conventions that must be preserved
 

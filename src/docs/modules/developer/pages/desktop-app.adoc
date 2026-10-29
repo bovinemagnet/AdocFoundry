@@ -299,7 +299,8 @@ The status bar adds `↑n` from `GitRepository::ahead`.
 
 == Tree-sitter grammars
 
-`grammars/tree-sitter-asciidoc` is a git submodule pinned to the `zed` branch of `bovinemagnet/tree-sitter-asciidoc`.
+`grammars/tree-sitter-asciidoc` is a git submodule tracking the `master` branch of `bovinemagnet/tree-sitter-asciidoc`.
+The fork is maintained for AdocFoundry and the zed-asciidoc extension now that the upstream project has been archived.
 The application depends on its binding crates, `tree-sitter-asciidoc` and `tree-sitter-asciidoc-inline`, as path dependencies.
 They are built with `cc` there because turning the C entry point into a `tree_sitter::Language` needs `unsafe`, which the workspace forbids.
 
