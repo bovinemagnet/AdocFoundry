@@ -48,6 +48,9 @@ ignore = ["node_modules", ".git", "build", "target", ".cache"]
 [tools]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
 git = ""                         # optional absolute path; discovered on PATH if empty
+dot = ""                         # optional absolute path; discovered on PATH if empty
+plantuml = ""                    # optional absolute path; discovered on PATH if empty
+d2 = ""                          # optional absolute path; discovered on PATH if empty
 
 [git]
 enabled = true                   # false: no repository is discovered
@@ -134,6 +137,21 @@ check = true                     # look for a newer release at start-up
 |string
 |`""`
 |An absolute path to `git`. Discovered on `PATH` when empty. Used to push, and to make signed commits. Everything else in Git is done in process.
+
+|`tools.dot`
+|string
+|`""`
+|An absolute path to Graphviz's `dot`, for `graphviz` and `dot` diagram blocks. Discovered on `PATH` when empty. If the path does not exist, the diagram shows its source with the reason.
+
+|`tools.plantuml`
+|string
+|`""`
+|An absolute path to `plantuml`, for `plantuml` and `uml` diagram blocks. Discovered on `PATH` when empty. If the path does not exist, the diagram shows its source with the reason.
+
+|`tools.d2`
+|string
+|`""`
+|An absolute path to `d2`, for `d2` diagram blocks. Discovered on `PATH` when empty. If the path does not exist, the diagram shows its source with the reason.
 
 |`git.enabled`
 |boolean

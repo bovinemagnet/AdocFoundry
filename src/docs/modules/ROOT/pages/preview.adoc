@@ -110,7 +110,7 @@ The languages are those listed in xref:using-the-editor.adoc#the-editor[the edit
 
 Diagram blocks are rendered in the preview.
 Every diagram renders on your computer.
-Mermaid runs inside AdocFoundry, and Graphviz, PlantUML and D2 use the tools installed on your `PATH`.
+Mermaid runs inside AdocFoundry, and Graphviz, PlantUML and D2 use the tools installed on your `PATH`, or at the paths set in `[tools]`.
 Nothing is sent to an online rendering service.
 
 [cols="2,2,3"]
@@ -123,15 +123,15 @@ Nothing is sent to an online rendering service.
 
 |`graphviz`, `dot`
 |`dot -Tsvg`
-|Graphviz on the `PATH`.
+|Graphviz, on the `PATH` or set as `[tools] dot`.
 
 |`plantuml`, `uml`
 |`plantuml`
-|PlantUML on the `PATH`.
+|PlantUML, on the `PATH` or set as `[tools] plantuml`.
 
 |`d2`
 |`d2`
-|D2 on the `PATH`.
+|D2, on the `PATH` or set as `[tools] d2`.
 |===
 
 While a diagram renders, the preview shows its source.
@@ -141,8 +141,14 @@ The preview updates when a diagram finishes, so the page never waits on one.
 Rendered diagrams are cached by a checksum of their source and options in `<workspace>/.cache/adocfoundry/diagrams/`.
 The `.cache` folder is skipped by workspace discovery by default.
 
-NOTE: Tool paths for Graphviz, PlantUML and D2 cannot be set yet.
-They are found on the `PATH` only.
+TIP: On macOS an application started from the Dock does not see your shell's `PATH`, so a Homebrew tool is often not found.
+Set the absolute path in the `[tools]` table of your user settings file, for example `dot = "/opt/homebrew/bin/dot"`.
+The `plantuml` and `d2` keys work the same way.
+These keys are read from the user settings file only; a workspace settings file that sets them gets a warning and is ignored.
+If a configured path does not exist, the diagram shows its source with the reason, for example "graphviz diagrams need `/opt/homebrew/bin/dot`, which does not exist".
+If the setting is empty and the tool is not on the `PATH`, the reason is "... which was not found on the PATH".
+Changing these settings takes effect when settings reload, and diagrams that failed are tried again.
+See xref:settings.adoc[Settings] for the keys.
 
 == STEM
 

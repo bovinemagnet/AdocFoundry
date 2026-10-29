@@ -106,6 +106,12 @@ pub struct ToolSettings {
     /// An absolute path to `git`, which pushes (and signed commits) use; discovered on `PATH`
     /// when empty.
     pub git: String,
+    /// An absolute path to Graphviz's `dot`; discovered on `PATH` when empty.
+    pub dot: String,
+    /// An absolute path to `plantuml`; discovered on `PATH` when empty.
+    pub plantuml: String,
+    /// An absolute path to `d2`; discovered on `PATH` when empty.
+    pub d2: String,
 }
 
 /// The `[git]` table.
@@ -357,6 +363,9 @@ impl Settings {
             }
             ("tools", "asciidoctor") => self.tools.asciidoctor = string(value)?,
             ("tools", "git") => self.tools.git = string(value)?,
+            ("tools", "dot") => self.tools.dot = string(value)?,
+            ("tools", "plantuml") => self.tools.plantuml = string(value)?,
+            ("tools", "d2") => self.tools.d2 = string(value)?,
             ("git", "enabled") => {
                 self.git.enabled = boolean(value)?;
                 self.git_enabled_set = true;
@@ -442,7 +451,7 @@ fn is_known(section: &str, key: &str) -> bool {
                 "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme" | "preview_tabs"
             )
             | ("workspace", "ignore")
-            | ("tools", "asciidoctor" | "git")
+            | ("tools", "asciidoctor" | "git" | "dot" | "plantuml" | "d2")
             | (
                 "git",
                 "enabled" | "show_markers" | "blame_on_hover" | "remote" | "hosts"
@@ -673,11 +682,27 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join(WORKSPACE_SETTINGS_FILE),
-            "[tools]\nasciidoctor = \"/bin/evil\"\n",
+            "[tools]\nasciidoctor = \"/bin/evil\"\ndot = \"/bin/evil\"\nplantuml = \"/bin/evil\"\nd2 = \"/bin/evil\"\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
-        assert_eq!(settings.tools.asciidoctor, "");
-        assert_eq!(settings.warnings.len(), 1);
+        assert_eq!(settings.tools, ToolSettings::default());
+        assert_eq!(settings.warnings.len(), 4);
+    }
+
+    #[test]
+    fn diagram_tool_paths_are_read_from_the_user_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("adocfoundry.toml");
+        fs::write(
+            &user,
+            "[tools]\ndot = \"/opt/homebrew/bin/dot\"\nplantuml = \"/opt/plantuml\"\nd2 = \"/usr/local/bin/d2\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.tools.dot, "/opt/homebrew/bin/dot");
+        assert_eq!(settings.tools.plantuml, "/opt/plantuml");
+        assert_eq!(settings.tools.d2, "/usr/local/bin/d2");
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
     }
 }

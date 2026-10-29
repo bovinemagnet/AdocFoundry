@@ -5,10 +5,14 @@ mod cache;
 mod external;
 mod mermaid;
 
-use std::{collections::BTreeMap, fmt, io, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fmt, io,
+    path::{Path, PathBuf},
+};
 
 pub use cache::DiagramCache;
-pub use external::{find_program, ExternalProvider};
+pub use external::{find_program, is_path, ExternalProvider, ToolPaths};
 pub use mermaid::MermaidProvider;
 
 /// One diagram block to render.
@@ -84,6 +88,12 @@ impl fmt::Display for DiagramError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedKind(kind) => write!(formatter, "no renderer for {kind} diagrams"),
+            Self::ToolMissing { kind, program } if external::is_path(Path::new(program)) => {
+                write!(
+                    formatter,
+                    "{kind} diagrams need `{program}`, which does not exist"
+                )
+            }
             Self::ToolMissing { kind, program } => write!(
                 formatter,
                 "{kind} diagrams need `{program}`, which was not found on the PATH"
@@ -121,9 +131,15 @@ impl Diagrams {
     /// Mermaid in process, and Graphviz, PlantUML and D2 when their tools are on the PATH.
     #[must_use]
     pub fn new(cache: DiagramCache) -> Self {
+        Self::with_tools(cache, &ToolPaths::default())
+    }
+
+    /// Mermaid in process, and Graphviz, PlantUML and D2 run from `tools`.
+    #[must_use]
+    pub fn with_tools(cache: DiagramCache, tools: &ToolPaths) -> Self {
         let mut providers: Vec<Box<dyn DiagramProvider>> = vec![Box::new(MermaidProvider)];
         providers.extend(
-            ExternalProvider::defaults()
+            ExternalProvider::for_tools(tools)
                 .into_iter()
                 .map(|provider| Box::new(provider) as Box<dyn DiagramProvider>),
         );
@@ -313,6 +329,26 @@ mod tests {
     }
 
     #[test]
+    fn a_configured_tool_that_does_not_exist_is_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("bin").join("dot");
+        let tools = ToolPaths {
+            dot: missing.clone(),
+            ..ToolPaths::default()
+        };
+        let diagrams = Diagrams::with_tools(DiagramCache::new(dir.path().join("cache")), &tools);
+        let error = diagrams
+            .render(&DiagramRequest::new("graphviz", "digraph { a -> b }"))
+            .unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "{message}"
+        );
+        assert!(!message.contains("PATH"), "{message}");
+    }
+
+    #[test]
     fn diagram_attributes_change_the_key() {
         let plain = mermaid();
         let mut themed = mermaid();
@@ -368,5 +404,29 @@ mod tests {
             matches!(&error, DiagramError::Failed(message) if message == "syntax error"),
             "{error:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_configured_tool_renders_from_outside_the_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        // Named as the real tool, in a folder that is not on the PATH.
+        let tool = dir.path().join("homebrew").join("dot");
+        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        std::fs::write(&tool, "#!/bin/sh\nprintf '<svg>%s</svg>' \"$(cat)\"\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let tools = ToolPaths {
+            dot: tool,
+            ..ToolPaths::default()
+        };
+        let diagrams = Diagrams::with_tools(DiagramCache::new(dir.path().join("cache")), &tools);
+
+        let svg = diagrams
+            .render(&DiagramRequest::new("graphviz", "a -> b"))
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(svg).unwrap(), "<svg>a -> b</svg>");
     }
 }

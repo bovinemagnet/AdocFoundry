@@ -298,7 +298,7 @@ Tools::
 Each shows its path and the first line of its version output.
 A tool that is missing shows why: `not found on PATH`, or, for a setting that points nowhere, `not found: [tools] asciidoctor is X, which is not a file`.
 A tool that does not answer within 15 seconds is reported as not answering.
-`[tools] asciidoctor` and `[tools] git` are honoured, and the diagram tools are looked up on `PATH`.
+`[tools] asciidoctor`, `[tools] git`, `[tools] dot`, `[tools] plantuml` and `[tools] d2` are honoured.
 
 Settings::
 The paths of the user and workspace settings files, each marked `(not found)` when missing, the workspace roots, whether Git is on or off, and each settings warning, or `Warnings: none`.

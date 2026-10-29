@@ -540,3 +540,50 @@ fn confined_access_reads_no_include_outside_the_roots() {
     engine.set_file_access(adoc_engine::FileAccess::Within(vec![root.clone()]));
     assert!(engine.open(&outside.join("outside.adoc")).is_err());
 }
+
+#[test]
+fn a_configured_diagram_tool_is_used_and_follows_the_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(
+        &page,
+        "= Page\n\n[graphviz]\n....\ndigraph { a -> b }\n....\n",
+    )
+    .unwrap();
+    let user = directory.path().join("adocfoundry.toml");
+    let configure = |dot: &std::path::Path| {
+        fs::write(
+            &user,
+            format!("[tools]\ndot = {:?}\n", dot.display().to_string()),
+        )
+        .unwrap();
+    };
+    // Paths that do not exist, so no process is ever started.
+    let first = directory.path().join("first").join("dot");
+    let second = directory.path().join("second").join("dot");
+    configure(&first);
+    let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap().with_git_opt_in());
+    let id = engine.open(&page).unwrap();
+    let message = |engine: &mut Engine| {
+        engine.request_preview(id);
+        engine.pump();
+        assert!(engine.wait_for_workers(WAIT));
+        engine.pump();
+        let message = blocks(engine, id)
+            .into_iter()
+            .find_map(|block| match block.kind {
+                ViewKind::Diagram(DiagramView::Failed { message, .. }) => Some(message),
+                _ => None,
+            });
+        engine.release_preview(id);
+        message.expect("the diagram fails with a reason")
+    };
+
+    let reason = message(&mut engine);
+    assert!(reason.contains(&first.display().to_string()), "{reason}");
+
+    configure(&second);
+    engine.reload_settings().unwrap();
+    let reason = message(&mut engine);
+    assert!(reason.contains(&second.display().to_string()), "{reason}");
+}

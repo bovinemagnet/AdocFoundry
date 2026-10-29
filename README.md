@@ -51,7 +51,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Clicking a block places the caret on its source, opening the partial it came from when there is one. Clicking an xref follows it, recorded in back and forward history; external links open the browser and attachments the default application.
 - Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
 - Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
-- Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render when `dot`, `plantuml` or `d2` is on `PATH`, and otherwise show their source with the reason. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
+- Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render through `dot`, `plantuml` or `d2`, from `[tools]` or else `PATH`, and otherwise show their source with the reason. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
 - STEM is typeset: block formulas are drawn as images, and inline formulas are drawn in the line of text, on its baseline and at its size, with their source in a tooltip; the visual editor draws them the same way. A formula that cannot be converted shows as its source.
 
 **Visual editing**
@@ -175,6 +175,9 @@ default_expansion = 2
 [tools]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
 git = ""                         # the git that pushes use; discovered on PATH if empty
+dot = ""                         # Graphviz; e.g. "/opt/homebrew/bin/dot" for an app started from the Dock
+plantuml = ""                    # discovered on PATH if empty
+d2 = ""                          # discovered on PATH if empty
 
 [git]
 enabled = true                   # false: look for no repository
@@ -282,7 +285,6 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 
 - In PDF export: source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
-- Settings for diagram tool paths; `dot`, `plantuml` and `d2` are found on `PATH` only.
 - Editing included content in place, spell checking, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
