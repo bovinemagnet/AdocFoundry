@@ -1165,6 +1165,38 @@ fn status_bar_shows_no_branch_outside_git(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("status-branch-main").is_none());
 }
 
+#[gpui::test]
+fn status_bar_shows_the_word_count_and_the_selection_s(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let page = dir.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n\nOne two three.\n").unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    settle_engine(&app, &mut cx);
+    assert!(
+        cx.debug_bounds("status-words-4").is_some(),
+        "the page's words are in the status bar"
+    );
+
+    let start = "= Page\n\nOne ".len();
+    cx.update(|window, cx| {
+        let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        editor.update(cx, |editor, cx| {
+            editor.reveal(
+                SourceRange::new(start, start + "two three".len()),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.debug_bounds("status-words-2-of-4").is_some(),
+        "the selection's words while there is one"
+    );
+}
+
 /// Drains the engine until its workers and timers are done, as the app's pump would.
 fn settle_engine(app: &Entity<AppState>, cx: &mut VisualTestContext) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

@@ -65,6 +65,7 @@ pub struct Engine {
     pub(crate) expansion: crate::expansion::Expansion,
     pub(crate) files: crate::files::Files,
     pub(crate) images: crate::images::Images,
+    pub(crate) words: crate::words::WordCounts,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
 }
@@ -127,6 +128,7 @@ impl Engine {
             expansion: crate::expansion::Expansion::default(),
             files: crate::files::Files::default(),
             images: crate::images::Images::default(),
+            words: crate::words::WordCounts::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
         }
@@ -295,6 +297,7 @@ impl Engine {
         self.forget_preview(id);
         self.forget_visual(id);
         self.forget_hunks(id);
+        self.forget_word_count(id);
         if self.rendered.layout.pinned == Some(id) {
             self.rendered.layout.pinned = None;
             self.emit(EngineEvent::PreviewLayoutChanged);
@@ -710,6 +713,7 @@ impl Engine {
             version: version_after,
             edits: forward.clone(),
         });
+        self.words_changed(id);
         // An edited page is kept open, even once undone.
         self.keep_open(id);
         self.preview_source_changed(&path);

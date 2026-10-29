@@ -8,9 +8,9 @@ use std::{cell::Cell, collections::HashMap, path::Path, rc::Rc};
 
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
-    commands::ids, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode, EngineEvent,
-    ExportArgs, ExportSummary, ExportTarget, NavigationPosition, OpenDisposition, SidebarPanel,
-    TabItem, ThemePreference,
+    commands::ids, count_words, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode,
+    EngineEvent, ExportArgs, ExportSummary, ExportTarget, NavigationPosition, OpenDisposition,
+    SidebarPanel, TabItem, ThemePreference,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity, FocusHandle,
@@ -2962,19 +2962,29 @@ impl WorkspaceView {
     /// The zero-based line and column (in characters, as the source editor counts them) of the
     /// caret the user is working with: the visual editor's in Visual mode, or in Split mode while
     /// it has focus, otherwise the source editor's.
-    pub(crate) fn caret_line_column(&self, window: &Window, cx: &App) -> Option<(u32, u32)> {
-        let editor = self.active_editor()?.read(cx);
-        let id = editor.document();
+    /// The visual editor of document `id` when it, rather than the source editor, holds the
+    /// caret: always in Visual mode, and in Split mode while it has focus.
+    fn caret_visual(
+        &self,
+        id: DocumentId,
+        window: &Window,
+        cx: &App,
+    ) -> Option<&Entity<VisualView>> {
         let engine = &self.app.read(cx).engine;
-        let visual = self
-            .visuals
+        self.visuals
             .get(&id)
             .filter(|visual| match engine.editor_mode(id) {
                 EditorMode::Visual => true,
                 EditorMode::Split => visual.read(cx).focus_handle(cx).is_focused(window),
                 EditorMode::Source => false,
-            });
-        let Some(visual) = visual else {
+            })
+    }
+
+    pub(crate) fn caret_line_column(&self, window: &Window, cx: &App) -> Option<(u32, u32)> {
+        let editor = self.active_editor()?.read(cx);
+        let id = editor.document();
+        let engine = &self.app.read(cx).engine;
+        let Some(visual) = self.caret_visual(id, window, cx) else {
             return Some(editor.cursor_line_column(cx));
         };
         let text = &engine.document(id)?.text;
@@ -2988,8 +2998,49 @@ impl WorkspaceView {
         ))
     }
 
+    /// The words of the active page, and of the selection while there is one: `120 words · 1
+    /// min read`, or `12 of 120 words`.
+    fn word_count(&self, window: &Window, cx: &App) -> Option<(String, String)> {
+        let editor = self.active_editor()?.read(cx);
+        let id = editor.document();
+        let engine = &self.app.read(cx).engine;
+        let count = engine.word_count(id)?;
+        let selection = match self.caret_visual(id, window, cx) {
+            Some(visual) => {
+                let selection = visual.read(cx).selection();
+                selection.start()..selection.end()
+            }
+            None => editor.selection(cx),
+        };
+        let selected = (!selection.is_empty())
+            .then(|| engine.text_in(id, SourceRange::new(selection.start, selection.end)))
+            .flatten()
+            .map(|text| count_words(&text));
+        let words = |count: usize| if count == 1 { "word" } else { "words" };
+        Some(match selected {
+            Some(selected) => (
+                format!("status-words-{selected}-of-{}", count.words),
+                format!("{selected} of {} {}", count.words, words(count.words)),
+            ),
+            None if count.minutes == 0 => (
+                format!("status-words-{}", count.words),
+                format!("{} {}", count.words, words(count.words)),
+            ),
+            None => (
+                format!("status-words-{}", count.words),
+                format!(
+                    "{} {} · {} min read",
+                    count.words,
+                    words(count.words),
+                    count.minutes
+                ),
+            ),
+        })
+    }
+
     fn render_status(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let caret = self.caret_line_column(window, cx);
+        let words = self.word_count(window, cx);
         let engine = &self.app.read(cx).engine;
         let roots = engine.roots().to_vec();
         let (location, path, file) = match self.active_editor() {
@@ -3064,6 +3115,14 @@ impl WorkspaceView {
             .when(indexing, |bar| bar.left(div().text_xs().child("Indexing…")))
             .when(engine.is_exporting(), |bar| {
                 bar.left(div().text_xs().child("Exporting PDF…"))
+            })
+            .when_some(words, |bar, (selector, words)| {
+                bar.right(
+                    div()
+                        .debug_selector(move || selector)
+                        .text_xs()
+                        .child(words),
+                )
             })
             .right(
                 div()

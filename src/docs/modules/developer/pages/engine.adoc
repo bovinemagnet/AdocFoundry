@@ -224,6 +224,10 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 |`GitPushed`
 |A push finished, with a `message` that reports the result or the error Git gave.
 
+|`WordCountChanged`
+|The word count of a document changed.
+It is published only when a new count differs from the last.
+
 |`ExportFinished`
 |A PDF export finished, with the output path and either an `ExportSummary` or the error.
 |===
@@ -294,6 +298,21 @@ The result arrives as `EngineEvent::ExportFinished`, with an `ExportSummary` (th
 `Engine::export_blocking(args, timeout)` runs the same job and waits, for the command-line `pdf`, and `Engine::is_exporting()` is true while a job is in flight.
 The settings' `[pdf]` table supplies the default theme, the themes and fonts directories, the site address and the standards.
 See xref:pdf.adoc[PDF export] for the flow and the crate.
+
+== Word counts
+
+The engine counts the words of the active page for the status bar.
+Counting is opt-in: a front end calls `Engine::enable_word_count()`, as the app does in `AppState::new`, while the CLI, `adoc-ls` and `adoc-mcp` never count.
+
+Only the active document is counted.
+`WORD_COUNT_SETTLE` (500 ms) after the last change to the page, a worker parses a snapshot with `OwnedInput::parse`, the parse the preview uses, and counts the prose in the `adoc-dom` tree.
+Switching to another tab, or opening a page, counts it straight away.
+The count is in `crates/adoc-engine/src/words.rs`.
+
+`Engine::word_count(id)` returns the last count as `Option<WordCount>`, which may lag the text until it settles.
+`WordCount` holds `words` and `minutes`, the reading time at `WORDS_PER_MINUTE` (200) rounded up.
+`adoc_engine::count_words(&str)` counts any text by the same rule, and the app uses it for the selection.
+When a new count differs from the last, the engine publishes `EngineEvent::WordCountChanged(DocumentId)`.
 
 == The visual model service
 
