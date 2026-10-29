@@ -318,6 +318,7 @@ dependencies = [
  "adoc-antora",
  "adoc-core",
  "adoc-dom",
+ "base64 0.22.1",
  "tempfile",
  "url",
 ]

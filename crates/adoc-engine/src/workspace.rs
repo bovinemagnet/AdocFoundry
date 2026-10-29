@@ -93,6 +93,10 @@ pub(crate) enum WorkerMessage {
         workdir: PathBuf,
         result: Result<String, String>,
     },
+    HtmlExported {
+        output: PathBuf,
+        result: Result<(), String>,
+    },
     #[cfg(feature = "typst")]
     ExportParsed {
         job: u64,
@@ -234,6 +238,7 @@ impl Engine {
             || self.git.has_pending()
             || self.has_due_word_count()
             || self.has_due_auto_save()
+            || self.has_due_html_export()
             || self
                 .watcher
                 .as_ref()
@@ -270,6 +275,7 @@ impl Engine {
             + self.save_due_expansion()
             + self.start_due_word_count()
             + self.save_due_documents()
+            + self.write_due_html_exports()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the
@@ -368,6 +374,7 @@ impl Engine {
             } => self.git_blamed(id, generation, blame),
             #[cfg(feature = "git")]
             WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
+            WorkerMessage::HtmlExported { output, result } => self.html_exported(output, result),
             #[cfg(feature = "typst")]
             WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),
             #[cfg(feature = "typst")]

@@ -91,6 +91,7 @@ actions!(
         Push,
         SaveAndCommit,
         ExportPagePdf,
+        ExportPageHtml,
         ExportComponentPdf,
     ]
 );
@@ -184,6 +185,7 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::GIT_PUSH => KeyBinding::new(keys, Push, workspace),
         ids::GIT_SAVE_AND_COMMIT => KeyBinding::new(keys, SaveAndCommit, workspace),
         ids::EXPORT_PDF_PAGE => KeyBinding::new(keys, ExportPagePdf, workspace),
+        ids::EXPORT_HTML_PAGE => KeyBinding::new(keys, ExportPageHtml, workspace),
         ids::EXPORT_PDF_COMPONENT => KeyBinding::new(keys, ExportComponentPdf, workspace),
         ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
         ids::APP_CHECK_FOR_UPDATES => KeyBinding::new(keys, CheckForUpdates, workspace),
@@ -261,6 +263,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::GIT_PUSH => Box::new(Push),
         ids::GIT_SAVE_AND_COMMIT => Box::new(SaveAndCommit),
         ids::EXPORT_PDF_PAGE => Box::new(ExportPagePdf),
+        ids::EXPORT_HTML_PAGE => Box::new(ExportPageHtml),
         ids::EXPORT_PDF_COMPONENT => Box::new(ExportComponentPdf),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),

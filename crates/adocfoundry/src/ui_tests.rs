@@ -927,6 +927,43 @@ fn export_command_writes_a_pdf(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn export_page_to_html_writes_the_page(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n\nExported from the app.\n").unwrap();
+    let output = directory.path().join("exported.html");
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+
+    // The command asks where to write the page, suggesting its name; the test answers.
+    cx.dispatch_action(crate::editor::bindings::ExportPageHtml);
+    cx.run_until_parked();
+    assert!(cx.did_prompt_for_new_path());
+    let chosen = output.clone();
+    cx.simulate_new_path_selection(move |_| Some(chosen));
+    let mut finished = None;
+    assert!(drain_until(&app, &mut cx, |_| {
+        finished = finished.take().or_else(|| {
+            events.try_iter().find_map(|event| match event {
+                adoc_engine::EngineEvent::ExportFinished { result, .. } => Some(result),
+                _ => None,
+            })
+        });
+        finished.is_some()
+    }));
+    let result = finished.unwrap();
+    let html = std::fs::read_to_string(&output).unwrap();
+    assert!(html.contains("Exported from the app."), "{html}");
+    assert_eq!(
+        crate::workspace_view::export_message(&output, &result),
+        "Exported exported.html"
+    );
+}
+
+#[gpui::test]
 fn export_component_exports_the_active_page_s_component_with_unsaved_edits(
     cx: &mut TestAppContext,
 ) {
@@ -2490,7 +2527,7 @@ fn export_from_the_palette_writes_a_pdf(cx: &mut TestAppContext) {
 
     cx.simulate_keystrokes("secondary-shift-p");
     cx.run_until_parked();
-    cx.simulate_input("Export Page");
+    cx.simulate_input("Export Page to PDF");
     cx.run_until_parked();
     cx.simulate_keystrokes("enter");
     let result = finish_export(&app, &events, &output, &mut cx);

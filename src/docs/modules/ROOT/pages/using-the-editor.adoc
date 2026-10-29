@@ -591,7 +591,7 @@ An item whose command cannot run just now is greyed out instead of hidden, for e
 A command the build lacks, such as PDF export in a build without Typst, is left out.
 
 File::
-Open, save, reload, export to PDF, close, settings and re-indexing.
+Open, save, reload, export to PDF or HTML, close, settings and re-indexing.
 
 Edit::
 Undo, Redo, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.

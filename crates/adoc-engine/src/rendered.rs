@@ -228,15 +228,31 @@ impl Engine {
         id: DocumentId,
         timeout: Duration,
     ) -> Option<Arc<RenderedPreview>> {
-        self.request_preview(id);
-        // Rendered now, not after the settle time.
-        let now = self.clock.now();
-        self.rendered.scheduled.insert(id, now);
-        self.start_due_previews();
+        self.render_now(id);
         let finished = self.wait_for_workers(timeout);
         let preview = self.rendered_preview(id);
         self.release_preview(id);
         preview.filter(|_| finished)
+    }
+
+    /// Requests a preview of `id` and starts rendering it now, not after the settle time.
+    pub(crate) fn render_now(&mut self, id: DocumentId) {
+        self.request_preview(id);
+        let now = self.clock.now();
+        self.rendered.scheduled.insert(id, now);
+        self.start_due_previews();
+    }
+
+    /// The preview of `id` once it shows the document's current text and no diagram it draws
+    /// is still rendering.
+    pub(crate) fn finished_preview(&self, id: DocumentId) -> Option<Arc<RenderedPreview>> {
+        let version = self.documents.get(&id)?.version;
+        let parsed = self.rendered.parsed.get(&id)?;
+        let preview = self.rendered.published.get(&id)?;
+        (preview.version == version
+            && parsed.waiting.is_empty()
+            && !self.rendered.scheduled.contains_key(&id))
+        .then(|| preview.clone())
     }
 
     pub fn release_preview(&mut self, id: DocumentId) {

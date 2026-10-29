@@ -12,7 +12,7 @@ pub use adoc_dom::{
 };
 pub use asciidoctor::{MockRenderer, Renderer, SystemAsciidoctor};
 pub use formula::{formula_image, with_baseline, FormulaImage, INLINE_FORMULA_POINTS};
-pub use html::{escape, inlines as inlines_html, to_html, HtmlOptions};
+pub use html::{embed_local_files, escape, inlines as inlines_html, to_html, HtmlOptions};
 pub use request::{RenderRequest, RenderSafeMode};
 pub use result::{RenderError, RenderOutput};
 pub use text::to_text;
