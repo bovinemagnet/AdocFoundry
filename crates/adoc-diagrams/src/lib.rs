@@ -12,7 +12,9 @@ use std::{
 };
 
 pub use cache::DiagramCache;
-pub use external::{find_program, is_path, ExternalProvider, ToolPaths};
+pub use external::{
+    find_program, is_path, ExternalProvider, ToolPaths, DEFAULT_TIMEOUT, MAX_OUTPUT,
+};
 pub use mermaid::MermaidProvider;
 
 /// One diagram block to render.
@@ -81,6 +83,11 @@ pub enum DiagramError {
     },
     /// The renderer ran and rejected the diagram.
     Failed(String),
+    /// The tool ran past its deadline and was stopped.
+    TimedOut {
+        program: String,
+        after: std::time::Duration,
+    },
     Io(io::Error),
 }
 
@@ -99,6 +106,11 @@ impl fmt::Display for DiagramError {
                 "{kind} diagrams need `{program}`, which was not found on the PATH"
             ),
             Self::Failed(message) => formatter.write_str(message),
+            Self::TimedOut { program, after } => write!(
+                formatter,
+                "`{program}` did not finish within {} seconds and was stopped",
+                after.as_secs_f64()
+            ),
             Self::Io(error) => write!(formatter, "{error}"),
         }
     }
@@ -428,5 +440,55 @@ mod tests {
             .render(&DiagramRequest::new("graphviz", "a -> b"))
             .unwrap();
         assert_eq!(std::fs::read_to_string(svg).unwrap(), "<svg>a -> b</svg>");
+    }
+
+    /// Writes `script` as an executable tool in `dir`.
+    #[cfg(unix)]
+    fn script(dir: &Path, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tool = dir.join("tool");
+        std::fs::write(&tool, script).unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        tool
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_that_hangs_is_stopped_at_the_deadline() {
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let tool = script(dir.path(), "#!/bin/sh\nexec sleep 30\n");
+        let provider = ExternalProvider::new(vec!["graphviz"], &tool, Vec::new())
+            .with_timeout(std::time::Duration::from_millis(200));
+
+        let started = std::time::Instant::now();
+        let error = provider
+            .render(&DiagramRequest::new("graphviz", "a -> b"))
+            .unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(matches!(error, DiagramError::TimedOut { .. }), "{error:?}");
+        assert!(error.to_string().contains("did not finish"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_over_the_cap_is_refused() {
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let tool = script(
+            dir.path(),
+            "#!/bin/sh\ncat >/dev/null\nhead -c 10000 /dev/zero | tr '\\0' a\n",
+        );
+        let provider =
+            ExternalProvider::new(vec!["graphviz"], &tool, Vec::new()).with_max_output(1000);
+
+        let error = provider
+            .render(&DiagramRequest::new("graphviz", "a -> b"))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("more than 1000 bytes"),
+            "{error}"
+        );
     }
 }

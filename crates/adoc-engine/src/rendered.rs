@@ -85,8 +85,15 @@ pub(crate) struct PreviewState {
     /// The parser previews are built with; acdc unless set otherwise.
     parser: Option<Arc<dyn DocumentParser>>,
     rendering: BTreeSet<String>,
+    /// Diagrams waiting for one of the [`DIAGRAM_WORKERS`].
+    queued: std::collections::VecDeque<(Arc<Diagrams>, DiagramRequest)>,
+    /// Diagram renders running on workers.
+    running: usize,
     failed: BTreeMap<String, String>,
 }
+
+/// The most diagrams rendered at once, however many a page holds.
+pub const DIAGRAM_WORKERS: usize = 4;
 
 impl PreviewState {
     pub(crate) fn has_scheduled(&self) -> bool {
@@ -625,7 +632,15 @@ impl Engine {
     /// previews again, retrying the diagrams that failed.
     pub(crate) fn diagram_tools_changed(&mut self, before: &crate::settings::ToolSettings) {
         let now = &self.settings.tools;
-        if (&before.dot, &before.plantuml, &before.d2) != (&now.dot, &now.plantuml, &now.d2) {
+        let tools = |tools: &crate::settings::ToolSettings| {
+            (
+                tools.dot.clone(),
+                tools.plantuml.clone(),
+                tools.d2.clone(),
+                tools.diagram_timeout,
+            )
+        };
+        if tools(before) != tools(now) {
             self.rendered.diagrams = None;
             self.rendered.failed.clear();
             self.preview_workspace_changed();
@@ -637,22 +652,35 @@ impl Engine {
         self.rendered.diagrams = Some(Arc::new(diagrams));
     }
 
+    /// Renders `request` on a worker, or queues it while all [`DIAGRAM_WORKERS`] are busy.
     fn spawn_diagram(&mut self, diagrams: &Arc<Diagrams>, request: DiagramRequest) {
-        let checksum = request.checksum();
-        if !self.rendered.rendering.insert(checksum.clone()) {
+        if !self.rendered.rendering.insert(request.checksum()) {
             return;
         }
-        let diagrams = diagrams.clone();
-        let sender = self.worker_sender.clone();
-        self.workers_running += 1;
-        thread::spawn(move || {
-            let result = diagrams.render(&request).map_err(|error| error.to_string());
-            let _ = sender.send(WorkerMessage::DiagramRendered { checksum, result });
-        });
+        self.rendered.queued.push_back((diagrams.clone(), request));
+        self.start_queued_diagrams();
+    }
+
+    fn start_queued_diagrams(&mut self) {
+        while self.rendered.running < DIAGRAM_WORKERS {
+            let Some((diagrams, request)) = self.rendered.queued.pop_front() else {
+                return;
+            };
+            let sender = self.worker_sender.clone();
+            self.rendered.running += 1;
+            self.workers_running += 1;
+            thread::spawn(move || {
+                let checksum = request.checksum();
+                let result = diagrams.render(&request).map_err(|error| error.to_string());
+                let _ = sender.send(WorkerMessage::DiagramRendered { checksum, result });
+            });
+        }
     }
 
     pub(crate) fn diagram_rendered(&mut self, checksum: &str, result: Result<PathBuf, String>) {
         self.rendered.rendering.remove(checksum);
+        self.rendered.running = self.rendered.running.saturating_sub(1);
+        self.start_queued_diagrams();
         if let Err(message) = result {
             self.rendered.failed.insert(checksum.to_owned(), message);
         }
@@ -801,5 +829,6 @@ fn diagram_tools(settings: &crate::Settings) -> ToolPaths {
         dot: or(&settings.tools.dot, defaults.dot),
         plantuml: or(&settings.tools.plantuml, defaults.plantuml),
         d2: or(&settings.tools.d2, defaults.d2),
+        timeout: Duration::from_secs(settings.tools.diagram_timeout),
     }
 }

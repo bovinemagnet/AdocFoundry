@@ -64,7 +64,7 @@ pub use navigation::NavigationPosition;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };
-pub use rendered::{PreviewLayout, RenderedPreview, PREVIEW_SETTLE};
+pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use settings::{
     pdf_standard, EditorSettings, ExpansionPolicy, GitSettings, PdfSettings, Settings,
     SidebarSettings, ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings,

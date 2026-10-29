@@ -99,7 +99,7 @@ impl Default for WorkspaceSettings {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ToolSettings {
     /// An absolute path to `asciidoctor`; discovered on `PATH` when empty.
     pub asciidoctor: String,
@@ -112,6 +112,21 @@ pub struct ToolSettings {
     pub plantuml: String,
     /// An absolute path to `d2`; discovered on `PATH` when empty.
     pub d2: String,
+    /// Seconds a diagram tool may run before it is stopped.
+    pub diagram_timeout: u64,
+}
+
+impl Default for ToolSettings {
+    fn default() -> Self {
+        Self {
+            asciidoctor: String::new(),
+            git: String::new(),
+            dot: String::new(),
+            plantuml: String::new(),
+            d2: String::new(),
+            diagram_timeout: adoc_diagrams::DEFAULT_TIMEOUT.as_secs(),
+        }
+    }
 }
 
 /// The `[git]` table.
@@ -366,6 +381,7 @@ impl Settings {
             ("tools", "dot") => self.tools.dot = string(value)?,
             ("tools", "plantuml") => self.tools.plantuml = string(value)?,
             ("tools", "d2") => self.tools.d2 = string(value)?,
+            ("tools", "diagram_timeout") => self.tools.diagram_timeout = positive(value)?.into(),
             ("git", "enabled") => {
                 self.git.enabled = boolean(value)?;
                 self.git_enabled_set = true;
@@ -451,7 +467,10 @@ fn is_known(section: &str, key: &str) -> bool {
                 "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme" | "preview_tabs"
             )
             | ("workspace", "ignore")
-            | ("tools", "asciidoctor" | "git" | "dot" | "plantuml" | "d2")
+            | (
+                "tools",
+                "asciidoctor" | "git" | "dot" | "plantuml" | "d2" | "diagram_timeout"
+            )
             | (
                 "git",
                 "enabled" | "show_markers" | "blame_on_hover" | "remote" | "hosts"
@@ -704,5 +723,19 @@ mod tests {
         assert_eq!(settings.tools.plantuml, "/opt/plantuml");
         assert_eq!(settings.tools.d2, "/usr/local/bin/d2");
         assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+    }
+
+    #[test]
+    fn the_diagram_timeout_is_read_in_seconds() {
+        assert_eq!(Settings::default().tools.diagram_timeout, 30);
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("adocfoundry.toml");
+        fs::write(&user, "[tools]\ndiagram_timeout = 5\n").unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.tools.diagram_timeout, 5);
+        fs::write(&user, "[tools]\ndiagram_timeout = 0\n").unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.tools.diagram_timeout, 30);
+        assert_eq!(settings.warnings.len(), 1);
     }
 }

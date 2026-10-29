@@ -51,7 +51,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Clicking a block places the caret on its source, opening the partial it came from when there is one. Clicking an xref follows it, recorded in back and forward history; external links open the browser and attachments the default application.
 - Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
 - Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
-- Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render through `dot`, `plantuml` or `d2`, from `[tools]` or else `PATH`, and otherwise show their source with the reason. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
+- Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render through `dot`, `plantuml` or `d2`, from `[tools]` or else `PATH`, and otherwise show their source with the reason. At most four diagrams render at once, and a tool that runs past `[tools] diagram_timeout` or writes more than 32 MB is stopped. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace.
 - STEM is typeset: block formulas are drawn as images, and inline formulas are drawn in the line of text, on its baseline and at its size, with their source in a tooltip; the visual editor draws them the same way. A formula that cannot be converted shows as its source.
 
 **Visual editing**
@@ -178,6 +178,7 @@ git = ""                         # the git that pushes use; discovered on PATH i
 dot = ""                         # Graphviz; e.g. "/opt/homebrew/bin/dot" for an app started from the Dock
 plantuml = ""                    # discovered on PATH if empty
 d2 = ""                          # discovered on PATH if empty
+diagram_timeout = 30             # seconds a diagram tool may run before it is stopped
 
 [git]
 enabled = true                   # false: look for no repository
