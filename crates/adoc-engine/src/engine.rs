@@ -49,6 +49,8 @@ pub struct Engine {
     pub(crate) workers_running: usize,
     /// Whole-workspace index jobs in flight, a subset of `workers_running`.
     pub(crate) indexing: usize,
+    /// The latest whole-workspace index job; results of earlier ones are dropped.
+    pub(crate) index_generation: u64,
     pub(crate) watcher: Option<FileWatcher>,
     pub(crate) history: crate::navigation::History,
     pub(crate) previews: BTreeMap<crate::PreviewId, crate::EditPreview>,
@@ -113,6 +115,7 @@ impl Engine {
             worker_receiver,
             workers_running: 0,
             indexing: 0,
+            index_generation: 0,
             watcher: None,
             history: crate::navigation::History::default(),
             previews: BTreeMap::new(),

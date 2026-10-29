@@ -413,7 +413,8 @@ The inverse of a step is the source edits that restore the text before it.
 `open_workspace` starts indexing on a worker thread and starts watching the roots.
 The worker returns a finished `WorkspaceState`, which is applied by `pump()`.
 Open documents are newer than the files the worker read, so they are kept.
-If a newer workspace has replaced the one a worker indexed, its result is discarded.
+Each index job carries a generation, as preview rendering and Git discovery do, and a result or failure from a job that a newer one has superseded is discarded.
+So a reindex of the same roots that finishes after a later one cannot replace the later index, and a newer workspace always wins over the one a worker was indexing.
 
 .The event pump
 [mermaid]
