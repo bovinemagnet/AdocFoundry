@@ -32,6 +32,7 @@ soft_wrap = true
 tab_width = 2
 theme = "auto"                   # auto | light | dark
 preview_tabs = true              # false: every page you open stays open
+auto_save = "off"                # off | on_focus_change | after_delay
 
 [sidebar]
 remember_expansion = true        # remember opened and closed branches (user file only)
@@ -103,6 +104,11 @@ check = true                     # look for a newer release at start-up
 |boolean
 |`true`
 |Open pages you browse to in a temporary preview tab, which the next page you browse to replaces. When `false`, every page you open stays open until you close it. See xref:using-the-editor.adoc#preview-tabs[Preview tabs].
+
+|`editor.auto_save`
+|`"off"`, `"on_focus_change"` or `"after_delay"`
+|`"off"`
+|Save pages without asking. `"after_delay"` saves a page one second after your last edit to it. `"on_focus_change"` saves a page when you leave its tab and every edited page when the AdocFoundry window loses focus. Any other value is ignored with a warning and leaves auto-save off. See xref:using-the-editor.adoc#auto-save[Auto-save].
 
 |`editor.theme`
 |`"auto"`, `"light"` or `"dark"`

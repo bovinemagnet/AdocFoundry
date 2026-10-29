@@ -82,6 +82,10 @@ The test `every_command_is_in_a_menu` fails when a command with an action is in 
 That list holds `document.overwrite` (Save, Overwriting the File on Disk, offered only after a conflict), `visual.split_block` (New Paragraph, bound to kbd:[Enter]), and `document.close_left` and `document.close_right` (Close Left and Close Right, which belong to the tab menu).
 A new command must therefore be added to a menu or to that list.
 
+== Window focus
+
+`WorkspaceView` observes window activation (`observe_window_activation`) and calls `Engine::focus_lost` when its window becomes inactive, which is how `on_focus_change` auto-save saves edited pages when the window loses focus.
+
 == Windows
 
 Window creation lives in `app.rs`.

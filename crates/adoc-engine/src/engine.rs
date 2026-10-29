@@ -68,6 +68,7 @@ pub struct Engine {
     pub(crate) files: crate::files::Files,
     pub(crate) images: crate::images::Images,
     pub(crate) words: crate::words::WordCounts,
+    pub(crate) auto_saves: crate::auto_save::AutoSaveState,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
 }
@@ -132,6 +133,7 @@ impl Engine {
             files: crate::files::Files::default(),
             images: crate::images::Images::default(),
             words: crate::words::WordCounts::default(),
+            auto_saves: crate::auto_save::AutoSaveState::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
         }
@@ -301,6 +303,7 @@ impl Engine {
         self.forget_visual(id);
         self.forget_hunks(id);
         self.forget_word_count(id);
+        self.forget_auto_save(id);
         if self.rendered.layout.pinned == Some(id) {
             self.rendered.layout.pinned = None;
             self.emit(EngineEvent::PreviewLayoutChanged);
@@ -429,6 +432,7 @@ impl Engine {
         if let Some(state) = self.states.get_mut(&id) {
             state.saved_hash = hash_text(&text);
         }
+        self.auto_save_settled(id);
         self.emit(EngineEvent::DocumentSaved(id));
         self.keep_open(id);
         self.schedule_hunks(id, false);
@@ -444,6 +448,7 @@ impl Engine {
         if let Some(document) = self.documents.get_mut(&id) {
             document.dirty = document.text != text;
         }
+        self.auto_save_settled(id);
     }
 
     #[must_use]
@@ -457,7 +462,10 @@ impl Engine {
             && (self.active != Some(id) || self.images.active.is_some())
         {
             self.images.active = None;
-            self.active = Some(id);
+            let left = self.active.replace(id).filter(|left| *left != id);
+            if let Some(left) = left {
+                self.auto_save_left(left);
+            }
             self.emit(EngineEvent::NavigationChanged);
             self.sync_preview_target();
         }
@@ -717,6 +725,7 @@ impl Engine {
             edits: forward.clone(),
         });
         self.words_changed(id);
+        self.auto_save_edited(id);
         // An edited page is kept open, even once undone.
         self.keep_open(id);
         self.preview_source_changed(&path);

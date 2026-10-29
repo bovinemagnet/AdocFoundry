@@ -38,6 +38,19 @@ A typed character is the one exception for the rest: re-indexing the document an
 On a 5,000-line document that work takes several milliseconds, too long to repeat on every keystroke.
 Every other command brings the index up to date before it runs, so search, rename, save and replace never see a stale index.
 
+== Auto-save
+
+`auto_save.rs` holds the optional auto-save (`[editor] auto_save`).
+`AutoSave` is `Off`, `OnFocusChange` or `AfterDelay`, and lives in `EditorSettings::auto_save`; any other value is a settings warning and leaves it `Off`.
+
+* Each edit records its time on the engine's clock, so tests use `ManualClock`.
+`pump` saves the pages left unedited for `AUTO_SAVE_DELAY` (1 s) when the setting is `AfterDelay`, and `has_pending` stays true meanwhile.
+* `Engine::set_active` and `set_active_image` save the page left when the setting is `OnFocusChange`.
+* `Engine::focus_lost()` saves every edited page with `OnFocusChange` and does nothing otherwise.
+* Saves go through `invoke(document.save)`, so the watcher and Git behave as after a manual save and a failure is the `CommandFailed` event.
+Untitled documents and documents without unsaved edits are skipped.
+* A page whose save is refused, such as by the changed-on-disk check, is remembered and not auto-saved again until a successful save, overwrite or reload.
+
 == Directory listings
 
 `files.rs` is framework-free and serves the Files view.

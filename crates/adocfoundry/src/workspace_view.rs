@@ -285,6 +285,12 @@ impl WorkspaceView {
             cx.subscribe(&preview, Self::on_preview_event),
             Self::record_expansion(&navigation, SidebarPanel::Navigation, cx),
             Self::record_expansion(&families, SidebarPanel::Modules, cx),
+            // `[editor] auto_save = "on_focus_change"` saves when the window loses focus.
+            cx.observe_window_activation(window, |this, window, cx| {
+                if !window.is_window_active() {
+                    this.app.update(cx, |app, _| app.engine.focus_lost());
+                }
+            }),
         ];
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace, window, cx));

@@ -31,6 +31,20 @@ pub struct EditorSettings {
     pub theme: ThemePreference,
     /// Browsing to a page shows it in one reusable preview tab until it is edited or kept open.
     pub preview_tabs: bool,
+    /// When pages are saved without Save.
+    pub auto_save: AutoSave,
+}
+
+/// `[editor] auto_save`: when an edited page is saved without Save.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AutoSave {
+    /// Only Save and Save All save.
+    #[default]
+    Off,
+    /// When the page's tab or the window loses focus.
+    OnFocusChange,
+    /// [`crate::AUTO_SAVE_DELAY`] after typing stops.
+    AfterDelay,
 }
 
 impl Default for EditorSettings {
@@ -42,6 +56,7 @@ impl Default for EditorSettings {
             tab_width: 2,
             theme: ThemePreference::Auto,
             preview_tabs: true,
+            auto_save: AutoSave::Off,
         }
     }
 }
@@ -364,6 +379,14 @@ impl Settings {
             }
             ("editor", "tab_width") => self.editor.tab_width = positive(value)?,
             ("editor", "preview_tabs") => self.editor.preview_tabs = boolean(value)?,
+            ("editor", "auto_save") => {
+                self.editor.auto_save = match value.as_str() {
+                    Some("off") => AutoSave::Off,
+                    Some("on_focus_change") => AutoSave::OnFocusChange,
+                    Some("after_delay") => AutoSave::AfterDelay,
+                    _ => return Err("expected \"off\", \"on_focus_change\" or \"after_delay\""),
+                };
+            }
             ("editor", "theme") => {
                 self.editor.theme = match value.as_str() {
                     Some("auto") => ThemePreference::Auto,
@@ -464,7 +487,13 @@ fn is_known(section: &str, key: &str) -> bool {
             )
             | (
                 "editor",
-                "font_family" | "font_size" | "soft_wrap" | "tab_width" | "theme" | "preview_tabs"
+                "font_family"
+                    | "font_size"
+                    | "soft_wrap"
+                    | "tab_width"
+                    | "theme"
+                    | "preview_tabs"
+                    | "auto_save"
             )
             | ("workspace", "ignore")
             | (
