@@ -40,6 +40,35 @@ Pin Preview (`preview.pin`) keeps the preview on one page while you edit others.
 This is useful for watching a page that includes the file you are editing.
 Pin again to unpin.
 
+== PDF preview
+
+The preview pane can show the preview target as PDF pages instead of the rendered page.
+The target is the pinned page, else the active one.
+Toggle PDF Preview (`view.toggle_pdf_preview`) switches it on and off.
+It is in the View menu and the command palette, and has no default key binding.
+The preview's header also has a PDF button; while the PDF is shown it reads Page, to switch back.
+Turning the PDF preview on also shows the preview if it was hidden.
+
+The pages are typeset as Export Page to PDF typesets the page, with the same theme and fonts.
+The theme is the page's `pdf-theme`, else `[pdf] theme`, found in `pdf-themesdir` or `[pdf] themes_dir`.
+Standards such as PDF/A and PDF/UA are not applied, because they change nothing that is visible.
+Unsaved edits are included.
+
+After typing, the pages follow once the page settles, which is the preview's 100 ms pause.
+They are typeset on a background worker, so the editor never waits.
+An ordinary page takes about a tenth of a second more; the typesetting of the four-page reference article takes about 25 ms in a release build.
+Pages are drawn at one screen pixel per point and scroll in the pane.
+
+Clicking a line of text on a page puts the caret at the start of the paragraph, heading or other block that line came from.
+When the line came from an included file, that file opens, as it does when you click a block in the rendered preview.
+Lines that come from the template, such as headers, footers and the generated parts of the title page, have no source.
+A click on one of them goes to the nearest line above it that has one.
+
+When the page cannot be typeset, for example because the theme is missing, the pane says why instead of showing pages.
+Pinning, detaching and docking work as they do for the rendered preview.
+Scroll sync does not apply to the PDF pages.
+See xref:pdf-export.adoc[Exporting to PDF] for the theme and font rules.
+
 == Detaching the preview
 
 Detach Preview (`view.detach_preview`) opens the preview in its own window, which you can put on a second screen.

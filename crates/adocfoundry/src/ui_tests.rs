@@ -4672,3 +4672,186 @@ fn a_misspelt_word_in_the_visual_editor_is_underlined_and_replaced(cx: &mut Test
     .unwrap();
     assert_eq!(text_of(&app, id, &mut cx), text);
 }
+
+#[gpui::test]
+fn the_pdf_preview_shows_the_pages_and_a_click_goes_to_the_source(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let text = "= Page\n\nFirst paragraph.\n\n<<<\n\nLast paragraph.\n";
+    std::fs::write(&page, text).unwrap();
+    let (app, workspace, mut cx) = previewing(vec![page.clone()], cx);
+    cx.dispatch_action(crate::editor::bindings::TogglePdfPreview);
+    let typeset = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .preview()
+                .read(cx)
+                .pdf_shown()
+                .and_then(|shown| shown.pages.as_ref().ok().map(Vec::len))
+                == Some(2)
+        })
+    };
+    assert!(drain_until(&app, &mut cx, typeset), "the pages are shown");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // A click on the second page's line goes to its paragraph.
+    let anchor = cx.update(|_, cx| {
+        let preview = workspace.read(cx).preview().read(cx);
+        let pages = preview.pdf_shown().unwrap().pages.clone().unwrap();
+        pages[1]
+            .anchors
+            .iter()
+            .find(|anchor| anchor.offset == text.find("Last paragraph").unwrap())
+            .cloned()
+            .expect("the paragraph's line")
+    });
+    let middle = ((anchor.top + anchor.bottom) / 2.0) as f32;
+    workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace
+            .preview()
+            .update(cx, |preview, cx| preview.pdf_scroll_to_page(1, cx));
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let position = cx
+        .update(|_, cx| {
+            workspace
+                .read(cx)
+                .preview()
+                .read(cx)
+                .pdf_position(1, middle)
+        })
+        .unwrap();
+    cx.simulate_click(position, gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        caret(&workspace, &mut cx),
+        text.find("Last paragraph").unwrap()
+    );
+
+    // Back to the rendered page.
+    cx.dispatch_action(crate::editor::bindings::TogglePdfPreview);
+    cx.run_until_parked();
+    assert!(!cx.update(|_, cx| app.read(cx).engine.preview_layout().pdf));
+}
+
+/// The book fixture copied to `directory/book` with `settings` as its `.adocfoundry.toml`, opened
+/// in a workspace window on `page`.
+fn profile_workspace(
+    directory: &Path,
+    settings: &str,
+    page: &str,
+    cx: &mut TestAppContext,
+) -> (
+    PathBuf,
+    Entity<AppState>,
+    std::sync::mpsc::Receiver<adoc_engine::EngineEvent>,
+    VisualTestContext,
+) {
+    let root = adoc_index::normalize_path(&directory.join("book"));
+    copy_dir(&fixture("pdf/book"), &root);
+    std::fs::write(root.join(".adocfoundry.toml"), settings).unwrap();
+    let page = root.join(page);
+    let mut engine_settings = Settings::load(None, Some(&root)).unwrap();
+    engine_settings.git.enabled = false;
+    let mut engine = Engine::new(engine_settings);
+    let events = engine.subscribe();
+    let app = app_with(engine, cx);
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        Root::new(view, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| app.read(cx).engine.active().is_some())
+    }));
+    (root, app, events, cx)
+}
+
+#[gpui::test]
+fn export_pdf_profile_writes_what_the_command_line_writes(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let (root, app, events, mut cx) = profile_workspace(
+        directory.path(),
+        "[pdf.profiles.install]\npage = \"guide/modules/ROOT/pages/install.adoc\"\noutput = \"build/install.pdf\"\ntheme = \"default-sans\"\n",
+        "guide/modules/ROOT/pages/use.adoc",
+        cx,
+    );
+    let output = root.join("build/install.pdf");
+    // What the command line writes: the profile's arguments, exported and waited for.
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            let args = app.engine.profile_export_args("install").unwrap();
+            app.engine
+                .export_blocking(args, std::time::Duration::from_secs(120))
+                .unwrap();
+        })
+    });
+    let from_cli = std::fs::read(&output).unwrap();
+    std::fs::remove_file(&output).unwrap();
+    let _ = events.try_iter().count();
+
+    cx.dispatch_action(crate::editor::bindings::ExportPdfProfile);
+    cx.run_until_parked();
+    cx.simulate_input("install");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let mut finished = None;
+    assert!(drain_until(&app, &mut cx, |_| {
+        finished = finished.take().or_else(|| {
+            events.try_iter().find_map(|event| match event {
+                adoc_engine::EngineEvent::ExportFinished { output, result } => {
+                    Some((output, result))
+                }
+                _ => None,
+            })
+        });
+        finished.is_some()
+    }));
+    let (written, result) = finished.unwrap();
+    assert_eq!(written, output);
+    assert!(result.is_ok(), "{result:?}");
+    assert!(
+        std::fs::read(&output).unwrap() == from_cli,
+        "the app's PDF differs from the command line's"
+    );
+}
+
+#[gpui::test]
+fn export_page_with_theme_offers_the_bundled_and_workspace_themes(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let (root, app, events, mut cx) = profile_workspace(
+        directory.path(),
+        "[pdf]\nthemes_dir = \"themes\"\n",
+        "guide/modules/ROOT/pages/use.adoc",
+        cx,
+    );
+    std::fs::create_dir_all(root.join("themes")).unwrap();
+    std::fs::write(
+        root.join("themes/sans-theme.yml"),
+        "extends: default-sans\nbase:\n  font-color: #112233\n",
+    )
+    .unwrap();
+    cx.dispatch_action(crate::editor::bindings::ExportPagePdfWithTheme);
+    cx.run_until_parked();
+    cx.simulate_input("sans —");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    let output = directory.path().join("themed.pdf");
+    let result = finish_export(&app, &events, &output, &mut cx);
+    assert!(result.is_ok(), "{result:?}");
+    // The workspace theme extends the sans theme: the PDF embeds Noto Sans, not Noto Serif.
+    let bytes = String::from_utf8_lossy(&std::fs::read(&output).unwrap()).into_owned();
+    assert!(bytes.contains("NotoSans"), "not the sans theme");
+    assert!(!bytes.contains("NotoSerif"), "the default theme was used");
+}

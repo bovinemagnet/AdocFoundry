@@ -245,8 +245,11 @@ pub struct PdfSettings {
     pub fonts_dir: Option<String>,
     /// The site cross references out of an exported book link to.
     pub site_url: Option<String>,
-    /// Standards every export conforms to: `pdf-a-2a`, `pdf-ua-1`.
+    /// Standards every export conforms to: `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a`, `pdf-ua-1`.
     pub standards: Vec<crate::PdfStandard>,
+    /// Publication profiles, `[pdf.profiles.<name>]`, by name; a workspace's replaces a user
+    /// profile of the same name.
+    pub profiles: Vec<crate::PdfProfile>,
 }
 
 impl Default for PdfSettings {
@@ -257,6 +260,7 @@ impl Default for PdfSettings {
             fonts_dir: None,
             site_url: None,
             standards: Vec::new(),
+            profiles: Vec::new(),
         }
     }
 }
@@ -265,6 +269,8 @@ impl Default for PdfSettings {
 #[must_use]
 pub fn pdf_standard(name: &str) -> Option<crate::PdfStandard> {
     match name {
+        "pdf-a-1b" | "a-1b" => Some(crate::PdfStandard::A1b),
+        "pdf-a-1a" | "a-1a" => Some(crate::PdfStandard::A1a),
         "pdf-a-2a" | "a-2a" => Some(crate::PdfStandard::A2a),
         "pdf-ua-1" | "ua-1" => Some(crate::PdfStandard::Ua1),
         _ => None,
@@ -406,6 +412,10 @@ impl Settings {
                 continue;
             };
             for (key, value) in entries {
+                if section == "pdf" && key == "profiles" {
+                    self.apply_profiles(&source, value);
+                    continue;
+                }
                 // `[sidebar.navigation]` and `[sidebar.modules]` are tables of their own.
                 let panel = value.as_table().filter(|_| {
                     section == "sidebar" && matches!(key.as_str(), "navigation" | "modules")
@@ -530,11 +540,35 @@ impl Settings {
                     .iter()
                     .map(|item| item.as_str().and_then(pdf_standard))
                     .collect::<Option<_>>()
-                    .ok_or("expected \"pdf-a-2a\" or \"pdf-ua-1\"")?;
+                    .ok_or("expected \"pdf-a-1b\", \"pdf-a-1a\", \"pdf-a-2a\" or \"pdf-ua-1\"")?;
             }
             _ => return Err("unknown setting"),
         }
         Ok(())
+    }
+
+    /// `[pdf.profiles.<name>]`: each profile parsed whole, or left out with a warning.
+    fn apply_profiles(&mut self, source: &str, value: &toml::Value) {
+        let Some(profiles) = value.as_table() else {
+            self.warn(source, "pdf.profiles", "expected a table of profiles");
+            return;
+        };
+        for (name, table) in profiles {
+            let parsed = table
+                .as_table()
+                .ok_or_else(|| "expected a table".to_owned())
+                .and_then(|table| crate::profiles::parse_profile(name, table));
+            match parsed {
+                Ok(profile) => {
+                    self.pdf.profiles.retain(|known| known.name != profile.name);
+                    self.pdf.profiles.push(profile);
+                    self.pdf
+                        .profiles
+                        .sort_by(|left, right| left.name.cmp(&right.name));
+                }
+                Err(problem) => self.warn(source, &format!("pdf.profiles.{name}"), &problem),
+            }
+        }
     }
 
     fn warn(&mut self, source: &str, name: &str, problem: &str) {
@@ -728,13 +762,20 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join(WORKSPACE_SETTINGS_FILE),
-            "[pdf]\ntheme = \"acme\"\nthemes_dir = \"resources/themes\"\nstandards = [\"pdf-a-2a\"]\n",
+            "[pdf]\ntheme = \"acme\"\nthemes_dir = \"resources/themes\"\nstandards = [\"pdf-a-2a\", \"pdf-a-1b\", \"pdf-a-1a\"]\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.pdf.theme, "acme");
         assert_eq!(settings.pdf.themes_dir.as_deref(), Some("resources/themes"));
-        assert_eq!(settings.pdf.standards, vec![crate::PdfStandard::A2a]);
+        assert_eq!(
+            settings.pdf.standards,
+            vec![
+                crate::PdfStandard::A2a,
+                crate::PdfStandard::A1b,
+                crate::PdfStandard::A1a
+            ]
+        );
         assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
     }
 

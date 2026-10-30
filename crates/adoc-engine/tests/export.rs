@@ -66,6 +66,7 @@ fn export(engine: &mut Engine, directory: &Path, target: ExportTarget) -> (Expor
                 standards: Vec::new(),
                 fonts_dir: None,
                 typst: Some(typst.clone()),
+                attributes: Vec::new(),
             },
             WAIT,
         )
@@ -263,6 +264,7 @@ fn export_runs_off_the_engine_thread() {
                 standards: Vec::new(),
                 fonts_dir: None,
                 typst: None,
+                attributes: Vec::new(),
             }),
         )
         .unwrap();
@@ -322,6 +324,7 @@ fn theme_setting_selects_the_theme() {
                 standards: Vec::new(),
                 fonts_dir: None,
                 typst: Some(directory.path().join("print.typ")),
+                attributes: Vec::new(),
             },
             WAIT,
         )
@@ -339,6 +342,7 @@ fn theme_setting_selects_the_theme() {
                 standards: Vec::new(),
                 fonts_dir: None,
                 typst: None,
+                attributes: Vec::new(),
             },
             WAIT,
         )

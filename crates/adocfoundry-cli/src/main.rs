@@ -7,7 +7,8 @@
 //! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 //! adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
 //!     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
-//!     [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+//!     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+//! adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli doctor [<root>] [--format text|json]
 //! adocfoundry-cli --version
@@ -34,7 +35,8 @@ const USAGE: &str = "usage:
   adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
   adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
       [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
-      [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+      [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+  adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli doctor [<root>] [--format text|json]
   adocfoundry-cli --version";
@@ -294,8 +296,50 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
             "output",
             "standard",
             "typst",
+            "profile",
         ],
     )?;
+    let standards = options
+        .iter()
+        .filter(|(name, _)| *name == "standard")
+        .map(|(_, value)| {
+            pdf_standard(value).ok_or_else(|| {
+                format!(
+                    "unknown standard `{value}`: expected pdf-a-1b, pdf-a-1a, pdf-a-2a or pdf-ua-1"
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(profile) = option(&options, "profile") {
+        // A profile is exported as the app exports it; options given here win over it.
+        let root = match (positional.as_slice(), option(&options, "root")) {
+            ([], None) => PathBuf::from("."),
+            ([root], None) => PathBuf::from(root),
+            ([], Some(root)) => PathBuf::from(root),
+            _ => return Err(USAGE.to_owned()),
+        };
+        let root = adoc_index::normalize_path(&root);
+        let mut engine = open_engine(&root, false)?;
+        let mut args = engine
+            .profile_export_args(profile)
+            .map_err(|error| error.to_string())?;
+        if let Some(output) = option(&options, "output") {
+            args.output = PathBuf::from(output);
+        }
+        if let Some(theme) = option(&options, "theme") {
+            args.theme = Some(theme.to_owned());
+        }
+        if let Some(fonts_dir) = option(&options, "fonts-dir") {
+            args.fonts_dir = Some(PathBuf::from(fonts_dir));
+        }
+        for standard in standards {
+            if !args.standards.contains(&standard) {
+                args.standards.push(standard);
+            }
+        }
+        args.typst = option(&options, "typst").map(PathBuf::from);
+        return report_export(&mut engine, args, &root);
+    }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
@@ -320,14 +364,6 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
         },
         |root| adoc_index::normalize_path(Path::new(root)),
     );
-    let standards = options
-        .iter()
-        .filter(|(name, _)| *name == "standard")
-        .map(|(_, value)| {
-            pdf_standard(value)
-                .ok_or_else(|| format!("unknown standard `{value}`: expected pdf-a-2a or pdf-ua-1"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
 
     let mut engine = open_engine(&root, false)?;
     let component = match option(&options, "component") {
@@ -364,24 +400,28 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
         }
     };
     let output = option(&options, "output").map_or(default_output, PathBuf::from);
-    let summary = engine.export_blocking(
-        ExportArgs {
-            target: export_target,
-            output: output.clone(),
-            theme: option(&options, "theme").map(str::to_owned),
-            standards,
-            fonts_dir: option(&options, "fonts-dir").map(PathBuf::from),
-            typst: option(&options, "typst").map(PathBuf::from),
-        },
-        INDEX_TIMEOUT,
-    );
-    match summary {
+    let args = ExportArgs {
+        target: export_target,
+        output,
+        theme: option(&options, "theme").map(str::to_owned),
+        standards,
+        fonts_dir: option(&options, "fonts-dir").map(PathBuf::from),
+        typst: option(&options, "typst").map(PathBuf::from),
+        attributes: Vec::new(),
+    };
+    report_export(&mut engine, args, &root)
+}
+
+/// Exports and waits, printing each diagnostic and then the output and its page count.
+fn report_export(engine: &mut Engine, args: ExportArgs, root: &Path) -> Result<ExitCode, String> {
+    let output = args.output.clone();
+    match engine.export_blocking(args, INDEX_TIMEOUT) {
         Ok(summary) => {
             for diagnostic in &summary.diagnostics {
                 match &diagnostic.location {
                     Some((path, line)) => eprintln!(
                         "{}:{line}: {}: {}",
-                        display_path(path, &root),
+                        display_path(path, root),
                         severity_name(diagnostic.severity),
                         diagnostic.message
                     ),

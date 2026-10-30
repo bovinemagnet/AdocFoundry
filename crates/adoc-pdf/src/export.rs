@@ -127,6 +127,8 @@ pub fn compile(
         .standards
         .iter()
         .map(|standard| match standard {
+            PdfStandard::A1b => typst_pdf::PdfStandard::A_1b,
+            PdfStandard::A1a => typst_pdf::PdfStandard::A_1a,
             PdfStandard::A2a => typst_pdf::PdfStandard::A_2a,
             PdfStandard::Ua1 => typst_pdf::PdfStandard::Ua_1,
         })
@@ -226,6 +228,102 @@ pub fn typeset_pages(
                 width: page.frame.width().to_pt(),
                 height: page.frame.height().to_pt(),
                 runs,
+            }
+        })
+        .collect())
+}
+
+/// A page of the live preview: its size in points, the page as SVG, and where its lines of text
+/// came from, so a click on the page can go to the source.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PreviewPage {
+    pub width: f64,
+    pub height: f64,
+    pub svg: String,
+    /// In order down the page.
+    pub anchors: Vec<PageAnchor>,
+}
+
+/// A line of text on a preview page, from the top of its type to its baseline in points, and the
+/// start of the AsciiDoc it was written from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageAnchor {
+    pub top: f64,
+    pub bottom: f64,
+    pub path: std::path::PathBuf,
+    pub offset: usize,
+}
+
+/// The pages as the PDF would have them, for the live preview: each as SVG, with the source of
+/// each line of text that the view tree allows to be traced back.
+pub fn preview_pages(
+    typst: &Typst,
+    theme: &LoadedTheme,
+    options: &PdfOptions,
+) -> Result<Vec<PreviewPage>, PdfError> {
+    fn collect(
+        frame: &typst::layout::Frame,
+        x: f64,
+        y: f64,
+        source: &dyn Fn(typst::syntax::Span) -> Option<(std::path::PathBuf, usize)>,
+        out: &mut Vec<PageAnchor>,
+    ) {
+        for (point, item) in frame.items() {
+            let (px, py) = (x + point.x.to_pt(), y + point.y.to_pt());
+            match item {
+                typst::layout::FrameItem::Group(group) => collect(
+                    &group.frame,
+                    px + group.transform.tx.to_pt(),
+                    py + group.transform.ty.to_pt(),
+                    source,
+                    out,
+                ),
+                typst::layout::FrameItem::Text(text) => {
+                    let Some((path, offset)) =
+                        text.glyphs.iter().find_map(|glyph| source(glyph.span.0))
+                    else {
+                        continue;
+                    };
+                    let top = py - text.size.to_pt();
+                    // Runs of one line from one source are one anchor.
+                    if let Some(last) = out.last_mut() {
+                        if last.path == path
+                            && last.offset == offset
+                            && (last.bottom - py).abs() < 0.5
+                        {
+                            continue;
+                        }
+                    }
+                    out.push(PageAnchor {
+                        top,
+                        bottom: py,
+                        path,
+                        offset,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    let (document, _, world) = typeset(typst, theme, options)?;
+    let source = |span: typst::syntax::Span| {
+        world
+            .range(span)
+            .and_then(|range| typst.map.lookup(range.start))
+            .map(|span| (span.path.clone(), span.range.start))
+    };
+    Ok(document
+        .pages()
+        .iter()
+        .map(|page| {
+            let mut anchors = Vec::new();
+            collect(&page.frame, 0.0, 0.0, &source, &mut anchors);
+            anchors.sort_by(|left, right| left.top.total_cmp(&right.top));
+            PreviewPage {
+                width: page.frame.width().to_pt(),
+                height: page.frame.height().to_pt(),
+                svg: typst_svg::svg(page, &typst_svg::SvgOptions::default()),
+                anchors,
             }
         })
         .collect())

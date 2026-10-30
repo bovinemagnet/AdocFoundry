@@ -50,6 +50,7 @@ actions!(
         TogglePreview,
         DetachPreview,
         TogglePreviewScrollSync,
+        TogglePdfPreview,
         PinPreview,
         ShowSource,
         ShowVisual,
@@ -95,6 +96,8 @@ actions!(
         ExportPagePdf,
         ExportPageHtml,
         ExportComponentPdf,
+        ExportPdfProfile,
+        ExportPagePdfWithTheme,
     ]
 );
 
@@ -110,6 +113,7 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
     ("Toggle Light/Dark Theme", "secondary-k secondary-t"),
     ("Open Read-Only Window", "secondary-k secondary-n"),
     ("Reveal in Files", ""),
+    ("Export Page to PDF with Theme…", ""),
     ("Zoom In", "secondary-="),
     ("Zoom Out", "secondary--"),
     ("Actual Size", "secondary-0"),
@@ -118,7 +122,7 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
 
 /// The first of the [`UI_ACTIONS`] that act on the image viewer, offered only while an image is
 /// the active tab.
-pub const IMAGE_UI_ACTIONS: usize = 4;
+pub const IMAGE_UI_ACTIONS: usize = 5;
 
 /// Translates a `cmd-s` style binding to GPUI's platform-neutral form: `cmd` is the platform's
 /// primary modifier (Command on macOS, Control elsewhere).
@@ -191,6 +195,7 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::DOCUMENT_LOCAL_HISTORY => KeyBinding::new(keys, LocalHistory, workspace),
         ids::DOCUMENT_RECOVER_UNSAVED => KeyBinding::new(keys, RecoverUnsaved, workspace),
         ids::EXPORT_PDF_COMPONENT => KeyBinding::new(keys, ExportComponentPdf, workspace),
+        ids::EXPORT_PDF_PROFILE => KeyBinding::new(keys, ExportPdfProfile, workspace),
         ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
         ids::APP_CHECK_FOR_UPDATES => KeyBinding::new(keys, CheckForUpdates, workspace),
         ids::APP_DIAGNOSTICS => KeyBinding::new(keys, ShowDiagnostics, workspace),
@@ -198,6 +203,7 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::VIEW_TOGGLE_PREVIEW => KeyBinding::new(keys, TogglePreview, workspace),
         ids::VIEW_DETACH_PREVIEW => KeyBinding::new(keys, DetachPreview, workspace),
         ids::VIEW_TOGGLE_SCROLL_SYNC => KeyBinding::new(keys, TogglePreviewScrollSync, workspace),
+        ids::VIEW_TOGGLE_PDF_PREVIEW => KeyBinding::new(keys, TogglePdfPreview, workspace),
         ids::PREVIEW_PIN => KeyBinding::new(keys, PinPreview, workspace),
         ids::VIEW_SHOW_SOURCE => KeyBinding::new(keys, ShowSource, workspace),
         ids::VIEW_SHOW_VISUAL => KeyBinding::new(keys, ShowVisual, workspace),
@@ -271,6 +277,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::DOCUMENT_LOCAL_HISTORY => Box::new(LocalHistory),
         ids::DOCUMENT_RECOVER_UNSAVED => Box::new(RecoverUnsaved),
         ids::EXPORT_PDF_COMPONENT => Box::new(ExportComponentPdf),
+        ids::EXPORT_PDF_PROFILE => Box::new(ExportPdfProfile),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),
         ids::APP_DIAGNOSTICS => Box::new(ShowDiagnostics),
@@ -278,6 +285,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),
         ids::VIEW_DETACH_PREVIEW => Box::new(DetachPreview),
         ids::VIEW_TOGGLE_SCROLL_SYNC => Box::new(TogglePreviewScrollSync),
+        ids::VIEW_TOGGLE_PDF_PREVIEW => Box::new(TogglePdfPreview),
         ids::PREVIEW_PIN => Box::new(PinPreview),
         ids::VIEW_SHOW_SOURCE => Box::new(ShowSource),
         ids::VIEW_SHOW_VISUAL => Box::new(ShowVisual),
@@ -315,9 +323,10 @@ pub fn ui_action(index: usize) -> Box<dyn gpui::Action> {
         1 => Box::new(ToggleTheme),
         2 => Box::new(OpenMirrorWindow),
         3 => Box::new(RevealInFiles),
-        4 => Box::new(crate::image_view::ZoomIn),
-        5 => Box::new(crate::image_view::ZoomOut),
-        6 => Box::new(crate::image_view::ActualSize),
+        4 => Box::new(ExportPagePdfWithTheme),
+        5 => Box::new(crate::image_view::ZoomIn),
+        6 => Box::new(crate::image_view::ZoomOut),
+        7 => Box::new(crate::image_view::ActualSize),
         _ => Box::new(crate::image_view::FitToWindow),
     }
 }

@@ -788,6 +788,7 @@ impl ProtocolServer {
             standards,
             fonts_dir: None,
             typst: None,
+            attributes: Vec::new(),
         };
         match self.engine.export_blocking(export, EXPORT_TIMEOUT) {
             Ok(summary) => {

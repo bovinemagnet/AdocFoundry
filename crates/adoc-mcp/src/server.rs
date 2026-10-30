@@ -194,7 +194,7 @@ struct ExportPdfArgs {
     /// The PDF to write, inside a root.
     output: String,
     theme: Option<String>,
-    /// `pdf-a-2a`, `pdf-ua-1`.
+    /// `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a`, `pdf-ua-1`.
     #[serde(default)]
     standards: Vec<String>,
 }
@@ -775,6 +775,7 @@ impl Server {
                         standards,
                         fonts_dir: None,
                         typst: None,
+                        attributes: Vec::new(),
                     },
                     TIMEOUT,
                 )

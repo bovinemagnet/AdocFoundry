@@ -5,6 +5,7 @@ mod document;
 mod emit;
 mod export;
 mod fonts;
+pub mod highlight;
 mod running;
 pub mod theme;
 mod typst;
@@ -13,8 +14,9 @@ mod world;
 pub use document::{to_typst, Book, BookItem, Document, PdfOptions, PdfStandard, Typst};
 pub use emit::{EmitOptions, PageView, SourceMap};
 pub use export::{
-    compile, export, render_math, render_math_svg, typeset_pages, typeset_text, PdfDiagnostic,
-    PdfError, PdfOutput, PdfSeverity, RenderedMath, TextRun, TypesetPage,
+    compile, export, preview_pages, render_math, render_math_svg, typeset_pages, typeset_text,
+    PageAnchor, PdfDiagnostic, PdfError, PdfOutput, PdfSeverity, PreviewPage, RenderedMath,
+    TextRun, TypesetPage,
 };
 pub use fonts::missing_fonts;
 

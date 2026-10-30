@@ -50,7 +50,7 @@ On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15,
 On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
 
 |`pdf-standards`
-|On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both standards too. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
+|On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1, and as PDF/A-1b and PDF/A-1a. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both of those standards too, but not under PDF/A-1, because its Mermaid diagram uses transparency. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
 
 |`grammar`
 |Builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.

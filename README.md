@@ -56,6 +56,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - It follows the active page; Pin keeps it on one page. Each page's scroll position is remembered.
 - Detach moves it into its own window; closing that window docks it again.
 - Scroll sync both ways: moving the caret scrolls the preview to that block, and scrolling the preview moves the source to the topmost visible block. Sync can be switched off.
+- A live PDF preview: View › Toggle PDF Preview, or PDF in the preview's header, shows the page as Export Page to PDF typesets it, in its theme and fonts, re-typeset on a worker a moment after you stop typing (about an eighth of a second on an ordinary page), so the editor never waits. Clicking a line on a page goes to its source.
 - Clicking a block places the caret on its source, opening the partial it came from when there is one. Clicking an xref follows it, recorded in back and forward history; external links open the browser and attachments the default application.
 - Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
 - Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
@@ -86,10 +87,12 @@ The project is built in phases: (1) a source editor with Antora support and link
 **PDF export**
 
 - Export Page to PDF… writes the active page as an article; Export Component to PDF… writes its Antora component version as a book in navigation order: a title page, a table of contents, a part for each navigation file (or titled list) when there are several, a chapter for each top-level entry and sections beneath, with cross references between its pages as links inside the PDF. Both are in the command palette and in `adocfoundry-cli pdf`.
+- Publication profiles: `[pdf.profiles.<name>]` in `.adocfoundry.toml` saves an export's content (a page, a component version, or navigation files in a chosen order), output, theme, fonts, attributes and metadata, and standards. File › Export PDF Profile… and `adocfoundry-cli pdf --profile <name>` export it, writing the same PDF; Export Page to PDF with Theme… offers the bundled themes and the workspace's own.
 - Export Page to HTML… writes the active page, unsaved edits included, as a standalone HTML file: what `adocfoundry-cli render` writes, with local images, diagrams and formulas embedded so the file opens anywhere.
 - Typeset in process by Typst, with no Asciidoctor, Ruby, Java or network; unsaved edits are exported, diagrams are rendered first, and Typst's errors point at the AsciiDoc line that caused them.
-- Styled by asciidoctor-pdf themes, loaded as asciidoctor-pdf loads them (`extends`, `$variables`, arithmetic, units, colours, the font catalogue), so an existing theme works without edits. The bundled `default`, `default-sans`, `default-for-print` and `base` themes use the same Noto and M+ fonts asciidoctor-pdf ships; on the reference article, every line lands within 2 pt of asciidoctor-pdf's.
-- Headers and footers with recto and verso columns, page numbers and section titles; a title page with logo, authors and revision; dot leaders in the table of contents; an index from `((terms))` in an `[index]` section; PDF/A-2a and PDF/UA-1 on request.
+- Styled by asciidoctor-pdf themes, loaded as asciidoctor-pdf loads them (`extends`, `$variables`, arithmetic, units, colours, the font catalogue), so an existing theme loads without edits. Of the 567 keys in asciidoctor-pdf 2.3's Theme Keys Reference, 263 take effect as they do there, 24 are approximated and 280 are ignored; the user guide's PDF theme keys page lists each one, and a test keeps that list in step with the template. The bundled `default`, `default-sans`, `default-for-print` and `base` themes use the same Noto and M+ fonts asciidoctor-pdf ships; on the reference article, every line lands within 2 pt of asciidoctor-pdf's.
+- Source blocks highlighted, when `source-highlighter` is set, with the editor's tree-sitter grammars in the preview's light colours, so a listing looks as it does in the preview; languages without a grammar fall back to Typst's highlighter.
+- Headers and footers with recto and verso columns, page numbers and section titles; a title page with logo, authors and revision; dot leaders in the table of contents; an index from `((terms))` in an `[index]` section; PDF/A-1b, PDF/A-1a, PDF/A-2a and PDF/UA-1 on request.
 - STEM typeset from AsciiMath or LaTeX (following `:stem:`) in STIX Two Math, with the source as each formula's alternative text; a formula that cannot be converted, or uses anything but maths, is shown as its source with a warning naming its line.
 
 **Find, replace and rename**
@@ -206,7 +209,13 @@ theme = "default"                # a bundled theme, a name in themes_dir, or a .
 # themes_dir = "resources/themes"  # relative to the workspace root, like -a pdf-themesdir
 # fonts_dir = "resources/fonts"    # like -a pdf-fontsdir; the bundled fonts are searched after it
 # site_url = "https://docs.example.com"  # where references out of an export lead; else the playbook's site.url
-standards = []                   # "pdf-a-2a", "pdf-ua-1"
+standards = []                   # "pdf-a-1b", "pdf-a-1a", "pdf-a-2a", "pdf-ua-1"
+
+# [pdf.profiles.manual]          # a publication: run with File › Export PDF Profile… or `pdf --profile manual`
+# nav = ["docs/modules/admin/nav.adoc", "docs/modules/ROOT/nav.adoc"]  # or page = "…" or component = "1.0@docs"
+# output = "build/manual.pdf"    # relative to the workspace root; <name>.pdf by default
+# theme = "acme"
+# attributes = { pdf-title = "The Manual", product = "Acme" }
 
 [spelling]
 enabled = true                   # underline misspelt words in prose
@@ -240,7 +249,8 @@ adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
-    [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+    [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli doctor [<root>] [--format text|json]
 ```
@@ -309,7 +319,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 
 ## Not implemented yet
 
-- In PDF export: source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
+- In PDF export: PDF/UA-2 (Typst writes only PDF/UA-1), and asciidoctor-pdf's Ruby extensions.
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.

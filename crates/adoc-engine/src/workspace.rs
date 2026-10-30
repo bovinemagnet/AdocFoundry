@@ -113,6 +113,10 @@ pub(crate) enum WorkerMessage {
         job: u64,
         result: Result<crate::ExportSummary, String>,
     },
+    #[cfg(feature = "typst")]
+    PdfPreviewTypeset {
+        preview: Box<crate::PdfPreview>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -395,6 +399,8 @@ impl Engine {
             WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),
             #[cfg(feature = "typst")]
             WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
+            #[cfg(feature = "typst")]
+            WorkerMessage::PdfPreviewTypeset { preview } => self.pdf_preview_typeset(*preview),
             WorkerMessage::IndexFailed { generation, error } => {
                 self.indexing = self.indexing.saturating_sub(1);
                 if generation != self.index_generation {

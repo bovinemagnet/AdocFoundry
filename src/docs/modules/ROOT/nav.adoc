@@ -5,6 +5,7 @@
 ** xref:preview.adoc[The preview]
 ** xref:visual-editing.adoc[Visual editing]
 ** xref:pdf-export.adoc[Exporting to PDF]
+*** xref:pdf-theme-keys.adoc[PDF theme keys]
 ** xref:keyboard-shortcuts.adoc[Keyboard shortcuts]
 ** xref:settings.adoc[Settings]
 * xref:antora-support.adoc[Antora support]

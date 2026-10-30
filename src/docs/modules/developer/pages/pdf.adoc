@@ -87,6 +87,11 @@ The flattened keys are passed to the template as a Typst dictionary under asciid
 A key asciidoctor-pdf reads is therefore a key the template can read.
 Only unknown top-level categories warn, because themes commonly keep variables in categories of their own.
 
+The classification of every asciidoctor-pdf 2.3 key lives in `crates/adoc-pdf/src/theme/compatibility.txt`, one `key | status | note` line each.
+The reference key list is `tests/fixtures/pdf/themes/reference-keys.txt`.
+`cargo test -p adoc-pdf --test theme_keys` checks that every reference key is classified once, that no key the template or the emitter names is marked ignored, and that the user guide's table is current.
+After changing the template's keys or the classification, run it with `UPDATE_THEME_KEYS=1` to regenerate `src/docs/modules/ROOT/partials/theme-keys.adoc`.
+
 `ThemeSource::named` picks the source from a name: a `.yml` name is a file, a bundled name is bundled, and any other name is `<name>-theme.yml` in the themes directory.
 
 == The emitter
@@ -121,6 +126,22 @@ The source is the alt text.
 A formula that is refused is written as code, and the export reports `STEM not typeset: <reason>` against its file and line.
 
 The preview and HTML use `adoc_pdf::render_math_svg(&TypstMath, block, size)`, which renders a formula to SVG through `typst-svg`.
+
+=== Source highlighting
+
+When the page sets `source-highlighter`, the emitter highlights a source block with `adoc_pdf::highlight::Highlighter` (`src/highlight/mod.rs`).
+It is a copy of gpui-component's algorithm, so the PDF matches the preview.
+It runs one query of injections, locals and highlights with the injection patterns disabled, highlights injected languages after their host, resolves overlapping captures so that the innermost wins, and falls back from a capture name to its first part.
+The grammars are the same crate versions gpui-component uses, pinned in `[workspace.dependencies]`.
+The queries that gpui-component ships are copied, with attribution (Apache-2.0), into `src/highlight/queries/`.
+
+The emitter writes each line of a highlighted listing as runs of `(text, fill, bold, italic)` and passes them to the template's `adoc-highlighted`.
+That function replaces each `raw.line` of the `raw` block with the runs, so the block stays a listing in the PDF's structure.
+Run text is always a Typst string literal and only numbers are spliced, so code cannot inject Typst.
+Tabs are expanded to the two-column stops `raw` uses.
+A language without a grammar is left to Typst's highlighter.
+
+The application crate's test `preview::highlight_tests::pdf_highlighting_matches_the_preview` compares the colour of every byte from the PDF highlighter and from gpui-component, over samples in every language, so the two cannot drift apart when gpui-component is upgraded.
 
 == The template and the spacing model
 
@@ -188,7 +209,7 @@ A missing image is a diagnostic, not a failure.
 So is an image that cannot be decoded: the page is written with Typst's own image decoder checking each image, and one that fails is shown as its alt text with the warning `image could not be read: <target> (<reason>)`, instead of Typst's "failed to decode image" error failing the export.
 The template labels the pages for the PDF: roman numerals for the front matter (the title page and a table of contents on its own pages) and arabic numbers from 1 for the body, so the labels match the printed footer numbers; a document without front matter is labelled from 1.
 
-`PdfStandard::A2a` and `Ua1` are passed to `typst-pdf`.
+`PdfStandard::A1b`, `A1a`, `A2a` and `Ua1` are mapped to `typst_pdf::PdfStandard` and passed to `typst-pdf`.
 A document date is written only when a standard is requested, the given one or else today's in UTC, so an ordinary export gives the same bytes for the same input.
 The document's title, language (`en-GB` is split into `en` and `GB`), author and keywords come from the attributes.
 An image without alt text gets its file name.
@@ -226,11 +247,14 @@ Like the preview service, it keeps the engine single-threaded and puts the long 
 |`export.pdf_page`, `export.pdf_component`
 |The commands. Both take `CommandArgs::Export(ExportArgs)`.
 
+|`export.pdf_profile`
+|Exports a publication profile. It takes `CommandArgs::Profile(name)`.
+
 |`ExportTarget`
-|`Page(DocumentId)` or `Component { name, version }`.
+|`Page(DocumentId)`, `Component { name, version }`, `File(PathBuf)` (a page that need not be open) or `Navigation(Vec<PathBuf>)` (a book from chosen navigation files, built with `adoc_antora::nav_trees_of`).
 
 |`ExportArgs`
-|The target, the output path, an optional theme, the standards, an optional fonts directory and an optional path to write the Typst to.
+|The target, the output path, an optional theme, the standards, an optional fonts directory, an optional path to write the Typst to and the attributes applied to the pages.
 
 |`Engine::export_blocking(args, timeout)`
 |Exports and waits, for front ends without an event loop. The command-line `pdf` uses it.
@@ -255,6 +279,34 @@ Theme selection is the export's own theme, then `pdf-theme`, then `[pdf] theme`,
 Themes directories and fonts directories follow the order in xref:ROOT:pdf-export.adoc[the user guide]; `GEM_FONTS_DIR` is always appended last.
 Standards are the settings' standards plus the export's own.
 Diagrams that failed are reported as warnings.
+
+=== Publication profiles
+
+`crates/adoc-engine/src/profiles.rs` holds `PdfProfile`, `ProfileContent` and the parser for the `[pdf.profiles.<name>]` tables.
+`Engine::profile_export_args(name)` turns a profile into `ExportArgs`, with every path resolved against the first root.
+`Engine::profile_export_args` refuses an output outside the first root, checked with `FileAccess::Within` (lexically and once links are followed).
+Both front ends export those arguments: the application through `export.pdf_profile`, and the command line through `export_blocking`.
+`Engine::pdf_themes()` lists the bundled themes and those in `[pdf] themes_dir` for the theme browser.
+
+The tests are in `crates/adoc-engine/tests/profiles.rs`, `pdf_profile_writes_what_the_app_writes` in `crates/adocfoundry-cli/tests/cli.rs`, and `export_pdf_profile_writes_what_the_command_line_writes` and `export_page_with_theme_offers_the_bundled_and_workspace_themes` in the application's tests.
+
+== The PDF preview
+
+The live PDF preview is in `crates/adoc-engine/src/pdf_preview.rs`.
+While `PreviewLayout::pdf` is set, each newly published view of the preview target (`publish_preview`) is typeset on a worker by `adoc_pdf::preview_pages`.
+One typesetting runs at a time; a newer view waits, and only the newest is typeset next.
+The result is `Engine::pdf_preview(id)`, a `PdfPreview { document, version, path, pages }` where `pages` is a `Result<Vec<PreviewPage>, String>`, announced by `EngineEvent::PdfPreviewReady`.
+
+`adoc_pdf::preview_pages` returns each page as SVG (`typst-svg`) with `PageAnchor`s.
+An anchor holds a line of text's top and baseline in points, and the AsciiDoc file and byte offset it was written from.
+The offset is found from the glyphs' Typst spans through the emitter's `SourceMap`.
+
+The app's `src/preview/pdf.rs` rasterises the SVG pages on a background task with the image viewer's decoder (`image_decode`).
+It drops the results of superseded rasterisations by generation and releases replaced images from the GPU.
+`anchor_at` picks the line a click falls on.
+
+The tests are `crates/adoc-pdf/tests/preview.rs`, `crates/adoc-engine/tests/pdf_preview.rs` and the app's `the_pdf_preview_shows_the_pages_and_a_click_goes_to_the_source`.
+The timing probe is `cargo test --release -p adoc-engine --test perf pdf_preview_after_typing -- --ignored --nocapture`.
 
 == Related
 

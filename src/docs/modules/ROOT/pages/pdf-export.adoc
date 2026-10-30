@@ -23,6 +23,7 @@ When it finishes, a notification reports the number of pages and the first warni
 If it fails, the notification gives the reason.
 
 From the command line, see xref:command-line.adoc#pdf[Command line].
+To see the pages while you edit, use the xref:preview.adoc#pdf-preview[PDF preview].
 
 == Exporting a component
 
@@ -49,6 +50,81 @@ The address is `[pdf] site_url`, else the playbook's `site.url`.
 Without either, it is plain text.
 
 The book's title can be overridden with a `pdf-title` attribute in the component's or playbook's `asciidoc.attributes`.
+
+[[publication-profiles]]
+== Publication profiles
+
+A publication profile names a PDF you produce again and again, with its source, theme, output file and metadata kept in the settings.
+A profile is a table `[pdf.profiles.<name>]` in the workspace settings file `.adocfoundry.toml`.
+It may also be in the user settings file; a workspace profile replaces a user profile with the same name.
+
+Give each profile exactly one of these keys to say what it exports.
+
+[cols="1,4"]
+|===
+|Key |Meaning
+
+|`page`
+|A page's path, relative to the first workspace folder. It is exported as an article.
+
+|`component`
+|A component version, as `name` or `version@name`. It is exported as a book in the component's navigation order.
+
+|`nav`
+|An array of navigation file paths, relative to the first workspace folder. It is exported as a book whose parts follow those files in the order given. The book is titled after the first file's component version.
+|===
+
+These keys are optional.
+
+[cols="1,4"]
+|===
+|Key |Meaning
+
+|`output`
+|Where to write the PDF, relative to the first workspace folder. The default is `<name>.pdf` there. Missing folders are created. The output must be inside the workspace folder. A profile whose output would be written outside it, through `..`, an absolute path elsewhere, or a symbolic link out of the workspace, is refused when it is run, because profiles come with a repository's files and must not write where you did not choose. The command line's `--output` and the app's save dialog are not limited.
+
+|`theme`
+|A bundled theme, a name found in `[pdf] themes_dir`, or a `.yml` file relative to the first workspace folder.
+
+|`fonts_dir`
+|A directory of theme fonts, relative to the first workspace folder.
+
+|`standards`
+|Standards to conform to, as for `[pdf] standards`. They are added to those.
+
+|`attributes`
+|A table of attribute names to strings, numbers or `true`. `true` sets the attribute empty.
+|===
+
+[source,toml]
+----
+[pdf.profiles.admin-guide]
+nav = ["docs/modules/admin/nav.adoc", "docs/modules/ROOT/nav.adoc"]
+output = "build/admin-guide.pdf"
+theme = "acme"
+standards = ["pdf-a-2a"]
+attributes = { pdf-title = "Acme Administration", product = "Acme Server", author = "Acme Docs" }
+
+[pdf.profiles.quick-start]
+page = "docs/modules/ROOT/pages/quick-start.adoc"
+----
+
+A profile's attributes are applied to every page before the page's own header, and after Antora's attributes.
+A page's header can therefore still override them, as it can override Antora component attributes.
+They are also applied to a book's own attributes.
+A document's metadata comes from attributes, so a profile sets it with `pdf-title` (a book's title on its title page and in the metadata), `author`, `description` and `keywords`.
+
+A profile that has none of `page`, `component` and `nav`, has more than one of them, has an empty `nav`, or has an unknown key is left out.
+A settings warning names `pdf.profiles.<name>`.
+
+To run a profile in the application, choose File › Export PDF Profile… (`export.pdf_profile`), which is also in the command palette.
+It lists the profiles by name and exports the one you choose to its `output`, with no save dialog.
+A notification offers to open the PDF.
+Without profiles it says to add a `[pdf.profiles.<name>]` table.
+
+On the command line, run `adocfoundry-cli pdf --profile <name> [<root>]`.
+See xref:command-line.adoc#pdf[Command line].
+The application and the command line write the same PDF for a profile, byte for byte.
 
 == Themes
 
@@ -96,6 +172,10 @@ A name that is not bundled is looked for as `<name>-theme.yml` in a themes direc
 That is the page's `pdf-themesdir` attribute, resolved against the page, or else `[pdf] themes_dir`, resolved against the first workspace root.
 A value ending in `.yml` is a theme file.
 
+To try a theme on the active page, choose File › Export Page to PDF with Theme… (also in the command palette).
+It lists the bundled themes, marked "(bundled)", and each `<name>-theme.yml` in `[pdf] themes_dir`, shown with its path.
+It then asks where to save the page's PDF in the theme you chose.
+
 [source,asciidoc]
 ----
 = Handbook
@@ -131,8 +211,21 @@ A font that cannot be read is a warning.
 * Admonitions, code, inline code, tables, lists, description lists, quotes, verses, sidebars, examples, captions, images and thematic breaks.
 * Links, marks, `kbd`, buttons, menus, footnotes, roles and the index.
 
-A theme key that the converter does not use is ignored.
+Which keys take effect, which are approximated and which are ignored is listed key by key in xref:pdf-theme-keys.adoc[].
 An unknown top-level category produces a warning, and its keys are still available as variables.
+
+== Source highlighting
+
+Source blocks are highlighted only when the page sets the `source-highlighter` attribute, to any value, which is how asciidoctor-pdf behaves.
+Without it, nothing is highlighted.
+
+The export then uses the same tree-sitter grammars and queries as the preview, in the preview's light theme colours, so a listing looks the same in the PDF as in the preview.
+These languages have a grammar: Bash (`bash`, `sh`), Go, HTML, Java, JavaScript (`javascript`, `js`), JSON (`json`, `jsonc`), Python (`python`, `py`), Rust (`rust`, `rs`), SQL, TOML, TypeScript (`typescript`, `ts`) and YAML (`yaml`, `yml`).
+A language without a grammar, such as XML, is highlighted by Typst's highlighter.
+
+The listing keeps the theme's code font, size, background and border.
+Only the token colours come from the preview.
+Code that is not in a token keeps the theme's `code_font_color`, and callout numbers keep their colour.
 
 == Running content and the title page
 
@@ -184,11 +277,17 @@ The theme's `index_column_count` and `index_column_gap` set the columns.
 
 == Standards and metadata
 
-Two standards are available, alone or together.
+Four standards are available, alone or together where they allow it.
 
 [cols="1,3"]
 |===
 |Name |Standard
+
+|`pdf-a-1b`
+|PDF/A-1b, for archiving. It is PDF 1.4.
+
+|`pdf-a-1a`
+|PDF/A-1a, for archiving. It is PDF 1.4 and tagged.
 
 |`pdf-a-2a`
 |PDF/A-2a, for archiving.
@@ -199,6 +298,11 @@ Two standards are available, alone or together.
 
 Request them with `--standard` (repeatable) or `standards = ["pdf-a-2a"]` in the `[pdf]` table.
 The PDF is always tagged.
+PDF/A-1 is PDF 1.4 and forbids transparency.
+An image or diagram with transparency makes a PDF/A-1 export fail with Typst's error at the line of the image, for example `configure.adoc:7: PDF/A-1b error: the image contains transparency`.
+Mermaid diagrams use opacity, so use PDF/A-2a for documents that contain them.
+PDF/A-1a and PDF/A-1b cannot be combined with PDF/UA-1, which needs PDF 1.5 or later.
+The export fails and says so.
 A document that cannot conform fails the export with Typst's reasons, mapped to source lines.
 
 An ordinary export has no creation date, so the same input gives the same bytes.
@@ -239,10 +343,7 @@ A page the parser cannot read is shown in the PDF as its source, and the export 
 
 == What is not supported
 
-* Source blocks are highlighted by Typst's highlighter, and only when the `source-highlighter` attribute is set, which is how asciidoctor-pdf behaves.
-The editor's tree-sitter highlighting is not used.
-* There is no live PDF preview pane.
-* PDF/A-1 and PDF/UA-2 are not available.
+* PDF/UA-2 is not available, because Typst 0.15.1 writes only PDF/UA-1.
 * asciidoctor-pdf's Ruby converter extensions are not run.
 * A front cover image is not supported beyond what the title page shows.
 * The `*-with-font-fallbacks` themes load without their fallback fonts.
