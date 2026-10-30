@@ -116,6 +116,20 @@ A request outside the roots, or through a link, is refused with `EngineError::Re
 Results answer a request id, so an answer to an older request, or for a workspace since closed (`open_workspace` clears the listings), is dropped.
 The watcher's debounced changes relist the listed folders that hold them (`directories_changed`).
 
+[[quick-open]]
+== Quick Open
+
+`quick_open.rs` holds the ranking behind `workspace.quick_open` (Quick Open…), so it is tested headlessly and the front ends only display the result.
+`Engine::quick_open(query, limit)` returns `Vec<QuickOpenItem>`, each with `path`, `relative_path`, `title` and `resource_id`.
+It reads the index, never the disk, so it lists AsciiDoc files only.
+The command takes `CommandArgs::Query(String)` and returns `CommandOutcome::QuickOpen(Vec<QuickOpenItem>)`, with at most `QUICK_OPEN_LIMIT` (100) items.
+
+Each space-separated word of the query must match the file name, title, resource ID or path as an in-order, case-insensitive subsequence.
+File name matches score highest, then the title, with bonuses for word starts and runs.
+Recently active files come first, most recent first, then the rest by score; an empty query gives recent files, then every file by path.
+Recency is recorded whenever a document becomes the active tab (`Engine::set_active`, and `activate_last_tab` when a closed tab hands over), and is kept for the session only.
+The `quick_open_in_a_workspace_of_3000_pages` probe in `tests/perf.rs` measures about 5 ms a query in a release build.
+
 [[images]]
 == Images and tabs
 

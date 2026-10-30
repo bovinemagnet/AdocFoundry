@@ -271,6 +271,36 @@ pub(crate) fn palette_commands(engine: &adoc_engine::Engine) -> Vec<&adoc_engine
         .collect()
 }
 
+/// A Quick Open row: the title (else the file name) above the resource id and the path.
+fn quick_open_row(item: &adoc_engine::QuickOpenItem, muted: gpui::Hsla) -> CommandItem {
+    let name = item
+        .relative_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(&item.relative_path)
+        .to_owned();
+    let heading: SharedString = item.title.clone().unwrap_or(name).into();
+    let resource_id = item.resource_id.clone();
+    let path: SharedString = item.relative_path.clone().into();
+    CommandItem::new()
+        .label(heading.clone())
+        .child(move |_, _| {
+            v_flex()
+                .overflow_hidden()
+                .child(div().truncate().child(heading.clone()))
+                .child(
+                    h_flex()
+                        .gap_3()
+                        .text_xs()
+                        .text_color(muted)
+                        .when_some(resource_id.clone(), |row, id| {
+                            row.child(div().flex_none().child(id))
+                        })
+                        .child(div().truncate().child(path.clone())),
+                )
+        })
+}
+
 /// What the notification says about a finished export: the file and its pages with the first
 /// warning, or the error, which names the file and line it comes from.
 /// An export of `target` in `theme`, its output still to be chosen.
@@ -1890,6 +1920,95 @@ impl WorkspaceView {
             .ok()
         })
         .detach();
+    }
+
+    /// Lists the workspace's files in the palette, ranked by the engine as the query changes,
+    /// and opens the one chosen as an ordinary tab.
+    fn on_quick_open(&mut self, _: &QuickOpen, window: &mut Window, cx: &mut Context<Self>) {
+        let matches = Rc::new(std::cell::RefCell::new(
+            self.quick_open_matches("", window, cx),
+        ));
+        let workspace = cx.weak_entity();
+        let palette = self.palette.clone();
+        palette.update(cx, |palette, cx| palette.set_query("", window, cx));
+        let focus = palette.read(cx).focus_handle(cx);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            window.focus(&focus, cx);
+            let muted = cx.theme().muted_foreground;
+            let items: Vec<CommandItem> = matches
+                .borrow()
+                .iter()
+                .map(|item| quick_open_row(item, muted))
+                .collect();
+            dialog.close_button(false).p_0().child(
+                Command::new(&palette)
+                    .bordered(false)
+                    // The engine ranks the files; the palette shows them as given.
+                    .filterable(false)
+                    .placeholder("Open a file by name, title or resource id…")
+                    .max_h(px(420.))
+                    .items(items)
+                    .on_query({
+                        let workspace = workspace.clone();
+                        let matches = matches.clone();
+                        move |query, window, cx| {
+                            if let Ok(found) = workspace
+                                .update(cx, |this, cx| this.quick_open_matches(query, window, cx))
+                            {
+                                *matches.borrow_mut() = found;
+                                window.refresh();
+                            }
+                        }
+                    })
+                    .on_confirm({
+                        let workspace = workspace.clone();
+                        let matches = matches.clone();
+                        move |index, window, cx| {
+                            let Some(path) = matches
+                                .borrow()
+                                .get(index.row)
+                                .map(|item| item.path.clone())
+                            else {
+                                return;
+                            };
+                            let workspace = workspace.clone();
+                            window.close_dialog(cx);
+                            window.defer(cx, move |window, cx| {
+                                let _ = workspace.update(cx, |this, cx| {
+                                    this.open_at(
+                                        &path,
+                                        SourceRange::default(),
+                                        OpenDisposition::Persistent,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            });
+                        }
+                    }),
+            )
+        });
+    }
+
+    /// The engine's Quick Open matches for `query`.
+    fn quick_open_matches(
+        &mut self,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<adoc_engine::QuickOpenItem> {
+        match self.invoke(
+            ids::WORKSPACE_QUICK_OPEN,
+            CommandArgs::Query {
+                query: query.to_owned(),
+                document: None,
+            },
+            window,
+            cx,
+        ) {
+            Some(CommandOutcome::QuickOpen(items)) => items,
+            _ => Vec::new(),
+        }
     }
 
     fn on_save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
@@ -3870,6 +3989,7 @@ impl Render for WorkspaceView {
             .text_color(cx.theme().foreground)
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_open_file))
+            .on_action(cx.listener(Self::on_quick_open))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_reload))

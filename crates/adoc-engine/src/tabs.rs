@@ -224,7 +224,12 @@ impl Engine {
     /// Makes the last tab active, after the active one closed.
     pub(crate) fn activate_last_tab(&mut self) {
         match self.tabs.order.last().copied() {
-            Some(TabItem::Document(id)) => self.active = Some(id),
+            Some(TabItem::Document(id)) => {
+                self.active = Some(id);
+                if let Some(document) = self.documents.get(&id) {
+                    self.recent.touch(&document.path);
+                }
+            }
             Some(TabItem::Image(id)) => self.images.active = Some(id),
             None => {}
         }

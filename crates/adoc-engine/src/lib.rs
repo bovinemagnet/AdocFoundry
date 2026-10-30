@@ -37,6 +37,7 @@ mod navigation;
 mod pdf_preview;
 mod preview;
 mod profiles;
+mod quick_open;
 mod recovery;
 mod rendered;
 pub mod report;
@@ -86,6 +87,7 @@ pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };
 pub use profiles::{PdfProfile, PdfThemeChoice, ProfileContent, BUNDLED_THEMES};
+pub use quick_open::{QuickOpenItem, QUICK_OPEN_LIMIT};
 pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use settings::{

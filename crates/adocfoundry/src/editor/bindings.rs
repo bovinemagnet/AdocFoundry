@@ -9,6 +9,7 @@ actions!(
     [
         OpenFolder,
         OpenFile,
+        QuickOpen,
         Save,
         SaveAll,
         Reload,
@@ -152,6 +153,7 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
     Some(match id {
         ids::WORKSPACE_OPEN_FOLDER => KeyBinding::new(keys, OpenFolder, workspace),
         ids::DOCUMENT_OPEN => KeyBinding::new(keys, OpenFile, workspace),
+        ids::WORKSPACE_QUICK_OPEN => KeyBinding::new(keys, QuickOpen, workspace),
         ids::DOCUMENT_SAVE => KeyBinding::new(keys, Save, workspace),
         ids::DOCUMENT_SAVE_ALL => KeyBinding::new(keys, SaveAll, workspace),
         ids::DOCUMENT_CLOSE => KeyBinding::new(keys, CloseDocument, workspace),
@@ -239,6 +241,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
     Some(match id {
         ids::WORKSPACE_OPEN_FOLDER => Box::new(OpenFolder),
         ids::DOCUMENT_OPEN => Box::new(OpenFile),
+        ids::WORKSPACE_QUICK_OPEN => Box::new(QuickOpen),
         ids::DOCUMENT_SAVE => Box::new(Save),
         ids::DOCUMENT_SAVE_ALL => Box::new(SaveAll),
         ids::DOCUMENT_RELOAD => Box::new(Reload),

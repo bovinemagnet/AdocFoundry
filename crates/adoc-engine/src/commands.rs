@@ -12,6 +12,7 @@ pub mod ids {
 
     pub const WORKSPACE_OPEN_FOLDER: CommandId = CommandId::new("workspace.open_folder");
     pub const WORKSPACE_REINDEX: CommandId = CommandId::new("workspace.reindex");
+    pub const WORKSPACE_QUICK_OPEN: CommandId = CommandId::new("workspace.quick_open");
     pub const DOCUMENT_OPEN: CommandId = CommandId::new("document.open");
     pub const DOCUMENT_BROWSE: CommandId = CommandId::new("document.browse");
     pub const DOCUMENT_KEEP_OPEN: CommandId = CommandId::new("document.keep_open");
@@ -531,6 +532,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::recovery::register_recovery(registry);
     crate::local_history::register_local_history(registry);
     crate::expansion::register_expansion(registry);
+    crate::quick_open::register_quick_open(registry);
     #[cfg(feature = "git")]
     {
         crate::git::register_git(registry);

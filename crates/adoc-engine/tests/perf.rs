@@ -229,3 +229,32 @@ fn pdf_preview_after_typing() {
         );
     }
 }
+
+#[test]
+#[ignore = "timing probe"]
+fn quick_open_in_a_workspace_of_3000_pages() {
+    let directory = tempfile::tempdir().unwrap();
+    for module in 0..30 {
+        let pages = directory.path().join(format!("module-{module}"));
+        fs::create_dir(&pages).unwrap();
+        for page in 0..100 {
+            fs::write(
+                pages.join(format!("topic-{page}.adoc")),
+                format!("= Topic {page} of Module {module}\n"),
+            )
+            .unwrap();
+        }
+    }
+    let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(60)));
+    for query in ["", "t", "top", "topic 42", "mod 7 top 99"] {
+        let started = Instant::now();
+        let found = engine
+            .quick_open(query, adoc_engine::QUICK_OPEN_LIMIT)
+            .len();
+        println!("{query:?}: {found} files in {:?}", started.elapsed());
+    }
+}

@@ -252,6 +252,12 @@ A symbolic link is never handed to the system by a click; Open Externally in the
 Space is bound to `OpenFileEntry` in the `FilesTree` key context.
 The editor's highlighting comes from `editor::language::for_document`: AsciiDoc for pages, gpui-component's grammar named by the file's extension, or plain text.
 
+== Quick Open
+
+`WorkspaceView::on_quick_open` shows gpui-component's `Command` palette with `filterable(false)`, and asks the engine for `workspace.quick_open` on each query change.
+The engine ranks and the picker only displays the rows; see xref:engine.adoc#quick-open[Quick Open] in the engine.
+Enter opens the file with `OpenDisposition::Persistent`.
+
 [[image-viewer]]
 == The image viewer
 
