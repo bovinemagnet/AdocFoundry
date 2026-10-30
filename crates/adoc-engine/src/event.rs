@@ -76,6 +76,9 @@ pub enum EngineEvent {
     EditorModeChanged(DocumentId),
     /// A new word count of `id` is available from `Engine::word_count`.
     WordCountChanged(DocumentId),
+    /// The misspellings of an open document changed: found by a check, moved or dropped by an
+    /// edit, or cleared.
+    SpellingChanged(DocumentId),
     #[cfg(feature = "git")]
     /// The repository holding workspace root `root` was found, or its `HEAD` moved to another
     /// branch or commit.

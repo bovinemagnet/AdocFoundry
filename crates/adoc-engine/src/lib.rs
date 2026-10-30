@@ -38,6 +38,7 @@ mod rendered;
 pub mod report;
 mod search;
 mod settings;
+mod spelling;
 #[cfg(feature = "typst")]
 mod stem;
 mod tabs;
@@ -81,6 +82,7 @@ pub use settings::{
     PdfSettings, Settings, SidebarSettings, SpellingSettings, ThemePreference, ToolSettings,
     UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
+pub use spelling::{Misspelling, MAX_SUGGESTED_WORDS, SPELLING_CODE, SPELLING_SETTLE};
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
 pub use tabs::{OpenDisposition, TabItem};
