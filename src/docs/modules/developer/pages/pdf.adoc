@@ -127,6 +127,22 @@ A formula that is refused is written as code, and the export reports `STEM not t
 
 The preview and HTML use `adoc_pdf::render_math_svg(&TypstMath, block, size)`, which renders a formula to SVG through `typst-svg`.
 
+=== Source highlighting
+
+When the page sets `source-highlighter`, the emitter highlights a source block with `adoc_pdf::highlight::Highlighter` (`src/highlight/mod.rs`).
+It is a copy of gpui-component's algorithm, so the PDF matches the preview.
+It runs one query of injections, locals and highlights with the injection patterns disabled, highlights injected languages after their host, resolves overlapping captures so that the innermost wins, and falls back from a capture name to its first part.
+The grammars are the same crate versions gpui-component uses, pinned in `[workspace.dependencies]`.
+The queries that gpui-component ships are copied, with attribution (Apache-2.0), into `src/highlight/queries/`.
+
+The emitter writes each line of a highlighted listing as runs of `(text, fill, bold, italic)` and passes them to the template's `adoc-highlighted`.
+That function replaces each `raw.line` of the `raw` block with the runs, so the block stays a listing in the PDF's structure.
+Run text is always a Typst string literal and only numbers are spliced, so code cannot inject Typst.
+Tabs are expanded to the two-column stops `raw` uses.
+A language without a grammar is left to Typst's highlighter.
+
+The application crate's test `preview::highlight_tests::pdf_highlighting_matches_the_preview` compares the colour of every byte from the PDF highlighter and from gpui-component, over samples in every language, so the two cannot drift apart when gpui-component is upgraded.
+
 == The template and the spacing model
 
 `adoc.typ` reads the theme as the dictionary `t` and the document's facts as `doc`: the page size and margins, the language and region, the catalogue's fallback families and line gaps, the table of contents' title and levels, and which heading levels running content names as part, chapter and section titles.

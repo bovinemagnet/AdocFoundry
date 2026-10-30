@@ -16,6 +16,7 @@ use adoc_render::{
     ViewBlock, ViewCell, ViewImage, ViewInline, ViewKind, ViewTable, ViewTree,
 };
 
+use crate::highlight::{Highlighter, Style};
 use crate::typst::{self, string, text};
 
 /// One page of the document: a whole article, or a page of a book.
@@ -100,6 +101,7 @@ pub(crate) struct Emitter<'a> {
     source: PathBuf,
     ulist_depth: usize,
     olist_depth: usize,
+    highlighter: Highlighter,
 }
 
 /// What follows each block of a run.
@@ -151,6 +153,7 @@ impl<'a> Emitter<'a> {
             source: PathBuf::new(),
             ulist_depth: 0,
             olist_depth: 0,
+            highlighter: Highlighter::new(),
         }
     }
 
@@ -534,18 +537,25 @@ impl<'a> Emitter<'a> {
                 callouts,
             } => {
                 let code = with_callouts(text, callouts);
+                let highlighted = match language {
+                    Some(language) if self.options.highlight => self
+                        .highlighter
+                        .highlight(language, text)
+                        .map(|runs| highlighted_lines(text, &runs, callouts)),
+                    _ => None,
+                };
                 let lang = match language {
-                    Some(language) if self.options.highlight => {
+                    Some(language) if self.options.highlight && highlighted.is_none() => {
                         format!(", lang: {}", string(language))
                     }
                     _ => String::new(),
                 };
-                let _ = writeln!(
-                    self.out,
-                    "#adoc-code({}raw({}, block: true{lang}))\n",
-                    fits_argument(block),
-                    string(&code)
-                );
+                let raw = format!("raw({}, block: true{lang})", string(&code));
+                let body = match highlighted {
+                    Some(lines) => format!("adoc-highlighted(({lines}), {raw})"),
+                    None => raw,
+                };
+                let _ = writeln!(self.out, "#adoc-code({}{body})\n", fits_argument(block));
             }
             ViewKind::Literal(text) => {
                 let _ = writeln!(
@@ -1341,6 +1351,76 @@ fn with_callouts(text: &str, callouts: &[adoc_render::Callout]) -> String {
         }
     }
     out
+}
+
+/// The lines of a highlighted listing as Typst: for each line of `text`, its runs as
+/// `(text, fill, bold, italic)`, with the line's callouts after it as `with_callouts` writes
+/// them. Tabs are expanded to `raw`'s two-column stops, as `raw` shows them. Only the run text
+/// is the document's, and it is always a string literal.
+fn highlighted_lines(
+    text: &str,
+    runs: &[(Range<usize>, Style)],
+    callouts: &[adoc_render::Callout],
+) -> String {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, line) in text.split('\n').enumerate() {
+        let has_callouts = callouts.iter().any(|callout| callout.line == index);
+        let end = start
+            + if has_callouts {
+                line.trim_end().len()
+            } else {
+                line.len()
+            };
+        let mut column = 0;
+        let mut parts = Vec::new();
+        for (range, style) in runs {
+            let (from, to) = (range.start.max(start), range.end.min(end));
+            if from >= to {
+                continue;
+            }
+            let mut piece = String::new();
+            for c in text[from..to].chars() {
+                if c == '\t' {
+                    let spaces = 2 - column % 2;
+                    piece.extend(std::iter::repeat_n(' ', spaces));
+                    column += spaces;
+                } else {
+                    piece.push(c);
+                    column += 1;
+                }
+            }
+            parts.push(run(&piece, style));
+        }
+        for callout in callouts.iter().filter(|callout| callout.line == index) {
+            parts.push(run(
+                &format!(" {}", circled(callout.number)),
+                &Style::default(),
+            ));
+        }
+        lines.push(format!(
+            "({}{})",
+            parts.join(", "),
+            if parts.len() == 1 { "," } else { "" }
+        ));
+        start += line.len() + 1;
+    }
+    let trailing = if lines.len() == 1 { "," } else { "" };
+    format!("{}{trailing}", lines.join(", "))
+}
+
+/// A highlighted run as Typst: its text, then its colour, weight and slant.
+fn run(text: &str, style: &Style) -> String {
+    let fill = match style.color {
+        Some([red, green, blue]) => format!("rgb({red}, {green}, {blue})"),
+        None => "none".to_owned(),
+    };
+    format!(
+        "({}, {fill}, {}, {})",
+        string(text),
+        style.bold,
+        style.italic
+    )
 }
 
 /// The circled digit for a callout number, as asciidoctor-pdf's `circled` glyphs.

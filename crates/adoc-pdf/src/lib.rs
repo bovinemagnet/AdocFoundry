@@ -5,6 +5,7 @@ mod document;
 mod emit;
 mod export;
 mod fonts;
+pub mod highlight;
 mod running;
 pub mod theme;
 mod typst;

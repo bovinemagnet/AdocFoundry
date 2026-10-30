@@ -135,6 +135,19 @@ A font that cannot be read is a warning.
 Which keys take effect, which are approximated and which are ignored is listed key by key in xref:pdf-theme-keys.adoc[].
 An unknown top-level category produces a warning, and its keys are still available as variables.
 
+== Source highlighting
+
+Source blocks are highlighted only when the page sets the `source-highlighter` attribute, to any value, which is how asciidoctor-pdf behaves.
+Without it, nothing is highlighted.
+
+The export then uses the same tree-sitter grammars and queries as the preview, in the preview's light theme colours, so a listing looks the same in the PDF as in the preview.
+These languages have a grammar: Bash (`bash`, `sh`), Go, HTML, Java, JavaScript (`javascript`, `js`), JSON (`json`, `jsonc`), Python (`python`, `py`), Rust (`rust`, `rs`), SQL, TOML, TypeScript (`typescript`, `ts`) and YAML (`yaml`, `yml`).
+A language without a grammar, such as XML, is highlighted by Typst's highlighter.
+
+The listing keeps the theme's code font, size, background and border.
+Only the token colours come from the preview.
+Code that is not in a token keeps the theme's `code_font_color`, and callout numbers keep their colour.
+
 == Running content and the title page
 
 The `header` and `footer` keys of a theme define the running content: a three-column grid on each side of the page, with separate recto and verso columns when the theme has them.
@@ -251,8 +264,6 @@ A page the parser cannot read is shown in the PDF as its source, and the export 
 
 == What is not supported
 
-* Source blocks are highlighted by Typst's highlighter, and only when the `source-highlighter` attribute is set, which is how asciidoctor-pdf behaves.
-The editor's tree-sitter highlighting is not used.
 * PDF/UA-2 is not available, because Typst 0.15.1 writes only PDF/UA-1.
 * asciidoctor-pdf's Ruby converter extensions are not run.
 * A front cover image is not supported beyond what the title page shows.

@@ -528,3 +528,85 @@ impl Render for PreviewView {
             .into_any_element()
     }
 }
+
+/// PDF export highlights source blocks with its own copy of the grammars, queries and light
+/// colours the preview uses; the two must agree.
+#[cfg(test)]
+mod highlight_tests {
+    use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
+
+    const SAMPLES: &[(&str, &str)] = &[
+        (
+            "rust",
+            "/// Docs.\n#[derive(Debug)]\npub struct Point { x: i32 }\n\nfn main() {\n    let p = Point { x: 1 };\n    println!(\"{:?} {}\", p, 'c');\n    // done\n}\n",
+        ),
+        ("python", "import os\n\n@cache\ndef area(r: float) -> float:\n    \"\"\"Doc.\"\"\"\n    return 3.14 * r ** 2  # pi\n"),
+        ("javascript", "const answer = 42;\nfunction greet(name) {\n  return `Hello ${name}`;\n}\nclass A extends B {}\n"),
+        ("typescript", "interface Point { x: number }\nexport const p: Point = { x: 1 };\ntype Id = string | null;\n"),
+        ("go", "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hi\", 3)\n}\n"),
+        ("java", "public class App {\n  public static void main(String[] args) {\n    System.out.println(\"hi\" + 1);\n  }\n}\n"),
+        ("bash", "#!/bin/sh\nfor f in *.adoc; do\n  echo \"$f\" | grep -q x && exit 1\ndone\n"),
+        ("json", "{\"name\": \"x\", \"n\": [1, 2.5, true, null]}\n"),
+        ("yaml", "name: adoc\nlist:\n  - 1\n  - true # yes\n"),
+        ("toml", "[package]\nname = \"x\"\nversion = 1\nok = true\n"),
+        ("sql", "SELECT id, name FROM users WHERE age > 21 ORDER BY name;\n"),
+        ("html", "<!DOCTYPE html>\n<p class=\"x\">Hi <b>there</b></p>\n<script>let a = 1;</script>\n"),
+    ];
+
+    /// The colour of each byte as the preview styles it.
+    fn preview(language: &str, code: &str) -> Vec<Option<[u8; 3]>> {
+        let mut highlighter = SyntaxHighlighter::new(language);
+        highlighter.update(None, &ropey::Rope::from_str(code), None);
+        let mut colours = vec![None; code.len()];
+        for (range, style) in
+            highlighter.styles(&(0..code.len()), &*HighlightTheme::default_light())
+        {
+            let colour = style.color.map(|colour| {
+                let rgba = gpui::Rgba::from(colour);
+                [rgba.r, rgba.g, rgba.b].map(|channel| (channel * 255.0).round() as u8)
+            });
+            for byte in range {
+                colours[byte] = colour;
+            }
+        }
+        colours
+    }
+
+    /// The colour of each byte as PDF export styles it.
+    fn pdf(language: &str, code: &str) -> Vec<Option<[u8; 3]>> {
+        let runs = adoc_pdf::highlight::Highlighter::new()
+            .highlight(language, code)
+            .unwrap_or_else(|| panic!("{language} has no grammar"));
+        let mut colours = vec![None; code.len()];
+        for (range, style) in runs {
+            for byte in range {
+                colours[byte] = style.color;
+            }
+        }
+        colours
+    }
+
+    fn close(left: Option<[u8; 3]>, right: Option<[u8; 3]>) -> bool {
+        match (left, right) {
+            (Some(left), Some(right)) => left.iter().zip(right).all(|(a, b)| a.abs_diff(b) <= 1),
+            (left, right) => left == right,
+        }
+    }
+
+    #[test]
+    fn pdf_highlighting_matches_the_preview() {
+        for (language, code) in SAMPLES {
+            let (preview, pdf) = (preview(language, code), pdf(language, code));
+            for (at, (left, right)) in preview.iter().zip(&pdf).enumerate() {
+                if !code.is_char_boundary(at) || code[at..].starts_with(char::is_whitespace) {
+                    continue;
+                }
+                assert!(
+                    close(*left, *right),
+                    "{language}: byte {at} ({:?}): preview {left:?}, pdf {right:?}",
+                    &code[at..code.len().min(at + 12)]
+                );
+            }
+        }
+    }
+}
