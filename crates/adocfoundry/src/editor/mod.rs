@@ -27,7 +27,7 @@ use gpui_component::{
     ActiveTheme as _, WindowExt as _,
 };
 
-use crate::app::AppState;
+use crate::{app::AppState, sidebar::DraggedLink};
 use providers::EngineProviders;
 
 /// Sends the difference between the engine's text and `widget_text` to the engine as one edit.
@@ -59,6 +59,36 @@ pub fn sync_widget_to_engine(
         // when the editor next reconciles.
         eprintln!("adocfoundry: edit rejected: {error}");
     }
+}
+
+/// The character boundary under `point` nearest to it, among the rows the editor has laid out.
+fn offset_at(state: &EditorState, point: gpui::Point<gpui::Pixels>) -> Option<usize> {
+    let rows = state.visible_row_range()?;
+    let map = state.display_map();
+    let text = state.text();
+    let first = map.display_row_to_buffer_line(rows.start);
+    let last = map
+        .display_row_to_buffer_line(rows.end.saturating_sub(1).max(rows.start))
+        .min(text.lines_len().saturating_sub(1));
+    let mut nearest: Option<(gpui::Pixels, usize)> = None;
+    for line in first..=last {
+        let (start, end) = (text.line_start_offset(line), text.line_end_offset(line));
+        let line_text = text.slice(start..end).to_string();
+        let boundaries = line_text.char_indices().map(|(at, _)| start + at);
+        for offset in boundaries.chain([end]) {
+            let Some(bounds) = state.range_to_bounds(&(offset..offset)) else {
+                continue;
+            };
+            if point.y < bounds.top() || point.y >= bounds.bottom() {
+                continue;
+            }
+            let distance = (bounds.left() - point.x).abs();
+            if nearest.is_none_or(|(closest, _)| distance < closest) {
+                nearest = Some((distance, offset));
+            }
+        }
+    }
+    nearest.map(|(_, offset)| offset)
 }
 
 /// What the editor tells the window around it.
@@ -285,6 +315,41 @@ impl SourceEditorView {
                 state.set_selected_range(selection.start.min(len)..selection.end.min(len), cx);
             });
         }
+    }
+
+    /// Inserts an xref to the page or section dragged in from the sidebar at the text under
+    /// the pointer, or at the caret when there is none, and puts the caret after it.
+    fn drop_link(&mut self, link: &DraggedLink, window: &mut Window, cx: &mut Context<Self>) {
+        let engine = &self.app.read(cx).engine;
+        let Some(xref) = engine.xref_to(self.document, &link.path, link.section) else {
+            window.push_notification(link.unlinkable(), cx);
+            return;
+        };
+        let at = offset_at(self.state.read(cx), window.mouse_position())
+            .unwrap_or_else(|| self.cursor(cx));
+        let text = xref.source();
+        let document = self.document;
+        let inserted = self.app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id: document,
+                    range: SourceRange::new(at, at),
+                    text: text.clone(),
+                },
+                cx,
+            )
+        });
+        if let Err(error) = inserted {
+            window.push_notification(error.to_string(), cx);
+            return;
+        }
+        self.reconcile(window, cx);
+        let caret = at + text.len();
+        self.state.update(cx, |state, cx| {
+            state.set_selected_range(caret..caret, cx);
+            state.focus(window, cx);
+        });
     }
 
     /// Places the caret at `range` and focuses the editor.
@@ -744,6 +809,9 @@ impl Render for SourceEditorView {
             .when(hover, |editor| {
                 editor.child(blame::hover_watch(cx.weak_entity(), self.state.clone()))
             })
+            .on_drop(cx.listener(|this, link: &DraggedLink, window, cx| {
+                this.drop_link(link, window, cx);
+            }))
             .when_some(blame, |editor, blame| {
                 // Painted after the editor, into the space kept for it on the left.
                 editor.child(blame::column(

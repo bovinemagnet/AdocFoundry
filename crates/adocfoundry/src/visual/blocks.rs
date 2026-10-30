@@ -22,7 +22,10 @@ use gpui_component::{
 };
 
 use super::{text, VisualView};
-use crate::preview::{self, blocks::BlockContext, inlines::InlineStyle};
+use crate::{
+    preview::{self, blocks::BlockContext, inlines::InlineStyle},
+    sidebar::DraggedLink,
+};
 
 /// What every node is drawn with.
 struct Draw<'a> {
@@ -731,6 +734,7 @@ impl VisualView {
         let read_only = !node.is_editable();
         let down_path = path.to_vec();
         let move_path = path.to_vec();
+        let drop_path = path.to_vec();
         let menu_path = path.to_vec();
         div()
             .w_full()
@@ -767,6 +771,9 @@ impl VisualView {
             )
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
                 this.mouse_drag(&move_path, event.position, cx);
+            }))
+            .on_drop(cx.listener(move |this, link: &DraggedLink, window, cx| {
+                this.drop_link(&drop_path, link, window, cx);
             }))
             .into_any_element()
     }

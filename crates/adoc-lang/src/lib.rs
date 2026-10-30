@@ -14,6 +14,7 @@ pub mod references;
 pub mod render_source;
 pub mod symbols;
 mod workspace;
+pub mod xref;
 
 use std::path::{Path, PathBuf};
 
@@ -28,6 +29,7 @@ pub use completion::{Candidate as CompletionItem, CandidateKind as CompletionIte
 pub use hover::HoverContent as Hover;
 pub use symbols::{DocumentSymbol, DocumentSymbolKind};
 pub use workspace::WorkspaceState;
+pub use xref::{xref_to, XrefLink};
 
 /// Where following the construct under the cursor leads.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -685,6 +685,62 @@ These two bindings use Ctrl on every platform, including macOS.
 kbd:[Alt+F12] on an `include::` shows the included file read-only, without leaving the current page.
 Use Open from the peek to open it in a tab.
 
+[[drag-a-link]]
+== Dragging a link into the page
+
+Drag a page from the Navigation or Modules panel, or a section from the Outline panel, into the source editor or the visual editor.
+Dropping it inserts an xref to it.
+The insert is one undo step.
+
+In the source editor, the xref goes in at the text under the pointer, or at the caret when no text is under the pointer.
+In the visual editor, the drop must land on editable text.
+The link appears as a link, and typing goes on after it.
+
+The target is the shortest resource ID that resolves to the page from the page you are editing.
+An alias is never used.
+
+[cols="2,3"]
+|===
+|The dragged page is |The target is
+
+|In the same module
+|`other.adoc`
+
+|In another module of the same component version
+|`module:other.adoc`
+
+|In another component
+|`component:module:other.adoc`
+
+|In the `ROOT` module of another component
+|`component::other.adoc`
+
+|In a version other than the latest
+|`1.0@product::feature.adoc`, with `version@` in front
+|===
+
+Outside Antora, the target is the path of the page relative to the page you are editing, such as `../index.adoc`.
+
+The link text is the title of the page.
+A section adds its id after `#` and uses the title of the section as the text.
+The id is the explicit anchor if the section has one.
+Otherwise it is the id the build generates: `first-steps` inside an Antora module, and `_first_steps` outside one.
+A section of the page you are editing becomes a link to an anchor in the same page.
+
+.Examples of the xref a drop inserts
+[source,asciidoc]
+----
+xref:beta::index.adoc[Beta]
+xref:beta:api:reference.adoc[API Reference]
+xref:guide.adoc#setup[Setup]
+<<setup,Setup>>
+----
+
+An image, a partial, a navigation file and the title of the page you are editing cannot be linked.
+Dropping one inserts nothing and shows a notification.
+
+See xref:antora-support.adoc#resource-ids[Resource IDs] for the coordinates a target is made of.
+
 == Find and replace
 
 Find in Workspace (kbd:[Cmd+Shift+F] or kbd:[Ctrl+Shift+F]) searches every file in the workspace.

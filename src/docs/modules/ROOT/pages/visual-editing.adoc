@@ -151,6 +151,8 @@ A target cannot contain spaces.
 Remove Link (`edit.remove_link`) replaces the link at the caret with its text.
 It is in the command palette.
 
+You can also drag a page from the sidebar, or a section from the Outline, onto editable text to insert a link to it; see xref:using-the-editor.adoc#drag-a-link[Dragging a link into the page].
+
 == Blocks
 
 === Enter

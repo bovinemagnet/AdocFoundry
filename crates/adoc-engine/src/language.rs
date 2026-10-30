@@ -8,8 +8,10 @@ use std::{
 
 use adoc_antora::{NavError, NavTree};
 
-use adoc_core::Diagnostic;
-use adoc_lang::{CompletionItem, DefinitionTarget, DocumentSymbol, Hover, WorkspaceSymbol};
+use adoc_core::{Diagnostic, SourceRange};
+use adoc_lang::{
+    CompletionItem, DefinitionTarget, DocumentSymbol, Hover, WorkspaceSymbol, XrefLink,
+};
 
 use crate::{DocumentId, Engine};
 
@@ -104,6 +106,27 @@ impl Engine {
             }
         }
         Some(files)
+    }
+
+    /// The link document `id` makes to the page at `to`, or to its section whose title is at
+    /// `section` (an outline entry's selection range), as a page dragged into an editor
+    /// inserts it.
+    #[must_use]
+    pub fn xref_to(
+        &self,
+        id: DocumentId,
+        to: &Path,
+        section: Option<SourceRange>,
+    ) -> Option<XrefLink> {
+        let from = &self.document(id)?.path;
+        let target = match self
+            .document_for_path(to)
+            .and_then(|open| self.document(open))
+        {
+            Some(open) => &open.parsed,
+            None => &self.workspace.index.file(to)?.document,
+        };
+        adoc_lang::xref_to(&self.workspace, from, to, target, section)
     }
 
     /// The outline of document `id`: the navigation tree for an Antora navigation file,

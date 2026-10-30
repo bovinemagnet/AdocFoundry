@@ -368,3 +368,61 @@ fn a_descriptor_without_a_name_is_reported_once_inside_it() {
                 .iter()
                 .any(|diagnostic| diagnostic.code == DiagnosticCode::AntoraInvalidDescriptor)));
 }
+
+#[test]
+fn a_dragged_page_from_another_component_inserts_an_xref_that_resolves() {
+    let root = adoc_engine::normalize_path(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-multi-component"),
+    );
+    let mut engine = open_workspace(&root);
+    let id = engine
+        .open(&root.join("alpha/modules/ROOT/pages/index.adoc"))
+        .unwrap();
+    // The page's one diagnostic is for its link through an alias.
+    let before = engine.document(id).unwrap().diagnostics.clone();
+    let reference = root.join("beta/modules/api/pages/reference.adoc");
+
+    let link = engine.xref_to(id, &reference, None).unwrap();
+    assert_eq!(link.source(), "xref:beta:api:reference.adoc[API Reference]");
+
+    let end = engine.document(id).unwrap().text.len();
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(end, end),
+                text: link.source(),
+            },
+        )
+        .unwrap();
+    let document = engine.document(id).unwrap();
+    assert_eq!(document.diagnostics, before, "the xref adds no diagnostic");
+    let target = engine.definition(id, end + "xref:".len());
+    assert!(
+        matches!(&target, Some(adoc_engine::DefinitionTarget::Location(location)) if location.path == reference),
+        "{target:?}"
+    );
+}
+
+#[test]
+fn a_dragged_outline_section_links_to_it_in_the_page() {
+    let root = adoc_engine::normalize_path(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-multi-component"),
+    );
+    let mut engine = open_workspace(&root);
+    let guide = root.join("alpha/modules/ROOT/pages/guide.adoc");
+    let id = engine.open(&guide).unwrap();
+    let setup = engine.outline(id)[0].children[0].selection_range;
+
+    let link = engine.xref_to(id, &guide, Some(setup)).unwrap();
+    assert_eq!(link.source(), "<<setup,Setup>>");
+    // From another page, through the page.
+    let index = engine
+        .open(&root.join("alpha/modules/ROOT/pages/index.adoc"))
+        .unwrap();
+    assert_eq!(
+        engine.xref_to(index, &guide, Some(setup)).unwrap().source(),
+        "xref:guide.adoc#setup[Setup]"
+    );
+}
