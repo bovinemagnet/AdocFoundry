@@ -775,6 +775,7 @@ impl Server {
                         standards,
                         fonts_dir: None,
                         typst: None,
+                        attributes: Vec::new(),
                     },
                     TIMEOUT,
                 )

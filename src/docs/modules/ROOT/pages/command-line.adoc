@@ -15,6 +15,7 @@ adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser ac
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
@@ -149,6 +150,7 @@ See xref:pdf-export.adoc[Exporting to PDF] for themes, fonts and what the output
 adocfoundry-cli pdf docs/modules/ROOT/pages/index.adoc
 adocfoundry-cli pdf docs --output docs.pdf --theme acme-theme.yml
 adocfoundry-cli pdf docs --root . --component 2.0@guide --standard pdf-a-2a --standard pdf-ua-1
+adocfoundry-cli pdf --profile admin-guide .
 ----
 
 A file argument exports that page as an article.
@@ -167,6 +169,9 @@ Without a version, `--component` uses the latest version of the component.
 
 |`--component [<version>@]<name>`
 |Export this component version as a book, with coordinates written as Antora writes them.
+
+|`--profile <name>`
+|Export the publication profile `[pdf.profiles.<name>]` from the settings. The workspace root is the argument, `--root <dir>`, or else the current directory. `--output`, `--theme`, `--fonts-dir` and `--typst` win over the profile's values, and `--standard` adds to its standards. See xref:pdf-export.adoc#publication-profiles[Publication profiles].
 
 |`--theme <name\|file.yml>`
 |A bundled theme, a theme found as `<name>-theme.yml` in the themes directory, or a theme file. It overrides the page's `pdf-theme` and `[pdf] theme`.

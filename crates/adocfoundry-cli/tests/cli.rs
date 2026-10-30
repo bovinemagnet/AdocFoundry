@@ -449,3 +449,64 @@ fn doctor_reports_the_program_tools_and_settings() {
     assert!(text.status.success());
     assert!(stdout(&text).starts_with("AdocFoundry diagnostics\n"));
 }
+
+#[test]
+fn pdf_profile_writes_what_the_app_writes() {
+    // Issue #103: a profile exported from the command line and from the app gives the same PDF.
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("book");
+    copy_tree(&repository_root().join("tests/fixtures/pdf/book"), &root);
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[pdf.profiles.manual]\nnav = [\"guide/modules/admin/nav.adoc\", \"guide/modules/ROOT/nav.adoc\"]\noutput = \"build/manual.pdf\"\nattributes = { pdf-title = \"The Manual\" }\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(directory.path())
+        .args(["pdf", "--profile", "manual", "book"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = root.join("build/manual.pdf");
+    assert!(
+        stdout(&output).contains("manual.pdf ("),
+        "{}",
+        stdout(&output)
+    );
+    let from_cli = std::fs::read(&written).unwrap();
+    std::fs::remove_file(&written).unwrap();
+
+    // The app's command, on an engine opened as the app opens one.
+    let mut settings = adoc_engine::Settings::load(None, Some(&root)).unwrap();
+    settings.git.enabled = false;
+    let mut engine = adoc_engine::Engine::new(settings);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let wait = std::time::Duration::from_secs(120);
+    assert!(engine.wait_for_workers(wait));
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EXPORT_PDF_PROFILE,
+            adoc_engine::CommandArgs::Profile("manual".to_owned()),
+        )
+        .unwrap();
+    while engine.is_exporting() {
+        assert!(engine.wait_for_workers(wait));
+    }
+    assert!(
+        std::fs::read(&written).unwrap() == from_cli,
+        "the app's PDF differs from the command line's"
+    );
+
+    // An unknown profile is an error that names it.
+    let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(directory.path())
+        .args(["pdf", "--profile", "missing", "book"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no PDF profile `missing`"));
+}

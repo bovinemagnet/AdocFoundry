@@ -134,6 +134,7 @@ fn book_memory_probe() {
                 standards: Vec::new(),
                 fonts_dir: None,
                 typst: None,
+                attributes: Vec::new(),
             },
             std::time::Duration::from_secs(600),
         )

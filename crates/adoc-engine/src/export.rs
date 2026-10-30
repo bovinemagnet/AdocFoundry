@@ -45,6 +45,11 @@ pub enum ExportTarget {
         name: String,
         version: Option<String>,
     },
+    /// A page by its path, open or not, as an article.
+    File(PathBuf),
+    /// Navigation files, as a book in the order given, titled after the first file's
+    /// component version.
+    Navigation(Vec<PathBuf>),
 }
 
 /// An export request: `CommandArgs::Export`.
@@ -62,6 +67,9 @@ pub struct ExportArgs {
     pub fonts_dir: Option<PathBuf>,
     /// Also write the generated Typst here, for inspection.
     pub typst: Option<PathBuf>,
+    /// Attributes every page is read with before its own header, after Antora's, and that a
+    /// book's own attributes take.
+    pub attributes: Vec<(String, String)>,
 }
 
 /// A finished export.
@@ -198,6 +206,31 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
         ),
         export_command,
     );
+    register(
+        registry,
+        spec(
+            ids::EXPORT_PDF_PROFILE,
+            "Export PDF Profile…",
+            CommandCategory::Workspace,
+            None,
+            CommandContext::Always,
+        ),
+        profile_command,
+    );
+}
+
+/// Exports a publication profile to the output it names.
+#[cfg(feature = "typst")]
+fn profile_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Profile(name) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_PDF_PROFILE,
+            expected: "a profile name",
+        });
+    };
+    let args = engine.profile_export_args(&name)?;
+    engine.start_export(args, false)?;
+    Ok(CommandOutcome::Done)
 }
 
 #[cfg(feature = "typst")]
@@ -250,16 +283,29 @@ impl Engine {
     }
 
     fn start_export(&mut self, args: ExportArgs, keep_result: bool) -> Result<u64, EngineError> {
-        let plan = self.export_plan(&args.target)?;
+        let mut plan = self.export_plan(&args.target)?;
+        if let Plan::Book {
+            attributes, title, ..
+        } = &mut plan
+        {
+            for (name, value) in &args.attributes {
+                attributes.insert(name.clone(), value.clone());
+            }
+            if let Some(pdf_title) = attributes.get("pdf-title") {
+                title.clone_from(pdf_title);
+            }
+        }
         let inputs: Vec<_> = plan
             .paths()
             .iter()
             .map(|path| {
-                self.parse_input_for_path(path).ok_or_else(|| {
+                let mut input = self.parse_input_for_path(path).ok_or_else(|| {
                     EngineError::NotFound(format!("{} cannot be read", path.display()))
-                })
+                })?;
+                input.attributes.extend(args.attributes.iter().cloned());
+                Ok(input)
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_, EngineError>>()?;
         self.export.next += 1;
         let job = self.export.next;
         self.export.jobs.insert(
@@ -297,20 +343,42 @@ impl Engine {
                     .ok_or(EngineError::UnknownDocument(*id))?;
                 Ok(Plan::Article(document.path.clone()))
             }
-            ExportTarget::Component { name, version } => self.book_plan(name, version.as_deref()),
+            ExportTarget::Component { name, version } => {
+                self.book_plan(name, version.as_deref(), None)
+            }
+            ExportTarget::File(path) => Ok(Plan::Article(path.clone())),
+            ExportTarget::Navigation(files) => {
+                let context = files
+                    .first()
+                    .and_then(|file| self.workspace.antora.context_for_path(file))
+                    .ok_or_else(|| {
+                        EngineError::NotFound(
+                            "the navigation files are not in an Antora component".to_owned(),
+                        )
+                    })?;
+                self.book_plan(&context.component, context.version.as_deref(), Some(files))
+            }
         }
     }
 
     /// A component version as a book: one part per nav file (or titled list) when there are
     /// several, chapters from top-level entries, sections from nested ones, each page once.
-    fn book_plan(&self, name: &str, version: Option<&str>) -> Result<Plan, EngineError> {
+    /// `nav_files`, when given, replace the component's own navigation, in their order.
+    fn book_plan(
+        &self,
+        name: &str,
+        version: Option<&str>,
+        nav_files: Option<&[PathBuf]>,
+    ) -> Result<Plan, EngineError> {
         let antora = &self.workspace.antora;
         let component = antora.component(name, version).ok_or_else(|| {
             EngineError::NotFound(format!("no Antora component `{name}` in the workspace"))
         })?;
-        let trees = self
-            .nav_trees(name, version)
-            .map_err(|error| EngineError::NotFound(error.to_string()))?;
+        let trees = match nav_files {
+            Some(files) => self.nav_trees_of(files),
+            None => self.nav_trees(name, version),
+        }
+        .map_err(|error| EngineError::NotFound(error.to_string()))?;
         // Groups of entries, each a candidate part: a titled list, or a whole nav file.
         let mut groups: Vec<(Option<&NavItem>, Vec<NavItem>)> = Vec::new();
         for tree in &trees {
@@ -794,6 +862,16 @@ fn typeset(
     args: &ExportArgs,
 ) -> Result<ExportSummary, String> {
     let typst = adoc_pdf::to_typst(document, theme, options);
+    // A profile may name a folder, such as `build/`, that does not exist yet.
+    for path in std::iter::once(&args.output).chain(&args.typst) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{}: {error}", parent.display()))?;
+        }
+    }
     if let Some(path) = &args.typst {
         std::fs::write(path, &typst.source)
             .map_err(|error| format!("{}: {error}", path.display()))?;
