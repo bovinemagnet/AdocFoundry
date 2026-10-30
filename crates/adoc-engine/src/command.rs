@@ -99,6 +99,11 @@ pub enum CommandArgs {
     Custom(serde_json::Value),
     /// A sidebar tree, for the commands that open and close its branches.
     Panel(crate::SidebarPanel),
+    /// What to look for, across the workspace or in one document.
+    Query {
+        query: String,
+        document: Option<DocumentId>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -110,6 +115,8 @@ pub enum CommandOutcome {
     Location(Location),
     External(PathBuf),
     Preview(EditPreview),
+    /// Sections, anchors and page titles to go to.
+    Symbols(Vec<crate::SymbolMatch>),
     /// The selection after a visual command, as source offsets.
     Selection(SourceRange),
     /// A web address for the front end to open or copy.

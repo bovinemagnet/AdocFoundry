@@ -10,10 +10,26 @@ use adoc_antora::{NavError, NavTree};
 
 use adoc_core::{Diagnostic, SourceRange};
 use adoc_lang::{
-    CompletionItem, DefinitionTarget, DocumentSymbol, Hover, WorkspaceSymbol, XrefLink,
+    CompletionItem, DefinitionTarget, DocumentSymbol, Hover, WorkspaceSymbol, WorkspaceSymbolKind,
+    XrefLink,
 };
 
-use crate::{DocumentId, Engine};
+use crate::{DocumentId, Engine, NavigationPosition};
+
+/// The most symbols a workspace query returns.
+pub const SYMBOL_RESULTS: usize = 100;
+
+/// A section, anchor or page title to go to.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SymbolMatch {
+    pub name: String,
+    pub kind: WorkspaceSymbolKind,
+    /// Where it is: the page's title (or `Page` for a page title) and, in Antora, the
+    /// component version and module (`Guide · alpha 1.0 › ROOT`), else the page's path in
+    /// the workspace.
+    pub detail: String,
+    pub position: NavigationPosition,
+}
 
 impl Engine {
     /// Where the construct at `offset` in document `id` leads.
@@ -65,6 +81,103 @@ impl Engine {
             &document.parsed.text,
             offset,
         )
+    }
+
+    /// The sections, anchors and page titles matching `query`: across the workspace, each
+    /// word of the query starting a word of the name (those starting with the query first, at
+    /// most [`SYMBOL_RESULTS`]); or in document `page`, those whose name contains the query,
+    /// every one for an empty query, in page order.
+    #[must_use]
+    pub fn symbols(&self, query: &str, page: Option<DocumentId>) -> Vec<SymbolMatch> {
+        let found: Vec<WorkspaceSymbol> = match page {
+            Some(id) => {
+                let Some(document) = self.document(id) else {
+                    return Vec::new();
+                };
+                let parsed = &document.parsed;
+                let symbol = |name: &str, kind, range: SourceRange| WorkspaceSymbol {
+                    name: name.to_owned(),
+                    kind,
+                    path: document.path.clone(),
+                    range,
+                    container: parsed.title.as_ref().map(|title| title.text.clone()),
+                };
+                let mut found: Vec<WorkspaceSymbol> = parsed
+                    .title
+                    .iter()
+                    .map(|title| {
+                        symbol(
+                            &title.text,
+                            WorkspaceSymbolKind::Title,
+                            title.selection_range,
+                        )
+                    })
+                    .chain(parsed.sections.iter().map(|section| {
+                        symbol(
+                            &section.title,
+                            WorkspaceSymbolKind::Section,
+                            section.selection_range,
+                        )
+                    }))
+                    .chain(parsed.anchors.iter().map(|anchor| {
+                        symbol(&anchor.id, WorkspaceSymbolKind::Anchor, anchor.range)
+                    }))
+                    .filter(|symbol| symbol.name.to_lowercase().contains(&query.to_lowercase()))
+                    .collect();
+                found.sort_by_key(|symbol| symbol.range.start);
+                found
+            }
+            None => {
+                let query = query.trim().to_lowercase();
+                let mut found: Vec<WorkspaceSymbol> = self
+                    .workspace_symbols(&query)
+                    .into_iter()
+                    .filter(|symbol| symbol.kind != WorkspaceSymbolKind::Attribute)
+                    .collect();
+                found.sort_by_key(|symbol| !symbol.name.to_lowercase().starts_with(&query));
+                found.truncate(SYMBOL_RESULTS);
+                found
+            }
+        };
+        found
+            .into_iter()
+            .map(|symbol| SymbolMatch {
+                detail: self.symbol_detail(&symbol),
+                position: NavigationPosition {
+                    path: symbol.path,
+                    offset: symbol.range.start,
+                },
+                name: symbol.name,
+                kind: symbol.kind,
+            })
+            .collect()
+    }
+
+    /// Where `symbol` is, for listing it: its page and the page's place in the workspace.
+    fn symbol_detail(&self, symbol: &WorkspaceSymbol) -> String {
+        let page = match symbol.kind {
+            WorkspaceSymbolKind::Title => "Page".to_owned(),
+            _ => symbol.container.clone().unwrap_or_else(|| {
+                symbol
+                    .path
+                    .file_name()
+                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
+            }),
+        };
+        let place = match self.workspace.antora.context_for_path(&symbol.path) {
+            Some(context) => match context.version {
+                Some(version) => format!("{} {version} › {}", context.component, context.module),
+                None => format!("{} › {}", context.component, context.module),
+            },
+            None => self
+                .roots()
+                .iter()
+                .find_map(|root| symbol.path.strip_prefix(root).ok())
+                .unwrap_or(&symbol.path)
+                .display()
+                .to_string(),
+        };
+        format!("{page} · {place}")
     }
 
     /// The edits that rename the anchor at `offset` in document `id`, and every reference to

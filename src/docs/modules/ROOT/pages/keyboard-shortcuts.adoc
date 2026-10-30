@@ -113,6 +113,16 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Alt-F12
 |`navigate.peek_include`
 
+|Go to symbol in workspace
+|Cmd-T
+|Ctrl-T
+|`navigate.go_to_symbol`
+
+|Go to symbol in page
+|Cmd-R
+|Ctrl-R
+|`navigate.go_to_symbol_in_page`
+
 |Find in workspace
 |Cmd-Shift-F
 |Ctrl-Shift-F

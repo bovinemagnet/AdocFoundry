@@ -50,6 +50,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Cmd-click (Ctrl-click on Linux and Windows) or F12 on an `xref:`, `include::` or `{attribute}` opens the target and places the caret there; images and attachments open in the system's default application.
 - Back and forward through the places you have followed links to.
 - Alt-F12 on an `include::` shows the included file read-only.
+- Go to Symbol in Workspace (Cmd/Ctrl-T) lists the sections, anchors and page titles across the workspace whose words start with what you type, each with its page and, in Antora, its component version and module; Enter opens it there, recorded in back and forward history. Go to Symbol in Page (Cmd/Ctrl-R) does the same for the active page. Both are in the Go menu.
 
 **Preview**
 

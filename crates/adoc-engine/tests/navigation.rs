@@ -166,3 +166,122 @@ fn images_open_in_image_tabs_and_includes_peek() {
         )
         .is_err());
 }
+
+fn symbols(outcome: CommandOutcome) -> Vec<adoc_engine::SymbolMatch> {
+    match outcome {
+        CommandOutcome::Symbols(found) => found,
+        other => panic!("expected symbols, got {other:?}"),
+    }
+}
+
+#[test]
+fn go_to_symbol_finds_a_section_in_another_component_and_opens_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let write = |path: &str, text: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("alpha/antora.yml", "name: alpha\nversion: '1.0'\n");
+    write(
+        "alpha/modules/ROOT/pages/index.adoc",
+        "= Alpha\n\n== Overview\n",
+    );
+    write("beta/antora.yml", "name: beta\nversion: ~\n");
+    let guide = "= Guide\n\n[[setup]]\n== Installing the Server\n\nText.\n\n:server-port: 8080\n";
+    write("beta/modules/admin/pages/guide.adoc", guide);
+    let mut engine = open_workspace(&root);
+    let alpha = engine
+        .open(&root.join("alpha/modules/ROOT/pages/index.adoc"))
+        .unwrap();
+
+    let found = symbols(
+        engine
+            .invoke(
+                ids::NAVIGATE_GO_TO_SYMBOL,
+                CommandArgs::Query {
+                    query: "instal serv".to_owned(),
+                    document: None,
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    let section = &found[0];
+    assert_eq!(section.name, "Installing the Server");
+    assert_eq!(section.kind, adoc_engine::WorkspaceSymbolKind::Section);
+    assert_eq!(section.detail, "Guide · beta › admin");
+    let page = root.join("beta/modules/admin/pages/guide.adoc");
+    assert_eq!(section.position.path, page);
+    assert_eq!(section.position.offset, guide.find("Installing").unwrap());
+
+    // Attributes are not symbols to go to; anchors and page titles are.
+    let found = symbols(
+        engine
+            .invoke(
+                ids::NAVIGATE_GO_TO_SYMBOL,
+                CommandArgs::Query {
+                    query: "server".to_owned(),
+                    document: None,
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    let found = symbols(
+        engine
+            .invoke(
+                ids::NAVIGATE_GO_TO_SYMBOL,
+                CommandArgs::Query {
+                    query: "setup".to_owned(),
+                    document: None,
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(found[0].kind, adoc_engine::WorkspaceSymbolKind::Anchor);
+
+    // Choosing it opens the page there, and Back returns.
+    engine
+        .invoke(
+            ids::NAVIGATE_GO_TO,
+            CommandArgs::Position(section.position.clone()),
+        )
+        .unwrap();
+    let active = engine.active().unwrap();
+    assert_eq!(engine.document(active).unwrap().path, page);
+    assert!(engine.can_go_back());
+    engine
+        .invoke(ids::NAVIGATE_BACK, CommandArgs::None)
+        .unwrap();
+    assert_eq!(engine.active(), Some(alpha));
+}
+
+#[test]
+fn go_to_symbol_in_page_lists_the_page_s_own() {
+    let root = fixture("antora-multi-component");
+    let mut engine = open_workspace(&root);
+    let guide = engine
+        .open(&root.join("alpha/modules/ROOT/pages/guide.adoc"))
+        .unwrap();
+    let names = |engine: &mut Engine, query: &str| -> Vec<String> {
+        symbols(
+            engine
+                .invoke(
+                    ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE,
+                    CommandArgs::Query {
+                        query: query.to_owned(),
+                        document: Some(guide),
+                    },
+                )
+                .unwrap(),
+        )
+        .into_iter()
+        .map(|symbol| symbol.name)
+        .collect()
+    };
+    // The title, the section and its anchor, in page order; every symbol with no query.
+    assert_eq!(names(&mut engine, ""), ["Guide", "setup", "Setup"]);
+    assert_eq!(names(&mut engine, "gui"), ["Guide"]);
+}

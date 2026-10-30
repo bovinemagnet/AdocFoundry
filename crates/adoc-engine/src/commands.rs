@@ -44,6 +44,9 @@ pub mod ids {
     pub const NAVIGATE_BACK: CommandId = CommandId::new("navigate.back");
     pub const NAVIGATE_FORWARD: CommandId = CommandId::new("navigate.forward");
     pub const NAVIGATE_PEEK_INCLUDE: CommandId = CommandId::new("navigate.peek_include");
+    pub const NAVIGATE_GO_TO_SYMBOL: CommandId = CommandId::new("navigate.go_to_symbol");
+    pub const NAVIGATE_GO_TO_SYMBOL_IN_PAGE: CommandId =
+        CommandId::new("navigate.go_to_symbol_in_page");
     pub const NAVIGATE_GO_TO: CommandId = CommandId::new("navigate.go_to");
     pub const NAVIGATE_REVEAL: CommandId = CommandId::new("navigate.reveal");
     pub const WORKSPACE_SEARCH: CommandId = CommandId::new("workspace.search");
@@ -135,7 +138,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, ActiveTab, Always};
 
-    let builtin: [(CommandSpec, Run); 35] = [
+    let builtin: [(CommandSpec, Run); 37] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -215,6 +218,26 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 ActiveDocument,
             ),
             navigate_peek_include,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_GO_TO_SYMBOL,
+                "Go to Symbol in Workspace",
+                Navigate,
+                Some("cmd-t"),
+                Always,
+            ),
+            |engine, args| navigate_symbols(engine, args, ids::NAVIGATE_GO_TO_SYMBOL),
+        ),
+        (
+            spec(
+                ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE,
+                "Go to Symbol in Page",
+                Navigate,
+                Some("cmd-r"),
+                ActiveDocument,
+            ),
+            |engine, args| navigate_symbols(engine, args, ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE),
         ),
         (
             spec(
@@ -779,6 +802,29 @@ fn navigate_definition(
             "nothing to follow at offset {offset}"
         ))),
     }
+}
+
+/// The sections, anchors and page titles matching the query: in the workspace, or with
+/// `navigate.go_to_symbol_in_page` in the given document. Going to one is `navigate.go_to`.
+fn navigate_symbols(
+    engine: &mut Engine,
+    args: CommandArgs,
+    command: CommandId,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Query { query, document } = args else {
+        return Err(invalid(command, "a query"));
+    };
+    let page = match (command == ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE, document) {
+        (false, _) => None,
+        (true, Some(id)) => {
+            engine
+                .document(id)
+                .ok_or(EngineError::UnknownDocument(id))?;
+            Some(id)
+        }
+        (true, None) => return Err(invalid(command, "a query and a document")),
+    };
+    Ok(CommandOutcome::Symbols(engine.symbols(&query, page)))
 }
 
 fn navigate_follow_link(

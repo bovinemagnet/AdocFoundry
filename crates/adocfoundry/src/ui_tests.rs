@@ -5049,3 +5049,95 @@ fn dragging_an_outline_section_inserts_a_reference_to_it(cx: &mut TestAppContext
     );
     assert_eq!(text_of(&app, id, &mut cx), text);
 }
+
+#[gpui::test]
+fn go_to_symbol_opens_a_section_in_another_component(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let write = |path: &str, text: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("alpha/antora.yml", "name: alpha\nversion: '1.0'\n");
+    write(
+        "alpha/modules/ROOT/pages/index.adoc",
+        "= Alpha\n\nWelcome.\n",
+    );
+    write("beta/antora.yml", "name: beta\nversion: ~\n");
+    let guide = "= Guide\n\n== Before\n\nFirst.\n\n== Installing the Server\n\nThen.\n";
+    write("beta/modules/admin/pages/guide.adoc", guide);
+    let alpha = root.join("alpha/modules/ROOT/pages/index.adoc");
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![alpha.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    let active_path = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let engine = &app.read(cx).engine;
+            engine
+                .document(engine.active().unwrap())
+                .unwrap()
+                .path
+                .clone()
+        })
+    };
+    let caret = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .active_editor_for_test()
+                .unwrap()
+                .read(cx)
+                .cursor(cx)
+        })
+    };
+
+    cx.simulate_keystrokes("secondary-t");
+    cx.run_until_parked();
+    cx.simulate_input("instal serv");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        active_path(&mut cx),
+        root.join("beta/modules/admin/pages/guide.adoc")
+    );
+    assert_eq!(caret(&mut cx), guide.find("Installing").unwrap());
+
+    // In the page, with the page's own symbols.
+    cx.simulate_keystrokes("secondary-r");
+    cx.run_until_parked();
+    cx.simulate_input("bef");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(caret(&mut cx), guide.find("Before").unwrap());
+
+    // Back returns to the section gone to first, then to Alpha.
+    cx.simulate_keystrokes("ctrl--");
+    cx.run_until_parked();
+    assert_eq!(caret(&mut cx), guide.find("Installing").unwrap());
+    cx.simulate_keystrokes("ctrl--");
+    cx.run_until_parked();
+    assert_eq!(active_path(&mut cx), alpha);
+}
