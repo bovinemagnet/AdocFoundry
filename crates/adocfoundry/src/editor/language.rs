@@ -118,6 +118,10 @@ and its second line, with ^super^ script.
 
 Plain words and nothing else.
 
+\"Quoted words with *stress*
+over two lines\"
+-- An attribution in _italics_
+
 * an item for <<anchor>>
 . a step to xref:other.adoc[]
 
@@ -273,6 +277,8 @@ let starred = *value*;
             "Section One",
             "first line",
             "second line",
+            "Quoted words",
+            "An attribution",
             "an item",
             "a step",
             "an admonition",
@@ -287,6 +293,36 @@ let starred = *value*;
                 "{prose:?} is not injected",
             );
         }
+    }
+
+    // A paragraph is injected whole, so a span broken over two of its lines reaches the
+    // inline grammar in one piece and is highlighted as one span.
+    #[test]
+    fn a_span_over_two_lines_of_a_paragraph_is_highlighted() {
+        use tree_sitter::StreamingIterator;
+        let page = "A paragraph with *strong words\nover two lines* in it.\n";
+        let span = page.find("*strong").unwrap()..page.find(" in it").unwrap();
+        let injected = inline_injections(page)
+            .into_iter()
+            .find(|range| range.start <= span.start && span.end <= range.end)
+            .expect("the span is not injected in one piece");
+        let text = &page[injected.clone()];
+        let inline = tree_sitter_asciidoc_inline::language();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&inline).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+        let query = tree_sitter::Query::new(&inline, INLINE_HIGHLIGHTS).unwrap();
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut captures = cursor.captures(&query, tree.root_node(), text.as_bytes());
+        let mut strong = false;
+        while let Some((found, index)) = captures.next() {
+            let capture = found.captures[*index];
+            let range = capture.node.byte_range();
+            strong |= query.capture_names()[capture.index as usize] == "emphasis.strong"
+                && injected.start + range.start == span.start
+                && injected.start + range.end == span.end;
+        }
+        assert!(strong, "{:?} is not highlighted as one span", &page[span]);
     }
 
     #[test]

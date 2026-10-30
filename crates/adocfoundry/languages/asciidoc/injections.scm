@@ -28,7 +28,6 @@
   (document_title (line) @injection.content)
   (ordered_list_item (line) @injection.content)
   (quoted_block (line) @injection.content)
-  (quoted_line (line) @injection.content)
   (quoted_md_block (line) @injection.content)
   (title1 (line) @injection.content)
   (title2 (line) @injection.content)
