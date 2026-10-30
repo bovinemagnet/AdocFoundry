@@ -21,6 +21,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - *Modules*: every module with its families (pages, partials, examples, images, attachments) and their resources.
 - *Files*: the folders and files on disk beneath each workspace folder, of every type, read a folder at a time as you open them. Dotfiles show; `workspace.ignore` entries are hidden unless Show Excluded Files is on; links show but are not followed. A click opens a file in a preview tab (text files that are not AsciiDoc open as plain, highlighted text, outside the index; images open in the image viewer), PDFs open in the system's viewer, and other binary files (fonts, archives, programs) are refused, opening only through Open Externally, so selecting a file never runs it. Right-click for Copy Path, Copy Relative Path, Reveal in Finder (or File Explorer, or File Manager), Refresh and Collapse All; Reveal in Files shows the active document there.
 - Both open two levels deep by default (`[sidebar.navigation]` and `[sidebar.modules]` `default_expansion`: a number of levels, or `"all"` for the old fully open trees). The branches you open and close stay that way through re-indexing and are remembered for the workspace across restarts (`[sidebar] remember_expansion`). Right-click either panel for Expand All, Collapse All, Collapse One Level and Reset to Configured Default; the View menu and the palette have them too, for the panel shown.
+- Files, Navigation and Modules follow the active page: whenever another page or image becomes active, each selects its row, opening the folders and branches above it, without taking focus. Navigation selects the first entry linking to the page, preferring one without a `#fragment` (or keeps the one you clicked), and clears its selection for a page in no navigation file. `[sidebar] follow_active = false` turns this off.
 - *Problems*: workspace diagnostics grouped by file; click one to go to it.
 - *Outline* of the active document; for a navigation file, its navigation tree.
 
@@ -172,6 +173,7 @@ ignore = ["node_modules", ".git", "build", "target", ".cache"]
 
 [sidebar]
 remember_expansion = true        # user file only
+follow_active = true             # reveal the active page in Files, Navigation and Modules
 
 [sidebar.navigation]
 default_expansion = 2            # levels, 0 or more, or "all" to open every branch

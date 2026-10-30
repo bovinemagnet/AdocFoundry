@@ -30,6 +30,8 @@ pub struct NavItem {
     /// The fully qualified page the entry links to, or `None` for a title, plain text or a
     /// target that does not resolve.
     pub target: Option<AntoraResourceId>,
+    /// The fragment the entry's link names after `#`, if any.
+    pub fragment: Option<String>,
     /// The entry's line in the nav file.
     pub source: Location,
     /// Whether the entry is a `.Title` line, heading the list beneath it.
@@ -110,6 +112,11 @@ fn build_tree(
         .into_iter()
         .map(|entry| {
             let range = SourceRange::new(entry.start, entry.end);
+            let fragment = entry
+                .target
+                .as_deref()
+                .and_then(|target| target.split_once('#'))
+                .map(|(_, fragment)| fragment.to_owned());
             let target = entry.target.as_deref().and_then(|target| {
                 let page = target.split_once('#').map_or(target, |(page, _)| page);
                 let resolved = parse_resource_id(page)
@@ -158,6 +165,7 @@ fn build_tree(
                 NavItem {
                     title: entry.text,
                     target,
+                    fragment,
                     source: Location {
                         path: path.clone(),
                         range,

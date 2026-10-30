@@ -36,6 +36,7 @@ auto_save = "off"                # off | on_focus_change | after_delay
 
 [sidebar]
 remember_expansion = true        # remember opened and closed branches (user file only)
+follow_active = true            # reveal the active page in Files, Navigation and Modules
 
 [sidebar.navigation]
 default_expansion = 2            # 0 or more, or "all"
@@ -114,6 +115,11 @@ check = true                     # look for a newer release at start-up
 |`"auto"`, `"light"` or `"dark"`
 |`"auto"`
 |The colour theme.
+
+|`sidebar.follow_active`
+|boolean
+|`true`
+|Reveal the active page in Files, Navigation and Modules whenever another file becomes active, opening the folders and branches above it. When `false`, the panels do not select or open anything by themselves. See xref:using-the-editor.adoc#following-the-active-page[Following the active page].
 
 |`sidebar.remember_expansion`
 |boolean
@@ -225,7 +231,7 @@ See xref:pdf-export.adoc[Exporting to PDF].
 
 == What a workspace file may set
 
-A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `workspace.ignore` and `pdf.*`.
+A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore` and `pdf.*`.
 The two depths override separately.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.

@@ -188,6 +188,7 @@ It switches the sidebar to Files, opens the folders above the document, and sele
 The editor keeps focus.
 A document beneath an excluded folder is shown anyway, for the moment.
 A document outside the workspace folders gets a message instead.
+With `sidebar.follow_active` on, Files already follows the active document, so the command matters mostly when that setting is off.
 
 When you switch tabs, Files selects the active document's row if it is shown.
 It does not open folders or switch the sidebar.
@@ -196,6 +197,39 @@ It does not open folders or switch the sidebar.
 
 Files, folders and empty folders created, deleted or renamed outside the app appear and disappear in the open folders by themselves, through the file watcher.
 Folders in `workspace.ignore` are not watched.
+
+[#following-the-active-page]
+=== Following the active page
+
+With `sidebar.follow_active` on, which is the default, the sidebar follows the page you are working on.
+Whenever another tab becomes active, Files, Navigation and Modules each select the row for that page.
+They open the collapsed folders and branches above it and scroll it into view.
+Following covers opening a page or image from anywhere, switching tabs, following a link, and going back or forward.
+The editor keeps focus.
+The panels follow even while they are not shown, so switching panels shows the page already selected.
+
+Each panel finds the row in its own way:
+
+* Files selects the file's row, listing and opening folders as needed.
+A page outside the workspace folders is not followed.
+* Modules selects the resource under its component version, module and family.
+Images, partials, examples and attachments are followed too.
+* Navigation selects the first entry that links to the page, searching depth first, and prefers an entry whose link has no `#fragment` (for example `+xref:install.adoc[]+` over `+xref:install.adoc#linux[]+`).
+Only when every entry for the page links to a fragment does it select the first of those.
+If the selected row already links to the page, it stays selected, so clicking the second of two entries for the same page does not move the selection.
+A page that is in no navigation file clears the selection.
+
+A file that is not an Antora resource is followed in Files only.
+
+Branches opened by following stay open and count as your own choices.
+With `sidebar.remember_expansion` on, they are remembered like branches you open yourself.
+Following never closes anything.
+It happens only when another file becomes active, so a branch you close over the active page stays closed until you switch to a different page.
+
+With `sidebar.follow_active` set to `false`, the panels open and select nothing by themselves.
+Files still selects the active page's row if it is already shown.
+Reveal in Files keeps working; see <<_reveal_in_files>>.
+The setting may be set in the user file or the workspace file; see xref:settings.adoc[Settings].
 
 === How far the trees open
 

@@ -4,7 +4,12 @@
 //! tab, a page or an image, so link following, back/forward and palette commands all arrive the
 //! same way.
 
-use std::{cell::Cell, collections::HashMap, path::Path, rc::Rc};
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
@@ -134,6 +139,13 @@ pub struct WorkspaceView {
     /// operation opens or closes branches.
     nav_nodes: Vec<sidebar::Node>,
     family_nodes: Vec<sidebar::Node>,
+    /// The file the sidebar trees last followed, with `[sidebar] follow_active`: they follow
+    /// again only once another becomes active, so a branch closed over it stays closed.
+    followed: Option<PathBuf>,
+    /// The file Navigation and Modules each still have to reveal once a rebuilt tree has a row
+    /// for it, as while the workspace is first indexed.
+    nav_follow: Option<PathBuf>,
+    families_follow: Option<PathBuf>,
     /// The Files panel: the folders and files on disk.
     files: Entity<crate::files_view::FilesView>,
     /// The panel menu opened from the keyboard, and what closes it.
@@ -317,6 +329,9 @@ impl WorkspaceView {
             families,
             nav_nodes: Vec::new(),
             family_nodes: Vec::new(),
+            followed: None,
+            nav_follow: None,
+            families_follow: None,
             sidebar_menu: None,
             files: {
                 let app = app.clone();
@@ -625,6 +640,97 @@ impl WorkspaceView {
         self.family_nodes = families;
         self.show_tree(SidebarPanel::Navigation, cx);
         self.show_tree(SidebarPanel::Modules, cx);
+        for panel in [SidebarPanel::Navigation, SidebarPanel::Modules] {
+            if let Some(file) = self.pending_follow(panel).clone() {
+                if self.reveal_in_tree(panel, &file, cx) {
+                    *self.pending_follow(panel) = None;
+                }
+            }
+        }
+    }
+
+    fn pending_follow(&mut self, panel: SidebarPanel) -> &mut Option<PathBuf> {
+        match panel {
+            SidebarPanel::Navigation => &mut self.nav_follow,
+            SidebarPanel::Modules => &mut self.families_follow,
+        }
+    }
+
+    /// With `[sidebar] follow_active`, reveals the active page or image in Files, Navigation and
+    /// Modules when it is not the file they last followed, without taking focus.
+    fn follow_in_sidebar(&mut self, cx: &mut Context<Self>) {
+        let file = {
+            let engine = &self.app.read(cx).engine;
+            if !engine.settings().sidebar.follow_active {
+                return;
+            }
+            match engine.active_item() {
+                Some(TabItem::Document(id)) => engine.document(id).map(|document| &document.path),
+                Some(TabItem::Image(id)) => engine.image(id).map(|image| &image.path),
+                None => None,
+            }
+            .cloned()
+        };
+        let Some(file) = file else {
+            return;
+        };
+        if self.followed.as_ref() == Some(&file) {
+            return;
+        }
+        self.followed = Some(file.clone());
+        // Deferred: a click in Files opens the file while Files is being updated.
+        let files = self.files.clone();
+        let revealed = file.clone();
+        cx.defer(move |cx| {
+            files.update(cx, |files, cx| files.reveal(&revealed, cx));
+        });
+        for panel in [SidebarPanel::Navigation, SidebarPanel::Modules] {
+            let found = self.reveal_in_tree(panel, &file, cx);
+            *self.pending_follow(panel) = (!found).then(|| file.clone());
+        }
+    }
+
+    /// Selects the row of `panel` that opens `file`, keeping the selected row when it does,
+    /// opening the branches above it and scrolling it into view. Without such a row the
+    /// selection is cleared and the answer is false.
+    fn reveal_in_tree(&mut self, panel: SidebarPanel, file: &Path, cx: &mut Context<Self>) -> bool {
+        let (state, nodes) = match panel {
+            SidebarPanel::Navigation => (self.navigation.clone(), &self.nav_nodes),
+            SidebarPanel::Modules => (self.families.clone(), &self.family_nodes),
+        };
+        let selected = state
+            .read(cx)
+            .selected_item()
+            .map(|item| item.id.to_string());
+        let kept = selected
+            .as_deref()
+            .filter(|id| sidebar::opens_file(id, file));
+        let ids = match kept {
+            Some(id) => sidebar::path_to(nodes, id),
+            None => sidebar::path_to_file(nodes, file),
+        };
+        let Some(ids) = ids else {
+            state.update(cx, |tree, cx| tree.set_selected_index(None, cx));
+            return false;
+        };
+        let branches: Vec<&str> = ids[..ids.len() - 1]
+            .iter()
+            .map(|id| sidebar::branch_key(id))
+            .collect();
+        self.app.update(cx, |app, _| {
+            app.engine.open_branches(panel, &branches);
+        });
+        let items = sidebar::tree_items(nodes, &self.app.read(cx).engine, panel);
+        let moved = kept.is_none();
+        state.update(cx, |tree, cx| {
+            tree.set_items(items, cx);
+            let index = ids.last().and_then(|id| tree.index_of(&id.into()));
+            tree.set_selected_index(index, cx);
+            if let (Some(index), true) = (index, moved) {
+                tree.scroll_to_item(index, gpui::ScrollStrategy::Center);
+            }
+        });
+        true
     }
 
     /// Records the branches the user opens and closes in `tree`, a panel's.
@@ -715,6 +821,20 @@ impl WorkspaceView {
                 format!("{}{}{mark}", "  ".repeat(entry.depth()), entry.item().label)
             })
             .collect()
+    }
+
+    /// The position among the rows shown of the row selected in `panel`.
+    #[cfg(test)]
+    pub fn selected_index_for_test(&self, panel: SidebarPanel, cx: &App) -> Option<usize> {
+        let state = match panel {
+            SidebarPanel::Navigation => &self.navigation,
+            SidebarPanel::Modules => &self.families,
+        }
+        .read(cx);
+        let selected = state.selected_item()?.id.clone();
+        (0..)
+            .map_while(|ix| state.entry(ix))
+            .position(|entry| entry.item().id == selected)
     }
 
     /// The label of the row selected in `panel`.
@@ -1127,6 +1247,7 @@ impl WorkspaceView {
         self.active_tab = index;
         // However the document became active, its tab is brought into view.
         self.reveal_active_tab(cx);
+        self.follow_in_sidebar(cx);
         let TabItem::Document(active) = item else {
             self.focus_active_editor(window, cx);
             return;

@@ -397,3 +397,43 @@ fn closing_the_engine_saves_what_is_pending() {
     engine.resolve_expansion(Modules, &modules_tree());
     assert!(!engine.branch_expanded(Modules, "c@1/a"));
 }
+
+#[test]
+fn opening_the_way_to_a_row_records_only_the_branches_it_opens() {
+    let directory = tempfile::tempdir().unwrap();
+    let docs = workspace(directory.path(), "docs");
+    let tree = modules_tree();
+    let clock = ManualClock::new();
+
+    let mut engine = remembering(directory.path(), true, &clock);
+    engine.open_workspace(vec![docs.clone()]).unwrap();
+    engine.resolve_expansion(Modules, &tree);
+    engine.set_branch_expanded(Modules, "c@1", false);
+    assert!(engine.open_branches(Modules, &["c@1", "c@1/a", "c@1/a/page"]));
+    assert_eq!(
+        expanded(&engine, Modules, &tree),
+        ["c@1", "c@1/a", "c@1/a/page", "c@1/b"]
+    );
+    assert!(
+        !engine.open_branches(Modules, &["c@1", "c@1/a"]),
+        "nothing left to open"
+    );
+    engine.pump();
+    clock.advance(EXPANSION_SAVE_SETTLE + Duration::from_millis(1));
+    engine.pump();
+    drop(engine);
+
+    // Under a shallower default, the branches it opened are remembered; c@1/a, open already,
+    // was left to the default.
+    let user = directory.path().join("settings.toml");
+    fs::write(
+        &user,
+        "[sidebar]\nremember_expansion = true\n\n[sidebar.modules]\ndefault_expansion = 0\n",
+    )
+    .unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap();
+    let mut engine = Engine::with_clock(settings, Arc::new(clock.clone()));
+    engine.open_workspace(vec![docs]).unwrap();
+    engine.resolve_expansion(Modules, &tree);
+    assert_eq!(expanded(&engine, Modules, &tree), ["c@1", "c@1/a/page"]);
+}
