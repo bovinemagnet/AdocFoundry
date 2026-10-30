@@ -35,7 +35,7 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 == Continuous integration
 
-`.github/workflows/ci.yml` runs on pull requests, on pushes to `main` and on `v*` tags, so a tagged release is tested as well as built.
+`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`. It does not run on `v*` tags by itself; `release.yml` calls it (`workflow_call`) on the tagged commit, so a tagged release is tested as well as built.
 
 [cols="1,4"]
 |===
@@ -61,6 +61,11 @@ On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platfo
 `.github/workflows/release.yml` runs when a tag matching `v*` is pushed, or on demand.
 Each platform job builds `adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` in release mode, with `adoc-ls` built with `--features adoc-ls/typst,adoc-ls/git`.
 Every package carries all four binaries, and `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` are also published as archives of their own.
+
+The workflow's first job, `ci`, calls `ci.yml` on the tagged commit.
+The packages are still built and smoke-tested alongside it, but the `publish` job needs both `ci` and `smoke`.
+A tag on a commit whose tests fail therefore still builds its artefacts, which can be downloaded from the workflow run, but publishes no release.
+To publish, re-run the failed jobs after a fix, or push a new tag.
 
 .The release pipeline
 [mermaid]
@@ -188,7 +193,7 @@ It then checks:
 * on macOS, that each binary passes `codesign --verify --strict`, has a Developer ID and the hardened runtime, and that Gatekeeper (`spctl`) accepts the app
 * on Windows, that each executable's Authenticode signature is `Valid`
 
-Its signature checks, and where it finds the licence, have unit tests in `packaging/test_smoke_test.py`, which the `lint` job runs with `python3 -m unittest discover -s packaging -p 'test_*.py'`.
+Its signature checks, and where it finds the licence, have unit tests in `packaging/test_smoke_test.py`, and `packaging/test_workflows.py` checks that `release.yml` calls `ci.yml` and that `publish` needs both `ci` and `smoke`. The `lint` job runs them with `python3 -m unittest discover -s packaging -p 'test_*.py'`.
 
 === The Flatpak manifest
 
