@@ -117,6 +117,15 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Alt-Shift-F12
 |Alt-Shift-F12
 |`navigate.find_references`
+|Go to symbol in workspace
+|Cmd-T
+|Ctrl-T
+|`navigate.go_to_symbol`
+
+|Go to symbol in page
+|Cmd-R
+|Ctrl-R
+|`navigate.go_to_symbol_in_page`
 
 |Find in workspace
 |Cmd-Shift-F
