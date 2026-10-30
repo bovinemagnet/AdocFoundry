@@ -1,0 +1,579 @@
+# How PDF export treats each key of asciidoctor-pdf 2.3's Theme Keys Reference
+# (tests/fixtures/pdf/themes/reference-keys.txt): `key | status | note`.
+#
+# supported     the key has the effect asciidoctor-pdf gives it
+# approximated  the key has an effect, but not every value asciidoctor-pdf accepts does (the note
+#               says which do)
+# ignored       the export does not read the key (the note says what happens instead)
+#
+# `cargo test -p adoc-pdf --test theme_keys` checks that every reference key is here once, that
+# no key the template or the emitter names is marked ignored, and that the documentation's
+# table (src/docs/modules/ROOT/partials/theme-keys.adoc) is generated from this file; run it with
+# UPDATE_THEME_KEYS=1 to regenerate the table after changing this file.
+abstract_first_line_font_color | ignored | An abstract is set as an ordinary block.
+abstract_first_line_font_style | ignored | An abstract is set as an ordinary block.
+abstract_first_line_text_transform | ignored | An abstract is set as an ordinary block.
+abstract_font_color | ignored | An abstract is set as an ordinary block.
+abstract_font_size | ignored | An abstract is set as an ordinary block.
+abstract_font_style | ignored | An abstract is set as an ordinary block.
+abstract_line_height | ignored | An abstract is set as an ordinary block.
+abstract_padding | ignored | An abstract is set as an ordinary block.
+abstract_text_decoration | ignored | An abstract is set as an ordinary block.
+abstract_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+abstract_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+abstract_text_transform | ignored | An abstract is set as an ordinary block.
+abstract_title_align | ignored | An abstract is set as an ordinary block.
+abstract_title_font_color | ignored | An abstract is set as an ordinary block.
+abstract_title_font_family | ignored | An abstract is set as an ordinary block.
+abstract_title_font_kerning | ignored | Typst always kerns.
+abstract_title_font_size | ignored | An abstract is set as an ordinary block.
+abstract_title_font_style | ignored | An abstract is set as an ordinary block.
+abstract_title_text_align | ignored | An abstract is set as an ordinary block.
+abstract_title_text_decoration | ignored | An abstract is set as an ordinary block.
+abstract_title_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+abstract_title_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+abstract_title_text_transform | ignored | An abstract is set as an ordinary block.
+admonition_background_color | supported
+admonition_border_color | supported
+admonition_border_radius | supported
+admonition_border_style | ignored | Borders and rules are drawn solid.
+admonition_border_width | supported
+admonition_column_rule_color | supported
+admonition_column_rule_style | ignored | Borders and rules are drawn solid.
+admonition_column_rule_width | supported
+admonition_font_color | ignored | The content keeps the base font.
+admonition_font_family | ignored | The content keeps the base font.
+admonition_font_kerning | ignored | Typst always kerns.
+admonition_font_size | ignored | The content keeps the base font.
+admonition_font_style | ignored | The content keeps the base font.
+admonition_icon_<name>_image | ignored | Admonitions show their label as text; icons are not drawn.
+admonition_icon_<name>_name | ignored | Admonitions show their label as text; icons are not drawn.
+admonition_icon_<name>_size | ignored | Admonitions show their label as text; icons are not drawn.
+admonition_icon_<name>_stroke_color | ignored | Admonitions show their label as text; icons are not drawn.
+admonition_label_<name>_font_color | supported
+admonition_label_<name>_font_family | supported
+admonition_label_<name>_font_kerning | ignored | Typst always kerns.
+admonition_label_<name>_font_size | supported
+admonition_label_<name>_font_style | supported
+admonition_label_<name>_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+admonition_label_font_color | supported
+admonition_label_font_family | supported
+admonition_label_font_kerning | ignored | Typst always kerns.
+admonition_label_font_size | supported
+admonition_label_font_style | supported
+admonition_label_min_width | ignored | The label column is as wide as the label.
+admonition_label_padding | supported
+admonition_label_text_align | supported
+admonition_label_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+admonition_label_vertical_align | supported
+admonition_padding | supported
+admonition_text_transform | ignored | The content keeps the base font.
+base_border_color | supported
+base_border_width | ignored | Not read; the base text uses the base font family, size, colour, line height and alignment.
+base_font_color | supported
+base_font_family | supported
+base_font_kerning | ignored | Typst always kerns.
+base_font_size | supported
+base_font_size_min | ignored | Text is not shrunk to fit.
+base_font_style | ignored | Not read; the base text uses the base font family, size, colour, line height and alignment.
+base_hyphens | ignored | Hyphenation follows the document's `hyphens` attribute.
+base_line_height | supported
+base_line_height_length | ignored | Line spacing comes from `base_line_height`.
+base_text_align | supported
+base_text_decoration | ignored | Not read; the base text uses the base font family, size, colour, line height and alignment.
+base_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+base_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+base_text_transform | ignored | Not read; the base text uses the base font family, size, colour, line height and alignment.
+block_anchor_top | ignored | Links to a block lead to its top.
+block_margin_bottom | supported
+button_background_color | ignored | A button is set as text, without a box.
+button_border_color | ignored | A button is set as text, without a box.
+button_border_offset | ignored | A button is set as text, without a box.
+button_border_radius | ignored | A button is set as text, without a box.
+button_border_width | ignored | A button is set as text, without a box.
+button_content | supported
+button_font_color | supported
+button_font_family | supported
+button_font_size | supported
+button_font_style | supported
+callout_list_font_color | ignored | Callout lists use the base font and the list item spacing.
+callout_list_font_family | ignored | Callout lists use the base font and the list item spacing.
+callout_list_font_kerning | ignored | Typst always kerns.
+callout_list_font_size | ignored | Callout lists use the base font and the list item spacing.
+callout_list_font_style | ignored | Callout lists use the base font and the list item spacing.
+callout_list_item_spacing | ignored | Callout lists use the base font and the list item spacing.
+callout_list_line_height | ignored | Callout lists use the base font and the list item spacing.
+callout_list_margin_top_after_code | supported
+callout_list_marker_font_color | ignored | Callout lists use the base font and the list item spacing.
+callout_list_text_align | ignored | Callout lists use the base font and the list item spacing.
+callout_list_text_transform | ignored | Callout lists use the base font and the list item spacing.
+caption_align | supported | The older name of `caption_text_align`, read when that is not set.
+caption_background_color | ignored | Not read for captions.
+caption_end | ignored | Captions go above tables and examples, and below images and diagrams.
+caption_font_color | supported
+caption_font_family | supported
+caption_font_kerning | ignored | Typst always kerns.
+caption_font_size | supported
+caption_font_style | supported
+caption_margin_inside | supported
+caption_margin_outside | supported
+caption_text_align | supported
+caption_text_decoration | ignored | Not read for captions.
+caption_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+caption_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+caption_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+code_background_color | supported
+code_border_color | supported
+code_border_radius | supported
+code_border_style | ignored | Borders and rules are drawn solid.
+code_border_width | supported
+code_font_color | supported
+code_font_family | supported
+code_font_size | supported
+code_font_style | ignored | Code is set in the code font's regular style.
+code_highlight_background_color | ignored | Highlighted lines are not marked.
+code_line_gap | ignored | Lines are spaced by `code_line_height`.
+code_line_height | supported
+code_linenum_font_color | ignored | Line numbers are not shown.
+code_padding | supported
+codespan_background_color | supported
+codespan_border_color | ignored | Inline code has a background colour but no border.
+codespan_border_offset | ignored | Inline code has a background colour but no border.
+codespan_border_radius | ignored | Inline code has a background colour but no border.
+codespan_border_width | ignored | Inline code has a background colour but no border.
+codespan_font_color | supported
+codespan_font_family | supported
+codespan_font_size | supported
+codespan_font_style | supported
+conum_font_color | supported
+conum_font_family | supported
+conum_font_kerning | ignored | Typst always kerns.
+conum_font_size | ignored | Callout numbers use the conum font family and colour, at the code's size.
+conum_font_style | ignored | Callout numbers use the conum font family and colour, at the code's size.
+conum_glyphs | ignored | Callout numbers are always circled digits.
+conum_line_height | ignored | Callout numbers use the conum font family and colour, at the code's size.
+cover_back_image | ignored | Cover images are not supported.
+cover_front_image | ignored | Cover images are not supported.
+description_list_description_indent | supported
+description_list_term_font_color | supported
+description_list_term_font_family | supported
+description_list_term_font_kerning | ignored | Typst always kerns.
+description_list_term_font_size | supported
+description_list_term_font_style | supported
+description_list_term_line_height | ignored | Terms use the base line height.
+description_list_term_spacing | supported
+description_list_term_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+example_background_color | supported
+example_border_color | supported
+example_border_radius | supported
+example_border_style | ignored | Borders and rules are drawn solid.
+example_border_width | supported
+example_font_color | ignored | The content keeps the base font.
+example_font_family | ignored | The content keeps the base font.
+example_font_kerning | ignored | Typst always kerns.
+example_font_size | ignored | The content keeps the base font.
+example_font_style | ignored | The content keeps the base font.
+example_padding | supported
+example_text_transform | ignored | The content keeps the base font.
+extends | supported
+font_catalog | supported
+font_fallbacks | supported
+footer_<side>_<position>_content | supported
+footer_<side>_columns | supported
+footer_<side>_content_margin | ignored | Running content spans the page's content width.
+footer_<side>_margin | ignored | Running content spans the page's content width.
+footer_<side>_padding | ignored | Each side uses the periphery's own padding.
+footer_background_color | supported
+footer_background_image | ignored | Running content has no background image.
+footer_border_color | supported
+footer_border_style | ignored | Borders and rules are drawn solid.
+footer_border_width | supported
+footer_column_rule_color | ignored | Running content has no column rules.
+footer_column_rule_spacing | ignored | Running content has no column rules.
+footer_column_rule_style | ignored | Borders and rules are drawn solid.
+footer_column_rule_width | ignored | Running content has no column rules.
+footer_columns | supported
+footer_content_margin | ignored | Running content spans the page's content width.
+footer_font_color | supported
+footer_font_family | supported
+footer_font_kerning | ignored | Typst always kerns.
+footer_font_size | supported
+footer_font_style | supported
+footer_height | supported
+footer_image_vertical_align | ignored | Images in running content are aligned as text.
+footer_line_height | supported
+footer_margin | ignored | Running content spans the page's content width.
+footer_padding | supported
+footer_sectlevels | supported
+footer_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+footer_title_style | ignored | Running titles are the section's title text.
+footer_vertical_align | supported
+footnotes_font_color | supported
+footnotes_font_size | supported
+footnotes_font_style | ignored | Not read for footnotes.
+footnotes_item_spacing | supported
+footnotes_margin_top | ignored | Not read for footnotes.
+footnotes_text_transform | ignored | Not read for footnotes.
+header_<side>_<position>_content | supported
+header_<side>_columns | supported
+header_<side>_content_margin | ignored | Running content spans the page's content width.
+header_<side>_margin | ignored | Running content spans the page's content width.
+header_<side>_padding | ignored | Each side uses the periphery's own padding.
+header_background_color | supported
+header_background_image | ignored | Running content has no background image.
+header_border_color | supported
+header_border_style | ignored | Borders and rules are drawn solid.
+header_border_width | supported
+header_column_rule_color | ignored | Running content has no column rules.
+header_column_rule_spacing | ignored | Running content has no column rules.
+header_column_rule_style | ignored | Borders and rules are drawn solid.
+header_column_rule_width | ignored | Running content has no column rules.
+header_columns | supported
+header_content_margin | ignored | Running content spans the page's content width.
+header_font_color | supported
+header_font_family | supported
+header_font_kerning | ignored | Typst always kerns.
+header_font_size | supported
+header_font_style | supported
+header_height | supported
+header_image_vertical_align | ignored | Images in running content are aligned as text.
+header_line_height | supported
+header_margin | ignored | Running content spans the page's content width.
+header_padding | supported
+header_sectlevels | supported
+header_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+header_title_style | ignored | Running titles are the section's title text.
+header_vertical_align | supported
+heading_chapter_break_before | ignored | In a book, parts and chapters always start a new page; in an article, nothing does.
+heading_font_color | supported
+heading_font_family | supported
+heading_font_kerning | ignored | Typst always kerns.
+heading_font_style | supported
+heading_h<n>_border_color | ignored | Headings have no border or padding of their own.
+heading_h<n>_border_style | ignored | Borders and rules are drawn solid.
+heading_h<n>_border_width | ignored | Headings have no border or padding of their own.
+heading_h<n>_font_color | supported
+heading_h<n>_font_family | supported
+heading_h<n>_font_kerning | ignored | Typst always kerns.
+heading_h<n>_font_size | supported
+heading_h<n>_font_style | supported
+heading_h<n>_margin_bottom | supported
+heading_h<n>_margin_page_top | ignored | A heading at the top of a page has no top margin.
+heading_h<n>_margin_top | supported
+heading_h<n>_padding | ignored | Headings have no border or padding of their own.
+heading_h<n>_text_align | supported
+heading_h<n>_text_decoration | ignored | Headings are not decorated.
+heading_h<n>_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+heading_h<n>_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+heading_h<n>_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+heading_line_height | supported
+heading_margin_bottom | supported
+heading_margin_page_top | ignored | A heading at the top of a page has no top margin.
+heading_margin_top | supported
+heading_min_height_after | supported
+heading_part_break_after | ignored | In a book, parts and chapters always start a new page; in an article, nothing does.
+heading_part_break_before | ignored | In a book, parts and chapters always start a new page; in an article, nothing does.
+heading_text_align | supported
+heading_text_decoration | ignored | Headings are not decorated.
+heading_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+heading_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+heading_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+image_align | supported
+image_alt_content | ignored | A missing image shows its alt text in a lighter base colour.
+image_alt_font_color | ignored | A missing image shows its alt text in a lighter base colour.
+image_alt_font_family | ignored | A missing image shows its alt text in a lighter base colour.
+image_alt_font_kerning | ignored | Typst always kerns.
+image_alt_font_size | ignored | A missing image shows its alt text in a lighter base colour.
+image_alt_font_style | ignored | A missing image shows its alt text in a lighter base colour.
+image_border_color | ignored | Images are drawn without a border.
+image_border_fit | ignored | Images are drawn without a border.
+image_border_radius | ignored | Images are drawn without a border.
+image_border_style | ignored | Borders and rules are drawn solid.
+image_border_width | ignored | Images are drawn without a border.
+image_caption_align | ignored | Captions follow the `caption` keys: above tables, below images.
+image_caption_end | ignored | Captions follow the `caption` keys: above tables, below images.
+image_caption_max_width | ignored | A caption is as wide as the content area.
+image_caption_text_align | ignored | Captions follow the `caption` keys: above tables, below images.
+image_float_gap | ignored | Floated images are not supported.
+image_width | ignored | An image's width comes from its attributes.
+index_column_gap | supported
+index_columns | supported
+kbd_background_color | supported
+kbd_border_color | supported
+kbd_border_offset | supported
+kbd_border_radius | supported
+kbd_border_width | supported
+kbd_font_color | supported
+kbd_font_family | supported
+kbd_font_size | supported
+kbd_font_style | supported
+kbd_separator | supported
+link_background_color | ignored | Links have no background.
+link_border_offset | ignored | Links have no background.
+link_font_color | supported
+link_font_family | supported
+link_font_size | supported
+link_font_style | supported
+link_text_decoration | approximated | `underline` only.
+link_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+link_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+list_indent | supported
+list_item_spacing | supported
+list_marker_font_color | supported
+list_text_align | ignored | List items follow the base alignment.
+mark_background_color | supported
+mark_border_offset | supported
+mark_font_color | supported
+mark_font_style | supported
+menu_caret_content | ignored | The caret is always `›`.
+menu_font_color | supported
+menu_font_family | supported
+menu_font_size | supported
+menu_font_style | supported
+olist_marker_font_color | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+olist_marker_font_family | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+olist_marker_font_size | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+olist_marker_font_style | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+olist_marker_line_height | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+page_background_color | supported
+page_background_image | ignored | Page images are not supported.
+page_column_gap | ignored | The body is set in one column.
+page_columns | ignored | The body is set in one column.
+page_foreground_image | ignored | Page images are not supported.
+page_initial_zoom | ignored | The viewer's defaults apply.
+page_layout | supported
+page_margin | supported
+page_margin_inner | ignored | Recto and verso pages share `page_margin`.
+page_margin_outer | ignored | Recto and verso pages share `page_margin`.
+page_margin_rotated | ignored | Pages are not rotated.
+page_mode | ignored | The viewer's defaults apply.
+page_numbering_start_at | ignored | Page numbering starts at the body.
+page_size | supported
+prose_margin_bottom | supported
+prose_margin_inner | ignored | Paragraphs are not indented; `prose_margin_bottom` spaces them.
+prose_text_indent | ignored | Paragraphs are not indented; `prose_margin_bottom` spaces them.
+prose_text_indent_inner | ignored | Paragraphs are not indented; `prose_margin_bottom` spaces them.
+quote_background_color | ignored | Quotes and verses have only their left border.
+quote_border_color | supported
+quote_border_left_width | supported
+quote_border_radius | ignored | Quotes and verses have only their left border.
+quote_border_style | ignored | Borders and rules are drawn solid.
+quote_border_width | ignored | Quotes and verses have only their left border.
+quote_cite_font_color | supported
+quote_cite_font_family | supported
+quote_cite_font_kerning | ignored | Typst always kerns.
+quote_cite_font_size | supported
+quote_cite_font_style | supported
+quote_cite_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+quote_font_color | supported
+quote_font_family | supported
+quote_font_kerning | ignored | Typst always kerns.
+quote_font_size | supported
+quote_font_style | supported
+quote_padding | supported
+quote_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+quotes | ignored | Typographic quotes come from the AsciiDoc source.
+role_<name>_background_color | supported
+role_<name>_border_color | ignored | Roles have no border.
+role_<name>_border_offset | ignored | Roles have no border.
+role_<name>_border_radius | ignored | Roles have no border.
+role_<name>_border_width | ignored | Roles have no border.
+role_<name>_font_color | supported
+role_<name>_font_family | supported
+role_<name>_font_size | supported
+role_<name>_font_style | supported
+role_<name>_text_align | ignored | Roles do not align text.
+role_<name>_text_decoration | approximated | `underline` and `line-through`.
+role_<name>_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+role_<name>_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+role_<name>_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+running_content_start_at | supported
+section_indent | ignored | Sections are not indented.
+sidebar_background_color | supported
+sidebar_border_color | supported
+sidebar_border_radius | supported
+sidebar_border_style | ignored | Borders and rules are drawn solid.
+sidebar_border_width | supported
+sidebar_font_color | ignored | The content keeps the base font.
+sidebar_font_family | ignored | The content keeps the base font.
+sidebar_font_kerning | ignored | Typst always kerns.
+sidebar_font_size | ignored | The content keeps the base font.
+sidebar_font_style | ignored | The content keeps the base font.
+sidebar_padding | supported
+sidebar_text_transform | ignored | The content keeps the base font.
+sidebar_title_align | supported | The older name of `sidebar_title_text_align`, renamed when the theme loads.
+sidebar_title_font_color | supported
+sidebar_title_font_family | supported
+sidebar_title_font_kerning | ignored | Typst always kerns.
+sidebar_title_font_size | supported
+sidebar_title_font_style | supported
+sidebar_title_text_align | supported
+sidebar_title_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+svg_fallback_font_family | ignored | SVG text uses the fonts the theme registers.
+table_align | ignored | Tables span the content width.
+table_asciidoc_cell_style | ignored | AsciiDoc cells keep the base style.
+table_background_color | supported
+table_body_background_color | ignored | Body rows use `table_background_color` and the stripes.
+table_body_stripe_background_color | supported
+table_border_color | supported
+table_border_style | ignored | Borders and rules are drawn solid.
+table_border_width | supported
+table_caption_align | ignored | Captions follow the `caption` keys: above tables, below images.
+table_caption_end | ignored | Captions follow the `caption` keys: above tables, below images.
+table_caption_max_width | ignored | A caption is as wide as the content area.
+table_caption_text_align | ignored | Captions follow the `caption` keys: above tables, below images.
+table_cell_line_height | ignored | Cells use the base line height.
+table_cell_padding | supported
+table_font_color | ignored | Cells keep the base font; `table_font_size` sets their size.
+table_font_family | ignored | Cells keep the base font; `table_font_size` sets their size.
+table_font_kerning | ignored | Typst always kerns.
+table_font_size | supported
+table_font_style | ignored | Cells keep the base font; `table_font_size` sets their size.
+table_foot_background_color | ignored | Body rows use `table_background_color` and the stripes.
+table_foot_font_color | supported
+table_foot_font_family | supported
+table_foot_font_size | supported
+table_foot_font_style | supported
+table_grid_color | supported
+table_grid_style | ignored | Borders and rules are drawn solid.
+table_grid_width | supported
+table_head_background_color | supported
+table_head_border_bottom_color | ignored | The header row uses the grid colour and the cell padding.
+table_head_border_bottom_style | ignored | Borders and rules are drawn solid.
+table_head_border_bottom_width | supported
+table_head_cell_padding | ignored | The header row uses the grid colour and the cell padding.
+table_head_font_color | supported
+table_head_font_family | supported
+table_head_font_kerning | ignored | Typst always kerns.
+table_head_font_size | supported
+table_head_font_style | supported
+table_head_line_height | ignored | The header row uses the grid colour and the cell padding.
+table_head_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+table_header_cell_background_color | ignored | Header cells use the `table_head` keys.
+table_header_cell_font_color | ignored | Header cells use the `table_head` keys.
+table_header_cell_font_family | ignored | Header cells use the `table_head` keys.
+table_header_cell_font_size | ignored | Header cells use the `table_head` keys.
+table_header_cell_font_style | ignored | Header cells use the `table_head` keys.
+table_header_cell_text_transform | ignored | Header cells use the `table_head` keys.
+thematic_break_border_color | supported
+thematic_break_border_style | ignored | Borders and rules are drawn solid.
+thematic_break_border_width | supported
+thematic_break_padding | supported
+title_page | supported
+title_page_authors_content | ignored | The authors are listed with `title_page_authors_delimiter`.
+title_page_authors_delimiter | supported
+title_page_authors_display | supported
+title_page_authors_font_color | supported
+title_page_authors_font_family | supported
+title_page_authors_font_kerning | ignored | Typst always kerns.
+title_page_authors_font_size | supported
+title_page_authors_font_style | supported
+title_page_authors_margin_bottom | supported
+title_page_authors_margin_top | supported
+title_page_authors_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+title_page_background_color | supported
+title_page_background_image | ignored | Title page images are not supported beyond the logo.
+title_page_font_color | supported
+title_page_font_family | supported
+title_page_font_kerning | ignored | Typst always kerns.
+title_page_font_size | ignored | Each title page part has its own size and line height.
+title_page_font_style | supported
+title_page_line_height | ignored | Each title page part has its own size and line height.
+title_page_logo_align | supported
+title_page_logo_image | supported
+title_page_logo_top | supported
+title_page_revision_delimiter | supported
+title_page_revision_display | supported
+title_page_revision_font_color | supported
+title_page_revision_font_family | supported
+title_page_revision_font_kerning | ignored | Typst always kerns.
+title_page_revision_font_size | supported
+title_page_revision_font_style | supported
+title_page_revision_margin_bottom | supported
+title_page_revision_margin_top | supported
+title_page_revision_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+title_page_subtitle_display | supported
+title_page_subtitle_font_color | supported
+title_page_subtitle_font_family | supported
+title_page_subtitle_font_kerning | ignored | Typst always kerns.
+title_page_subtitle_font_size | supported
+title_page_subtitle_font_style | supported
+title_page_subtitle_line_height | supported
+title_page_subtitle_margin_bottom | supported
+title_page_subtitle_margin_top | supported
+title_page_subtitle_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+title_page_text_align | supported
+title_page_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+title_page_title_display | supported
+title_page_title_font_color | supported
+title_page_title_font_family | supported
+title_page_title_font_kerning | ignored | Typst always kerns.
+title_page_title_font_size | supported
+title_page_title_font_style | supported
+title_page_title_line_height | supported
+title_page_title_margin_bottom | supported
+title_page_title_margin_top | supported
+title_page_title_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+title_page_title_top | supported
+toc_break_after | ignored | The table of contents starts and ends on its own pages in a book.
+toc_dot_leader_content | supported
+toc_dot_leader_font_color | supported
+toc_dot_leader_font_size | ignored | Dot leaders use the entry's size.
+toc_dot_leader_font_style | ignored | Dot leaders use the entry's size.
+toc_dot_leader_levels | ignored | Every level has dot leaders.
+toc_font_color | supported
+toc_font_family | supported
+toc_font_kerning | ignored | Typst always kerns.
+toc_font_size | supported
+toc_font_style | supported
+toc_h<n>_font_color | supported
+toc_h<n>_font_family | supported
+toc_h<n>_font_kerning | ignored | Typst always kerns.
+toc_h<n>_font_size | ignored | Every level uses `toc_font_size`.
+toc_h<n>_font_style | supported
+toc_h<n>_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+toc_hanging_indent | ignored | Entries are indented by `toc_indent` per level.
+toc_indent | supported
+toc_line_height | supported
+toc_margin_top | ignored | The table of contents starts and ends on its own pages in a book.
+toc_text_decoration | ignored | Entries are not decorated.
+toc_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
+toc_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
+toc_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+toc_title_font_color | ignored | The contents title is set as a level 2 heading.
+toc_title_font_family | ignored | The contents title is set as a level 2 heading.
+toc_title_font_kerning | ignored | Typst always kerns.
+toc_title_font_size | ignored | The contents title is set as a level 2 heading.
+toc_title_font_style | ignored | The contents title is set as a level 2 heading.
+toc_title_text_align | ignored | The contents title is set as a level 2 heading.
+toc_title_text_transform | ignored | The contents title is set as a level 2 heading.
+ulist_marker_<type>_content | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_<type>_font_color | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_<type>_font_family | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_<type>_font_size | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_<type>_font_style | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_<type>_line_height | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_font_color | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_font_family | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_font_size | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_font_style | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+ulist_marker_line_height | ignored | Markers are set in the text font: `•`, `◦` and `▪`, or `1.`, `a.` and `i.`; `list_marker_font_color` colours them.
+verse_background_color | ignored | Quotes and verses have only their left border.
+verse_border_color | supported
+verse_border_left_width | supported
+verse_border_radius | ignored | Quotes and verses have only their left border.
+verse_border_style | ignored | Borders and rules are drawn solid.
+verse_border_width | ignored | Quotes and verses have only their left border.
+verse_cite_font_color | supported
+verse_cite_font_family | supported
+verse_cite_font_kerning | ignored | Typst always kerns.
+verse_cite_font_size | supported
+verse_cite_font_style | supported
+verse_cite_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
+verse_font_color | supported
+verse_font_family | supported
+verse_font_kerning | ignored | Typst always kerns.
+verse_font_size | supported
+verse_font_style | supported
+verse_padding | supported
+verse_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.

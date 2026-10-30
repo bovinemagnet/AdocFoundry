@@ -87,6 +87,11 @@ The flattened keys are passed to the template as a Typst dictionary under asciid
 A key asciidoctor-pdf reads is therefore a key the template can read.
 Only unknown top-level categories warn, because themes commonly keep variables in categories of their own.
 
+The classification of every asciidoctor-pdf 2.3 key lives in `crates/adoc-pdf/src/theme/compatibility.txt`, one `key | status | note` line each.
+The reference key list is `tests/fixtures/pdf/themes/reference-keys.txt`.
+`cargo test -p adoc-pdf --test theme_keys` checks that every reference key is classified once, that no key the template or the emitter names is marked ignored, and that the user guide's table is current.
+After changing the template's keys or the classification, run it with `UPDATE_THEME_KEYS=1` to regenerate `src/docs/modules/ROOT/partials/theme-keys.adoc`.
+
 `ThemeSource::named` picks the source from a name: a `.yml` name is a file, a bundled name is bundled, and any other name is `<name>-theme.yml` in the themes directory.
 
 == The emitter
