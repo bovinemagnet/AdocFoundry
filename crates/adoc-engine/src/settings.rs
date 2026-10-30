@@ -551,7 +551,7 @@ fn is_host_kind(kind: &str) -> bool {
     known
 }
 
-/// A sidebar tree's expansion: levels, 0 or more, or `"all"`.
+/// A language tag: letters, digits, `_` and `-`, as `en_GB` or `en-US`.
 fn language_tag(value: &toml::Value) -> Result<String, &'static str> {
     value
         .as_str()
@@ -565,6 +565,7 @@ fn language_tag(value: &toml::Value) -> Result<String, &'static str> {
         .ok_or("expected a language tag such as \"en_GB\"")
 }
 
+/// A sidebar tree's expansion: levels, 0 or more, or `"all"`.
 fn expansion(value: &toml::Value) -> Result<ExpansionPolicy, &'static str> {
     const EXPECTED: &str = "expected a whole number of levels, 0 or more, or \"all\"";
     if value.as_str() == Some("all") {
