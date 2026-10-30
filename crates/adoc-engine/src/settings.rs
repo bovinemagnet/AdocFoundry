@@ -226,7 +226,7 @@ pub struct PdfSettings {
     pub fonts_dir: Option<String>,
     /// The site cross references out of an exported book link to.
     pub site_url: Option<String>,
-    /// Standards every export conforms to: `pdf-a-2a`, `pdf-ua-1`.
+    /// Standards every export conforms to: `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a`, `pdf-ua-1`.
     pub standards: Vec<crate::PdfStandard>,
 }
 
@@ -246,6 +246,8 @@ impl Default for PdfSettings {
 #[must_use]
 pub fn pdf_standard(name: &str) -> Option<crate::PdfStandard> {
     match name {
+        "pdf-a-1b" | "a-1b" => Some(crate::PdfStandard::A1b),
+        "pdf-a-1a" | "a-1a" => Some(crate::PdfStandard::A1a),
         "pdf-a-2a" | "a-2a" => Some(crate::PdfStandard::A2a),
         "pdf-ua-1" | "ua-1" => Some(crate::PdfStandard::Ua1),
         _ => None,
@@ -506,7 +508,7 @@ impl Settings {
                     .iter()
                     .map(|item| item.as_str().and_then(pdf_standard))
                     .collect::<Option<_>>()
-                    .ok_or("expected \"pdf-a-2a\" or \"pdf-ua-1\"")?;
+                    .ok_or("expected \"pdf-a-1b\", \"pdf-a-1a\", \"pdf-a-2a\" or \"pdf-ua-1\"")?;
             }
             _ => return Err("unknown setting"),
         }
@@ -689,13 +691,20 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join(WORKSPACE_SETTINGS_FILE),
-            "[pdf]\ntheme = \"acme\"\nthemes_dir = \"resources/themes\"\nstandards = [\"pdf-a-2a\"]\n",
+            "[pdf]\ntheme = \"acme\"\nthemes_dir = \"resources/themes\"\nstandards = [\"pdf-a-2a\", \"pdf-a-1b\", \"pdf-a-1a\"]\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.pdf.theme, "acme");
         assert_eq!(settings.pdf.themes_dir.as_deref(), Some("resources/themes"));
-        assert_eq!(settings.pdf.standards, vec![crate::PdfStandard::A2a]);
+        assert_eq!(
+            settings.pdf.standards,
+            vec![
+                crate::PdfStandard::A2a,
+                crate::PdfStandard::A1b,
+                crate::PdfStandard::A1a
+            ]
+        );
         assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
     }
 

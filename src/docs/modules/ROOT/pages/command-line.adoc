@@ -14,7 +14,7 @@ adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
-    [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+    [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
@@ -177,8 +177,8 @@ Without a version, `--component` uses the latest version of the component.
 |`--output <file.pdf>`
 |Where to write the PDF.
 
-|`--standard pdf-a-2a\|pdf-ua-1`
-|Make the PDF conform to a standard. Repeat the option to ask for both. Standards in `[pdf] standards` also apply.
+|`--standard pdf-a-1b\|pdf-a-1a\|pdf-a-2a\|pdf-ua-1`
+|Make the PDF conform to a standard. Repeat the option to ask for more than one. Standards in `[pdf] standards` also apply.
 
 |`--typst <file.typ>`
 |Also write the generated Typst source, for inspection.

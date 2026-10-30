@@ -358,6 +358,7 @@ It was not adopted, and its design (steps with inverses, step maps, marks on tex
 This section summarises section 11 of `docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`.
 Where it differs from the earlier sections of that specification, section 11 wins.
 Not in Phase 4, by decision: typeset STEM, a live Typst preview, PDF/A-1 and PDF/UA-2, cover images beyond a full-page image, and asciidoctor-pdf's Ruby extensions.
+PDF/A-1b and PDF/A-1a were added later (issue #63), and PDF/UA-2 waits on Typst, which writes only PDF/UA-1.
 
 [cols="1,2,3,3"]
 |===

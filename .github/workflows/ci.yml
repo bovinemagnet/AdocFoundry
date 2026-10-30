@@ -64,7 +64,9 @@ jobs:
       - run: cargo build -p adoc-ls --all-features
 
   pdf-standards:
-    # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1.
+    # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1,
+    # and the article as PDF/A-1b and PDF/A-1a (the book's Mermaid diagram uses transparency,
+    # which PDF/A-1 forbids).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,15 +80,22 @@ jobs:
           cli=target/release/adocfoundry-cli
           $cli pdf tests/fixtures/pdf/reference/article.adoc --standard pdf-a-2a --output out/article-a.pdf
           $cli pdf tests/fixtures/pdf/reference/article.adoc --standard pdf-ua-1 --output out/article-ua.pdf
+          $cli pdf tests/fixtures/pdf/reference/article.adoc --standard pdf-a-1b --output out/article-a1b.pdf
+          $cli pdf tests/fixtures/pdf/reference/article.adoc --standard pdf-a-1a --output out/article-a1a.pdf
           cp -R tests/fixtures/pdf/book /tmp/book
           (cd /tmp/book && "$GITHUB_WORKSPACE/$cli" pdf guide --standard pdf-a-2a --standard pdf-ua-1 --output "$GITHUB_WORKSPACE/out/book.pdf")
       - name: Validate with veraPDF
         run: |
           verapdf() { docker run --rm -v "$PWD/out:/data" verapdf/cli:v1.30.3 --format text "$@"; }
-          result=$( { verapdf --flavour 2a /data/article-a.pdf /data/book.pdf; verapdf --flavour ua1 /data/article-ua.pdf /data/book.pdf; } || true )
+          result=$( {
+            verapdf --flavour 2a /data/article-a.pdf /data/book.pdf
+            verapdf --flavour ua1 /data/article-ua.pdf /data/book.pdf
+            verapdf --flavour 1b /data/article-a1b.pdf
+            verapdf --flavour 1a /data/article-a1a.pdf
+          } || true )
           echo "$result"
           if echo "$result" | grep -q '^FAIL'; then exit 1; fi
-          test "$(echo "$result" | grep -c '^PASS')" -eq 4
+          test "$(echo "$result" | grep -c '^PASS')" -eq 6
 
   grammar:
     runs-on: ubuntu-latest

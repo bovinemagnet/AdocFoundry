@@ -7,6 +7,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Added
 
 - Files, Navigation and Modules follow the active page: whenever another page or image becomes active, each panel selects its row, opening the folders and branches above it and scrolling it into view, without taking focus. `[sidebar] follow_active = false` turns this off (#151).
+- PDF/A-1b and PDF/A-1a output: `--standard pdf-a-1b|pdf-a-1a`, `[pdf] standards` and the MCP server's `export_pdf`, validated by veraPDF in CI. PDF/A-1 forbids transparency, so a page with a transparent image or a Mermaid diagram fails with the line of the image; PDF/UA-2 waits on Typst, which writes only PDF/UA-1 (#63).
 
 ### Fixed
 
