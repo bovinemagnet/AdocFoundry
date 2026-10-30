@@ -6,15 +6,15 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{Engine, EngineError, ExportArgs, ExportTarget, PdfStandard};
+use crate::{Engine, EngineError, ExportArgs, ExportTarget, FileAccess, PdfStandard};
 
 /// A saved publication.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfProfile {
     pub name: String,
     pub content: ProfileContent,
-    /// Where the PDF is written, relative to the first workspace root; `<name>.pdf` there when
-    /// unset.
+    /// Where the PDF is written, relative to the first workspace root and inside it;
+    /// `<name>.pdf` there when unset.
     pub output: Option<String>,
     /// A bundled theme, a name in the themes directory, or a theme file relative to the first
     /// workspace root; otherwise the page's `pdf-theme`, then `[pdf] theme`.
@@ -180,6 +180,14 @@ impl Engine {
                 .as_deref()
                 .unwrap_or(&format!("{}.pdf", profile.name)),
         );
+        // A profile comes with the workspace's files, so it writes only inside the workspace,
+        // lexically and once links are followed; a front end's own output choice is not limited.
+        if !FileAccess::Within(vec![root.clone()]).permits(&output) {
+            return Err(EngineError::Refused(format!(
+                "PDF profile `{name}` writes {}, which is outside the workspace",
+                output.display()
+            )));
+        }
         // A theme file is the workspace's; a name is looked up as any theme name is.
         let theme = profile.theme.as_ref().map(|theme| {
             if theme.ends_with(".yml") || theme.ends_with(".yaml") {

@@ -268,6 +268,7 @@ Diagrams that failed are reported as warnings.
 
 `crates/adoc-engine/src/profiles.rs` holds `PdfProfile`, `ProfileContent` and the parser for the `[pdf.profiles.<name>]` tables.
 `Engine::profile_export_args(name)` turns a profile into `ExportArgs`, with every path resolved against the first root.
+`Engine::profile_export_args` refuses an output outside the first root, checked with `FileAccess::Within` (lexically and once links are followed).
 Both front ends export those arguments: the application through `export.pdf_profile`, and the command line through `export_blocking`.
 `Engine::pdf_themes()` lists the bundled themes and those in `[pdf] themes_dir` for the theme browser.
 

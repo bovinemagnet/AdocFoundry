@@ -260,3 +260,32 @@ fn themes_lists_the_bundled_and_the_workspace_themes() {
     );
     assert!(!names.contains(&"notes"));
 }
+
+#[test]
+fn a_profile_cannot_write_outside_the_workspace() {
+    // A profile comes with the repository, so it may not write where its reader did not choose.
+    let outside = tempfile::tempdir().unwrap();
+    let absolute = outside.path().join("escape.pdf");
+    let settings = format!(
+        "[pdf.profiles.up]\npage = \"guide/modules/ROOT/pages/install.adoc\"\noutput = \"../escape.pdf\"\n\n\
+         [pdf.profiles.absolute]\npage = \"guide/modules/ROOT/pages/install.adoc\"\noutput = {:?}\n\n\
+         [pdf.profiles.linked]\npage = \"guide/modules/ROOT/pages/install.adoc\"\noutput = \"link/escape.pdf\"\n\n\
+         [pdf.profiles.inside]\npage = \"guide/modules/ROOT/pages/install.adoc\"\noutput = \"build/../out/x.pdf\"\n",
+        absolute.display().to_string()
+    );
+    let (_directory, root, engine) = book_workspace(&settings);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), root.join("link")).unwrap();
+    let mut refused = vec!["up", "absolute"];
+    if cfg!(unix) {
+        refused.push("linked");
+    }
+    for name in refused {
+        let error = engine.profile_export_args(name).unwrap_err().to_string();
+        assert!(error.contains("outside the workspace"), "{name}: {error}");
+    }
+    assert_eq!(
+        engine.profile_export_args("inside").unwrap().output,
+        root.join("out/x.pdf")
+    );
+}

@@ -80,7 +80,7 @@ These keys are optional.
 |Key |Meaning
 
 |`output`
-|Where to write the PDF, relative to the first workspace folder. The default is `<name>.pdf` there. Missing folders are created.
+|Where to write the PDF, relative to the first workspace folder. The default is `<name>.pdf` there. Missing folders are created. The output must be inside the workspace folder. A profile whose output would be written outside it, through `..`, an absolute path elsewhere, or a symbolic link out of the workspace, is refused when it is run, because profiles come with a repository's files and must not write where you did not choose. The command line's `--output` and the app's save dialog are not limited.
 
 |`theme`
 |A bundled theme, a name found in `[pdf] themes_dir`, or a `.yml` file relative to the first workspace folder.
