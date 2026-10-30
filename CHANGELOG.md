@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Bold, italic, monospace and highlighted text broken over two lines of a paragraph is highlighted in the editor.
+
 ## 0.4.0 — 2026-10-27
 
 ### Added
