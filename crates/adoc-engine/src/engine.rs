@@ -59,6 +59,8 @@ pub struct Engine {
     pub(crate) next_preview: u64,
     pub(crate) next_search: u64,
     pub(crate) group_moves: BTreeMap<UndoGroup, Vec<crate::FileMove>>,
+    /// The files each group made, which undoing it deletes.
+    pub(crate) group_created: BTreeMap<UndoGroup, Vec<crate::new_page::CreatedFile>>,
     /// The documents taking part in each applied preview's group, which is undone and redone
     /// only as a whole.
     pub(crate) group_documents: BTreeMap<UndoGroup, Vec<DocumentId>>,
@@ -138,6 +140,7 @@ impl Engine {
             next_preview: 1,
             next_search: 1,
             group_moves: BTreeMap::new(),
+            group_created: BTreeMap::new(),
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
             rendered: crate::rendered::PreviewState::default(),
@@ -612,6 +615,7 @@ impl Engine {
             }
         }
         self.replay_moves(group, true);
+        self.replay_creations(group, true);
         true
     }
 
@@ -646,6 +650,7 @@ impl Engine {
             }
         }
         self.replay_moves(group, false);
+        self.replay_creations(group, false);
         true
     }
 

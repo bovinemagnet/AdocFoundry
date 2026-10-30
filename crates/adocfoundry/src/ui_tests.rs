@@ -2757,6 +2757,41 @@ fn open_recent_opens_the_folder_chosen(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn new_page_makes_the_page_opens_it_and_lists_it_in_the_navigation(cx: &mut TestAppContext) {
+    let (directory, app, workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let root = adoc_index::normalize_path(directory.path());
+    cx.dispatch_action(crate::editor::bindings::NewPage);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    cx.simulate_input("Release Notes");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    let page = root.join("alpha/modules/ROOT/pages/release-notes.adoc");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Release Notes\n");
+    let active = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .path
+            .clone()
+    });
+    assert_eq!(active, page);
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .tree_rows_for_test(adoc_engine::SidebarPanel::Navigation, cx)
+                .iter()
+                .any(|row| row.contains("Release Notes") || row.contains("release-notes"))
+        })
+    }));
+}
+
+#[gpui::test]
 fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
     let text = "= Page\n\nSome plain words.\n";
     let (app, _, visual, id, mut cx) = visual_workspace(text, cx);

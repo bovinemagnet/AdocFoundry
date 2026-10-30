@@ -33,6 +33,7 @@ mod language;
 mod line_diff;
 mod local_history;
 mod navigation;
+mod new_page;
 #[cfg(feature = "typst")]
 mod pdf_preview;
 mod preview;
@@ -82,6 +83,7 @@ pub use language::{SymbolMatch, SYMBOL_RESULTS};
 pub use line_diff::{line_diff, DiffLine, DIFF_CONTEXT};
 pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE, HISTORY_SWEEP_INTERVAL};
 pub use navigation::NavigationPosition;
+pub use new_page::{NewPage, PageModule};
 #[cfg(feature = "typst")]
 pub use pdf_preview::PdfPreview;
 pub use preview::{

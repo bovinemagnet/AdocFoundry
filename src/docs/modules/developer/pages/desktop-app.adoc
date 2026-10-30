@@ -269,6 +269,14 @@ The Open Recent Folder picker is the command palette's `Command` with its built-
 It shows the folders from `workspace.open_recent` and opens the chosen one with `workspace.open_folder`.
 See xref:engine.adoc#sessions[Sessions and recent folders] in the engine.
 
+== New Page
+
+`WorkspaceView::on_new_page` builds the New Page dialog from `Engine::new_page_modules`.
+It is an alert dialog holding an input for the title, gpui-component's `Select` for the module and a `Checkbox` for the navigation entry, which is disabled when the chosen module has no `nav`.
+Create invokes `page.new` with `CommandArgs::NewPage`.
+When the command is refused the dialog stays open, so that another title can be tried, and the reason is shown in a notification.
+See xref:engine.adoc#new-page[New Page] in the engine.
+
 [[image-viewer]]
 == The image viewer
 

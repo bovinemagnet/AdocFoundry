@@ -83,6 +83,7 @@ It provides:
 * A source editor with syntax highlighting, folding, diagnostics as you type, hover and completion.
 * Link following for `xref:`, `include::` and `+{attribute}+` references, with back and forward history and a read-only peek at includes.
 * Workspace find and replace, and page rename that rewrites every xref, both with a preview and a single undo step.
+* New pages made in a module, with an entry added to its navigation in the same undo step.
 * A command palette, light and dark themes, a read-only second window and TOML settings.
 
 The following are not implemented yet:
