@@ -210,7 +210,7 @@ A font that cannot be read is a warning.
 * Admonitions, code, inline code, tables, lists, description lists, quotes, verses, sidebars, examples, captions, images and thematic breaks.
 * Links, marks, `kbd`, buttons, menus, footnotes, roles and the index.
 
-A theme key that the converter does not use is ignored.
+Which keys take effect, which are approximated and which are ignored is listed key by key in xref:pdf-theme-keys.adoc[].
 An unknown top-level category produces a warning, and its keys are still available as variables.
 
 == Running content and the title page

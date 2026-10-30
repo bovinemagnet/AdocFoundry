@@ -303,3 +303,37 @@ fn stem_alt_text_is_the_source() {
         "{tree:?}"
     );
 }
+
+#[test]
+fn index_columns_sets_the_index_columns() {
+    // Enough terms to fill more than one column.
+    let mut text = String::from("= Guide\n\n");
+    for number in 0..120 {
+        let _ = std::fmt::Write::write_fmt(&mut text, format_args!("A ((term{number:03})).\n\n"));
+    }
+    text.push_str("[index]\n== Index\n");
+    let view = common::view_of_text(Path::new("/doc/guide.adoc"), &text);
+    let columns = |count: u32| {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("columns-theme.yml");
+        std::fs::write(
+            &path,
+            format!("extends: default\nindex:\n  columns: {count}\n"),
+        )
+        .unwrap();
+        let theme = adoc_pdf::load_theme(&adoc_pdf::ThemeSource::File(path)).unwrap();
+        let typst = to_typst(&common::article(view.clone()), &theme, &options(&[]));
+        let pages = typeset_pages(&typst, &theme, &options(&[])).unwrap_or_else(|e| panic!("{e}"));
+        let mut lefts: Vec<i64> = pages
+            .iter()
+            .flat_map(|page| &page.runs)
+            .filter(|run| run.text.starts_with("term"))
+            .map(|run| run.x.round() as i64)
+            .collect();
+        lefts.sort_unstable();
+        lefts.dedup();
+        lefts.len()
+    };
+    assert_eq!(columns(1), 1);
+    assert_eq!(columns(3), 3);
+}
