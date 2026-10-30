@@ -68,7 +68,7 @@ A failed write can no longer leave a truncated file.
 [#crash-recovery]
 === Recovering unsaved changes
 
-While a page has unsaved edits, the app keeps a copy of its text in a `recovery` folder beside the user settings file (`adocfoundry.toml`; see xref:settings.adoc[Settings] for where that is).
+While a page has unsaved edits, the app keeps a copy of its text in a `recovery` folder in the app's state folder (see xref:settings.adoc#state-folder[Settings] for where that is).
 The copy is written two seconds after you stop typing, and again when the app quits.
 Untitled pages are kept too.
 The copy is removed as soon as the page is saved, closed without saving, or its edits are undone back to the saved text.
@@ -93,6 +93,7 @@ With nothing to recover it says so.
 It has no key.
 
 A page whose file was deleted since is recovered at its old path, and saving writes the file again.
+A page renamed or moved with Rename Page has its copy rewritten under the new path, so it is recovered there.
 
 Several copies of the app can run at once.
 Each holds a lock while it runs, so one app never offers another running app's unsaved text, nor its own.
@@ -103,7 +104,7 @@ Only the desktop app does this.
 [#local-history]
 === Local history
 
-Each save keeps the saved text in a `history` folder beside the user settings file, with one folder for each page.
+Each save keeps the saved text in a `history` folder in the app's state folder, with one folder for each page.
 This covers Save, Save All, auto-save, Overwrite and the save before a commit.
 The first time the history sees a page, and whenever the file on disk is not the text it last kept, the save also keeps the text it replaces.
 That is the file as it was before your first save, or a change made outside the app.
@@ -115,8 +116,12 @@ Restore puts that version in the page as one undo step, unsaved, so Undo brings 
 With no versions yet the dialog says "This page has no saved versions yet: each save keeps one."
 Untitled pages have no history.
 
-Old versions are removed when that page is saved, and every page's once per session at the first save.
-The `[history]` settings choose whether history is kept, how many days it is kept and how many versions each page keeps; see xref:settings.adoc[Settings].
+A page renamed or moved with Rename Page takes its history with it, joined with any history the new path already had.
+A page renamed by another program starts a new history.
+
+Old versions are removed when that page is saved.
+At the first save of a session, and then at most once an hour, a save also prunes every page's history and then removes the oldest versions of any page until the whole history is under its size limit.
+The `[history]` settings choose whether history is kept, how many days it is kept, how many versions each page keeps and how much space the whole history may use; see xref:settings.adoc[Settings].
 
 Local history is independent of Git.
 It keeps saves that were never committed, and it works in a folder that is not a repository.
@@ -959,6 +964,6 @@ A local branch that is ahead of its remote still gets a link.
 
 == Known limits
 
-* Crash recovery and local history are kept only when the app has a user settings folder to keep them in.
+* Crash recovery and local history are kept only when the app has a state folder to keep them in.
 * Input-method (IME) composition has not been verified by hand on any platform.
 * Frame timing during long typing bursts has not been captured on every platform.

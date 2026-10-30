@@ -91,7 +91,7 @@ They invoke `document.recover`, `document.discard_recovery` and `document.restor
 `WorkspaceView::offer_recovery_at_start_up` opens the recovery dialog after the window is first drawn (`window.defer`) when `Engine::recoverable()` is not empty.
 `on_recover_unsaved` and `on_local_history` handle the File menu items, whose actions are `RecoverUnsaved` and `LocalHistory`.
 Neither has a default key binding.
-`AppState::new` enables recovery and local history, and `cx.on_app_quit` calls `Engine::write_recovery_now()` so that pages unsaved at quit are offered at the next launch.
+`main.rs` sets the state folder with `.with_state_dir(Settings::default_state_dir())`, `AppState::new` enables recovery and local history, and `cx.on_app_quit` calls `Engine::write_recovery_now()` so that pages unsaved at quit are offered at the next launch.
 See xref:engine.adoc#crash-recovery[Crash recovery] and xref:engine.adoc#local-history[Local history].
 
 == Window focus

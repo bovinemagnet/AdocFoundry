@@ -21,7 +21,11 @@ Open Settings creates it if it is missing.
 Saving either file applies it.
 Reload Settings re-reads both.
 
-The app also keeps two folders beside `adocfoundry.toml`: `recovery`, holding copies of unsaved pages until they are saved or closed, and `history`, holding saved versions of pages.
+[#state-folder]
+The app also keeps two folders in its state folder, `adocfoundry` under the platform's local state location: `$XDG_STATE_HOME/adocfoundry` on Linux, normally `~/.local/state/adocfoundry`; `~/Library/Application Support/adocfoundry` on macOS; and `%LOCALAPPDATA%\adocfoundry` on Windows.
+It is local, never roaming, because the settings file is often synchronised or kept in a dotfiles repository and copies of pages should not travel with it.
+The folders are `recovery`, holding copies of unsaved pages until they are saved or closed, and `history`, holding saved versions of pages.
+`update-state.toml` and `sidebar-state.json` stay beside the settings file.
 See xref:using-the-editor.adoc#crash-recovery[Recovering unsaved changes] and xref:using-the-editor.adoc#local-history[Local history].
 
 == Example
@@ -238,6 +242,11 @@ check = true                     # look for a newer release at start-up
 |positive integer
 |`50`
 |The most versions kept for each page. The oldest go first.
+
+|`history.max_size_mb`
+|positive integer
+|`256`
+|The history of every page together is kept under this many megabytes. The oldest versions of any page are removed first.
 
 |`updates.check`
 |boolean

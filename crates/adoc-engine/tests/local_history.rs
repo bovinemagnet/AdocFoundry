@@ -33,15 +33,25 @@ impl Setup {
         adoc_engine::normalize_path(&self.pages.path().join("page.adoc"))
     }
 
+    /// The app's state folder, apart from the settings file.
+    fn state(&self) -> PathBuf {
+        self.user.parent().unwrap().join("state")
+    }
+
     fn store(&self) -> PathBuf {
-        self.user.parent().unwrap().join(HISTORY_DIR)
+        self.state().join(HISTORY_DIR)
+    }
+
+    /// The settings as the app loads them, with its state folder.
+    fn settings(&self) -> Settings {
+        Settings::load(Some(&self.user), None)
+            .unwrap()
+            .with_git_opt_in()
+            .with_state_dir(Some(self.state()))
     }
 
     fn engine(&self) -> Engine {
-        let settings = Settings::load(Some(&self.user), None)
-            .unwrap()
-            .with_git_opt_in();
-        let mut engine = Engine::with_clock(settings, Arc::new(ManualClock::new()));
+        let mut engine = Engine::with_clock(self.settings(), Arc::new(ManualClock::new()));
         engine.enable_local_history();
         engine
     }
@@ -211,10 +221,7 @@ fn a_version_is_named_only_by_what_the_history_lists() {
 fn no_history_is_kept_when_turned_off_or_not_asked_for() {
     for (settings, enable) in [("[history]\nenabled = false\n", true), ("", false)] {
         let setup = Setup::new(settings);
-        let settings = Settings::load(Some(&setup.user), None)
-            .unwrap()
-            .with_git_opt_in();
-        let mut engine = Engine::new(settings);
+        let mut engine = Engine::new(setup.settings());
         if enable {
             engine.enable_local_history();
         }
@@ -223,4 +230,107 @@ fn no_history_is_kept_when_turned_off_or_not_asked_for() {
         assert!(!setup.store().exists());
         assert!(history(&mut engine, id).is_empty());
     }
+}
+
+fn now_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+}
+
+/// The versions in another page's folder of the store, by name.
+fn versions_in(folder: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(folder)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name != "path")
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+#[test]
+fn the_whole_history_is_kept_under_max_size_mb_oldest_first() {
+    let setup = Setup::new("[history]\nmax_size_mb = 1\n");
+    // Another page's history from an earlier session: 1.2 MB in two versions.
+    let other = setup.store().join("0123456789abcdef0123456789abcdef");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("path"), "/elsewhere/other.adoc").unwrap();
+    let big = "x".repeat(600 * 1024);
+    let now = now_millis();
+    let older = format!("{}-aaaaaaaaaaaaaaaa", now - 2000);
+    let newer = format!("{}-bbbbbbbbbbbbbbbb", now - 1000);
+    fs::write(other.join(&older), &big).unwrap();
+    fs::write(other.join(&newer), &big).unwrap();
+
+    let clock = ManualClock::new();
+    let mut engine = Engine::with_clock(setup.settings(), Arc::new(clock.clone()));
+    engine.enable_local_history();
+    let id = engine.open(&setup.page()).unwrap();
+    save_as_text(&mut engine, id, "second\n");
+    assert_eq!(
+        versions_in(&other),
+        [newer],
+        "the oldest version went first"
+    );
+    assert_eq!(texts(&engine, &setup), ["second\n", "first\n"]);
+
+    // Checked again once an hour, not at every save.
+    let latest = format!("{}-cccccccccccccccc", now_millis());
+    fs::write(other.join(&latest), &big).unwrap();
+    save_as_text(&mut engine, id, "third\n");
+    assert_eq!(versions_in(&other).len(), 2);
+    clock.advance(adoc_engine::HISTORY_SWEEP_INTERVAL);
+    save_as_text(&mut engine, id, "fourth\n");
+    assert_eq!(versions_in(&other), [latest]);
+}
+
+#[test]
+fn a_renamed_page_keeps_its_history() {
+    let setup = Setup::new("");
+    let mut engine = setup.engine();
+    engine
+        .open_workspace(vec![setup.pages.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let id = engine.open(&setup.page()).unwrap();
+    save_as_text(&mut engine, id, "second\n");
+    let renamed = adoc_engine::normalize_path(&setup.pages.path().join("renamed.adoc"));
+    let Ok(CommandOutcome::Preview(preview)) = engine.invoke(
+        ids::PAGE_RENAME,
+        CommandArgs::Rename {
+            id,
+            new_path: renamed.clone(),
+        },
+    ) else {
+        panic!("no rename preview");
+    };
+    engine
+        .invoke(
+            ids::WORKSPACE_APPLY_PREVIEW,
+            CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+        )
+        .unwrap();
+
+    assert!(engine.local_history(&setup.page()).is_empty());
+    let versions = history(&mut engine, id);
+    assert_eq!(versions.len(), 2);
+    assert_eq!(
+        engine.saved_version(&renamed, &versions[1].id).unwrap(),
+        "first\n"
+    );
+    save_as_text(&mut engine, id, "third\n");
+    assert_eq!(engine.local_history(&renamed).len(), 3);
+    // The folder names the page at its new path.
+    let folders: Vec<_> = fs::read_dir(setup.store()).unwrap().flatten().collect();
+    assert_eq!(folders.len(), 1);
+    assert_eq!(
+        fs::read_to_string(folders[0].path().join("path")).unwrap(),
+        renamed.display().to_string()
+    );
 }

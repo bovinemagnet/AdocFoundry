@@ -69,7 +69,7 @@ pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use images::{is_image_path, ImageId, OpenImage, IMAGE_EXTENSIONS};
 pub use inspect::resource_id_string;
 pub use line_diff::{line_diff, DiffLine, DIFF_CONTEXT};
-pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE};
+pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE, HISTORY_SWEEP_INTERVAL};
 pub use navigation::NavigationPosition;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,

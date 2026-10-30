@@ -1,5 +1,5 @@
 //! Crash recovery: the text of each page with unsaved edits is written to a recovery store
-//! beside the user settings file once typing pauses for [`RECOVERY_SETTLE`], and removed once
+//! in the app's state folder ([`crate::Settings::state_dir`]) once typing pauses for [`RECOVERY_SETTLE`], and removed once
 //! the page is saved, closed or back to its saved text. A session that ended without saving
 //! leaves its records behind, and the next session offers them back.
 //!
@@ -28,7 +28,7 @@ use crate::{
 /// How long a page must go unedited before its unsaved text is written to the store.
 pub const RECOVERY_SETTLE: Duration = Duration::from_secs(2);
 
-/// The store's folder, beside the user settings file.
+/// The store's folder, in the app's state folder.
 pub const RECOVERY_DIR: &str = "recovery";
 
 const FORMAT_VERSION: u64 = 1;
@@ -309,8 +309,7 @@ impl Engine {
             return None;
         }
         self.settings
-            .user_file()
-            .and_then(Path::parent)
+            .state_dir()
             .map(|directory| directory.join(RECOVERY_DIR))
     }
 

@@ -1,5 +1,5 @@
-//! Local history: the versions of each page as it was saved, kept beside the user settings
-//! file independently of Git, to compare with the page and restore.
+//! Local history: the versions of each page as it was saved, kept in the app's state folder
+//! ([`crate::Settings::state_dir`]) independently of Git, to compare with the page and restore.
 //!
 //! Each page has a folder in the store, named from a digest of its path, holding one file per
 //! version named `<milliseconds>-<digest of the text>`. Every save keeps the text written, and
@@ -11,7 +11,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use adoc_core::SourceRange;
@@ -24,7 +24,7 @@ use crate::{
     DiffLine, DocumentId, Engine, EngineError, TextEdit,
 };
 
-/// The store's folder, beside the user settings file.
+/// The store's folder, in the app's state folder.
 pub const HISTORY_DIR: &str = "history";
 
 /// Pages larger than this are not kept.
@@ -33,13 +33,18 @@ pub const HISTORY_MAX_PAGE: usize = 4 * 1024 * 1024;
 /// The file in each page's folder that names the page.
 const PATH_FILE: &str = "path";
 
+/// How often a save also prunes every page's folder and keeps the whole history under
+/// `[history] max_size_mb`.
+pub const HISTORY_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
 const DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
+const MEGABYTE: u64 = 1024 * 1024;
 
 #[derive(Default)]
 pub(crate) struct LocalHistory {
     enabled: bool,
-    /// Whether every page's folder has been pruned this session, not only those saved.
-    swept: bool,
+    /// When every page's folder was last pruned, not only the one saved.
+    swept: Option<Instant>,
 }
 
 /// A saved version of a page.
@@ -227,10 +232,35 @@ impl Engine {
             }
         }
         self.prune_history(&folder);
-        if !self.local_history.swept {
-            self.local_history.swept = true;
+        let now = self.clock.now();
+        let due = self
+            .local_history
+            .swept
+            .is_none_or(|swept| now >= swept + HISTORY_SWEEP_INTERVAL);
+        if due {
+            self.local_history.swept = Some(now);
             self.sweep_history();
         }
+    }
+
+    /// Moves the history of the page at `from` to its new path `to`, joining any history
+    /// `to` had. A failure leaves the versions where they were.
+    pub(crate) fn move_history(&self, from: &Path, to: &Path) {
+        let (Some(old), Some(new)) = (self.history_folder(from), self.history_folder(to)) else {
+            return;
+        };
+        if old == new || !old.is_dir() || fs::create_dir_all(&new).is_err() {
+            return;
+        }
+        for version in stored(&old) {
+            let _ = fs::rename(old.join(&version.id), new.join(&version.id));
+        }
+        let _ = fs::write(new.join(PATH_FILE), to.display().to_string());
+        if stored(&old).is_empty() {
+            let _ = fs::remove_file(old.join(PATH_FILE));
+            let _ = fs::remove_dir(&old);
+        }
+        self.prune_history(&new);
     }
 
     fn history_store(&self) -> Option<PathBuf> {
@@ -238,8 +268,7 @@ impl Engine {
             return None;
         }
         self.settings
-            .user_file()
-            .and_then(Path::parent)
+            .state_dir()
             .map(|directory| directory.join(HISTORY_DIR))
     }
 
@@ -272,7 +301,8 @@ impl Engine {
         }
     }
 
-    /// Prunes every page's folder, for the pages not saved for a while.
+    /// Prunes every page's folder, for the pages not saved for a while, then removes the
+    /// oldest versions of any page until the whole history is under `max_size_mb`.
     fn sweep_history(&self) {
         let Some(store) = self.history_store() else {
             return;
@@ -280,10 +310,35 @@ impl Engine {
         let Ok(entries) = fs::read_dir(store) else {
             return;
         };
-        for entry in entries.flatten() {
-            let folder = entry.path();
-            if folder.is_dir() {
-                self.prune_history(&folder);
+        let folders: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|folder| folder.is_dir())
+            .collect();
+        let mut versions = Vec::new();
+        for folder in &folders {
+            self.prune_history(folder);
+            for version in stored(folder) {
+                let file = folder.join(&version.id);
+                let size = fs::metadata(&file).map_or(0, |metadata| metadata.len());
+                versions.push((version.millis, file, size));
+            }
+        }
+        versions.sort();
+        let limit = u64::from(self.settings.history.max_size_mb) * MEGABYTE;
+        let mut total: u64 = versions.iter().map(|(_, _, size)| size).sum();
+        for (_, file, size) in versions {
+            if total <= limit {
+                break;
+            }
+            if fs::remove_file(&file).is_ok() {
+                total -= size;
+            }
+        }
+        for folder in &folders {
+            if stored(folder).is_empty() {
+                let _ = fs::remove_file(folder.join(PATH_FILE));
+                let _ = fs::remove_dir(folder);
             }
         }
     }

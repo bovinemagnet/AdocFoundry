@@ -34,8 +34,21 @@ impl Setup {
         adoc_engine::normalize_path(&self.pages.path().join("page.adoc"))
     }
 
+    /// The app's state folder, apart from the settings file.
+    fn state(&self) -> PathBuf {
+        self.user.parent().unwrap().join("state")
+    }
+
     fn store(&self) -> PathBuf {
-        self.user.parent().unwrap().join(RECOVERY_DIR)
+        self.state().join(RECOVERY_DIR)
+    }
+
+    /// The settings as the app loads them, with its state folder.
+    fn settings(&self) -> Settings {
+        Settings::load(Some(&self.user), None)
+            .unwrap()
+            .with_git_opt_in()
+            .with_state_dir(Some(self.state()))
     }
 
     /// The records in the store.
@@ -51,10 +64,7 @@ impl Setup {
     /// An app session: an engine with recovery on.
     fn session(&self) -> (Engine, ManualClock) {
         let clock = ManualClock::new();
-        let settings = Settings::load(Some(&self.user), None)
-            .unwrap()
-            .with_git_opt_in();
-        let mut engine = Engine::with_clock(settings, Arc::new(clock.clone()));
+        let mut engine = Engine::with_clock(self.settings(), Arc::new(clock.clone()));
         engine.enable_recovery();
         (engine, clock)
     }
@@ -298,7 +308,7 @@ fn discarding_forgets_the_record() {
 fn only_records_offered_can_be_recovered() {
     let setup = Setup::new();
     let (mut engine, _) = setup.session();
-    for record in [setup.page(), setup.store().join("../adocfoundry.toml")] {
+    for record in [setup.page(), setup.store().join("../../adocfoundry.toml")] {
         assert!(engine
             .invoke(ids::DOCUMENT_RECOVER, CommandArgs::Path(record.clone()))
             .is_err());
@@ -313,10 +323,7 @@ fn only_records_offered_can_be_recovered() {
 fn front_ends_without_recovery_write_nothing() {
     let setup = Setup::new();
     let clock = ManualClock::new();
-    let settings = Settings::load(Some(&setup.user), None)
-        .unwrap()
-        .with_git_opt_in();
-    let mut engine = Engine::with_clock(settings, Arc::new(clock.clone()));
+    let mut engine = Engine::with_clock(setup.settings(), Arc::new(clock.clone()));
     let id = engine.open(&setup.page()).unwrap();
     type_text(&mut engine, id, "language server buffer");
     settle(&mut engine, &clock);
@@ -325,22 +332,23 @@ fn front_ends_without_recovery_write_nothing() {
 }
 
 #[test]
-fn without_a_settings_file_nothing_is_written() {
-    let pages = tempfile::tempdir().unwrap();
-    let page = pages.path().join("page.adoc");
-    fs::write(&page, "= Page\n").unwrap();
+fn without_a_state_folder_nothing_is_written() {
+    let setup = Setup::new();
     let clock = ManualClock::new();
-    let mut engine = Engine::with_clock(
-        Settings::load(None, None).unwrap().with_git_opt_in(),
-        Arc::new(clock.clone()),
-    );
+    let settings = Settings::load(Some(&setup.user), None)
+        .unwrap()
+        .with_git_opt_in();
+    let mut engine = Engine::with_clock(settings, Arc::new(clock.clone()));
     engine.enable_recovery();
-    let id = engine.open(&page).unwrap();
+    let id = engine.open(&setup.page()).unwrap();
     type_text(&mut engine, id, "x");
     settle(&mut engine, &clock);
     engine.write_recovery_now();
     assert!(offered(&mut engine).is_empty());
-    assert_eq!(fs::read_dir(pages.path()).unwrap().count(), 1);
+    // Nothing beside the settings file, nor beside the page.
+    let config = setup.user.parent().unwrap();
+    assert_eq!(fs::read_dir(config).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(setup.pages.path()).unwrap().count(), 1);
 }
 
 #[test]

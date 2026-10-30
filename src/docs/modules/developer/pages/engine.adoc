@@ -56,9 +56,11 @@ Untitled documents and documents without unsaved edits are skipped.
 
 `recovery.rs` keeps the text of pages with unsaved edits so that a crash does not lose it.
 Like word counts, it is opt-in: a front end calls `Engine::enable_recovery()`, as the app does in `AppState::new`, while `adoc-ls`, `adoc-mcp` and the CLI never write records.
-Without a user settings file location nothing is written.
+Without a state folder (`Settings::state_dir()`) nothing is written.
+Only the app's `main.rs` sets one, with `.with_state_dir(Settings::default_state_dir())`, so tests, `adoc-ls`, `adoc-mcp` and the CLI never write there.
+`default_state_dir()` returns `dirs::state_dir()`, else `dirs::data_local_dir()`, joined with `adocfoundry`; `with_state_dir(Option<PathBuf>)` sets it and it is kept across `reload`.
 
-* Records are JSON files in `RECOVERY_DIR` (`recovery`) beside the user settings file, named `<session>-<document id>.json`.
+* Records are JSON files in `RECOVERY_DIR` (`recovery`) in the state folder, named `<session>-<document id>.json`.
 * A session is named `<pid>-<milliseconds>.<n>` and holds an exclusive lock (`File::try_lock`) on `<session>.lock` from its first record until the engine is dropped.
 * An edit that leaves the page dirty schedules a record, and `pump` writes it `RECOVERY_SETTLE` (2 s) later (`write_due_recovery`); `has_pending` stays true meanwhile.
 An edit that leaves the page clean removes the record, as do save, `mark_saved` (reload) and close.
@@ -76,9 +78,9 @@ Discarding the last record of a session also removes its lock file.
 == Local history
 
 `local_history.rs` keeps the saved versions of each page.
-A front end calls `Engine::enable_local_history()`, as the app does in `AppState::new`; without it, or without a user settings file location, nothing is kept.
+A front end calls `Engine::enable_local_history()`, as the app does in `AppState::new`; without it, or without a state folder, nothing is kept.
 
-* Each page has a folder in `HISTORY_DIR` (`history`) beside the user settings file, named from a SHA-256 digest of the page's path.
+* Each page has a folder in `HISTORY_DIR` (`history`) in the state folder, named from a SHA-256 digest of the page's path.
 It holds a `path` file naming the page and one file per version, named `<milliseconds>-<first 16 hex digits of the text's SHA-256>`.
 Each name is strictly later than the one before.
 * `write_document` reads the file before writing it and calls `record_save(path, previous, saved)` after a successful write.
@@ -88,7 +90,10 @@ Saving text the history already holds as its latest version keeps nothing, and t
 `saved_version(path, id)` reads only a version the history lists.
 `version_diff(document, version)` diffs the version against the open text using <<line-diff>>.
 * Pruning follows `HistorySettings { enabled, keep_days, max_versions }` in `Settings::history`, a user-file-only `[history]` table.
-A page is pruned when it is saved, and every page once per session at the first save.
+A page's own folder is pruned when it is saved (`keep_days`, `max_versions`).
+At the first save of a session, and then at most once every `HISTORY_SWEEP_INTERVAL` (1 hour), a save also prunes every page's folder and then removes the oldest versions across all pages until the total is under `max_size_mb` (`history.max_size_mb`).
+* `move_file` in `search.rs` calls `move_history(from, to)`, so a renamed page's history moves with it, joined with any history the new path had, and `recovery_changed(id)`, so its recovery record is rewritten under the new path.
+Renames made by other programs start a new history.
 
 The commands are `document.local_history` (Local History…, context `ActiveDocument`), which takes `CommandArgs::Document(id)` or uses the active page and returns `CommandOutcome::LocalHistory { document, versions }`, and `document.restore_version` (Restore Saved Version), which takes `CommandArgs::Custom({"document": id, "version": id})`, applies the text as one undo group and returns `Done`.
 

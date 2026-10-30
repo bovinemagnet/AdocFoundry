@@ -4468,14 +4468,17 @@ fn with_follow_active_off_the_trees_stay_put(cx: &mut TestAppContext) {
     assert_eq!(followed(&workspace, &mut cx), (None, None));
 }
 
-/// Settings kept in `directory`, as the app keeps them, so recovery and local history have
+/// Settings, and the app's state, kept in `directory`, so recovery and local history have
 /// somewhere to write.
 fn settings_in(directory: &Path) -> Settings {
     let file = directory.join("adocfoundry.toml");
     if !file.exists() {
         std::fs::write(&file, "").unwrap();
     }
-    Settings::load(Some(&file), None).unwrap().with_git_opt_in()
+    Settings::load(Some(&file), None)
+        .unwrap()
+        .with_git_opt_in()
+        .with_state_dir(Some(directory.join("state")))
 }
 
 #[gpui::test]
