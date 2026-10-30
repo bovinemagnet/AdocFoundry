@@ -8,4 +8,4 @@ Icon=io.github.bovinemagnet.AdocFoundry
 Terminal=false
 Categories=Development;TextEditor;Documentation;
 MimeType=text/asciidoc;text/x-asciidoc;inode/directory;
-StartupWMClass=adocfoundry
+StartupWMClass=io.github.bovinemagnet.AdocFoundry
