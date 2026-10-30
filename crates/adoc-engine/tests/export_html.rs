@@ -49,6 +49,7 @@ fn export(
                 standards: Vec::new(),
                 fonts_dir: None,
                 typst: None,
+                attributes: Vec::new(),
             }),
         )
         .unwrap();

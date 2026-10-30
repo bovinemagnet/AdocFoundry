@@ -11,6 +11,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - PDF/A-1b and PDF/A-1a output: `--standard pdf-a-1b|pdf-a-1a`, `[pdf] standards` and the MCP server's `export_pdf`, validated by veraPDF in CI. PDF/A-1 forbids transparency, so a page with a transparent image or a Mermaid diagram fails with the line of the image; PDF/UA-2 waits on Typst, which writes only PDF/UA-1 (#63).
 - The user guide lists every key in asciidoctor-pdf 2.3's Theme Keys Reference as supported, approximated (and how) or ignored by PDF export, generated from `crates/adoc-pdf/src/theme/compatibility.txt`; a test checks that every key is classified and that no key the template reads is marked ignored (#106).
 - PDF export highlights source blocks with the editor's tree-sitter grammars and the preview's queries and light colours, so a listing looks as it does in the preview, when `source-highlighter` is set; Bash, Go, HTML, Java, JavaScript, JSON, Python, Rust, SQL, TOML, TypeScript and YAML, with other languages left to Typst's highlighter as before (#61).
+- PDF publication profiles: `[pdf.profiles.<name>]` in the workspace settings saves what to export (a page, a component version, or navigation files in a chosen order), where, the theme, fonts, attributes (and so the metadata) and standards. File › Export PDF Profile… and `adocfoundry-cli pdf --profile <name>` run one and write the same PDF; File › Export Page to PDF with Theme… offers the bundled and workspace themes (#103).
 
 ### Fixed
 

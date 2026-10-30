@@ -107,6 +107,7 @@ pub mod ids {
     pub const GIT_SAVE_AND_COMMIT: CommandId = CommandId::new("git.save_and_commit");
     pub const EXPORT_PDF_PAGE: CommandId = CommandId::new("export.pdf_page");
     pub const EXPORT_PDF_COMPONENT: CommandId = CommandId::new("export.pdf_component");
+    pub const EXPORT_PDF_PROFILE: CommandId = CommandId::new("export.pdf_profile");
     pub const EXPORT_HTML_PAGE: CommandId = CommandId::new("export.html_page");
 }
 

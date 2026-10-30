@@ -94,6 +94,8 @@ pub enum CommandArgs {
     Visual(crate::VisualArgs),
     /// A PDF export: what to export and where to write it.
     Export(crate::ExportArgs),
+    /// A publication profile, by name: `[pdf.profiles.<name>]`.
+    Profile(String),
     Custom(serde_json::Value),
     /// A sidebar tree, for the commands that open and close its branches.
     Panel(crate::SidebarPanel),

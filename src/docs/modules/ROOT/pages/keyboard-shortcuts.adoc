@@ -174,7 +174,7 @@ Four sidebar commands also have no default binding and are available from the pa
 Reveal in Files also has no default binding and is available from the palette and the View menu.
 In the Files view, kbd:[Space] opens the selected file.
 See xref:using-the-editor.adoc[Using the editor].
-Three export commands also have no default binding and are available from the palette and the File menu: Export Page to PDF… (`export.pdf_page`), Export Component to PDF… (`export.pdf_component`) and Export Page to HTML… (`export.html_page`).
+Five export commands also have no default binding and are available from the palette and the File menu: Export Page to PDF… (`export.pdf_page`), Export Page to PDF with Theme…, Export Component to PDF… (`export.pdf_component`), Export PDF Profile… (`export.pdf_profile`) and Export Page to HTML… (`export.html_page`).
 See xref:pdf-export.adoc[Exporting to PDF] and xref:preview.adoc#exporting-html[Exporting to HTML].
 Three document commands also have no default binding and are available from the palette: Reload from Disk (`document.reload`), Save, Overwriting the File on Disk (`document.overwrite`) and Keep Open (`document.keep_open`).
 See xref:using-the-editor.adoc[Using the editor].

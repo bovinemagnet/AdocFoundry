@@ -146,4 +146,16 @@ impl Engine {
         };
         adoc_antora::nav_tree(&self.workspace.antora, component, version, &read)
     }
+
+    /// The navigation trees of `files`, in that order, from open buffers or the disk.
+    pub fn nav_trees_of(&self, files: &[std::path::PathBuf]) -> Result<Vec<NavTree>, NavError> {
+        let read = |path: &Path| match self.document_for_path(path) {
+            Some(id) => Ok(self
+                .document(id)
+                .map(|document| document.text.to_string())
+                .unwrap_or_default()),
+            None => fs::read_to_string(path),
+        };
+        adoc_antora::nav_trees_of(&self.workspace.antora, files, &read)
+    }
 }

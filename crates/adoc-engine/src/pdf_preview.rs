@@ -63,6 +63,7 @@ impl Engine {
             standards: Vec::new(),
             fonts_dir: None,
             typst: None,
+            attributes: Vec::new(),
         };
         let attributes = preview.view.attributes.clone();
         let source = self.theme_source(None, &attributes, Some(&preview.path));

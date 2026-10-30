@@ -260,6 +260,19 @@ pub(crate) fn palette_commands(engine: &adoc_engine::Engine) -> Vec<&adoc_engine
 
 /// What the notification says about a finished export: the file and its pages with the first
 /// warning, or the error, which names the file and line it comes from.
+/// An export of `target` in `theme`, its output still to be chosen.
+fn export_args(target: ExportTarget, theme: Option<String>) -> ExportArgs {
+    ExportArgs {
+        target,
+        output: PathBuf::new(),
+        theme,
+        standards: Vec::new(),
+        fonts_dir: None,
+        typst: None,
+        attributes: Vec::new(),
+    }
+}
+
 pub(crate) fn export_message(output: &Path, result: &Result<ExportSummary, String>) -> String {
     let html = output
         .extension()
@@ -2362,7 +2375,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.export_page(ids::EXPORT_PDF_PAGE, "pdf", window, cx);
+        self.export_page(ids::EXPORT_PDF_PAGE, "pdf", None, window, cx);
     }
 
     /// Asks where to write the active page as HTML, then exports it on the engine's workers.
@@ -2372,13 +2385,14 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.export_page(ids::EXPORT_HTML_PAGE, "html", window, cx);
+        self.export_page(ids::EXPORT_HTML_PAGE, "html", None, window, cx);
     }
 
     fn export_page(
         &mut self,
         command: adoc_engine::CommandId,
         extension: &str,
+        theme: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2396,12 +2410,129 @@ impl WorkspaceView {
             .map(|stem| format!("{}.{extension}", stem.to_string_lossy()));
         self.export_to(
             command,
-            ExportTarget::Page(id),
+            export_args(ExportTarget::Page(id), theme),
             &directory,
             name,
             window,
             cx,
         );
+    }
+
+    /// Offers the bundled and workspace themes, then asks where to write the active page's PDF
+    /// in the one chosen.
+    fn on_export_page_pdf_with_theme(
+        &mut self,
+        _: &ExportPagePdfWithTheme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        if engine.active().is_none() {
+            window.push_notification("Open a page to export it.", cx);
+            return;
+        }
+        let themes = engine.pdf_themes();
+        let labels = themes
+            .iter()
+            .map(|theme| match &theme.file {
+                Some(file) => format!("{} — {}", theme.name, file.display()),
+                None => format!("{} (bundled)", theme.name),
+            })
+            .collect();
+        self.pick(
+            "Choose a PDF theme…",
+            labels,
+            window,
+            cx,
+            move |this, index, window, cx| {
+                let theme = themes[index].name.clone();
+                this.export_page(ids::EXPORT_PDF_PAGE, "pdf", Some(theme), window, cx);
+            },
+        );
+    }
+
+    /// Offers the workspace's publication profiles, then exports the one chosen to its output.
+    fn on_export_pdf_profile(
+        &mut self,
+        _: &ExportPdfProfile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let profiles: Vec<String> = self
+            .app
+            .read(cx)
+            .engine
+            .settings()
+            .pdf
+            .profiles
+            .iter()
+            .map(|profile| profile.name.clone())
+            .collect();
+        if profiles.is_empty() {
+            window.push_notification(
+                "No PDF profiles: add a [pdf.profiles.<name>] table to the workspace's .adocfoundry.toml.",
+                cx,
+            );
+            return;
+        }
+        self.pick(
+            "Export a PDF profile…",
+            profiles.clone(),
+            window,
+            cx,
+            move |this, index, window, cx| {
+                this.invoke(
+                    ids::EXPORT_PDF_PROFILE,
+                    CommandArgs::Profile(profiles[index].clone()),
+                    window,
+                    cx,
+                );
+                cx.notify();
+            },
+        );
+    }
+
+    /// Shows `labels` in the palette's list and calls `chosen` with the index picked, once the
+    /// list has closed and handed focus back.
+    fn pick(
+        &mut self,
+        placeholder: &'static str,
+        labels: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        chosen: impl Fn(&mut Self, usize, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let items: Vec<CommandItem> = labels
+            .into_iter()
+            .map(|label| CommandItem::new().label(label))
+            .collect();
+        let workspace = cx.weak_entity();
+        let chosen = std::rc::Rc::new(chosen);
+        let palette = self.palette.clone();
+        palette.update(cx, |palette, cx| palette.set_query("", window, cx));
+        let focus = palette.read(cx).focus_handle(cx);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            window.focus(&focus, cx);
+            let workspace = workspace.clone();
+            let chosen = chosen.clone();
+            dialog.close_button(false).p_0().child(
+                Command::new(&palette)
+                    .bordered(false)
+                    .placeholder(placeholder)
+                    .max_h(px(420.))
+                    .items(items.clone())
+                    .on_confirm(move |index, window, cx| {
+                        let index = index.row;
+                        let workspace = workspace.clone();
+                        let chosen = chosen.clone();
+                        window.close_dialog(cx);
+                        window.defer(cx, move |window, cx| {
+                            let _ =
+                                workspace.update(cx, |this, cx| chosen(this, index, window, cx));
+                        });
+                    }),
+            )
+        });
     }
 
     /// Asks where to write the active page's component as a book, then exports it.
@@ -2431,7 +2562,7 @@ impl WorkspaceView {
         let suggested = Some(format!("{name}.pdf"));
         self.export_to(
             ids::EXPORT_PDF_COMPONENT,
-            ExportTarget::Component { name, version },
+            export_args(ExportTarget::Component { name, version }, None),
             &directory,
             suggested,
             window,
@@ -2439,10 +2570,12 @@ impl WorkspaceView {
         );
     }
 
+    /// Asks where to write `export`, starting in `directory` with `suggested`, then runs it
+    /// with the path chosen as its output.
     fn export_to(
         &mut self,
         command: adoc_engine::CommandId,
-        target: ExportTarget,
+        export: ExportArgs,
         directory: &Path,
         suggested: Option<String>,
         window: &mut Window,
@@ -2454,14 +2587,7 @@ impl WorkspaceView {
             this.update_in(cx, |this, window, cx| {
                 this.invoke(
                     command,
-                    CommandArgs::Export(ExportArgs {
-                        target,
-                        output,
-                        theme: None,
-                        standards: Vec::new(),
-                        fonts_dir: None,
-                        typst: None,
-                    }),
+                    CommandArgs::Export(ExportArgs { output, ..export }),
                     window,
                     cx,
                 );
@@ -3549,6 +3675,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_export_page_pdf))
             .on_action(cx.listener(Self::on_export_page_html))
             .on_action(cx.listener(Self::on_export_component_pdf))
+            .on_action(cx.listener(Self::on_export_pdf_profile))
+            .on_action(cx.listener(Self::on_export_page_pdf_with_theme))
             .on_action(cx.listener(Self::on_save_and_commit))
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_check_for_updates))
