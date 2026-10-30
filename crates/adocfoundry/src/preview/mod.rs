@@ -3,6 +3,7 @@
 
 pub(crate) mod blocks;
 pub(crate) mod inlines;
+pub(crate) mod pdf;
 pub(crate) mod sync;
 
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
@@ -46,6 +47,8 @@ pub struct PreviewView {
     scroll: ScrollHandle,
     positions: HashMap<DocumentId, Point<Pixels>>,
     highlights: Rc<RefCell<HighlightCache>>,
+    /// The target's PDF pages, while the preview shows them.
+    pdf: pdf::PdfPages,
     _subscription: Subscription,
 }
 
@@ -58,7 +61,7 @@ impl PreviewView {
     ) -> Self {
         let subscription = cx.subscribe_in(&app, window, |this, _, event, _, cx| {
             let relevant = match event {
-                EngineEvent::PreviewReady { id, .. } => {
+                EngineEvent::PreviewReady { id, .. } | EngineEvent::PdfPreviewReady { id, .. } => {
                     this.app.read(cx).engine.preview_target() == Some(*id)
                 }
                 EngineEvent::PreviewLayoutChanged
@@ -78,6 +81,7 @@ impl PreviewView {
             scroll: ScrollHandle::new(),
             positions: HashMap::new(),
             highlights: Rc::default(),
+            pdf: pdf::PdfPages::default(),
             _subscription: subscription,
         };
         view.refresh(cx);
@@ -110,7 +114,52 @@ impl PreviewView {
             self.scroll.set_offset(offset);
         }
         self.shown = latest;
+        let pdf = {
+            let engine = &self.app.read(cx).engine;
+            engine
+                .preview_layout()
+                .pdf
+                .then(|| engine.preview_target())
+                .flatten()
+                .and_then(|id| engine.pdf_preview(id))
+        };
+        self.pdf.update(pdf, cx, |view: &mut Self| &mut view.pdf);
         cx.notify();
+    }
+
+    /// The PDF pages on screen.
+    #[cfg(test)]
+    pub fn pdf_shown(&self) -> Option<&Arc<adoc_engine::PdfPreview>> {
+        self.pdf.shown.as_ref()
+    }
+
+    /// Scrolls the PDF pages so page `page` is at the top.
+    #[cfg(test)]
+    pub fn pdf_scroll_to_page(&mut self, page: usize, cx: &mut Context<Self>) {
+        let Some(pages) = self
+            .pdf
+            .shown
+            .as_ref()
+            .and_then(|shown| shown.pages.as_ref().ok())
+        else {
+            return;
+        };
+        if let Some(top) = pdf::page_tops(pages).get(page) {
+            self.pdf.scroll.set_offset(gpui::point(px(0.), -px(*top)));
+            cx.notify();
+        }
+    }
+
+    /// Where a point `y` points down page `page` of the PDF is drawn, for tests that click it.
+    #[cfg(test)]
+    pub fn pdf_position(&self, page: usize, y: f32) -> Option<gpui::Point<Pixels>> {
+        let pages = self.pdf.shown.as_ref()?.pages.as_ref().ok()?;
+        let top = *pdf::page_tops(pages).get(page)?;
+        let container = self.pdf.scroll.bounds();
+        Some(gpui::point(
+            container.origin.x + container.size.width / 2.,
+            container.origin.y + self.pdf.scroll.offset().y + px(top + y),
+        ))
     }
 
     /// Scrolls so the innermost block containing `offset` in `path` is at the top, keeping the
@@ -224,6 +273,23 @@ impl PreviewView {
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(title),
+            )
+            .when(
+                self.app
+                    .read(cx)
+                    .engine
+                    .commands()
+                    .get(ids::VIEW_TOGGLE_PDF_PREVIEW)
+                    .is_some(),
+                |header| {
+                    header.child(
+                        Button::new("preview-pdf")
+                            .ghost()
+                            .xsmall()
+                            .label(if layout.pdf { "Page" } else { "PDF" })
+                            .on_click(command(ids::VIEW_TOGGLE_PDF_PREVIEW)),
+                    )
+                },
             )
             .child(
                 Button::new("preview-pin")
@@ -397,6 +463,31 @@ impl Render for PreviewView {
                 .unwrap_or_default();
             TitleBar::new().child(format!("Preview — {name}"))
         });
+        let layout = self.app.read(cx).engine.preview_layout();
+        if layout.pdf {
+            let target = self.app.read(cx).engine.preview_target().is_some();
+            let pages = self.pdf.render(
+                target,
+                |this: &mut Self, path, offset, window, cx| {
+                    let position = NavigationPosition { path, offset };
+                    this.invoke(
+                        ids::NAVIGATE_REVEAL,
+                        CommandArgs::Position(position),
+                        window,
+                        cx,
+                    );
+                },
+                cx,
+            );
+            return v_flex()
+                .size_full()
+                .bg(cx.theme().background)
+                .text_color(cx.theme().foreground)
+                .children(window_title)
+                .child(header)
+                .child(pages)
+                .into_any_element();
+        }
         v_flex()
             .size_full()
             .bg(cx.theme().background)
@@ -434,6 +525,7 @@ impl Render for PreviewView {
                             }),
                     ),
             )
+            .into_any_element()
     }
 }
 

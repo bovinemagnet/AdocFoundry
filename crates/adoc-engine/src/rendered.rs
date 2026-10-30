@@ -43,6 +43,8 @@ pub struct PreviewLayout {
     pub scroll_sync: bool,
     /// Shown instead of the active document.
     pub pinned: Option<DocumentId>,
+    /// Shows the target's pages as the PDF export typesets them, instead of the rendered page.
+    pub pdf: bool,
 }
 
 impl Default for PreviewLayout {
@@ -52,6 +54,7 @@ impl Default for PreviewLayout {
             detached: false,
             scroll_sync: true,
             pinned: None,
+            pdf: false,
         }
     }
 }
@@ -276,6 +279,8 @@ impl Engine {
         state.stale_before.remove(&id);
         state.parsed.remove(&id);
         state.published.remove(&id);
+        #[cfg(feature = "typst")]
+        self.forget_pdf_preview(id);
     }
 
     #[must_use]
@@ -598,6 +603,8 @@ impl Engine {
         let version = preview.version;
         self.rendered.published.insert(id, preview);
         self.emit(EngineEvent::PreviewReady { id, version });
+        #[cfg(feature = "typst")]
+        self.request_pdf_preview(id);
     }
 
     /// The diagram renderer, cached under the first workspace root.

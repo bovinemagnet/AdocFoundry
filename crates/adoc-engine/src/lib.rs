@@ -32,6 +32,8 @@ mod language;
 mod line_diff;
 mod local_history;
 mod navigation;
+#[cfg(feature = "typst")]
+mod pdf_preview;
 mod preview;
 mod profiles;
 mod recovery;
@@ -50,6 +52,8 @@ mod visual;
 mod words;
 mod workspace;
 
+#[cfg(feature = "typst")]
+pub use adoc_pdf::{PageAnchor, PreviewPage};
 pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use command::{
@@ -72,6 +76,8 @@ pub use inspect::resource_id_string;
 pub use line_diff::{line_diff, DiffLine, DIFF_CONTEXT};
 pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE, HISTORY_SWEEP_INTERVAL};
 pub use navigation::NavigationPosition;
+#[cfg(feature = "typst")]
+pub use pdf_preview::PdfPreview;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };

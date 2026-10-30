@@ -121,6 +121,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::VIEW_SHOW_SPLIT),
             Separator,
             Command(ids::VIEW_TOGGLE_PREVIEW),
+            Command(ids::VIEW_TOGGLE_PDF_PREVIEW),
             Command(ids::VIEW_DETACH_PREVIEW),
             Command(ids::PREVIEW_PIN),
             Command(ids::VIEW_TOGGLE_SCROLL_SYNC),

@@ -64,8 +64,14 @@ pub enum EngineEvent {
         id: DocumentId,
         version: u64,
     },
-    /// The preview was shown, hidden, detached, docked, pinned or unpinned, or scroll sync
-    /// was toggled.
+    /// The PDF preview of `id` is typeset, from the document as it was at `version`; read it
+    /// with `Engine::pdf_preview`.
+    PdfPreviewReady {
+        id: DocumentId,
+        version: u64,
+    },
+    /// The preview was shown, hidden, detached, docked, pinned or unpinned, switched between
+    /// the page and its PDF, or scroll sync was toggled.
     PreviewLayoutChanged,
     /// A new visual model of `id` is available from `Engine::visual`.
     ModelChanged {

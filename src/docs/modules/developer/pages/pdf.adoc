@@ -290,6 +290,24 @@ Both front ends export those arguments: the application through `export.pdf_prof
 
 The tests are in `crates/adoc-engine/tests/profiles.rs`, `pdf_profile_writes_what_the_app_writes` in `crates/adocfoundry-cli/tests/cli.rs`, and `export_pdf_profile_writes_what_the_command_line_writes` and `export_page_with_theme_offers_the_bundled_and_workspace_themes` in the application's tests.
 
+== The PDF preview
+
+The live PDF preview is in `crates/adoc-engine/src/pdf_preview.rs`.
+While `PreviewLayout::pdf` is set, each newly published view of the preview target (`publish_preview`) is typeset on a worker by `adoc_pdf::preview_pages`.
+One typesetting runs at a time; a newer view waits, and only the newest is typeset next.
+The result is `Engine::pdf_preview(id)`, a `PdfPreview { document, version, path, pages }` where `pages` is a `Result<Vec<PreviewPage>, String>`, announced by `EngineEvent::PdfPreviewReady`.
+
+`adoc_pdf::preview_pages` returns each page as SVG (`typst-svg`) with `PageAnchor`s.
+An anchor holds a line of text's top and baseline in points, and the AsciiDoc file and byte offset it was written from.
+The offset is found from the glyphs' Typst spans through the emitter's `SourceMap`.
+
+The app's `src/preview/pdf.rs` rasterises the SVG pages on a background task with the image viewer's decoder (`image_decode`).
+It drops the results of superseded rasterisations by generation and releases replaced images from the GPU.
+`anchor_at` picks the line a click falls on.
+
+The tests are `crates/adoc-pdf/tests/preview.rs`, `crates/adoc-engine/tests/pdf_preview.rs` and the app's `the_pdf_preview_shows_the_pages_and_a_click_goes_to_the_source`.
+The timing probe is `cargo test --release -p adoc-engine --test perf pdf_preview_after_typing -- --ignored --nocapture`.
+
 == Related
 
 * xref:architecture.adoc[Architecture], for the layer of `adoc-pdf`

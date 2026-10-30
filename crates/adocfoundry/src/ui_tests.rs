@@ -4565,6 +4565,68 @@ fn local_history_restores_a_saved_version(cx: &mut TestAppContext) {
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "second\n");
 }
 
+#[gpui::test]
+fn the_pdf_preview_shows_the_pages_and_a_click_goes_to_the_source(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let text = "= Page\n\nFirst paragraph.\n\n<<<\n\nLast paragraph.\n";
+    std::fs::write(&page, text).unwrap();
+    let (app, workspace, mut cx) = previewing(vec![page.clone()], cx);
+    cx.dispatch_action(crate::editor::bindings::TogglePdfPreview);
+    let typeset = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .preview()
+                .read(cx)
+                .pdf_shown()
+                .and_then(|shown| shown.pages.as_ref().ok().map(Vec::len))
+                == Some(2)
+        })
+    };
+    assert!(drain_until(&app, &mut cx, typeset), "the pages are shown");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+
+    // A click on the second page's line goes to its paragraph.
+    let anchor = cx.update(|_, cx| {
+        let preview = workspace.read(cx).preview().read(cx);
+        let pages = preview.pdf_shown().unwrap().pages.clone().unwrap();
+        pages[1]
+            .anchors
+            .iter()
+            .find(|anchor| anchor.offset == text.find("Last paragraph").unwrap())
+            .cloned()
+            .expect("the paragraph's line")
+    });
+    let middle = ((anchor.top + anchor.bottom) / 2.0) as f32;
+    workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace
+            .preview()
+            .update(cx, |preview, cx| preview.pdf_scroll_to_page(1, cx));
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let position = cx
+        .update(|_, cx| {
+            workspace
+                .read(cx)
+                .preview()
+                .read(cx)
+                .pdf_position(1, middle)
+        })
+        .unwrap();
+    cx.simulate_click(position, gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert_eq!(
+        caret(&workspace, &mut cx),
+        text.find("Last paragraph").unwrap()
+    );
+
+    // Back to the rendered page.
+    cx.dispatch_action(crate::editor::bindings::TogglePdfPreview);
+    cx.run_until_parked();
+    assert!(!cx.update(|_, cx| app.read(cx).engine.preview_layout().pdf));
+}
+
 /// The book fixture copied to `directory/book` with `settings` as its `.adocfoundry.toml`, opened
 /// in a workspace window on `page`.
 fn profile_workspace(

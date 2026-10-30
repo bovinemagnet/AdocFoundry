@@ -180,7 +180,7 @@ Three document commands also have no default binding and are available from the 
 See xref:using-the-editor.adoc[Using the editor].
 Two file commands also have no default binding and are available from the palette and the File menu: Local History… (`document.local_history`) and Recover Unsaved Changes… (`document.recover_unsaved`).
 See xref:using-the-editor.adoc#crash-recovery[Recovering unsaved changes] and xref:using-the-editor.adoc#local-history[Local history].
-Three preview commands also have no default binding and are available from the palette: Detach Preview (`view.detach_preview`), Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) and Pin Preview (`preview.pin`).
+Four preview commands also have no default binding and are available from the palette: Detach Preview (`view.detach_preview`), Toggle PDF Preview (`view.toggle_pdf_preview`), Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) and Pin Preview (`preview.pin`).
 Toggle Preview is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
 See xref:preview.adoc[The preview].
 Go to Location (`navigate.go_to`) and Reveal in Editor (`navigate.reveal`) take a position and are driven by clicks in the preview rather than bound to keys.

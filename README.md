@@ -55,6 +55,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - It follows the active page; Pin keeps it on one page. Each page's scroll position is remembered.
 - Detach moves it into its own window; closing that window docks it again.
 - Scroll sync both ways: moving the caret scrolls the preview to that block, and scrolling the preview moves the source to the topmost visible block. Sync can be switched off.
+- A live PDF preview: View › Toggle PDF Preview, or PDF in the preview's header, shows the page as Export Page to PDF typesets it, in its theme and fonts, re-typeset on a worker a moment after you stop typing (about an eighth of a second on an ordinary page), so the editor never waits. Clicking a line on a page goes to its source.
 - Clicking a block places the caret on its source, opening the partial it came from when there is one. Clicking an xref follows it, recorded in back and forward history; external links open the browser and attachments the default application.
 - Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
 - Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
@@ -312,7 +313,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 
 ## Not implemented yet
 
-- In PDF export: a live PDF preview, PDF/UA-2 (Typst writes only PDF/UA-1), and asciidoctor-pdf's Ruby extensions.
+- In PDF export: PDF/UA-2 (Typst writes only PDF/UA-1), and asciidoctor-pdf's Ruby extensions.
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
 - Editing included content in place, spell checking, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
