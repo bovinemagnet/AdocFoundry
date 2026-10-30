@@ -149,6 +149,8 @@ pub enum CommandOutcome {
         document: DocumentId,
         versions: Vec<crate::SavedVersion>,
     },
+    /// The folders opened recently that are still there, most recent first.
+    RecentFolders(Vec<PathBuf>),
     /// The files matching a Quick Open query, best first.
     QuickOpen(Vec<crate::QuickOpenItem>),
     Cancelled,

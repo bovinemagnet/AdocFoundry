@@ -258,6 +258,17 @@ The editor's highlighting comes from `editor::language::for_document`: AsciiDoc 
 The engine ranks and the picker only displays the rows; see xref:engine.adoc#quick-open[Quick Open] in the engine.
 Enter opens the file with `OpenDisposition::Persistent`.
 
+== Sessions and Open Recent Folder
+
+`WorkspaceView::new` calls `Engine::restore_session` when it is given no folder and no files.
+It then gives every restored tab its tab view, its visual editor when its mode needs one, and its caret.
+`WorkspaceView::write_session` passes the engine the carets (the visual editor's in visual mode, otherwise the source editor's) and runs from `cx.on_app_quit` and from the main window's `on_window_should_close`.
+`AppState::new` calls `Engine::enable_sessions`.
+
+The Open Recent Folder picker is the command palette's `Command` with its built-in filter over the name and path.
+It shows the folders from `workspace.open_recent` and opens the chosen one with `workspace.open_folder`.
+See xref:engine.adoc#sessions[Sessions and recent folders] in the engine.
+
 [[image-viewer]]
 == The image viewer
 

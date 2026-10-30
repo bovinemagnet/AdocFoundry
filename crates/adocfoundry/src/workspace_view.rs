@@ -271,6 +271,33 @@ pub(crate) fn palette_commands(engine: &adoc_engine::Engine) -> Vec<&adoc_engine
         .collect()
 }
 
+/// An Open Recent row: the folder's name above its path, both searched.
+fn recent_folder_row(folder: &Path, muted: gpui::Hsla) -> CommandItem {
+    let name: SharedString = folder
+        .file_name()
+        .map_or_else(
+            || folder.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+        .into();
+    let path: SharedString = folder.display().to_string().into();
+    CommandItem::new()
+        .label(name.clone())
+        .keywords([path.clone()])
+        .child(move |_, _| {
+            v_flex()
+                .overflow_hidden()
+                .child(div().truncate().child(name.clone()))
+                .child(
+                    div()
+                        .truncate()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(path.clone()),
+                )
+        })
+}
+
 /// A Quick Open row: the title (else the file name) above the resource id and the path.
 fn quick_open_row(item: &adoc_engine::QuickOpenItem, muted: gpui::Hsla) -> CommandItem {
     let name = item
@@ -367,7 +394,18 @@ impl WorkspaceView {
                     this.app.update(cx, |app, _| app.engine.focus_lost());
                 }
             }),
+            // The session is kept for the next launch, whether the app quits or the window
+            // closes first.
+            cx.on_app_quit(|this, cx| {
+                this.write_session(cx);
+                async {}
+            }),
         ];
+        let closing = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            let _ = closing.update(cx, |this, cx| this.write_session(cx));
+            true
+        });
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace.clone(), window, cx));
         let references = cx.new(|_| ReferencesView::new(app.clone(), workspace));
@@ -422,6 +460,8 @@ impl WorkspaceView {
         };
         view.apply_theme(window, cx);
         view.warn_about_settings(window, cx);
+        // Launched with nothing to open, the last session comes back.
+        let restore = folder.is_none() && files.is_empty();
         if let Some(folder) = folder {
             view.open_folder(folder, window, cx);
         }
@@ -433,6 +473,9 @@ impl WorkspaceView {
                 window,
                 cx,
             );
+        }
+        if restore {
+            view.restore_session(window, cx);
         }
         if let (Some(duration), Some(editor)) = (
             crate::typing_bench::requested(),
@@ -459,6 +502,62 @@ impl WorkspaceView {
         window.defer(cx, move |window, cx| {
             crate::history_view::show_recovery(app, workspace, items, window, cx);
         });
+    }
+
+    /// Brings back the session written last: the engine reopens the workspace and the tabs,
+    /// and each page gets its tab, its visual editor and its caret.
+    fn restore_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let carets = self.app.update(cx, |app, cx| {
+            let carets = app.engine.restore_session();
+            app.drain(cx);
+            carets
+        });
+        let order = self.app.read(cx).engine.tab_order().to_vec();
+        for item in order {
+            if !self.tabs.iter().any(|tab| tab.item(cx) == item) {
+                let tab = self.new_tab(item, window, cx);
+                self.tabs.push(tab);
+            }
+            if let TabItem::Document(id) = item {
+                self.sync_visual(id, window, cx);
+            }
+        }
+        for tab in self.tabs.clone() {
+            let Some(editor) = tab.editor() else {
+                continue;
+            };
+            let id = editor.read(cx).document();
+            let Some(&caret) = carets.get(&id) else {
+                continue;
+            };
+            editor.update(cx, |editor, cx| {
+                editor.reveal(SourceRange::new(caret, caret), window, cx);
+            });
+            if let Some(visual) = self.visuals.get(&id).cloned() {
+                visual.update(cx, |visual, cx| visual.go_to(caret, cx));
+            }
+        }
+        self.follow_active(window, cx);
+    }
+
+    /// Writes the session for the next launch, with each page's caret: the visual editor's in
+    /// visual mode, else the source editor's.
+    pub(crate) fn write_session(&self, cx: &App) {
+        let engine = &self.app.read(cx).engine;
+        let mut carets = HashMap::new();
+        for editor in self.tabs.iter().filter_map(TabView::editor) {
+            let id = editor.read(cx).document();
+            let caret = match self.visuals.get(&id) {
+                Some(visual) if engine.editor_mode(id) == EditorMode::Visual => {
+                    visual.read(cx).selection().head
+                }
+                _ => editor.read(cx).cursor(cx),
+            };
+            carets.insert(id, caret);
+        }
+        if let Err(error) = engine.write_session(&carets) {
+            eprintln!("adocfoundry: could not save the session: {error}");
+        }
     }
 
     // --- engine events -----------------------------------------------------------------------
@@ -1920,6 +2019,50 @@ impl WorkspaceView {
             .ok()
         })
         .detach();
+    }
+
+    /// Lists the folders opened recently in the palette, and opens the one chosen as the
+    /// workspace.
+    fn on_open_recent(&mut self, _: &OpenRecent, window: &mut Window, cx: &mut Context<Self>) {
+        let folders = match self.invoke(ids::WORKSPACE_OPEN_RECENT, CommandArgs::None, window, cx) {
+            Some(CommandOutcome::RecentFolders(folders)) => Rc::new(folders),
+            _ => return,
+        };
+        if folders.is_empty() {
+            window.push_notification("No folders have been opened yet.", cx);
+            return;
+        }
+        let workspace = cx.weak_entity();
+        let palette = self.palette.clone();
+        palette.update(cx, |palette, cx| palette.set_query("", window, cx));
+        let focus = palette.read(cx).focus_handle(cx);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            window.focus(&focus, cx);
+            let muted = cx.theme().muted_foreground;
+            let items: Vec<CommandItem> = folders
+                .iter()
+                .map(|folder| recent_folder_row(folder, muted))
+                .collect();
+            let (folders, workspace) = (folders.clone(), workspace.clone());
+            dialog.close_button(false).p_0().child(
+                Command::new(&palette)
+                    .bordered(false)
+                    .placeholder("Open a folder opened recently…")
+                    .max_h(px(420.))
+                    .items(items)
+                    .on_confirm(move |index, window, cx| {
+                        let Some(folder) = folders.get(index.row).cloned() else {
+                            return;
+                        };
+                        let workspace = workspace.clone();
+                        window.close_dialog(cx);
+                        window.defer(cx, move |window, cx| {
+                            let _ = workspace
+                                .update(cx, |this, cx| this.open_folder(folder, window, cx));
+                        });
+                    }),
+            )
+        });
     }
 
     /// Lists the workspace's files in the palette, ranked by the engine as the query changes,
@@ -3990,6 +4133,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_open_file))
             .on_action(cx.listener(Self::on_quick_open))
+            .on_action(cx.listener(Self::on_open_recent))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_reload))

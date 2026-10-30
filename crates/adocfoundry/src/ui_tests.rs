@@ -2629,6 +2629,134 @@ fn quick_open_opens_the_page_chosen(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_last_session_comes_back_with_its_tabs_modes_carets_and_preview(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(pages.path());
+    let page = |name: &str| root.join(format!("{name}.adoc"));
+    for name in ["one", "two", "three"] {
+        std::fs::write(page(name), format!("= Page {name}\n\nSome text.\n")).unwrap();
+    }
+    {
+        let app = app_with(Engine::new(settings_in(config.path())), cx);
+        let files = vec![page("three"), page("two")];
+        let (workspace, mut cx) = workspace_window(&app, files, &mut *cx);
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            app.update(cx, |app, cx| {
+                app.invoke(
+                    ids::WORKSPACE_OPEN_FOLDER,
+                    CommandArgs::Path(root.clone()),
+                    cx,
+                )
+                .unwrap();
+                let two = app.engine.document_for_path(&page("two")).unwrap();
+                app.invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(two), cx)
+                    .unwrap();
+                app.invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None, cx)
+                    .unwrap();
+            });
+        });
+        cx.run_until_parked();
+        // The caret in the source page, which is then the active one.
+        cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.open_at(
+                    &page("three"),
+                    SourceRange::new(9, 9),
+                    adoc_engine::OpenDisposition::Persistent,
+                    window,
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| workspace.read(cx).write_session(cx));
+    }
+
+    // Launched with nothing to open.
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.run_until_parked();
+    let (roots, tabs, two, active, visible) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let tabs: Vec<PathBuf> = workspace
+            .read(cx)
+            .tab_items(cx)
+            .into_iter()
+            .map(|item| {
+                engine
+                    .document(item.document().unwrap())
+                    .unwrap()
+                    .path
+                    .clone()
+            })
+            .collect();
+        let two = engine.document_for_path(&page("two")).unwrap();
+        let active = engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .path
+            .clone();
+        (
+            engine.roots().to_vec(),
+            tabs,
+            two,
+            active,
+            engine.preview_layout().visible,
+        )
+    });
+    assert_eq!(roots, std::slice::from_ref(&root));
+    assert_eq!(tabs, [page("three"), page("two")]);
+    assert_eq!(active, page("three"));
+    assert!(visible);
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.editor_mode(two)),
+        adoc_engine::EditorMode::Visual
+    );
+    assert!(cx.update(|_, cx| workspace.read(cx).visual_for_test(two).is_some()));
+    assert_eq!(caret(&workspace, &mut cx), 9);
+}
+
+#[gpui::test]
+fn open_recent_opens_the_folder_chosen(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let folders = tempfile::tempdir().unwrap();
+    let folder = |name: &str| adoc_index::normalize_path(&folders.path().join(name));
+    for name in ["alpha", "beta"] {
+        std::fs::create_dir(folder(name)).unwrap();
+    }
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (_workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            for name in ["alpha", "beta"] {
+                app.invoke(
+                    ids::WORKSPACE_OPEN_FOLDER,
+                    CommandArgs::Path(folder(name)),
+                    cx,
+                )
+                .unwrap();
+            }
+        });
+    });
+    cx.run_until_parked();
+    cx.dispatch_action(crate::editor::bindings::OpenRecent);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    cx.simulate_input("alpha");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.roots().to_vec()),
+        [folder("alpha")]
+    );
+}
+
+#[gpui::test]
 fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
     let text = "= Page\n\nSome plain words.\n";
     let (app, _, visual, id, mut cx) = visual_workspace(text, cx);

@@ -532,6 +532,37 @@ An SVG shows only what it contains.
 Scripts never run and links are not followed.
 Images it links to, whether local files or web addresses, are not loaded, but images embedded as `data:` URIs are shown.
 
+[[restoring-the-session]]
+== Restoring the last session
+
+Launched with no folder or file (`adocfoundry` with no arguments), the app reopens the last session:
+
+* the workspace's folders;
+* the open tabs, in the same order, with each page's editor mode (source, visual or split) and caret;
+* which tab was the preview tab, the reusable tab that browsing uses;
+* the active tab;
+* the preview's layout: shown or hidden, docked or detached, scroll sync on or off, the PDF preview, and the pinned page.
+
+Files and folders that have gone since are skipped.
+Untitled pages are not reopened, but their unsaved text is still offered by xref:#crash-recovery[crash recovery], which is separate.
+
+The session is saved when the app quits and when the main window closes.
+Launched with a folder or files (`adocfoundry [folder [file...]]`), the app opens those instead and does not restore the session.
+
+The session is kept in `session.json` in the app's state folder (see xref:settings.adoc#state-folder[Settings]), never in the repository.
+Only the app reads or writes it, never the command line tool, `adoc-ls` or `adoc-mcp`.
+
+[[open-recent-folder]]
+== Open Recent Folder
+
+File > Open Recent Folder… (also in the command palette, with no default key binding) lists the folders you opened recently as a workspace, most recent first.
+Each row shows the folder's name above its full path.
+Typing filters by name or path, and Enter opens the chosen folder as the workspace, as Open Folder does.
+
+The app remembers up to 10 folders, in `recent-folders.json` in the state folder.
+Folders that no longer exist are left out.
+If no folder has been opened yet, a notification says so.
+
 [[quick-open]]
 == Quick Open
 

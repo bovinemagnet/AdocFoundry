@@ -42,6 +42,7 @@ mod recovery;
 mod rendered;
 pub mod report;
 mod search;
+mod session;
 mod settings;
 mod spelling;
 #[cfg(feature = "typst")]
@@ -90,6 +91,7 @@ pub use profiles::{PdfProfile, PdfThemeChoice, ProfileContent, BUNDLED_THEMES};
 pub use quick_open::{QuickOpenItem, QUICK_OPEN_LIMIT};
 pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
+pub use session::{RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE};
 pub use settings::{
     pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, HistorySettings,
     PdfSettings, Settings, SidebarSettings, SpellingSettings, ThemePreference, ToolSettings,
