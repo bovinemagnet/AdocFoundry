@@ -417,6 +417,7 @@ Not in Phase 4, by decision: typeset STEM, a live Typst preview, PDF/A-1 and PDF
 |tree-sitter
 |Typst's highlighter, only when `source-highlighter` is set
 |The tree-sitter highlighter is in the application crate. asciidoctor-pdf also highlights only then.
+Highlighting through the editor's grammars was added later (issue #61); see xref:pdf.adoc#_source_highlighting[Source highlighting].
 
 |PDF/A date
 |Not specified

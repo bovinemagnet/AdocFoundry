@@ -7,6 +7,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Added
 
 - Files, Navigation and Modules follow the active page: whenever another page or image becomes active, each panel selects its row, opening the folders and branches above it and scrolling it into view, without taking focus. `[sidebar] follow_active = false` turns this off (#151).
+- PDF export highlights source blocks with the editor's tree-sitter grammars and the preview's queries and light colours, so a listing looks as it does in the preview, when `source-highlighter` is set; Bash, Go, HTML, Java, JavaScript, JSON, Python, Rust, SQL, TOML, TypeScript and YAML, with other languages left to Typst's highlighter as before (#61).
 
 ### Fixed
 
