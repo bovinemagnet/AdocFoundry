@@ -5,7 +5,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     thread,
     time::{Duration, Instant},
@@ -15,7 +15,12 @@ use adoc_core::SourceRange;
 use adoc_model::{Access, Mark, Model, Piece};
 use adoc_spell::{Dictionaries, WordList};
 
-use crate::{workspace::WorkerMessage, DocumentId, Engine, EngineEvent, TextEdit};
+use crate::{
+    commands::{ids, register, spec},
+    workspace::WorkerMessage,
+    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
+    Engine, EngineError, EngineEvent, TextEdit,
+};
 
 /// How long a page must go unchanged before it is checked again.
 pub const SPELLING_SETTLE: Duration = Duration::from_millis(500);
@@ -25,6 +30,12 @@ pub const MAX_SUGGESTED_WORDS: usize = 100;
 
 /// The code front ends give spelling hints, apart from the engine's diagnostics.
 pub const SPELLING_CODE: &str = "adoc.spelling";
+
+/// A workspace root's word list, committed with the repository.
+pub const WORKSPACE_WORDS_FILE: &str = ".adocfoundry-words.txt";
+
+/// The user's word list, beside the user settings file.
+pub const USER_WORDS_FILE: &str = "spelling-words.txt";
 
 /// A word the dictionary and word lists do not know, where it is, and what might replace it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -167,7 +178,7 @@ impl Engine {
     }
 
     /// The word lists that apply to the page at `path`: the user's, and its workspace root's.
-    pub(crate) fn word_lists_for(&self, path: &std::path::Path) -> Vec<Arc<WordList>> {
+    pub(crate) fn word_lists_for(&self, path: &Path) -> Vec<Arc<WordList>> {
         let mut lists = vec![self.spelling.user_words.clone()];
         lists.extend(
             self.spelling
@@ -277,8 +288,167 @@ impl Engine {
         }
     }
 
-    /// Reads the user's and each workspace root's word list. Task 6 fills this in.
-    fn read_word_lists(&mut self) {}
+    /// The user's word list file, beside the user settings file.
+    fn user_words_path(&self) -> Option<PathBuf> {
+        Some(self.settings.user_file()?.parent()?.join(USER_WORDS_FILE))
+    }
+
+    /// The word list file of the workspace root holding document `id`.
+    fn workspace_words_path(&self, id: DocumentId) -> Option<PathBuf> {
+        let path = &self.documents.get(&id)?.path;
+        let root = self.roots.iter().find(|root| path.starts_with(root))?;
+        Some(root.join(WORKSPACE_WORDS_FILE))
+    }
+
+    /// Reads the user's and each workspace root's word list; a list that cannot be read is
+    /// empty.
+    fn read_word_lists(&mut self) {
+        let read = |path: &Path| Arc::new(WordList::read(path).unwrap_or_default());
+        self.spelling.user_words = self
+            .user_words_path()
+            .map_or_else(Arc::default, |path| read(&path));
+        self.spelling.workspace_words = self
+            .roots
+            .iter()
+            .map(|root| (root.clone(), read(&root.join(WORKSPACE_WORDS_FILE))))
+            .collect();
+    }
+
+    /// Reads a workspace root's list again when the watcher reports it changed.
+    pub(crate) fn word_lists_changed(&mut self, paths: &[PathBuf]) {
+        let mut changed = false;
+        for path in paths {
+            let Some(root) = path.parent().filter(|_| {
+                path.file_name()
+                    .is_some_and(|name| name == WORKSPACE_WORDS_FILE)
+            }) else {
+                continue;
+            };
+            if let Some(list) = self.spelling.workspace_words.get_mut(root) {
+                *list = Arc::new(WordList::read(path).unwrap_or_default());
+                changed = true;
+            }
+        }
+        if changed {
+            self.spelling.generation += 1;
+        }
+    }
+
+    /// Adds the word at `range` of document `id` to the user's list, or to its workspace root's,
+    /// writes the list and drops the misspellings it now accepts.
+    fn add_word(
+        &mut self,
+        id: DocumentId,
+        range: SourceRange,
+        user: bool,
+    ) -> Result<(), EngineError> {
+        let word = self
+            .text_in(id, range)
+            .ok_or(EngineError::UnknownDocument(id))?;
+        if word.is_empty() || word.chars().any(char::is_whitespace) || word.chars().count() > 100 {
+            return Err(EngineError::InvalidRequest(format!(
+                "`{word}` is not a word"
+            )));
+        }
+        let path = if user {
+            self.user_words_path().ok_or_else(|| {
+                EngineError::InvalidRequest("there is no user settings file".to_owned())
+            })?
+        } else {
+            self.workspace_words_path(id).ok_or_else(|| {
+                EngineError::InvalidRequest("the page is in no workspace folder".to_owned())
+            })?
+        };
+        // The file as it is now, so words added elsewhere are kept.
+        let mut list = WordList::read(&path).map_err(|error| spell_error(&path, error))?;
+        list.insert(&word);
+        list.write(&path)
+            .map_err(|error| spell_error(&path, error))?;
+        let list = Arc::new(list);
+        let applies: Vec<DocumentId> = if user {
+            self.spelling.user_words = list.clone();
+            self.documents.keys().copied().collect()
+        } else {
+            let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
+            self.spelling
+                .workspace_words
+                .insert(root.clone(), list.clone());
+            self.documents
+                .iter()
+                .filter(|(_, document)| document.path.starts_with(&root))
+                .map(|(id, _)| *id)
+                .collect()
+        };
+        self.spelling.generation += 1;
+        for id in applies {
+            let Some(checked) = self.spelling.results.get_mut(&id) else {
+                continue;
+            };
+            let before = checked.misspellings.len();
+            checked
+                .misspellings
+                .retain(|misspelling| !list.contains(&misspelling.word));
+            if checked.misspellings.len() != before {
+                self.emit(EngineEvent::SpellingChanged(id));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn spell_error(path: &Path, error: adoc_spell::SpellError) -> EngineError {
+    match error {
+        adoc_spell::SpellError::Io { source, .. } => EngineError::Io {
+            path: path.to_path_buf(),
+            source,
+        },
+        other => EngineError::InvalidRequest(other.to_string()),
+    }
+}
+
+pub(crate) fn register_spelling(registry: &mut CommandRegistry) {
+    register(
+        registry,
+        spec(
+            ids::SPELLING_ADD_TO_WORKSPACE,
+            "Add Word to Workspace Dictionary",
+            CommandCategory::Edit,
+            None,
+            CommandContext::ActiveDocument,
+        ),
+        |engine, args| add_word_command(engine, args, false),
+    );
+    register(
+        registry,
+        spec(
+            ids::SPELLING_ADD_TO_USER,
+            "Add Word to User Dictionary",
+            CommandCategory::Edit,
+            None,
+            CommandContext::ActiveDocument,
+        ),
+        |engine, args| add_word_command(engine, args, true),
+    );
+}
+
+/// Takes `CommandArgs::Range`: the word's range in a document.
+fn add_word_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+    user: bool,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Range { id, range } = args else {
+        return Err(EngineError::InvalidArguments {
+            command: if user {
+                ids::SPELLING_ADD_TO_USER
+            } else {
+                ids::SPELLING_ADD_TO_WORKSPACE
+            },
+            expected: "a document and the range of a word",
+        });
+    };
+    engine.add_word(id, range, user)?;
+    Ok(CommandOutcome::Done)
 }
 
 /// The misspellings in the prose of `model`: the text of editable text blocks that are not code,

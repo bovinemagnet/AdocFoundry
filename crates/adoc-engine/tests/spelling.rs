@@ -5,7 +5,7 @@ use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use adoc_core::SourceRange;
 use adoc_engine::{
     commands::ids, CommandArgs, DocumentId, Engine, EngineEvent, ManualClock, Settings,
-    SPELLING_SETTLE,
+    SPELLING_SETTLE, USER_WORDS_FILE, WORKSPACE_WORDS_FILE,
 };
 
 const WAIT: Duration = Duration::from_secs(30);
@@ -254,4 +254,81 @@ fn nothing_is_checked_when_spelling_is_off() {
     settle(&mut engine);
     assert!(engine.misspellings(id).is_empty());
     assert!(!engine.has_pending());
+}
+
+fn workspace_page(text: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let path = root.join("page.adoc");
+    fs::write(&path, text).unwrap();
+    (directory, root, path)
+}
+
+#[test]
+fn adding_a_word_to_the_workspace_dictionary_writes_the_list_and_clears_it() {
+    let (_directory, root, path) = workspace_page("= Page\n\nWe use Qwzxy daily.\n");
+    let (mut engine, _clock) = engine_with_clock();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let id = engine.open(&path).unwrap();
+    settle(&mut engine);
+    let range = engine.misspellings(id)[0].range;
+    engine
+        .invoke(
+            ids::SPELLING_ADD_TO_WORKSPACE,
+            CommandArgs::Range { id, range },
+        )
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(root.join(WORKSPACE_WORDS_FILE)).unwrap(),
+        "Qwzxy\n"
+    );
+    assert!(engine.misspellings(id).is_empty(), "cleared at once");
+    settle(&mut engine);
+    assert!(
+        engine.misspellings(id).is_empty(),
+        "and after checking again"
+    );
+}
+
+#[test]
+fn adding_a_word_to_the_user_dictionary_needs_a_settings_file() {
+    let (directory, root, path) = workspace_page("= Page\n\nA qwzxy.\n");
+    let user = directory.path().join("settings.toml");
+    fs::write(&user, "").unwrap();
+    let (mut engine, _clock) = engine_with(Settings::load(Some(&user), None).unwrap());
+    engine.open_workspace(vec![root]).unwrap();
+    let id = engine.open(&path).unwrap();
+    settle(&mut engine);
+    let range = engine.misspellings(id)[0].range;
+    engine
+        .invoke(ids::SPELLING_ADD_TO_USER, CommandArgs::Range { id, range })
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(directory.path().join(USER_WORDS_FILE)).unwrap(),
+        "qwzxy\n"
+    );
+    assert!(engine.misspellings(id).is_empty());
+
+    let (mut bare, _clock) = engine_with_clock();
+    let id = bare.open(&path).unwrap();
+    assert!(bare
+        .invoke(ids::SPELLING_ADD_TO_USER, CommandArgs::Range { id, range })
+        .is_err());
+}
+
+#[test]
+fn an_edited_workspace_list_is_read_again() {
+    let (_directory, root, path) = workspace_page("= Page\n\nWe use Qwzxy daily.\n");
+    let (mut engine, _clock) = engine_with_clock();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let id = engine.open(&path).unwrap();
+    settle(&mut engine);
+    assert_eq!(misspelt(&engine, id), ["Qwzxy"]);
+    fs::write(root.join(WORKSPACE_WORDS_FILE), "Qwzxy\n").unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while !engine.misspellings(id).is_empty() && std::time::Instant::now() < deadline {
+        settle(&mut engine);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(engine.misspellings(id).is_empty());
 }

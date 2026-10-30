@@ -82,7 +82,10 @@ pub use settings::{
     PdfSettings, Settings, SidebarSettings, SpellingSettings, ThemePreference, ToolSettings,
     UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
-pub use spelling::{Misspelling, MAX_SUGGESTED_WORDS, SPELLING_CODE, SPELLING_SETTLE};
+pub use spelling::{
+    Misspelling, MAX_SUGGESTED_WORDS, SPELLING_CODE, SPELLING_SETTLE, USER_WORDS_FILE,
+    WORKSPACE_WORDS_FILE,
+};
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
 pub use tabs::{OpenDisposition, TabItem};

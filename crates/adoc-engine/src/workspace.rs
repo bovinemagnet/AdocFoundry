@@ -454,6 +454,7 @@ impl Engine {
         let listed: Vec<PathBuf> = ready.iter().map(|(path, _)| path.clone()).collect();
         self.directories_changed(&listed);
         self.images_changed(&listed);
+        self.word_lists_changed(&listed);
         let mut reindex = false;
         for (path, change) in &ready {
             if *change == Change::Directory {
