@@ -57,6 +57,7 @@ pub mod ids {
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
     pub const VIEW_TOGGLE_SCROLL_SYNC: CommandId = CommandId::new("view.toggle_scroll_sync");
+    pub const VIEW_TOGGLE_PDF_PREVIEW: CommandId = CommandId::new("view.toggle_pdf_preview");
     pub const PREVIEW_PIN: CommandId = CommandId::new("preview.pin");
     pub const VIEW_SHOW_SOURCE: CommandId = CommandId::new("view.show_source");
     pub const VIEW_SHOW_VISUAL: CommandId = CommandId::new("view.show_visual");

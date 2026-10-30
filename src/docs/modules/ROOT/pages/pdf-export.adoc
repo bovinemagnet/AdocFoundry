@@ -23,6 +23,7 @@ When it finishes, a notification reports the number of pages and the first warni
 If it fails, the notification gives the reason.
 
 From the command line, see xref:command-line.adoc#pdf[Command line].
+To see the pages while you edit, use the xref:preview.adoc#pdf-preview[PDF preview].
 
 == Exporting a component
 
@@ -252,7 +253,6 @@ A page the parser cannot read is shown in the PDF as its source, and the export 
 
 * Source blocks are highlighted by Typst's highlighter, and only when the `source-highlighter` attribute is set, which is how asciidoctor-pdf behaves.
 The editor's tree-sitter highlighting is not used.
-* There is no live PDF preview pane.
 * PDF/UA-2 is not available, because Typst 0.15.1 writes only PDF/UA-1.
 * asciidoctor-pdf's Ruby converter extensions are not run.
 * A front cover image is not supported beyond what the title page shows.

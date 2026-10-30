@@ -144,3 +144,67 @@ fn book_memory_probe() {
         started.elapsed().as_secs_f64()
     );
 }
+
+#[test]
+#[ignore = "timing probe"]
+fn pdf_preview_after_typing() {
+    // Issue #62: an ordinary page's PDF preview follows typing within a second or two. The
+    // reference article: four pages of every block kind, an image, a table and a footnote.
+    let page = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/pdf/reference/article.adoc");
+    let directory = tempfile::tempdir().unwrap();
+    let copy = directory.path().join("article.adoc");
+    fs::copy(&page, &copy).unwrap();
+    fs::create_dir_all(directory.path().join("images")).unwrap();
+    for entry in fs::read_dir(page.parent().unwrap().join("images")).unwrap() {
+        let entry = entry.unwrap();
+        fs::copy(
+            entry.path(),
+            directory.path().join("images").join(entry.file_name()),
+        )
+        .unwrap();
+    }
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    let events = engine.subscribe();
+    let id = engine.open(&copy).unwrap();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PDF_PREVIEW, CommandArgs::None)
+        .unwrap();
+    let ready = |engine: &mut Engine| {
+        let started = Instant::now();
+        loop {
+            engine.pump();
+            engine.wait_for_workers(std::time::Duration::from_millis(20));
+            if events
+                .try_iter()
+                .any(|event| matches!(event, adoc_engine::EngineEvent::PdfPreviewReady { .. }))
+            {
+                return started.elapsed();
+            }
+            assert!(started.elapsed().as_secs() < 30, "no PDF preview");
+        }
+    };
+    println!("first PDF preview: {:?}", ready(&mut engine));
+    for round in 0..5 {
+        // Anything still arriving from the round before.
+        engine.wait_for_workers(std::time::Duration::from_secs(5));
+        let _ = events.try_iter().count();
+        let started = Instant::now();
+        engine
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(0, 0),
+                    text: "// edited\n".to_owned(),
+                },
+            )
+            .unwrap();
+        let edit = started.elapsed();
+        let latency = ready(&mut engine);
+        println!(
+            "round {round}: edit {edit:?}, PDF preview {:?} after the edit",
+            edit + latency
+        );
+    }
+}

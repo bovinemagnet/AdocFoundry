@@ -198,6 +198,31 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
         ),
         export_command,
     );
+    register(
+        registry,
+        spec(
+            ids::VIEW_TOGGLE_PDF_PREVIEW,
+            "Toggle PDF Preview",
+            CommandCategory::View,
+            None,
+            CommandContext::Always,
+        ),
+        toggle_pdf_preview,
+    );
+}
+
+/// Switches the preview between the rendered page and its PDF pages, showing the preview when
+/// it switches to the PDF.
+#[cfg(feature = "typst")]
+fn toggle_pdf_preview(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    layout.pdf = !layout.pdf || !layout.visible;
+    layout.visible = true;
+    engine.set_preview_layout(layout);
+    if let Some(target) = engine.preview_target() {
+        engine.request_pdf_preview(target);
+    }
+    Ok(CommandOutcome::Done)
 }
 
 #[cfg(feature = "typst")]
@@ -614,7 +639,7 @@ impl Engine {
         ThemeSource::named(&name, themes_dir.as_deref())
     }
 
-    fn export_options(
+    pub(crate) fn export_options(
         &self,
         args: &ExportArgs,
         attributes: &BTreeMap<String, String>,

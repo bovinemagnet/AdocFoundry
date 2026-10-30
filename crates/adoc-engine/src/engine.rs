@@ -77,6 +77,8 @@ pub struct Engine {
     pub(crate) html_exports: crate::html_export::HtmlExports,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
+    #[cfg(feature = "typst")]
+    pub(crate) pdf_preview: crate::pdf_preview::PdfPreviewState,
 }
 
 /// Typed characters re-parse their document at once but re-index it, and refresh diagnostics,
@@ -146,6 +148,8 @@ impl Engine {
             html_exports: crate::html_export::HtmlExports::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
+            #[cfg(feature = "typst")]
+            pdf_preview: crate::pdf_preview::PdfPreviewState::default(),
         }
     }
 

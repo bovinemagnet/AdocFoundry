@@ -2677,6 +2677,15 @@ impl WorkspaceView {
         self.invoke(ids::VIEW_TOGGLE_SCROLL_SYNC, CommandArgs::None, window, cx);
     }
 
+    fn on_toggle_pdf_preview(
+        &mut self,
+        _: &TogglePdfPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_TOGGLE_PDF_PREVIEW, CommandArgs::None, window, cx);
+    }
+
     fn on_pin_preview(&mut self, _: &PinPreview, window: &mut Window, cx: &mut Context<Self>) {
         self.invoke(ids::PREVIEW_PIN, CommandArgs::None, window, cx);
     }
@@ -3553,6 +3562,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_toggle_preview))
             .on_action(cx.listener(Self::on_detach_preview))
             .on_action(cx.listener(Self::on_toggle_preview_sync))
+            .on_action(cx.listener(Self::on_toggle_pdf_preview))
             .on_action(cx.listener(Self::on_pin_preview))
             .on_action(cx.listener(Self::on_show_source))
             .on_action(cx.listener(Self::on_show_visual))
