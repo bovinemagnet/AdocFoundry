@@ -28,6 +28,11 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Ctrl-O
 |`document.open`
 
+|Quick Open
+|Cmd-P
+|Ctrl-P
+|`workspace.quick_open`
+
 |Save
 |Cmd-S
 |Ctrl-S

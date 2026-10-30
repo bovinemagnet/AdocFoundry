@@ -53,6 +53,8 @@ pub struct Engine {
     pub(crate) index_generation: u64,
     pub(crate) watcher: Option<FileWatcher>,
     pub(crate) history: crate::navigation::History,
+    /// The files made active, for Quick Open.
+    pub(crate) recent: crate::quick_open::RecentFiles,
     pub(crate) previews: BTreeMap<crate::PreviewId, crate::EditPreview>,
     pub(crate) next_preview: u64,
     pub(crate) next_search: u64,
@@ -129,6 +131,7 @@ impl Engine {
             index_generation: 0,
             watcher: None,
             history: crate::navigation::History::default(),
+            recent: crate::quick_open::RecentFiles::default(),
             previews: BTreeMap::new(),
             next_preview: 1,
             next_search: 1,
@@ -497,6 +500,7 @@ impl Engine {
             if let Some(left) = left {
                 self.auto_save_left(left);
             }
+            self.recent.touch(&self.documents[&id].path);
             self.emit(EngineEvent::NavigationChanged);
             self.sync_preview_target();
         }

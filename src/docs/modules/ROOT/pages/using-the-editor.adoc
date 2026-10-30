@@ -532,6 +532,31 @@ An SVG shows only what it contains.
 Scripts never run and links are not followed.
 Images it links to, whether local files or web addresses, are not loaded, but images embedded as `data:` URIs are shown.
 
+[[quick-open]]
+== Quick Open
+
+Quick Open finds a page by name.
+Press Cmd-P (Ctrl-P on Windows and Linux), or choose File > Quick Open… or Quick Open… in the command palette.
+
+The picker lists the workspace's AsciiDoc files, read from the index, so the disk is not scanned.
+Each row shows the page title, or the file name when there is no title.
+It also shows the Antora resource ID and the path relative to the workspace root.
+Pages show an ID such as `1.0@alpha:ROOT:guide.adoc`, and other families show the family, such as `beta:ROOT:partial$intro.adoc`.
+Navigation files and files outside Antora modules have no ID.
+
+Matching is fuzzy.
+Each space-separated word you type must match the file name, title, resource ID or path, with its letters in order and ignoring case.
+`gde` finds `guide.adoc`, and `beta refer` finds the `reference.adoc` of the `beta` component.
+Matches in the file name count most, then the title.
+Letters at the start of words and runs of letters count more.
+
+Files you opened recently in this session come first, most recent first, then the rest by how well they match.
+With nothing typed, recent files come first, then every file by path.
+The picker lists at most 100 files.
+Recent files are forgotten when you quit.
+
+Enter opens the chosen file as an ordinary tab, not the preview tab, as Open File does.
+
 [[formatting-text]]
 == Formatting text in the source editor
 

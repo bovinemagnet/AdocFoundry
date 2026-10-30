@@ -2598,6 +2598,37 @@ fn palette_commands_reach_the_workspace(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn quick_open_opens_the_page_chosen(cx: &mut TestAppContext) {
+    init(cx);
+    let root = fixture("antora-multi-component");
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let index = root.join("alpha/modules/ROOT/pages/index.adoc");
+    let (_workspace, mut cx) = workspace_window(&app, vec![index], cx);
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-p");
+    cx.run_until_parked();
+    // The component, from the resource id, and the start of the file name: no row's text
+    // holds this as typed, so only the engine's matching finds it.
+    cx.simulate_input("beta refer");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let (active, preview) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.active().unwrap();
+        (
+            engine.document(id).unwrap().path.clone(),
+            engine.is_preview(adoc_engine::TabItem::Document(id)),
+        )
+    });
+    assert_eq!(active, root.join("beta/modules/api/pages/reference.adoc"));
+    assert!(!preview, "a page chosen by name opens as an ordinary tab");
+}
+
+#[gpui::test]
 fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
     let text = "= Page\n\nSome plain words.\n";
     let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
