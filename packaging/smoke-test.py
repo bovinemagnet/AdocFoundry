@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Smoke test of release binaries: each one's --version, a PDF export from the CLI, the
-language server's and the MCP server's initialise and shutdown, and the app staying up on a
-fixture workspace.
+"""Smoke test of release binaries: the bundled dictionaries' licence shipped with them, each
+one's --version, a PDF export from the CLI, the language server's and the MCP server's
+initialise and shutdown, and the app staying up on a fixture workspace.
 
 usage: packaging/smoke-test.py <directory with the binaries> [--no-app] [--expect-signed]
 
@@ -22,6 +22,15 @@ import time
 
 FIXTURES = os.path.join("tests", "fixtures")
 TIMEOUT = 120
+
+# Where each package puts the dictionaries' licence, from the folder holding the binaries:
+# beside them (the Windows zip), in the app bundle's resources (macOS), or with the package's
+# documentation (deb, rpm, AppImage).
+LICENCE_PLACES = [
+    os.path.join("licenses", "SCOWL.txt"),
+    os.path.join("..", "Resources", "licenses", "SCOWL.txt"),
+    os.path.join("..", "share", "doc", "adocfoundry", "SCOWL.txt"),
+]
 
 
 def binary(directory, name):
@@ -45,6 +54,22 @@ def versions(directory):
         )
         check(output.returncode == 0 and output.stdout.startswith(name + " "),
               f"{name} --version: {output.stdout.strip()}")
+
+
+def licence_path(directory):
+    """The dictionaries' licence shipped with the binaries in `directory`, or None."""
+    for place in LICENCE_PLACES:
+        path = os.path.join(directory, place)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def licence(directory):
+    path = licence_path(directory)
+    with open(path or os.devnull, encoding="utf-8") as file:
+        text = file.read()
+    check("Kevin Atkinson" in text, f"the dictionaries' licence ships with the binaries: {path}")
 
 
 def pdf_export(directory):
@@ -168,6 +193,7 @@ def main():
     directory = sys.argv[1]
     if "--expect-signed" in sys.argv:
         signatures(directory)
+    licence(directory)
     versions(directory)
     pdf_export(directory)
     language_server(directory)

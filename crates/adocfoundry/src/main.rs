@@ -14,6 +14,7 @@ mod mirror_view;
 mod preview;
 mod search_view;
 mod sidebar;
+mod spelling;
 mod typing_bench;
 #[cfg(test)]
 mod ui_tests;

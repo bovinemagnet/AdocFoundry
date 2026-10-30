@@ -73,10 +73,14 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           packaging/macos/bundle.sh dist/adocfoundry "$version" dist \
             dist/adocfoundry-cli dist/adoc-ls dist/adoc-mcp
-          # The archives carry the signed tools from the bundle.
+          # The archives carry the signed tools from the bundle, and the dictionaries' licence.
+          notices="$RUNNER_TEMP/notices"
+          mkdir -p "$notices/licenses"
+          cp crates/adoc-spell/dictionaries/README.md "$notices/licenses/SCOWL.txt"
           for bin in adoc-ls adocfoundry-cli adoc-mcp; do
             cp "dist/AdocFoundry.app/Contents/MacOS/$bin" "dist/$bin"
-            tar -C dist -czf "dist/$bin-$version-macos-universal.tar.gz" "$bin"
+            tar -czf "dist/$bin-$version-macos-universal.tar.gz" -C dist "$bin" \
+              -C "$notices" licenses/SCOWL.txt
           done
       - name: Check the signatures
         if: env.SIGNED == 'true'
@@ -179,9 +183,13 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
           $bin = "target/${{ matrix.target }}/release"
-          Compress-Archive -Path "$bin/adocfoundry.exe","$bin/adocfoundry-cli.exe","$bin/adoc-ls.exe","$bin/adoc-mcp.exe",LICENSE,README.md `
+          # The dictionaries' licence, as licenses/SCOWL.txt in each zip.
+          $licenses = Join-Path $env:RUNNER_TEMP "notices/licenses"
+          New-Item -ItemType Directory -Force -Path $licenses | Out-Null
+          Copy-Item crates/adoc-spell/dictionaries/README.md (Join-Path $licenses "SCOWL.txt")
+          Compress-Archive -Path "$bin/adocfoundry.exe","$bin/adocfoundry-cli.exe","$bin/adoc-ls.exe","$bin/adoc-mcp.exe",LICENSE,README.md,$licenses `
             -DestinationPath "dist/AdocFoundry-$version-windows-${{ matrix.arch }}.zip"
-          Compress-Archive -Path "$bin/adoc-ls.exe" -DestinationPath "dist/adoc-ls-$version-windows-${{ matrix.arch }}.zip"
+          Compress-Archive -Path "$bin/adoc-ls.exe",$licenses -DestinationPath "dist/adoc-ls-$version-windows-${{ matrix.arch }}.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.arch }}
@@ -222,6 +230,8 @@ jobs:
           curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage"
           chmod +x linuxdeploy
           cp packaging/icons/adocfoundry-256.png io.github.bovinemagnet.AdocFoundry.png
+          # linuxdeploy keeps what the AppDir holds already: the dictionaries' licence, as the deb has it.
+          install -Dm644 crates/adoc-spell/dictionaries/README.md AppDir/usr/share/doc/adocfoundry/SCOWL.txt
           # Update information for AppImageUpdate, and the .zsync it reads, published with the
           # release.
           update="gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-${{ matrix.arch }}.AppImage.zsync"
@@ -243,11 +253,17 @@ jobs:
             grep -q "install -Dm755 target/release/$bin -t /app/bin" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
           done
           grep -q -- "--features adoc-ls/typst,adoc-ls/git" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
+          grep -q "crates/adoc-spell/dictionaries/README.md /app/share/doc/adocfoundry/SCOWL.txt" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
       - name: Command-line tools
         run: |
           version="${GITHUB_REF_NAME#v}"
+          # Each with the dictionaries' licence, staged outside dist/, which is uploaded whole.
+          notices="$RUNNER_TEMP/notices"
+          mkdir -p "$notices/licenses"
+          cp crates/adoc-spell/dictionaries/README.md "$notices/licenses/SCOWL.txt"
           for bin in adoc-ls adocfoundry-cli adoc-mcp; do
-            tar -C target/release -czf "dist/$bin-$version-linux-${{ matrix.arch }}.tar.gz" "$bin"
+            tar -czf "dist/$bin-$version-linux-${{ matrix.arch }}.tar.gz" -C target/release "$bin" \
+              -C "$notices" licenses/SCOWL.txt
           done
       - uses: actions/upload-artifact@v4
         with:

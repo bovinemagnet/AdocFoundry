@@ -36,6 +36,7 @@ Between messages the server lets the engine catch up every 50 ms and publishes w
 * Find references (`textDocument/references`).
 * Rename an anchor (`textDocument/rename`).
 * Update links when a file is renamed (`workspace/willRenameFiles`).
+* Spelling hints and quick fixes, described below.
 * Code actions and commands, described below.
 
 Hover, definition, completion and symbols behave as before.
@@ -71,6 +72,16 @@ It returns `{ files, problems }`.
 `adoc.exportPdf` exports a page to PDF, or with `component: true` its component version as a book.
 It takes `{ uri, component?, output, theme?, standards? }` and reports with `window/showMessage`.
 It is advertised only when the server is built with Typst.
+
+`adoc.spelling.addToWorkspace` and `adoc.spelling.addToUser` add a word to the workspace dictionary (`.adocfoundry-words.txt`) or the user dictionary (`spelling-words.txt` beside the user settings file).
+Each takes `[uri, start, end]`, the page and the byte offsets of the word.
+
+== Spelling
+
+The server publishes misspelt words as Hint diagnostics with the code `adoc.spelling`.
+Each has a quick fix, "Change to '<word>'" for every suggestion, and fixes that run the two commands above.
+Misspellings are not in the Problems panel or in `adocfoundry-cli check`.
+See xref:using-the-editor.adoc#spelling[Spelling] for what is checked and for the dictionaries.
 
 == Settings
 

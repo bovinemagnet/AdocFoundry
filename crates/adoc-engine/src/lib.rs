@@ -41,6 +41,7 @@ mod rendered;
 pub mod report;
 mod search;
 mod settings;
+mod spelling;
 #[cfg(feature = "typst")]
 mod stem;
 mod tabs;
@@ -86,8 +87,12 @@ pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use settings::{
     pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, HistorySettings,
-    PdfSettings, Settings, SidebarSettings, ThemePreference, ToolSettings, UpdateSettings,
-    WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    PdfSettings, Settings, SidebarSettings, SpellingSettings, ThemePreference, ToolSettings,
+    UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+};
+pub use spelling::{
+    Misspelling, MAX_SUGGESTED_WORDS, SPELLING_CODE, SPELLING_SETTLE, USER_WORDS_FILE,
+    WORKSPACE_WORDS_FILE,
 };
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;

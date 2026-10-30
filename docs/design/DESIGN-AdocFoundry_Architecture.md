@@ -230,6 +230,7 @@ AdocFoundry/
     adoc-antora              L1  (from zed-asciidoc)
     adoc-index               L1  (from zed-asciidoc)
     adoc-dom                 L1  new: full AST behind `trait DocumentParser`
+    adoc-spell               L1  spell checking: Hunspell dictionaries, words, word lists
     adoc-model               L2  Phase 3: editable tree + steps
     adoc-render              L2  (from zed-asciidoc) + NativeRenderer
     adoc-diagrams            L2  Phase 2

@@ -58,6 +58,12 @@ pub(crate) enum WorkerMessage {
         version: u64,
         count: crate::WordCount,
     },
+    SpellingChecked {
+        id: crate::DocumentId,
+        version: u64,
+        generation: u64,
+        misspellings: Vec<crate::Misspelling>,
+    },
     #[cfg(feature = "git")]
     GitDiscovered {
         generation: u64,
@@ -241,6 +247,7 @@ impl Engine {
             || self.visual.has_due()
             || self.git.has_pending()
             || self.has_due_word_count()
+            || self.has_due_spelling()
             || self.has_due_auto_save()
             || self.has_due_recovery()
             || self.has_due_html_export()
@@ -279,6 +286,7 @@ impl Engine {
             + self.start_due_hunks()
             + self.save_due_expansion()
             + self.start_due_word_count()
+            + self.start_due_spelling()
             + self.save_due_documents()
             + self.write_due_recovery()
             + self.write_due_html_exports()
@@ -352,6 +360,12 @@ impl Engine {
             WorkerMessage::WordsCounted { id, version, count } => {
                 self.words_counted(id, version, count);
             }
+            WorkerMessage::SpellingChecked {
+                id,
+                version,
+                generation,
+                misspellings,
+            } => self.spelling_checked(id, version, generation, misspellings),
             #[cfg(feature = "git")]
             WorkerMessage::GitDiscovered {
                 generation,
@@ -446,6 +460,7 @@ impl Engine {
         let listed: Vec<PathBuf> = ready.iter().map(|(path, _)| path.clone()).collect();
         self.directories_changed(&listed);
         self.images_changed(&listed);
+        self.word_lists_changed(&listed);
         let mut reindex = false;
         for (path, change) in &ready {
             if *change == Change::Directory {

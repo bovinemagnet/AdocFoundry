@@ -212,6 +212,25 @@ impl Default for HistorySettings {
     }
 }
 
+/// Spell checking: whether it is on, the language of pages with no `lang` attribute, and a
+/// folder of further Hunspell dictionaries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SpellingSettings {
+    pub enabled: bool,
+    pub language: String,
+    pub dictionaries: Option<String>,
+}
+
+impl Default for SpellingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            language: "en_GB".to_owned(),
+            dictionaries: None,
+        }
+    }
+}
+
 /// The `[pdf]` table: how PDF export finds its theme and fonts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfSettings {
@@ -268,6 +287,7 @@ pub struct Settings {
     pub updates: UpdateSettings,
     pub sidebar: SidebarSettings,
     pub history: HistorySettings,
+    pub spelling: SpellingSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -425,6 +445,7 @@ impl Settings {
         let allowed_here = layer == Layer::User
             || section == "editor"
             || section == "pdf"
+            || (section == "spelling" && key != "dictionaries")
             || section.starts_with("sidebar.")
             || (section == "sidebar" && key == "follow_active")
             || (section == "workspace" && key == "ignore");
@@ -506,6 +527,9 @@ impl Settings {
                 self.sidebar.navigation = expansion(value)?;
             }
             ("sidebar.modules", "default_expansion") => self.sidebar.modules = expansion(value)?,
+            ("spelling", "enabled") => self.spelling.enabled = boolean(value)?,
+            ("spelling", "language") => self.spelling.language = language_tag(value)?,
+            ("spelling", "dictionaries") => self.spelling.dictionaries = Some(string(value)?),
             ("pdf", "theme") => self.pdf.theme = string(value)?,
             ("pdf", "themes_dir") => self.pdf.themes_dir = Some(string(value)?),
             ("pdf", "fonts_dir") => self.pdf.fonts_dir = Some(string(value)?),
@@ -561,6 +585,20 @@ fn is_host_kind(kind: &str) -> bool {
     known
 }
 
+/// A language tag: letters, digits, `_` and `-`, as `en_GB` or `en-US`.
+fn language_tag(value: &toml::Value) -> Result<String, &'static str> {
+    value
+        .as_str()
+        .filter(|tag| {
+            !tag.is_empty()
+                && tag
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
+        .map(str::to_owned)
+        .ok_or("expected a language tag such as \"en_GB\"")
+}
+
 /// A sidebar tree's expansion: levels, 0 or more, or `"all"`.
 fn expansion(value: &toml::Value) -> Result<ExpansionPolicy, &'static str> {
     const EXPECTED: &str = "expected a whole number of levels, 0 or more, or \"all\"";
@@ -577,6 +615,7 @@ fn is_known(section: &str, key: &str) -> bool {
     matches!(
         (section, key),
         ("sidebar", "remember_expansion" | "follow_active")
+            | ("spelling", "enabled" | "language" | "dictionaries")
             | (
                 "sidebar.navigation" | "sidebar.modules",
                 "default_expansion"
@@ -776,6 +815,56 @@ mod tests {
         assert_eq!(settings.sidebar.navigation, ExpansionPolicy::Depth(2));
         assert_eq!(settings.sidebar.modules, ExpansionPolicy::Depth(2));
         assert!(settings.sidebar.remember_expansion);
+    }
+
+    #[test]
+    fn spelling_loads_per_layer() {
+        let defaults = Settings::default().spelling;
+        assert!(defaults.enabled);
+        assert_eq!(defaults.language, "en_GB");
+        assert_eq!(defaults.dictionaries, None);
+
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(
+            &user,
+            "[spelling]\nenabled = false\nlanguage = \"en_US\"\ndictionaries = \"/opt/dicts\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+        assert!(!settings.spelling.enabled);
+        assert_eq!(settings.spelling.language, "en_US");
+        assert_eq!(
+            settings.spelling.dictionaries.as_deref(),
+            Some("/opt/dicts")
+        );
+
+        // The workspace overrides the switch and the language, but not the folder.
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[spelling]\nenabled = true\nlanguage = \"de-DE\"\ndictionaries = \"/tmp/other\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(settings.spelling.enabled);
+        assert_eq!(settings.spelling.language, "de-DE");
+        assert_eq!(
+            settings.spelling.dictionaries.as_deref(),
+            Some("/opt/dicts")
+        );
+        assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
+        assert!(settings.warnings[0].contains("can only be set in the user settings file"));
+
+        // An invalid language warns and keeps the layer beneath.
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[spelling]\nlanguage = \"en GB\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert_eq!(settings.spelling.language, "en_US");
+        assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
     }
 
     #[test]

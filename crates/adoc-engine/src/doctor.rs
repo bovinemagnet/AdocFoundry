@@ -130,6 +130,7 @@ pub struct Doctor {
     tools: Vec<Tool>,
     search_path: Option<OsString>,
     settings: DoctorSection,
+    spelling: DoctorSection,
     #[cfg(feature = "typst")]
     theme: adoc_pdf::ThemeSource,
     #[cfg(feature = "typst")]
@@ -200,6 +201,25 @@ impl Engine {
             section = section.line("Warning", warning.clone());
         }
 
+        let mut spelling = DoctorSection::new("Spelling")
+            .line(
+                "Spelling",
+                if settings.spelling.enabled {
+                    "on"
+                } else {
+                    "off"
+                },
+            )
+            .line("Language", settings.spelling.language.clone());
+        let folder = settings.spelling.dictionaries.as_deref().map(Path::new);
+        for info in adoc_spell::Dictionaries::new(folder).list() {
+            let source = match info.source {
+                adoc_spell::DictionarySource::Bundled => "built in".to_owned(),
+                adoc_spell::DictionarySource::File(path) => path.display().to_string(),
+            };
+            spelling = spelling.line("Dictionary", format!("{} ({source})", info.name));
+        }
+
         #[cfg(feature = "typst")]
         let attributes = std::collections::BTreeMap::new();
         Doctor {
@@ -208,6 +228,7 @@ impl Engine {
             tools,
             search_path: std::env::var_os("PATH"),
             settings: section,
+            spelling,
             #[cfg(feature = "typst")]
             theme: self.theme_source(None, &attributes, None),
             #[cfg(feature = "typst")]
@@ -306,6 +327,7 @@ impl Doctor {
             lines: tools,
         });
         sections.push(self.settings);
+        sections.push(self.spelling);
         DoctorReport { sections }
     }
 

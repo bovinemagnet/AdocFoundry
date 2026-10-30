@@ -22,6 +22,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-index", 1),
     ("adoc-lang", 1),
     ("adoc-math", 1),
+    ("adoc-spell", 1),
     ("adoc-render", 2),
     ("adoc-diagrams", 2),
     ("adoc-model", 2),
@@ -88,6 +89,9 @@ pub const NETWORK_SERVER_ALLOWED: &[&str] = &["adoc-mcp"];
 
 /// External AsciiDoc parser crates, permitted only in `adoc-dom` so the parser stays swappable.
 pub const PARSER_CRATES: &[&str] = &["acdc-parser", "asciidoc-parser"];
+
+/// The spell checker, permitted only in `adoc-spell`.
+pub const SPELL_CRATES: &[&str] = &["spellbook"];
 
 /// Source-level imports forbidden in `adoc-lang`.
 const ADOC_LANG_FORBIDDEN_PATHS: &[&str] = &["lsp_types", "lsp_server", "url::"];
@@ -187,6 +191,14 @@ pub fn check_manifest(manifest: &Manifest) -> Vec<String> {
         if PARSER_CRATES.contains(&dependency.as_str()) && name != "adoc-dom" {
             violations.push(format!(
                 "{name} depends on parser crate {dependency}; only adoc-dom may"
+            ));
+        }
+    }
+
+    for dependency in &manifest.dependencies {
+        if SPELL_CRATES.contains(&dependency.as_str()) && name != "adoc-spell" {
+            violations.push(format!(
+                "{name} depends on spell checker {dependency}; only adoc-spell may"
             ));
         }
     }
@@ -500,6 +512,15 @@ libc = "=0.2.0"
     fn accepts_a_crate_depending_on_itself() {
         // A dev-dependency on the crate itself turns on a feature for its own tests.
         assert!(check_manifest(&manifest("adoc-git", &["adoc-git", "adoc-core"])).is_empty());
+    }
+
+    #[test]
+    fn confines_the_spell_checker() {
+        assert!(check_manifest(&manifest("adoc-spell", &["spellbook"])).is_empty());
+        assert_eq!(
+            check_manifest(&manifest("adoc-engine", &["spellbook"])),
+            ["adoc-engine depends on spell checker spellbook; only adoc-spell may"]
+        );
     }
 
     #[test]

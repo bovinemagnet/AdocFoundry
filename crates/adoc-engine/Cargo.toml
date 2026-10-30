@@ -18,6 +18,7 @@ adoc-parser.workspace = true
 adoc-math = { workspace = true, optional = true }
 adoc-pdf = { workspace = true, optional = true }
 adoc-render.workspace = true
+adoc-spell.workspace = true
 dirs.workspace = true
 notify.workspace = true
 regex.workspace = true
