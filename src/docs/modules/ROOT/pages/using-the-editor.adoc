@@ -763,7 +763,27 @@ Git::
 Refreshing status, staging, committing, pushing and the remote links.
 
 Help::
-Check for Updates and Show Diagnostics.
+Check for Updates, Show Diagnostics and About AdocFoundry.
+
+[[about]]
+== About
+
+*Help > About AdocFoundry*, also in the command palette as *About AdocFoundry*, opens a dialog about the build.
+It is the last item of the Help menu, after a separator, and has no default key.
+It shows the name and version, the build (the target triple and profile, such as `x86_64-unknown-linux-gnu, release`) and the licence, Apache-2.0.
+*Repository* and *Documentation* open https://github.com/bovinemagnet/AdocFoundry and https://bovinemagnet.github.io/AdocFoundry.
+
+Below that is a list of every third-party component the application is built from, each with its version and licence.
+It holds the Rust crates of the release build, for every platform, and the bundled fonts (Noto Sans, Noto Serif, M+ 1mn and STIX Two Math), SCOWL dictionaries and Asciidoctor PDF themes.
+The first row is AdocFoundry itself with its `LICENSE`.
+Choosing a row shows the full licence texts beside the list, and *Copy Licence* copies that text.
+
+Every package also ships the same notices as `THIRD-PARTY-NOTICES.txt`, beside `SCOWL.txt`:
+
+* `licenses/` in the zips and tool archives
+* `Contents/Resources/licenses/` in the macOS app bundle
+* `licenses\` in the MSI install folder
+* `/usr/share/doc/adocfoundry/` in the deb, rpm, AppImage and Flatpak
 
 [[reporting-a-problem]]
 == Reporting a problem

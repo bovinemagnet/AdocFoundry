@@ -15,6 +15,8 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - Spell checking of prose in the source and visual editors and in `adoc-ls`: misspelt words are underlined, with suggestions and Add to Workspace Dictionary or Add to User Dictionary in the context menu. Pages are checked in their `lang`, else `[spelling] language` (British English by default), with bundled British and American English dictionaries and any Hunspell dictionaries in `[spelling] dictionaries` (#65).
 
+- Help › About AdocFoundry: the version, build and licence, links to the repository and the documentation, and every third-party component the app is built from with its version, licence and full licence text, ready to copy. The list is generated at build time from Cargo's metadata (every crate of the release build) and the bundled fonts, dictionaries and PDF themes, and each package ships it as `THIRD-PARTY-NOTICES.txt`; a dependency without a licence text fails the build and a test (#161).
+
 ### Fixed
 
 - PDF export reads `index_columns` for the number of index columns, as asciidoctor-pdf does, instead of `index_column_count`; a theme that set it no longer fails to typeset (#106).

@@ -3,6 +3,9 @@
 use std::{path::PathBuf, process::ExitCode};
 
 mod layers;
+// Shared with the app's build script, which uses what this binary does not.
+#[allow(dead_code)]
+mod notices;
 mod package;
 
 fn main() -> ExitCode {
@@ -22,10 +25,39 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("notices") => run_notices(std::env::args().nth(2)),
         _ => {
             eprintln!(
-                "usage: cargo xtask <task>\n\ntasks:\n  layers     check the crate dependency ladder\n  package    release build and archive for this platform in dist/"
+                "usage: cargo xtask <task>\n\ntasks:\n  layers     check the crate dependency ladder\n  notices    write the third-party notices to a file, or print them\n  package    release build and archive for this platform in dist/"
             );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `cargo xtask notices [<file>]`: the notices file the packages ship, written to `file` or
+/// printed.
+fn run_notices(output: Option<String>) -> ExitCode {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let text = match notices::collect(&root, &cargo) {
+        Ok(notices) => notices.to_text(),
+        Err(error) => {
+            eprintln!("notices: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(output) = output else {
+        print!("{text}");
+        return ExitCode::SUCCESS;
+    };
+    match std::fs::write(&output, text) {
+        Ok(()) => {
+            println!("notices: {output}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("notices: {output}: {error}");
             ExitCode::FAILURE
         }
     }

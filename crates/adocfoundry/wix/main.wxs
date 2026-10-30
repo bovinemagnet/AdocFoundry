@@ -39,6 +39,10 @@
             <Component Id="ScowlLicense" Guid="*">
               <File Id="ScowlLicenseFile" Name="SCOWL.txt" DiskId="1" Source="$(sys.SOURCEFILEDIR)..\..\adoc-spell\dictionaries\README.md" KeyPath="yes"/>
             </Component>
+            <!-- The third-party notices, written by `cargo xtask notices` before the MSI is built. -->
+            <Component Id="ThirdPartyNotices" Guid="*">
+              <File Id="ThirdPartyNoticesFile" Name="THIRD-PARTY-NOTICES.txt" DiskId="1" Source="$(sys.SOURCEFILEDIR)..\..\..\target\THIRD-PARTY-NOTICES.txt" KeyPath="yes"/>
+            </Component>
           </Directory>
           <Directory Id="Bin" Name="bin">
             <Component Id="Path" Guid="0F4D3B1A-6C57-4E7E-A1C9-28B6E3D2C9F1" KeyPath="yes">
@@ -75,6 +79,7 @@
              Display="expand" Absent="disallow">
       <ComponentRef Id="License"/>
       <ComponentRef Id="ScowlLicense"/>
+      <ComponentRef Id="ThirdPartyNotices"/>
       <ComponentRef Id="binary0"/>
       <ComponentRef Id="binary1"/>
       <ComponentRef Id="binary2"/>

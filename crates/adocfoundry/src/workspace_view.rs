@@ -2739,6 +2739,14 @@ impl WorkspaceView {
         }
     }
 
+    fn on_show_about(&mut self, _: &ShowAbout, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(CommandOutcome::About(about)) =
+            self.invoke(ids::APP_ABOUT, CommandArgs::None, window, cx)
+        {
+            crate::about::show(*about, window, cx);
+        }
+    }
+
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::External(path)) =
             self.invoke(ids::SETTINGS_OPEN, CommandArgs::None, window, cx)
@@ -3681,6 +3689,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_check_for_updates))
             .on_action(cx.listener(Self::on_show_diagnostics))
+            .on_action(cx.listener(Self::on_show_about))
             .on_action(cx.listener(Self::on_recover_unsaved))
             .on_action(cx.listener(Self::on_local_history))
             .on_action(cx.listener(Self::on_reload_settings))

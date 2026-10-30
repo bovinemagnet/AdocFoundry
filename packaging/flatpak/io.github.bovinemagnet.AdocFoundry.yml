@@ -33,6 +33,8 @@ modules:
       - install -Dm644 packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop -t /app/share/applications
       - install -Dm644 packaging/icons/adocfoundry-256.png /app/share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png
       - install -Dm644 crates/adoc-spell/dictionaries/README.md /app/share/doc/adocfoundry/SCOWL.txt
+      - cargo --offline xtask notices target/THIRD-PARTY-NOTICES.txt
+      - install -Dm644 target/THIRD-PARTY-NOTICES.txt -t /app/share/doc/adocfoundry
     sources:
       - type: git
         url: https://github.com/bovinemagnet/AdocFoundry.git

@@ -27,10 +27,12 @@ for tool in ${tools[@]+"${tools[@]}"}; do
   cp "$tool" "$app/Contents/MacOS/"
 done
 sed "s/@VERSION@/$version/g" "$here/Info.plist" > "$app/Contents/Info.plist"
-# The bundled dictionaries' licence, whose notice goes with every copy. Before signing, which
-# seals Resources.
+# The bundled dictionaries' licence, whose notice goes with every copy, and the third-party
+# notices (`cargo xtask notices target/THIRD-PARTY-NOTICES.txt`). Before signing, which seals
+# Resources.
 mkdir -p "$app/Contents/Resources/licenses"
 cp "$here/../../crates/adoc-spell/dictionaries/README.md" "$app/Contents/Resources/licenses/SCOWL.txt"
+cp "$here/../../target/THIRD-PARTY-NOTICES.txt" "$app/Contents/Resources/licenses/"
 
 # An .icns from the 1024-pixel master, at every size macOS asks for.
 master="$here/../icons/adocfoundry.png"

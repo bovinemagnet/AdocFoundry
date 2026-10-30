@@ -3,6 +3,7 @@
 //! It owns open documents, undo history, the command registry and settings, and publishes
 //! [`EngineEvent`]s. Every user-visible action is a [`Command`] with a stable [`CommandId`].
 
+mod about;
 mod auto_save;
 mod clock;
 mod command;
@@ -53,6 +54,7 @@ mod visual;
 mod words;
 mod workspace;
 
+pub use about::{About, Notice, Notices, DOCUMENTATION};
 #[cfg(feature = "typst")]
 pub use adoc_pdf::{PageAnchor, PreviewPage};
 pub use auto_save::AUTO_SAVE_DELAY;
