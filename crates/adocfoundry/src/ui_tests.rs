@@ -4609,3 +4609,66 @@ fn a_misspelt_word_is_underlined_and_replaced_in_one_undo_step(cx: &mut TestAppC
     cx.run_until_parked();
     assert_eq!(document_text(&app, &mut cx), text);
 }
+
+#[gpui::test]
+fn a_misspelt_word_in_the_visual_editor_is_underlined_and_replaced(cx: &mut TestAppContext) {
+    let text = "= Page\n\nWe recieve it.\n";
+    let (app, _workspace, visual, id, mut cx) = visual_workspace(text, cx);
+    settle_engine(&app, &mut cx);
+    let start = text.find("recieve").unwrap();
+    let underlined = cx.update(|_, cx| {
+        let visual = visual.read(cx);
+        visual
+            .shown()
+            .map(|shown| visual.misspelt(shown, cx))
+            .unwrap_or_default()
+    });
+    assert_eq!(
+        underlined,
+        [SourceRange::new(start, start + "recieve".len())]
+    );
+
+    let first = cx.update(|_, cx| {
+        crate::spelling::choices(&app.read(cx).engine, id, start)[0]
+            .0
+            .clone()
+    });
+    // Right-click the word, then take the first item.
+    let position = cx.update(|_, cx| {
+        let layouts = visual.read(cx).layouts().borrow();
+        layouts
+            .get(&vec![1])
+            .expect("the paragraph is laid out")
+            .position_for_index("We re".len())
+            .expect("laid out")
+            + gpui::point(px(1.), px(2.))
+    });
+    let button = gpui::MouseButton::Right;
+    cx.simulate_event(gpui::MouseDownEvent {
+        button,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        button,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        format!("= Page\n\nWe {first} it.\n")
+    );
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::EDIT_UNDO, CommandArgs::Document(id), cx)
+        })
+    })
+    .unwrap();
+    assert_eq!(text_of(&app, id, &mut cx), text);
+}

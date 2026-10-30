@@ -510,6 +510,47 @@ pub fn bounds_of(layouts: &Layouts, path: &[usize]) -> Option<Bounds<Pixels>> {
     layouts.borrow().get(path).map(TextLayout::bounds)
 }
 
+/// `runs` with a wavy underline in `colour` under each of `ranges` (indices into the shown
+/// text), splitting runs where a range begins or ends.
+#[must_use]
+pub fn with_underlines(runs: Vec<TextRun>, ranges: &[Range<usize>], colour: Hsla) -> Vec<TextRun> {
+    if ranges.is_empty() {
+        return runs;
+    }
+    let mut out = Vec::with_capacity(runs.len() + ranges.len() * 2);
+    let mut at = 0;
+    for run in runs {
+        let end = at + run.len;
+        let mut cuts: Vec<usize> = ranges
+            .iter()
+            .flat_map(|range| [range.start, range.end])
+            .filter(|cut| *cut > at && *cut < end)
+            .collect();
+        cuts.sort_unstable();
+        cuts.dedup();
+        cuts.push(end);
+        let mut start = at;
+        for cut in cuts {
+            let mut piece = run.clone();
+            piece.len = cut - start;
+            if ranges
+                .iter()
+                .any(|range| range.start <= start && cut <= range.end)
+            {
+                piece.underline = Some(UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(colour),
+                    wavy: true,
+                });
+            }
+            out.push(piece);
+            start = cut;
+        }
+        at = end;
+    }
+    out
+}
+
 /// `runs` with syntax highlighting laid over them: each run is split where a highlight starts or
 /// ends, and a highlighted piece takes its colour, weight and style. Both are in bytes of the
 /// same text, so the layout, the caret and the selection are unchanged.
@@ -737,5 +778,31 @@ mod tests {
         assert_eq!(before.text, "a é\u{a0}\u{a0} b");
         assert_eq!(before.formulas[0].shown, 4..8);
         assert_eq!(before.index(5), 8);
+    }
+
+    #[test]
+    fn underlines_split_the_runs_they_cover() {
+        let run = TextRun {
+            len: 10,
+            font: style().font,
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let red = gpui::red();
+        let runs = with_underlines(
+            vec![run.clone(), TextRun { len: 4, ..run }],
+            &[2..5, 9..12],
+            red,
+        );
+        let lengths: Vec<usize> = runs.iter().map(|run| run.len).collect();
+        assert_eq!(lengths, [2, 3, 4, 1, 2, 2]);
+        let wavy: Vec<bool> = runs
+            .iter()
+            .map(|run| run.underline.is_some_and(|underline| underline.wavy))
+            .collect();
+        assert_eq!(wavy, [false, true, false, true, true, false]);
+        assert_eq!(runs[1].underline.unwrap().color, Some(red));
     }
 }
