@@ -4319,6 +4319,44 @@ fn diagnostics_show_the_report_and_copy_it(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+fn about_shows_the_version_and_each_components_licence(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+
+    cx.dispatch_action(crate::editor::bindings::ShowAbout);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(cx.debug_bounds("about-details").is_some());
+    assert!(cx.debug_bounds("about-licence").is_some());
+
+    let copied = |cx: &mut VisualTestContext| {
+        click("about-copy", cx);
+        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .unwrap()
+    };
+    let own = copied(&mut cx);
+    assert!(
+        own.starts_with(&format!(
+            "AdocFoundry {}\nLicence: Apache-2.0\n\nLICENSE\n",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{own}"
+    );
+    click("about-component-1", &mut cx);
+    let first = copied(&mut cx);
+    assert_ne!(first, own);
+    assert!(
+        first.lines().nth(1).unwrap().starts_with("Licence: "),
+        "{first}"
+    );
+}
+
 // A dialog that slides in on the wall clock moves between the frame a click is aimed at and
 // the frame its release lands on, so a slow test run would miss the button.
 #[gpui::test]
@@ -5048,6 +5086,115 @@ fn dragging_an_outline_section_inserts_a_reference_to_it(cx: &mut TestAppContext
         &mut cx,
     );
     assert_eq!(text_of(&app, id, &mut cx), text);
+}
+
+/// Two components, copied: Alpha's guide declares `setup`, and pages in both name it.
+fn anchored_workspace(
+    page: &str,
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let write = |path: &str, text: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("alpha/antora.yml", "name: alpha\nversion: '1.0'\n");
+    write(
+        "alpha/modules/ROOT/pages/guide.adoc",
+        "= Guide\n\n[[setup]]\n== Setup\n\nSee <<setup>>.\n",
+    );
+    write(
+        "alpha/modules/ROOT/pages/index.adoc",
+        "= Alpha\n\nStart with xref:guide.adoc#setup[setting up].\n",
+    );
+    write("beta/antora.yml", "name: beta\nversion: ~\n");
+    write(
+        "beta/modules/ROOT/pages/index.adoc",
+        "= Beta\n\nRead xref:alpha::guide.adoc#setup[Alpha's set-up].\n",
+    );
+    let page = root.join(page);
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    (directory, app, workspace, cx)
+}
+
+/// Puts the source caret at `offset` of the active page.
+fn source_caret(workspace: &Entity<WorkspaceView>, offset: usize, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(offset, offset), window, cx)
+        });
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn find_references_lists_them_by_file_and_opens_one(cx: &mut TestAppContext) {
+    let (_directory, app, workspace, mut cx) =
+        anchored_workspace("alpha/modules/ROOT/pages/guide.adoc", cx);
+    let guide = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let offset = text_of(&app, guide, &mut cx).find("setup]]").unwrap();
+    source_caret(&workspace, offset, &mut cx);
+
+    cx.simulate_keystrokes("alt-shift-f12");
+    cx.run_until_parked();
+    let rows = cx.update(|_, cx| workspace.read(cx).references_for_test(cx));
+    assert_eq!(
+        rows,
+        [
+            "3 references in 3 files",
+            "alpha/modules/ROOT/pages/guide.adoc",
+            "6  See <<setup>>.",
+            "alpha/modules/ROOT/pages/index.adoc",
+            "3  Start with xref:guide.adoc#setup[setting up].",
+            "beta/modules/ROOT/pages/index.adoc",
+            "3  Read xref:alpha::guide.adoc#setup[Alpha's set-up].",
+        ]
+    );
+
+    // A click opens the page at the reference.
+    click("reference-2", &mut cx);
+    let opened = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .path
+            .clone()
+    });
+    assert!(
+        opened.ends_with("beta/modules/ROOT/pages/index.adoc"),
+        "{opened:?}"
+    );
 }
 
 #[gpui::test]

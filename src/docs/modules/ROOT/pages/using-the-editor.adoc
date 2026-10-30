@@ -686,6 +686,22 @@ These two bindings use Ctrl on every platform, including macOS.
 kbd:[Alt+F12] on an `include::` shows the included file read-only, without leaving the current page.
 Use Open from the peek to open it in a tab.
 
+[[find-references]]
+=== Find references
+
+Find References (kbd:[Alt+Shift+F12]) lists where the thing under the source caret is used.
+It is also in the Go menu, after Peek Include, and in the command palette (`navigate.find_references`).
+
+* With the caret on an anchor (`+[[id]]+` or `+[#id]+`) or on a reference to one (`+<<id>>+` or `+xref:page.adoc#id[]+`), it lists every reference to that anchor.
+This includes references from other components, such as `+xref:alpha::guide.adoc#setup[]+`.
+* Anywhere else in a page, it lists every xref, include and navigation entry that names the page itself.
+
+The results appear in a panel below the editor, in the place of the Find in Workspace panel.
+A summary line, for example "3 references in 3 files", is followed by each file and, under it, each reference with its line number and the text of the line.
+Clicking a reference opens that page at the reference, in the preview tab, as clicking a search result does.
+The close button closes the panel, and opening Find in Workspace replaces it.
+
+Find References acts at the caret in the source editor.
 [#go-to-symbol]
 == Go to symbol
 
@@ -717,7 +733,7 @@ Go to Symbol in Page (`navigate.go_to_symbol_in_page`, kbd:[Cmd+R], or kbd:[Ctrl
 It lists them all before you type anything, and typing keeps those whose name contains the text.
 Jumps within the page are recorded in the history too.
 
-Both commands are in the Go menu, after Peek Include, and in the command palette.
+Both commands are in the Go menu, after Find References, and in the command palette.
 
 [[drag-a-link]]
 == Dragging a link into the page
@@ -853,7 +869,27 @@ Git::
 Refreshing status, staging, committing, pushing and the remote links.
 
 Help::
-Check for Updates and Show Diagnostics.
+Check for Updates, Show Diagnostics and About AdocFoundry.
+
+[[about]]
+== About
+
+*Help > About AdocFoundry*, also in the command palette as *About AdocFoundry*, opens a dialog about the build.
+It is the last item of the Help menu, after a separator, and has no default key.
+It shows the name and version, the build (the target triple and profile, such as `x86_64-unknown-linux-gnu, release`) and the licence, Apache-2.0.
+*Repository* and *Documentation* open https://github.com/bovinemagnet/AdocFoundry and https://bovinemagnet.github.io/AdocFoundry.
+
+Below that is a list of every third-party component the application is built from, each with its version and licence.
+It holds the Rust crates of the release build, for every platform, and the bundled fonts (Noto Sans, Noto Serif, M+ 1mn and STIX Two Math), SCOWL dictionaries and Asciidoctor PDF themes.
+The first row is AdocFoundry itself with its `LICENSE`.
+Choosing a row shows the full licence texts beside the list, and *Copy Licence* copies that text.
+
+Every package also ships the same notices as `THIRD-PARTY-NOTICES.txt`, beside `SCOWL.txt`:
+
+* `licenses/` in the zips and tool archives
+* `Contents/Resources/licenses/` in the macOS app bundle
+* `licenses\` in the MSI install folder
+* `/usr/share/doc/adocfoundry/` in the deb, rpm, AppImage and Flatpak
 
 [[reporting-a-problem]]
 == Reporting a problem

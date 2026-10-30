@@ -760,6 +760,19 @@ It holds no page content, and the engine makes no network request.
 The command `app.diagnostics` (*Show Diagnostics*, in the Help category) returns `CommandOutcome::Diagnostics(Box<Doctor>)`, leaving the front end to run it.
 See xref:desktop-app.adoc#diagnostics[Diagnostics] for the app's side.
 
+[[about]]
+== About
+
+`about.rs` builds what the app's *About AdocFoundry* dialog shows.
+The command `app.about` (*About AdocFoundry*, in the Help category) returns `CommandOutcome::About(Box<About>)`.
+`About` holds the name, version, optional build, the licence (`CARGO_PKG_LICENSE`) and its text (`LICENSE`), the repository and documentation addresses (`DOCUMENTATION`), and the `Notices`.
+
+A front end names itself with `About::program(name, version, build)` and gives its embedded notices with `About::notices(Notices::from_json(...))`.
+`Notices::from_json` refuses notices that name a text they lack.
+`Notices::texts(notice)` and `Notices::text(notice)` give a component's texts.
+As with the doctor, the engine owns the command and the view only renders it.
+See xref:building-and-releasing.adoc#notices[cargo xtask notices] for how the notices are generated and xref:desktop-app.adoc#about[About] for the app's side.
+
 == Engine features
 
 The engine has two Cargo features, `typst` and `git`.

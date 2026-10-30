@@ -8,13 +8,13 @@ use std::{
 
 use adoc_antora::{NavError, NavTree};
 
-use adoc_core::{Diagnostic, SourceRange};
+use adoc_core::{Diagnostic, LineIndex, SourceRange};
 use adoc_lang::{
     CompletionItem, DefinitionTarget, DocumentSymbol, Hover, WorkspaceSymbol, WorkspaceSymbolKind,
     XrefLink,
 };
 
-use crate::{DocumentId, Engine, NavigationPosition};
+use crate::{DocumentId, Engine, NavigationPosition, SearchMatch};
 
 /// The most symbols a workspace query returns.
 pub const SYMBOL_RESULTS: usize = 100;
@@ -81,6 +81,42 @@ impl Engine {
             &document.parsed.text,
             offset,
         )
+    }
+
+    /// The references to what is at `offset` in document `id`, as [`Engine::references`] finds
+    /// them, each with its line for listing (from the open buffer when the file is open), in
+    /// file order.
+    #[must_use]
+    pub fn reference_matches(&self, id: DocumentId, offset: usize) -> Vec<SearchMatch> {
+        let mut locations = self.references(id, offset);
+        locations.sort();
+        locations
+            .into_iter()
+            .filter_map(|location| {
+                let text = match self.document_for_path(&location.path) {
+                    Some(open) => self.document(open)?.text_string(),
+                    None => self
+                        .workspace
+                        .index
+                        .file(&location.path)?
+                        .document
+                        .text
+                        .clone(),
+                };
+                let lines = LineIndex::new(&text);
+                let (line, _) = lines.line_column(location.range.start);
+                let start = lines.offset(line, 0).unwrap_or(0);
+                let end = text[start..]
+                    .find('\n')
+                    .map_or(text.len(), |end| start + end);
+                Some(SearchMatch {
+                    line,
+                    line_text: text[start..end].trim_end_matches('\r').to_owned(),
+                    path: location.path,
+                    range: location.range,
+                })
+            })
+            .collect()
     }
 
     /// The sections, anchors and page titles matching `query`: across the workspace, each

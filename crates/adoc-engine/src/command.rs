@@ -115,6 +115,8 @@ pub enum CommandOutcome {
     Location(Location),
     External(PathBuf),
     Preview(EditPreview),
+    /// The references to an anchor or a page, in file order.
+    References(Vec<crate::SearchMatch>),
     /// Sections, anchors and page titles to go to.
     Symbols(Vec<crate::SymbolMatch>),
     /// The selection after a visual command, as source offsets.
@@ -127,6 +129,9 @@ pub enum CommandOutcome {
     /// What the doctor report needs from the engine, for the front end to complete with
     /// `Doctor::run`, off its main thread, and show.
     Diagnostics(Box<crate::Doctor>),
+    /// Help › About, for the front end to name itself in and give its notices to
+    /// (`About::program`, `About::notices`), and show.
+    About(Box<crate::About>),
     /// A commit was made; these open documents were saved first.
     Committed {
         commit: String,

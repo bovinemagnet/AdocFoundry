@@ -426,3 +426,91 @@ fn a_dragged_outline_section_links_to_it_in_the_page() {
         "xref:guide.adoc#setup[Setup]"
     );
 }
+
+/// Two components: Alpha's guide declares `setup`, and pages in both components name it.
+fn anchored_components() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let write = |path: &str, text: &str| {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    };
+    write("alpha/antora.yml", "name: alpha\nversion: '1.0'\n");
+    write(
+        "alpha/modules/ROOT/pages/guide.adoc",
+        "= Guide\n\n[[setup]]\n== Setup\n\nSee <<setup>>.\n",
+    );
+    write(
+        "alpha/modules/ROOT/pages/index.adoc",
+        "= Alpha\n\nStart with xref:guide.adoc#setup[setting up].\n",
+    );
+    write("beta/antora.yml", "name: beta\nversion: ~\n");
+    write(
+        "beta/modules/ROOT/pages/index.adoc",
+        "= Beta\n\nRead xref:alpha::guide.adoc#setup[Alpha's set-up] or xref:alpha::guide.adoc[the guide].\n",
+    );
+    directory
+}
+
+#[test]
+fn find_references_lists_every_reference_to_an_anchor_across_components() {
+    let directory = anchored_components();
+    let root = adoc_engine::normalize_path(directory.path());
+    let mut engine = open_workspace(&root);
+    let guide = root.join("alpha/modules/ROOT/pages/guide.adoc");
+    let id = engine.open(&guide).unwrap();
+    let offset = engine
+        .document(id)
+        .unwrap()
+        .text
+        .to_string()
+        .find("setup]]")
+        .unwrap();
+
+    let CommandOutcome::References(found) = engine
+        .invoke(
+            ids::NAVIGATE_FIND_REFERENCES,
+            CommandArgs::Offset { id, offset },
+        )
+        .unwrap()
+    else {
+        panic!("the references");
+    };
+    let found: Vec<(String, usize, String)> = found
+        .iter()
+        .map(|found| {
+            (
+                found
+                    .path
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .display()
+                    .to_string()
+                    .replace('\\', "/"),
+                found.line,
+                found.line_text.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                "alpha/modules/ROOT/pages/guide.adoc".to_owned(),
+                5,
+                "See <<setup>>.".to_owned()
+            ),
+            (
+                "alpha/modules/ROOT/pages/index.adoc".to_owned(),
+                2,
+                "Start with xref:guide.adoc#setup[setting up].".to_owned()
+            ),
+            (
+                "beta/modules/ROOT/pages/index.adoc".to_owned(),
+                2,
+                "Read xref:alpha::guide.adoc#setup[Alpha's set-up] or xref:alpha::guide.adoc[the guide].".to_owned()
+            ),
+        ]
+    );
+}
