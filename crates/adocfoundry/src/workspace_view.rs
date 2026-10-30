@@ -380,7 +380,20 @@ impl WorkspaceView {
             window.focus(&view.focus_handle, cx);
         }
         crate::updates::check_at_start_up(&view.app, window, cx);
+        view.offer_recovery_at_start_up(window, cx);
         view
+    }
+
+    /// Offers what a session that ended left unsaved, once the window is drawn.
+    fn offer_recovery_at_start_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let items = self.app.read(cx).engine.recoverable();
+        if items.is_empty() {
+            return;
+        }
+        let (app, workspace) = (self.app.clone(), cx.weak_entity());
+        window.defer(cx, move |window, cx| {
+            crate::history_view::show_recovery(app, workspace, items, window, cx);
+        });
     }
 
     // --- engine events -----------------------------------------------------------------------
@@ -1587,7 +1600,7 @@ impl WorkspaceView {
 
     // --- operations used by other views ------------------------------------------------------
 
-    fn invoke(
+    pub(crate) fn invoke(
         &mut self,
         command: adoc_engine::CommandId,
         args: CommandArgs,
@@ -2528,6 +2541,55 @@ impl WorkspaceView {
         {
             crate::updates::check(&self.app, &feed, true, window, cx);
         }
+    }
+
+    fn on_recover_unsaved(
+        &mut self,
+        _: &RecoverUnsaved,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(CommandOutcome::Recoverable(items)) =
+            self.invoke(ids::DOCUMENT_RECOVER_UNSAVED, CommandArgs::None, window, cx)
+        else {
+            return;
+        };
+        if items.is_empty() {
+            window.push_notification("There are no unsaved changes to recover.", cx);
+            return;
+        }
+        let workspace = cx.weak_entity();
+        crate::history_view::show_recovery(self.app.clone(), workspace, items, window, cx);
+    }
+
+    fn on_local_history(&mut self, _: &LocalHistory, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.active_document(cx) else {
+            return;
+        };
+        let Some(CommandOutcome::LocalHistory { document, versions }) = self.invoke(
+            ids::DOCUMENT_LOCAL_HISTORY,
+            CommandArgs::Document(id),
+            window,
+            cx,
+        ) else {
+            return;
+        };
+        if versions.is_empty() {
+            window.push_notification(
+                "This page has no saved versions yet: each save keeps one.",
+                cx,
+            );
+            return;
+        }
+        let workspace = cx.weak_entity();
+        crate::history_view::show_history(
+            self.app.clone(),
+            workspace,
+            document,
+            versions,
+            window,
+            cx,
+        );
     }
 
     fn on_show_diagnostics(
@@ -3482,6 +3544,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_check_for_updates))
             .on_action(cx.listener(Self::on_show_diagnostics))
+            .on_action(cx.listener(Self::on_recover_unsaved))
+            .on_action(cx.listener(Self::on_local_history))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_open_mirror))

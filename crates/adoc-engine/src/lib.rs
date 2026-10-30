@@ -29,8 +29,11 @@ mod images;
 mod git;
 mod inspect;
 mod language;
+mod line_diff;
+mod local_history;
 mod navigation;
 mod preview;
+mod recovery;
 mod rendered;
 pub mod report;
 mod search;
@@ -65,15 +68,18 @@ pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};
 pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use images::{is_image_path, ImageId, OpenImage, IMAGE_EXTENSIONS};
 pub use inspect::resource_id_string;
+pub use line_diff::{line_diff, DiffLine, DIFF_CONTEXT};
+pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE, HISTORY_SWEEP_INTERVAL};
 pub use navigation::NavigationPosition;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };
+pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use settings::{
-    pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, PdfSettings, Settings,
-    SidebarSettings, ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings,
-    USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, HistorySettings,
+    PdfSettings, Settings, SidebarSettings, ThemePreference, ToolSettings, UpdateSettings,
+    WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;

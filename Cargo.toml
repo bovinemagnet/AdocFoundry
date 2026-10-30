@@ -97,6 +97,8 @@ getrandom = "=0.3.4"
 schemars = "=1.2.3"
 tokio = { version = "=1.54.1", features = ["rt", "macros", "io-std", "time", "net", "signal"] }
 sha2 = "=0.10.9"
+# Line diffs for crash recovery and local history; already in the tree through insta.
+similar = { version = "=2.7.0", default-features = false, features = ["text"] }
 tempfile = "=3.27.0"
 toml = "=1.1.8"
 tree-sitter = "=0.26.13"

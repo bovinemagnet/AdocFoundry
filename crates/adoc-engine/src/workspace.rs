@@ -238,6 +238,7 @@ impl Engine {
             || self.git.has_pending()
             || self.has_due_word_count()
             || self.has_due_auto_save()
+            || self.has_due_recovery()
             || self.has_due_html_export()
             || self
                 .watcher
@@ -275,6 +276,7 @@ impl Engine {
             + self.save_due_expansion()
             + self.start_due_word_count()
             + self.save_due_documents()
+            + self.write_due_recovery()
             + self.write_due_html_exports()
     }
 

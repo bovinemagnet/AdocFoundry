@@ -6,6 +6,7 @@ mod app;
 mod diagnostics;
 mod editor;
 mod files_view;
+mod history_view;
 mod image_decode;
 mod image_view;
 mod menus;
@@ -39,7 +40,9 @@ fn main() {
             eprintln!("adocfoundry: {error}; using default settings");
             Settings::default()
         }
-    };
+    }
+    // Where unsaved text is kept for recovery, and the local history.
+    .with_state_dir(Settings::default_state_dir());
     let engine = Engine::new(settings);
 
     gpui_platform::application()

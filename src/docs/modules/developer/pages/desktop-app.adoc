@@ -82,6 +82,18 @@ The test `every_command_is_in_a_menu` fails when a command with an action is in 
 That list holds `document.overwrite` (Save, Overwriting the File on Disk, offered only after a conflict), `visual.split_block` (New Paragraph, bound to kbd:[Enter]), and `document.close_left` and `document.close_right` (Close Left and Close Right, which belong to the tab menu).
 A new command must therefore be added to a menu or to that list.
 
+== Recovery and local history dialogs
+
+`src/history_view.rs` holds both dialogs: `show_recovery` and `show_history`.
+Their views, `RecoveryList` and `HistoryList`, share one diff view that draws the engine's `line_diff` output, removed lines red, added lines green and skipped runs counted.
+They invoke `document.recover`, `document.discard_recovery` and `document.restore_version`; the views hold no copy of the text.
+
+`WorkspaceView::offer_recovery_at_start_up` opens the recovery dialog after the window is first drawn (`window.defer`) when `Engine::recoverable()` is not empty.
+`on_recover_unsaved` and `on_local_history` handle the File menu items, whose actions are `RecoverUnsaved` and `LocalHistory`.
+Neither has a default key binding.
+`main.rs` sets the state folder with `.with_state_dir(Settings::default_state_dir())`, `AppState::new` enables recovery and local history, and `cx.on_app_quit` calls `Engine::write_recovery_now()` so that pages unsaved at quit are offered at the next launch.
+See xref:engine.adoc#crash-recovery[Crash recovery] and xref:engine.adoc#local-history[Local history].
+
 == Window focus
 
 `WorkspaceView` observes window activation (`observe_window_activation`) and calls `Engine::focus_lost` when its window becomes inactive, which is how `on_focus_change` auto-save saves edited pages when the window loses focus.

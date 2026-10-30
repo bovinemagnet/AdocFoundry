@@ -4467,3 +4467,100 @@ fn with_follow_active_off_the_trees_stay_put(cx: &mut TestAppContext) {
     assert_eq!(rows(&workspace, Navigation, &mut cx), before);
     assert_eq!(followed(&workspace, &mut cx), (None, None));
 }
+
+/// Settings, and the app's state, kept in `directory`, so recovery and local history have
+/// somewhere to write.
+fn settings_in(directory: &Path) -> Settings {
+    let file = directory.join("adocfoundry.toml");
+    if !file.exists() {
+        std::fs::write(&file, "").unwrap();
+    }
+    Settings::load(Some(&file), None)
+        .unwrap()
+        .with_git_opt_in()
+        .with_state_dir(Some(directory.join("state")))
+}
+
+#[gpui::test]
+fn unsaved_edits_of_a_session_that_ended_are_offered_at_start_up(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&pages.path().join("page.adoc"));
+    std::fs::write(&page, "= Page\n").unwrap();
+    // The session before ended with an edit unsaved.
+    {
+        let mut engine = Engine::new(settings_in(config.path()));
+        engine.enable_recovery();
+        let id = engine.open(&page).unwrap();
+        engine
+            .invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(7, 7),
+                    text: "Unsaved.\n".to_owned(),
+                },
+            )
+            .unwrap();
+        engine.write_recovery_now();
+    }
+
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (_workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(cx.debug_bounds("recovery-item-0").is_some());
+    assert!(cx.debug_bounds("recovery-diff").is_some());
+
+    click("recovery-recover", &mut cx);
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(document_text(&app, &mut cx), "= Page\nUnsaved.\n");
+    assert!(cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine.document(engine.active().unwrap()).unwrap().dirty
+    }));
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
+}
+
+#[gpui::test]
+fn local_history_restores_a_saved_version(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&pages.path().join("page.adoc"));
+    std::fs::write(&page, "first\n").unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            app.invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(0, 6),
+                    text: "second\n".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+            app.invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id), cx)
+                .unwrap();
+        });
+    });
+    cx.run_until_parked();
+
+    cx.dispatch_action(crate::editor::bindings::LocalHistory);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(cx.debug_bounds("history-item-0").is_some());
+    assert!(cx.debug_bounds("history-diff").is_some());
+    // The older version: the file before the save.
+    click("history-item-1", &mut cx);
+    click("history-restore", &mut cx);
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(document_text(&app, &mut cx), "first\n");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "second\n");
+}

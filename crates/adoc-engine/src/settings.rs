@@ -187,6 +187,31 @@ impl Default for UpdateSettings {
     }
 }
 
+/// The `[history]` table: the saved versions of each page the app keeps beside the settings
+/// file, for comparing and restoring.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistorySettings {
+    pub enabled: bool,
+    /// Versions older than this many days are removed.
+    pub keep_days: u32,
+    /// At most this many versions of a page are kept, the oldest removed first.
+    pub max_versions: u32,
+    /// The history of every page together is kept under this many megabytes, the oldest
+    /// versions removed first.
+    pub max_size_mb: u32,
+}
+
+impl Default for HistorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            keep_days: 30,
+            max_versions: 50,
+            max_size_mb: 256,
+        }
+    }
+}
+
 /// The `[pdf]` table: how PDF export finds its theme and fonts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfSettings {
@@ -236,6 +261,7 @@ pub struct Settings {
     pub pdf: PdfSettings,
     pub updates: UpdateSettings,
     pub sidebar: SidebarSettings,
+    pub history: HistorySettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -244,6 +270,9 @@ pub struct Settings {
     git_enabled_set: bool,
     /// Git is off unless a settings file turns it on, as in the language server.
     git_opt_in: bool,
+    /// Where the app keeps unsaved text for recovery and the local history; see
+    /// [`Settings::with_state_dir`].
+    state_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -257,6 +286,29 @@ impl Settings {
     #[must_use]
     pub fn default_user_file() -> Option<PathBuf> {
         dirs::config_dir().map(|dir| dir.join("adocfoundry").join(USER_SETTINGS_FILE))
+    }
+
+    /// The platform location of the app's state: `~/.local/state/adocfoundry` on Linux (or
+    /// `$XDG_STATE_HOME`), the local, never roaming, application data folder elsewhere. Kept
+    /// apart from the settings file, which is often synchronised or kept in a repository.
+    #[must_use]
+    pub fn default_state_dir() -> Option<PathBuf> {
+        dirs::state_dir()
+            .or_else(dirs::data_local_dir)
+            .map(|dir| dir.join("adocfoundry"))
+    }
+
+    /// Keeps unsaved text for recovery and the local history in `dir`, now and on every
+    /// reload. Unset, as it is by default, nothing is kept.
+    #[must_use]
+    pub fn with_state_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.state_dir = dir;
+        self
+    }
+
+    #[must_use]
+    pub fn state_dir(&self) -> Option<&Path> {
+        self.state_dir.as_deref()
     }
 
     /// Loads the user layer from `user_file` and the workspace layer from
@@ -280,6 +332,7 @@ impl Settings {
             user_file: self.user_file.clone(),
             workspace_file: self.workspace_file.clone(),
             git_opt_in: self.git_opt_in,
+            state_dir: self.state_dir.clone(),
             ..Self::default()
         };
         if let Some(path) = fresh.user_file.clone() {
@@ -431,6 +484,10 @@ impl Settings {
                 self.git.hosts = hosts;
             }
             ("updates", "check") => self.updates.check = boolean(value)?,
+            ("history", "enabled") => self.history.enabled = boolean(value)?,
+            ("history", "keep_days") => self.history.keep_days = positive(value)?,
+            ("history", "max_versions") => self.history.max_versions = positive(value)?,
+            ("history", "max_size_mb") => self.history.max_size_mb = positive(value)?,
             ("sidebar", "remember_expansion") => {
                 self.sidebar.remember_expansion = boolean(value)?;
             }
@@ -514,6 +571,10 @@ fn is_known(section: &str, key: &str) -> bool {
                 "theme" | "themes_dir" | "fonts_dir" | "site_url" | "standards"
             )
             | ("updates", "check")
+            | (
+                "history",
+                "enabled" | "keep_days" | "max_versions" | "max_size_mb"
+            )
     )
 }
 
@@ -802,5 +863,52 @@ mod tests {
         let settings = Settings::load(Some(&user), None).unwrap();
         assert_eq!(settings.tools.diagram_timeout, 30);
         assert_eq!(settings.warnings.len(), 1);
+    }
+
+    #[test]
+    fn the_state_folder_is_set_only_when_asked_and_kept_on_reload() {
+        assert_eq!(Settings::default().state_dir(), None);
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("adocfoundry.toml");
+        let mut settings = Settings::load(Some(&user), None)
+            .unwrap()
+            .with_state_dir(Some(directory.path().join("state")));
+        assert_eq!(
+            settings.state_dir(),
+            Some(directory.path().join("state").as_path())
+        );
+        settings.reload().unwrap();
+        assert_eq!(
+            settings.state_dir(),
+            Some(directory.path().join("state").as_path())
+        );
+        assert!(Settings::default_state_dir().is_some_and(|dir| dir.ends_with("adocfoundry")));
+    }
+
+    #[test]
+    fn local_history_is_read_from_the_user_file_only() {
+        let defaults = HistorySettings::default();
+        assert!(defaults.enabled);
+        assert_eq!((defaults.keep_days, defaults.max_versions), (30, 50));
+        assert_eq!(defaults.max_size_mb, 256);
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("adocfoundry.toml");
+        fs::write(
+            &user,
+            "[history]\nenabled = false\nkeep_days = 7\nmax_versions = 10\nmax_size_mb = 64\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[history]\nkeep_days = 1\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(!settings.history.enabled);
+        assert_eq!(settings.history.keep_days, 7);
+        assert_eq!(settings.history.max_versions, 10);
+        assert_eq!(settings.history.max_size_mb, 64);
+        assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
+        assert!(settings.warnings[0].contains("can only be set in the user settings file"));
     }
 }

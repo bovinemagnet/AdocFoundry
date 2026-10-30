@@ -47,6 +47,8 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::DOCUMENT_SAVE),
             Command(ids::DOCUMENT_SAVE_ALL),
             Command(ids::DOCUMENT_RELOAD),
+            Command(ids::DOCUMENT_LOCAL_HISTORY),
+            Command(ids::DOCUMENT_RECOVER_UNSAVED),
             Separator,
             Command(ids::EXPORT_PDF_PAGE),
             Command(ids::EXPORT_PDF_COMPONENT),

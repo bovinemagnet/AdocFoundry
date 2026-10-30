@@ -13,6 +13,8 @@ actions!(
         SaveAll,
         Reload,
         Overwrite,
+        LocalHistory,
+        RecoverUnsaved,
         CloseDocument,
         CloseOthers,
         CloseLeft,
@@ -186,6 +188,8 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::GIT_SAVE_AND_COMMIT => KeyBinding::new(keys, SaveAndCommit, workspace),
         ids::EXPORT_PDF_PAGE => KeyBinding::new(keys, ExportPagePdf, workspace),
         ids::EXPORT_HTML_PAGE => KeyBinding::new(keys, ExportPageHtml, workspace),
+        ids::DOCUMENT_LOCAL_HISTORY => KeyBinding::new(keys, LocalHistory, workspace),
+        ids::DOCUMENT_RECOVER_UNSAVED => KeyBinding::new(keys, RecoverUnsaved, workspace),
         ids::EXPORT_PDF_COMPONENT => KeyBinding::new(keys, ExportComponentPdf, workspace),
         ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
         ids::APP_CHECK_FOR_UPDATES => KeyBinding::new(keys, CheckForUpdates, workspace),
@@ -264,6 +268,8 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::GIT_SAVE_AND_COMMIT => Box::new(SaveAndCommit),
         ids::EXPORT_PDF_PAGE => Box::new(ExportPagePdf),
         ids::EXPORT_HTML_PAGE => Box::new(ExportPageHtml),
+        ids::DOCUMENT_LOCAL_HISTORY => Box::new(LocalHistory),
+        ids::DOCUMENT_RECOVER_UNSAVED => Box::new(RecoverUnsaved),
         ids::EXPORT_PDF_COMPONENT => Box::new(ExportComponentPdf),
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),
@@ -401,6 +407,9 @@ mod tests {
             ids::VISUAL_DELETE_BACKWARD,
             ids::VISUAL_DELETE_FORWARD,
             ids::EDIT_SET_BLOCK_TYPE,
+            ids::DOCUMENT_RECOVER,
+            ids::DOCUMENT_DISCARD_RECOVERY,
+            ids::DOCUMENT_RESTORE_VERSION,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

@@ -128,6 +128,13 @@ pub enum CommandOutcome {
         message: String,
         paths: Vec<PathBuf>,
     },
+    /// Unsaved text that sessions which have ended left behind, for the front end to offer.
+    Recoverable(Vec<crate::Recoverable>),
+    /// A page's saved versions, newest first, for the front end to compare and restore.
+    LocalHistory {
+        document: DocumentId,
+        versions: Vec<crate::SavedVersion>,
+    },
     Cancelled,
 }
 

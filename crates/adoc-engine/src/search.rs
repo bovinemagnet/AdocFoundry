@@ -293,6 +293,7 @@ impl Engine {
         fs::rename(from, to).map_err(|error| EngineError::io(from, error))?;
         let from = normalize_path(from);
         let to = normalize_path(to);
+        self.move_history(&from, &to);
         self.workspace.remove_document(&from);
         if let Some(id) = self.document_for_path(&from) {
             if let Some(document) = self.documents.get_mut(&id) {
@@ -308,6 +309,8 @@ impl Engine {
                 to: to.clone(),
             });
             self.visual_source_changed(&to);
+            // Unsaved text is recovered at the new path.
+            self.recovery_changed(id);
         } else if let Ok(text) = fs::read_to_string(&to) {
             self.workspace.index.index_source(&to, &text);
         }
