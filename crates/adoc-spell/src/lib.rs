@@ -5,10 +5,14 @@
 use std::borrow::Cow;
 
 mod dictionaries;
+mod list;
+mod words;
 
 pub use dictionaries::{
     Checker, Dictionaries, DictionaryInfo, DictionarySource, SpellError, MAX_SUGGESTIONS,
 };
+pub use list::WordList;
+pub use words::{words, OBJECT};
 
 /// `word` with each right single quotation mark read as an apostrophe, as dictionaries and word
 /// lists spell it.
