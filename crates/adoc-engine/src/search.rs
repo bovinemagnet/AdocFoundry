@@ -308,6 +308,8 @@ impl Engine {
                 to: to.clone(),
             });
             self.visual_source_changed(&to);
+            // Unsaved text is recovered at the new path.
+            self.recovery_changed(id);
         } else if let Ok(text) = fs::read_to_string(&to) {
             self.workspace.index.index_source(&to, &text);
         }

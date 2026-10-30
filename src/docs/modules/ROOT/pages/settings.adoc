@@ -21,6 +21,9 @@ Open Settings creates it if it is missing.
 Saving either file applies it.
 Reload Settings re-reads both.
 
+The app also keeps two folders beside `adocfoundry.toml`: `recovery`, holding copies of unsaved pages until they are saved or closed, and `history`, holding saved versions of pages.
+See xref:using-the-editor.adoc#crash-recovery[Recovering unsaved changes] and xref:using-the-editor.adoc#local-history[Local history].
+
 == Example
 
 [source,toml]
@@ -221,6 +224,21 @@ check = true                     # look for a newer release at start-up
 |empty
 |Standards every export conforms to: `"pdf-a-2a"` and `"pdf-ua-1"`. The command line's `--standard` adds to these.
 
+|`history.enabled`
+|boolean
+|`true`
+|Keep the saved text of each page in local history. When `false`, no history is kept. See xref:using-the-editor.adoc#local-history[Local history].
+
+|`history.keep_days`
+|positive integer
+|`30`
+|Versions older than this many days are removed.
+
+|`history.max_versions`
+|positive integer
+|`50`
+|The most versions kept for each page. The oldest go first.
+
 |`updates.check`
 |boolean
 |`true`
@@ -237,6 +255,7 @@ The two depths override separately.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.
 `sidebar.remember_expansion` is also accepted only in the user file, because it decides what is saved outside the repository.
 `updates.*` is also accepted only in the user file, so a repository cannot make the editor reach the network.
+`history.*` is also accepted only in the user file, because history is kept outside the repository.
 
 == Warnings
 

@@ -178,6 +178,8 @@ Three export commands also have no default binding and are available from the pa
 See xref:pdf-export.adoc[Exporting to PDF] and xref:preview.adoc#exporting-html[Exporting to HTML].
 Three document commands also have no default binding and are available from the palette: Reload from Disk (`document.reload`), Save, Overwriting the File on Disk (`document.overwrite`) and Keep Open (`document.keep_open`).
 See xref:using-the-editor.adoc[Using the editor].
+Two file commands also have no default binding and are available from the palette and the File menu: Local History… (`document.local_history`) and Recover Unsaved Changes… (`document.recover_unsaved`).
+See xref:using-the-editor.adoc#crash-recovery[Recovering unsaved changes] and xref:using-the-editor.adoc#local-history[Local history].
 Three preview commands also have no default binding and are available from the palette: Detach Preview (`view.detach_preview`), Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) and Pin Preview (`preview.pin`).
 Toggle Preview is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
 See xref:preview.adoc[The preview].

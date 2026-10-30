@@ -187,6 +187,27 @@ impl Default for UpdateSettings {
     }
 }
 
+/// The `[history]` table: the saved versions of each page the app keeps beside the settings
+/// file, for comparing and restoring.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistorySettings {
+    pub enabled: bool,
+    /// Versions older than this many days are removed.
+    pub keep_days: u32,
+    /// At most this many versions of a page are kept, the oldest removed first.
+    pub max_versions: u32,
+}
+
+impl Default for HistorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            keep_days: 30,
+            max_versions: 50,
+        }
+    }
+}
+
 /// The `[pdf]` table: how PDF export finds its theme and fonts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfSettings {
@@ -236,6 +257,7 @@ pub struct Settings {
     pub pdf: PdfSettings,
     pub updates: UpdateSettings,
     pub sidebar: SidebarSettings,
+    pub history: HistorySettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -431,6 +453,9 @@ impl Settings {
                 self.git.hosts = hosts;
             }
             ("updates", "check") => self.updates.check = boolean(value)?,
+            ("history", "enabled") => self.history.enabled = boolean(value)?,
+            ("history", "keep_days") => self.history.keep_days = positive(value)?,
+            ("history", "max_versions") => self.history.max_versions = positive(value)?,
             ("sidebar", "remember_expansion") => {
                 self.sidebar.remember_expansion = boolean(value)?;
             }
@@ -514,6 +539,7 @@ fn is_known(section: &str, key: &str) -> bool {
                 "theme" | "themes_dir" | "fonts_dir" | "site_url" | "standards"
             )
             | ("updates", "check")
+            | ("history", "enabled" | "keep_days" | "max_versions")
     )
 }
 
@@ -802,5 +828,30 @@ mod tests {
         let settings = Settings::load(Some(&user), None).unwrap();
         assert_eq!(settings.tools.diagram_timeout, 30);
         assert_eq!(settings.warnings.len(), 1);
+    }
+
+    #[test]
+    fn local_history_is_read_from_the_user_file_only() {
+        let defaults = HistorySettings::default();
+        assert!(defaults.enabled);
+        assert_eq!((defaults.keep_days, defaults.max_versions), (30, 50));
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("adocfoundry.toml");
+        fs::write(
+            &user,
+            "[history]\nenabled = false\nkeep_days = 7\nmax_versions = 10\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[history]\nkeep_days = 1\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(!settings.history.enabled);
+        assert_eq!(settings.history.keep_days, 7);
+        assert_eq!(settings.history.max_versions, 10);
+        assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
+        assert!(settings.warnings[0].contains("can only be set in the user settings file"));
     }
 }

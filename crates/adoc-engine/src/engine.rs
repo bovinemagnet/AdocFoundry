@@ -72,6 +72,8 @@ pub struct Engine {
     pub(crate) images: crate::images::Images,
     pub(crate) words: crate::words::WordCounts,
     pub(crate) auto_saves: crate::auto_save::AutoSaveState,
+    pub(crate) recovery: crate::recovery::RecoveryState,
+    pub(crate) local_history: crate::local_history::LocalHistory,
     pub(crate) html_exports: crate::html_export::HtmlExports,
     #[cfg(feature = "typst")]
     pub(crate) export: crate::export::ExportState,
@@ -139,6 +141,8 @@ impl Engine {
             images: crate::images::Images::default(),
             words: crate::words::WordCounts::default(),
             auto_saves: crate::auto_save::AutoSaveState::default(),
+            recovery: crate::recovery::RecoveryState::default(),
+            local_history: crate::local_history::LocalHistory::default(),
             html_exports: crate::html_export::HtmlExports::default(),
             #[cfg(feature = "typst")]
             export: crate::export::ExportState::default(),
@@ -310,6 +314,7 @@ impl Engine {
         self.forget_hunks(id);
         self.forget_word_count(id);
         self.forget_auto_save(id);
+        self.forget_recovery(id);
         self.forget_html_exports(id);
         if self.rendered.layout.pinned == Some(id) {
             self.rendered.layout.pinned = None;
@@ -420,18 +425,28 @@ impl Engine {
             )));
         }
         let path = document.path.clone();
+        let on_disk = fs::read_to_string(&path);
         if !overwrite {
             let saved = self.states.get(&id).map(|state| state.saved_hash);
-            match fs::read_to_string(&path) {
-                Ok(on_disk) if Some(hash_text(&on_disk)) == saved => {}
+            match &on_disk {
+                Ok(on_disk) if Some(hash_text(on_disk)) == saved => {}
                 // Deleted outside: writing it again loses nothing.
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 // Changed, or no longer text.
                 _ => return Err(EngineError::SaveConflict { path }),
             }
         }
+        // The text replaced, for the local history.
+        let previous = on_disk.ok().map(|text| {
+            let modified = fs::metadata(&path).and_then(|metadata| metadata.modified());
+            (
+                text,
+                modified.unwrap_or_else(|_| std::time::SystemTime::now()),
+            )
+        });
         let text = document.text.to_string();
         write_replacing(&path, &text).map_err(|error| EngineError::io(&path, error))?;
+        self.record_save(&path, previous, &text);
         let Some(document) = self.documents.get_mut(&id) else {
             return Err(EngineError::UnknownDocument(id));
         };
@@ -440,6 +455,7 @@ impl Engine {
             state.saved_hash = hash_text(&text);
         }
         self.auto_save_settled(id);
+        self.recovery_changed(id);
         self.emit(EngineEvent::DocumentSaved(id));
         self.keep_open(id);
         self.schedule_hunks(id, false);
@@ -456,6 +472,7 @@ impl Engine {
             document.dirty = document.text != text;
         }
         self.auto_save_settled(id);
+        self.recovery_changed(id);
     }
 
     #[must_use]
@@ -772,6 +789,7 @@ impl Engine {
         });
         self.words_changed(id);
         self.auto_save_edited(id);
+        self.recovery_changed(id);
         // An edited page is kept open, even once undone.
         self.keep_open(id);
         self.preview_source_changed(&path);

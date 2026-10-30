@@ -30,6 +30,11 @@ pub mod ids {
     pub const DOCUMENT_CLOSE_RIGHT: CommandId = CommandId::new("document.close_right");
     pub const DOCUMENT_CLOSE_CLEAN: CommandId = CommandId::new("document.close_clean");
     pub const DOCUMENT_CLOSE_ALL: CommandId = CommandId::new("document.close_all");
+    pub const DOCUMENT_RECOVER_UNSAVED: CommandId = CommandId::new("document.recover_unsaved");
+    pub const DOCUMENT_RECOVER: CommandId = CommandId::new("document.recover");
+    pub const DOCUMENT_DISCARD_RECOVERY: CommandId = CommandId::new("document.discard_recovery");
+    pub const DOCUMENT_LOCAL_HISTORY: CommandId = CommandId::new("document.local_history");
+    pub const DOCUMENT_RESTORE_VERSION: CommandId = CommandId::new("document.restore_version");
     pub const EDIT_INSERT_TEXT: CommandId = CommandId::new("edit.insert_text");
     pub const EDIT_REPLACE_RANGE: CommandId = CommandId::new("edit.replace_range");
     pub const EDIT_UNDO: CommandId = CommandId::new("edit.undo");
@@ -471,6 +476,8 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::doctor::register_doctor(registry);
     crate::format_table::register_format_table(registry);
     crate::html_export::register_html_export(registry);
+    crate::recovery::register_recovery(registry);
+    crate::local_history::register_local_history(registry);
     crate::expansion::register_expansion(registry);
     #[cfg(feature = "git")]
     {

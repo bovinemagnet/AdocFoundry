@@ -65,6 +65,62 @@ Every save writes a temporary file in the same directory and renames it over the
 For a symbolic link, the link's target is written and the link is kept.
 A failed write can no longer leave a truncated file.
 
+[#crash-recovery]
+=== Recovering unsaved changes
+
+While a page has unsaved edits, the app keeps a copy of its text in a `recovery` folder beside the user settings file (`adocfoundry.toml`; see xref:settings.adoc[Settings] for where that is).
+The copy is written two seconds after you stop typing, and again when the app quits.
+Untitled pages are kept too.
+The copy is removed as soon as the page is saved, closed without saving, or its edits are undone back to the saved text.
+
+If the app ends without saving, the next launch opens the Recover Unsaved Changes dialog.
+This happens when the app crashes, is killed, the machine loses power, or you quit with pages unsaved.
+The dialog lists each page, with untitled pages marked "(untitled)", and when it was edited.
+Beside the list it shows the lines the unsaved text changes compared with the file on disk now.
+Removed lines are red and start with `-`, added lines are green and start with `+`, and three unchanged lines are shown around each change.
+Unchanged lines between changes are counted rather than shown.
+
+Recover::
+Opens the page with the recovered text as one undo step.
+The page is unsaved, so save it to keep the text; Undo takes the page back to the file.
+
+Discard::
+Forgets that copy.
+
+The dialog closes once every entry is recovered or discarded.
+*File > Recover Unsaved Changes…* (`document.recover_unsaved`, also in the command palette) shows the list again at any time.
+With nothing to recover it says so.
+It has no key.
+
+A page whose file was deleted since is recovered at its old path, and saving writes the file again.
+
+Several copies of the app can run at once.
+Each holds a lock while it runs, so one app never offers another running app's unsaved text, nor its own.
+
+Only the desktop app does this.
+`adoc-ls`, `adoc-mcp` and `adocfoundry-cli` never write recovery copies.
+
+[#local-history]
+=== Local history
+
+Each save keeps the saved text in a `history` folder beside the user settings file, with one folder for each page.
+This covers Save, Save All, auto-save, Overwrite and the save before a commit.
+The first time the history sees a page, and whenever the file on disk is not the text it last kept, the save also keeps the text it replaces.
+That is the file as it was before your first save, or a change made outside the app.
+Saving the same text again keeps nothing new, and pages larger than 4 MB are not kept.
+
+*File > Local History…* (`document.local_history`, also in the command palette) lists the active page's saved versions, newest first, each with when it was saved and its size.
+Selecting a version shows the lines the page has changed since that version, under "Changes made since this version".
+Restore puts that version in the page as one undo step, unsaved, so Undo brings your text back and nothing is lost.
+With no versions yet the dialog says "This page has no saved versions yet: each save keeps one."
+Untitled pages have no history.
+
+Old versions are removed when that page is saved, and every page's once per session at the first save.
+The `[history]` settings choose whether history is kept, how many days it is kept and how many versions each page keeps; see xref:settings.adoc[Settings].
+
+Local history is independent of Git.
+It keeps saves that were never committed, and it works in a folder that is not a repository.
+
 == The sidebar
 
 The sidebar has four tabs and an outline.
@@ -646,7 +702,7 @@ An item whose command cannot run just now is greyed out instead of hidden, for e
 A command the build lacks, such as PDF export in a build without Typst, is left out.
 
 File::
-Open, save, reload, export to PDF or HTML, close, settings and re-indexing.
+Open, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, settings and re-indexing.
 
 Edit::
 Undo, Redo, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.
@@ -903,5 +959,6 @@ A local branch that is ahead of its remote still gets a link.
 
 == Known limits
 
+* Crash recovery and local history are kept only when the app has a user settings folder to keep them in.
 * Input-method (IME) composition has not been verified by hand on any platform.
 * Frame timing during long typing bursts has not been captured on every platform.

@@ -23,6 +23,7 @@ pub struct AppState {
     pub fetch: crate::updates::Fetch,
     events: Receiver<EngineEvent>,
     _pump: Task<()>,
+    _quit: gpui::Subscription,
 }
 
 impl EventEmitter<EngineEvent> for AppState {}
@@ -33,6 +34,9 @@ impl AppState {
         engine.enable_preview_tabs();
         // The status bar shows the active page's words.
         engine.enable_word_count();
+        // Unsaved edits survive a crash, and saved versions are kept to restore.
+        engine.enable_recovery();
+        engine.enable_local_history();
         let events = engine.subscribe();
         let pump = cx.spawn(async move |this, cx| loop {
             let busy = this
@@ -47,11 +51,17 @@ impl AppState {
                 break;
             }
         });
+        // Edits made in the last moments before quitting are kept too.
+        let quit = cx.on_app_quit(|this, _| {
+            this.engine.write_recovery_now();
+            async {}
+        });
         Self {
             engine,
             fetch: crate::updates::system_fetch(),
             events,
             _pump: pump,
+            _quit: quit,
         }
     }
 
