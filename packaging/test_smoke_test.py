@@ -1,5 +1,5 @@
 """Tests of the smoke test's signature checks, which otherwise run only on a signed release, and
-of where it finds the dictionaries' licence in each package.
+of where it finds the dictionaries' licence and the third-party notices in each package.
 
 Run with: python3 -m unittest discover -s packaging -p 'test_*.py'
 """
@@ -90,6 +90,15 @@ class LicenceChecks(unittest.TestCase):
     def test_a_package_without_the_licence_is_reported(self):
         root = self.package("usr/bin", None)
         self.assertIsNone(smoke_test.licence_path(os.path.join(root, "usr/bin")))
+
+    def test_the_third_party_notices_are_beside_the_licence(self):
+        root = self.package("usr/bin", "usr/share/doc/adocfoundry/SCOWL.txt")
+        binaries = os.path.join(root, "usr/bin")
+        self.assertIsNone(smoke_test.notices_path(binaries))
+        notices = os.path.join(root, "usr/share/doc/adocfoundry/THIRD-PARTY-NOTICES.txt")
+        with open(notices, "w", encoding="utf-8") as file:
+            file.write("Third-party notices for AdocFoundry\n")
+        self.assertTrue(os.path.samefile(smoke_test.notices_path(binaries), notices))
 
 if __name__ == "__main__":
     unittest.main()

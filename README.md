@@ -106,10 +106,11 @@ The project is built in phases: (1) a source editor with Antora support and link
 **Also**
 
 - A ☰ menu at the left of the title bar that opens into File, Edit, Format, View, Go, Git and Help menus, as in Zed; a command palette listing every command; light and dark themes; a read-only second window that follows the active document; and TOML settings.
+- Help › About AdocFoundry shows the version, build and licence, links to the repository and the documentation, and every third-party component the app is built from (the crates of the release build, and the bundled fonts, dictionaries and PDF themes) with its version, licence and full licence text, ready to copy.
 
 ## Installing
 
-Releases are on the [GitHub releases page](https://github.com/bovinemagnet/AdocFoundry/releases). Every package carries the app and the `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` binaries; `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` are also published as archives of their own. Nothing else is needed at run time: no Ruby, Node.js or Java.
+Releases are on the [GitHub releases page](https://github.com/bovinemagnet/AdocFoundry/releases). Every package carries the app and the `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` binaries; `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` are also published as archives of their own. Nothing else is needed at run time: no Ruby, Node.js or Java. Each package and archive ships the third-party notices as `THIRD-PARTY-NOTICES.txt`, beside the dictionaries' licence `SCOWL.txt`.
 
 - **macOS** (universal): open `AdocFoundry-<version>-macos-universal.dmg` and drag AdocFoundry to Applications. A release built with the project's signing credentials is signed with a Developer ID and notarised, so it opens without a prompt; one built without them (every release up to 0.2.1) is signed ad hoc, so macOS asks before opening it the first time: Control-click the app, choose Open, and confirm. The release notes say which a release is. The command-line tools are in `AdocFoundry.app/Contents/MacOS`; link them onto your `PATH`, for example `ln -s /Applications/AdocFoundry.app/Contents/MacOS/adoc-ls /usr/local/bin/`.
 - **Windows** (x64 and ARM64): run the MSI, which can add the tools to `PATH`, or unpack the portable zip. A release built with the signing credentials has Authenticode signatures on the executables and the MSI; an unsigned one (every release up to 0.2.1) makes SmartScreen ask before running it: choose More info, then Run anyway.
@@ -336,6 +337,7 @@ cargo test --workspace
 cargo deny check
 cargo xtask layers      # the crate dependency ladder
 cargo xtask package     # release build and archive for this platform in dist/
+cargo xtask notices     # the third-party notices; with a file name, written to it
 ```
 
 The workspace is a ladder of crates, each depending only on those below it:
@@ -354,4 +356,4 @@ adoc-core
 
 ## Licence
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE). The third-party components and their licences are listed in Help › About AdocFoundry and in each package's `THIRD-PARTY-NOTICES.txt`, generated from Cargo's metadata by `xtask/src/notices.rs`.

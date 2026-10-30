@@ -4319,6 +4319,44 @@ fn diagnostics_show_the_report_and_copy_it(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+fn about_shows_the_version_and_each_components_licence(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+
+    cx.dispatch_action(crate::editor::bindings::ShowAbout);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(cx.debug_bounds("about-details").is_some());
+    assert!(cx.debug_bounds("about-licence").is_some());
+
+    let copied = |cx: &mut VisualTestContext| {
+        click("about-copy", cx);
+        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .unwrap()
+    };
+    let own = copied(&mut cx);
+    assert!(
+        own.starts_with(&format!(
+            "AdocFoundry {}\nLicence: Apache-2.0\n\nLICENSE\n",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{own}"
+    );
+    click("about-component-1", &mut cx);
+    let first = copied(&mut cx);
+    assert_ne!(first, own);
+    assert!(
+        first.lines().nth(1).unwrap().starts_with("Licence: "),
+        "{first}"
+    );
+}
+
 // A dialog that slides in on the wall clock moves between the frame a click is aimed at and
 // the frame its release lands on, so a slow test run would miss the button.
 #[gpui::test]

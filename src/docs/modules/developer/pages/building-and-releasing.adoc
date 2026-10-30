@@ -17,6 +17,7 @@ cargo run -p adoc-ls -- --version                        # smoke-test the langua
 cargo deny check                                         # licences and advisories
 cargo xtask layers                                       # the crate dependency ladder
 cargo xtask package                                      # release build and archive in dist/
+cargo xtask notices target/THIRD-PARTY-NOTICES.txt       # the third-party licence notices
 ----
 
 Targeted runs:
@@ -81,17 +82,17 @@ include::example$release-pipeline.mmd[]
 |Builds `aarch64-apple-darwin` and `x86_64-apple-darwin`, joins them with `lipo` into universal binaries, and runs `packaging/macos/bundle.sh` to make the `.app` and the DMG, with the tools beside the app in `Contents/MacOS`. The tools are signed separately with the hardened runtime and a timestamp, then the app.
 The app is notarised and stapled, then the DMG is signed, notarised and stapled.
 The tool archives carry the signed tools from the bundle.
-The bundle (in `Contents/Resources/licenses/`) and the tool archives (in `licenses/`) carry the dictionaries' licence, `SCOWL.txt`.
+The bundle (in `Contents/Resources/licenses/`) and the tool archives (in `licenses/`) carry the dictionaries' licence, `SCOWL.txt`, and `THIRD-PARTY-NOTICES.txt`.
 The job checks the result with `codesign --verify`, `spctl` and `stapler validate`.
 
 |`windows`
-|For x64 and ARM64: an MSI from `cargo wix`, and a portable zip with the four executables, the licence, the dictionaries' licence (`licenses/SCOWL.txt`) and the README.
-The MSI installs the dictionaries' licence too, as `licenses\SCOWL.txt` beside `LICENSE.txt`.
+|For x64 and ARM64: an MSI from `cargo wix`, and a portable zip with the four executables, the licence, the dictionaries' licence (`licenses/SCOWL.txt`), the third-party notices (`licenses/THIRD-PARTY-NOTICES.txt`) and the README.
+The MSI installs both too, as `licenses\SCOWL.txt` and `licenses\THIRD-PARTY-NOTICES.txt` beside `LICENSE.txt`.
 The four executables are signed through Azure Artifact Signing (formerly Trusted Signing, `azure/artifact-signing-action`) before `cargo wix` builds the MSI, which is signed too.
 The job checks every signature with `Get-AuthenticodeSignature`.
 
 |`linux`
-|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy` (with its update information set, `gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-<arch>.AppImage.zsync`) and its `.zsync` file, and archives of `adoc-ls`, `adocfoundry-cli` and `adoc-mcp`. Each package and archive carries the dictionaries' licence: the deb, rpm and AppImage install it as `/usr/share/doc/adocfoundry/SCOWL.txt`, and the archives hold `licenses/SCOWL.txt`.
+|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy` (with its update information set, `gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-<arch>.AppImage.zsync`) and its `.zsync` file, and archives of `adoc-ls`, `adocfoundry-cli` and `adoc-mcp`. Each package and archive carries the dictionaries' licence and the third-party notices: the deb, rpm and AppImage install them as `/usr/share/doc/adocfoundry/SCOWL.txt` and `THIRD-PARTY-NOTICES.txt`, and the archives hold `licenses/SCOWL.txt` and `licenses/THIRD-PARTY-NOTICES.txt`.
 It also checks the Flatpak manifest (see below).
 
 |`smoke`
@@ -180,6 +181,7 @@ The `smoke` job runs `packaging/smoke-test.py <bin-dir> [--no-app]` on each plat
 It checks:
 
 * that the dictionaries' licence ships with the binaries (`licenses/SCOWL.txt` beside them, in the app bundle's `Resources/licenses/`, or in `share/doc/adocfoundry/`) and holds the SCOWL copyright notice
+* that `THIRD-PARTY-NOTICES.txt` ships beside `SCOWL.txt` (`notices_path`)
 * every binary's `--version`
 * a PDF export of the reference article by `adocfoundry-cli`
 * the initialise and shutdown of `adoc-ls` and `adoc-mcp`
@@ -199,16 +201,44 @@ Its signature checks, and where it finds the licence, have unit tests in `packag
 
 A Flatpak manifest is kept in `packaging/flatpak/`.
 The workflow does not build it, but the Linux job checks that the manifest installs the four binaries and builds `adoc-ls` with its features.
-It also checks that the manifest installs the dictionaries' licence as `/app/share/doc/adocfoundry/SCOWL.txt`.
+It also checks that the manifest installs the dictionaries' licence as `/app/share/doc/adocfoundry/SCOWL.txt`, and the notices beside it.
 
 The packages for macOS and Windows have not been installed and run by hand yet; see xref:testing.adoc#platform-status[platform status].
 
 == cargo xtask package
 
 `cargo xtask package` is a local dry run for the host platform.
-It builds the four binaries (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`) in release mode, with `adoc-ls` built with its features, stages them in `dist/` with the licence, the dictionaries' licence (`licenses/SCOWL.txt`) and README (and, on Linux, the desktop entry and the icon as `io.github.bovinemagnet.AdocFoundry.png`), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
+It builds the four binaries (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`) in release mode, with `adoc-ls` built with its features, stages them in `dist/` with the licence, the dictionaries' licence (`licenses/SCOWL.txt`), the notices (`licenses/THIRD-PARTY-NOTICES.txt`) and README (and, on Linux, the desktop entry and the icon as `io.github.bovinemagnet.AdocFoundry.png`), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
 The version is read from `workspace.package.version` in the root `Cargo.toml`.
 The installers themselves come from the release workflow.
+
+[[notices]]
+== cargo xtask notices
+
+`xtask/src/notices.rs` generates the third-party notices shown by *Help > About AdocFoundry* and shipped as `THIRD-PARTY-NOTICES.txt`.
+`cargo xtask notices [<file>]` writes the text form to a file, or prints it.
+Each component is listed with its version, licence and the numbers of its texts, then each text follows once, numbered.
+The release workflow runs `cargo xtask notices target/THIRD-PARTY-NOTICES.txt` after building on each platform.
+`packaging/macos/bundle.sh`, the WiX `main.wxs`, the deb and rpm metadata in `crates/adocfoundry/Cargo.toml`, the AppImage step, the Flatpak manifest and the tool archives take it from there.
+
+The generator runs `cargo metadata --format-version 1 --locked --features adoc-ls/typst,adoc-ls/git`.
+It is deliberately not `--offline`: metadata needs every package of the graph, other platforms' too, so it may download them.
+It walks normal and build dependencies, not dev dependencies, from the four release binaries on every platform, and lists each package outside the workspace.
+The vendored `evalexpr` and `comemo` and the `tree-sitter-asciidoc` grammar crates are therefore included.
+
+A crate's texts are the licence files it ships: names containing `licen`, or starting `copying`, `copyright` or `notice`.
+A path dependency without one looks in its parent folder, where the grammar keeps its `LICENSE`.
+A crate that ships none gets the standard text of the first alternative of its licence expression that has one in `xtask/licences/` (0BSD, Apache-2.0, BSD-3-Clause, CC0-1.0, MIT, MPL-2.0 and Zlib), with a note naming its authors as the copyright holders.
+Expressions with `AND` or parentheses get no fallback.
+A component without any text is an error.
+Identical texts are shared.
+
+Bundled files that are not crates are listed in `ASSETS` in that module: the folder, how their file names begin, and their licence and notice files.
+A new font, theme or dictionary needs an entry.
+
+The app's build script, `crates/adocfoundry/build.rs`, includes the module by `#[path]`, writes `notices.json` to `OUT_DIR` and sets `ADOCFOUNDRY_BUILD` to `<target>, <profile>`.
+It reruns when `Cargo.lock`, `Cargo.toml`, the generator, `xtask/licences` or an asset's notice files change.
+The xtask tests `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice` fail when a dependency has no notice or a file in `crates/adoc-pdf/fonts`, `crates/adoc-pdf/themes` or `crates/adoc-spell/dictionaries` belongs to no asset.
 
 == The app icon
 

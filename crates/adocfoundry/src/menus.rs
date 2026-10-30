@@ -183,6 +183,8 @@ const MENUS: &[(&str, &[Entry])] = &[
         &[
             Command(ids::APP_CHECK_FOR_UPDATES),
             Command(ids::APP_DIAGNOSTICS),
+            Separator,
+            Command(ids::APP_ABOUT),
         ],
     ),
 ];

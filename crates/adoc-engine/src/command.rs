@@ -120,6 +120,9 @@ pub enum CommandOutcome {
     /// What the doctor report needs from the engine, for the front end to complete with
     /// `Doctor::run`, off its main thread, and show.
     Diagnostics(Box<crate::Doctor>),
+    /// Help › About, for the front end to name itself in and give its notices to
+    /// (`About::program`, `About::notices`), and show.
+    About(Box<crate::About>),
     /// A commit was made; these open documents were saved first.
     Committed {
         commit: String,

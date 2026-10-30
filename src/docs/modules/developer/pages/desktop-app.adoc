@@ -282,6 +282,13 @@ The app's image tests are in `src/ui_tests.rs`.
 It names the program, adds a Display section that only the app can fill, runs the doctor with `cx.background_spawn` so the probing of tools does not block the window, and shows the result in a dialog with a Copy button.
 The Display section gives the graphics backend, the GPU and display server where the platform reports them, the scale factor, and whether the editor and interface fonts are installed.
 
+[[about]]
+== About
+
+`src/about.rs` completes the engine's `app.about` command, which returns an `About` (see xref:engine.adoc#about[About]).
+It embeds the `notices.json` that `build.rs` writes, names the program with the build string from `ADOCFOUNDRY_BUILD`, and shows the dialog for the `ShowAbout` action.
+The dialog is a `uniform_list` of components beside the chosen component's licence texts, with Repository and Documentation buttons and a Copy Licence button.
+
 == Change markers and the Changes panel
 
 `src/editor/changes.rs` paints the source editor's markers over the editor.
