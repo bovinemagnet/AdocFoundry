@@ -4564,3 +4564,48 @@ fn local_history_restores_a_saved_version(cx: &mut TestAppContext) {
     assert_eq!(document_text(&app, &mut cx), "first\n");
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "second\n");
 }
+
+#[gpui::test]
+fn a_misspelt_word_is_underlined_and_replaced_in_one_undo_step(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("page.adoc");
+    let text = "= Page\n\nWe recieve it.\n";
+    std::fs::write(&path, text).unwrap();
+    let mut engine = Engine::new(Settings::default());
+    let document = engine.open(&path).unwrap();
+    let app = app_with(engine, cx);
+    let (editor, window) = editor_window(&app, document, cx);
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    settle_engine(&app, &mut cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| editor.read(cx).spelling_hints_for_test(cx)),
+        ["Unknown word: recieve"]
+    );
+
+    let start = text.find("recieve").unwrap();
+    let choices =
+        cx.update(|_, cx| crate::spelling::choices(&app.read(cx).engine, document, start + 2));
+    assert_eq!(
+        choices.last().map(|(label, _)| label.as_str()),
+        Some("Add to Workspace Dictionary")
+    );
+    let (first, choice) = choices[0].clone();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(start, start), window, cx)
+        });
+    });
+    cx.dispatch_action(crate::spelling::ApplySpelling { document, choice });
+    cx.run_until_parked();
+    let replaced = format!("= Page\n\nWe {first} it.\n");
+    assert_eq!(document_text(&app, &mut cx), replaced);
+    assert_eq!(widget_text(&editor, &mut cx), replaced);
+
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(document_text(&app, &mut cx), text);
+}
