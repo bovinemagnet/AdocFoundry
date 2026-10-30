@@ -188,7 +188,7 @@ A missing image is a diagnostic, not a failure.
 So is an image that cannot be decoded: the page is written with Typst's own image decoder checking each image, and one that fails is shown as its alt text with the warning `image could not be read: <target> (<reason>)`, instead of Typst's "failed to decode image" error failing the export.
 The template labels the pages for the PDF: roman numerals for the front matter (the title page and a table of contents on its own pages) and arabic numbers from 1 for the body, so the labels match the printed footer numbers; a document without front matter is labelled from 1.
 
-`PdfStandard::A2a` and `Ua1` are passed to `typst-pdf`.
+`PdfStandard::A1b`, `A1a`, `A2a` and `Ua1` are mapped to `typst_pdf::PdfStandard` and passed to `typst-pdf`.
 A document date is written only when a standard is requested, the given one or else today's in UTC, so an ordinary export gives the same bytes for the same input.
 The document's title, language (`en-GB` is split into `en` and `GB`), author and keywords come from the attributes.
 An image without alt text gets its file name.

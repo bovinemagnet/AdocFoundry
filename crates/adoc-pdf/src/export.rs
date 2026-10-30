@@ -127,6 +127,8 @@ pub fn compile(
         .standards
         .iter()
         .map(|standard| match standard {
+            PdfStandard::A1b => typst_pdf::PdfStandard::A_1b,
+            PdfStandard::A1a => typst_pdf::PdfStandard::A_1a,
             PdfStandard::A2a => typst_pdf::PdfStandard::A_2a,
             PdfStandard::Ua1 => typst_pdf::PdfStandard::Ua_1,
         })

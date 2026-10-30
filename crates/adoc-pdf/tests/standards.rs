@@ -102,6 +102,28 @@ fn pdf_a_2a_export_is_conformant() {
 }
 
 #[test]
+fn pdf_a_1_export_is_conformant() {
+    let path = common::fixtures().join("pdf/reference/article.adoc");
+    let document = common::article(common::view_of(&path));
+    for (standard, conformance) in [(PdfStandard::A1b, "B"), (PdfStandard::A1a, "A")] {
+        let output = export(&document, &common::default_theme(), &options(&[standard]))
+            .unwrap_or_else(|error| panic!("{standard:?}: {error}"));
+        assert!(output.bytes.starts_with(b"%PDF-1.4"), "{standard:?}");
+        let bytes = String::from_utf8_lossy(&output.bytes);
+        assert!(
+            bytes.contains("<pdfaid:part>1</pdfaid:part>"),
+            "{standard:?}: no PDF/A part"
+        );
+        assert!(
+            bytes.contains(&format!(
+                "<pdfaid:conformance>{conformance}</pdfaid:conformance>"
+            )),
+            "{standard:?}"
+        );
+    }
+}
+
+#[test]
 fn pdf_ua_1_requires_alt_text() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(

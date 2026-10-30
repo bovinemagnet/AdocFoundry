@@ -45,7 +45,7 @@ It adds xref:pdf-export.adoc[PDF export]:
 * Typesetting in process by Typst, with no Ruby, Node.js or network.
 * asciidoctor-pdf themes, loaded without edits, with the `default`, `default-sans`, `default-for-print` and `base` themes bundled, along with their fonts.
 * Running headers and footers with recto and verso columns, and an index built from index terms.
-* PDF/A-2a and PDF/UA-1 on request.
+* PDF/A-1b, PDF/A-1a, PDF/A-2a and PDF/UA-1 on request.
 * `adocfoundry-cli pdf`, and Export Page to PDF and Export Component to PDF in the command palette.
 
 == Phase 3 status

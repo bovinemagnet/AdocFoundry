@@ -31,6 +31,10 @@ const RUNNING_START: &str = "#metadata(none) <adoc-running-start>#counter(page).
 /// A PDF standard the output must conform to.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PdfStandard {
+    /// PDF/A-1b: archival, PDF 1.4.
+    A1b,
+    /// PDF/A-1a: archival, PDF 1.4, tagged.
+    A1a,
     /// PDF/A-2a: archival, tagged.
     A2a,
     /// PDF/UA-1: accessible.

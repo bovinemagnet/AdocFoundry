@@ -162,7 +162,7 @@ Without it they are not listed, and calling one fails as an unknown tool.
 
 |`export_pdf`
 |`path` or `component`, `output`, `theme?`, `standards?`
-|Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-2a` and `pdf-ua-1`. It returns the output, the page count and any warnings.
+|Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a` and `pdf-ua-1`. It returns the output, the page count and any warnings.
 |===
 
 See xref:pdf-export.adoc[Exporting to PDF] for themes and standards.
