@@ -76,6 +76,7 @@ pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};
 pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use images::{is_image_path, ImageId, OpenImage, IMAGE_EXTENSIONS};
 pub use inspect::resource_id_string;
+pub use language::{SymbolMatch, SYMBOL_RESULTS};
 pub use line_diff::{line_diff, DiffLine, DIFF_CONTEXT};
 pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE, HISTORY_SWEEP_INTERVAL};
 pub use navigation::NavigationPosition;

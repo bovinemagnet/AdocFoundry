@@ -486,7 +486,8 @@ fn find_references_lists_every_reference_to_an_anchor_across_components() {
                     .strip_prefix(&root)
                     .unwrap()
                     .display()
-                    .to_string(),
+                    .to_string()
+                    .replace('\\', "/"),
                 found.line,
                 found.line_text.clone(),
             )

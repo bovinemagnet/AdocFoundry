@@ -252,6 +252,15 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// A symbol as the Go to Symbol list shows it: an anchor as `#id`, then where it is.
+fn symbol_label(symbol: &adoc_engine::SymbolMatch) -> String {
+    let name = match symbol.kind {
+        adoc_engine::WorkspaceSymbolKind::Anchor => format!("#{}", symbol.name),
+        _ => symbol.name.clone(),
+    };
+    format!("{name}  —  {}", symbol.detail)
+}
+
 /// The engine's commands the palette offers: those that apply now, so the visual editor's are
 /// listed only while the active document is shown visually.
 pub(crate) fn palette_commands(engine: &adoc_engine::Engine) -> Vec<&adoc_engine::CommandSpec> {
@@ -2584,6 +2593,102 @@ impl WorkspaceView {
         });
     }
 
+    fn on_go_to_symbol(&mut self, _: &GoToSymbol, window: &mut Window, cx: &mut Context<Self>) {
+        self.symbol_picker(None, window, cx);
+    }
+
+    fn on_go_to_symbol_in_page(
+        &mut self,
+        _: &GoToSymbolInPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(id) = self.active_document(cx) {
+            self.symbol_picker(Some(id), window, cx);
+        }
+    }
+
+    /// Lists the sections, anchors and page titles matching what is typed, across the workspace
+    /// or in `page`; choosing one goes there, recorded in back and forward history.
+    fn symbol_picker(
+        &mut self,
+        page: Option<DocumentId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (command, placeholder) = match page {
+            Some(_) => (
+                ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE,
+                "Go to a section or anchor in this page",
+            ),
+            None => (
+                ids::NAVIGATE_GO_TO_SYMBOL,
+                "Go to a section, anchor or page in the workspace",
+            ),
+        };
+        let query = Rc::new(
+            move |workspace: &mut Self, text: &str, window: &mut Window, cx: &mut Context<Self>| {
+                let args = CommandArgs::Query {
+                    query: text.to_owned(),
+                    document: page,
+                };
+                match workspace.invoke(command, args, window, cx) {
+                    Some(CommandOutcome::Symbols(found)) => found,
+                    _ => Vec::new(),
+                }
+            },
+        );
+        // What the list shows, replaced as the query changes.
+        let found = Rc::new(std::cell::RefCell::new(query(self, "", window, cx)));
+        let workspace = cx.weak_entity();
+        let palette = self.palette.clone();
+        palette.update(cx, |palette, cx| palette.set_query("", window, cx));
+        let focus = palette.read(cx).focus_handle(cx);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            window.focus(&focus, cx);
+            let items: Vec<CommandItem> = found
+                .borrow()
+                .iter()
+                .map(|symbol| CommandItem::new().label(symbol_label(symbol)))
+                .collect();
+            let (queried, chosen) = (found.clone(), found.clone());
+            let (asking, going) = (workspace.clone(), workspace.clone());
+            let query = query.clone();
+            dialog.close_button(false).p_0().child(
+                Command::new(&palette)
+                    .bordered(false)
+                    .filterable(false)
+                    .placeholder(placeholder)
+                    .max_h(px(420.))
+                    .items(items)
+                    .on_query(move |text, window, cx| {
+                        let _ = asking.update(cx, |this, cx| {
+                            *queried.borrow_mut() = query(this, text, window, cx);
+                        });
+                        window.refresh();
+                    })
+                    .on_confirm(move |index, window, cx| {
+                        let symbol = chosen.borrow().get(index.row).cloned();
+                        window.close_dialog(cx);
+                        let workspace = going.clone();
+                        window.defer(cx, move |window, cx| {
+                            let Some(symbol) = symbol else {
+                                return;
+                            };
+                            let _ = workspace.update(cx, |this, cx| {
+                                this.invoke(
+                                    ids::NAVIGATE_GO_TO,
+                                    CommandArgs::Position(symbol.position),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        });
+                    }),
+            )
+        });
+    }
+
     /// Asks where to write the active page's component as a book, then exports it.
     fn on_export_component_pdf(
         &mut self,
@@ -3730,6 +3835,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_replace))
             .on_action(cx.listener(Self::on_rename))
             .on_action(cx.listener(Self::on_find_references))
+            .on_action(cx.listener(Self::on_go_to_symbol))
+            .on_action(cx.listener(Self::on_go_to_symbol_in_page))
             .on_action(cx.listener(Self::on_reindex))
             .on_action(cx.listener(Self::on_refresh_git))
             .on_action(cx.listener(Self::on_revert_change))

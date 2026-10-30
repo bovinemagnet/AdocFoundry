@@ -674,6 +674,7 @@ If the target cannot be resolved, the diagnostic is shown and nothing is opened.
 include::example$link-following.mmd[]
 ----
 
+[#back-and-forward]
 === Back and forward
 
 Every followed link is recorded.
@@ -701,6 +702,38 @@ Clicking a reference opens that page at the reference, in the preview tab, as cl
 The close button closes the panel, and opening Find in Workspace replaces it.
 
 Find References acts at the caret in the source editor.
+[#go-to-symbol]
+== Go to symbol
+
+Go to Symbol in Workspace (`navigate.go_to_symbol`, kbd:[Cmd+T], or kbd:[Ctrl+T] on Linux and Windows) opens a picker over the section titles, anchors and page titles of every page in the workspace.
+Attributes are not listed.
+
+Nothing is listed until you type.
+Every word you type must start a word of the name, in any order and in any case, so `instal serv` finds "Installing the Server".
+At most 100 results are shown, and names that start with what you typed come first.
+
+Each row shows the name, with an anchor shown as `#id`, and then where it is:
+
+* the title of the page it is on, or "Page" for a page title;
+* in an Antora workspace, the component version and module, such as `Guide · beta › admin`;
+* outside Antora, the page's path in the workspace.
+
+For example, typing `instal serv` can show this row:
+
+----
+Installing the Server  —  Guide · beta › admin
+----
+
+A page title is shown as, for example, `Overview  —  Alpha · alpha 1.0 › ROOT`.
+
+Enter, or a click, opens the page at that place.
+The jump is recorded in the history, so Go Back returns to where you were; see <<back-and-forward>>.
+
+Go to Symbol in Page (`navigate.go_to_symbol_in_page`, kbd:[Cmd+R], or kbd:[Ctrl+R] on Linux and Windows) is the same picker limited to the active page's title, sections and anchors, in page order.
+It lists them all before you type anything, and typing keeps those whose name contains the text.
+Jumps within the page are recorded in the history too.
+
+Both commands are in the Go menu, after Find References, and in the command palette.
 
 [[drag-a-link]]
 == Dragging a link into the page

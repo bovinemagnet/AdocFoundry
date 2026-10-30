@@ -51,6 +51,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Back and forward through the places you have followed links to.
 - Alt-F12 on an `include::` shows the included file read-only.
 - Find References (Alt-Shift-F12, Go menu) lists every reference to the anchor at the caret (`<<id>>` and `xref:page.adoc#id[]`, across components), or else every xref, include and nav entry that names the page, grouped by file in a panel below the editor; clicking one opens it there.
+- Go to Symbol in Workspace (Cmd/Ctrl-T) lists the sections, anchors and page titles across the workspace whose words start with what you type, each with its page and, in Antora, its component version and module; Enter opens it there, recorded in back and forward history. Go to Symbol in Page (Cmd/Ctrl-R) does the same for the active page. Both are in the Go menu.
 
 **Preview**
 
