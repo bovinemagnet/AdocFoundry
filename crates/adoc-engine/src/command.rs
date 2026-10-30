@@ -110,6 +110,8 @@ pub enum CommandOutcome {
     Location(Location),
     External(PathBuf),
     Preview(EditPreview),
+    /// The references to an anchor or a page, in file order.
+    References(Vec<crate::SearchMatch>),
     /// The selection after a visual command, as source offsets.
     Selection(SourceRange),
     /// A web address for the front end to open or copy.
