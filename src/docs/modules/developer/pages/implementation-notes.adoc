@@ -418,6 +418,7 @@ PDF/A-1b and PDF/A-1a were added later (issue #63), and PDF/UA-2 waits on Typst,
 |tree-sitter
 |Typst's highlighter, only when `source-highlighter` is set
 |The tree-sitter highlighter is in the application crate. asciidoctor-pdf also highlights only then.
+Highlighting through the editor's grammars was added later (issue #61); see xref:pdf.adoc#_source_highlighting[Source highlighting].
 
 |PDF/A date
 |Not specified
