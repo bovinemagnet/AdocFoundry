@@ -225,6 +225,7 @@ dependencies = [
  "adoc-core",
  "adoc-index",
  "adoc-parser",
+ "tempfile",
 ]
 
 [[package]]

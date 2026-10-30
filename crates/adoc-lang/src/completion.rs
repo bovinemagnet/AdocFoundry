@@ -5,7 +5,7 @@ use std::{
 
 use adoc_antora::{AntoraCatalog, AntoraContext, ResourceFamily};
 
-use adoc_core::{asciidoctor_id, canonical_id, Document, SourceRange};
+use adoc_core::{Document, SourceRange};
 use adoc_index::{list_directory, WorkspaceIndex};
 use adoc_parser::{completion_context, CompletionKind};
 
@@ -137,21 +137,10 @@ fn anchor_candidates(
         return Vec::new();
     };
 
-    let generate_id: fn(&str) -> String = if antora.context_for_path(path).is_some() {
-        canonical_id
-    } else {
-        asciidoctor_id
-    };
-
     let mut candidates: Vec<Candidate> = document
         .sections
         .iter()
-        .map(|section| {
-            section
-                .id
-                .clone()
-                .unwrap_or_else(|| generate_id(&section.title))
-        })
+        .map(|section| crate::xref::section_id(antora, path, section))
         .map(|label| candidate(label, range))
         .collect();
 

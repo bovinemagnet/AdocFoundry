@@ -11,5 +11,8 @@ adoc-core.workspace = true
 adoc-index.workspace = true
 adoc-parser.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

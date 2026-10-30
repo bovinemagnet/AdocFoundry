@@ -24,6 +24,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Files, Navigation and Modules follow the active page: whenever another page or image becomes active, each selects its row, opening the folders and branches above it, without taking focus. Navigation selects the first entry linking to the page, preferring one without a `#fragment` (or keeps the one you clicked), and clears its selection for a page in no navigation file. `[sidebar] follow_active = false` turns this off.
 - *Problems*: workspace diagnostics grouped by file; click one to go to it.
 - *Outline* of the active document; for a navigation file, its navigation tree.
+- Drag a page from Navigation or Modules, or a section from the Outline, into the source or visual editor to insert an xref to it where you drop it, as one undo step. The target is the shortest resource ID that resolves to the page from the page being edited (`other.adoc`, `module:other.adoc`, `component:module:other.adoc`, or `component::other.adoc` for a ROOT module), with `version@` only for a version other than the latest, never an alias; outside Antora it is the page's relative path. The link text is the page's or section's title, a section adds its id (`guide.adoc#setup`), and a section of the page itself becomes `<<setup,Setup>>`.
 
 **Editor**
 

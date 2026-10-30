@@ -30,7 +30,7 @@ use gpui::{
 };
 use gpui_component::{v_flex, ActiveTheme as _, WindowExt as _};
 
-use crate::app::AppState;
+use crate::{app::AppState, sidebar::DraggedLink};
 
 pub use input::bind;
 use text::Layouts;
@@ -718,6 +718,40 @@ impl VisualView {
             if offset != self.selection.head {
                 self.move_to(Some(offset), true, cx);
             }
+        }
+    }
+
+    /// Inserts an xref to the page or section dragged in from the sidebar at the text under
+    /// the pointer in the text block at `path`.
+    pub(crate) fn drop_link(
+        &mut self,
+        path: &[usize],
+        link: &DraggedLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(offset) = self.offset_at(path, window.mouse_position()) else {
+            return;
+        };
+        let engine = &self.app.read(cx).engine;
+        let Some(xref) = engine.xref_to(self.document, &link.path, link.section) else {
+            window.push_notification(link.unlinkable(), cx);
+            return;
+        };
+        window.focus(&self.focus, cx);
+        self.set_selection(Selection::caret(offset), cx);
+        let inserted = self.run(
+            ids::EDIT_INSERT_LINK,
+            VisualValue::Link {
+                target: xref.target,
+                text: xref.text,
+            },
+            window,
+            cx,
+        );
+        // Typing goes on after the link rather than replacing it.
+        if inserted {
+            self.set_selection(Selection::caret(self.selection.end()), cx);
         }
     }
 

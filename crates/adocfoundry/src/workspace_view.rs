@@ -2980,6 +2980,15 @@ impl WorkspaceView {
                     IconName::File
                 };
                 let workspace = workspace.clone();
+                // Pages and the Outline's sections drag into an editor as xrefs.
+                let drag = matches!(id, "nav" | "families" | "outline")
+                    .then(|| sidebar::parse_target(&item.id))
+                    .flatten()
+                    .map(|target| sidebar::DraggedLink {
+                        section: (id == "outline").then_some(target.range),
+                        path: target.path,
+                        label: item.label.clone(),
+                    });
                 ListItem::new(index)
                     .w_full()
                     .rounded(cx.theme().radius)
@@ -2995,6 +3004,9 @@ impl WorkspaceView {
                             .child(icon)
                             .child(tree_label(id, index, item.label.clone())),
                     )
+                    .when_some(drag, |row, link| {
+                        row.on_drag(link, |link, _, _, cx| cx.new(|_| link.clone()))
+                    })
                     .on_click(move |event, window, cx| {
                         let Some(target) = sidebar::parse_target(&item.id) else {
                             return;

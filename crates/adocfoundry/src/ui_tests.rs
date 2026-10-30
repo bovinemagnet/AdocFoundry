@@ -4747,3 +4747,197 @@ fn export_page_with_theme_offers_the_bundled_and_workspace_themes(cx: &mut TestA
     assert!(bytes.contains("NotoSans"), "not the sans theme");
     assert!(!bytes.contains("NotoSerif"), "the default theme was used");
 }
+
+/// The Antora workspace with two components, copied, with Alpha's page `page` open.
+fn drag_workspace(
+    page: &str,
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    copy_dir(&fixture("antora-multi-component"), &root);
+    let page = root.join("alpha/modules/ROOT/pages").join(page);
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("nav-row-0").is_some()
+            && cx.update(|_, cx| app.read(cx).engine.active().is_some())
+    }));
+    (directory, app, workspace, cx)
+}
+
+/// The selector of the Navigation row labelled `label`.
+fn nav_row(
+    workspace: &Entity<WorkspaceView>,
+    label: &str,
+    cx: &mut VisualTestContext,
+) -> &'static str {
+    let rows = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .tree_rows_for_test(adoc_engine::SidebarPanel::Navigation, cx)
+    });
+    let index = rows
+        .iter()
+        .position(|row| row.trim_start().trim_end_matches([' ', '+', '-']) == label)
+        .unwrap_or_else(|| panic!("no {label} row in {rows:?}"));
+    // Debug selectors are static.
+    format!("nav-row-{index}").leak()
+}
+
+/// Where the caret goes at `offset` in the active source editor.
+fn source_point(
+    workspace: &Entity<WorkspaceView>,
+    offset: usize,
+    cx: &mut VisualTestContext,
+) -> gpui::Point<gpui::Pixels> {
+    cx.update(|_, cx| {
+        let editor = workspace
+            .read(cx)
+            .active_editor_for_test()
+            .unwrap()
+            .read(cx);
+        editor
+            .state_for_test()
+            .read(cx)
+            .range_to_bounds(&(offset..offset))
+    })
+    .expect("the offset is laid out")
+    .left_center()
+        + gpui::point(px(1.), px(0.))
+}
+
+/// Drags the element drawn for `selector` to `to` with the mouse, and drops it there.
+fn drag_to(selector: &'static str, to: gpui::Point<gpui::Pixels>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let from = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} is not drawn"))
+        .center();
+    let button = gpui::MouseButton::Left;
+    cx.simulate_mouse_move(from, None, gpui::Modifiers::none());
+    cx.simulate_mouse_down(from, button, gpui::Modifiers::none());
+    cx.simulate_mouse_move(
+        from + gpui::point(px(20.), px(0.)),
+        Some(button),
+        gpui::Modifiers::none(),
+    );
+    cx.simulate_mouse_move(to, Some(button), gpui::Modifiers::none());
+    cx.simulate_mouse_up(to, button, gpui::Modifiers::none());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn dragging_a_page_into_the_source_editor_inserts_an_xref(cx: &mut TestAppContext) {
+    let (_directory, app, workspace, mut cx) = drag_workspace("index.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let text = text_of(&app, id, &mut cx);
+    // The end of the line that links to Beta.
+    let at = text.find("\n\nThe xref").unwrap();
+    let editor = cx
+        .update(|_, cx| workspace.read(cx).active_editor_for_test().cloned())
+        .expect("a source editor");
+    let to = source_point(&workspace, at, &mut cx);
+    let row = nav_row(&workspace, "Beta home", &mut cx);
+    drag_to(row, to, &mut cx);
+
+    let xref = "xref:beta::index.adoc[Beta]";
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        format!("{}{xref}{}", &text[..at], &text[at..])
+    );
+    assert_eq!(
+        cx.update(|_, cx| editor.read(cx).cursor(cx)),
+        at + xref.len(),
+        "the caret follows the xref"
+    );
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.active()),
+        Some(id),
+        "a drag opens nothing"
+    );
+}
+
+#[gpui::test]
+fn dragging_a_page_into_the_visual_editor_inserts_an_xref(cx: &mut TestAppContext) {
+    let (_directory, app, workspace, mut cx) = drag_workspace("index.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    cx.simulate_keystrokes("secondary-k w");
+    cx.run_until_parked();
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    let text = text_of(&app, id, &mut cx);
+    // Before "See", at the start of the first paragraph.
+    let at = text.find("See").unwrap();
+    let to = cx.update(|_, cx| {
+        let layouts = visual.read(cx).layouts().borrow();
+        layouts
+            .get(&vec![1])
+            .expect("the paragraph is laid out")
+            .position_for_index(0)
+            .expect("its start is laid out")
+            + gpui::point(px(1.), px(2.))
+    });
+    let row = nav_row(&workspace, "reference.adoc", &mut cx);
+    drag_to(row, to, &mut cx);
+
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        format!(
+            "{}xref:beta:api:reference.adoc[API Reference]{}",
+            &text[..at],
+            &text[at..]
+        )
+    );
+    // Typing goes on after the link.
+    cx.simulate_keystrokes("space");
+    cx.run_until_parked();
+    assert!(text_of(&app, id, &mut cx).contains("[API Reference] See"));
+}
+
+#[gpui::test]
+fn dragging_an_outline_section_inserts_a_reference_to_it(cx: &mut TestAppContext) {
+    let (_directory, app, workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let text = text_of(&app, id, &mut cx);
+    let at = text.find("Set it up.").unwrap() + "Set it up.".len();
+    let to = source_point(&workspace, at, &mut cx);
+    // The page's title is row 0, its Setup section row 1.
+    drag_to("outline-row-1", to, &mut cx);
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        format!("{}<<setup,Setup>>{}", &text[..at], &text[at..])
+    );
+
+    // The page's own title links nowhere from the page.
+    let text = text_of(&app, id, &mut cx);
+    drag_to(
+        "outline-row-0",
+        source_point(&workspace, 0, &mut cx),
+        &mut cx,
+    );
+    assert_eq!(text_of(&app, id, &mut cx), text);
+}

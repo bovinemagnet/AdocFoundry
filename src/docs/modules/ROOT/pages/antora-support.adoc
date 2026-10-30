@@ -41,6 +41,7 @@ version@component:module:family$path
 Every coordinate except the path is optional.
 Pages are the default family in an `xref:`.
 Includes use `partial$` and `example$`, and images use `image$`.
+Dragging a page from the sidebar into the editor writes the shortest resource ID for it; see xref:using-the-editor.adoc#drag-a-link[Dragging a link into the page].
 
 [cols="2,3"]
 |===

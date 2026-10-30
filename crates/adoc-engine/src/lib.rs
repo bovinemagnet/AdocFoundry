@@ -124,7 +124,7 @@ pub use adoc_antora::{
 pub use adoc_git::{BlameLine, Change as GitChange, FileStatus, Head, Hunk, HunkKind};
 pub use adoc_lang::{
     CompletionItem, CompletionItemKind, DefinitionTarget, DocumentSymbol, DocumentSymbolKind,
-    Hover, Location, WorkspaceState, WorkspaceSymbol, WorkspaceSymbolKind,
+    Hover, Location, WorkspaceState, WorkspaceSymbol, WorkspaceSymbolKind, XrefLink,
 };
 pub use adoc_model::{next_word_end, previous_word_start, word_at};
 pub use adoc_model::{

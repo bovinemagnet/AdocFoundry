@@ -13,13 +13,48 @@ use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
     Branch, DocumentId, DocumentSymbol, Engine, GitChange, NavItem, SidebarPanel, WorkspaceState,
 };
-use gpui_component::tree::TreeItem;
+use gpui::{
+    div, Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Window,
+};
+use gpui_component::{tree::TreeItem, ActiveTheme as _};
 
 /// Where a tree item leads when clicked.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Target {
     pub path: PathBuf,
     pub range: SourceRange,
+}
+
+/// A page, or (from the Outline) a section of one, dragged from the sidebar: dropped into an
+/// editor, it becomes an xref to it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DraggedLink {
+    pub path: PathBuf,
+    /// The selection range of the section's title, for a section.
+    pub section: Option<SourceRange>,
+    pub label: SharedString,
+}
+
+impl DraggedLink {
+    /// What a drop says when the page being edited cannot link to what was dragged.
+    pub fn unlinkable(&self) -> String {
+        format!("{} cannot be linked from this page.", self.label)
+    }
+}
+
+impl Render for DraggedLink {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_0p5()
+            .text_sm()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .text_color(cx.theme().popover_foreground)
+            .child(self.label.clone())
+    }
 }
 
 /// Encodes a target as a tree item id, unique within one tree.
