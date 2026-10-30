@@ -5288,3 +5288,75 @@ fn go_to_symbol_opens_a_section_in_another_component(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(active_path(&mut cx), alpha);
 }
+
+#[gpui::test]
+fn f2_on_a_heading_renames_its_section_id(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\n== First Steps\n\nSee <<_first_steps>>.\n";
+    std::fs::write(&page, text).unwrap();
+    std::fs::write(
+        root.join("other.adoc"),
+        "= Other\n\nRead xref:page.adoc#_first_steps[the first steps].\n",
+    )
+    .unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let heading = text.find("First").unwrap();
+    cx.update(|window, cx| {
+        let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(heading, heading), window, cx)
+        });
+    });
+    cx.run_until_parked();
+
+    // F2 asks for the new id, starting from the generated one; Enter previews, Enter applies.
+    cx.simulate_keystrokes("f2");
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("begin");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\n[[begin]]\n== First Steps\n\nSee <<begin>>.\n"
+    );
+    let other = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let other = engine.document_for_path(&root.join("other.adoc")).unwrap();
+        engine.document(other).unwrap().text_string()
+    });
+    assert_eq!(
+        other,
+        "= Other\n\nRead xref:page.adoc#begin[the first steps].\n"
+    );
+}

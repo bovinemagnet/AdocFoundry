@@ -50,7 +50,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Cmd-click (Ctrl-click on Linux and Windows) or F12 on an `xref:`, `include::` or `{attribute}` opens the target and places the caret there; images and attachments open in the system's default application.
 - Back and forward through the places you have followed links to.
 - Alt-F12 on an `include::` shows the included file read-only.
-- Find References (Alt-Shift-F12, Go menu) lists every reference to the anchor at the caret (`<<id>>` and `xref:page.adoc#id[]`, across components), or else every xref, include and nav entry that names the page, grouped by file in a panel below the editor; clicking one opens it there.
+- Find References (Alt-Shift-F12, Go menu) lists every reference to the anchor or section heading at the caret (`<<id>>` and `xref:page.adoc#id[]`, across components), or else every xref, include and nav entry that names the page, grouped by file in a panel below the editor; clicking one opens it there.
 - Go to Symbol in Workspace (Cmd/Ctrl-T) lists the sections, anchors and page titles across the workspace whose words start with what you type, each with its page and, in Antora, its component version and module; Enter opens it there, recorded in back and forward history. Go to Symbol in Page (Cmd/Ctrl-R) does the same for the active page. Both are in the Go menu.
 
 **Preview**
@@ -103,6 +103,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Find in the workspace, with regular expression, case and whole-word options.
 - Replace across the workspace shows every change first; applying it is one undo step.
 - Rename Page moves the file and rewrites every xref that leads to it, shown as a preview first; one undo moves the page back and restores every xref.
+- F2 on an anchor (`[[id]]`, `[#id]`), a section heading or a reference to one renames the anchor instead (Rename Anchor): its declaration and every `<<id>>` and `xref:page.adoc#id[]` that names it, in every page, shown as a preview first and undone as one step. A section without an anchor gets `[[new-id]]` above its heading, and references written with its generated id (Antora's or Asciidoctor's form) are rewritten. Elsewhere F2 renames the page.
 - A replace or rename is undone and redone only as a whole. If one of its pages was edited afterwards, undo says which; undo that page's later edits first.
 
 **Also**

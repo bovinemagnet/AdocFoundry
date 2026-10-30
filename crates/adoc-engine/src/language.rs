@@ -119,6 +119,15 @@ impl Engine {
             .collect()
     }
 
+    /// The id of the anchor at `offset` in document `id`: an `[[id]]` or `[#id]` there, a
+    /// section heading's id (declared or generated), or the anchor a reference there names.
+    #[must_use]
+    pub fn anchor_at(&self, id: DocumentId, offset: usize) -> Option<String> {
+        let document = self.document(id)?;
+        adoc_lang::references::anchor_at(&self.workspace, &document.path, &document.parsed, offset)
+            .map(|anchor| anchor.id)
+    }
+
     /// The sections, anchors and page titles matching `query`: across the workspace, each
     /// word of the query starting a word of the name (those starting with the query first, at
     /// most [`SYMBOL_RESULTS`]); or in document `page`, those whose name contains the query,
