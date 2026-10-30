@@ -66,6 +66,8 @@ pub struct Node {
     pub key: String,
     pub label: String,
     pub target: Option<Target>,
+    /// Whether the row is a navigation entry linking to a fragment of its page.
+    pub fragment: bool,
     pub children: Vec<Node>,
 }
 
@@ -75,6 +77,7 @@ impl Node {
             key,
             label: label.into(),
             target,
+            fragment: false,
             children: Vec::new(),
         }
     }
@@ -140,6 +143,41 @@ pub fn path_to(nodes: &[Node], id: &str) -> Option<Vec<String>> {
     None
 }
 
+/// The ids of the rows from the root down to the first row, depth first, that opens `file`: a
+/// resource's row, or a navigation entry linking to it, never an entry opening a nav file's line.
+/// An entry linking to a fragment of the page is found only when no entry links to the page itself.
+pub fn path_to_file(nodes: &[Node], file: &Path) -> Option<Vec<String>> {
+    path_to_entry(nodes, file, false).or_else(|| path_to_entry(nodes, file, true))
+}
+
+fn path_to_entry(nodes: &[Node], file: &Path, fragments: bool) -> Option<Vec<String>> {
+    for node in nodes {
+        if (fragments || !node.fragment)
+            && node
+                .target
+                .as_ref()
+                .is_some_and(|target| opens(target, file))
+        {
+            return Some(vec![node.id()]);
+        }
+        if let Some(mut path) = path_to_entry(&node.children, file, fragments) {
+            path.insert(0, node.id());
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Whether the row with id `id` opens `file`, as [`path_to_file`] finds rows.
+pub fn opens_file(id: &str, file: &Path) -> bool {
+    parse_target(id).is_some_and(|target| opens(&target, file))
+}
+
+/// Resources and linked entries open their file at its start; other entries open a line.
+fn opens(target: &Target, file: &Path) -> bool {
+    target.path == file && target.range == SourceRange::new(0, 0)
+}
+
 fn component_label(name: &str, title: Option<&str>, version: Option<&str>) -> String {
     let title = title.unwrap_or(name);
     match version {
@@ -200,6 +238,7 @@ fn nav_items(workspace: &WorkspaceState, items: &[NavItem], parent: &str) -> Vec
                 None => (item.source.path.clone(), item.source.range),
             };
             let mut node = Node::new(key, item.title.clone(), Some(Target { path, range }));
+            node.fragment = item.fragment.is_some();
             node.children = nav_items(workspace, &item.children, &node.key);
             node
         })
@@ -582,5 +621,91 @@ mod tests {
         keys(&navigation(&engine), &mut after);
         assert_eq!(after.len(), before.len() + 1);
         assert!(before.iter().all(|key| after.contains(key)));
+    }
+
+    #[test]
+    fn an_entry_without_a_fragment_is_found_before_one_with() {
+        let page = Path::new("/docs/pages/install.adoc");
+        let entry = |key: &str, fragment: bool| {
+            let target = Target {
+                path: page.to_path_buf(),
+                range: SourceRange::new(0, 0),
+            };
+            let mut node = Node::new(key.to_owned(), key, Some(target));
+            node.fragment = fragment;
+            node
+        };
+        let mut home = Node::new("home".to_owned(), "Home", None);
+        home.children = vec![entry("home/steps", true), entry("home/install", false)];
+        let nodes = vec![entry("first", true), home];
+        assert_eq!(
+            path_to_file(&nodes, page),
+            Some(vec![nodes[1].id(), nodes[1].children[1].id()])
+        );
+        // Only entries with a fragment: the first of them.
+        let nodes = vec![entry("steps", true), entry("again", true)];
+        assert_eq!(path_to_file(&nodes, page), Some(vec![nodes[0].id()]));
+    }
+
+    #[test]
+    fn the_first_row_opening_a_file_is_found() {
+        let directory = tempfile::tempdir().unwrap();
+        copy_fixture(directory.path());
+        let root = adoc_index::normalize_path(directory.path());
+        let engine = fixture_engine(&root);
+        let labels = |nodes: &[Node], ids: Vec<String>| -> Vec<String> {
+            let mut level = nodes;
+            ids.iter()
+                .map(|id| {
+                    let node = level.iter().find(|node| &node.id() == id).unwrap();
+                    level = &node.children;
+                    node.label.clone()
+                })
+                .collect()
+        };
+        let pages = root.join("guide-2.0/modules/ROOT/pages");
+
+        // Install is listed twice: the first entry is the one found.
+        let nav = navigation(&engine);
+        let install = path_to_file(&nav, &pages.join("install.adoc")).unwrap();
+        assert_eq!(
+            labels(&nav, install.clone()),
+            ["Guide 2.0", "Home", "Install"]
+        );
+        assert_eq!(
+            install.last(),
+            Some(&nav[0].children[0].children[0].id()),
+            "the first Install"
+        );
+        assert!(opens_file(
+            install.last().unwrap(),
+            &pages.join("install.adoc")
+        ));
+        assert!(!opens_file(
+            install.last().unwrap(),
+            &pages.join("faq.adoc")
+        ));
+        assert!(!opens_file(&nav[0].id(), &pages.join("install.adoc")));
+        assert_eq!(
+            labels(&nav, path_to_file(&nav, &pages.join("linux.adoc")).unwrap()),
+            ["Guide 2.0", "Home", "Install", "Linux"]
+        );
+        // A page in no navigation file, and the navigation file itself, have no row.
+        let more = root.join("guide-2.0/modules/extra/pages/more.adoc");
+        assert_eq!(path_to_file(&nav, &more), None);
+        let nav_file = root.join("guide-2.0/modules/ROOT/nav.adoc");
+        assert_eq!(path_to_file(&nav, &nav_file), None);
+
+        // Modules lists pages and images alike.
+        let modules = families(&engine);
+        assert_eq!(
+            labels(&modules, path_to_file(&modules, &more).unwrap()),
+            ["Guide 2.0", "extra", "page (1)", "more.adoc"]
+        );
+        let image = root.join("guide-1.0/modules/ROOT/images/diagram.svg");
+        assert_eq!(
+            labels(&modules, path_to_file(&modules, &image).unwrap()),
+            ["Guide 1.0", "ROOT", "image (1)", "diagram.svg"]
+        );
     }
 }

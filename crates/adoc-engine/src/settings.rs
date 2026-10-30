@@ -80,11 +80,13 @@ impl ExpansionPolicy {
     }
 }
 
-/// The Navigation and Modules trees: how far each opens, and whether the branches the user
-/// opens and closes are remembered for the workspace.
+/// The Navigation and Modules trees: how far each opens, whether the branches the user opens
+/// and closes are remembered for the workspace, and whether the Files, Navigation and Modules
+/// trees reveal and select the active page.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SidebarSettings {
     pub remember_expansion: bool,
+    pub follow_active: bool,
     pub navigation: ExpansionPolicy,
     pub modules: ExpansionPolicy,
 }
@@ -93,6 +95,7 @@ impl Default for SidebarSettings {
     fn default() -> Self {
         Self {
             remember_expansion: true,
+            follow_active: true,
             navigation: ExpansionPolicy::Depth(2),
             modules: ExpansionPolicy::Depth(2),
         }
@@ -360,6 +363,7 @@ impl Settings {
             || section == "editor"
             || section == "pdf"
             || section.starts_with("sidebar.")
+            || (section == "sidebar" && key == "follow_active")
             || (section == "workspace" && key == "ignore");
         if !allowed_here && is_known(section, key) {
             self.warn(source, &name, "can only be set in the user settings file");
@@ -430,6 +434,7 @@ impl Settings {
             ("sidebar", "remember_expansion") => {
                 self.sidebar.remember_expansion = boolean(value)?;
             }
+            ("sidebar", "follow_active") => self.sidebar.follow_active = boolean(value)?,
             ("sidebar.navigation", "default_expansion") => {
                 self.sidebar.navigation = expansion(value)?;
             }
@@ -480,7 +485,7 @@ fn expansion(value: &toml::Value) -> Result<ExpansionPolicy, &'static str> {
 fn is_known(section: &str, key: &str) -> bool {
     matches!(
         (section, key),
-        ("sidebar", "remember_expansion")
+        ("sidebar", "remember_expansion" | "follow_active")
             | (
                 "sidebar.navigation" | "sidebar.modules",
                 "default_expansion"
@@ -669,6 +674,37 @@ mod tests {
         assert_eq!(settings.sidebar.navigation, ExpansionPolicy::Depth(2));
         assert_eq!(settings.sidebar.modules, ExpansionPolicy::Depth(2));
         assert!(settings.sidebar.remember_expansion);
+    }
+
+    #[test]
+    fn sidebar_follow_active_loads_per_layer() {
+        assert!(Settings::default().sidebar.follow_active);
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(&user, "[sidebar]\nfollow_active = false\n").unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+        assert!(!settings.sidebar.follow_active);
+
+        // The workspace overrides the user's.
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[sidebar]\nfollow_active = true\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+        assert!(settings.sidebar.follow_active);
+
+        // An invalid value warns and keeps the value beneath it.
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[sidebar]\nfollow_active = \"yes\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(!settings.sidebar.follow_active);
+        assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
     }
 
     #[test]

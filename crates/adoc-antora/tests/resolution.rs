@@ -228,6 +228,10 @@ fn nav_tree_nests_by_list_depth() {
     assert_eq!(guide.component.as_deref(), Some("alpha"));
     assert_eq!(guide.module.as_deref(), Some("ROOT"));
     assert_eq!(guide.path, "guide.adoc");
+    assert_eq!(home.children[0].fragment, None);
+    let setup = &home.children[0].children[0];
+    assert_eq!(setup.target.as_ref().unwrap().path, "guide.adoc");
+    assert_eq!(setup.fragment.as_deref(), Some("setup"));
     let beta = alpha.children[1].target.as_ref().unwrap();
     assert_eq!(beta.component.as_deref(), Some("beta"));
     assert_eq!(beta.version, None);

@@ -133,6 +133,23 @@ impl Engine {
         self.expansion_changed();
     }
 
+    /// Opens each of `keys`, the branches above a row being revealed, that is closed, recording
+    /// those it opens as the user's choices. False when all were open already.
+    pub fn open_branches(&mut self, panel: SidebarPanel, keys: &[&str]) -> bool {
+        let state = &mut self.expansion.panels[panel.index()];
+        let mut opened = false;
+        for key in keys {
+            if !state.live.get(*key).copied().unwrap_or(false) {
+                state.choose(key, true);
+                opened = true;
+            }
+        }
+        if opened {
+            self.expansion_changed();
+        }
+        opened
+    }
+
     /// Opens every branch of `panel`'s tree.
     pub fn expand_all(&mut self, panel: SidebarPanel) {
         self.choose_all(panel, true);

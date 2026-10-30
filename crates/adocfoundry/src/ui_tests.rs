@@ -4339,3 +4339,131 @@ fn dialogs_take_clicks_however_late_they_come(cx: &mut TestAppContext) {
         .update(|_, cx| cx.read_from_clipboard())
         .is_some_and(|item| item.text().is_some()));
 }
+
+/// The labels of the rows selected in Navigation and Modules.
+fn followed(
+    workspace: &Entity<WorkspaceView>,
+    cx: &mut VisualTestContext,
+) -> (Option<String>, Option<String>) {
+    use adoc_engine::SidebarPanel::{Modules, Navigation};
+    cx.update(|_, cx| {
+        let workspace = workspace.read(cx);
+        (
+            workspace.selected_row_for_test(Navigation, cx),
+            workspace.selected_row_for_test(Modules, cx),
+        )
+    })
+}
+
+#[gpui::test]
+fn sidebar_trees_follow_the_active_page(cx: &mut TestAppContext) {
+    use adoc_engine::{
+        OpenDisposition::Persistent,
+        SidebarPanel::{Modules, Navigation},
+    };
+    let (directory, app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let root = adoc_index::normalize_path(directory.path());
+    let pages = root.join("guide-2.0/modules/ROOT/pages");
+    let selected_index = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| workspace.read(cx).selected_index_for_test(Navigation, cx))
+    };
+
+    // Linux sits under Install, closed at the default depth: the way to it opens.
+    let linux = pages.join("linux.adoc");
+    open_as(&workspace, &linux, Persistent, &mut cx);
+    assert_eq!(
+        followed(&workspace, &mut cx),
+        (Some("Linux".to_owned()), Some("linux.adoc".to_owned()))
+    );
+    let navigation = rows(&workspace, Navigation, &mut cx);
+    assert_eq!(
+        navigation[..4],
+        ["Guide 2.0 +", "  Home +", "    Install +", "      Linux"]
+    );
+    assert_eq!(selected_index(&mut cx), Some(3));
+    assert!(
+        rows(&workspace, Modules, &mut cx).contains(&"      linux.adoc".to_owned()),
+        "{:#?}",
+        rows(&workspace, Modules, &mut cx)
+    );
+
+    // Install is listed twice: the first entry is selected.
+    open_as(&workspace, &pages.join("install.adoc"), Persistent, &mut cx);
+    assert_eq!(selected_index(&mut cx), Some(2));
+    // A click on the second keeps that one.
+    open_as(&workspace, &pages.join("faq.adoc"), Persistent, &mut cx);
+    assert_eq!(followed(&workspace, &mut cx).0.as_deref(), Some("FAQ"));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    click("nav-row-4", &mut cx);
+    assert_eq!(selected_index(&mut cx), Some(4));
+    assert_eq!(followed(&workspace, &mut cx).0.as_deref(), Some("Install"));
+
+    // A page in no navigation file is followed in Modules only.
+    let more = root.join("guide-2.0/modules/extra/pages/more.adoc");
+    open_as(&workspace, &more, Persistent, &mut cx);
+    assert_eq!(
+        followed(&workspace, &mut cx),
+        (None, Some("more.adoc".to_owned()))
+    );
+
+    // So is an image, in its family.
+    let image = root.join("guide-1.0/modules/ROOT/images/diagram.svg");
+    open_as(&workspace, &image, Persistent, &mut cx);
+    assert_eq!(
+        followed(&workspace, &mut cx),
+        (None, Some("diagram.svg".to_owned()))
+    );
+
+    // Files has followed too, without being shown.
+    let files =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_files_for_test(cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| files.read(cx).selected_for_test(cx)) == Some(image.clone())
+    }));
+}
+
+#[gpui::test]
+fn a_branch_closed_over_the_active_page_stays_closed(cx: &mut TestAppContext) {
+    use adoc_engine::{OpenDisposition::Persistent, SidebarPanel::Navigation};
+    let (directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let pages = adoc_index::normalize_path(directory.path()).join("guide-2.0/modules/ROOT/pages");
+    let linux = pages.join("linux.adoc");
+    open_as(&workspace, &linux, Persistent, &mut cx);
+    // Collapse All, then the same page again: nothing reopens.
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
+    cx.simulate_keystrokes("down down down enter");
+    cx.run_until_parked();
+    assert_eq!(
+        rows(&workspace, Navigation, &mut cx),
+        ["Guide 2.0 -", "Guide 1.0 -"]
+    );
+    open_as(&workspace, &linux, Persistent, &mut cx);
+    assert_eq!(
+        rows(&workspace, Navigation, &mut cx),
+        ["Guide 2.0 -", "Guide 1.0 -"]
+    );
+    // Another page opens the way to it.
+    open_as(&workspace, &pages.join("faq.adoc"), Persistent, &mut cx);
+    assert_eq!(
+        rows(&workspace, Navigation, &mut cx),
+        ["Guide 2.0 +", "  Home -", "  FAQ", "Guide 1.0 -"]
+    );
+    assert_eq!(followed(&workspace, &mut cx).0.as_deref(), Some("FAQ"));
+}
+
+#[gpui::test]
+fn with_follow_active_off_the_trees_stay_put(cx: &mut TestAppContext) {
+    use adoc_engine::{OpenDisposition::Persistent, SidebarPanel::Navigation};
+    let settings_dir = tempfile::tempdir().unwrap();
+    let user = settings_dir.path().join("settings.toml");
+    std::fs::write(&user, "[sidebar]\nfollow_active = false\n").unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap();
+    let (directory, _app, workspace, mut cx) = expansion_workspace(settings, cx);
+    let before = rows(&workspace, Navigation, &mut cx);
+    let linux = adoc_index::normalize_path(directory.path())
+        .join("guide-2.0/modules/ROOT/pages/linux.adoc");
+    open_as(&workspace, &linux, Persistent, &mut cx);
+    assert_eq!(rows(&workspace, Navigation, &mut cx), before);
+    assert_eq!(followed(&workspace, &mut cx), (None, None));
+}
