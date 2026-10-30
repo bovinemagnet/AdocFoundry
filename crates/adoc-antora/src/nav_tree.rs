@@ -49,6 +49,10 @@ pub enum NavError {
         path: PathBuf,
         message: String,
     },
+    /// A navigation file named outside every component's modules.
+    OutsideModules {
+        path: PathBuf,
+    },
 }
 
 impl fmt::Display for NavError {
@@ -62,6 +66,11 @@ impl fmt::Display for NavError {
                 None => write!(formatter, "unknown Antora component `{component}`"),
             },
             Self::Read { path, message } => write!(formatter, "{}: {message}", path.display()),
+            Self::OutsideModules { path } => write!(
+                formatter,
+                "{} is not in a module of an Antora component",
+                path.display()
+            ),
         }
     }
 }
@@ -95,6 +104,35 @@ pub fn nav_tree(
                 message: error.to_string(),
             })?;
             Ok(build_tree(catalog, component, version, path, &text))
+        })
+        .collect()
+}
+
+/// The navigation trees of `files`, in the order given, each read in the component version and
+/// module it sits in, for a publication that chooses its own navigation.
+pub fn nav_trees_of(
+    catalog: &AntoraCatalog,
+    files: &[PathBuf],
+    read: &dyn Fn(&Path) -> io::Result<String>,
+) -> Result<Vec<NavTree>, NavError> {
+    files
+        .iter()
+        .map(|path| {
+            let path = normalise(path);
+            let context = catalog
+                .context_for_path(&path)
+                .ok_or_else(|| NavError::OutsideModules { path: path.clone() })?;
+            let text = read(&path).map_err(|error| NavError::Read {
+                path: path.clone(),
+                message: error.to_string(),
+            })?;
+            Ok(build_tree(
+                catalog,
+                &context.component,
+                context.version.as_deref(),
+                path,
+                &text,
+            ))
         })
         .collect()
 }

@@ -228,6 +228,9 @@ pub struct PdfSettings {
     pub site_url: Option<String>,
     /// Standards every export conforms to: `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a`, `pdf-ua-1`.
     pub standards: Vec<crate::PdfStandard>,
+    /// Publication profiles, `[pdf.profiles.<name>]`, by name; a workspace's replaces a user
+    /// profile of the same name.
+    pub profiles: Vec<crate::PdfProfile>,
 }
 
 impl Default for PdfSettings {
@@ -238,6 +241,7 @@ impl Default for PdfSettings {
             fonts_dir: None,
             site_url: None,
             standards: Vec::new(),
+            profiles: Vec::new(),
         }
     }
 }
@@ -388,6 +392,10 @@ impl Settings {
                 continue;
             };
             for (key, value) in entries {
+                if section == "pdf" && key == "profiles" {
+                    self.apply_profiles(&source, value);
+                    continue;
+                }
                 // `[sidebar.navigation]` and `[sidebar.modules]` are tables of their own.
                 let panel = value.as_table().filter(|_| {
                     section == "sidebar" && matches!(key.as_str(), "navigation" | "modules")
@@ -513,6 +521,30 @@ impl Settings {
             _ => return Err("unknown setting"),
         }
         Ok(())
+    }
+
+    /// `[pdf.profiles.<name>]`: each profile parsed whole, or left out with a warning.
+    fn apply_profiles(&mut self, source: &str, value: &toml::Value) {
+        let Some(profiles) = value.as_table() else {
+            self.warn(source, "pdf.profiles", "expected a table of profiles");
+            return;
+        };
+        for (name, table) in profiles {
+            let parsed = table
+                .as_table()
+                .ok_or_else(|| "expected a table".to_owned())
+                .and_then(|table| crate::profiles::parse_profile(name, table));
+            match parsed {
+                Ok(profile) => {
+                    self.pdf.profiles.retain(|known| known.name != profile.name);
+                    self.pdf.profiles.push(profile);
+                    self.pdf
+                        .profiles
+                        .sort_by(|left, right| left.name.cmp(&right.name));
+                }
+                Err(problem) => self.warn(source, &format!("pdf.profiles.{name}"), &problem),
+            }
+        }
     }
 
     fn warn(&mut self, source: &str, name: &str, problem: &str) {

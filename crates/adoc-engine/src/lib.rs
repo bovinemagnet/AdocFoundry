@@ -33,6 +33,7 @@ mod line_diff;
 mod local_history;
 mod navigation;
 mod preview;
+mod profiles;
 mod recovery;
 mod rendered;
 pub mod report;
@@ -74,6 +75,7 @@ pub use navigation::NavigationPosition;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };
+pub use profiles::{PdfProfile, PdfThemeChoice, ProfileContent, BUNDLED_THEMES};
 pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use settings::{

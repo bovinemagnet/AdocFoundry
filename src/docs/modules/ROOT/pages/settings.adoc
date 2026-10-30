@@ -78,6 +78,10 @@ fonts_dir = "resources/fonts"
 site_url = "https://docs.example.com"
 standards = ["pdf-a-2a"]         # pdf-a-1b | pdf-a-1a | pdf-a-2a | pdf-ua-1
 
+[pdf.profiles.quick-start]       # a named PDF, run by name
+page = "docs/modules/ROOT/pages/quick-start.adoc"
+output = "build/quick-start.pdf"
+
 [updates]
 check = true                     # look for a newer release at start-up
 ----
@@ -227,6 +231,11 @@ check = true                     # look for a newer release at start-up
 |array of strings
 |empty
 |Standards every export conforms to: `"pdf-a-1b"`, `"pdf-a-1a"`, `"pdf-a-2a"` and `"pdf-ua-1"`. The command line's `--standard` adds to these.
+
+|`pdf.profiles.<name>`
+|table
+|none
+|A named publication profile: exactly one of `page`, `component` or `nav`, and optionally `output`, `theme`, `fonts_dir`, `standards` and `attributes`. A workspace profile replaces a user profile of the same name. A profile that is not valid is left out with a warning. See xref:pdf-export.adoc#publication-profiles[Publication profiles].
 
 |`history.enabled`
 |boolean

@@ -226,11 +226,14 @@ Like the preview service, it keeps the engine single-threaded and puts the long 
 |`export.pdf_page`, `export.pdf_component`
 |The commands. Both take `CommandArgs::Export(ExportArgs)`.
 
+|`export.pdf_profile`
+|Exports a publication profile. It takes `CommandArgs::Profile(name)`.
+
 |`ExportTarget`
-|`Page(DocumentId)` or `Component { name, version }`.
+|`Page(DocumentId)`, `Component { name, version }`, `File(PathBuf)` (a page that need not be open) or `Navigation(Vec<PathBuf>)` (a book from chosen navigation files, built with `adoc_antora::nav_trees_of`).
 
 |`ExportArgs`
-|The target, the output path, an optional theme, the standards, an optional fonts directory and an optional path to write the Typst to.
+|The target, the output path, an optional theme, the standards, an optional fonts directory, an optional path to write the Typst to and the attributes applied to the pages.
 
 |`Engine::export_blocking(args, timeout)`
 |Exports and waits, for front ends without an event loop. The command-line `pdf` uses it.
@@ -255,6 +258,15 @@ Theme selection is the export's own theme, then `pdf-theme`, then `[pdf] theme`,
 Themes directories and fonts directories follow the order in xref:ROOT:pdf-export.adoc[the user guide]; `GEM_FONTS_DIR` is always appended last.
 Standards are the settings' standards plus the export's own.
 Diagrams that failed are reported as warnings.
+
+=== Publication profiles
+
+`crates/adoc-engine/src/profiles.rs` holds `PdfProfile`, `ProfileContent` and the parser for the `[pdf.profiles.<name>]` tables.
+`Engine::profile_export_args(name)` turns a profile into `ExportArgs`, with every path resolved against the first root.
+Both front ends export those arguments: the application through `export.pdf_profile`, and the command line through `export_blocking`.
+`Engine::pdf_themes()` lists the bundled themes and those in `[pdf] themes_dir` for the theme browser.
+
+The tests are in `crates/adoc-engine/tests/profiles.rs`, `pdf_profile_writes_what_the_app_writes` in `crates/adocfoundry-cli/tests/cli.rs`, and `export_pdf_profile_writes_what_the_command_line_writes` and `export_page_with_theme_offers_the_bundled_and_workspace_themes` in the application's tests.
 
 == Related
 

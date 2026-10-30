@@ -85,6 +85,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 **PDF export**
 
 - Export Page to PDF… writes the active page as an article; Export Component to PDF… writes its Antora component version as a book in navigation order: a title page, a table of contents, a part for each navigation file (or titled list) when there are several, a chapter for each top-level entry and sections beneath, with cross references between its pages as links inside the PDF. Both are in the command palette and in `adocfoundry-cli pdf`.
+- Publication profiles: `[pdf.profiles.<name>]` in `.adocfoundry.toml` saves an export's content (a page, a component version, or navigation files in a chosen order), output, theme, fonts, attributes and metadata, and standards. File › Export PDF Profile… and `adocfoundry-cli pdf --profile <name>` export it, writing the same PDF; Export Page to PDF with Theme… offers the bundled themes and the workspace's own.
 - Export Page to HTML… writes the active page, unsaved edits included, as a standalone HTML file: what `adocfoundry-cli render` writes, with local images, diagrams and formulas embedded so the file opens anywhere.
 - Typeset in process by Typst, with no Asciidoctor, Ruby, Java or network; unsaved edits are exported, diagrams are rendered first, and Typst's errors point at the AsciiDoc line that caused them.
 - Styled by asciidoctor-pdf themes, loaded as asciidoctor-pdf loads them (`extends`, `$variables`, arithmetic, units, colours, the font catalogue), so an existing theme works without edits. The bundled `default`, `default-sans`, `default-for-print` and `base` themes use the same Noto and M+ fonts asciidoctor-pdf ships; on the reference article, every line lands within 2 pt of asciidoctor-pdf's.
@@ -207,6 +208,12 @@ theme = "default"                # a bundled theme, a name in themes_dir, or a .
 # site_url = "https://docs.example.com"  # where references out of an export lead; else the playbook's site.url
 standards = []                   # "pdf-a-1b", "pdf-a-1a", "pdf-a-2a", "pdf-ua-1"
 
+# [pdf.profiles.manual]          # a publication: run with File › Export PDF Profile… or `pdf --profile manual`
+# nav = ["docs/modules/admin/nav.adoc", "docs/modules/ROOT/nav.adoc"]  # or page = "…" or component = "1.0@docs"
+# output = "build/manual.pdf"    # relative to the workspace root; <name>.pdf by default
+# theme = "acme"
+# attributes = { pdf-title = "The Manual", product = "Acme" }
+
 [updates]
 check = true                     # look for a newer release at start-up, at most once a day
 
@@ -235,6 +242,7 @@ adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser ac
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli doctor [<root>] [--format text|json]
 ```

@@ -8,6 +8,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - Files, Navigation and Modules follow the active page: whenever another page or image becomes active, each panel selects its row, opening the folders and branches above it and scrolling it into view, without taking focus. `[sidebar] follow_active = false` turns this off (#151).
 - PDF/A-1b and PDF/A-1a output: `--standard pdf-a-1b|pdf-a-1a`, `[pdf] standards` and the MCP server's `export_pdf`, validated by veraPDF in CI. PDF/A-1 forbids transparency, so a page with a transparent image or a Mermaid diagram fails with the line of the image; PDF/UA-2 waits on Typst, which writes only PDF/UA-1 (#63).
+- PDF publication profiles: `[pdf.profiles.<name>]` in the workspace settings saves what to export (a page, a component version, or navigation files in a chosen order), where, the theme, fonts, attributes (and so the metadata) and standards. File › Export PDF Profile… and `adocfoundry-cli pdf --profile <name>` run one and write the same PDF; File › Export Page to PDF with Theme… offers the bundled and workspace themes (#103).
 
 ### Fixed
 
