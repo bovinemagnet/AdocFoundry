@@ -12,6 +12,11 @@ permissions:
   contents: write
 
 jobs:
+  # The tests on the tagged commit. The packages build alongside, but are published only if
+  # these pass.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   macos:
     runs-on: macos-14
     env:
@@ -333,7 +338,7 @@ jobs:
           python3 packaging/smoke-test.py "$RUNNER_TEMP/squashfs-root/usr/bin" --no-app
 
   publish:
-    needs: [smoke]
+    needs: [ci, smoke]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:

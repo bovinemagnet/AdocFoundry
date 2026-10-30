@@ -115,7 +115,7 @@ Releases are on the [GitHub releases page](https://github.com/bovinemagnet/AdocF
 - **Windows** (x64 and ARM64): run the MSI, which can add the tools to `PATH`, or unpack the portable zip. A release built with the signing credentials has Authenticode signatures on the executables and the MSI; an unsigned one (every release up to 0.2.1) makes SmartScreen ask before running it: choose More info, then Run anyway.
 - **Linux** (x86_64 and aarch64): the AppImage (`chmod +x`, then run it), the deb (`sudo apt install ./AdocFoundry-….deb`) or the rpm (`sudo dnf install ./adocfoundry-….rpm`). A Flatpak manifest is in `packaging/flatpak/`.
 
-The release workflow (`.github/workflows/release.yml`, run on `v*` tags) builds these, signs them when the signing secrets are set (see the developer documentation's Building and releasing page), and smoke-tests each platform's downloads (`packaging/smoke-test.py`), signatures included. On Linux, `cargo xtask package`, `cargo deb -p adocfoundry` and `cargo generate-rpm -p crates/adocfoundry` build the same packages locally.
+The release workflow (`.github/workflows/release.yml`, run on `v*` tags) builds these, signs them when the signing secrets are set (see the developer documentation's Building and releasing page), and smoke-tests each platform's downloads (`packaging/smoke-test.py`), signatures included. It runs CI on the tagged commit too, and publishes the release only once that passes. On Linux, `cargo xtask package`, `cargo deb -p adocfoundry` and `cargo generate-rpm -p crates/adocfoundry` build the same packages locally.
 
 To build from source you need Rust (stable, via rustup) and, on Linux, the libraries GPUI uses:
 
