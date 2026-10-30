@@ -54,7 +54,10 @@ fn the_report_names_the_build_the_system_and_the_settings() {
         .iter()
         .map(|section| section.title.as_str())
         .collect();
-    assert_eq!(titles, ["Program", "System", "PDF", "Tools", "Settings"]);
+    assert_eq!(
+        titles,
+        ["Program", "System", "PDF", "Tools", "Settings", "Spelling"]
+    );
 
     let program = section(&report, "Program");
     assert_eq!(program.value("Version"), Some("adocfoundry-cli 9.9.9"));
@@ -208,4 +211,16 @@ fn the_diagnostics_command_hands_the_front_end_the_doctor() {
             .unwrap(),
         CommandOutcome::Diagnostics(Box::new(doctor))
     );
+}
+
+#[test]
+fn the_report_lists_the_dictionaries() {
+    let report = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in())
+        .doctor()
+        .run();
+    let spelling = report.section("Spelling").expect("a spelling section");
+    assert_eq!(spelling.value("Spelling"), Some("on"));
+    assert_eq!(spelling.value("Language"), Some("en_GB"));
+    let dictionaries: Vec<&str> = spelling.values("Dictionary").collect();
+    assert_eq!(dictionaries, ["en_GB (built in)", "en_US (built in)"]);
 }

@@ -432,7 +432,10 @@ fn doctor_reports_the_program_tools_and_settings() {
         .iter()
         .map(|section| section["title"].as_str().unwrap())
         .collect();
-    assert_eq!(titles, ["Program", "System", "PDF", "Tools", "Settings"]);
+    assert_eq!(
+        titles,
+        ["Program", "System", "PDF", "Tools", "Settings", "Spelling"]
+    );
     assert_eq!(
         report["sections"][0]["lines"][0]["value"],
         format!("adocfoundry-cli {}", env!("CARGO_PKG_VERSION"))
