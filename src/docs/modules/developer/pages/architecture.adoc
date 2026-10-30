@@ -45,6 +45,10 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 |`adoc-lang`
 |Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it. It also finds references (`references_at`, `page_references`, `includes_of`) and renames anchors (`rename_anchor`).
 
+|L1
+|`adoc-spell`
+|Spell checking with no knowledge of AsciiDoc. It wraps `spellbook`, which no other crate names (`cargo xtask layers` checks this). `Dictionaries` holds the bundled SCOWL `en_GB` and `en_US` dictionaries and any others loaded from a folder. `words` splits text into checkable words, skipping those that are not words (`OBJECT` stands in for an atom), and `WordList` holds the workspace and user word lists. The engine's `src/spelling.rs` reads prose from the visual model and checks open pages on a worker.
+
 |L2
 |`adoc-render`
 |A framework-free view tree (`ViewTree`, built from a `Dom` by `build_view` through a `ViewResolver`), a standalone HTML backend, and the optional external Asciidoctor renderer used by the language server's preview. The engine and the application use the view tree; the command-line `render` uses the HTML backend, and `embed_local_files` turns its local `file://` images into `data:` URIs for the application's HTML export. `to_text` writes the view tree as plain text, for `adoc-mcp`'s `render_page`.
@@ -101,6 +105,7 @@ The application sees `adoc-model` types only through the engine's re-exports.
 * an HTTP client crate (`reqwest` and its GPUI fork, `ureq`, `isahc`, `curl`, `attohttpc`, `surf`) is reachable from any crate except `adocfoundry`, directly or through its normal or build dependencies;
 * `hyper` or `hyper-util` is reachable from any crate except `adocfoundry` and `adoc-mcp`, or `adoc-mcp`'s own build turns on a `client` feature of either;
 * a parser crate (`acdc-parser`, `asciidoc-parser`) appears outside `adoc-dom`;
+* `spellbook` appears outside `adoc-spell`;
 * `adoc-lang` depends on `url`, or its sources mention `lsp_types`, `lsp_server` or `url::`.
 
 Adding a crate means adding a line to the layer table in `xtask/src/layers.rs` and to the ladder in the repository's contributor guidance.

@@ -419,6 +419,8 @@ mod tests {
             ids::DOCUMENT_RECOVER,
             ids::DOCUMENT_DISCARD_RECOVERY,
             ids::DOCUMENT_RESTORE_VERSION,
+            ids::SPELLING_ADD_TO_WORKSPACE,
+            ids::SPELLING_ADD_TO_USER,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

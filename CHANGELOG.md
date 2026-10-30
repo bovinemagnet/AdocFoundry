@@ -13,6 +13,8 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - PDF export highlights source blocks with the editor's tree-sitter grammars and the preview's queries and light colours, so a listing looks as it does in the preview, when `source-highlighter` is set; Bash, Go, HTML, Java, JavaScript, JSON, Python, Rust, SQL, TOML, TypeScript and YAML, with other languages left to Typst's highlighter as before (#61).
 - PDF publication profiles: `[pdf.profiles.<name>]` in the workspace settings saves what to export (a page, a component version, or navigation files in a chosen order), where, the theme, fonts, attributes (and so the metadata) and standards. File › Export PDF Profile… and `adocfoundry-cli pdf --profile <name>` run one and write the same PDF; File › Export Page to PDF with Theme… offers the bundled and workspace themes (#103).
 
+- Spell checking of prose in the source and visual editors and in `adoc-ls`: misspelt words are underlined, with suggestions and Add to Workspace Dictionary or Add to User Dictionary in the context menu. Pages are checked in their `lang`, else `[spelling] language` (British English by default), with bundled British and American English dictionaries and any Hunspell dictionaries in `[spelling] dictionaries` (#65).
+
 ### Fixed
 
 - PDF export reads `index_columns` for the number of index columns, as asciidoctor-pdf does, instead of `index_column_count`; a theme that set it no longer fails to typeset (#106).

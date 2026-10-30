@@ -38,6 +38,8 @@ impl AppState {
         engine.enable_preview_tabs();
         // The status bar shows the active page's words.
         engine.enable_word_count();
+        // Both editors underline misspelt words.
+        engine.enable_spelling();
         // Unsaved edits survive a crash, and saved versions are kept to restore.
         engine.enable_recovery();
         engine.enable_local_history();

@@ -148,6 +148,26 @@ fn book_memory_probe() {
 
 #[test]
 #[ignore = "timing probe"]
+fn spelling_a_5000_line_document() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("synthetic.adoc");
+    fs::write(&path, synthetic_document()).unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.enable_spelling();
+    let id = engine.open(&path).unwrap();
+    let started = Instant::now();
+    engine.pump();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(60)));
+    let elapsed = started.elapsed();
+    println!(
+        "spelling: {elapsed:?} for {} misspellings (dictionary load included)",
+        engine.misspellings(id).len()
+    );
+    assert!(elapsed < std::time::Duration::from_secs(5), "{elapsed:?}");
+}
+
+#[test]
+#[ignore = "timing probe"]
 fn pdf_preview_after_typing() {
     // Issue #62: an ordinary page's PDF preview follows typing within a second or two. The
     // reference article: four pages of every block kind, an image, a table and a footnote.

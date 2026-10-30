@@ -1,5 +1,6 @@
 //! `cargo xtask package`: a release build of the three binaries, staged with the licence, README,
-//! desktop entry and icon into `dist/` and archived for the host platform.
+//! the bundled dictionaries' licence (`licenses/SCOWL.txt`), desktop entry and icon into `dist/`
+//! and archived for the host platform.
 //!
 //! The release workflow builds the platform installers (DMG, MSI, AppImage, deb, rpm); this task
 //! produces the same binaries locally as a dry run.
@@ -72,6 +73,11 @@ pub fn run_package(root: &Path) -> Result<PathBuf, String> {
     }
     copy(root.join("LICENSE"), "LICENSE")?;
     copy(root.join("README.md"), "README.md")?;
+    fs::create_dir_all(staging.join("licenses")).map_err(|error| error.to_string())?;
+    copy(
+        root.join("crates/adoc-spell/dictionaries/README.md"),
+        "licenses/SCOWL.txt",
+    )?;
     if cfg!(target_os = "linux") {
         copy(
             root.join("packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop"),

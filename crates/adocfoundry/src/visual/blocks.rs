@@ -38,6 +38,9 @@ struct Draw<'a> {
     /// The document's changes against `HEAD`, when markers are shown.
     changes: Vec<adoc_engine::Hunk>,
     marks: crate::editor::changes::MarkColours,
+    /// The misspelt words, underlined in `spelling`.
+    misspelt: Vec<adoc_core::SourceRange>,
+    spelling: Hsla,
 }
 
 /// Highlighted blocks kept before the cache is emptied.
@@ -104,6 +107,8 @@ pub fn document(
             modified: cx.theme().info,
             deleted: cx.theme().danger,
         },
+        misspelt: view.misspelt(document, cx),
+        spelling: cx.theme().danger,
     };
     let mut path = Vec::new();
     document
@@ -700,6 +705,17 @@ impl VisualView {
         {
             runs = text::with_highlights(runs, &(draw.context.highlight)(language, &shown.text));
         }
+        let underlined: Vec<std::ops::Range<usize>> = draw
+            .misspelt
+            .iter()
+            .filter(|range| range.start >= block.range.start && range.end <= block.range.end)
+            .filter_map(|range| {
+                let start = shown.index(block.display_offset(range.start)?);
+                let end = shown.index(block.display_offset(range.end)?);
+                Some(start..end)
+            })
+            .collect();
+        runs = text::with_underlines(runs, &underlined, draw.spelling);
         let pending = self.pending.filter(|_| caret_here);
         let caret = caret_display
             .filter(|_| draw.focused && self.selection.is_empty() && pending.is_none())
@@ -719,6 +735,7 @@ impl VisualView {
         let down_path = path.to_vec();
         let move_path = path.to_vec();
         let drop_path = path.to_vec();
+        let menu_path = path.to_vec();
         div()
             .w_full()
             .when(read_only, |text| {
@@ -743,6 +760,13 @@ impl VisualView {
                         window,
                         cx,
                     );
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.spelling_menu(&menu_path, event.position, window, cx);
                 }),
             )
             .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {

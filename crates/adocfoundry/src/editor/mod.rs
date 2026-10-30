@@ -23,6 +23,7 @@ use gpui::{
 use gpui_component::{
     highlighter::{Diagnostic, DiagnosticSeverity as WidgetSeverity},
     input::{Editor, EditorState, InputEvent, RopeExt as _, TabSize},
+    native_menu::NativeMenu,
     ActiveTheme as _, WindowExt as _,
 };
 
@@ -100,6 +101,7 @@ pub enum SourceEditorEvent {
 pub struct SourceEditorView {
     app: Entity<AppState>,
     document: DocumentId,
+    readonly: bool,
     caret: Option<usize>,
     state: Entity<EditorState>,
     /// The change markers as last painted.
@@ -208,6 +210,12 @@ impl SourceEditorView {
                         let _ = this.update(cx, |this, cx| this.show_diagnostics(cx));
                     }));
                 }
+                EngineEvent::SpellingChanged(id) if *id == this.document => {
+                    this._diagnostics = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(DIAGNOSTICS_DELAY).await;
+                        let _ = this.update(cx, |this, cx| this.show_diagnostics(cx));
+                    }));
+                }
                 _ => {}
             },
         ));
@@ -225,6 +233,7 @@ impl SourceEditorView {
         let mut view = Self {
             app,
             document,
+            readonly,
             caret: None,
             state,
             marks: Rc::default(),
@@ -408,13 +417,12 @@ impl SourceEditorView {
     }
 
     fn show_diagnostics(&mut self, cx: &mut Context<Self>) {
-        let diagnostics = self
-            .app
-            .read(cx)
-            .engine
+        let engine = &self.app.read(cx).engine;
+        let diagnostics = engine
             .document(self.document)
             .map(|open| open.diagnostics.clone())
             .unwrap_or_default();
+        let misspellings = engine.misspellings(self.document).to_vec();
         self.state.update(cx, |state, cx| {
             let text = state.text().clone();
             let Some(set) = state.diagnostics_mut() else {
@@ -431,6 +439,13 @@ impl SourceEditorView {
                         DiagnosticSeverity::Information => WidgetSeverity::Info,
                     })
                     .with_code(diagnostic.code.as_str())
+            }));
+            set.extend(misspellings.into_iter().map(|misspelling| {
+                let start = text.offset_to_position(misspelling.range.start.min(text.len()));
+                let end = text.offset_to_position(misspelling.range.end.min(text.len()));
+                Diagnostic::new(start..end, format!("Unknown word: {}", misspelling.word))
+                    .with_severity(WidgetSeverity::Hint)
+                    .with_code(adoc_engine::SPELLING_CODE)
             }));
             cx.notify();
         });
@@ -549,6 +564,23 @@ impl SourceEditorView {
     #[cfg(test)]
     pub fn marks_for_test(&self) -> Vec<changes::GutterMark> {
         self.marks.borrow().clone()
+    }
+
+    /// The messages of the spelling hints the editor shows.
+    #[cfg(test)]
+    pub fn spelling_hints_for_test(&self, cx: &gpui::App) -> Vec<String> {
+        self.state
+            .read(cx)
+            .diagnostics()
+            .map(|set| {
+                set.iter()
+                    .filter(|entry| {
+                        entry.diagnostic.code.as_deref() == Some(adoc_engine::SPELLING_CODE)
+                    })
+                    .map(|entry| entry.diagnostic.message.to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The text in `HEAD` shown by the open change card.
@@ -758,7 +790,14 @@ impl Render for SourceEditorView {
                     .h(relative(1.))
                     .font_family(font_family)
                     .text_size(gpui::px(font_size))
-                    .text_color(cx.theme().foreground),
+                    .text_color(cx.theme().foreground)
+                    .context_menu({
+                        let app = self.app.clone();
+                        let state = self.state.clone();
+                        let document = self.document;
+                        let readonly = self.readonly;
+                        move |menu, _, cx| context_menu(menu, &app, &state, document, readonly, cx)
+                    }),
             )
             .child(changes::overlay(
                 cx.weak_entity(),
@@ -785,6 +824,18 @@ impl Render for SourceEditorView {
             });
         gpui_component::h_flex()
             .size_full()
+            .on_action(cx.listener(
+                |this, action: &crate::spelling::ApplySpelling, window, cx| {
+                    if action.document != this.document {
+                        return;
+                    }
+                    if let Err(error) =
+                        crate::spelling::apply(&this.app, action.document, &action.choice, cx)
+                    {
+                        window.push_notification(error.to_string(), cx);
+                    }
+                },
+            ))
             .when(self.show_blame, |row| {
                 row.child(
                     div()
@@ -799,4 +850,54 @@ impl Render for SourceEditorView {
             .children(card)
             .children(tip)
     }
+}
+
+/// The editor's menu: on a misspelt word its suggestions and dictionaries first, then the
+/// editor's own items, which a custom menu must list itself.
+fn context_menu(
+    mut menu: NativeMenu,
+    app: &Entity<AppState>,
+    state: &Entity<EditorState>,
+    document: DocumentId,
+    readonly: bool,
+    cx: &gpui::App,
+) -> NativeMenu {
+    use gpui_component::input::{Copy, Cut, GoToDefinition, Paste, SelectAll};
+    let editor = state.read(cx);
+    if !readonly {
+        let choices = crate::spelling::choices(&app.read(cx).engine, document, editor.cursor());
+        let mut suggested = false;
+        for (label, choice) in choices.iter().cloned() {
+            let replace = matches!(choice, crate::spelling::Choice::Replace { .. });
+            if !replace && suggested {
+                menu = menu.separator();
+                suggested = false;
+            }
+            suggested |= replace;
+            menu = menu.menu(
+                label,
+                Box::new(crate::spelling::ApplySpelling { document, choice }),
+            );
+        }
+        if !choices.is_empty() {
+            menu = menu.separator();
+        }
+    }
+    let capabilities = editor.context_menu_capabilities();
+    let editable = capabilities.is_editable();
+    menu.menu_with_disabled(
+        "Go to Definition",
+        !capabilities.has_definition(),
+        Box::new(GoToDefinition),
+    )
+    .separator()
+    .menu_with_disabled(
+        "Cut",
+        !(editable && capabilities.is_copyable()),
+        Box::new(Cut),
+    )
+    .menu_with_disabled("Copy", !capabilities.is_copyable(), Box::new(Copy))
+    .menu_with_disabled("Paste", !editable, Box::new(Paste))
+    .separator()
+    .menu("Select All", Box::new(SelectAll))
 }

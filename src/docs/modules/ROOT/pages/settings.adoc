@@ -82,6 +82,11 @@ standards = ["pdf-a-2a"]         # pdf-a-1b | pdf-a-1a | pdf-a-2a | pdf-ua-1
 page = "docs/modules/ROOT/pages/quick-start.adoc"
 output = "build/quick-start.pdf"
 
+[spelling]
+enabled = true                   # underline misspelt words in prose
+language = "en_GB"               # for pages with no lang attribute
+dictionaries = ""                # folder of extra Hunspell .aff/.dic files (user file only)
+
 [updates]
 check = true                     # look for a newer release at start-up
 ----
@@ -257,6 +262,21 @@ check = true                     # look for a newer release at start-up
 |`256`
 |The history of every page together is kept under this many megabytes. The oldest versions of any page are removed first.
 
+|`spelling.enabled`
+|boolean
+|`true`
+|Underline misspelt words in prose, in the source and visual editors, and offer suggestions. When `false`, nothing is checked. See xref:using-the-editor.adoc#spelling[Spelling].
+
+|`spelling.language`
+|string
+|`"en_GB"`
+|The language of pages that have no `lang` attribute. British (`en_GB`) and American (`en_US`) English are bundled. A page in a language with no dictionary is not checked. See xref:using-the-editor.adoc#spelling[Spelling].
+
+|`spelling.dictionaries`
+|string
+|none
+|A folder of extra Hunspell dictionaries, each a `.aff` and `.dic` pair named for its language, such as `de_DE.aff` and `de_DE.dic`. User file only. See xref:using-the-editor.adoc#spelling[Spelling].
+
 |`updates.check`
 |boolean
 |`true`
@@ -267,13 +287,14 @@ See xref:pdf-export.adoc[Exporting to PDF].
 
 == What a workspace file may set
 
-A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore` and `pdf.*`.
+A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `spelling.enabled` and `spelling.language`.
 The two depths override separately.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.
 `sidebar.remember_expansion` is also accepted only in the user file, because it decides what is saved outside the repository.
 `updates.*` is also accepted only in the user file, so a repository cannot make the editor reach the network.
 `history.*` is also accepted only in the user file, because history is kept outside the repository.
+`spelling.dictionaries` is accepted only in the user file, so a repository cannot point the editor at files of its choosing.
 
 == Warnings
 

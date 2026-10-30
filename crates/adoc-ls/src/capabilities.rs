@@ -15,6 +15,10 @@ pub const EXPORT_PDF_COMMAND: &str = "adoc.exportPdf";
 
 /// Publishes the diagnostics of every file in the workspace, open or not.
 pub const CHECK_WORKSPACE_COMMAND: &str = "adoc.checkWorkspace";
+/// Adds a misspelt word to the workspace dictionary: `[uri, start, end]`, byte offsets.
+pub const ADD_TO_WORKSPACE_COMMAND: &str = "adoc.spelling.addToWorkspace";
+/// Adds a misspelt word to the user dictionary: `[uri, start, end]`, byte offsets.
+pub const ADD_TO_USER_COMMAND: &str = "adoc.spelling.addToUser";
 
 /// The commands this build runs.
 #[must_use]
@@ -24,6 +28,8 @@ pub(crate) fn commands(can_export: bool) -> Vec<String> {
         RENDER_LIVE_PREVIEW_COMMAND.to_owned(),
         STOP_LIVE_PREVIEW_COMMAND.to_owned(),
         CHECK_WORKSPACE_COMMAND.to_owned(),
+        ADD_TO_WORKSPACE_COMMAND.to_owned(),
+        ADD_TO_USER_COMMAND.to_owned(),
     ];
     if can_export {
         commands.push(EXPORT_PDF_COMMAND.to_owned());

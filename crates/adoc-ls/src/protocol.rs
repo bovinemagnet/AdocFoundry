@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use adoc_core::DiagnosticSeverity as CoreDiagnosticSeverity;
+use adoc_core::{DiagnosticSeverity as CoreDiagnosticSeverity, SourceRange};
 use adoc_engine::{
     commands::ids, CommandArgs, DefinitionTarget, DocumentId, DocumentSymbolKind, Engine,
     EngineEvent, ExportArgs, ExportTarget, FileEdits, Settings, WorkspaceSymbolKind,
@@ -37,7 +37,10 @@ use lsp_types::{
 };
 
 use crate::{
-    capabilities::{server_capabilities, CHECK_WORKSPACE_COMMAND, EXPORT_PDF_COMMAND},
+    capabilities::{
+        server_capabilities, ADD_TO_USER_COMMAND, ADD_TO_WORKSPACE_COMMAND,
+        CHECK_WORKSPACE_COMMAND, EXPORT_PDF_COMMAND,
+    },
     handlers::{
         code_actions::{
             code_actions_for, LivePreview, RENDER_LIVE_PREVIEW_COMMAND, RENDER_PREVIEW_COMMAND,
@@ -71,9 +74,11 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
     let settings = Settings::load(Settings::default_user_file().as_deref(), None)
         .unwrap_or_default()
         .with_git_opt_in();
+    let mut engine = Engine::new(settings);
+    engine.enable_spelling();
     let mut server = ProtocolServer::new(
         encoding,
-        Engine::new(settings),
+        engine,
         Box::new(BrowserSink::new(
             std::env::temp_dir().join("adoc-ls-preview"),
             SystemLauncher,
@@ -368,12 +373,13 @@ impl ProtocolServer {
     fn published(&mut self, changed: Option<DocumentId>) -> Vec<Notification> {
         let mut ids: Vec<DocumentId> = changed.into_iter().collect();
         for event in self.events.try_iter() {
-            if let EngineEvent::DiagnosticsUpdated { path } = event {
-                if let Some(id) = self.engine.document_for_path(&path) {
-                    if !ids.contains(&id) {
-                        ids.push(id);
-                    }
-                }
+            let id = match event {
+                EngineEvent::DiagnosticsUpdated { path } => self.engine.document_for_path(&path),
+                EngineEvent::SpellingChanged(id) => Some(id),
+                _ => None,
+            };
+            if let Some(id) = id.filter(|id| !ids.contains(id)) {
+                ids.push(id);
             }
         }
         ids.into_iter()
@@ -385,7 +391,7 @@ impl ProtocolServer {
         let (uri, version) = self.open.get(&id)?;
         let uri = Uri::from_str(uri).ok()?;
         let document = self.engine.document(id)?;
-        let diagnostics = document
+        let mut diagnostics: Vec<Diagnostic> = document
             .diagnostics
             .iter()
             .filter_map(|diagnostic| {
@@ -405,6 +411,24 @@ impl ProtocolServer {
                 })
             })
             .collect();
+        let text = &document.parsed.text;
+        diagnostics.extend(
+            self.engine
+                .misspellings(id)
+                .iter()
+                .filter_map(|misspelling| {
+                    Some(Diagnostic {
+                        range: self.encoding.range(text, misspelling.range)?,
+                        severity: Some(DiagnosticSeverity::HINT),
+                        code: Some(NumberOrString::String(
+                            adoc_engine::SPELLING_CODE.to_owned(),
+                        )),
+                        source: Some("adoc-ls".to_owned()),
+                        message: format!("Unknown word: {}", misspelling.word),
+                        ..Diagnostic::default()
+                    })
+                }),
+        );
         Some(Notification::new(
             PublishDiagnostics::METHOD.to_owned(),
             PublishDiagnosticsParams::new(uri, diagnostics, Some(*version)),
@@ -486,21 +510,90 @@ impl ProtocolServer {
             LivePreview::Inactive
         };
 
-        code_actions_for(uri, live)
-            .into_iter()
-            .map(|action| {
-                CodeActionOrCommand::CodeAction(CodeAction {
-                    title: action.title.clone(),
-                    kind: Some(CodeActionKind::EMPTY),
-                    command: Some(Command {
-                        title: action.title,
-                        command: action.command.to_owned(),
-                        arguments: Some(vec![serde_json::Value::String(action.uri)]),
+        let mut actions = self.spelling_actions(params);
+        actions.extend(code_actions_for(uri, live).into_iter().map(|action| {
+            CodeActionOrCommand::CodeAction(CodeAction {
+                title: action.title.clone(),
+                kind: Some(CodeActionKind::EMPTY),
+                command: Some(Command {
+                    title: action.title,
+                    command: action.command.to_owned(),
+                    arguments: Some(vec![serde_json::Value::String(action.uri)]),
+                }),
+                ..CodeAction::default()
+            })
+        }));
+        actions
+    }
+
+    /// For each misspelling the range touches: a change to each suggestion, and adding the word
+    /// to the workspace dictionary, or the user's when there is a user settings file.
+    fn spelling_actions(&self, params: &CodeActionParams) -> Vec<CodeActionOrCommand> {
+        let uri = &params.text_document.uri;
+        let Some(id) = self.id_for(uri.as_str()) else {
+            return Vec::new();
+        };
+        let Some(text) = self.text_of(id) else {
+            return Vec::new();
+        };
+        let (Some(start), Some(end)) = (
+            self.encoding.offset(text, params.range.start),
+            self.encoding.offset(text, params.range.end),
+        ) else {
+            return Vec::new();
+        };
+        let user = self.engine.settings().user_file().is_some();
+        let mut actions = Vec::new();
+        for misspelling in self.engine.misspellings(id) {
+            if misspelling.range.start > end || misspelling.range.end < start {
+                continue;
+            }
+            let Some(range) = self.encoding.range(text, misspelling.range) else {
+                continue;
+            };
+            for suggestion in &misspelling.suggestions {
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: format!("Change to '{suggestion}'"),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(
+                            [(uri.clone(), vec![TextEdit::new(range, suggestion.clone())])]
+                                .into_iter()
+                                .collect(),
+                        ),
+                        ..WorkspaceEdit::default()
                     }),
                     ..CodeAction::default()
-                })
-            })
-            .collect()
+                }));
+            }
+            let mut add = vec![(
+                format!("Add '{}' to the workspace dictionary", misspelling.word),
+                ADD_TO_WORKSPACE_COMMAND,
+            )];
+            if user {
+                add.push((
+                    format!("Add '{}' to the user dictionary", misspelling.word),
+                    ADD_TO_USER_COMMAND,
+                ));
+            }
+            for (title, command) in add {
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: title.clone(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    command: Some(Command {
+                        title,
+                        command: command.to_owned(),
+                        arguments: Some(vec![
+                            serde_json::Value::String(uri.as_str().to_owned()),
+                            serde_json::json!(misspelling.range.start),
+                            serde_json::json!(misspelling.range.end),
+                        ]),
+                    }),
+                    ..CodeAction::default()
+                }));
+            }
+        }
+        actions
     }
 
     pub(crate) fn execute_command_response(
@@ -521,6 +614,8 @@ impl ProtocolServer {
         match command {
             EXPORT_PDF_COMMAND if self.can_export() => return self.export_pdf(id, &params),
             CHECK_WORKSPACE_COMMAND => return self.check_workspace(id),
+            ADD_TO_WORKSPACE_COMMAND => return self.add_word(id, &params, false),
+            ADD_TO_USER_COMMAND => return self.add_word(id, &params, true),
             _ => {}
         }
         let mode = match command {
@@ -571,6 +666,60 @@ impl ProtocolServer {
             Err(error) => Response::new_err(id, ErrorCode::InternalError as i32, error.to_string()),
         };
         (response, Vec::new())
+    }
+
+    /// `adoc.spelling.addToWorkspace` and `adoc.spelling.addToUser`: `[uri, start, end]`, the
+    /// word's byte offsets in the open document.
+    fn add_word(
+        &mut self,
+        request: lsp_server::RequestId,
+        params: &ExecuteCommandParams,
+        user: bool,
+    ) -> (Response, Vec<Notification>) {
+        let arguments = &params.arguments;
+        let (Some(uri), Some(start), Some(end)) = (
+            arguments.first().and_then(serde_json::Value::as_str),
+            arguments.get(1).and_then(serde_json::Value::as_u64),
+            arguments.get(2).and_then(serde_json::Value::as_u64),
+        ) else {
+            return (
+                Response::new_err(
+                    request,
+                    ErrorCode::InvalidParams as i32,
+                    "expected a document URI and the start and end of a word".to_owned(),
+                ),
+                Vec::new(),
+            );
+        };
+        let Some(id) = self.id_for(uri) else {
+            return (
+                Response::new_err(
+                    request,
+                    ErrorCode::InvalidParams as i32,
+                    format!("{uri} is not open"),
+                ),
+                Vec::new(),
+            );
+        };
+        let command = if user {
+            ids::SPELLING_ADD_TO_USER
+        } else {
+            ids::SPELLING_ADD_TO_WORKSPACE
+        };
+        let range = SourceRange::new(start as usize, end as usize);
+        match self
+            .engine
+            .invoke(command, CommandArgs::Range { id, range })
+        {
+            Ok(_) => (
+                Response::new_ok(request, serde_json::Value::Null),
+                self.published(None),
+            ),
+            Err(error) => (
+                Response::new_err(request, ErrorCode::RequestFailed as i32, error.to_string()),
+                Vec::new(),
+            ),
+        }
     }
 
     /// `adoc.exportPdf { uri, component?, output, theme?, standards? }`: the page, or its
@@ -1007,13 +1156,15 @@ mod tests {
             Notification as LspNotification, PublishDiagnostics,
         },
         request::{
-            DocumentSymbolRequest, GotoDefinition, Initialize, Request as LspRequest, Shutdown,
+            DocumentSymbolRequest, ExecuteCommand, GotoDefinition, Initialize,
+            Request as LspRequest, Shutdown,
         },
-        ClientCapabilities, DiagnosticSeverity, DidChangeTextDocumentParams,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentSymbol,
-        DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-        InitializeParams, InitializedParams, Location, NumberOrString, PartialResultParams,
-        Position, PublishDiagnosticsParams, Range, SymbolKind, TextDocumentContentChangeEvent,
+        ClientCapabilities, CodeActionContext, CodeActionOrCommand, CodeActionParams, Diagnostic,
+        DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+        DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+        ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
+        InitializedParams, Location, NumberOrString, PartialResultParams, Position,
+        PublishDiagnosticsParams, Range, SymbolKind, TextDocumentContentChangeEvent,
         TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Uri,
         VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceFolder,
         WorkspaceSymbolParams, WorkspaceSymbolResponse,
@@ -1685,5 +1836,152 @@ mod tests {
         assert!(html.contains("<img"), "{html}");
         assert!(html.contains("alt=\"sqrt(4) = 2\""), "{html}");
         assert!(html.contains(".svg"), "{html}");
+    }
+
+    fn spelling_server(directory: &Path) -> ProtocolServer {
+        let user = directory.join("settings.toml");
+        std::fs::write(&user, "").unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap().with_git_opt_in();
+        let mut engine = Engine::with_clock(
+            settings,
+            std::sync::Arc::new(adoc_engine::ManualClock::new()),
+        );
+        engine.enable_spelling();
+        ProtocolServer::new(
+            PositionEncoding::Utf16,
+            engine,
+            Box::new(BrowserSink::new(directory.join("previews"), Unopened)),
+        )
+    }
+
+    /// The spelling diagnostics of each publish, by URI.
+    fn spelling_hints(notifications: Vec<Notification>) -> Vec<(String, Vec<Diagnostic>)> {
+        notifications
+            .into_iter()
+            .map(|notification| {
+                let params: PublishDiagnosticsParams =
+                    serde_json::from_value(notification.params).unwrap();
+                let hints = params
+                    .diagnostics
+                    .into_iter()
+                    .filter(|diagnostic| {
+                        diagnostic.code
+                            == Some(NumberOrString::String(
+                                adoc_engine::SPELLING_CODE.to_owned(),
+                            ))
+                    })
+                    .collect();
+                (params.uri.as_str().to_owned(), hints)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn misspellings_are_published_as_hints_with_quick_fixes() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_index::normalize_path(directory.path());
+        let page = root.join("page.adoc");
+        let text = "= Page\n\nWe recieve it.\n";
+        std::fs::write(&page, text).unwrap();
+        let mut server = spelling_server(&root);
+        server.open_workspace(vec![root.clone()]);
+        let uri = file_uri(&page);
+        open(&mut server, uri.as_str(), text);
+        server.tick();
+        assert!(server
+            .engine
+            .wait_for_workers(std::time::Duration::from_secs(30)));
+        let published = spelling_hints(server.published(None));
+        let (_, hints) = published
+            .iter()
+            .find(|(published, _)| published == uri.as_str())
+            .expect("a publish for the page");
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0].severity, Some(DiagnosticSeverity::HINT));
+        assert_eq!(hints[0].message, "Unknown word: recieve");
+        assert_eq!(
+            hints[0].range,
+            Range::new(Position::new(2, 3), Position::new(2, 10))
+        );
+
+        let actions = server.code_action_response(&CodeActionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            range: hints[0].range,
+            context: CodeActionContext::default(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        });
+        let titles: Vec<String> = actions
+            .iter()
+            .filter_map(|action| match action {
+                CodeActionOrCommand::CodeAction(action) => Some(action.title.clone()),
+                CodeActionOrCommand::Command(_) => None,
+            })
+            .collect();
+        assert!(
+            titles.contains(&"Change to 'receive'".to_owned()),
+            "{titles:?}"
+        );
+        assert!(titles.contains(&"Add 'recieve' to the workspace dictionary".to_owned()));
+        assert!(titles.contains(&"Add 'recieve' to the user dictionary".to_owned()));
+        let receive = actions
+            .iter()
+            .find_map(|action| match action {
+                CodeActionOrCommand::CodeAction(action)
+                    if action.title == "Change to 'receive'" =>
+                {
+                    action.edit.clone()
+                }
+                _ => None,
+            })
+            .unwrap();
+        let edits = &receive.changes.unwrap()[&uri];
+        assert_eq!(edits[0].new_text, "receive");
+        assert_eq!(edits[0].range, hints[0].range);
+    }
+
+    #[test]
+    fn the_add_to_workspace_command_writes_the_list() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_index::normalize_path(directory.path());
+        let page = root.join("page.adoc");
+        let text = "= Page\n\nWe recieve it.\n";
+        std::fs::write(&page, text).unwrap();
+        let mut server = spelling_server(&root);
+        server.open_workspace(vec![root.clone()]);
+        let uri = file_uri(&page);
+        open(&mut server, uri.as_str(), text);
+        server.tick();
+        assert!(server
+            .engine
+            .wait_for_workers(std::time::Duration::from_secs(30)));
+        server.published(None);
+        let start = text.find("recieve").unwrap();
+        let (response, notifications) = server.execute_command_response(Request::new(
+            RequestId::from(7),
+            ExecuteCommand::METHOD.to_owned(),
+            ExecuteCommandParams {
+                command: crate::capabilities::ADD_TO_WORKSPACE_COMMAND.to_owned(),
+                arguments: vec![
+                    serde_json::json!(uri.as_str()),
+                    serde_json::json!(start),
+                    serde_json::json!(start + "recieve".len()),
+                ],
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            },
+        ));
+        assert!(
+            response.response_result.is_ok(),
+            "{:?}",
+            response.response_result
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(adoc_engine::WORKSPACE_WORDS_FILE)).unwrap(),
+            "recieve\n"
+        );
+        let published = spelling_hints(notifications);
+        assert!(published
+            .iter()
+            .any(|(published, hints)| published == uri.as_str() && hints.is_empty()));
     }
 }

@@ -71,6 +71,7 @@ pub struct Engine {
     pub(crate) files: crate::files::Files,
     pub(crate) images: crate::images::Images,
     pub(crate) words: crate::words::WordCounts,
+    pub(crate) spelling: crate::spelling::Spelling,
     pub(crate) auto_saves: crate::auto_save::AutoSaveState,
     pub(crate) recovery: crate::recovery::RecoveryState,
     pub(crate) local_history: crate::local_history::LocalHistory,
@@ -142,6 +143,7 @@ impl Engine {
             files: crate::files::Files::default(),
             images: crate::images::Images::default(),
             words: crate::words::WordCounts::default(),
+            spelling: crate::spelling::Spelling::default(),
             auto_saves: crate::auto_save::AutoSaveState::default(),
             recovery: crate::recovery::RecoveryState::default(),
             local_history: crate::local_history::LocalHistory::default(),
@@ -317,6 +319,7 @@ impl Engine {
         self.forget_visual(id);
         self.forget_hunks(id);
         self.forget_word_count(id);
+        self.forget_spelling(id);
         self.forget_auto_save(id);
         self.forget_recovery(id);
         self.forget_html_exports(id);
@@ -792,6 +795,7 @@ impl Engine {
             edits: forward.clone(),
         });
         self.words_changed(id);
+        self.spelling_edited(id, &forward);
         self.auto_save_edited(id);
         self.recovery_changed(id);
         // An edited page is kept open, even once undone.
@@ -892,6 +896,7 @@ impl Engine {
         let tools_before = self.settings.tools.clone();
         self.settings.reload()?;
         self.emit(EngineEvent::SettingsChanged);
+        self.spelling_settings_changed();
         self.diagram_tools_changed(&tools_before);
         self.settle_preview_tab();
         if self.settings.git.enabled != git_was_enabled {

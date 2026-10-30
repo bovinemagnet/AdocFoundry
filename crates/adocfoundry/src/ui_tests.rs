@@ -4566,6 +4566,114 @@ fn local_history_restores_a_saved_version(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_misspelt_word_is_underlined_and_replaced_in_one_undo_step(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("page.adoc");
+    let text = "= Page\n\nWe recieve it.\n";
+    std::fs::write(&path, text).unwrap();
+    let mut engine = Engine::new(Settings::default());
+    let document = engine.open(&path).unwrap();
+    let app = app_with(engine, cx);
+    let (editor, window) = editor_window(&app, document, cx);
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    settle_engine(&app, &mut cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| editor.read(cx).spelling_hints_for_test(cx)),
+        ["Unknown word: recieve"]
+    );
+
+    let start = text.find("recieve").unwrap();
+    let choices =
+        cx.update(|_, cx| crate::spelling::choices(&app.read(cx).engine, document, start + 2));
+    assert_eq!(
+        choices.last().map(|(label, _)| label.as_str()),
+        Some("Add to Workspace Dictionary")
+    );
+    let (first, choice) = choices[0].clone();
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(start, start), window, cx)
+        });
+    });
+    cx.dispatch_action(crate::spelling::ApplySpelling { document, choice });
+    cx.run_until_parked();
+    let replaced = format!("= Page\n\nWe {first} it.\n");
+    assert_eq!(document_text(&app, &mut cx), replaced);
+    assert_eq!(widget_text(&editor, &mut cx), replaced);
+
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(document_text(&app, &mut cx), text);
+}
+
+#[gpui::test]
+fn a_misspelt_word_in_the_visual_editor_is_underlined_and_replaced(cx: &mut TestAppContext) {
+    let text = "= Page\n\nWe recieve it.\n";
+    let (app, _workspace, visual, id, mut cx) = visual_workspace(text, cx);
+    settle_engine(&app, &mut cx);
+    let start = text.find("recieve").unwrap();
+    let underlined = cx.update(|_, cx| {
+        let visual = visual.read(cx);
+        visual
+            .shown()
+            .map(|shown| visual.misspelt(shown, cx))
+            .unwrap_or_default()
+    });
+    assert_eq!(
+        underlined,
+        [SourceRange::new(start, start + "recieve".len())]
+    );
+
+    let first = cx.update(|_, cx| {
+        crate::spelling::choices(&app.read(cx).engine, id, start)[0]
+            .0
+            .clone()
+    });
+    // Right-click the word, then take the first item.
+    let position = cx.update(|_, cx| {
+        let layouts = visual.read(cx).layouts().borrow();
+        layouts
+            .get(&vec![1])
+            .expect("the paragraph is laid out")
+            .position_for_index("We re".len())
+            .expect("laid out")
+            + gpui::point(px(1.), px(2.))
+    });
+    let button = gpui::MouseButton::Right;
+    cx.simulate_event(gpui::MouseDownEvent {
+        button,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        button,
+        position,
+        modifiers: gpui::Modifiers::none(),
+        click_count: 1,
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        format!("= Page\n\nWe {first} it.\n")
+    );
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::EDIT_UNDO, CommandArgs::Document(id), cx)
+        })
+    })
+    .unwrap();
+    assert_eq!(text_of(&app, id, &mut cx), text);
+}
+
+#[gpui::test]
 fn the_pdf_preview_shows_the_pages_and_a_click_goes_to_the_source(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));

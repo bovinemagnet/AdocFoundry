@@ -111,6 +111,12 @@ pub struct VisualView {
     /// The typeset inline formulas as last drawn, so the text between frames is shown as it
     /// was drawn.
     formula_gaps: text::FormulaGaps,
+    /// The spelling menu open on a misspelt word: where it was opened, and the menu.
+    spelling_menu: Option<(
+        gpui::Point<gpui::Pixels>,
+        Entity<gpui_component::menu::PopupMenu>,
+        Subscription,
+    )>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -153,6 +159,7 @@ impl VisualView {
             reveal: Rc::default(),
             highlights: Rc::default(),
             formula_gaps: text::FormulaGaps::new(),
+            spelling_menu: None,
             _subscriptions: vec![subscription],
         };
         if let Some(first) = view
@@ -624,6 +631,70 @@ impl VisualView {
 
     // --- mouse -------------------------------------------------------------------------------
 
+    /// The misspellings of the document, when the model shown is of its current version (their
+    /// ranges are the current text's).
+    pub fn misspelt(&self, document: &VisualDocument, cx: &App) -> Vec<SourceRange> {
+        let engine = &self.app.read(cx).engine;
+        let current = engine
+            .document(self.document)
+            .is_some_and(|open| open.version == document.version);
+        if !current {
+            return Vec::new();
+        }
+        engine
+            .misspellings(self.document)
+            .iter()
+            .map(|misspelling| misspelling.range)
+            .collect()
+    }
+
+    /// Opens the spelling menu for the misspelt word under `position` in the text block at
+    /// `path`, if there is one.
+    fn spelling_menu(
+        &mut self,
+        path: &[usize],
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(offset) = self.offset_at(path, position) else {
+            return;
+        };
+        let choices = crate::spelling::choices(&self.app.read(cx).engine, self.document, offset);
+        if choices.is_empty() {
+            return;
+        }
+        let app = self.app.clone();
+        let document = self.document;
+        let menu = gpui_component::menu::PopupMenu::build(window, cx, move |mut menu, _, _| {
+            let mut suggested = false;
+            for (label, choice) in choices {
+                let replace = matches!(choice, crate::spelling::Choice::Replace { .. });
+                if !replace && suggested {
+                    menu = menu.separator();
+                    suggested = false;
+                }
+                suggested |= replace;
+                let app = app.clone();
+                menu = menu.item(gpui_component::menu::PopupMenuItem::new(label).on_click(
+                    move |_, window, cx| {
+                        if let Err(error) = crate::spelling::apply(&app, document, &choice, cx) {
+                            window.push_notification(error.to_string(), cx);
+                        }
+                    },
+                ));
+            }
+            menu
+        });
+        let closed = cx.subscribe_in(&menu, window, |this, _, _: &gpui::DismissEvent, _, cx| {
+            this.spelling_menu = None;
+            cx.notify();
+        });
+        menu.read(cx).focus_handle(cx).focus(window, cx);
+        self.spelling_menu = Some((position, menu, closed));
+        cx.notify();
+    }
+
     /// The source offset under `position` in the text block at `path`.
     fn offset_at(&self, path: &[usize], position: gpui::Point<gpui::Pixels>) -> Option<usize> {
         let shown_document = self.shown.as_ref()?;
@@ -841,6 +912,19 @@ impl Render for VisualView {
                 .size_full(),
             )
             .child(self.toolbar(cx))
+            .when_some(
+                self.spelling_menu
+                    .as_ref()
+                    .map(|(position, menu, _)| (*position, menu.clone())),
+                |view, (position, menu)| {
+                    view.child(gpui::deferred(
+                        gpui::anchored()
+                            .position(position)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(div().occlude().child(menu)),
+                    ))
+                },
+            )
             .child(
                 div()
                     .id("visual-scroll")
