@@ -50,6 +50,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Cmd-click (Ctrl-click on Linux and Windows) or F12 on an `xref:`, `include::` or `{attribute}` opens the target and places the caret there; images and attachments open in the system's default application.
 - Back and forward through the places you have followed links to.
 - Alt-F12 on an `include::` shows the included file read-only.
+- Find References (Alt-Shift-F12, Go menu) lists every reference to the anchor at the caret (`<<id>>` and `xref:page.adoc#id[]`, across components), or else every xref, include and nav entry that names the page, grouped by file in a panel below the editor; clicking one opens it there.
 
 **Preview**
 

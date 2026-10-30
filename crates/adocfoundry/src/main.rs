@@ -13,6 +13,7 @@ mod image_view;
 mod menus;
 mod mirror_view;
 mod preview;
+mod references_view;
 mod search_view;
 mod sidebar;
 mod spelling;

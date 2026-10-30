@@ -45,6 +45,7 @@ use crate::{
     image_view::{ActualSize, FitToWindow, ImageView, ZoomIn, ZoomOut},
     menus::AppMenu,
     preview::{PreviewEvent, PreviewView},
+    references_view::{ReferencesEvent, ReferencesView},
     search_view::SearchView,
     sidebar,
     visual::{VisualEvent, VisualView},
@@ -164,6 +165,9 @@ pub struct WorkspaceView {
     _settle: Option<gpui::Task<()>>,
     search: Entity<SearchView>,
     show_search: bool,
+    /// Find References' results, shown in the search panel's place.
+    references: Entity<ReferencesView>,
+    show_references: bool,
     palette: Entity<CommandState>,
     /// The ☰ application menu in the title bar.
     app_menu: Entity<AppMenu>,
@@ -313,7 +317,7 @@ impl WorkspaceView {
         let preview = cx.new(|cx| PreviewView::new(app.clone(), false, window, cx));
         let navigation = cx.new(|cx| TreeState::new(cx));
         let families = cx.new(|cx| TreeState::new(cx));
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.subscribe_in(&app, window, Self::on_engine_event),
             cx.subscribe(&preview, Self::on_preview_event),
             Self::record_expansion(&navigation, SidebarPanel::Navigation, cx),
@@ -326,7 +330,14 @@ impl WorkspaceView {
             }),
         ];
         let workspace = cx.weak_entity();
-        let search = cx.new(|cx| SearchView::new(app.clone(), workspace, window, cx));
+        let search = cx.new(|cx| SearchView::new(app.clone(), workspace.clone(), window, cx));
+        let references = cx.new(|_| ReferencesView::new(app.clone(), workspace));
+        subscriptions.push(cx.subscribe(&references, |this, _, event, cx| match event {
+            ReferencesEvent::Close => {
+                this.show_references = false;
+                cx.notify();
+            }
+        }));
         let focus_handle = cx.focus_handle();
         let app_menu = cx.new(|_| AppMenu::new(app.clone(), focus_handle.clone()));
         let mut view = Self {
@@ -360,6 +371,8 @@ impl WorkspaceView {
             _settle: None,
             search,
             show_search: false,
+            references,
+            show_references: false,
             palette: cx.new(|cx| CommandState::new(window, cx)),
             app_menu,
             preview,
@@ -2083,6 +2096,41 @@ impl WorkspaceView {
         self.on_follow_link(&FollowLink, window, cx);
     }
 
+    /// Lists the references to the anchor at the caret, or else to the page, in the panel
+    /// below the editor.
+    fn on_find_references(
+        &mut self,
+        _: &FindReferences,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((id, offset)) = self.caret(cx) else {
+            return;
+        };
+        if let Some(CommandOutcome::References(found)) = self.invoke(
+            ids::NAVIGATE_FIND_REFERENCES,
+            CommandArgs::Offset { id, offset },
+            window,
+            cx,
+        ) {
+            let found = found.clone();
+            self.references
+                .update(cx, |references, cx| references.show(found, cx));
+            self.show_references = true;
+            self.show_search = false;
+            cx.notify();
+        }
+    }
+
+    /// The Find References panel's rows, as shown.
+    #[cfg(test)]
+    pub fn references_for_test(&self, cx: &App) -> Vec<String> {
+        if !self.show_references {
+            return Vec::new();
+        }
+        self.references.read(cx).rows_for_test(cx)
+    }
+
     fn on_go_back(&mut self, _: &GoBack, window: &mut Window, cx: &mut Context<Self>) {
         self.invoke(ids::NAVIGATE_BACK, CommandArgs::None, window, cx);
     }
@@ -2156,6 +2204,7 @@ impl WorkspaceView {
 
     fn on_find(&mut self, _: &FindInWorkspace, window: &mut Window, cx: &mut Context<Self>) {
         self.show_search = true;
+        self.show_references = false;
         self.search
             .update(cx, |search, cx| search.focus(window, cx));
         cx.notify();
@@ -3577,6 +3626,7 @@ impl Render for WorkspaceView {
         let editor = self.editor_area(cx);
         let has_tabs = !self.tabs.is_empty();
         let show_search = self.show_search;
+        let show_references = self.show_references;
         let layout = self.app.read(cx).engine.preview_layout();
         let docked_preview = (layout.visible && !layout.detached).then(|| self.preview.clone());
         let center = v_flex()
@@ -3615,6 +3665,9 @@ impl Render for WorkspaceView {
             )
             .when(show_search, |center| {
                 center.child(div().h(px(280.)).child(self.search.clone()))
+            })
+            .when(show_references, |center| {
+                center.child(div().h(px(280.)).child(self.references.clone()))
             })
             .into_any_element();
 
@@ -3676,6 +3729,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_find))
             .on_action(cx.listener(Self::on_replace))
             .on_action(cx.listener(Self::on_rename))
+            .on_action(cx.listener(Self::on_find_references))
             .on_action(cx.listener(Self::on_reindex))
             .on_action(cx.listener(Self::on_refresh_git))
             .on_action(cx.listener(Self::on_revert_change))
