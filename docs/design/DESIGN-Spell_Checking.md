@@ -152,3 +152,15 @@ Each piece is test-first.
 ## Delivery
 
 One branch, `feat/spell-checking`, and one pull request closing #65, built in commits that each leave the workspace green: `adoc-spell`; the engine and settings; `adoc-ls`; the source editor; the visual editor; documentation.
+
+## Implementation notes
+
+Where the build departs from this design:
+
+- The spelling commands have no keymap action, so they need no `NOT_IN_MENUS` entry. They are listed with the other commands driven by clicks rather than chosen by name in the palette test (`every_command_is_in_the_palette`).
+- `adoc-spell` depends on `spellbook` and `unicode-segmentation` only, not `adoc-core`; `foldhash` comes through `spellbook`.
+- `adoc-ls` gives its spelling hints the source `adoc-ls`, like its other diagnostics. They are tested in `protocol.rs`'s unit tests rather than `tests/stdio.rs`.
+- A word list also accepts a listed word followed by a possessive `'s`.
+- The visual editor underlines misspelt words through its text runs' wavy underline rather than painting them.
+- The source editor's context menu replaces the editor component's built-in menu, which a custom menu cannot extend. It lists the built-in items after the spelling choices, with the same enabled states, apart from Show Code Actions, which the editor never enables because it has no code action provider.
+- The app's UI tests cover replacing a word from the source editor and from the visual editor's menu, but not Add to Workspace Dictionary from the menu; the engine's tests cover that command.

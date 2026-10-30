@@ -8,6 +8,8 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - Files, Navigation and Modules follow the active page: whenever another page or image becomes active, each panel selects its row, opening the folders and branches above it and scrolling it into view, without taking focus. `[sidebar] follow_active = false` turns this off (#151).
 
+- Spell checking of prose in the source and visual editors and in `adoc-ls`: misspelt words are underlined, with suggestions and Add to Workspace Dictionary or Add to User Dictionary in the context menu. Pages are checked in their `lang`, else `[spelling] language` (British English by default), with bundled British and American English dictionaries and any Hunspell dictionaries in `[spelling] dictionaries` (#65).
+
 ### Fixed
 
 - Bold, italic, monospace and highlighted text broken over two lines of a paragraph is highlighted in the editor.

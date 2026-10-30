@@ -32,6 +32,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Diagnostics as you type for unresolved xrefs, anchors, includes and images, duplicate anchors, unknown Antora modules and resources, invalid resource IDs and invalid component descriptors. Inside `antora.yml`, at the line concerned: a missing `name` or `version`, a key Antora does not use, a `nav` file that does not exist, and an attribute value that is a list or mapping. Diagnostics are conservative: warnings rather than errors, and nothing for dynamic constructs such as `include::{attr}/x.adoc[]`.
 - Hover and completion for xref, include and image targets, anchors and `{attributes}`.
 - Undo and redo that treat a run of typing as one step.
+- Spell checking of prose in the source and visual editors: misspelt words are underlined half a second after typing stops, and right-clicking one offers suggestions (each replaces the word as one undo step), Add to Workspace Dictionary (`.adocfoundry-words.txt` in the workspace root, to commit with the repository) and Add to User Dictionary (`spelling-words.txt` beside the user settings file). Code, literal blocks, inline code, attributes, references, links and macros are never checked, and included text is checked in its own file. A page is checked in its `:lang:`, else `[spelling] language`; British and American English are built in, and `[spelling] dictionaries` adds Hunspell dictionaries. `adoc-ls` publishes the same misspellings as hints with quick fixes.
 - The status bar shows the page's word count and reading time (`120 words · 1 min read`), and the selection's count while there is one (`12 of 120 words`). Only prose counts: not markup, attributes, code, diagrams or formulas. The page is counted on a worker half a second after typing stops.
 - Optional auto-save (`[editor] auto_save`): `after_delay` saves a page a second after typing stops, and `on_focus_change` when you leave its tab or the window. It saves through Save, so a file changed on disk is never overwritten: the conflict is reported once, and that page is left until you save, overwrite or reload it.
 - Crash recovery: a page's unsaved text is copied to the app's state folder two seconds after typing stops and when the app quits, and the copy goes once the page is saved, closed or undone back to its saved text. If the app ends without saving, the next launch lists what it left, each beside the lines it changes in the file on disk, to recover (as one undo step, unsaved) or discard; File › Recover Unsaved Changes… lists it again. A copy of the app still running is never offered another's unsaved text, and a page renamed in the app is recovered at its new path.
@@ -207,6 +208,11 @@ theme = "default"                # a bundled theme, a name in themes_dir, or a .
 # site_url = "https://docs.example.com"  # where references out of an export lead; else the playbook's site.url
 standards = []                   # "pdf-a-2a", "pdf-ua-1"
 
+[spelling]
+enabled = true                   # underline misspelt words in prose
+language = "en_GB"               # for pages with no lang attribute
+dictionaries = ""                # folder of extra Hunspell .aff/.dic files (user file only)
+
 [updates]
 check = true                     # look for a newer release at start-up, at most once a day
 
@@ -305,7 +311,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 
 - In PDF export: source highlighting through the editor's tree-sitter grammars (Typst's highlighter is used, when `source-highlighter` is set), a live PDF preview, PDF/A-1 and PDF/UA-2, and asciidoctor-pdf's Ruby extensions.
 - In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
-- Editing included content in place, spell checking, plugins.
+- Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).

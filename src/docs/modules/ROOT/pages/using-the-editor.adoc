@@ -620,6 +620,42 @@ It leaves any other table unchanged and says why in a notification:
 Tables shown as text inside listing, literal, passthrough or comment blocks are not tables.
 With no table at the caret, the command reports that there is no table there.
 
+[#spelling]
+== Spelling
+
+Misspelt words in prose get a wavy underline, in the source editor and in the visual editor.
+Only prose is checked: the editable text blocks of the page.
+Source and literal blocks, inline code, attribute references, xrefs, links, macros and the like are not checked.
+Included content is checked in its own file, not in the page that includes it.
+A word split by formatting marks, such as `pro**gram**me`, is not checked.
+The engine checks a page once typing has paused for half a second.
+
+=== Language and dictionaries
+
+A page is checked in the language of its `lang` attribute, for example `:lang: en-US`.
+A page without one uses `spelling.language`, which is `en_GB` unless you change it.
+British (`en_GB`) and American (`en_US`) English are bundled with the app.
+To check other languages, set `spelling.dictionaries` in the user settings file to a folder of Hunspell `.aff` and `.dic` pairs.
+A page in a language with no dictionary is not checked.
+See xref:settings.adoc[Settings].
+
+=== Suggestions and your own words
+
+Right-click an underlined word for a menu of:
+
+* Suggestions. Choosing one replaces the word, as a single undo step.
+* *Add to Workspace Dictionary*, which writes the word to `.adocfoundry-words.txt` in the workspace root.
+Commit this file with the repository so that everyone who works on the documentation shares the words.
+You can also edit it by hand, one word per line, and the change is picked up automatically.
+* *Add to User Dictionary*, which writes the word to `spelling-words.txt` beside the user settings file.
+It is offered only when there is a user settings file.
+
+Spelling does not appear in the Problems panel or in `adocfoundry-cli check`.
+Help › Show Diagnostics and `adocfoundry-cli doctor` report whether it is on, its language and each dictionary, as "built in" or by path.
+The language server offers the same hints and quick fixes; see xref:language-server.adoc[Language server].
+
+To switch it off, set `enabled = false` under `[spelling]` in either settings file.
+
 == Following links
 
 Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+Enter]) on a reference follows it:
