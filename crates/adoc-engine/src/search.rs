@@ -348,6 +348,29 @@ impl Engine {
         self.refresh_open_diagnostics(None);
     }
 
+    /// Computes renaming the anchor at `offset` in document `id` to `new_id`, and every
+    /// reference to it in every page; a section without an anchor gets one.
+    pub fn anchor_rename_preview(
+        &mut self,
+        id: DocumentId,
+        offset: usize,
+        new_id: &str,
+    ) -> Result<EditPreview, EngineError> {
+        let old_id = self
+            .anchor_at(id, offset)
+            .ok_or_else(|| EngineError::InvalidRequest("there is no anchor here".to_owned()))?;
+        let edits = self
+            .anchor_rename_edits(id, offset, new_id)
+            .ok_or_else(|| {
+                EngineError::InvalidRequest(format!("`{new_id}` cannot be an anchor id"))
+            })?;
+        Ok(self.store_preview(
+            format!("Rename anchor `{old_id}` to `{new_id}`"),
+            Vec::new(),
+            edits,
+        ))
+    }
+
     /// Computes moving the page of document `id` to `new_path` and rewriting every xref that
     /// resolves to it and every include that includes it.
     pub fn rename_preview(

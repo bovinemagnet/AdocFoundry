@@ -101,6 +101,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Find in the workspace, with regular expression, case and whole-word options.
 - Replace across the workspace shows every change first; applying it is one undo step.
 - Rename Page moves the file and rewrites every xref that leads to it, shown as a preview first; one undo moves the page back and restores every xref.
+- F2 on an anchor (`[[id]]`, `[#id]`), a section heading or a reference to one renames the anchor instead (Rename Anchor): its declaration and every `<<id>>` and `xref:page.adoc#id[]` that names it, in every page, shown as a preview first and undone as one step. A section without an anchor gets `[[new-id]]` above its heading, and references written with its generated id (Antora's or Asciidoctor's form) are rewritten. Elsewhere F2 renames the page.
 - A replace or rename is undone and redone only as a whole. If one of its pages was edited afterwards, undo says which; undo that page's later edits first.
 
 **Also**

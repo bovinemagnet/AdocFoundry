@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use adoc_core::{Document, Location, Reference, ReferenceKind, SourceRange};
+use adoc_core::{Document, Location, Reference, ReferenceKind, Section, SourceRange};
 use adoc_index::{normalize_path, IncludeLocation, ReferenceLocation};
 
 use crate::{definition::reference_target_path, with_document, WorkspaceState};
@@ -106,6 +106,17 @@ pub fn anchor_at(
             id: anchor.id.clone(),
         });
     }
+    // A heading names its section's id, declared or generated.
+    if let Some(section) = document
+        .sections
+        .iter()
+        .find(|section| section.range.start <= offset && offset <= section.range.end)
+    {
+        return Some(AnchorTarget {
+            path: path.to_path_buf(),
+            id: crate::xref::section_id(&ws.antora, path, section),
+        });
+    }
     let reference = document
         .references
         .iter()
@@ -149,14 +160,31 @@ pub fn rename_anchor(
             .filter_map(|declared| id_range(text, declared.range, &anchor.id))
             .collect::<Vec<_>>()
     };
-    let declarations = if anchor.path == path {
-        with_document(ws, &path, text, |document| declared(document, text))
+    // A section with no anchor gets one, above its heading, in place of its generated id.
+    let generated = |document: &Document| {
+        generated_section(ws, &anchor.path, document, &anchor.id)
+            .map(|section| SourceRange::new(section.range.start, section.range.start))
+    };
+    let (declarations, insert) = if anchor.path == path {
+        with_document(ws, &path, text, |document| {
+            (declared(document, text), generated(document))
+        })
     } else {
         let file = ws.index.file(&anchor.path)?;
-        declared(&file.document, &file.document.text)
+        (
+            declared(&file.document, &file.document.text),
+            generated(&file.document),
+        )
     };
     if declarations.is_empty() {
-        return None;
+        let at = insert?;
+        edits.push((
+            Location {
+                path: anchor.path.clone(),
+                range: at,
+            },
+            format!("[[{new_id}]]\n"),
+        ));
     }
     for range in declarations {
         edits.push((
@@ -167,11 +195,17 @@ pub fn rename_anchor(
             new_id.to_owned(),
         ));
     }
+    // The longest form first, so that one form's prefix never stands for another.
+    let mut ids = anchor_ids(ws, &anchor);
+    ids.sort_by_key(|id| std::cmp::Reverse(id.len()));
     for location in anchor_references(ws, &anchor) {
         let Some(file) = ws.index.file(&location.path) else {
             continue;
         };
-        if let Some(range) = id_range(&file.document.text, location.reference.range, &anchor.id) {
+        let range = ids
+            .iter()
+            .find_map(|id| id_range(&file.document.text, location.reference.range, id));
+        if let Some(range) = range {
             edits.push((
                 Location {
                     path: location.path.clone(),
@@ -186,18 +220,45 @@ pub fn rename_anchor(
     Some(edits)
 }
 
-/// The references that reach `anchor`.
+/// The references that reach `anchor`, by any id that names it.
 fn anchor_references<'a>(
     ws: &'a WorkspaceState,
     anchor: &AnchorTarget,
 ) -> Vec<&'a ReferenceLocation> {
-    ws.index
-        .references_with_fragment(&anchor.id)
+    anchor_ids(ws, anchor)
+        .iter()
+        .flat_map(|id| ws.index.references_with_fragment(id))
         .filter(|location| {
             fragment_target(ws, &location.path, &location.reference)
                 .is_some_and(|(target, _)| target == anchor.path)
         })
         .collect()
+}
+
+/// The ids a reference may name `anchor` by: its own, and for a section without an anchor
+/// every form of its generated id that resolves to it.
+fn anchor_ids(ws: &WorkspaceState, anchor: &AnchorTarget) -> Vec<String> {
+    let mut ids = vec![anchor.id.clone()];
+    if let Some(file) = ws.index.file(&anchor.path) {
+        if let Some(section) = generated_section(ws, &anchor.path, &file.document, &anchor.id) {
+            ids.extend(section.implicit_ids());
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// The section of `document` (the page at `path`) whose id `id` is generated, not declared.
+fn generated_section<'a>(
+    ws: &WorkspaceState,
+    path: &Path,
+    document: &'a Document,
+    id: &str,
+) -> Option<&'a Section> {
+    document.sections.iter().find(|section| {
+        section.id.is_none() && crate::xref::section_id(&ws.antora, path, section) == id
+    })
 }
 
 /// The file and id a reference's fragment points at. A local reference reaches the page it is
@@ -357,5 +418,85 @@ mod tests {
         assert_eq!(edits.len(), 3);
         assert!(rename_anchor(&ws, &index, &text, offset, "two words").is_none());
         assert!(rename_anchor(&ws, &index, &text, 2, "install").is_none());
+    }
+
+    #[test]
+    fn a_heading_names_its_section_s_anchor() {
+        let ws = workspace();
+        let index = fixture("index.adoc");
+        let text = std::fs::read_to_string(&index).unwrap();
+        let heading = text.find("== Setup").unwrap() + 4;
+        let anchor = text.find("[[setup]]").unwrap() + 3;
+        assert_eq!(
+            references_at(&ws, &index, &text, heading),
+            references_at(&ws, &index, &text, anchor)
+        );
+        let edits = rename_anchor(&ws, &index, &text, heading, "install").unwrap();
+        assert_eq!(
+            edits.len(),
+            3,
+            "the anchor above the heading and its references"
+        );
+    }
+
+    /// A page whose section has no anchor, and another page linking to it by its generated id.
+    fn generated(ws: &mut WorkspaceState, root: &Path) -> (PathBuf, String) {
+        let page = root.join("page.adoc");
+        let text = "= Page\n\n== First Steps\n\nSee <<_first_steps>>.\n".to_owned();
+        ws.index.index_source(&page, &text);
+        ws.index.index_source(
+            root.join("other.adoc"),
+            "= Other\n\nRead xref:page.adoc#_first_steps[the first steps].\n",
+        );
+        (page, text)
+    }
+
+    #[test]
+    fn a_heading_without_an_anchor_names_its_generated_id() {
+        let mut ws = WorkspaceState::new();
+        let root = normalize_path(Path::new("/docs"));
+        let (page, text) = generated(&mut ws, &root);
+        let heading = text.find("First").unwrap();
+        let found = references_at(&ws, &page, &text, heading);
+        assert_eq!(found.len(), 2, "{found:?}");
+    }
+
+    #[test]
+    fn renaming_a_generated_id_adds_an_anchor_and_rewrites_its_references() {
+        let mut ws = WorkspaceState::new();
+        let root = normalize_path(Path::new("/docs"));
+        let (page, text) = generated(&mut ws, &root);
+        let heading = text.find("First").unwrap();
+        let mut edits = rename_anchor(&ws, &page, &text, heading, "begin").unwrap();
+        edits.sort_by(|a, b| a.0.cmp(&b.0));
+        let line = text.find("== First").unwrap();
+        let reference = text.find("_first_steps>>").unwrap();
+        let other = "= Other\n\nRead xref:page.adoc#".len();
+        assert_eq!(
+            edits,
+            [
+                (
+                    Location {
+                        path: root.join("other.adoc"),
+                        range: SourceRange::new(other, other + "_first_steps".len()),
+                    },
+                    "begin".to_owned()
+                ),
+                (
+                    Location {
+                        path: page.clone(),
+                        range: SourceRange::new(line, line),
+                    },
+                    "[[begin]]\n".to_owned()
+                ),
+                (
+                    Location {
+                        path: page.clone(),
+                        range: SourceRange::new(reference, reference + "_first_steps".len()),
+                    },
+                    "begin".to_owned()
+                ),
+            ]
+        );
     }
 }

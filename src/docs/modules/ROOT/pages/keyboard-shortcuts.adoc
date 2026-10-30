@@ -123,10 +123,15 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Ctrl-Shift-H
 |`workspace.replace`
 
-|Rename page
+|Rename page (caret elsewhere than on an anchor or heading)
 |F2
 |F2
 |`page.rename`
+
+|Rename anchor (caret on an anchor, heading or anchor reference; shares F2 with Rename page)
+|F2
+|F2
+|`anchor.rename`
 
 |Open the Navigation or Modules panel's menu (in that tree)
 |Shift-F10

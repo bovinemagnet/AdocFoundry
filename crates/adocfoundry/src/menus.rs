@@ -77,6 +77,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::WORKSPACE_REPLACE),
             Separator,
             Command(ids::PAGE_RENAME),
+            Command(ids::ANCHOR_RENAME),
             Command(ids::GIT_REVERT_HUNK),
         ],
     ),

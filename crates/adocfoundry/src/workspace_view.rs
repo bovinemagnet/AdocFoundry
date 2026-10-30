@@ -2165,7 +2165,92 @@ impl WorkspaceView {
         self.on_find(&FindInWorkspace, window, cx);
     }
 
+    /// F2: renames the anchor at the caret when there is one, else the page.
     fn on_rename(&mut self, _: &RenamePage, window: &mut Window, cx: &mut Context<Self>) {
+        let anchor = self.caret(cx).and_then(|(id, offset)| {
+            let current = self.app.read(cx).engine.anchor_at(id, offset)?;
+            Some((id, offset, current))
+        });
+        if let Some((id, offset, current)) = anchor {
+            self.rename_anchor(id, offset, current, window, cx);
+            return;
+        }
+        self.rename_page(window, cx);
+    }
+
+    fn on_rename_anchor(&mut self, _: &RenameAnchor, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((id, offset)) = self.caret(cx) else {
+            return;
+        };
+        match self.app.read(cx).engine.anchor_at(id, offset) {
+            Some(current) => self.rename_anchor(id, offset, current, window, cx),
+            None => window.push_notification(
+                "Put the caret on an anchor, a section heading or a reference to one.",
+                cx,
+            ),
+        }
+    }
+
+    /// Asks for the anchor's new id, then previews renaming it and every reference to it.
+    fn rename_anchor(
+        &mut self,
+        id: DocumentId,
+        offset: usize,
+        current: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(current));
+        let first = input.clone();
+        let workspace = cx.weak_entity();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let input = input.clone();
+            let workspace = workspace.clone();
+            dialog
+                .title("Rename Anchor")
+                .width(px(640.))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child("New id; every reference to it is rewritten.")
+                        .child(Input::new(&input)),
+                )
+                .confirm()
+                .ok_text("Preview")
+                .on_ok(move |_, window, cx| {
+                    let new_id = input.read(cx).value().to_string();
+                    let Some(workspace) = workspace.upgrade() else {
+                        return true;
+                    };
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(CommandOutcome::Preview(preview)) = workspace.invoke(
+                            ids::ANCHOR_RENAME,
+                            CommandArgs::Text {
+                                id,
+                                range: SourceRange::new(offset, offset),
+                                text: new_id,
+                            },
+                            window,
+                            cx,
+                        ) {
+                            let preview = preview.clone();
+                            let handle = cx.weak_entity();
+                            window.defer(cx, move |window, cx| {
+                                if let Some(workspace) = handle.upgrade() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.show_preview(preview, window, cx);
+                                    });
+                                }
+                            });
+                        }
+                    });
+                    true
+                })
+        });
+        first.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    fn rename_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.active_document(cx) else {
             return;
         };
@@ -3668,6 +3753,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_find))
             .on_action(cx.listener(Self::on_replace))
             .on_action(cx.listener(Self::on_rename))
+            .on_action(cx.listener(Self::on_rename_anchor))
             .on_action(cx.listener(Self::on_reindex))
             .on_action(cx.listener(Self::on_refresh_git))
             .on_action(cx.listener(Self::on_revert_change))

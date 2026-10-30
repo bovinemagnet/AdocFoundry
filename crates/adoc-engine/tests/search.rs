@@ -212,6 +212,108 @@ fn preview_for_selection(engine: &mut Engine, path: &Path) -> EditPreview {
 }
 
 #[test]
+fn renaming_a_section_id_rewrites_every_page_and_undoes_as_one() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    let write = |path: &str, text: &str| {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    };
+    let guide_text = "= Guide\n\n== First Steps\n\nSee <<first-steps>>.\n";
+    let alpha_text = "= Alpha\n\nStart with xref:guide.adoc#first-steps[the first steps].\n";
+    let beta_text = "= Beta\n\nRead xref:alpha::guide.adoc#first-steps[Alpha's first steps].\n";
+    write("alpha/antora.yml", "name: alpha\nversion: '1.0'\n");
+    write("alpha/modules/ROOT/pages/guide.adoc", guide_text);
+    write("alpha/modules/ROOT/pages/index.adoc", alpha_text);
+    write("beta/antora.yml", "name: beta\nversion: ~\n");
+    write("beta/modules/ROOT/pages/index.adoc", beta_text);
+    let mut engine = open_workspace(&root);
+    let guide = engine
+        .open(&root.join("alpha/modules/ROOT/pages/guide.adoc"))
+        .unwrap();
+    let heading = guide_text.find("First Steps").unwrap();
+    assert_eq!(
+        engine.anchor_at(guide, heading).as_deref(),
+        Some("first-steps")
+    );
+    assert_eq!(
+        engine.anchor_at(guide, 2),
+        None,
+        "the page's title is no anchor"
+    );
+
+    let preview = preview(
+        engine
+            .invoke(
+                ids::ANCHOR_RENAME,
+                CommandArgs::Text {
+                    id: guide,
+                    range: adoc_core::SourceRange::new(heading, heading),
+                    text: "begin".to_owned(),
+                },
+            )
+            .unwrap(),
+    );
+    assert_eq!(preview.edits.len(), 3, "the guide and the pages naming it");
+    engine
+        .invoke(
+            ids::WORKSPACE_APPLY_PREVIEW,
+            CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+        )
+        .unwrap();
+    let text = |engine: &Engine, path: &str| {
+        let id = engine.document_for_path(&root.join(path)).unwrap();
+        engine.document(id).unwrap().text.to_string()
+    };
+    assert_eq!(
+        text(&engine, "alpha/modules/ROOT/pages/guide.adoc"),
+        "= Guide\n\n[[begin]]\n== First Steps\n\nSee <<begin>>.\n"
+    );
+    assert_eq!(
+        text(&engine, "alpha/modules/ROOT/pages/index.adoc"),
+        "= Alpha\n\nStart with xref:guide.adoc#begin[the first steps].\n"
+    );
+    assert_eq!(
+        text(&engine, "beta/modules/ROOT/pages/index.adoc"),
+        "= Beta\n\nRead xref:alpha::guide.adoc#begin[Alpha's first steps].\n"
+    );
+
+    // One undo restores every page.
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(guide))
+        .unwrap();
+    assert_eq!(
+        text(&engine, "alpha/modules/ROOT/pages/guide.adoc"),
+        guide_text
+    );
+    assert_eq!(
+        text(&engine, "alpha/modules/ROOT/pages/index.adoc"),
+        alpha_text
+    );
+    assert_eq!(
+        text(&engine, "beta/modules/ROOT/pages/index.adoc"),
+        beta_text
+    );
+}
+
+#[test]
+fn renaming_where_there_is_no_anchor_is_refused() {
+    let root = fixture("references");
+    let mut engine = open_workspace(&root);
+    let id = engine.open(&root.join("other.adoc")).unwrap();
+    let refused = engine.invoke(
+        ids::ANCHOR_RENAME,
+        CommandArgs::Text {
+            id,
+            range: adoc_core::SourceRange::new(2, 2),
+            text: "begin".to_owned(),
+        },
+    );
+    assert!(refused.is_err(), "{refused:?}");
+}
+
+#[test]
 fn rename_page_rewrites_xrefs_as_one_undo_group() {
     let directory = tempfile::tempdir().unwrap();
     let root = adoc_index::normalize_path(&directory.path().join("docs"));

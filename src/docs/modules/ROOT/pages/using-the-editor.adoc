@@ -1,7 +1,7 @@
 = Using the editor
 Paul Snow
 :revnumber: 0.0.0
-:description: The workspace, sidebar, editor, link following, search and replace, and page rename.
+:description: The workspace, sidebar, editor, link following, search and replace, and page and anchor rename.
 
 This page describes the source editor and the workspace around it.
 The rendered preview has its own page, xref:preview.adoc[The preview], and editing the rendered page has another, xref:visual-editing.adoc[Visual editing].
@@ -779,6 +779,40 @@ If the rename cannot be completed, for example because the destination folder ca
 ----
 include::example$rename-page.mmd[]
 ----
+
+[[rename-an-anchor]]
+== Rename an anchor
+
+Rename Anchor (`anchor.rename`) renames the anchor at the caret in the source editor, together with every reference to it.
+kbd:[F2] chooses between the two renames by where the caret is.
+On an anchor (`+[[id]]+` or `+[#id]+`), on a section heading (`== Title`), or on a reference to an anchor (`+<<id>>+` or `+xref:page.adoc#id[]+`), kbd:[F2] renames the anchor.
+Anywhere else it renames the page, as described in <<Rename a page>>.
+Rename Anchor is also in the Edit menu, after Rename Page, and in the command palette; it has no shortcut of its own.
+With the caret on no anchor it says so in a notification.
+It acts at the caret in the source editor; in the visual editor kbd:[F2] renames the page.
+
+A dialog titled Rename Anchor asks for the new id, starting from the current one.
+Preview shows every edit, in the same preview as Rename Page, and Apply makes them.
+The rename rewrites the anchor's declaration and every `+<<id>>+` and `+xref:page.adoc#id[]+` that names it, in every page, including pages of other components.
+One undo restores every page.
+
+A section without an explicit anchor has a generated id.
+Inside an Antora module it takes Antora's form, so `== First Steps` gives `first-steps`; elsewhere it takes Asciidoctor's form, `_first_steps`.
+Renaming a generated id adds `+[[new-id]]+` on the line above the heading and rewrites the references that used the generated id.
+
+An id cannot contain spaces or any of `+[ ] < > # , " '+`; a new id that does is refused.
+
+For example, renaming `first-steps` to `begin` changes these lines:
+
+[source,asciidoc]
+----
+[[begin]]
+== First Steps
+
+See <<begin>> or xref:alpha::guide.adoc#begin[].
+----
+
+Before the rename the heading had no anchor, the first reference was `+<<first-steps>>+` and the second was `+xref:alpha::guide.adoc#first-steps[]+`.
 
 [[application-menu]]
 == The application menu

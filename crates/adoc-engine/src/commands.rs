@@ -50,6 +50,7 @@ pub mod ids {
     pub const WORKSPACE_REPLACE: CommandId = CommandId::new("workspace.replace");
     pub const WORKSPACE_APPLY_PREVIEW: CommandId = CommandId::new("workspace.apply_preview");
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
+    pub const ANCHOR_RENAME: CommandId = CommandId::new("anchor.rename");
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
     pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
     pub const APP_DIAGNOSTICS: CommandId = CommandId::new("app.diagnostics");
@@ -135,7 +136,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, ActiveTab, Always};
 
-    let builtin: [(CommandSpec, Run); 35] = [
+    let builtin: [(CommandSpec, Run); 36] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -175,6 +176,16 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 ActiveDocument,
             ),
             page_rename,
+        ),
+        (
+            spec(
+                ids::ANCHOR_RENAME,
+                "Rename Anchor",
+                Workspace,
+                None,
+                ActiveDocument,
+            ),
+            anchor_rename,
         ),
         (
             spec(
@@ -888,6 +899,16 @@ fn workspace_apply_preview(
     engine
         .apply_preview(crate::PreviewId::from_raw(id))
         .map(|_| CommandOutcome::Done)
+}
+
+/// Previews renaming the anchor at the caret (`range.start`) to `text`.
+fn anchor_rename(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Text { id, range, text } = args else {
+        return Err(invalid(ids::ANCHOR_RENAME, "a document, offset and new id"));
+    };
+    engine
+        .anchor_rename_preview(id, range.start, text.trim())
+        .map(CommandOutcome::Preview)
 }
 
 fn page_rename(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {

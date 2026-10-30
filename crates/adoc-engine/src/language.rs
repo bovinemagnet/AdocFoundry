@@ -67,6 +67,15 @@ impl Engine {
         )
     }
 
+    /// The id of the anchor at `offset` in document `id`: an `[[id]]` or `[#id]` there, a
+    /// section heading's id (declared or generated), or the anchor a reference there names.
+    #[must_use]
+    pub fn anchor_at(&self, id: DocumentId, offset: usize) -> Option<String> {
+        let document = self.document(id)?;
+        adoc_lang::references::anchor_at(&self.workspace, &document.path, &document.parsed, offset)
+            .map(|anchor| anchor.id)
+    }
+
     /// The edits that rename the anchor at `offset` in document `id`, and every reference to
     /// it, to `new_id`, by file. `None` when there is no anchor there or `new_id` is not an id.
     #[must_use]
