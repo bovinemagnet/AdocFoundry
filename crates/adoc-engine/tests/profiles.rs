@@ -183,7 +183,10 @@ fn a_profile_exports_its_navigation_files_in_its_order_with_its_attributes() {
     // The metadata comes from the profile's attributes.
     let pdf = String::from_utf8_lossy(&pdf);
     for expected in ["Acme Administration", "Acme Docs", "How to run Acme."] {
-        assert!(pdf.contains(expected), "{expected:?} is not in the metadata");
+        assert!(
+            pdf.contains(expected),
+            "{expected:?} is not in the metadata"
+        );
     }
     let typst = fs::read_to_string(typst).unwrap();
     let order = positions(
