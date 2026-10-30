@@ -791,6 +791,7 @@ impl Engine {
             edits: forward.clone(),
         });
         self.words_changed(id);
+        self.spelling_edited(id, &forward);
         self.auto_save_edited(id);
         self.recovery_changed(id);
         // An edited page is kept open, even once undone.

@@ -3,7 +3,10 @@
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 
 use adoc_core::SourceRange;
-use adoc_engine::{DocumentId, Engine, ManualClock, Settings};
+use adoc_engine::{
+    commands::ids, CommandArgs, DocumentId, Engine, EngineEvent, ManualClock, Settings,
+    SPELLING_SETTLE,
+};
 
 const WAIT: Duration = Duration::from_secs(30);
 
@@ -37,6 +40,19 @@ fn misspelt(engine: &Engine, id: DocumentId) -> Vec<String> {
         .iter()
         .map(|misspelling| misspelling.word.clone())
         .collect()
+}
+
+fn type_text(engine: &mut Engine, id: DocumentId, offset: usize, text: &str) {
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(offset, offset),
+                text: text.to_owned(),
+            },
+        )
+        .unwrap();
 }
 
 #[test]
@@ -145,6 +161,95 @@ fn nothing_is_checked_without_enable_spelling() {
         Settings::load(None, None).unwrap().with_git_opt_in(),
         Arc::new(clock),
     );
+    let id = engine.open(&path).unwrap();
+    settle(&mut engine);
+    assert!(engine.misspellings(id).is_empty());
+    assert!(!engine.has_pending());
+}
+
+#[test]
+fn checking_waits_for_typing_to_settle() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = page(&directory, "page.adoc", "= Page\n\nOne two.\n");
+    let (mut engine, clock) = engine_with_clock();
+    let events = engine.subscribe();
+    let id = engine.open(&path).unwrap();
+    settle(&mut engine);
+    assert!(misspelt(&engine, id).is_empty());
+    assert!(!engine.has_pending());
+
+    type_text(&mut engine, id, "= Page\n\nOne two".len(), " qwzxy");
+    clock.advance(SPELLING_SETTLE - Duration::from_millis(1));
+    settle(&mut engine);
+    assert!(misspelt(&engine, id).is_empty(), "not yet");
+    clock.advance(Duration::from_millis(1));
+    settle(&mut engine);
+    assert_eq!(misspelt(&engine, id), ["qwzxy"]);
+    assert!(events
+        .try_iter()
+        .any(|event| event == EngineEvent::SpellingChanged(id)));
+}
+
+#[test]
+fn misspellings_move_with_edits_and_go_when_typed_into() {
+    let directory = tempfile::tempdir().unwrap();
+    let text = "= Page\n\nA qwzxy word.\n";
+    let path = page(&directory, "page.adoc", text);
+    let (mut engine, _clock) = engine_with_clock();
+    let id = engine.open(&path).unwrap();
+    settle(&mut engine);
+    let start = text.find("qwzxy").unwrap();
+    assert_eq!(
+        engine.misspellings(id)[0].range,
+        SourceRange::new(start, start + 5)
+    );
+
+    type_text(&mut engine, id, text.find("A qwzxy").unwrap(), "Big ");
+    assert_eq!(
+        engine.misspellings(id)[0].range,
+        SourceRange::new(start + 4, start + 9),
+        "moved before any check"
+    );
+    type_text(&mut engine, id, start + 9, "s");
+    assert!(engine.misspellings(id).is_empty(), "typed into");
+}
+
+#[test]
+fn a_misspelt_word_is_replaced_in_one_undo_step() {
+    let directory = tempfile::tempdir().unwrap();
+    let text = "= Page\n\nWe recieve it.\n";
+    let path = page(&directory, "page.adoc", text);
+    let (mut engine, _clock) = engine_with_clock();
+    let id = engine.open(&path).unwrap();
+    settle(&mut engine);
+    let misspelling = engine.misspellings(id)[0].clone();
+    engine
+        .invoke(
+            ids::EDIT_REPLACE_RANGE,
+            CommandArgs::Text {
+                id,
+                range: misspelling.range,
+                text: "receive".to_owned(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        engine.document(id).unwrap().text_string(),
+        "= Page\n\nWe receive it.\n"
+    );
+    assert!(engine.misspellings(id).is_empty());
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(engine.document(id).unwrap().text_string(), text);
+}
+
+#[test]
+fn nothing_is_checked_when_spelling_is_off() {
+    let directory = tempfile::tempdir().unwrap();
+    let user = page(&directory, "settings.toml", "[spelling]\nenabled = false\n");
+    let path = page(&directory, "page.adoc", "= Page\n\nA qwzxy.\n");
+    let (mut engine, _clock) = engine_with(Settings::load(Some(&user), None).unwrap());
     let id = engine.open(&path).unwrap();
     settle(&mut engine);
     assert!(engine.misspellings(id).is_empty());

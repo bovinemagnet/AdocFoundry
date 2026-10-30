@@ -15,7 +15,7 @@ use adoc_core::SourceRange;
 use adoc_model::{Access, Mark, Model, Piece};
 use adoc_spell::{Dictionaries, WordList};
 
-use crate::{workspace::WorkerMessage, DocumentId, Engine, EngineEvent};
+use crate::{workspace::WorkerMessage, DocumentId, Engine, EngineEvent, TextEdit};
 
 /// How long a page must go unchanged before it is checked again.
 pub const SPELLING_SETTLE: Duration = Duration::from_millis(500);
@@ -206,6 +206,44 @@ impl Engine {
             },
         );
         if changed {
+            self.emit(EngineEvent::SpellingChanged(id));
+        }
+    }
+
+    /// Records that document `id` changed, so it is checked only once it settles, and moves its
+    /// misspellings through `edits`, dropping those an edit touches.
+    pub(crate) fn spelling_edited(&mut self, id: DocumentId, edits: &[TextEdit]) {
+        if !self.spelling.enabled {
+            return;
+        }
+        self.spelling.changed.insert(id, self.clock.now());
+        let Some(checked) = self.spelling.results.get_mut(&id) else {
+            return;
+        };
+        let before = checked.misspellings.len();
+        let mut moved = false;
+        checked.misspellings.retain_mut(|misspelling| {
+            let mut delta: isize = 0;
+            for edit in edits {
+                if edit.range.start <= misspelling.range.end
+                    && edit.range.end >= misspelling.range.start
+                {
+                    return false;
+                }
+                if edit.range.end <= misspelling.range.start {
+                    delta += edit.replacement.len() as isize - edit.range.len() as isize;
+                }
+            }
+            if delta != 0 {
+                moved = true;
+                misspelling.range = SourceRange::new(
+                    misspelling.range.start.saturating_add_signed(delta),
+                    misspelling.range.end.saturating_add_signed(delta),
+                );
+            }
+            true
+        });
+        if moved || checked.misspellings.len() != before {
             self.emit(EngineEvent::SpellingChanged(id));
         }
     }
