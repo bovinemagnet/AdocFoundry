@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Smoke test of release binaries: the bundled dictionaries' licence shipped with them, each
-one's --version, a PDF export from the CLI, the language server's and the MCP server's
+"""Smoke test of release binaries: the bundled dictionaries' licence and the third-party notices
+shipped with them, each one's --version, a PDF export from the CLI, the language server's and the MCP server's
 initialise and shutdown, and the app staying up on a fixture workspace.
 
 usage: packaging/smoke-test.py <directory with the binaries> [--no-app] [--expect-signed]
@@ -70,6 +70,22 @@ def licence(directory):
     with open(path or os.devnull, encoding="utf-8") as file:
         text = file.read()
     check("Kevin Atkinson" in text, f"the dictionaries' licence ships with the binaries: {path}")
+
+
+def notices_path(directory):
+    """The third-party notices, beside the dictionaries' licence, shipped with the binaries in
+    `directory`, or None."""
+    licence = licence_path(directory)
+    path = licence and os.path.join(os.path.dirname(licence), "THIRD-PARTY-NOTICES.txt")
+    return path if path and os.path.isfile(path) else None
+
+
+def notices(directory):
+    path = notices_path(directory)
+    with open(path or os.devnull, encoding="utf-8") as file:
+        text = file.read()
+    check(text.startswith("Third-party notices for AdocFoundry") and "\ngpui-pre " in text,
+          f"the third-party notices ship with the binaries: {path}")
 
 
 def pdf_export(directory):
@@ -194,6 +210,7 @@ def main():
     if "--expect-signed" in sys.argv:
         signatures(directory)
     licence(directory)
+    notices(directory)
     versions(directory)
     pdf_export(directory)
     language_server(directory)

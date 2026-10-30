@@ -27,6 +27,8 @@ Keep fixtures small and readable, and add one alongside every behaviour change.
 
 `crates/adoc-engine/tests/` drives the engine headlessly through commands: documents, language features, navigation, search and replace, settings and workspace indexing.
 No window is involved.
+`tests/about.rs` covers the `app.about` command and the notices it carries.
+The notices generator's tests are in `xtask/src/notices.rs`: `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice`.
 Add a test here rather than in the application crate whenever the behaviour can be reached through the engine.
 
 == CLI snapshot tests
@@ -253,6 +255,7 @@ They cover:
 * committing from the app: `save_and_commit_commits_the_page_and_counts_it_unpushed`;
 * the blame column and hover: `blame_column_toggles_and_hover_shows_the_commit`;
 * the version badge: `status_bar_shows_the_version_and_branch`;
+* the About dialog: `about_shows_the_version_and_each_components_licence`;
 * `every_command_is_in_the_palette` (in `editor/bindings.rs`), which fails when an engine command has no UI action, apart from those driven by typing and clicks.
 
 The last one exercises the widget's input handler on the test platform.

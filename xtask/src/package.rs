@@ -1,6 +1,7 @@
 //! `cargo xtask package`: a release build of the three binaries, staged with the licence, README,
-//! the bundled dictionaries' licence (`licenses/SCOWL.txt`), desktop entry and icon into `dist/`
-//! and archived for the host platform.
+//! the bundled dictionaries' licence (`licenses/SCOWL.txt`), the third-party notices
+//! (`licenses/THIRD-PARTY-NOTICES.txt`), desktop entry and icon into `dist/` and archived for the
+//! host platform.
 //!
 //! The release workflow builds the platform installers (DMG, MSI, AppImage, deb, rpm); this task
 //! produces the same binaries locally as a dry run.
@@ -11,7 +12,7 @@ use std::{
     process::Command,
 };
 
-const BINARIES: &[&str] = &["adocfoundry", "adocfoundry-cli", "adoc-ls", "adoc-mcp"];
+use crate::notices::{self, BINARIES, FEATURES};
 
 fn workspace_version(root: &Path) -> Result<String, String> {
     let text = fs::read_to_string(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
@@ -52,7 +53,7 @@ pub fn run_package(root: &Path) -> Result<PathBuf, String> {
         build.args(["-p", binary]);
     }
     // The packaged language server is the full one, as the release workflow builds it.
-    build.args(["--features", "adoc-ls/typst,adoc-ls/git"]);
+    build.args(["--features", FEATURES]);
     run(&mut build)?;
 
     let name = archive_name(&version);
@@ -78,6 +79,13 @@ pub fn run_package(root: &Path) -> Result<PathBuf, String> {
         root.join("crates/adoc-spell/dictionaries/README.md"),
         "licenses/SCOWL.txt",
     )?;
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let notices = notices::collect(root, &cargo)?;
+    fs::write(
+        staging.join("licenses/THIRD-PARTY-NOTICES.txt"),
+        notices.to_text(),
+    )
+    .map_err(|error| error.to_string())?;
     if cfg!(target_os = "linux") {
         copy(
             root.join("packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop"),

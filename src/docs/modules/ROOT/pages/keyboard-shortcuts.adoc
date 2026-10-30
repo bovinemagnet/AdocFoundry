@@ -113,6 +113,11 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Alt-F12
 |`navigate.peek_include`
 
+|Find references
+|Alt-Shift-F12
+|Alt-Shift-F12
+|`navigate.find_references`
+
 |Find in workspace
 |Cmd-Shift-F
 |Ctrl-Shift-F

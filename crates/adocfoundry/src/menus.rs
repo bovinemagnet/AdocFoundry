@@ -155,6 +155,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::NAVIGATE_DEFINITION),
             Command(ids::NAVIGATE_FOLLOW_LINK),
             Command(ids::NAVIGATE_PEEK_INCLUDE),
+            Command(ids::NAVIGATE_FIND_REFERENCES),
             Separator,
             Command(ids::GIT_NEXT_CHANGE),
             Command(ids::GIT_PREVIOUS_CHANGE),
@@ -184,6 +185,8 @@ const MENUS: &[(&str, &[Entry])] = &[
         &[
             Command(ids::APP_CHECK_FOR_UPDATES),
             Command(ids::APP_DIAGNOSTICS),
+            Separator,
+            Command(ids::APP_ABOUT),
         ],
     ),
 ];

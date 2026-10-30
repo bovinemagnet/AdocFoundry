@@ -44,6 +44,7 @@ pub mod ids {
     pub const NAVIGATE_BACK: CommandId = CommandId::new("navigate.back");
     pub const NAVIGATE_FORWARD: CommandId = CommandId::new("navigate.forward");
     pub const NAVIGATE_PEEK_INCLUDE: CommandId = CommandId::new("navigate.peek_include");
+    pub const NAVIGATE_FIND_REFERENCES: CommandId = CommandId::new("navigate.find_references");
     pub const NAVIGATE_GO_TO: CommandId = CommandId::new("navigate.go_to");
     pub const NAVIGATE_REVEAL: CommandId = CommandId::new("navigate.reveal");
     pub const WORKSPACE_SEARCH: CommandId = CommandId::new("workspace.search");
@@ -54,6 +55,7 @@ pub mod ids {
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
     pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
     pub const APP_DIAGNOSTICS: CommandId = CommandId::new("app.diagnostics");
+    pub const APP_ABOUT: CommandId = CommandId::new("app.about");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
@@ -136,7 +138,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, ActiveTab, Always};
 
-    let builtin: [(CommandSpec, Run); 36] = [
+    let builtin: [(CommandSpec, Run); 37] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -226,6 +228,16 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 ActiveDocument,
             ),
             navigate_peek_include,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_FIND_REFERENCES,
+                "Find References",
+                Navigate,
+                Some("alt-shift-f12"),
+                ActiveDocument,
+            ),
+            navigate_find_references,
         ),
         (
             spec(
@@ -489,6 +501,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::tabs::register_tabs(registry);
     crate::images::register_images(registry);
     crate::doctor::register_doctor(registry);
+    crate::about::register_about(registry);
     crate::format_table::register_format_table(registry);
     crate::html_export::register_html_export(registry);
     crate::spelling::register_spelling(registry);
@@ -790,6 +803,25 @@ fn navigate_definition(
             "nothing to follow at offset {offset}"
         ))),
     }
+}
+
+/// The references to the anchor at the offset, or else to the page.
+fn navigate_find_references(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Offset { id, offset } = args else {
+        return Err(invalid(
+            ids::NAVIGATE_FIND_REFERENCES,
+            "a document and offset",
+        ));
+    };
+    engine
+        .document(id)
+        .ok_or(EngineError::UnknownDocument(id))?;
+    Ok(CommandOutcome::References(
+        engine.reference_matches(id, offset),
+    ))
 }
 
 fn navigate_follow_link(

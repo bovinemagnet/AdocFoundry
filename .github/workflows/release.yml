@@ -12,6 +12,11 @@ permissions:
   contents: write
 
 jobs:
+  # The tests on the tagged commit. The packages build alongside, but are published only if
+  # these pass.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   macos:
     runs-on: macos-14
     env:
@@ -37,6 +42,8 @@ jobs:
             lipo -create -output "dist/$bin" \
               "target/aarch64-apple-darwin/release/$bin" "target/x86_64-apple-darwin/release/$bin"
           done
+      # The third-party notices every package ships, as Help › About shows them.
+      - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
       - name: Import the Developer ID certificate
         if: env.SIGNED == 'true'
         env:
@@ -73,14 +80,16 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           packaging/macos/bundle.sh dist/adocfoundry "$version" dist \
             dist/adocfoundry-cli dist/adoc-ls dist/adoc-mcp
-          # The archives carry the signed tools from the bundle, and the dictionaries' licence.
+          # The archives carry the signed tools from the bundle, the dictionaries' licence and the
+          # third-party notices.
           notices="$RUNNER_TEMP/notices"
           mkdir -p "$notices/licenses"
           cp crates/adoc-spell/dictionaries/README.md "$notices/licenses/SCOWL.txt"
+          cp target/THIRD-PARTY-NOTICES.txt "$notices/licenses/"
           for bin in adoc-ls adocfoundry-cli adoc-mcp; do
             cp "dist/AdocFoundry.app/Contents/MacOS/$bin" "dist/$bin"
             tar -czf "dist/$bin-$version-macos-universal.tar.gz" -C dist "$bin" \
-              -C "$notices" licenses/SCOWL.txt
+              -C "$notices" licenses/SCOWL.txt licenses/THIRD-PARTY-NOTICES.txt
           done
       - name: Check the signatures
         if: env.SIGNED == 'true'
@@ -127,6 +136,8 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cargo install cargo-wix --locked
       - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      # The third-party notices, for the MSI and the zips.
+      - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
       # The executables are signed before the MSI and the zips take them.
       - name: Sign the executables
         if: env.SIGNED == 'true'
@@ -183,10 +194,12 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
           $bin = "target/${{ matrix.target }}/release"
-          # The dictionaries' licence, as licenses/SCOWL.txt in each zip.
+          # The dictionaries' licence and the third-party notices, as licenses/SCOWL.txt and
+          # licenses/THIRD-PARTY-NOTICES.txt in each zip.
           $licenses = Join-Path $env:RUNNER_TEMP "notices/licenses"
           New-Item -ItemType Directory -Force -Path $licenses | Out-Null
           Copy-Item crates/adoc-spell/dictionaries/README.md (Join-Path $licenses "SCOWL.txt")
+          Copy-Item target/THIRD-PARTY-NOTICES.txt $licenses
           Compress-Archive -Path "$bin/adocfoundry.exe","$bin/adocfoundry-cli.exe","$bin/adoc-ls.exe","$bin/adoc-mcp.exe",LICENSE,README.md,$licenses `
             -DestinationPath "dist/AdocFoundry-$version-windows-${{ matrix.arch }}.zip"
           Compress-Archive -Path "$bin/adoc-ls.exe",$licenses -DestinationPath "dist/adoc-ls-$version-windows-${{ matrix.arch }}.zip"
@@ -219,6 +232,8 @@ jobs:
             libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev file
       - run: cargo install cargo-deb cargo-generate-rpm --locked
       - run: cargo build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      # The third-party notices, which the deb and rpm take from here.
+      - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
       - name: deb and rpm
         run: |
           mkdir -p dist
@@ -230,8 +245,10 @@ jobs:
           curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage"
           chmod +x linuxdeploy
           cp packaging/icons/adocfoundry-256.png io.github.bovinemagnet.AdocFoundry.png
-          # linuxdeploy keeps what the AppDir holds already: the dictionaries' licence, as the deb has it.
+          # linuxdeploy keeps what the AppDir holds already: the dictionaries' licence and the
+          # third-party notices, as the deb has them.
           install -Dm644 crates/adoc-spell/dictionaries/README.md AppDir/usr/share/doc/adocfoundry/SCOWL.txt
+          install -Dm644 target/THIRD-PARTY-NOTICES.txt -t AppDir/usr/share/doc/adocfoundry
           # Update information for AppImageUpdate, and the .zsync it reads, published with the
           # release.
           update="gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-${{ matrix.arch }}.AppImage.zsync"
@@ -254,16 +271,19 @@ jobs:
           done
           grep -q -- "--features adoc-ls/typst,adoc-ls/git" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
           grep -q "crates/adoc-spell/dictionaries/README.md /app/share/doc/adocfoundry/SCOWL.txt" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
+          grep -q "target/THIRD-PARTY-NOTICES.txt -t /app/share/doc/adocfoundry" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
       - name: Command-line tools
         run: |
           version="${GITHUB_REF_NAME#v}"
-          # Each with the dictionaries' licence, staged outside dist/, which is uploaded whole.
+          # Each with the dictionaries' licence and the third-party notices, staged outside dist/,
+          # which is uploaded whole.
           notices="$RUNNER_TEMP/notices"
           mkdir -p "$notices/licenses"
           cp crates/adoc-spell/dictionaries/README.md "$notices/licenses/SCOWL.txt"
+          cp target/THIRD-PARTY-NOTICES.txt "$notices/licenses/"
           for bin in adoc-ls adocfoundry-cli adoc-mcp; do
             tar -czf "dist/$bin-$version-linux-${{ matrix.arch }}.tar.gz" -C target/release "$bin" \
-              -C "$notices" licenses/SCOWL.txt
+              -C "$notices" licenses/SCOWL.txt licenses/THIRD-PARTY-NOTICES.txt
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -333,7 +353,7 @@ jobs:
           python3 packaging/smoke-test.py "$RUNNER_TEMP/squashfs-root/usr/bin" --no-app
 
   publish:
-    needs: [smoke]
+    needs: [ci, smoke]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
