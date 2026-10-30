@@ -1,0 +1,45 @@
+= PDF theme keys
+Paul Snow
+:revnumber: 0.0.0
+:description: Which asciidoctor-pdf 2.3 theme keys the PDF export supports, approximates or ignores, key by key.
+
+PDF export reads asciidoctor-pdf 2.3 themes.
+This page lists every key in asciidoctor-pdf 2.3's https://docs.asciidoctor.org/pdf-converter/latest/theme/keys/[Theme Keys Reference] and what the export does with it.
+For choosing and writing themes, see xref:pdf-export.adoc[].
+
+== Statuses
+
+Each key has one of three statuses.
+
+Supported::
+The key has the effect asciidoctor-pdf gives it.
+
+Approximated::
+The key has an effect, but not every value asciidoctor-pdf accepts does.
+The note says which values do.
+
+Ignored::
+The export does not read the key.
+The note says what happens instead.
+
+Every theme still loads whole.
+An ignored key is not an error, and its value is still available to `$variables`.
+
+== How keys are written
+
+Keys are written flattened, as the theme loader flattens them.
+For example, `heading: h2: font-size` is `heading_h2_font_size`.
+In a key:
+
+* `<n>` stands for a heading level.
+* `<name>` stands for a name, such as an admonition type or a role.
+* `<type>` stands for a list marker type.
+* `<side>` stands for `recto` or `verso`.
+* `<position>` stands for `left`, `center` or `right`.
+
+The table is generated from `crates/adoc-pdf/src/theme/compatibility.txt`.
+A test checks that it covers every key in the reference and that no key the template reads is marked ignored.
+
+== Keys by category
+
+include::partial$theme-keys.adoc[]

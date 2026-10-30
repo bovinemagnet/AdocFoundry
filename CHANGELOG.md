@@ -8,9 +8,11 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - Files, Navigation and Modules follow the active page: whenever another page or image becomes active, each panel selects its row, opening the folders and branches above it and scrolling it into view, without taking focus. `[sidebar] follow_active = false` turns this off (#151).
 - PDF/A-1b and PDF/A-1a output: `--standard pdf-a-1b|pdf-a-1a`, `[pdf] standards` and the MCP server's `export_pdf`, validated by veraPDF in CI. PDF/A-1 forbids transparency, so a page with a transparent image or a Mermaid diagram fails with the line of the image; PDF/UA-2 waits on Typst, which writes only PDF/UA-1 (#63).
+- The user guide lists every key in asciidoctor-pdf 2.3's Theme Keys Reference as supported, approximated (and how) or ignored by PDF export, generated from `crates/adoc-pdf/src/theme/compatibility.txt`; a test checks that every key is classified and that no key the template reads is marked ignored (#106).
 
 ### Fixed
 
+- PDF export reads `index_columns` for the number of index columns, as asciidoctor-pdf does, instead of `index_column_count`; a theme that set it no longer fails to typeset (#106).
 - Bold, italic, monospace and highlighted text broken over two lines of a paragraph is highlighted in the editor.
 - On Linux the app's windows show the AdocFoundry icon in the task bar and window switcher instead of the desktop's placeholder: every window now has the app id `io.github.bovinemagnet.AdocFoundry`, which the desktop entry's name and `StartupWMClass` match (#153).
 
