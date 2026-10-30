@@ -76,7 +76,7 @@ theme = "default"                # a bundled name, a theme name or a .yml path
 themes_dir = "resources/themes"  # where <name>-theme.yml is found
 fonts_dir = "resources/fonts"
 site_url = "https://docs.example.com"
-standards = ["pdf-a-2a"]         # pdf-a-2a | pdf-ua-1
+standards = ["pdf-a-2a"]         # pdf-a-1b | pdf-a-1a | pdf-a-2a | pdf-ua-1
 
 [updates]
 check = true                     # look for a newer release at start-up
@@ -226,7 +226,7 @@ check = true                     # look for a newer release at start-up
 |`pdf.standards`
 |array of strings
 |empty
-|Standards every export conforms to: `"pdf-a-2a"` and `"pdf-ua-1"`. The command line's `--standard` adds to these.
+|Standards every export conforms to: `"pdf-a-1b"`, `"pdf-a-1a"`, `"pdf-a-2a"` and `"pdf-ua-1"`. The command line's `--standard` adds to these.
 
 |`history.enabled`
 |boolean

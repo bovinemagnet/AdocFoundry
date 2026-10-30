@@ -102,6 +102,28 @@ fn pdf_a_2a_export_is_conformant() {
 }
 
 #[test]
+fn pdf_a_1_export_is_conformant() {
+    let path = common::fixtures().join("pdf/reference/article.adoc");
+    let document = common::article(common::view_of(&path));
+    for (standard, conformance) in [(PdfStandard::A1b, "B"), (PdfStandard::A1a, "A")] {
+        let output = export(&document, &common::default_theme(), &options(&[standard]))
+            .unwrap_or_else(|error| panic!("{standard:?}: {error}"));
+        assert!(output.bytes.starts_with(b"%PDF-1.4"), "{standard:?}");
+        let bytes = String::from_utf8_lossy(&output.bytes);
+        assert!(
+            bytes.contains("<pdfaid:part>1</pdfaid:part>"),
+            "{standard:?}: no PDF/A part"
+        );
+        assert!(
+            bytes.contains(&format!(
+                "<pdfaid:conformance>{conformance}</pdfaid:conformance>"
+            )),
+            "{standard:?}"
+        );
+    }
+}
+
+#[test]
 fn pdf_ua_1_requires_alt_text() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::copy(
@@ -280,4 +302,38 @@ fn stem_alt_text_is_the_source() {
             .any(|(_, kind, alt)| kind == "Formula" && alt == "sum_(i=1)^n i^2"),
         "{tree:?}"
     );
+}
+
+#[test]
+fn index_columns_sets_the_index_columns() {
+    // Enough terms to fill more than one column.
+    let mut text = String::from("= Guide\n\n");
+    for number in 0..120 {
+        let _ = std::fmt::Write::write_fmt(&mut text, format_args!("A ((term{number:03})).\n\n"));
+    }
+    text.push_str("[index]\n== Index\n");
+    let view = common::view_of_text(Path::new("/doc/guide.adoc"), &text);
+    let columns = |count: u32| {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("columns-theme.yml");
+        std::fs::write(
+            &path,
+            format!("extends: default\nindex:\n  columns: {count}\n"),
+        )
+        .unwrap();
+        let theme = adoc_pdf::load_theme(&adoc_pdf::ThemeSource::File(path)).unwrap();
+        let typst = to_typst(&common::article(view.clone()), &theme, &options(&[]));
+        let pages = typeset_pages(&typst, &theme, &options(&[])).unwrap_or_else(|e| panic!("{e}"));
+        let mut lefts: Vec<i64> = pages
+            .iter()
+            .flat_map(|page| &page.runs)
+            .filter(|run| run.text.starts_with("term"))
+            .map(|run| run.x.round() as i64)
+            .collect();
+        lefts.sort_unstable();
+        lefts.dedup();
+        lefts.len()
+    };
+    assert_eq!(columns(1), 1);
+    assert_eq!(columns(3), 3);
 }

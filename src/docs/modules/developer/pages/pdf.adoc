@@ -87,6 +87,11 @@ The flattened keys are passed to the template as a Typst dictionary under asciid
 A key asciidoctor-pdf reads is therefore a key the template can read.
 Only unknown top-level categories warn, because themes commonly keep variables in categories of their own.
 
+The classification of every asciidoctor-pdf 2.3 key lives in `crates/adoc-pdf/src/theme/compatibility.txt`, one `key | status | note` line each.
+The reference key list is `tests/fixtures/pdf/themes/reference-keys.txt`.
+`cargo test -p adoc-pdf --test theme_keys` checks that every reference key is classified once, that no key the template or the emitter names is marked ignored, and that the user guide's table is current.
+After changing the template's keys or the classification, run it with `UPDATE_THEME_KEYS=1` to regenerate `src/docs/modules/ROOT/partials/theme-keys.adoc`.
+
 `ThemeSource::named` picks the source from a name: a `.yml` name is a file, a bundled name is bundled, and any other name is `<name>-theme.yml` in the themes directory.
 
 == The emitter
@@ -204,7 +209,7 @@ A missing image is a diagnostic, not a failure.
 So is an image that cannot be decoded: the page is written with Typst's own image decoder checking each image, and one that fails is shown as its alt text with the warning `image could not be read: <target> (<reason>)`, instead of Typst's "failed to decode image" error failing the export.
 The template labels the pages for the PDF: roman numerals for the front matter (the title page and a table of contents on its own pages) and arabic numbers from 1 for the body, so the labels match the printed footer numbers; a document without front matter is labelled from 1.
 
-`PdfStandard::A2a` and `Ua1` are passed to `typst-pdf`.
+`PdfStandard::A1b`, `A1a`, `A2a` and `Ua1` are mapped to `typst_pdf::PdfStandard` and passed to `typst-pdf`.
 A document date is written only when a standard is requested, the given one or else today's in UTC, so an ordinary export gives the same bytes for the same input.
 The document's title, language (`en-GB` is split into `en` and `GB`), author and keywords come from the attributes.
 An image without alt text gets its file name.

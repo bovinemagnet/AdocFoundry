@@ -15,6 +15,10 @@ use crate::{mirror_view::MirrorView, preview::PreviewView, workspace_view::Works
 const BUSY_TICK: Duration = Duration::from_millis(16);
 const IDLE_TICK: Duration = Duration::from_millis(100);
 
+/// The id Linux desktops match a window to its desktop entry by, and so find its icon: the
+/// Wayland app id and the X11 `WM_CLASS`. It is the desktop entry's name and the Flatpak id.
+const APP_ID: &str = "io.github.bovinemagnet.AdocFoundry";
+
 /// The single owner of the engine. Views hold an `Entity<AppState>`, invoke commands through it,
 /// and subscribe to the engine events it re-emits.
 pub struct AppState {
@@ -107,18 +111,24 @@ pub fn open_main_window(
     files: Vec<PathBuf>,
     cx: &mut App,
 ) {
-    let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..WindowOptions::default()
-    };
+    let options = window_options(Bounds::centered(None, size(px(1280.), px(800.)), cx));
     let opened = cx.open_window(options, |window, cx| {
         let view = cx.new(|cx| WorkspaceView::new(app.clone(), folder, files.clone(), window, cx));
         cx.new(|cx| Root::new(view, window, cx))
     });
     if let Err(error) = opened {
         eprintln!("adocfoundry: could not open the main window: {error}");
+    }
+}
+
+/// The options every window opens with, so that each is grouped under the app and shows its
+/// icon.
+fn window_options(bounds: Bounds<gpui::Pixels>) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
+        app_id: Some(APP_ID.to_owned()),
+        ..WindowOptions::default()
     }
 }
 
@@ -129,12 +139,7 @@ pub fn open_secondary_window(
     kind: WindowKind,
     cx: &mut App,
 ) -> Option<(WindowHandle<Root>, AnyView)> {
-    let bounds = Bounds::centered(None, size(px(720.), px(640.)), cx);
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        titlebar: Some(gpui_component::TitleBar::title_bar_options()),
-        ..WindowOptions::default()
-    };
+    let options = window_options(Bounds::centered(None, size(px(720.), px(640.)), cx));
     let mut view: Option<AnyView> = None;
     let opened = cx.open_window(options, |window, cx| match kind {
         WindowKind::Mirror => {
@@ -167,5 +172,33 @@ pub fn open_secondary_window(
             eprintln!("adocfoundry: could not open a window: {error}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use gpui::point;
+
+    use super::*;
+
+    #[test]
+    fn every_window_names_the_app() {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(720.), px(640.)));
+        assert_eq!(window_options(bounds).app_id.as_deref(), Some(APP_ID));
+    }
+
+    #[test]
+    fn desktop_entry_is_found_by_the_app_id() {
+        let entry = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packaging/linux")
+            .join(format!("{APP_ID}.desktop"));
+        let text =
+            std::fs::read_to_string(&entry).expect("the desktop entry is named for the app id");
+        assert!(text
+            .lines()
+            .any(|line| line == format!("StartupWMClass={APP_ID}")));
+        assert!(text.lines().any(|line| line == format!("Icon={APP_ID}")));
     }
 }

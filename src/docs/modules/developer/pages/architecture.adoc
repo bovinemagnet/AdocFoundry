@@ -64,7 +64,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L2
 |`adoc-pdf`
-|PDF export. A theme loader for asciidoctor-pdf's YAML themes, an emitter from the view tree to Typst, a Typst `World` with bundled fonts, in-process compilation with errors mapped back to AsciiDoc lines, book assembly, the index, and PDF/A-2a and PDF/UA-1. It depends on `adoc-core`, `adoc-render` and Typst. See xref:pdf.adoc[PDF export].
+|PDF export. A theme loader for asciidoctor-pdf's YAML themes, an emitter from the view tree to Typst, a Typst `World` with bundled fonts, in-process compilation with errors mapped back to AsciiDoc lines, book assembly, the index, and the PDF/A-1b, PDF/A-1a, PDF/A-2a and PDF/UA-1 profiles. It depends on `adoc-core`, `adoc-render` and Typst. See xref:pdf.adoc[PDF export].
 
 |L3
 |`adoc-engine`

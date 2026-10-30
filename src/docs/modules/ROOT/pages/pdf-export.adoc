@@ -131,7 +131,7 @@ A font that cannot be read is a warning.
 * Admonitions, code, inline code, tables, lists, description lists, quotes, verses, sidebars, examples, captions, images and thematic breaks.
 * Links, marks, `kbd`, buttons, menus, footnotes, roles and the index.
 
-A theme key that the converter does not use is ignored.
+Which keys take effect, which are approximated and which are ignored is listed key by key in xref:pdf-theme-keys.adoc[].
 An unknown top-level category produces a warning, and its keys are still available as variables.
 
 == Source highlighting
@@ -197,11 +197,17 @@ The theme's `index_column_count` and `index_column_gap` set the columns.
 
 == Standards and metadata
 
-Two standards are available, alone or together.
+Four standards are available, alone or together where they allow it.
 
 [cols="1,3"]
 |===
 |Name |Standard
+
+|`pdf-a-1b`
+|PDF/A-1b, for archiving. It is PDF 1.4.
+
+|`pdf-a-1a`
+|PDF/A-1a, for archiving. It is PDF 1.4 and tagged.
 
 |`pdf-a-2a`
 |PDF/A-2a, for archiving.
@@ -212,6 +218,11 @@ Two standards are available, alone or together.
 
 Request them with `--standard` (repeatable) or `standards = ["pdf-a-2a"]` in the `[pdf]` table.
 The PDF is always tagged.
+PDF/A-1 is PDF 1.4 and forbids transparency.
+An image or diagram with transparency makes a PDF/A-1 export fail with Typst's error at the line of the image, for example `configure.adoc:7: PDF/A-1b error: the image contains transparency`.
+Mermaid diagrams use opacity, so use PDF/A-2a for documents that contain them.
+PDF/A-1a and PDF/A-1b cannot be combined with PDF/UA-1, which needs PDF 1.5 or later.
+The export fails and says so.
 A document that cannot conform fails the export with Typst's reasons, mapped to source lines.
 
 An ordinary export has no creation date, so the same input gives the same bytes.
@@ -253,7 +264,7 @@ A page the parser cannot read is shown in the PDF as its source, and the export 
 == What is not supported
 
 * There is no live PDF preview pane.
-* PDF/A-1 and PDF/UA-2 are not available.
+* PDF/UA-2 is not available, because Typst 0.15.1 writes only PDF/UA-1.
 * asciidoctor-pdf's Ruby converter extensions are not run.
 * A front cover image is not supported beyond what the title page shows.
 * The `*-with-font-fallbacks` themes load without their fallback fonts.

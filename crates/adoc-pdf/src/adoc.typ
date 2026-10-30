@@ -534,7 +534,7 @@
 }
 
 // The index: every term the document marks, grouped by first letter, each with the body pages
-// it is on as links, in `index_column_count` columns, as asciidoctor-pdf lays it out.
+// it is on as links, in `index_columns` columns, as asciidoctor-pdf lays it out.
 #let adoc-index() = context {
   let entries = query(<adoc-index-term>).map(marker => (
     terms: marker.value,
@@ -568,7 +568,7 @@
     }
   }
   let letters = entries.map(e => upper(e.terms.first().first())).dedup().sorted()
-  columns(pick("index_column_count", default: 2), gutter: pick("index_column_gap", default: 12pt), {
+  columns(int(pick("index_columns", default: 2)), gutter: pick("index_column_gap", default: 12pt), {
     for letter in letters {
       block(sticky: true, above: prose-bottom, below: list-gap, styled(("index_category", "heading_h4", "heading"), strong(letter)))
       let beneath = entries.filter(e => upper(e.terms.first().first()) == letter)

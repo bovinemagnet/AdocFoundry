@@ -7,7 +7,7 @@
 //! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 //! adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
 //!     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
-//!     [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+//!     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli doctor [<root>] [--format text|json]
 //! adocfoundry-cli --version
@@ -34,7 +34,7 @@ const USAGE: &str = "usage:
   adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
   adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
       [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
-      [--standard pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+      [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli doctor [<root>] [--format text|json]
   adocfoundry-cli --version";
@@ -324,8 +324,11 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
         .iter()
         .filter(|(name, _)| *name == "standard")
         .map(|(_, value)| {
-            pdf_standard(value)
-                .ok_or_else(|| format!("unknown standard `{value}`: expected pdf-a-2a or pdf-ua-1"))
+            pdf_standard(value).ok_or_else(|| {
+                format!(
+                    "unknown standard `{value}`: expected pdf-a-1b, pdf-a-1a, pdf-a-2a or pdf-ua-1"
+                )
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
 

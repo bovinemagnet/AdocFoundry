@@ -50,7 +50,7 @@ On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15,
 On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
 
 |`pdf-standards`
-|On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both standards too. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
+|On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1, and as PDF/A-1b and PDF/A-1a. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both of those standards too, but not under PDF/A-1, because its Mermaid diagram uses transparency. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
 
 |`grammar`
 |Builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
@@ -216,11 +216,24 @@ There is no SVG, and `librsvg` is not needed.
 |Linux
 |The deb, rpm and Flatpak install the 256 PNG as `share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png`.
 The AppImage uses the same PNG, and `cargo xtask package` puts it in the archive as `io.github.bovinemagnet.AdocFoundry.png`.
+The window's icon comes from the desktop entry, which the desktop finds by the app id `io.github.bovinemagnet.AdocFoundry`.
+That is the Wayland app id and the X11 `WM_CLASS`, and it is also the desktop file's name, its `StartupWMClass` and the Flatpak id.
+A test in `crates/adocfoundry/src/app.rs` keeps them the same.
+A development build (`cargo run -p adocfoundry`) shows the desktop's placeholder icon until the entry and icon are installed for the user, as shown after this table.
 
 |Windows
 |`crates/adocfoundry/build.rs` embeds `adocfoundry.ico` in `adocfoundry.exe` as icon resource 1, where GPUI looks for the window icon, using the `embed-resource` crate.
 The MSI (`crates/adocfoundry/wix/main.wxs`) gives the Start-menu shortcut and the Programs and Features entry the same icon.
 |===
+
+To see the icon in a development build on Linux, install the desktop entry and the icon for the user.
+The entry's `Exec=adocfoundry` does not need to run the build for the icon to show.
+
+[source,sh]
+----
+install -Dm644 packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop -t ~/.local/share/applications
+install -Dm644 packaging/icons/adocfoundry-256.png ~/.local/share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png
+----
 
 == Release records
 
