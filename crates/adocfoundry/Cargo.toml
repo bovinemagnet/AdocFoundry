@@ -55,6 +55,7 @@ assets = [
     ["target/release/adoc-mcp", "usr/bin/", "755"],
     ["../../packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop", "usr/share/applications/", "644"],
     ["../../packaging/icons/adocfoundry-256.png", "usr/share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png", "644"],
+    ["../../crates/adoc-spell/dictionaries/README.md", "usr/share/doc/adocfoundry/SCOWL.txt", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -66,4 +67,5 @@ assets = [
     { source = "target/release/adoc-mcp", dest = "/usr/bin/adoc-mcp", mode = "755" },
     { source = "packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop", dest = "/usr/share/applications/io.github.bovinemagnet.AdocFoundry.desktop", mode = "644" },
     { source = "packaging/icons/adocfoundry-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png", mode = "644" },
+    { source = "crates/adoc-spell/dictionaries/README.md", dest = "/usr/share/doc/adocfoundry/SCOWL.txt", mode = "644", doc = true },
 ]

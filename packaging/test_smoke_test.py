@@ -1,10 +1,13 @@
-"""Tests of the smoke test's signature checks, which otherwise run only on a signed release.
+"""Tests of the smoke test's signature checks, which otherwise run only on a signed release, and
+of where it finds the dictionaries' licence in each package.
 
 Run with: python3 -m unittest discover -s packaging -p 'test_*.py'
 """
 
 import importlib.util
 import os
+import shutil
+import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -56,6 +59,37 @@ class SignatureChecks(unittest.TestCase):
     def test_linux_has_no_signature_check(self):
         self.assertEqual(len(smoke_test.signature_problems("bin", "linux", runner({}))), 1)
 
+
+class LicenceChecks(unittest.TestCase):
+    def package(self, binaries, licence):
+        """A temporary package with its binaries' folder at `binaries` and, unless None, the
+        licence at `licence`, both relative to its root: the root."""
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        os.makedirs(os.path.join(root, binaries))
+        if licence:
+            path = os.path.join(root, licence)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as file:
+                file.write("Copyright 2000-2026 by Kevin Atkinson\n")
+        return root
+
+    def test_the_licence_is_found_in_each_package(self):
+        packages = {
+            "Windows zip": ("unpacked", "unpacked/licenses/SCOWL.txt"),
+            "macOS app": ("AdocFoundry.app/Contents/MacOS",
+                          "AdocFoundry.app/Contents/Resources/licenses/SCOWL.txt"),
+            "deb, rpm, AppImage": ("usr/bin", "usr/share/doc/adocfoundry/SCOWL.txt"),
+        }
+        for package, (binaries, licence) in packages.items():
+            root = self.package(binaries, licence)
+            path = smoke_test.licence_path(os.path.join(root, binaries))
+            self.assertIsNotNone(path, package)
+            self.assertTrue(os.path.samefile(path, os.path.join(root, licence)), package)
+
+    def test_a_package_without_the_licence_is_reported(self):
+        root = self.package("usr/bin", None)
+        self.assertIsNone(smoke_test.licence_path(os.path.join(root, "usr/bin")))
 
 if __name__ == "__main__":
     unittest.main()
