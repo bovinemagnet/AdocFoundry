@@ -11,6 +11,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Fixed
 
 - Bold, italic, monospace and highlighted text broken over two lines of a paragraph is highlighted in the editor.
+- On Linux the app's windows show the AdocFoundry icon in the task bar and window switcher instead of the desktop's placeholder: every window now has the app id `io.github.bovinemagnet.AdocFoundry`, which the desktop entry's name and `StartupWMClass` match (#153).
 
 ## 0.4.0 — 2026-10-27
 
