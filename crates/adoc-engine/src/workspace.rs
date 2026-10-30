@@ -201,6 +201,7 @@ impl Engine {
                 None
             }
         };
+        self.record_recent_folders();
         self.reindex();
         self.discover_git();
         Ok(())

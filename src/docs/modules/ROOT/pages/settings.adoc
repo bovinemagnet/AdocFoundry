@@ -22,11 +22,12 @@ Saving either file applies it.
 Reload Settings re-reads both.
 
 [#state-folder]
-The app also keeps two folders in its state folder, `adocfoundry` under the platform's local state location: `$XDG_STATE_HOME/adocfoundry` on Linux, normally `~/.local/state/adocfoundry`; `~/Library/Application Support/adocfoundry` on macOS; and `%LOCALAPPDATA%\adocfoundry` on Windows.
+The app also keeps two folders and two files in its state folder, `adocfoundry` under the platform's local state location: `$XDG_STATE_HOME/adocfoundry` on Linux, normally `~/.local/state/adocfoundry`; `~/Library/Application Support/adocfoundry` on macOS; and `%LOCALAPPDATA%\adocfoundry` on Windows.
 It is local, never roaming, because the settings file is often synchronised or kept in a dotfiles repository and copies of pages should not travel with it.
 The folders are `recovery`, holding copies of unsaved pages until they are saved or closed, and `history`, holding saved versions of pages.
+The files are `session.json`, the last session, and `recent-folders.json`, the folders opened recently.
 `update-state.toml` and `sidebar-state.json` stay beside the settings file.
-See xref:using-the-editor.adoc#crash-recovery[Recovering unsaved changes] and xref:using-the-editor.adoc#local-history[Local history].
+See xref:using-the-editor.adoc#crash-recovery[Recovering unsaved changes], xref:using-the-editor.adoc#local-history[Local history] and xref:using-the-editor.adoc#restoring-the-session[Restoring the last session].
 
 == Example
 

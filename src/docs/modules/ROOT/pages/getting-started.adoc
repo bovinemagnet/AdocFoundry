@@ -134,6 +134,7 @@ adocfoundry [folder [file...]]
 
 `adocfoundry` opens a folder as the workspace and any files you list in tabs.
 Open Folder (kbd:[Cmd+Shift+O] or kbd:[Ctrl+Shift+O]) does the same from inside the application.
+Launched with no folder or file, the app reopens the last session; see xref:using-the-editor.adoc#restoring-the-session[Restoring the last session].
 
 The fixtures in the repository make a good first workspace.
 

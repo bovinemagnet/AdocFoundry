@@ -76,6 +76,8 @@ pub struct Engine {
     pub(crate) spelling: crate::spelling::Spelling,
     pub(crate) auto_saves: crate::auto_save::AutoSaveState,
     pub(crate) recovery: crate::recovery::RecoveryState,
+    /// Whether the last session and the recent folders are kept, and those folders.
+    pub(crate) session: crate::session::SessionState,
     pub(crate) local_history: crate::local_history::LocalHistory,
     pub(crate) html_exports: crate::html_export::HtmlExports,
     #[cfg(feature = "typst")]
@@ -149,6 +151,7 @@ impl Engine {
             spelling: crate::spelling::Spelling::default(),
             auto_saves: crate::auto_save::AutoSaveState::default(),
             recovery: crate::recovery::RecoveryState::default(),
+            session: crate::session::SessionState::default(),
             local_history: crate::local_history::LocalHistory::default(),
             html_exports: crate::html_export::HtmlExports::default(),
             #[cfg(feature = "typst")]

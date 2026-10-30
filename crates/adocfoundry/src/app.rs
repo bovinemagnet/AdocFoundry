@@ -43,6 +43,8 @@ impl AppState {
         // Unsaved edits survive a crash, and saved versions are kept to restore.
         engine.enable_recovery();
         engine.enable_local_history();
+        // The last session and the folders opened recently are kept for the next launch.
+        engine.enable_sessions();
         let events = engine.subscribe();
         let pump = cx.spawn(async move |this, cx| loop {
             let busy = this
