@@ -384,6 +384,24 @@
   ))
 }
 
+// A listing highlighted as the preview highlights it: each line of the `raw` block drawn as its
+// runs, `(text, fill, bold, italic)`, so the block stays a listing, in the code font, with its
+// callouts coloured. A run without a fill keeps the code's colour.
+#let adoc-highlighted(lines, body) = {
+  show raw.line: it => {
+    let runs = lines.at(it.number - 1, default: none)
+    if runs == none { return it }
+    for (content, fill, bold, italic) in runs {
+      let args = (:)
+      if fill != none { args.fill = fill }
+      if bold { args.weight = "bold" }
+      if italic { args.style = "italic" }
+      text(..args, content)
+    }
+  }
+  body
+}
+
 #let adoc-callouts(items) = context {
   let color = pick("conum_font_color", "codespan_font_color", default: base-color)
   let markers = items.map(((number, _)) => text(fill: color, font: families(pick("conum_font_family", "codespan_font_family")), str.from-unicode(0x245F + number)))

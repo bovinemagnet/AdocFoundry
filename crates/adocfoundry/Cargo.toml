@@ -28,6 +28,8 @@ embed-resource.workspace = true
 
 [dev-dependencies]
 adoc-git = { workspace = true, features = ["test-support"] }
+# PDF export highlights source blocks as the preview does; `preview::highlight_tests` checks it.
+adoc-pdf.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 gpui-component = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

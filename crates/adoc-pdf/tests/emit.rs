@@ -316,3 +316,61 @@ fn only_blocks_that_may_not_fit_are_measured() {
         "an image's height is not known from text"
     );
 }
+
+#[test]
+fn source_blocks_are_highlighted_as_the_preview_highlights_them() {
+    let page = ":source-highlighter: rouge\n\n[source,rust]\n----\nfn main() { // <1>\n\tlet s = \"x\";\n}\n----\n<1> The entry point.\n";
+    let typst = typst_of(&format!("= Page\n{page}"));
+    // Each line's runs in the preview's light colours: `fn` a keyword, the string green.
+    assert!(
+        typst.source.contains("adoc-highlighted((("),
+        "{}",
+        typst.source
+    );
+    assert!(
+        typst.source.contains("(\"fn\", rgb(4, 51, 255)"),
+        "{}",
+        typst.source
+    );
+    assert!(
+        typst.source.contains("(\"\\\"x\\\"\", rgb(3, 106, 7)"),
+        "{}",
+        typst.source
+    );
+    // The callout (its comment marker removed, as Asciidoctor removes it) stays on its line, and the tab is expanded as `raw` expands it.
+    let text = compiled_text(&typst);
+    assert!(text.contains("fnmain(){①"), "{text}");
+    assert!(text.contains("lets=\"x\";"), "{text}");
+}
+
+#[test]
+fn highlighted_code_is_never_typst() {
+    for line in [
+        r#"")); #panic("injected") (("#,
+        r"#set page(width: 1pt) $x$ <label> @ref",
+        r"] [ \ \u{41} // /* */",
+    ] {
+        let typst = typst_of(&format!(
+            "= Page\n:source-highlighter: rouge\n\n[source,bash]\n----\necho '{line}'\n----\n"
+        ));
+        assert!(
+            typst.source.contains("adoc-highlighted((("),
+            "{}",
+            typst.source
+        );
+        let text = compiled_text(&typst);
+        assert!(text.contains(&squeeze(line)), "{line:?} became {text:?}");
+    }
+}
+
+#[test]
+fn languages_without_a_grammar_keep_typst_s_highlighter() {
+    let typst = typst_of("= Page\n:source-highlighter: rouge\n\n[source,xml]\n----\n<a/>\n----\n");
+    assert!(!typst.source.contains("adoc-highlighted((("));
+    assert!(typst.source.contains("lang: \"xml\""), "{}", typst.source);
+    // Without `source-highlighter`, nothing is highlighted, as asciidoctor-pdf does.
+    let typst = typst_of("= Page\n\n[source,rust]\n----\nfn main() {}\n----\n");
+    assert!(
+        !typst.source.contains("adoc-highlighted(((") && !typst.source.contains("lang: \"rust\"")
+    );
+}
