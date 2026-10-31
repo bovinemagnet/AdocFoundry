@@ -5,7 +5,8 @@ flowchart TD
         test["test matrix: ubuntu, macos-14, windows<br/>cargo test --workspace --exclude adocfoundry,<br/>then cargo build -p adocfoundry"]
         grammar["grammar: tree-sitter corpus tests<br/>and queries compile"]
     end
-    tag["Tag v*"] --> rel
+    tag["Tag v*"] --> version["version: the tag matches Cargo.toml,<br/>src/docs/antora.yml and CHANGELOG.md"]
+    version --> rel
     subgraph rel["Release workflow"]
         mac["macOS universal DMG<br/>lipo, packaging/macos/bundle.sh,<br/>ad-hoc signed (Developer ID in Phase 6)"]
         win["Windows MSI (cargo-wix) and zip<br/>x64, arm64"]

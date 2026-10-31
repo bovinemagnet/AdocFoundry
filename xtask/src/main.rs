@@ -2,6 +2,7 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
+mod bump;
 mod layers;
 // Shared with the app's build script, which uses what this binary does not.
 #[allow(dead_code)]
@@ -26,9 +27,10 @@ fn main() -> ExitCode {
             }
         }
         Some("notices") => run_notices(std::env::args().nth(2)),
+        Some("bump") => run_bump(std::env::args().nth(2)),
         _ => {
             eprintln!(
-                "usage: cargo xtask <task>\n\ntasks:\n  layers     check the crate dependency ladder\n  notices    write the third-party notices to a file, or print them\n  package    release build and archive for this platform in dist/"
+                "usage: cargo xtask <task>\n\ntasks:\n  bump       write a release's version into Cargo.toml, the docs and the changelog\n  layers     check the crate dependency ladder\n  notices    write the third-party notices to a file, or print them\n  package    release build and archive for this platform in dist/"
             );
             ExitCode::FAILURE
         }
@@ -58,6 +60,25 @@ fn run_notices(output: Option<String>) -> ExitCode {
         }
         Err(error) => {
             eprintln!("notices: {output}: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `cargo xtask bump <version>`: the version every file the release checks gives.
+fn run_bump(version: Option<String>) -> ExitCode {
+    let Some(version) = version else {
+        eprintln!("usage: cargo xtask bump <version>");
+        return ExitCode::FAILURE;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    match bump::run(&root, &version) {
+        Ok(()) => {
+            println!("bump: Cargo.toml, src/docs/antora.yml and CHANGELOG.md give {version}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("bump: {error}");
             ExitCode::FAILURE
         }
     }

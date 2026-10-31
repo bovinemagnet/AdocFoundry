@@ -12,12 +12,25 @@ permissions:
   contents: write
 
 jobs:
+  # A tag must name the version the files give: binaries report Cargo.toml's version, and a
+  # package published under another would be offered by the updater again and again. Checked
+  # before anything is built; `cargo xtask bump <version>` writes the files.
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches Cargo.toml, the documentation and the changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 packaging/release-version.py check "${GITHUB_REF_NAME#v}"
+
   # The tests on the tagged commit. The packages build alongside, but are published only if
   # these pass.
   ci:
+    needs: version
     uses: ./.github/workflows/ci.yml
 
   macos:
+    needs: version
     runs-on: macos-14
     env:
       # Signing and notarisation need the Developer ID secrets; without them the app is signed
@@ -115,6 +128,7 @@ jobs:
             dist/*.tar.gz
 
   windows:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -211,6 +225,7 @@ jobs:
             dist/*.zip
 
   linux:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -339,10 +354,13 @@ jobs:
         run: |
           signed=()
           if [[ "$SIGNED" == "true" ]]; then signed=(--expect-signed); fi
+          # A tag's packages must report the tag's version.
+          expected=()
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then expected=(--expect-version "${GITHUB_REF_NAME#v}"); fi
           if [[ "$RUNNER_OS" == "Linux" ]]; then
-            python3 packaging/smoke-test.py "$BIN" --no-app
+            python3 packaging/smoke-test.py "$BIN" --no-app "${expected[@]}"
           else
-            python3 packaging/smoke-test.py "$BIN" "${signed[@]}"
+            python3 packaging/smoke-test.py "$BIN" "${signed[@]}" "${expected[@]}"
           fi
       # The AppImage carries the tools as the deb does.
       - name: Smoke test (AppImage)
@@ -350,13 +368,19 @@ jobs:
         run: |
           chmod +x artefacts/*.AppImage
           (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/artefacts/*.AppImage --appimage-extract >/dev/null)
-          python3 packaging/smoke-test.py "$RUNNER_TEMP/squashfs-root/usr/bin" --no-app
+          expected=()
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then expected=(--expect-version "${GITHUB_REF_NAME#v}"); fi
+          python3 packaging/smoke-test.py "$RUNNER_TEMP/squashfs-root/usr/bin" --no-app "${expected[@]}"
 
   publish:
     needs: [ci, smoke]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      # The changelog's section for the version, ahead of GitHub's list of pull requests.
+      - name: Release notes
+        run: python3 packaging/release-version.py notes "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/release-notes.md"
       - uses: actions/download-artifact@v4
         with:
           path: artefacts
@@ -367,4 +391,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: artefacts/*
+          body_path: ${{ runner.temp }}/release-notes.md
           generate_release_notes: true

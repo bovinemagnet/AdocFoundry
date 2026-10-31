@@ -1,4 +1,5 @@
-"""Tests that a release is published only once CI has passed on the tagged commit.
+"""Tests that a release is published only once CI has passed on the tagged commit, and only
+when the tag matches the version the files give.
 
 Run with: python3 -m unittest discover -s packaging -p 'test_*.py'
 """
@@ -54,6 +55,30 @@ class ReleaseWaitsForCi(unittest.TestCase):
         self.assertEqual(len(callers), 1, "one job of release.yml runs ci.yml")
         self.assertIn(callers[0], needs(release["publish"]), "publish waits for CI")
         self.assertIn("smoke", needs(release["publish"]), "publish still waits for the smoke tests")
+
+    def test_tag_check_precedes_build(self):
+        release = jobs(read("release.yml"))
+        checks = [
+            name
+            for name, lines in release.items()
+            if any("packaging/release-version.py check" in line for line in lines)
+        ]
+        self.assertEqual(checks, ["version"], "one job checks the tag against the files")
+        check = "\n".join(release["version"])
+        self.assertIn('"${GITHUB_REF_NAME#v}"', check, "the tag's version is the one checked")
+        self.assertIn("startsWith(github.ref, 'refs/tags/')", check, "only a tag is checked")
+        # Nothing is built, tested or published until the tag has been checked.
+        for name in ["ci", "macos", "windows", "linux"]:
+            self.assertIn("version", needs(release[name]), f"{name} waits for the version check")
+
+    def test_the_release_is_published_with_its_changelog_section(self):
+        publish = "\n".join(jobs(read("release.yml"))["publish"])
+        self.assertIn('packaging/release-version.py notes "${GITHUB_REF_NAME#v}"', publish)
+        self.assertRegex(publish, r"body_path:\s*\S+")
+
+    def test_the_smoke_test_expects_the_tags_version(self):
+        smoke = "\n".join(jobs(read("release.yml"))["smoke"])
+        self.assertIn("--expect-version", smoke)
 
     def test_ci_can_be_called_and_does_not_also_run_on_tags(self):
         ci = read("ci.yml")

@@ -17,6 +17,7 @@ cargo run -p adoc-ls -- --version                        # smoke-test the langua
 cargo deny check                                         # licences and advisories
 cargo xtask layers                                       # the crate dependency ladder
 cargo xtask package                                      # release build and archive in dist/
+cargo xtask bump 0.5.0                                   # set the version for a release
 cargo xtask notices target/THIRD-PARTY-NOTICES.txt       # the third-party licence notices
 ----
 
@@ -63,7 +64,19 @@ On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platfo
 Each platform job builds `adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` in release mode, with `adoc-ls` built with `--features adoc-ls/typst,adoc-ls/git`.
 Every package carries all four binaries, and `adoc-ls`, `adocfoundry-cli` and `adoc-mcp` are also published as archives of their own.
 
-The workflow's first job, `ci`, calls `ci.yml` on the tagged commit.
+The workflow's first job, `version`, checks that the tag names the version the repository holds.
+On a `v*` tag it runs `python3 packaging/release-version.py check "${GITHUB_REF_NAME#v}"`, which fails, naming each file, unless all three of these give the tag's version:
+
+* `version` under `[workspace.package]` in the root `Cargo.toml`
+* `display_version` in `src/docs/antora.yml`
+* a `## <version> ` section heading in `CHANGELOG.md`
+
+The `ci` job and the macOS, Windows and Linux build jobs all wait for `version`, so a mismatched tag fails before anything is built.
+The check matters because the binaries report `Cargo.toml`'s version (`CARGO_PKG_VERSION`), while the packages are named after the tag, and the updater compares the running version with the release's tag.
+A release whose two versions differ would be offered to its own users again and again.
+On a manual (`workflow_dispatch`) run from a branch the check is skipped.
+
+The `ci` job calls `ci.yml` on the tagged commit.
 The packages are still built and smoke-tested alongside it, but the `publish` job needs both `ci` and `smoke`.
 A tag on a commit whose tests fail therefore still builds its artefacts, which can be downloaded from the workflow run, but publishes no release.
 To publish, re-run the failed jobs after a fix, or push a new tag.
@@ -99,7 +112,9 @@ It also checks the Flatpak manifest (see below).
 |Runs `packaging/smoke-test.py` on each platform's downloaded artefacts before `publish` (see below).
 
 |`publish`
-|On a tag, downloads every artefact and writes `SHA256SUMS` (`sha256sum` over every asset), and attaches the artefacts and `SHA256SUMS` to a GitHub release with generated release notes.
+|On a tag, checks out the repository, downloads every artefact and writes `SHA256SUMS` (`sha256sum` over every asset).
+It takes the changelog's section for the version, without its heading, with `python3 packaging/release-version.py notes <version> <file>`, and uses it as the release's body (`body_path`).
+It attaches the artefacts and `SHA256SUMS` to a GitHub release, and GitHub's generated list of pull requests (`generate_release_notes: true`) is still appended after the changelog section.
 |===
 
 === Signing
@@ -182,12 +197,14 @@ It checks:
 
 * that the dictionaries' licence ships with the binaries (`licenses/SCOWL.txt` beside them, in the app bundle's `Resources/licenses/`, or in `share/doc/adocfoundry/`) and holds the SCOWL copyright notice
 * that `THIRD-PARTY-NOTICES.txt` ships beside `SCOWL.txt` (`notices_path`)
-* every binary's `--version`
+* every binary's `--version`, which with `--expect-version <version>` must give exactly that version
 * a PDF export of the reference article by `adocfoundry-cli`
 * the initialise and shutdown of `adoc-ls` and `adoc-mcp`
 * that the application stays up for 15 seconds on a fixture workspace
 
 The application is not launched on Linux, because the hosted runners have no GPU for its Vulkan renderer (`--no-app`); it is checked by hand there.
+
+The release passes `--expect-version` the tag's version on tag builds: on macOS and Windows, and for the deb and the AppImage on Linux.
 
 The script also takes `--expect-signed`, which the `smoke` job passes when the platform was signed.
 It then checks:
@@ -195,7 +212,11 @@ It then checks:
 * on macOS, that each binary passes `codesign --verify --strict`, has a Developer ID and the hardened runtime, and that Gatekeeper (`spctl`) accepts the app
 * on Windows, that each executable's Authenticode signature is `Valid`
 
-Its signature checks, and where it finds the licence, have unit tests in `packaging/test_smoke_test.py`, and `packaging/test_workflows.py` checks that `release.yml` calls `ci.yml` and that `publish` needs both `ci` and `smoke`. The `lint` job runs them with `python3 -m unittest discover -s packaging -p 'test_*.py'`.
+Its signature checks, and where it finds the licence, have unit tests in `packaging/test_smoke_test.py`.
+`packaging/test_release_version.py` tests the tag check and the extraction of the changelog's notes.
+`packaging/test_workflows.py` checks that `release.yml` calls `ci.yml` and that `publish` needs both `ci` and `smoke`.
+It also checks that the `version` job precedes every build (`test_tag_check_precedes_build`), that `publish` uses the changelog section, and that the smoke test is given the tag's version.
+The `lint` job runs them with `python3 -m unittest discover -s packaging -p 'test_*.py'`.
 
 === The Flatpak manifest
 
@@ -211,6 +232,20 @@ The packages for macOS and Windows have not been installed and run by hand yet; 
 It builds the four binaries (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`) in release mode, with `adoc-ls` built with its features, stages them in `dist/` with the licence, the dictionaries' licence (`licenses/SCOWL.txt`), the notices (`licenses/THIRD-PARTY-NOTICES.txt`) and README (and, on Linux, the desktop entry and the icon as `io.github.bovinemagnet.AdocFoundry.png`), and writes a `tar.gz` named like `adocfoundry-<version>-<os>-<arch>`.
 The version is read from `workspace.package.version` in the root `Cargo.toml`.
 The installers themselves come from the release workflow.
+
+[[bump]]
+== cargo xtask bump
+
+`xtask/src/bump.rs` sets the version for a release.
+`cargo xtask bump <version>` writes it into the three files that the release workflow checks:
+
+* `version` under `[workspace.package]` in the root `Cargo.toml`
+* `display_version` in `src/docs/antora.yml`
+* `CHANGELOG.md`, whose `## Unreleased` heading becomes `## <version> — <date>`, with today's date in UTC
+
+It then runs `cargo update --workspace --offline`, so that `Cargo.lock` matches.
+
+The command refuses, and writes nothing, when the version is not like `0.5.0` or `0.5.0-rc.1`, when the changelog has no `## Unreleased` section, or when the changelog already has a section for that version.
 
 [[notices]]
 == cargo xtask notices
@@ -278,11 +313,28 @@ install -Dm644 packaging/icons/adocfoundry-256.png ~/.local/share/icons/hicolor/
 == Release records
 
 `CHANGELOG.md` at the repository root records each release.
+Its section for the version becomes the body of the GitHub release.
+
+A release goes in this order:
+
+. Run `cargo xtask bump <version>`, which sets the version in `Cargo.toml`, `src/docs/antora.yml` and `CHANGELOG.md`, and brings `Cargo.lock` up to date.
+. Commit the result.
+. Tag the commit `v<version>` and push the tag.
+
+[source,sh]
+----
+cargo xtask bump 0.5.0
+git commit -am "Release 0.5.0"
+git tag v0.5.0
+git push origin v0.5.0
+----
+
+The `version` job of the release workflow fails the run if the tag and the three files disagree.
 
 The manual checks for a release are in `docs/qa/phase5.md`.
 Every item of `docs/qa/phase1.md` to `docs/qa/phase4.md` is also re-run on all three platforms.
 
-The documentation site stays unversioned and shows `0.4.0` as its display version, set in `src/docs/antora.yml`.
+The documentation site stays unversioned and shows the release as its display version, set as `display_version` in `src/docs/antora.yml` (currently `0.4.0`).
 
 == Conventions for contributions
 

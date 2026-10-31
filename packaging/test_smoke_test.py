@@ -29,6 +29,18 @@ def runner(answers):
     return run
 
 
+class VersionChecks(unittest.TestCase):
+    def test_the_version_must_be_the_tags_when_one_is_expected(self):
+        self.assertTrue(smoke_test.version_reported("adoc-ls", "adoc-ls 0.5.0\n", "0.5.0"))
+        self.assertFalse(smoke_test.version_reported("adoc-ls", "adoc-ls 0.4.0\n", "0.5.0"))
+        self.assertFalse(smoke_test.version_reported("adoc-ls", "adoc-ls 0.5.0-rc\n", "0.5.0"))
+
+    def test_without_an_expected_version_any_is_accepted(self):
+        self.assertTrue(smoke_test.version_reported("adoc-mcp", "adoc-mcp 0.4.0\n", None))
+        self.assertFalse(smoke_test.version_reported("adoc-mcp", "adoc-ls 0.4.0\n", None))
+        self.assertFalse(smoke_test.version_reported("adoc-mcp", "", None))
+
+
 class SignatureChecks(unittest.TestCase):
     def test_signature_checks_report_unsigned_builds(self):
         # Ad hoc: codesign verifies, but there is no Developer ID or runtime, and Gatekeeper
