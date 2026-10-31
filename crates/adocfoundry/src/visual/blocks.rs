@@ -33,12 +33,15 @@ struct Draw<'a> {
     context: BlockContext<'a>,
     inline: InlineStyle,
     caret: Hsla,
+    /// The path of the text block holding the caret, and the caret's display offset in it:
+    /// found once for the frame.
+    caret_at: Option<(adoc_engine::BlockPath, Option<usize>)>,
     selection: Hsla,
     focused: bool,
-    /// The document's changes against `HEAD`, when markers are shown.
+    /// The document's changes against `HEAD`, when markers are shown, in order.
     changes: Vec<adoc_engine::Hunk>,
     marks: crate::editor::changes::MarkColours,
-    /// The misspelt words, underlined in `spelling`.
+    /// The misspelt words, underlined in `spelling`, in order.
     misspelt: Vec<adoc_core::SourceRange>,
     spelling: Hsla,
 }
@@ -86,7 +89,7 @@ pub fn document(
         window,
         cx,
     );
-    let changes = {
+    let mut changes = {
         let engine = &view.app.read(cx).engine;
         if engine.settings().git.show_markers {
             engine.git().hunks_for(view.document).to_vec()
@@ -94,11 +97,21 @@ pub fn document(
             Vec::new()
         }
     };
+    // Each block finds its own by searching; hunks never overlap.
+    changes.sort_by_key(|hunk| hunk.range.start);
+    let mut misspelt = view.misspelt(document, cx);
+    misspelt.sort_by_key(|range| range.start);
+    let head = view.selection.head;
+    let caret_at = document
+        .model
+        .text_block_at(head)
+        .map(|(path, _, text)| (path, text.display_offset(head)));
     let draw = Draw {
         document,
         inline: context.inline.clone(),
         context,
         caret: cx.theme().primary,
+        caret_at,
         selection: cx.theme().primary.opacity(0.25),
         focused: view.focus.is_focused(window),
         changes,
@@ -107,7 +120,7 @@ pub fn document(
             modified: cx.theme().info,
             deleted: cx.theme().danger,
         },
-        misspelt: view.misspelt(document, cx),
+        misspelt,
         spelling: cx.theme().danger,
     };
     let mut path = Vec::new();
@@ -684,12 +697,12 @@ impl VisualView {
         let Some(block) = node.text.as_ref() else {
             return gpui::Empty.into_any_element();
         };
-        let caret_here = self
-            .block_at(self.selection.head)
-            .is_some_and(|(at, _)| at.as_slice() == path);
-        let caret_display = caret_here
-            .then(|| block.display_offset(self.selection.head))
-            .flatten();
+        let caret_display = draw
+            .caret_at
+            .as_ref()
+            .filter(|(at, _)| at.as_slice() == path);
+        let caret_here = caret_display.is_some();
+        let caret_display = caret_display.and_then(|(_, display)| *display);
         let composing = caret_display.zip(self.composing.as_deref());
         let shown = text::shown(block, composing, &self.formula_gaps);
         // Titles, headings and terms are bold throughout: runs set their own weight.
@@ -705,10 +718,13 @@ impl VisualView {
         {
             runs = text::with_highlights(runs, &(draw.context.highlight)(language, &shown.text));
         }
-        let underlined: Vec<std::ops::Range<usize>> = draw
+        let first = draw
             .misspelt
+            .partition_point(|range| range.start < block.range.start);
+        let underlined: Vec<std::ops::Range<usize>> = draw.misspelt[first..]
             .iter()
-            .filter(|range| range.start >= block.range.start && range.end <= block.range.end)
+            .take_while(|range| range.start <= block.range.end)
+            .filter(|range| range.end <= block.range.end)
             .filter_map(|range| {
                 let start = shown.index(block.display_offset(range.start)?);
                 let end = shown.index(block.display_offset(range.end)?);
@@ -826,9 +842,13 @@ fn with_change_bar(
     draw: &Draw<'_>,
 ) -> AnyElement {
     use adoc_engine::HunkKind;
-    let kinds: Vec<HunkKind> = draw
+    // The hunks are in order and never overlap, so their ends are in order too.
+    let first = draw
         .changes
+        .partition_point(|hunk| hunk.range.end < range.start);
+    let kinds: Vec<HunkKind> = draw.changes[first..]
         .iter()
+        .take_while(|hunk| hunk.range.start <= range.end)
         .filter(|hunk| {
             if hunk.range.is_empty() {
                 range.start <= hunk.range.start && hunk.range.start < range.end

@@ -576,6 +576,18 @@ fn preview_draws_inline_stem_in_the_line(cx: &mut TestAppContext) {
         "image at {top:?} in a paragraph {:?} tall",
         height(with_formula)
     );
+
+    // Its gap is measured once, not again each frame.
+    use adoc_core::probe::{self, Probe};
+    probe::reset();
+    for _ in 0..10 {
+        cx.update(|window, cx| {
+            let preview = workspace.read(cx).preview().clone();
+            preview.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        });
+    }
+    assert_eq!(probe::count(Probe::MeasureFormula), 0);
 }
 
 /// An app whose settings live in `directory` and whose releases feed names `tag`, counting
@@ -1903,6 +1915,52 @@ fn visual_code_blocks_are_highlighted(cx: &mut TestAppContext) {
             .map(|(_, styles)| styles.len())
     });
     assert!(styles.is_some_and(|count| count > 0), "{styles:?}");
+}
+
+/// Draws a frame of the visual editor, rendering it again.
+fn draw_visual(visual: &Entity<crate::visual::VisualView>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        visual.update(cx, |_, cx| cx.notify());
+        window.draw(cx).clear(cx);
+    });
+}
+
+#[gpui::test]
+fn one_visual_frame_walks_the_model_at_most_twice(cx: &mut TestAppContext) {
+    use adoc_core::probe::{self, Probe};
+    let text = format!("= Page\n\n{}", "A *bold* paragraph.\n\n".repeat(300));
+    let (_, _, visual, _, mut cx) = visual_workspace(&text, cx);
+    place_caret(&visual, text.len() / 2, &mut cx);
+    draw_visual(&visual, &mut cx);
+    probe::reset();
+    draw_visual(&visual, &mut cx);
+    let walks = probe::count(Probe::Walk);
+    assert!(walks <= 2, "{walks} walks of the model in one frame");
+}
+
+#[gpui::test]
+fn formulas_are_measured_once(cx: &mut TestAppContext) {
+    use adoc_core::probe::{self, Probe};
+    let formulas: String = (1..=20)
+        .map(|power| format!("Power stem:[x^{power}] here.\n\n"))
+        .collect();
+    let text = format!("= Page\n:stem:\n\n{formulas}");
+    let (app, _, visual, _, mut cx) = visual_workspace(&text, cx);
+    let rendered = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            visual
+                .read(cx)
+                .shown()
+                .is_some_and(|shown| shown.view.inline_formulas().len() == 20)
+        })
+    };
+    assert!(drain_until(&app, &mut cx, rendered), "the formulas render");
+    probe::reset();
+    for _ in 0..10 {
+        draw_visual(&visual, &mut cx);
+    }
+    let measured = probe::count(Probe::MeasureFormula);
+    assert!(measured <= 20, "{measured} formulas measured in 10 frames");
 }
 
 #[gpui::test]

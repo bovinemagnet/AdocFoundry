@@ -50,6 +50,7 @@ impl Model {
             source: source.to_owned(),
             attributes: dom.attributes.clone(),
             blocks,
+            text_index: crate::text::TextIndex::default(),
         }
     }
 }

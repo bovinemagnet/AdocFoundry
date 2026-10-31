@@ -542,6 +542,7 @@ pub struct Gap {
 impl Gap {
     /// The gap for `image` in `font`, as the window's text style sets its size.
     pub fn measure(image: &FormulaImage, font: &Font, window: &Window) -> Self {
+        adoc_core::probe::hit(adoc_core::probe::Probe::MeasureFormula);
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = style.line_height_in_pixels(window.rem_size());
@@ -627,6 +628,43 @@ pub fn place_formula(
     Some(image)
 }
 
+/// What a text's formula gaps were measured for: each formula's image and font, and the size
+/// of the text.
+#[derive(PartialEq)]
+struct GapKey {
+    formulas: Vec<(FormulaImage, Font)>,
+    font_size: Pixels,
+    line_height: Pixels,
+}
+
+/// The gaps of `formulas` in the text of element `id`, measured again only when the formulas
+/// or the text's size changed since the last frame.
+fn measured_gaps(
+    id: Option<&GlobalElementId>,
+    formulas: &[InlineFormula],
+    window: &mut Window,
+) -> Vec<Gap> {
+    let style = window.text_style();
+    let key = GapKey {
+        formulas: formulas
+            .iter()
+            .map(|formula| (formula.image.clone(), formula.font.clone()))
+            .collect(),
+        font_size: style.font_size.to_pixels(window.rem_size()),
+        line_height: style.line_height_in_pixels(window.rem_size()),
+    };
+    window.with_optional_element_state(id, |kept: Option<Option<(GapKey, Vec<Gap>)>>, window| {
+        if let Some((kept_key, gaps)) = kept.flatten().filter(|(kept, _)| *kept == key) {
+            return (gaps.clone(), Some((kept_key, gaps)));
+        }
+        let gaps: Vec<Gap> = formulas
+            .iter()
+            .map(|formula| Gap::measure(&formula.image, &formula.font, window))
+            .collect();
+        (gaps.clone(), Some((key, gaps)))
+    })
+}
+
 /// A formula placed in the text: where its gap is, and how it is drawn.
 struct Placed {
     start: usize,
@@ -661,7 +699,7 @@ impl Element for FormulaText {
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
-        None
+        Some(self.id.clone())
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
@@ -670,17 +708,13 @@ impl Element for FormulaText {
 
     fn request_layout(
         &mut self,
-        _: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let text = self.text.take().unwrap_or_default();
-        let gaps: Vec<Gap> = text
-            .formulas
-            .iter()
-            .map(|formula| Gap::measure(&formula.image, &formula.font, window))
-            .collect();
+        let gaps = measured_gaps(id, &text.formulas, window);
         let formulas = text.formulas.clone();
         let texts: Vec<String> = gaps.iter().map(|gap| gap.text.clone()).collect();
         let (spliced, ranges) = splice(text, &texts);

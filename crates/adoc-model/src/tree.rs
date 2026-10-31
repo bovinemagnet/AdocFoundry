@@ -19,6 +19,8 @@ pub struct Model {
     /// Document attributes, for the values of attribute references.
     pub attributes: BTreeMap<String, String>,
     pub blocks: Vec<Node>,
+    /// The text blocks by where they start, for finding the one at an offset.
+    pub(crate) text_index: crate::text::TextIndex,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -359,6 +361,7 @@ impl Model {
     /// Every node in document order, depth first, with its path.
     #[must_use]
     pub fn walk(&self) -> Vec<(BlockPath, &Node)> {
+        adoc_core::probe::hit(adoc_core::probe::Probe::Walk);
         fn visit<'m>(node: &'m Node, path: &mut BlockPath, out: &mut Vec<(BlockPath, &'m Node)>) {
             out.push((path.clone(), node));
             for (index, child) in node.children.iter().enumerate() {
