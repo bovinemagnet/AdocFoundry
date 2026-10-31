@@ -111,7 +111,7 @@ impl Engine {
                         .file(&location.path)?
                         .document
                         .text
-                        .clone(),
+                        .to_string(),
                 };
                 let lines = LineIndex::new(&text);
                 let (line, _) = lines.line_column(location.range.start);
@@ -263,7 +263,7 @@ impl Engine {
                         .workspace
                         .index
                         .file(&location.path)
-                        .map(|file| file.document.text.clone())
+                        .map(|file| file.document.text.to_string())
                         .unwrap_or_default();
                     files.push(crate::FileEdits {
                         path: location.path,

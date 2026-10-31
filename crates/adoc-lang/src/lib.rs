@@ -48,7 +48,7 @@ fn with_document<R>(
     f: impl FnOnce(&Document) -> R,
 ) -> R {
     if let Some(file) = ws.index.file(path) {
-        if file.document.text == text {
+        if *file.document.text == *text {
             return f(&file.document);
         }
     }

@@ -94,7 +94,7 @@ impl Engine {
                     .as_ref()
                     .is_none_or(|scope| file.path.starts_with(scope))
             })
-            .map(|file| (file.path.as_path(), file.document.text.as_str()))
+            .map(|file| (file.path.as_path(), &*file.document.text))
             .collect();
         files.sort_by(|left, right| left.0.cmp(right.0));
         files
@@ -558,7 +558,7 @@ impl Engine {
                     .workspace
                     .index
                     .file(&path)
-                    .map(|file| file.document.text.clone())
+                    .map(|file| file.document.text.to_string())
                     .unwrap_or_default();
                 FileEdits { path, edits, base }
             })
@@ -578,7 +578,7 @@ impl Engine {
             return Vec::new();
         };
         let document = &file.document;
-        let text = document.text.as_str();
+        let text = &*document.text;
         let move_ = Move {
             from,
             to,

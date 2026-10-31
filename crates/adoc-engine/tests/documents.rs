@@ -410,3 +410,43 @@ fn saving_keeps_permissions_and_links_and_leaves_no_temporary_file() {
         .collect();
     assert_eq!(names.len(), 2, "{names:?}");
 }
+
+#[test]
+fn open_documents_share_one_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = adoc_engine::normalize_path(&directory.path().join("page.adoc"));
+    fs::write(&path, "= Page\n\nText.\n").unwrap();
+    let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&path).unwrap();
+    let shared = |engine: &Engine| {
+        let parsed = &engine.document(id).unwrap().parsed().text;
+        let indexed = &engine.workspace().index.file(&path).unwrap().document.text;
+        Arc::ptr_eq(parsed, indexed)
+    };
+    assert!(shared(&engine), "as opened");
+
+    // After an edit is indexed, the index holds the edited parse's text, not a copy of it.
+    insert(&mut engine, id, 7, "\nMore.\n");
+    engine
+        .invoke(
+            ids::NAVIGATE_GO_TO_SYMBOL,
+            CommandArgs::Query {
+                query: "page".to_owned(),
+                document: None,
+            },
+        )
+        .ok();
+    assert!(engine
+        .workspace()
+        .index
+        .file(&path)
+        .unwrap()
+        .document
+        .text
+        .contains("More."));
+    assert!(shared(&engine), "after an edit");
+}

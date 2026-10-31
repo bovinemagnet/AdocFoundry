@@ -38,7 +38,7 @@ pub fn source_for_render(
     scratch: &Path,
 ) -> String {
     let Some(context) = antora.context_for_path(current_path) else {
-        return document.text.clone();
+        return document.text.to_string();
     };
 
     let mut visited = HashSet::new();

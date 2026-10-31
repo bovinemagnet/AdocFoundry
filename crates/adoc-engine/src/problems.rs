@@ -174,7 +174,7 @@ fn located(
         return Vec::new();
     }
     let text = match ws.index.file(path) {
-        Some(file) => file.document.text.clone(),
+        Some(file) => file.document.text.to_string(),
         None => access.read_to_string(path).unwrap_or_default(),
     };
     let lines = LineIndex::new(&text);

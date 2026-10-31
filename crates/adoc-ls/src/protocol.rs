@@ -187,7 +187,7 @@ impl ProtocolServer {
 
     /// The parsed text of open document `id`, which diagnostics and positions refer to.
     fn text_of(&self, id: DocumentId) -> Option<&str> {
-        Some(self.engine.document(id)?.parsed().text.as_str())
+        Some(&self.engine.document(id)?.parsed().text)
     }
 
     /// The text positions in the file at `path` refer to: its open buffer, else the indexed
@@ -195,14 +195,14 @@ impl ProtocolServer {
     fn file_text(&self, path: &Path) -> String {
         if let Some(id) = self.engine.document_for_path(path) {
             if let Some(document) = self.engine.document(id) {
-                return document.parsed().text.clone();
+                return document.parsed().text.to_string();
             }
         }
         self.engine
             .workspace()
             .index
             .file(path)
-            .map(|file| file.document.text.clone())
+            .map(|file| file.document.text.to_string())
             .or_else(|| fs::read_to_string(path).ok())
             .unwrap_or_default()
     }

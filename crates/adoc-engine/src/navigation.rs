@@ -184,7 +184,7 @@ impl Engine {
                 let text = match self.document_for_path(&location.path) {
                     Some(open) => self.documents[&open].text.to_string(),
                     None => match self.workspace.index.file(&location.path) {
-                        Some(file) => file.document.text.clone(),
+                        Some(file) => file.document.text.to_string(),
                         None => self.read_text(&location.path)?,
                     },
                 };
