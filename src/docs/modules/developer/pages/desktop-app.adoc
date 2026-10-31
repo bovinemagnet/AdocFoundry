@@ -165,6 +165,28 @@ The visual editor's read-only blocks pass no cache.
 The highlight cache is keyed by theme brightness and a hash of the language and text, checks the language and text on a hit, and returns the styles as a shared `Highlights` (`Rc<[..]>`), so a hit copies nothing.
 A code block's styles are divided among its lines in one pass (`styles_by_line`).
 
+=== Rows and scroll sync
+
+The preview draws through a GPUI `list` over a `ListState` held by `PreviewView`, as the visual editor does, so it no longer builds and lays out every block each frame.
+The rows (`blocks::Row`, built by `blocks::rows` when a new preview arrives) are the document title, the table of contents and the blocks, with a section split into a row for its heading and a row for each of its blocks.
+Each row carries the gap that the page's column (12 px) or a section's (8 px) puts above it (`blocks::row_gap`), so the page looks as it did before.
+Only the rows in view, and 400 px beyond them, are laid out.
+
+A new version of the same page keeps the scroll position.
+Rows past the old count are added or dropped, and the rest are measured again as they are next laid out.
+Switching pages resets the list and restores the page's remembered position, which is now a `ListOffset`.
+
+Block extents (`sync::Extents`) are recorded as blocks are painted, in content coordinates measured by the list, so only blocks laid out in the last frame have extents.
+The recorder reads the list while painting, because the list holds its state while it lays rows out.
+
+Scroll sync from the caret (`reveal_source`) uses the block's extent when it is known and scrolls so that the block is 8 px below the top.
+Otherwise it scrolls to the block's row.
+A block that is a row of its own is placed exactly, and a block inside a row is placed once its row has been laid out (`finish_revealing`, which waits up to three frames).
+Revealing the title, or the user scrolling, cancels a pending reveal.
+
+Scroll sync to the source (`scrolled`) names the block at the top from the extents of the blocks laid out.
+These are few, so `block_at_y` scans them.
+
 The application depends on `adoc-render` for the view types only; `adoc-dom` and the parser crates stay behind the engine.
 
 == The visual editor

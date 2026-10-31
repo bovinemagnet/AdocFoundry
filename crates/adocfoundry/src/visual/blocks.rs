@@ -162,11 +162,11 @@ pub fn row(
             window.push_notification(error.to_string(), cx);
         }
     });
-    // The visual editor keeps no extents: its scrolling is the list's.
+    // The visual editor records no extents: its scrolling is its own list's.
     let context = preview::block_context(
         &view.app,
         preview::sync::Extents::default(),
-        gpui::ScrollHandle::new(),
+        None,
         on_block,
         &highlight,
         window,

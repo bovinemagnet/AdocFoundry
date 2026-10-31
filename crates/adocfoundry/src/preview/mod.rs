@@ -13,8 +13,8 @@ use adoc_engine::{
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, Context, Entity, HighlightStyle,
-    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, SharedString,
+    Styled as _, Subscription, Window,
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
@@ -26,6 +26,12 @@ use gpui_component::{
 use crate::app::AppState;
 
 pub use inlines::Link;
+
+/// How far beyond the view rows are laid out.
+const LIST_OVERDRAW: Pixels = px(400.);
+
+/// Frames to wait for a block scrolled to before giving up on placing it exactly.
+const REVEAL_FRAMES: u8 = 3;
 
 /// Highlighted code, by theme brightness and a hash of its language and text, with the language
 /// and text it is of.
@@ -47,8 +53,13 @@ pub struct PreviewView {
     /// In its own window, which then needs a title bar.
     standalone: bool,
     shown: Option<Arc<RenderedPreview>>,
-    scroll: ScrollHandle,
-    positions: HashMap<DocumentId, Point<Pixels>>,
+    /// The rows drawn, laid out only where they are in view.
+    list: gpui::ListState,
+    /// The rows of the view tree shown.
+    rows: Rc<[blocks::Row]>,
+    /// A block to scroll to once it has been laid out.
+    revealing: Option<(Vec<usize>, u8)>,
+    positions: HashMap<DocumentId, gpui::ListOffset>,
     highlights: Rc<RefCell<HighlightCache>>,
     /// Inline text as laid out for the view tree shown, in the style it was laid out in.
     inline_cache: Rc<inlines::InlineCache>,
@@ -86,7 +97,9 @@ impl PreviewView {
             extents: sync::Extents::default(),
             standalone,
             shown: None,
-            scroll: ScrollHandle::new(),
+            list: gpui::ListState::new(0, gpui::ListAlignment::Top, LIST_OVERDRAW),
+            rows: Rc::from(Vec::new()),
+            revealing: None,
             positions: HashMap::new(),
             highlights: Rc::default(),
             inline_cache: Rc::default(),
@@ -115,15 +128,6 @@ impl PreviewView {
         };
         let before = self.shown.as_ref().map(|shown| shown.document);
         let after = latest.as_ref().map(|shown| shown.document);
-        if before != after {
-            if let Some(before) = before {
-                self.positions.insert(before, self.scroll.offset());
-            }
-            let offset = after
-                .and_then(|after| self.positions.get(&after).copied())
-                .unwrap_or_default();
-            self.scroll.set_offset(offset);
-        }
         let changed = match (&self.shown, &latest) {
             (Some(shown), Some(latest)) => !Arc::ptr_eq(shown, latest),
             (None, None) => false,
@@ -133,6 +137,32 @@ impl PreviewView {
             self.blocks = latest
                 .as_ref()
                 .map(|shown| adoc_render::BlockIndex::new(&shown.view));
+            let rows = latest
+                .as_ref()
+                .map(|shown| blocks::rows(&shown.view))
+                .unwrap_or_default();
+            if before == after {
+                // A new version of the same page: rows past the old count are added or
+                // dropped, and every other row is measured again where it is next laid out, so
+                // the scroll position holds.
+                let (old, new) = (self.list.item_count(), rows.len());
+                if new != old {
+                    self.list.splice(new.min(old)..old, new.saturating_sub(old));
+                }
+                self.list.remeasure_items(0..new.min(old));
+            } else {
+                if let Some(before) = before {
+                    self.positions
+                        .insert(before, self.list.logical_scroll_top());
+                }
+                self.list.reset(rows.len());
+                let offset = after
+                    .and_then(|after| self.positions.get(&after).copied())
+                    .unwrap_or_default();
+                self.list.scroll_to(offset);
+                self.revealing = None;
+            }
+            self.rows = Rc::from(rows);
         }
         self.shown = latest;
         let pdf = {
@@ -201,32 +231,92 @@ impl PreviewView {
                     .first()
                     .is_none_or(|block| offset < block.span.range.start)
             {
+                self.revealing = None;
                 self.scroll_to(px(0.), cx);
             }
             return;
         };
-        let Some(extent) = self.extents.borrow().get(trail).copied() else {
-            return;
-        };
-        self.scroll_to((extent.top - px(8.)).max(px(0.)), cx);
+        let trail = trail.to_vec();
+        let extent = self.extents.borrow().get(&trail).copied();
+        match extent {
+            Some(extent) => {
+                self.revealing = None;
+                self.scroll_to((extent.top - px(8.)).max(px(0.)), cx);
+            }
+            // Not laid out: to its row, which places a block that is a row of its own exactly;
+            // a block inside a row is placed once the row has been laid out.
+            None => {
+                let Some(index) = blocks::row_of(&self.rows, &trail) else {
+                    return;
+                };
+                let own_row = matches!(
+                    &self.rows[index],
+                    blocks::Row::Block { trail: row, .. } if *row == trail
+                );
+                let offset = gpui::ListOffset {
+                    item_ix: index,
+                    offset_in_item: (blocks::row_gap(&self.rows, index) - px(8.)).max(px(0.)),
+                };
+                let logical = self.list.logical_scroll_top();
+                if logical.item_ix != offset.item_ix
+                    || logical.offset_in_item != offset.offset_in_item
+                {
+                    self.list.scroll_to(offset);
+                    cx.notify();
+                }
+                self.revealing = (!own_row).then_some((trail, REVEAL_FRAMES));
+            }
+        }
     }
 
     /// Scrolls so content position `top` is at the top, redrawing only when that moves it: the
     /// caret moving within a block leaves the preview as it is.
     fn scroll_to(&mut self, top: Pixels, cx: &mut Context<Self>) {
-        let offset = gpui::point(px(0.), -top);
-        if self.scroll.offset() != offset {
-            self.scroll.set_offset(offset);
+        if top <= px(0.) {
+            if self.list.logical_scroll_top().item_ix != 0
+                || self.list.logical_scroll_top().offset_in_item != px(0.)
+            {
+                self.list.scroll_to(gpui::ListOffset::default());
+                cx.notify();
+            }
+            return;
+        }
+        let distance = top - self.content_top();
+        if distance.abs() >= px(0.5) {
+            self.list.scroll_by(distance);
             cx.notify();
+        }
+    }
+
+    /// The content position at the top of the preview, as far as the list has measured it.
+    fn content_top(&self) -> Pixels {
+        -self.list.scroll_px_offset_for_scrollbar().y
+    }
+
+    /// Finishes revealing a block that was not laid out when asked for: scrolls to it once it
+    /// has been, or asks for another frame, a few times.
+    fn finish_revealing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((trail, frames)) = self.revealing.take() else {
+            return;
+        };
+        let extent = self.extents.borrow().get(&trail).copied();
+        match extent {
+            Some(extent) => self.scroll_to((extent.top - px(8.)).max(px(0.)), cx),
+            None if frames > 0 => {
+                self.revealing = Some((trail, frames - 1));
+                window.request_animation_frame();
+            }
+            None => {}
         }
     }
 
     /// Reports the block now at the top after the user scrolled.
     fn scrolled(&mut self, cx: &mut Context<Self>) {
+        self.revealing = None;
         let Some(shown) = &self.shown else {
             return;
         };
-        let top = -self.scroll.offset().y;
+        let top = self.content_top();
         let Some(trail) = sync::block_at_y(&self.extents.borrow(), top) else {
             return;
         };
@@ -239,22 +329,28 @@ impl PreviewView {
     #[cfg(test)]
     pub fn block_position(&self, trail: &[usize]) -> Option<gpui::Point<Pixels>> {
         let extent = *self.extents.borrow().get(trail)?;
-        let container = self.scroll.bounds();
-        let y = container.origin.y + self.scroll.offset().y + extent.top + px(2.);
-        Some(gpui::point(container.origin.x + px(24.), y))
+        let viewport = self.list.viewport_bounds();
+        let y = viewport.origin.y + extent.top - self.content_top() + px(2.);
+        Some(gpui::point(viewport.origin.x + px(24.), y))
     }
 
     /// Simulates the user scrolling the preview to content position `top`.
     #[cfg(test)]
     pub fn scroll_for_test(&mut self, top: Pixels, cx: &mut Context<Self>) {
-        self.scroll.set_offset(gpui::point(px(0.), -top));
+        self.list.scroll_by(top - self.content_top());
         self.scrolled(cx);
     }
 
     /// The content position at the top of the preview.
     #[cfg(test)]
     pub fn scroll_top(&self) -> Pixels {
-        -self.scroll.offset().y
+        self.content_top()
+    }
+
+    /// How many blocks the last frame laid out.
+    #[cfg(test)]
+    pub fn laid_out(&self) -> usize {
+        self.extents.borrow().len()
     }
 
     /// The extent of the block at `trail`, once laid out.
@@ -375,7 +471,7 @@ impl PreviewView {
         let mut context = block_context(
             &self.app,
             self.extents.clone(),
-            self.scroll.clone(),
+            Some(self.list.clone()),
             on_block,
             highlight,
             window,
@@ -391,7 +487,7 @@ impl PreviewView {
 pub(crate) fn block_context<'a>(
     app: &Entity<AppState>,
     extents: sync::Extents,
-    scroll: ScrollHandle,
+    list: Option<gpui::ListState>,
     on_block: blocks::BlockHandler,
     highlight: blocks::Highlighter<'a>,
     window: &Window,
@@ -420,18 +516,8 @@ pub(crate) fn block_context<'a>(
     });
     blocks::BlockContext {
         extents,
-        scroll,
-        inline: inlines::InlineStyle {
-            font: window.text_style().font(),
-            mono_family: theme.mono_font_family.clone(),
-            color: theme.foreground,
-            muted: theme.muted_foreground,
-            link: theme.link,
-            unresolved: theme.danger,
-            mark: theme.yellow_light,
-            code_background: theme.muted,
-            formula_backing: theme.mode.is_dark().then(gpui::white),
-        },
+        list,
+        inline: inline_style(window, cx),
         palette: blocks::Palette {
             border: theme.border,
             surface: theme.muted,
@@ -448,6 +534,22 @@ pub(crate) fn block_context<'a>(
         on_block,
         highlight,
         inline_cache: None,
+    }
+}
+
+/// The theme's fonts and colours for inline text.
+fn inline_style(window: &Window, cx: &App) -> inlines::InlineStyle {
+    let theme = cx.theme();
+    inlines::InlineStyle {
+        font: window.text_style().font(),
+        mono_family: theme.mono_font_family.clone(),
+        color: theme.foreground,
+        muted: theme.muted_foreground,
+        link: theme.link,
+        unresolved: theme.danger,
+        mark: theme.yellow_light,
+        code_background: theme.muted,
+        formula_backing: theme.mode.is_dark().then(gpui::white),
     }
 }
 
@@ -478,33 +580,50 @@ pub(crate) fn highlight(
     styles
 }
 
+impl PreviewView {
+    /// Row `index` of `rows`, the rows of the view tree shown.
+    fn row(
+        &self,
+        rows: &[blocks::Row],
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let Some(shown) = self.shown.clone() else {
+            return gpui::Empty.into_any_element();
+        };
+        let cache = self.highlights.clone();
+        let dark = cx.theme().mode.is_dark();
+        let theme = cx.theme().highlight_theme.clone();
+        let highlight =
+            move |language: &str, text: &str| highlight(&cache, dark, &theme, language, text);
+        let context = self.context(&highlight, window, cx);
+        blocks::row(&shown.view, rows, index, &context)
+    }
+}
+
 impl gpui::EventEmitter<PreviewEvent> for PreviewView {}
 
 impl Render for PreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::renders::rendered(crate::renders::View::Preview);
-        // Repopulated as this frame's blocks are laid out.
+        self.finish_revealing(window, cx);
+        // Repopulated as this frame's blocks are painted.
         self.extents.borrow_mut().clear();
         let header = self.header(cx);
         let waiting = self.shown.is_none() && self.app.read(cx).engine.preview_target().is_some();
-        let body = self.shown.clone().map(|shown| {
-            let cache = self.highlights.clone();
-            let dark = cx.theme().mode.is_dark();
-            let theme = cx.theme().highlight_theme.clone();
-            let highlight =
-                move |language: &str, text: &str| highlight(&cache, dark, &theme, language, text);
-            let context = self.context(&highlight, window, cx);
+        if let Some(shown) = &self.shown {
             // Laid out again for a new view tree, or a new font or theme.
+            let style = inline_style(window, cx);
             let current = self
                 .inline_for
                 .as_ref()
-                .is_some_and(|(of, style)| Arc::ptr_eq(of, &shown) && *style == context.inline);
+                .is_some_and(|(of, kept)| Arc::ptr_eq(of, shown) && *kept == style);
             if !current {
                 self.inline_cache.borrow_mut().clear();
-                self.inline_for = Some((shown.clone(), context.inline.clone()));
+                self.inline_for = Some((shown.clone(), style));
             }
-            blocks::document(&shown.view, &context)
-        });
+        }
         let window_title = self.standalone.then(|| {
             let name = self
                 .shown
@@ -550,31 +669,35 @@ impl Render for PreviewView {
                     .id("preview-scroll")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
                     .on_scroll_wheel(cx.listener(|_, _, window, cx| {
                         // After the scroll itself has been applied.
                         cx.defer_in(window, |this, _, cx| this.scrolled(cx));
                     }))
-                    .child(
-                        v_flex()
-                            .p_4()
-                            .gap_3()
-                            .max_w(px(900.))
-                            .when_some(body, |content, body| content.children(body))
-                            .when(self.shown.is_none(), |content| {
-                                content.child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(SharedString::from(if waiting {
-                                            "Rendering…"
-                                        } else {
-                                            "Open a page to preview it."
-                                        })),
-                                )
-                            }),
-                    ),
+                    .when(self.shown.is_some(), |content| {
+                        let rows = self.rows.clone();
+                        content.child(
+                            gpui::list(
+                                self.list.clone(),
+                                cx.processor(move |this, index: usize, window, cx| {
+                                    this.row(&rows, index, window, cx)
+                                }),
+                            )
+                            .size_full(),
+                        )
+                    })
+                    .when(self.shown.is_none(), |content| {
+                        content.child(
+                            div()
+                                .p_4()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(SharedString::from(if waiting {
+                                    "Rendering…"
+                                } else {
+                                    "Open a page to preview it."
+                                })),
+                        )
+                    }),
             )
             .into_any_element()
     }
