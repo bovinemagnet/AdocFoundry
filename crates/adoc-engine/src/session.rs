@@ -248,6 +248,7 @@ impl Engine {
             let _ = self.open_workspace(roots);
         }
         let mut opened: HashMap<usize, TabItem> = HashMap::new();
+        self.restoring = true;
         for (place, tab) in saved.tabs.iter().enumerate() {
             if !tab.path.is_file() {
                 continue;
@@ -268,10 +269,16 @@ impl Engine {
                 continue;
             };
             let mode = EditorMode::from(tab.mode);
+            // The models are built later: the active page's as the engine is next pumped,
+            // every other page's when it is shown.
             if document.asciidoc && mode != EditorMode::Source {
-                self.set_editor_mode(id, mode);
+                self.set_editor_mode_later(id, mode);
             }
             carets.insert(id, within_text(&self.documents[&id].text, tab.caret));
+        }
+        self.restoring = false;
+        if !opened.is_empty() {
+            self.refresh_open_diagnostics(None);
         }
         if let Some(&item) = saved.active.and_then(|place| opened.get(&place)) {
             self.activate(item);

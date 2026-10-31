@@ -10,7 +10,7 @@ use std::{
 
 use adoc_engine::{
     commands::ids, normalize_path, CommandArgs, CommandOutcome, DocumentId, EditorMode, Engine,
-    OpenDisposition, Settings, TabItem, RECENT_FOLDERS_FILE, SESSION_FILE,
+    EngineEvent, OpenDisposition, Settings, TabItem, RECENT_FOLDERS_FILE, SESSION_FILE,
 };
 
 /// A state folder, and a workspace of three pages and an image.
@@ -154,7 +154,8 @@ fn four_tabs_in_mixed_modes_and_the_preview_come_back() {
     assert_eq!(engine.editor_mode(one), EditorMode::Source);
     assert_eq!(engine.editor_mode(two), EditorMode::Visual);
     assert_eq!(engine.editor_mode(three), EditorMode::Split);
-    assert!(engine.visual(two).is_some());
+    // A page in the background has its model built when it is shown.
+    assert!(engine.visual(two).is_none());
     // The page browsed to is in the preview tab again; the others are kept.
     assert!(engine.is_preview(three));
     assert!(!engine.is_preview(one) && !engine.is_preview(two));
@@ -170,6 +171,94 @@ fn four_tabs_in_mixed_modes_and_the_preview_come_back() {
     assert_eq!(carets_back[&one], 3);
     assert_eq!(carets_back[&two], 12);
     assert_eq!(carets_back[&three], 0);
+
+    engine.activate(TabItem::Document(two));
+    assert!(engine.visual(two).is_some());
+}
+
+#[test]
+fn restore_session_with_20_visual_tabs() {
+    let setup = Setup::new();
+    let paragraphs = "A paragraph with *bold* and _italic_ text in it.\n\n".repeat(200);
+    let paths: Vec<PathBuf> = (0..20)
+        .map(|n| {
+            let path = setup.path(&format!("page-{n:02}.adoc"));
+            fs::write(&path, format!("= Page {n}\n\n{paragraphs}")).unwrap();
+            path
+        })
+        .collect();
+    {
+        let mut engine = setup.engine();
+        open_workspace(&mut engine, &setup.root());
+        for path in &paths {
+            let id = document(open(&mut engine, path, OpenDisposition::Persistent));
+            engine
+                .invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(id))
+                .unwrap();
+        }
+        engine.write_session(&HashMap::new()).unwrap();
+    }
+
+    let mut engine = setup.engine();
+    let events = engine.subscribe();
+    let started = std::time::Instant::now();
+    engine.restore_session();
+    let took = started.elapsed();
+    assert_eq!(engine.tab_order().len(), 20);
+    assert!(took < Duration::from_millis(50), "restoring took {took:?}");
+    let models = |events: &std::sync::mpsc::Receiver<EngineEvent>| {
+        events
+            .try_iter()
+            .filter(|event| matches!(event, EngineEvent::ModelChanged { .. }))
+            .count()
+    };
+    assert_eq!(models(&events), 0, "no model is built while restoring");
+
+    // The active page's model is built as the engine is pumped, every other page's when shown.
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert!(engine.has_pending(), "the active page's model is due");
+    engine.pump();
+    assert_eq!(models(&events), 1);
+    let active = engine.active().unwrap();
+    assert_eq!(active, id_of(&engine, &paths[19]));
+    assert!(engine.visual(active).is_some());
+    let first = id_of(&engine, &paths[0]);
+    assert!(engine.visual(first).is_none());
+    engine.set_active(first);
+    assert!(engine.visual(first).is_some());
+    assert_eq!(models(&events), 1);
+}
+
+#[test]
+fn a_restored_session_works_out_each_page_s_diagnostics_against_every_page() {
+    let setup = Setup::new();
+    fs::write(
+        setup.path("one.adoc"),
+        "= One\n\nSee xref:two.adoc#gone[].\n",
+    )
+    .unwrap();
+    fs::write(setup.path("two.adoc"), "= Two\n\nNo anchors.\n").unwrap();
+    {
+        // No workspace, so nothing but the open pages is indexed.
+        let mut engine = setup.engine();
+        for name in ["one.adoc", "two.adoc"] {
+            open(&mut engine, &setup.path(name), OpenDisposition::Persistent);
+        }
+        engine.write_session(&HashMap::new()).unwrap();
+    }
+    // `one` opens first, naming an anchor in a page not yet open; once `two` is, the anchor
+    // is known to be missing.
+    let mut engine = setup.engine();
+    engine.restore_session();
+    let one = id_of(&engine, &setup.path("one.adoc"));
+    let codes: Vec<_> = engine
+        .document(one)
+        .unwrap()
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(codes, [adoc_core::DiagnosticCode::UnresolvedAnchor]);
 }
 
 #[test]

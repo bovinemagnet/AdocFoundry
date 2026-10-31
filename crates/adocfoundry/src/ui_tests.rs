@@ -6033,3 +6033,61 @@ fn the_visual_editor_redraws_for_spelling_but_not_word_counts(cx: &mut TestAppCo
     cx.run_until_parked();
     assert_eq!(renders::count(View::Visual), 1);
 }
+
+#[gpui::test]
+fn a_restored_session_s_pages_open_after_the_first_draw(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let one = adoc_index::normalize_path(&pages.path().join("one.adoc"));
+    let two = adoc_index::normalize_path(&pages.path().join("two.adoc"));
+    std::fs::write(&one, "= One\n\nThe first page.\n").unwrap();
+    std::fs::write(&two, "= Two\n\nThe second page.\n").unwrap();
+    let caret = "= Two\n\nThe second".len();
+    // The session before ended with the source page active and the visual one behind it.
+    {
+        let mut engine = Engine::new(settings_in(config.path()));
+        engine.enable_sessions();
+        let one = engine.open(&one).unwrap();
+        let two = engine.open(&two).unwrap();
+        engine
+            .invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(two))
+            .unwrap();
+        engine.set_active(one);
+        engine
+            .write_session(&std::collections::HashMap::from([(one, 0), (two, caret)]))
+            .unwrap();
+    }
+
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let mut workspace = None;
+    let mut opened_while_built = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| WorkspaceView::new(app.clone(), None, Vec::new(), window, cx));
+        // GPUI draws the window as soon as it is built; nothing of the session is open yet.
+        opened_while_built = Some(app.read(cx).engine.tab_order().len());
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    assert_eq!(opened_while_built, Some(0));
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 2);
+
+    // The visual page behind has no model until it is shown; then its caret comes back.
+    let two = cx.update(|_, cx| app.read(cx).engine.document_for_path(&two).unwrap());
+    assert!(cx.update(|_, cx| app.read(cx).engine.visual(two).is_none()));
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.engine.set_active(two);
+            app.drain(cx);
+        });
+    });
+    cx.run_until_parked();
+    let head = cx.update(|_, cx| {
+        let visual = workspace.read(cx).visual_for_test(two).unwrap();
+        visual.read(cx).selection().head
+    });
+    assert_eq!(head, caret);
+}

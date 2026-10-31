@@ -71,6 +71,9 @@ pub struct Engine {
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
     /// A typing command is running: a small edit it makes waits for a pause to be indexed.
     pub(crate) typing: bool,
+    /// A session is being restored: the open pages' diagnostics are refreshed once at the end,
+    /// not as each page opens.
+    pub(crate) restoring: bool,
     pub(crate) rendered: crate::rendered::PreviewState,
     pub(crate) visual: crate::visual::VisualState,
     pub(crate) git: crate::git::GitState,
@@ -168,6 +171,7 @@ impl Engine {
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
             typing: false,
+            restoring: false,
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
             git: crate::git::GitState::default(),
@@ -307,7 +311,7 @@ impl Engine {
             },
         );
         self.emit(EngineEvent::DocumentOpened(id));
-        if asciidoc && !untitled {
+        if asciidoc && !untitled && !self.restoring {
             self.refresh_open_diagnostics(None);
         }
         if !untitled {

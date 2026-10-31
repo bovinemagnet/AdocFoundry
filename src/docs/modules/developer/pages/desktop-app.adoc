@@ -335,8 +335,12 @@ Enter opens the file with `OpenDisposition::Persistent`.
 
 == Sessions and Open Recent Folder
 
-`WorkspaceView::new` calls `Engine::restore_session` when it is given no folder and no files.
+When it is given no folder and no files, `WorkspaceView::new` calls `Engine::restore_session` once the window's first frame is on screen (`after_first_frame`).
+It schedules a next-frame callback that schedules a second one, because a next-frame callback runs as its frame begins, before that frame is presented.
+On GPUI's test platform, which draws no frames, it runs at the end of the effect cycle instead, after the window's first draw.
+The restore is skipped if a folder or file was opened by then.
 It then gives every restored tab its tab view, its visual editor when its mode needs one, and its caret.
+A visual editor made before its page's model is built keeps the caret it is given (`VisualView::go_to`) until the model arrives.
 `WorkspaceView::write_session` passes the engine the carets (the visual editor's in visual mode, otherwise the source editor's) and runs from `cx.on_app_quit` and from the main window's `on_window_should_close`.
 `AppState::new` calls `Engine::enable_sessions`.
 
