@@ -8,7 +8,9 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
+    sync::atomic::Ordering,
     thread,
+    time::{Duration, Instant},
 };
 
 use adoc_antora::{parse_resource_id, AntoraContext, AntoraCoordinate, ResourceFamily};
@@ -47,32 +49,43 @@ fn build_regex(request: &SearchRequest) -> Result<Regex, EngineError> {
         .map_err(|error| EngineError::InvalidRequest(error.to_string()))
 }
 
-fn find_matches(regex: &Regex, path: &Path, text: &str) -> Vec<SearchMatch> {
-    let lines = LineIndex::new(text);
-    regex
+/// The most matches a workspace search reports; past it the search stops and says so.
+pub const SEARCH_MATCH_LIMIT: usize = 10_000;
+
+/// A search reports what it found in batches of this many matches, or fewer when finding them
+/// takes longer than [`SEARCH_BATCH_INTERVAL`].
+const SEARCH_BATCH: usize = 500;
+const SEARCH_BATCH_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Adds to `out` the first `limit` matches of `regex` in the file at `path`, its text `text`.
+/// Lines are counted only in a file with a match.
+fn find_matches(regex: &Regex, path: &Path, text: &str, limit: usize, out: &mut Vec<SearchMatch>) {
+    let mut lines = None;
+    for found in regex
         .find_iter(text)
         .filter(|found| !found.is_empty())
-        .map(|found| {
-            let (line, _) = lines.line_column(found.start());
-            let line_start = lines.offset(line, 0).unwrap_or(0);
-            let line_end = text[line_start..]
-                .find('\n')
-                .map_or(text.len(), |end| line_start + end);
-            SearchMatch {
-                path: path.to_path_buf(),
-                range: SourceRange::new(found.start(), found.end()),
-                line,
-                line_text: text[line_start..line_end].trim_end_matches('\r').to_owned(),
-            }
-        })
-        .collect()
+        .take(limit)
+    {
+        let lines = lines.get_or_insert_with(|| LineIndex::new(text));
+        let (line, _) = lines.line_column(found.start());
+        let line_start = lines.offset(line, 0).unwrap_or(0);
+        let line_end = text[line_start..]
+            .find('\n')
+            .map_or(text.len(), |end| line_start + end);
+        out.push(SearchMatch {
+            path: path.to_path_buf(),
+            range: SourceRange::new(found.start(), found.end()),
+            line,
+            line_text: text[line_start..line_end].trim_end_matches('\r').to_owned(),
+        });
+    }
 }
 
 impl Engine {
     /// The text of every indexed file in `scope`, open buffers included, in path order.
-    fn searchable_files(&self, scope: Option<&Path>) -> Vec<(PathBuf, String)> {
+    fn searchable_files(&self, scope: Option<&Path>) -> Vec<(&Path, &str)> {
         let scope = scope.map(normalize_path);
-        let mut files: Vec<(PathBuf, String)> = self
+        let mut files: Vec<(&Path, &str)> = self
             .workspace
             .index
             .files()
@@ -81,36 +94,107 @@ impl Engine {
                     .as_ref()
                     .is_none_or(|scope| file.path.starts_with(scope))
             })
-            .map(|file| (file.path.clone(), file.document.text.clone()))
+            .map(|file| (file.path.as_path(), file.document.text.as_str()))
             .collect();
-        files.sort_by(|left, right| left.0.cmp(&right.0));
+        files.sort_by(|left, right| left.0.cmp(right.0));
         files
     }
 
-    /// Starts a workspace search on a worker thread. Results arrive as one
-    /// `SearchResults { done: true }` event once [`Engine::pump`] applies them.
+    /// Starts a workspace search on a worker thread, which reads the files there: an open
+    /// page's buffer, else the file. Results arrive as `SearchResults` events, applied by
+    /// [`Engine::pump`], in batches with `done: false` and then one with `done: true`. It stops
+    /// at [`SEARCH_MATCH_LIMIT`] matches, saying `limited`, and as soon as another search
+    /// starts.
     pub fn search(&mut self, request: SearchRequest) -> Result<SearchId, EngineError> {
         let regex = build_regex(&request)?;
-        let files = self.searchable_files(request.scope.as_deref());
+        let scope = request.scope.as_deref().map(normalize_path);
+        let open: BTreeMap<&Path, String> = self
+            .documents
+            .values()
+            .filter(|document| document.indexed())
+            .map(|document| (document.path.as_path(), document.text.to_string()))
+            .collect();
+        let mut files: Vec<(PathBuf, Option<String>)> = self
+            .workspace
+            .index
+            .files()
+            .filter(|file| {
+                scope
+                    .as_ref()
+                    .is_none_or(|scope| file.path.starts_with(scope))
+            })
+            .map(|file| (file.path.clone(), open.get(file.path.as_path()).cloned()))
+            .collect();
+        files.sort_by(|left, right| left.0.cmp(&right.0));
         let id = SearchId(self.next_search);
         self.next_search += 1;
+        self.latest_search.store(id.get(), Ordering::Relaxed);
+        let latest = self.latest_search.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         thread::spawn(move || {
-            let results = files
-                .iter()
-                .flat_map(|(path, text)| find_matches(&regex, path, text))
-                .collect();
-            let _ = sender.send(WorkerMessage::Search { id, results });
+            let mut batch = Vec::new();
+            let mut found = 0;
+            let mut sent = Instant::now();
+            for (path, text) in files {
+                if latest.load(Ordering::Relaxed) != id.get() {
+                    break;
+                }
+                let Some(text) = text.or_else(|| fs::read_to_string(&path).ok()) else {
+                    continue;
+                };
+                let before = batch.len();
+                // One past the limit, to tell whether there are more.
+                find_matches(
+                    &regex,
+                    &path,
+                    &text,
+                    SEARCH_MATCH_LIMIT + 1 - found,
+                    &mut batch,
+                );
+                found += batch.len() - before;
+                if found > SEARCH_MATCH_LIMIT {
+                    break;
+                }
+                if batch.len() >= SEARCH_BATCH
+                    || (!batch.is_empty() && sent.elapsed() >= SEARCH_BATCH_INTERVAL)
+                {
+                    let results = std::mem::take(&mut batch);
+                    let _ = sender.send(WorkerMessage::Search {
+                        id,
+                        results,
+                        done: false,
+                        limited: false,
+                    });
+                    sent = Instant::now();
+                }
+            }
+            let limited = found > SEARCH_MATCH_LIMIT;
+            if limited {
+                batch.pop();
+            }
+            let _ = sender.send(WorkerMessage::Search {
+                id,
+                results: batch,
+                done: true,
+                limited,
+            });
         });
         Ok(id)
     }
 
-    pub(crate) fn search_finished(&mut self, request: SearchId, results: Vec<SearchMatch>) {
+    pub(crate) fn search_found(
+        &mut self,
+        request: SearchId,
+        results: Vec<SearchMatch>,
+        done: bool,
+        limited: bool,
+    ) {
         self.emit(EngineEvent::SearchResults {
             request,
             results,
-            done: true,
+            done,
+            limited,
         });
     }
 
@@ -127,14 +211,14 @@ impl Engine {
         let mut edits = Vec::new();
         for (path, text) in self.searchable_files(request.scope.as_deref()) {
             let mut file_edits = Vec::new();
-            for captures in regex.captures_iter(&text) {
+            for captures in regex.captures_iter(text) {
                 let Some(found) = captures.get(0).filter(|found| !found.is_empty()) else {
                     continue;
                 };
                 let range = SourceRange::new(found.start(), found.end());
                 if selected.is_some_and(|selected| {
                     !selected.iter().any(|(selected_path, selected_range)| {
-                        normalize_path(selected_path) == path && *selected_range == range
+                        normalize_path(selected_path) == *path && *selected_range == range
                     })
                 }) {
                     continue;
@@ -149,9 +233,9 @@ impl Engine {
             }
             if !file_edits.is_empty() {
                 edits.push(FileEdits {
-                    path,
+                    path: path.to_path_buf(),
                     edits: file_edits,
-                    base: text.clone(),
+                    base: text.to_owned(),
                 });
             }
         }

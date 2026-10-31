@@ -51,10 +51,13 @@ pub enum EngineEvent {
     },
     /// Back/forward availability or the active document changed.
     NavigationChanged,
+    /// Matches of search `request`, in batches: the last has `done`, and `limited` when the
+    /// search stopped at `SEARCH_MATCH_LIMIT` with more to find.
     SearchResults {
         request: SearchId,
         results: Vec<SearchMatch>,
         done: bool,
+        limited: bool,
     },
     CommandFailed {
         command: CommandId,

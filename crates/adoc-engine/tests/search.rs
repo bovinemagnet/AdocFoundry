@@ -894,3 +894,137 @@ fn a_closed_participant_does_not_hold_the_group_back() {
     assert!(renamed.old_path.is_file());
     assert_eq!(text_of(&renamed.engine, nav), renamed.original_nav);
 }
+
+/// Every `SearchResults` event of one search, in order: each batch's size, `done` and
+/// `limited`.
+fn batches(events: &std::sync::mpsc::Receiver<EngineEvent>) -> Vec<(usize, bool, bool)> {
+    events
+        .try_iter()
+        .filter_map(|event| match event {
+            EngineEvent::SearchResults {
+                results,
+                done,
+                limited,
+                ..
+            } => Some((results.len(), done, limited)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn search_streams_and_caps() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = format!(
+        "= Title\n\n{}",
+        "A line of text here, then more.\n".repeat(100)
+    );
+    for file in 0..200 {
+        fs::write(directory.path().join(format!("page-{file:03}.adoc")), &page).unwrap();
+    }
+    let mut engine = open_workspace(directory.path());
+    let events = engine.subscribe();
+    engine
+        .search(SearchRequest {
+            query: "e".to_owned(),
+            ..SearchRequest::default()
+        })
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(30)));
+    let batches = batches(&events);
+    let (last, rest) = batches.split_last().unwrap();
+    assert!(!rest.is_empty(), "matches arrive before the search ends");
+    assert!(rest.iter().all(|(_, done, _)| !done));
+    assert_eq!(
+        (last.1, last.2),
+        (true, true),
+        "the last batch says the search stopped"
+    );
+    let total: usize = batches.iter().map(|(count, ..)| count).sum();
+    assert_eq!(total, adoc_engine::SEARCH_MATCH_LIMIT);
+
+    // Under the limit, the search says nothing was left out.
+    engine
+        .search(SearchRequest {
+            query: "= Title".to_owned(),
+            ..SearchRequest::default()
+        })
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(30)));
+    let batches = self::batches(&events);
+    assert_eq!(batches.iter().map(|(count, ..)| count).sum::<usize>(), 200);
+    assert_eq!(
+        batches.last().map(|(_, done, limited)| (*done, *limited)),
+        Some((true, false))
+    );
+}
+
+#[test]
+fn a_search_reads_an_open_page_s_unsaved_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("page.adoc");
+    fs::write(&path, "= Page\n\nSaved text.\n").unwrap();
+    let mut engine = open_workspace(directory.path());
+    let id = engine.open(&path).unwrap();
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(8, 8),
+                text: "Unsaved zebra. ".to_owned(),
+            },
+        )
+        .unwrap();
+    let events = engine.subscribe();
+    engine
+        .search(SearchRequest {
+            query: "zebra".to_owned(),
+            ..SearchRequest::default()
+        })
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert_eq!(batches(&events), [(1, true, false)]);
+}
+
+#[test]
+fn a_search_started_over_another_still_lets_both_finish() {
+    let directory = tempfile::tempdir().unwrap();
+    for file in 0..50 {
+        fs::write(
+            directory.path().join(format!("page-{file:02}.adoc")),
+            "Alpha and beta.\n".repeat(50),
+        )
+        .unwrap();
+    }
+    let mut engine = open_workspace(directory.path());
+    let events = engine.subscribe();
+    let request = |query: &str| SearchRequest {
+        query: query.to_owned(),
+        ..SearchRequest::default()
+    };
+    let first = engine.search(request("alpha")).unwrap();
+    let second = engine.search(request("beta")).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(30)));
+    let mut ended = Vec::new();
+    let mut second_found = 0;
+    for event in events.try_iter() {
+        if let EngineEvent::SearchResults {
+            request,
+            results,
+            done,
+            ..
+        } = event
+        {
+            if request == second {
+                second_found += results.len();
+            }
+            if done {
+                ended.push(request);
+            }
+        }
+    }
+    // The first may stop early, but it ends; the second finds every match.
+    assert!(ended.contains(&first) && ended.contains(&second));
+    assert_eq!(second_found, 50 * 50);
+}

@@ -553,7 +553,7 @@ impl Server {
                         }),
                     )
                     .map_err(|error| error.to_string())?;
-                // The search runs on one worker, which reports every match at once.
+                // The search runs on one worker, which reports its matches in batches.
                 if !state.engine.wait_for_workers(TIMEOUT) {
                     return Err("the search did not finish".to_owned());
                 }

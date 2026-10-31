@@ -44,6 +44,7 @@ mod recovery;
 mod rendered;
 pub mod report;
 mod search;
+pub use search::SEARCH_MATCH_LIMIT;
 mod session;
 mod settings;
 mod spelling;
