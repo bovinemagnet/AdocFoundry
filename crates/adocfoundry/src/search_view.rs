@@ -31,6 +31,8 @@ pub struct SearchView {
     whole_word: bool,
     pending: Option<SearchId>,
     results: Vec<SearchMatch>,
+    /// The search stopped at the engine's limit, with more to find.
+    limited: bool,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -51,13 +53,20 @@ impl SearchView {
                 }
             }),
             cx.subscribe(&app, |this, _, event, cx| {
+                // Matches arrive in batches, the last one `done`.
                 if let EngineEvent::SearchResults {
-                    request, results, ..
+                    request,
+                    results,
+                    done,
+                    limited,
                 } = event
                 {
                     if this.pending == Some(*request) {
-                        this.results = results.clone();
-                        this.pending = None;
+                        this.results.extend(results.iter().cloned());
+                        if *done {
+                            this.pending = None;
+                            this.limited = *limited;
+                        }
                         cx.notify();
                     }
                 }
@@ -73,6 +82,7 @@ impl SearchView {
             whole_word: false,
             pending: None,
             results: Vec::new(),
+            limited: false,
             error: None,
             _subscriptions: subscriptions,
         }
@@ -115,6 +125,8 @@ impl SearchView {
         match result {
             Ok(id) => {
                 self.pending = Some(id);
+                self.results.clear();
+                self.limited = false;
                 self.error = None;
             }
             Err(error) => self.error = Some(error.to_string().into()),
@@ -186,7 +198,7 @@ impl Render for SearchView {
         let roots = self.app.read(cx).engine.roots().to_vec();
         let status: SharedString = if let Some(error) = &self.error {
             error.clone()
-        } else if self.pending.is_some() {
+        } else if self.pending.is_some() && self.results.is_empty() {
             "Searching…".into()
         } else {
             let files = {
@@ -194,7 +206,14 @@ impl Render for SearchView {
                 paths.dedup();
                 paths.len()
             };
-            format!("{} result(s) in {files} file(s)", self.results.len()).into()
+            let found = format!("{} result(s) in {files} file(s)", self.results.len());
+            if self.pending.is_some() {
+                format!("Searching… {found} so far").into()
+            } else if self.limited {
+                format!("The first {found}; narrow the search to find the rest").into()
+            } else {
+                found.into()
+            }
         };
         v_flex()
             .size_full()

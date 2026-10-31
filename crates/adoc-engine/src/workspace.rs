@@ -52,9 +52,12 @@ pub(crate) enum WorkerMessage {
         generation: u64,
         error: String,
     },
+    /// A batch of a search's matches; only the last, `done`, ends its worker.
     Search {
         id: crate::SearchId,
         results: Vec<crate::SearchMatch>,
+        done: bool,
+        limited: bool,
     },
     Saved {
         ticket: u64,
@@ -438,7 +441,9 @@ impl Engine {
     }
 
     pub(crate) fn apply_worker_message(&mut self, message: WorkerMessage) {
-        self.workers_running = self.workers_running.saturating_sub(1);
+        if !matches!(message, WorkerMessage::Search { done: false, .. }) {
+            self.workers_running = self.workers_running.saturating_sub(1);
+        }
         match message {
             WorkerMessage::ProblemsComputed {
                 generation,
@@ -500,7 +505,12 @@ impl Engine {
                 self.preview_workspace_changed();
                 self.visual_workspace_changed();
             }
-            WorkerMessage::Search { id, results } => self.search_finished(id, results),
+            WorkerMessage::Search {
+                id,
+                results,
+                done,
+                limited,
+            } => self.search_found(id, results, done, limited),
             WorkerMessage::Saved {
                 id,
                 version,

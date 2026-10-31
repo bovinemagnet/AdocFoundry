@@ -62,6 +62,9 @@ pub struct Engine {
     pub(crate) previews: BTreeMap<crate::PreviewId, crate::EditPreview>,
     pub(crate) next_preview: u64,
     pub(crate) next_search: u64,
+    /// The search started last, which a search on a worker checks so as to stop once another
+    /// has started.
+    pub(crate) latest_search: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub(crate) group_moves: BTreeMap<UndoGroup, Vec<crate::FileMove>>,
     /// The files each group made, which undoing it deletes.
     pub(crate) group_created: BTreeMap<UndoGroup, Vec<crate::new_page::CreatedFile>>,
@@ -169,6 +172,7 @@ impl Engine {
             previews: BTreeMap::new(),
             next_preview: 1,
             next_search: 1,
+            latest_search: std::sync::Arc::default(),
             group_moves: BTreeMap::new(),
             group_created: BTreeMap::new(),
             group_documents: BTreeMap::new(),

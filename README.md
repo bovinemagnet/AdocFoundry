@@ -103,7 +103,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 **Find, replace and rename**
 
-- Find in the workspace, with regular expression, case and whole-word options.
+- Find in the workspace, with regular expression, case and whole-word options. Results are listed as they are found, open pages are searched with their unsaved edits, and a search stops at 10,000 matches and says so.
 - Replace across the workspace shows every change first; applying it is one undo step.
 - New Page… (Cmd/Ctrl-N, also in the File menu, in an Antora workspace) asks for a title and a module, the active page's to begin with, writes `pages/<slug>.adoc` holding `= Title` (`Release Notes` gives `release-notes.adoc`) and opens it. Unless told not to, it adds `* xref:<slug>.adoc[]` to the module's `nav.adoc` after the active page's entry, at its level, or else at the end, so the page resolves and is in the Navigation panel at once. One undo takes the entry out and deletes the file, as long as the file is still as it was made.
 - Rename Page moves the file and rewrites every xref that leads to it, shown as a preview first; one undo moves the page back and restores every xref.

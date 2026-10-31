@@ -856,6 +856,8 @@ See xref:antora-support.adoc#resource-ids[Resource IDs] for the coordinates a ta
 Find in Workspace (kbd:[Cmd+Shift+F] or kbd:[Ctrl+Shift+F]) searches every file in the workspace.
 Regular expression, case-sensitive and whole-word options are available.
 Results arrive as the search runs, and clicking one opens it.
+A page with unsaved edits is searched as it is in the editor.
+The search stops after 10,000 matches and says so, so a narrower search finds the rest.
 
 Replace in Workspace (kbd:[Cmd+Shift+H] or kbd:[Ctrl+Shift+H]) does not change anything immediately.
 It shows a preview listing every change; nothing is written until you apply it.

@@ -367,7 +367,7 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 |The active document or back and forward availability changed.
 
 |`SearchResults`
-|A batch of search matches, with a `done` flag.
+|A batch of search matches; the last batch has `done`, and `limited` when the search stopped at `SEARCH_MATCH_LIMIT`.
 
 |`CommandFailed`
 |A command returned an error.
@@ -834,6 +834,14 @@ Before anything changes, `validate_moves` checks that each source is a file, tha
 `apply_group` then applies the edits and moves; if a move fails, `roll_back` discards the group with `discard_group` and reverses the recorded moves, so no edit, move or undo or redo entry of the change remains.
 
 `workspace.search` returns immediately and delivers matches as `SearchResults` events.
+The worker reads each file itself: an open page's buffer, unsaved edits included, otherwise the file on disk.
+It does not copy every file's text out of the index first.
+Each event carries up to 500 matches, or whatever was found once 50 ms have passed.
+Every batch has `done: false` except the last, which has `done: true`.
+A search stops at `SEARCH_MATCH_LIMIT` (10,000) matches, and its last event then has `limited: true`.
+Starting another search stops the earlier one at its next file, but the earlier one still sends its final `done: true` event.
+`wait_for_workers` counts a search's worker as finished only at its `done` batch.
+Lines are counted (`LineIndex`) only in a file with a match.
 `workspace.replace` and `page.rename` return a `Preview` outcome.
 Rename finds every xref that resolves to the page using the index and the resolver.
 `Engine::rename_preview` also adds `outgoing_edits` for the moved page itself.

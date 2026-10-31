@@ -1,6 +1,7 @@
 use std::{
     ffi::OsStr,
-    fs, io,
+    fs,
+    io::{self, BufRead as _},
     path::{Component, Path, PathBuf},
 };
 
@@ -103,6 +104,26 @@ fn header_attribute<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
+/// The lines of the file at `path` that [`header_attribute`] reads: from the top up to the
+/// first blank line after the header starts. The rest of the page is never read.
+fn read_header(path: &Path) -> io::Result<String> {
+    let mut reader = io::BufReader::new(fs::File::open(path)?);
+    let mut header = String::new();
+    let mut started = false;
+    loop {
+        let start = header.len();
+        if reader.read_line(&mut header)? == 0 {
+            break;
+        }
+        let blank = header[start..].trim_end().is_empty();
+        if blank && started {
+            break;
+        }
+        started |= !blank;
+    }
+    Ok(header)
+}
+
 fn collect_component_roots(path: &Path, ignore: &[impl AsRef<str>], roots: &mut Vec<PathBuf>) {
     if path.is_file() {
         if path.file_name() == Some(OsStr::new("antora.yml")) {
@@ -181,8 +202,8 @@ pub(crate) fn discover_component(
                     relative_path,
                 };
                 let aliases = if family == ResourceFamily::Page {
-                    fs::read_to_string(&source_path)
-                        .map(|text| page_aliases(&text, &coordinate))
+                    read_header(&source_path)
+                        .map(|header| page_aliases(&header, &coordinate))
                         .unwrap_or_default()
                 } else {
                     Vec::new()
@@ -246,6 +267,33 @@ mod tests {
     use crate::{
         discover_antora_workspace, parse_resource_id, AntoraContext, AntoraResolver, ResourceFamily,
     };
+
+    /// Only the header is read for `:page-aliases:`: a body that is not text, or an attribute
+    /// line after the header, makes no difference.
+    #[test]
+    fn page_aliases_are_read_from_the_header_alone() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("antora.yml"), "name: demo\nversion: ~\n").unwrap();
+        let pages = root.path().join("modules/ROOT/pages");
+        std::fs::create_dir_all(&pages).unwrap();
+        let mut page =
+            b"\n= Guide\n:page-aliases: old-guide.adoc\n\n:page-aliases: body.adoc\n".to_vec();
+        page.extend_from_slice(&[0xff, 0xfe, b'\n']);
+        std::fs::write(pages.join("guide.adoc"), page).unwrap();
+
+        let discovery = discover_antora_workspace(&[root.path().to_path_buf()]).unwrap();
+        let guide = discovery
+            .catalog
+            .resources()
+            .find(|resource| resource.source_path.ends_with("guide.adoc"))
+            .unwrap();
+        let aliases: Vec<&str> = guide
+            .aliases
+            .iter()
+            .map(|alias| alias.path.as_str())
+            .collect();
+        assert_eq!(aliases, ["old-guide.adoc"]);
+    }
 
     #[test]
     fn discovers_components_modules_and_resources() {

@@ -105,6 +105,7 @@ A page may declare the old ids it used to have.
 :page-aliases: old-name.adoc, other-module:legacy.adoc
 ----
 
+Only a page's header is read for `page-aliases`, so the attribute must be in the header, before the first blank line after it, as Antora requires.
 Each alias is resolved relative to the page's own coordinates.
 An xref to an alias resolves to the page.
 It also carries an information diagnostic, `adoc.antora.resolved-via-alias`, suggesting the current id, so that old links can be tidied.
