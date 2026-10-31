@@ -1938,6 +1938,94 @@ fn one_visual_frame_walks_the_model_at_most_twice(cx: &mut TestAppContext) {
     assert!(walks <= 2, "{walks} walks of the model in one frame");
 }
 
+/// A page of `count` one-line paragraphs, the `n`th reading `Paragraph n.`.
+fn long_page(count: usize) -> String {
+    let paragraphs: String = (1..=count).map(|n| format!("Paragraph {n}.\n\n")).collect();
+    format!("= Page\n\n{paragraphs}")
+}
+
+#[gpui::test]
+fn visual_lays_out_only_visible_blocks(cx: &mut TestAppContext) {
+    let text = long_page(2_000);
+    let (_, _, visual, _, mut cx) = visual_workspace(&text, cx);
+    draw_visual(&visual, &mut cx);
+    let drawn = cx.update(|_, cx| visual.read(cx).layouts().borrow().len());
+    // A line and the gap after it are at least 30 px, so 900 px hold no more than 30 rows.
+    assert!(drawn > 0, "the first blocks are laid out");
+    assert!(drawn <= 90, "{drawn} blocks laid out");
+}
+
+#[gpui::test]
+fn visual_lays_out_only_visible_blocks_of_a_section(cx: &mut TestAppContext) {
+    let text = long_page(2_000).replacen("= Page\n\n", "= Page\n\n== Section\n\n", 1);
+    let (_, _, visual, _, mut cx) = visual_workspace(&text, cx);
+    draw_visual(&visual, &mut cx);
+    let (drawn, heading) = cx.update(|_, cx| {
+        let layouts = visual.read(cx).layouts().borrow();
+        (layouts.len(), layouts.contains_key(&vec![1]))
+    });
+    assert!(heading, "the section's heading is laid out");
+    assert!(drawn <= 90, "{drawn} blocks laid out");
+}
+
+#[gpui::test]
+fn split_mode_reveals_a_block_not_laid_out(cx: &mut TestAppContext) {
+    let text = long_page(2_000);
+    let (_, _, visual, _, mut cx) = visual_workspace(&text, cx);
+    draw_visual(&visual, &mut cx);
+    let offset = text.find("Paragraph 1500.").unwrap();
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.reveal_offset(offset, cx)));
+    for _ in 0..2 {
+        draw_visual(&visual, &mut cx);
+    }
+    let (revealed, selection) = cx.update(|_, cx| {
+        let visual = visual.read(cx);
+        (
+            visual.layouts().borrow().contains_key(&vec![1500]),
+            visual.selection(),
+        )
+    });
+    assert!(revealed, "the block is scrolled to and laid out");
+    assert!(selection.head < offset, "the selection stays where it was");
+}
+
+#[gpui::test]
+fn the_visual_caret_is_revealed_in_a_block_not_laid_out(cx: &mut TestAppContext) {
+    let text = long_page(2_000);
+    let (_, _, visual, _, mut cx) = visual_workspace(&text, cx);
+    let last = text.find("Paragraph 2000.").unwrap();
+    place_caret(&visual, last, &mut cx);
+    for _ in 0..3 {
+        draw_visual(&visual, &mut cx);
+    }
+    let (laid_out, first_laid_out) = cx.update(|_, cx| {
+        let layouts = visual.read(cx).layouts().borrow();
+        (
+            layouts.contains_key(&vec![2000]),
+            layouts.contains_key(&vec![1]),
+        )
+    });
+    assert!(laid_out, "the caret's block is scrolled to and laid out");
+    assert!(!first_laid_out, "the top of the page is out of view");
+}
+
+#[gpui::test]
+fn moving_down_goes_on_into_blocks_out_of_view(cx: &mut TestAppContext) {
+    let text = long_page(200);
+    let (_, _, visual, _, mut cx) = visual_workspace(&text, cx);
+    place_caret(&visual, text.find("Paragraph 1.").unwrap(), &mut cx);
+    for _ in 0..60 {
+        cx.simulate_keystrokes("down");
+        draw_visual(&visual, &mut cx);
+    }
+    let head = cx.update(|_, cx| visual.read(cx).selection().head);
+    assert!(
+        text[head..].starts_with("Paragraph 61."),
+        "at {:?}",
+        &text[head..(head + 15).min(text.len())]
+    );
+}
+
 #[gpui::test]
 fn formulas_are_measured_once(cx: &mut TestAppContext) {
     use adoc_core::probe::{self, Probe};

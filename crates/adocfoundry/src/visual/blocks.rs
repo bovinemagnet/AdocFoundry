@@ -2,17 +2,17 @@
 //! read-only (images, diagrams, included content, verbatim source) is drawn as the preview
 //! draws it, from the view tree built with the model.
 
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use adoc_engine::{
-    commands::ids, Access, CommandArgs, Node, NodeKind, ReadOnly, RowSection, TextBlock,
-    VisualDocument,
+    commands::ids, Access, BlockPath, CommandArgs, Model, Node, NodeKind, ReadOnly, RowSection,
+    TextBlock, VisualDocument,
 };
 use adoc_render::{
     AdmonitionKind, ColumnWidth, ListKind, ViewBlock, ViewCell, ViewKind, ViewTable,
 };
 use gpui::{
-    div, prelude::FluentBuilder as _, px, relative, AnyElement, Context, FontWeight, Hsla,
+    div, prelude::FluentBuilder as _, px, relative, AnyElement, App, Context, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
     ParentElement as _, Styled as _, Window,
 };
@@ -30,36 +30,118 @@ use crate::{
 /// What every node is drawn with.
 struct Draw<'a> {
     document: &'a VisualDocument,
+    frame: &'a Frame,
     context: BlockContext<'a>,
     inline: InlineStyle,
     caret: Hsla,
-    /// The path of the text block holding the caret, and the caret's display offset in it:
-    /// found once for the frame.
-    caret_at: Option<(adoc_engine::BlockPath, Option<usize>)>,
     selection: Hsla,
+    marks: crate::editor::changes::MarkColours,
+    spelling: Hsla,
+}
+
+/// What the rows of a frame share, worked out once for the frame.
+pub struct Frame {
+    document: Arc<VisualDocument>,
+    /// The path of the text block holding the caret, and the caret's display offset in it.
+    caret_at: Option<(BlockPath, Option<usize>)>,
     focused: bool,
     /// The document's changes against `HEAD`, when markers are shown, in order.
     changes: Vec<adoc_engine::Hunk>,
-    marks: crate::editor::changes::MarkColours,
     /// The misspelt words, underlined in `spelling`, in order.
     misspelt: Vec<adoc_core::SourceRange>,
-    spelling: Hsla,
+}
+
+/// A row of the list the visual editor draws: a top-level node, or a section's heading, whose
+/// blocks are the rows after it, so that a page of sections is laid out a block at a time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Row {
+    pub path: BlockPath,
+    /// Only the section's heading.
+    pub heading: bool,
+}
+
+/// The rows of `model`, in document order.
+#[must_use]
+pub fn rows(model: &Model) -> Vec<Row> {
+    fn visit(node: &Node, path: &mut BlockPath, out: &mut Vec<Row>) {
+        let section = matches!(node.kind, NodeKind::Section { .. });
+        out.push(Row {
+            path: path.clone(),
+            heading: section,
+        });
+        if section {
+            for (index, child) in node.children.iter().enumerate() {
+                path.push(index);
+                visit(child, path, out);
+                path.pop();
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut path = Vec::new();
+    for (index, node) in model.blocks.iter().enumerate() {
+        path.push(index);
+        visit(node, &mut path, &mut out);
+        path.pop();
+    }
+    out
+}
+
+/// The index of the row holding the node at `path`.
+#[must_use]
+pub fn row_of(rows: &[Row], path: &[usize]) -> Option<usize> {
+    // Rows are in document order, which is the order of their paths: the last at or before
+    // `path` is the one holding it.
+    rows.partition_point(|row| row.path.as_slice() <= path)
+        .checked_sub(1)
 }
 
 /// Highlighted blocks kept before the cache is emptied.
 const HIGHLIGHT_CACHE_LIMIT: usize = 256;
 
-/// The whole document: each top-level node.
-pub fn document(
-    view: &VisualView,
-    document: &VisualDocument,
-    window: &mut Window,
-    cx: &mut Context<VisualView>,
-) -> Vec<AnyElement> {
+/// What this frame's rows share.
+pub fn frame(view: &VisualView, document: Arc<VisualDocument>, window: &Window, cx: &App) -> Frame {
     // Typing adds an entry for each version of a block's text; start afresh before that grows.
     if view.highlights.borrow().len() > HIGHLIGHT_CACHE_LIMIT {
         view.highlights.borrow_mut().clear();
     }
+    let mut changes = {
+        let engine = &view.app.read(cx).engine;
+        if engine.settings().git.show_markers {
+            engine.git().hunks_for(view.document).to_vec()
+        } else {
+            Vec::new()
+        }
+    };
+    // Each block finds its own by searching; hunks never overlap.
+    changes.sort_by_key(|hunk| hunk.range.start);
+    let mut misspelt = view.misspelt(&document, cx);
+    misspelt.sort_by_key(|range| range.start);
+    let head = view.selection.head;
+    let caret_at = document
+        .model
+        .text_block_at(head)
+        .map(|(path, _, text)| (path, text.display_offset(head)));
+    Frame {
+        document,
+        caret_at,
+        focused: view.focus.is_focused(window),
+        changes,
+        misspelt,
+    }
+}
+
+/// Row `index` of the document's `count` rows.
+pub fn row(
+    view: &VisualView,
+    frame: &Frame,
+    row: &Row,
+    index: usize,
+    count: usize,
+    window: &mut Window,
+    cx: &mut Context<VisualView>,
+) -> AnyElement {
+    let document = &*frame.document;
     let cache = view.highlights.clone();
     let dark = cx.theme().mode.is_dark();
     let theme = cx.theme().highlight_theme.clone();
@@ -80,62 +162,48 @@ pub fn document(
             window.push_notification(error.to_string(), cx);
         }
     });
+    // The visual editor keeps no extents: its scrolling is the list's.
     let context = preview::block_context(
         &view.app,
         preview::sync::Extents::default(),
-        view.scroll.clone(),
+        gpui::ScrollHandle::new(),
         on_block,
         &highlight,
         window,
         cx,
     );
-    let mut changes = {
-        let engine = &view.app.read(cx).engine;
-        if engine.settings().git.show_markers {
-            engine.git().hunks_for(view.document).to_vec()
-        } else {
-            Vec::new()
-        }
-    };
-    // Each block finds its own by searching; hunks never overlap.
-    changes.sort_by_key(|hunk| hunk.range.start);
-    let mut misspelt = view.misspelt(document, cx);
-    misspelt.sort_by_key(|range| range.start);
-    let head = view.selection.head;
-    let caret_at = document
-        .model
-        .text_block_at(head)
-        .map(|(path, _, text)| (path, text.display_offset(head)));
     let draw = Draw {
         document,
+        frame,
         inline: context.inline.clone(),
         context,
         caret: cx.theme().primary,
-        caret_at,
         selection: cx.theme().primary.opacity(0.25),
-        focused: view.focus.is_focused(window),
-        changes,
         marks: crate::editor::changes::MarkColours {
             added: cx.theme().success,
             modified: cx.theme().info,
             deleted: cx.theme().danger,
         },
-        misspelt,
         spelling: cx.theme().danger,
     };
-    let mut path = Vec::new();
-    document
-        .model
-        .blocks
-        .iter()
-        .enumerate()
-        .map(|(index, node)| {
-            path.push(index);
-            let element = view.node(&mut path, node, &draw, cx);
-            path.pop();
-            element
-        })
-        .collect()
+    let mut path = row.path.clone();
+    let element = match document.model.node(&row.path) {
+        Some(node) => match (&node.kind, row.heading) {
+            (NodeKind::Section { level }, true) => view.heading(&path, node, *level, &draw, cx),
+            _ => view.node(&mut path, node, &draw, cx),
+        },
+        None => gpui::Empty.into_any_element(),
+    };
+    // The page's margins and the gap between blocks, a row at a time.
+    div()
+        .w_full()
+        .max_w(px(900.))
+        .px_4()
+        .when(index == 0, |row| row.pt_4())
+        .when(index > 0, |row| row.pt_3())
+        .when(index + 1 == count, |row| row.pb_4())
+        .child(element)
+        .into_any_element()
 }
 
 impl VisualView {
@@ -212,6 +280,28 @@ impl VisualView {
         }
     }
 
+    /// A section's or heading's title, sized by its level.
+    fn heading(
+        &self,
+        path: &[usize],
+        node: &Node,
+        level: u8,
+        draw: &Draw<'_>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let heading = div()
+            .pt_2()
+            .font_weight(FontWeight::BOLD)
+            .child(self.text(path, node, draw, cx));
+        match level {
+            0 | 1 => heading.text_2xl(),
+            2 => heading.text_xl(),
+            3 => heading.text_lg(),
+            _ => heading.text_base(),
+        }
+        .into_any_element()
+    }
+
     fn node_body(
         &self,
         path: &mut Vec<usize>,
@@ -228,16 +318,7 @@ impl VisualView {
                 .child(self.text(path, node, draw, cx))
                 .into_any_element(),
             NodeKind::Section { level } | NodeKind::Heading { level } => {
-                let heading = div()
-                    .pt_2()
-                    .font_weight(FontWeight::BOLD)
-                    .child(self.text(path, node, draw, cx));
-                let heading = match level {
-                    0 | 1 => heading.text_2xl(),
-                    2 => heading.text_xl(),
-                    3 => heading.text_lg(),
-                    _ => heading.text_base(),
-                };
+                let heading = self.heading(path, node, *level, draw, cx);
                 v_flex()
                     .gap_3()
                     .child(heading)
@@ -698,6 +779,7 @@ impl VisualView {
             return gpui::Empty.into_any_element();
         };
         let caret_display = draw
+            .frame
             .caret_at
             .as_ref()
             .filter(|(at, _)| at.as_slice() == path);
@@ -719,9 +801,10 @@ impl VisualView {
             runs = text::with_highlights(runs, &(draw.context.highlight)(language, &shown.text));
         }
         let first = draw
+            .frame
             .misspelt
             .partition_point(|range| range.start < block.range.start);
-        let underlined: Vec<std::ops::Range<usize>> = draw.misspelt[first..]
+        let underlined: Vec<std::ops::Range<usize>> = draw.frame.misspelt[first..]
             .iter()
             .take_while(|range| range.start <= block.range.end)
             .filter(|range| range.end <= block.range.end)
@@ -734,7 +817,7 @@ impl VisualView {
         runs = text::with_underlines(runs, &underlined, draw.spelling);
         let pending = self.pending.filter(|_| caret_here);
         let caret = caret_display
-            .filter(|_| draw.focused && self.selection.is_empty() && pending.is_none())
+            .filter(|_| draw.frame.focused && self.selection.is_empty() && pending.is_none())
             .map(|display| shown.index(display));
         let selection = selected_range(block, self.selection.start(), self.selection.end())
             .map(|range| shown.index(range.start)..shown.index(range.end));
@@ -744,7 +827,7 @@ impl VisualView {
             caret_colour: draw.caret,
             selection_colour: draw.selection,
             formula_backing: draw.inline.formula_backing,
-            reveal: caret_here.then(|| (self.scroll.clone(), self.reveal.clone())),
+            reveal: caret_here.then(|| (self.list.clone(), self.reveal.clone())),
         };
         let element = text::element(path.to_vec(), &shown, runs, &self.layouts, overlay);
         let read_only = !node.is_editable();
@@ -844,9 +927,10 @@ fn with_change_bar(
     use adoc_engine::HunkKind;
     // The hunks are in order and never overlap, so their ends are in order too.
     let first = draw
+        .frame
         .changes
         .partition_point(|hunk| hunk.range.end < range.start);
-    let kinds: Vec<HunkKind> = draw.changes[first..]
+    let kinds: Vec<HunkKind> = draw.frame.changes[first..]
         .iter()
         .take_while(|hunk| hunk.range.start <= range.end)
         .filter(|hunk| {

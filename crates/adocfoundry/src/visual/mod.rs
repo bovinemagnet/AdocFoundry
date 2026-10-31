@@ -26,7 +26,7 @@ use adoc_engine::{
 use gpui::{
     canvas, div, prelude::FluentBuilder as _, px, App, Context, ElementInputHandler, Entity,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    Styled as _, Subscription, Window,
 };
 use gpui_component::{v_flex, ActiveTheme as _, WindowExt as _};
 
@@ -37,6 +37,9 @@ use text::Layouts;
 
 /// The key context of the visual editor.
 pub const VISUAL_CONTEXT: &str = "VisualEditor";
+
+/// How far beyond the view rows are laid out, so the caret can move into the next one.
+const LIST_OVERDRAW: gpui::Pixels = px(400.);
 
 /// A selection: where it started and where the caret is, as source offsets.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -102,7 +105,13 @@ pub struct VisualView {
     /// The horizontal position kept while moving up and down.
     goal_x: Option<gpui::Pixels>,
     dragging: bool,
-    scroll: ScrollHandle,
+    /// The rows drawn, laid out only where they are in view.
+    list: gpui::ListState,
+    /// The rows of the model shown, and the model they are of.
+    rows: Rc<[blocks::Row]>,
+    rows_of: Option<Arc<VisualDocument>>,
+    /// What this frame's rows share.
+    frame: Option<Rc<blocks::Frame>>,
     layouts: Layouts,
     reveal: Rc<Cell<bool>>,
     /// Highlighted code, kept between frames so a block is highlighted again only when its
@@ -156,7 +165,10 @@ impl VisualView {
             pending: None,
             goal_x: None,
             dragging: false,
-            scroll: ScrollHandle::new(),
+            list: gpui::ListState::new(0, gpui::ListAlignment::Top, LIST_OVERDRAW),
+            rows: Rc::from(Vec::new()),
+            rows_of: None,
+            frame: None,
             layouts: Layouts::default(),
             reveal: Rc::default(),
             highlights: Rc::default(),
@@ -285,17 +297,26 @@ impl VisualView {
         let Some((path, _)) = self.block_at(offset) else {
             return;
         };
-        let Some(bounds) = text::bounds_of(&self.layouts, &path) else {
-            return;
-        };
-        let visible = self.scroll.bounds();
-        if bounds.top() >= visible.top() && bounds.bottom() <= visible.bottom() {
-            return;
+        match text::bounds_of(&self.layouts, &path) {
+            Some(bounds) => {
+                let visible = self.list.viewport_bounds();
+                if bounds.top() >= visible.top() && bounds.bottom() <= visible.bottom() {
+                    return;
+                }
+                self.list
+                    .scroll_by(bounds.top() - (visible.top() + px(24.)));
+            }
+            // Not laid out: its row goes to the top.
+            None => {
+                let Some(index) = blocks::row_of(&self.rows, &path) else {
+                    return;
+                };
+                self.list.scroll_to(gpui::ListOffset {
+                    item_ix: index,
+                    offset_in_item: px(0.),
+                });
+            }
         }
-        let mut scroll = self.scroll.offset();
-        scroll.y += visible.top() + px(24.) - bounds.top();
-        scroll.y = scroll.y.min(px(0.));
-        self.scroll.set_offset(scroll);
         cx.notify();
     }
 
@@ -615,11 +636,12 @@ impl VisualView {
             let index = text::hit(&self.layouts, &other, gpui::point(x, y), &other_shown)?;
             return other_block.source_offset(index, other_block.marks_at(index));
         }
-        Some(if down {
+        // Nothing drawn beyond: the next block may not be laid out yet, being out of view.
+        self.neighbour_edge(&path, down).or(Some(if down {
             block.range.end
         } else {
             block.range.start
-        })
+        }))
     }
 
     fn move_to(&mut self, offset: Option<usize>, select: bool, cx: &mut Context<Self>) {
@@ -858,6 +880,54 @@ impl VisualView {
     }
 }
 
+impl VisualView {
+    /// Takes the rows of a new model. Rows past the old count are added or dropped, and every
+    /// other row is measured again where it is next laid out, so the scroll position holds.
+    fn update_rows(&mut self) {
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        if self
+            .rows_of
+            .as_ref()
+            .is_some_and(|of| Arc::ptr_eq(of, shown))
+        {
+            return;
+        }
+        let rows = blocks::rows(&shown.model);
+        let (old, new) = (self.list.item_count(), rows.len());
+        if new != old {
+            self.list.splice(new.min(old)..old, new.saturating_sub(old));
+        }
+        self.list.remeasure_items(0..new.min(old));
+        self.rows = Rc::from(rows);
+        self.rows_of = Some(shown.clone());
+    }
+
+    /// Scrolls to the caret's row when it is to be revealed and was not laid out last frame;
+    /// once laid out, the caret scrolls itself into view as it is painted.
+    fn reveal_row(&self) {
+        if !self.reveal.get() {
+            return;
+        }
+        let Some(shown) = &self.shown else {
+            return;
+        };
+        let Some((path, ..)) = shown.model.text_block_at(self.selection.head) else {
+            return;
+        };
+        let Some(index) = blocks::row_of(&self.rows, &path) else {
+            return;
+        };
+        if self.list.bounds_for_item(index).is_none() {
+            self.list.scroll_to(gpui::ListOffset {
+                item_ix: index,
+                offset_in_item: px(0.),
+            });
+        }
+    }
+}
+
 /// What the formulas' gaps were measured for.
 struct Measured {
     shown: Arc<VisualDocument>,
@@ -923,10 +993,12 @@ impl Render for VisualView {
         // Repopulated as this frame's text blocks are drawn.
         self.layouts.borrow_mut().clear();
         self.measure_formulas(window);
-        let body = self
+        self.update_rows();
+        self.reveal_row();
+        self.frame = self
             .shown
             .clone()
-            .map(|shown| blocks::document(self, &shown, window, cx));
+            .map(|shown| Rc::new(blocks::frame(self, shown, window, cx)));
         let entity = cx.entity();
         let focus = self.focus.clone();
         v_flex()
@@ -971,28 +1043,31 @@ impl Render for VisualView {
                     ))
                 },
             )
-            .child(
-                div()
-                    .id("visual-scroll")
+            .when(self.shown.is_some(), |view| {
+                let rows = self.rows.clone();
+                view.child(
+                    gpui::list(
+                        self.list.clone(),
+                        cx.processor(move |this, index: usize, window, cx| {
+                            let (Some(frame), Some(row)) = (this.frame.clone(), rows.get(index))
+                            else {
+                                return gpui::Empty.into_any_element();
+                            };
+                            blocks::row(this, &frame, row, index, rows.len(), window, cx)
+                        }),
+                    )
                     .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .child(
-                        v_flex()
-                            .p_4()
-                            .gap_3()
-                            .max_w(px(900.))
-                            .when_some(body, |content, body| content.children(body))
-                            .when(self.shown.is_none(), |content| {
-                                content.child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child("Preparing the visual editor…"),
-                                )
-                            }),
-                    ),
-            )
+                    .min_h_0(),
+                )
+            })
+            .when(self.shown.is_none(), |view| {
+                view.child(
+                    div()
+                        .p_4()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Preparing the visual editor…"),
+                )
+            })
     }
 }
