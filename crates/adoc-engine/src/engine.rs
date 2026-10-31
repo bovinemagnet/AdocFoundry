@@ -275,6 +275,7 @@ impl Engine {
             DocumentState {
                 undo: UndoStack::default(),
                 saved_hash: hash_text(text),
+                changed_on_disk: false,
             },
         );
         self.emit(EngineEvent::DocumentOpened(id));
@@ -469,6 +470,7 @@ impl Engine {
         document.dirty = false;
         if let Some(state) = self.states.get_mut(&id) {
             state.saved_hash = hash_text(&text);
+            state.changed_on_disk = false;
         }
         self.auto_save_settled(id);
         self.recovery_changed(id);
@@ -483,6 +485,7 @@ impl Engine {
     pub(crate) fn mark_saved(&mut self, id: DocumentId, text: &str) {
         if let Some(state) = self.states.get_mut(&id) {
             state.saved_hash = hash_text(text);
+            state.changed_on_disk = false;
         }
         if let Some(document) = self.documents.get_mut(&id) {
             document.dirty = document.text != text;
