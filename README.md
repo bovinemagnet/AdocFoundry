@@ -186,7 +186,7 @@ preview_tabs = true              # false keeps every page you open in a tab of i
 auto_save = "off"                # off | on_focus_change | after_delay (a second after typing stops)
 
 [workspace]
-ignore = ["node_modules", ".git", "build", "target", ".cache"]
+ignore = [".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]   # never indexed, discovered or watched
 
 [sidebar]
 remember_expansion = true        # user file only

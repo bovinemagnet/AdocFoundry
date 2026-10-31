@@ -283,10 +283,12 @@ fn without_remembering_reopening_starts_from_the_default() {
     let docs = workspace(directory.path(), "docs");
     let tree = modules_tree();
     let clock = ManualClock::new();
+    // The engines live side by side, so each waits for its own write before the next reads.
     let save = |engine: &mut Engine| {
         engine.pump();
         clock.advance(EXPANSION_SAVE_SETTLE + Duration::from_millis(1));
         engine.pump();
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
     };
 
     // Remembered once…

@@ -53,7 +53,7 @@ default_expansion = 2            # 0 or more, or "all"
 default_expansion = 2            # to keep the old fully open trees, use "all" in both
 
 [workspace]
-ignore = ["node_modules", ".git", "build", "target", ".cache"]
+ignore = [".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]
 
 [tools]
 asciidoctor = ""                 # optional absolute path; discovered on PATH if empty
@@ -155,8 +155,8 @@ check = true                     # look for a newer release at start-up
 
 |`workspace.ignore`
 |array of strings
-|`["node_modules", ".git", "build", "target", ".cache"]`
-|Folder names skipped during discovery and indexing.
+|`[".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]`
+|Folder names skipped by indexing, Antora discovery and the file watcher, and hidden in Files unless Show Excluded Files is on. A workspace file's list replaces the default rather than adding to it.
 
 |`tools.asciidoctor`
 |string

@@ -3,17 +3,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub const DEFAULT_IGNORED_DIRECTORIES: &[&str] = &[
-    ".cache",
-    ".git",
-    ".zed",
-    "node_modules",
-    "build",
-    "target",
-    "dist",
-    ".idea",
-    ".gradle",
-];
+pub use adoc_core::DEFAULT_IGNORED_DIRECTORIES;
 
 #[must_use]
 pub fn is_asciidoc_path(path: &Path) -> bool {
@@ -22,32 +12,47 @@ pub fn is_asciidoc_path(path: &Path) -> bool {
         .is_some_and(|extension| matches!(extension, "adoc" | "asciidoc" | "ad"))
 }
 
-pub(crate) fn collect_asciidoc_files(path: &Path, output: &mut Vec<PathBuf>) -> io::Result<()> {
+/// Collects the AsciiDoc files beneath `path`, never entering a folder named in `ignore` or a
+/// link. `on_directory` sees each folder entered before it is read; one that cannot be read is
+/// added to `unreadable` and left out.
+pub(crate) fn collect_asciidoc_files(
+    path: &Path,
+    ignore: &[impl AsRef<str>],
+    on_directory: &mut dyn FnMut(&Path),
+    output: &mut Vec<PathBuf>,
+    unreadable: &mut Vec<PathBuf>,
+) {
     if path.is_file() {
         if is_asciidoc_path(path) {
             output.push(normalize_path(path));
         }
-        return Ok(());
+        return;
     }
 
-    let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
+    on_directory(path);
+    let Ok(mut entries) = fs::read_dir(path).and_then(Iterator::collect::<io::Result<Vec<_>>>)
+    else {
+        unreadable.push(normalize_path(path));
+        return;
+    };
     entries.sort_by_key(fs::DirEntry::file_name);
     for entry in entries {
-        let file_type = entry.file_type()?;
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         let entry_path = entry.path();
         if file_type.is_dir() {
             let ignored = entry
                 .file_name()
                 .to_str()
-                .is_some_and(|name| DEFAULT_IGNORED_DIRECTORIES.contains(&name));
+                .is_some_and(|name| ignore.iter().any(|ignored| ignored.as_ref() == name));
             if !ignored {
-                collect_asciidoc_files(&entry_path, output)?;
+                collect_asciidoc_files(&entry_path, ignore, on_directory, output, unreadable);
             }
         } else if file_type.is_file() && is_asciidoc_path(&entry_path) {
             output.push(normalize_path(&entry_path));
         }
     }
-    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

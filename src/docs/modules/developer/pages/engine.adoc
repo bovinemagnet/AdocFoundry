@@ -622,7 +622,13 @@ The inverse of a step is the source edits that restore the text before it.
 
 == The pump and worker indexing
 
-`open_workspace` starts indexing on a worker thread and starts watching the roots.
+`open_workspace` starts indexing on a worker thread and creates the watcher, but places no watches itself, so it does no watching on the caller's thread.
+The worker walks the roots with `index_roots_with(roots, ignore, on_directory)` in `adoc-index` and `adoc-lang`.
+It calls `on_directory` before it reads each folder, and the engine uses that call to place the watch, so nothing read afterwards is missed.
+The index, Antora discovery and the watcher all take the one `workspace.ignore` list.
+Files are read and parsed on up to four threads.
+A folder or file that cannot be read is left out of the index and recorded in `Indexed::unreadable`, and the rest of the workspace is indexed.
+The engine reports the first unreadable path once, as `CommandFailed` for `workspace.reindex`, with a message such as "could not read <path> and N more; the rest of the workspace is indexed".
 The worker returns a finished `WorkspaceState`, which is applied by `pump()`.
 Open documents are newer than the files the worker read, so they are kept.
 Each index job carries a generation, as preview rendering and Git discovery do, and a result or failure from a job that a newer one has superseded is discarded.
@@ -640,11 +646,27 @@ include::example$event-pump.mmd[]
 == The file watcher
 
 A `notify` watcher, with a 250 ms debounce, feeds the pump.
+Its `WatchMode` is chosen per platform.
+
+* `WatchMode::Roots` puts one recursive watch on each root.
+FSEvents on macOS and `ReadDirectoryChangesW` on Windows keep that without walking the tree, and changes in ignored folders are filtered out.
+* `WatchMode::Folders`, used on Linux, puts a non-recursive watch on each folder the index enters, because inotify watches one folder at a time.
+Ignored folders such as `node_modules` and `.git` are never watched.
+A new folder is watched when the re-index that its creation triggers enters it.
+
+The `Watches` are shared, and the index worker locks them to add each watch.
+In `Folders` mode `Indexed` also carries the folders `entered`.
+When the engine applies a current-generation result, it unwatches every folder not in that set, such as one that was removed or is now ignored.
+A result from a superseded job is discarded and changes no watches.
+The watcher never follows symbolic links, as the index never did.
+If a watch cannot be added, for example at Linux's `fs.inotify.max_user_watches` limit, the engine reports it once as `CommandFailed` for `workspace.open_folder` ("file watching is incomplete: …") and keeps working.
+
 
 * A created, modified or removed AsciiDoc file is re-indexed.
 * A document with unsaved edits is never overwritten; the engine emits `DocumentChangedOnDisk` instead.
 * A modified `antora.yml` reloads that component version, and diagnostics are re-run for affected files.
 * A directory created or removed under a module re-indexes the root.
+A folder that is removed and then touched in the same debounce window still counts as a folder change.
 * A changed file that is open as an image calls `images_changed`, which reloads it.
 
 Saving checks the same thing.

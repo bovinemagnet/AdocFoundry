@@ -4,6 +4,7 @@ use std::{
     hash::{Hash, Hasher},
     io,
     path::{Path, PathBuf},
+    thread,
 };
 
 use adoc_core::{
@@ -16,7 +17,20 @@ use crate::{
     diagnostics::resolve_include_target,
     symbols::{document_symbols, words, WorkspaceSymbol},
     workspace::{collect_asciidoc_files, normalize_path},
+    DEFAULT_IGNORED_DIRECTORIES,
 };
+
+/// The most threads that read and parse files while a workspace is indexed.
+const PARSE_THREADS: usize = 4;
+
+/// What indexing a workspace's roots found.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct IndexReport {
+    /// The AsciiDoc files indexed.
+    pub files: usize,
+    /// The folders and files that could not be read, and were left out.
+    pub unreadable: Vec<PathBuf>,
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct AnchorKey {
@@ -239,18 +253,71 @@ impl WorkspaceIndex {
     }
 
     pub fn index_roots(&mut self, roots: &[PathBuf]) -> io::Result<usize> {
+        let report = self.index_roots_with(roots, DEFAULT_IGNORED_DIRECTORIES, |_| {});
+        match report.unreadable.first() {
+            Some(path) => Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} could not be read", path.display()),
+            )),
+            None => Ok(report.files),
+        }
+    }
+
+    /// Indexes every AsciiDoc file beneath `roots`, never entering a folder named in `ignore`
+    /// or a link, and leaving out whatever cannot be read. `on_directory` sees each folder
+    /// entered before it is read, so a watch placed there misses nothing read after. Files are
+    /// read and parsed on a few threads.
+    pub fn index_roots_with(
+        &mut self,
+        roots: &[PathBuf],
+        ignore: &[impl AsRef<str>],
+        mut on_directory: impl FnMut(&Path),
+    ) -> IndexReport {
         let mut paths = Vec::new();
+        let mut unreadable = Vec::new();
         for root in roots {
-            collect_asciidoc_files(root, &mut paths)?;
+            collect_asciidoc_files(root, ignore, &mut on_directory, &mut paths, &mut unreadable);
         }
         paths.sort();
         paths.dedup();
 
-        for path in &paths {
-            let text = fs::read_to_string(path)?;
-            self.index_source(path, &text);
+        let threads = thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(PARSE_THREADS);
+        let chunk = paths.len().div_ceil(threads).max(1);
+        let parsed: Vec<_> = thread::scope(|scope| {
+            let workers: Vec<_> = paths
+                .chunks(chunk)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .map(|path| {
+                                let document = fs::read_to_string(path)
+                                    .map(|text| parse(&path_to_uri(path), &text).document);
+                                (path, document)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().expect("parsing never panics"))
+                .collect()
+        });
+        let mut files = 0;
+        for (path, document) in parsed {
+            match document {
+                Ok(document) => {
+                    self.replace(path.clone(), document);
+                    files += 1;
+                }
+                Err(_) => unreadable.push(path.clone()),
+            }
         }
-        Ok(paths.len())
+        unreadable.sort();
+        IndexReport { files, unreadable }
     }
 
     #[must_use]
@@ -415,6 +482,30 @@ mod tests {
         assert!(index.resolve_anchor(&path, "new").is_some());
         assert!(index.references().is_empty());
         assert_eq!(index.files().count(), 1);
+    }
+
+    #[test]
+    fn indexing_enters_each_folder_kept_before_reading_it() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let mut entered = Vec::new();
+        let mut index = WorkspaceIndex::new();
+        let report = index.index_roots_with(std::slice::from_ref(&root), &["pages"], |folder| {
+            entered.push(folder.to_path_buf());
+        });
+
+        assert!(report.unreadable.is_empty());
+        assert_eq!(report.files, index.files().count());
+        assert_eq!(entered.first(), Some(&root), "the root is entered first");
+        assert!(entered.contains(&root.join("modules/ROOT/partials")));
+        assert!(
+            entered.iter().all(|folder| !folder.ends_with("pages")),
+            "a folder named in the ignore list is never entered"
+        );
+        assert!(index.files().all(|file| !file
+            .path
+            .components()
+            .any(|part| part.as_os_str() == "pages")));
     }
 
     #[test]

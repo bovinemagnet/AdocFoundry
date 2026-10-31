@@ -52,6 +52,8 @@ pub struct Engine {
     /// The latest whole-workspace index job; results of earlier ones are dropped.
     pub(crate) index_generation: u64,
     pub(crate) watcher: Option<FileWatcher>,
+    /// How the next workspace opened is watched: the platform's way, but tests try both.
+    pub(crate) watch_mode: crate::workspace::WatchMode,
     pub(crate) history: crate::navigation::History,
     /// The files made active, for Quick Open.
     pub(crate) recent: crate::quick_open::RecentFiles,
@@ -155,6 +157,7 @@ impl Engine {
             indexing: 0,
             index_generation: 0,
             watcher: None,
+            watch_mode: crate::workspace::WatchMode::PLATFORM,
             history: crate::navigation::History::default(),
             recent: crate::quick_open::RecentFiles::default(),
             previews: BTreeMap::new(),

@@ -1181,7 +1181,10 @@ fn export_component_exports_the_active_page_s_component_with_unsaved_edits(
     });
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     assert!(drain_until(&app, &mut cx, |cx| {
-        cx.update(|_, cx| app.read(cx).engine.active().is_some())
+        // The page's component is known once the workspace is indexed.
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
     }));
 
     cx.dispatch_action(crate::editor::bindings::ExportComponentPdf);

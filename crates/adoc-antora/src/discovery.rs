@@ -9,17 +9,6 @@ use crate::{
     AntoraResourceId, ComponentDescriptor, DescriptorError, Module, ResourceFamily,
 };
 
-const IGNORED_DIRECTORIES: &[&str] = &[
-    ".cache",
-    ".git",
-    ".zed",
-    ".idea",
-    "node_modules",
-    "target",
-    "build",
-    "dist",
-];
-
 #[derive(Clone, Debug, Default)]
 pub struct DiscoveryResult {
     pub catalog: AntoraCatalog,
@@ -27,9 +16,18 @@ pub struct DiscoveryResult {
 }
 
 pub fn discover_antora_workspace(roots: &[PathBuf]) -> io::Result<DiscoveryResult> {
+    discover_antora_workspace_ignoring(roots, adoc_core::DEFAULT_IGNORED_DIRECTORIES)
+}
+
+/// Discovers the components beneath `roots`, never entering a folder named in `ignore` or one
+/// that cannot be read.
+pub fn discover_antora_workspace_ignoring(
+    roots: &[PathBuf],
+    ignore: &[impl AsRef<str>],
+) -> io::Result<DiscoveryResult> {
     let mut component_roots = Vec::new();
     for root in roots {
-        collect_component_roots(root, &mut component_roots)?;
+        collect_component_roots(root, ignore, &mut component_roots);
     }
     component_roots.sort();
     component_roots.dedup();
@@ -105,26 +103,29 @@ fn header_attribute<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
-fn collect_component_roots(path: &Path, roots: &mut Vec<PathBuf>) -> io::Result<()> {
+fn collect_component_roots(path: &Path, ignore: &[impl AsRef<str>], roots: &mut Vec<PathBuf>) {
     if path.is_file() {
         if path.file_name() == Some(OsStr::new("antora.yml")) {
             if let Some(root) = path.parent().filter(|root| root.join("modules").is_dir()) {
                 roots.push(normalize_path(root));
             }
         }
-        return Ok(());
+        return;
     }
 
     if path.join("antora.yml").is_file() && path.join("modules").is_dir() {
         roots.push(normalize_path(path));
     }
-    for entry in sorted_entries(path)? {
-        if !entry.file_type()?.is_dir() || is_ignored(&entry.file_name()) {
-            continue;
+    // An unreadable folder holds no components the workspace can use.
+    let Ok(entries) = sorted_entries(path) else {
+        return;
+    };
+    for entry in entries {
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if is_dir && !is_ignored(&entry.file_name(), ignore) {
+            collect_component_roots(&entry.path(), ignore, roots);
         }
-        collect_component_roots(&entry.path(), roots)?;
     }
-    Ok(())
 }
 
 pub(crate) fn discover_component(
@@ -215,9 +216,9 @@ fn sorted_entries(path: &Path) -> io::Result<Vec<fs::DirEntry>> {
     Ok(entries)
 }
 
-fn is_ignored(name: &OsStr) -> bool {
+fn is_ignored(name: &OsStr, ignore: &[impl AsRef<str>]) -> bool {
     name.to_str()
-        .is_some_and(|name| IGNORED_DIRECTORIES.contains(&name))
+        .is_some_and(|name| ignore.iter().any(|ignored| ignored.as_ref() == name))
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
