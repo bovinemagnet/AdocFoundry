@@ -4,6 +4,10 @@ shipped with them, each one's --version, a PDF export from the CLI, the language
 initialise and shutdown, and the app staying up on a fixture workspace.
 
 usage: packaging/smoke-test.py <directory with the binaries> [--no-app] [--expect-signed]
+                               [--expect-version <version>]
+
+With --expect-version every binary's --version must give exactly that version, the tag's, so a
+package never reports another release than it is published as.
 
 With --expect-signed it also checks the signatures: on macOS every binary passes
 `codesign --verify --strict` with the hardened runtime and a Developer ID, and the app bundle
@@ -46,14 +50,24 @@ def check(condition, message):
     print(f"ok: {message}")
 
 
-def versions(directory):
+def version_reported(name, stdout, expected):
+    """Whether `stdout` of `name --version` names the binary and, when `expected` is given,
+    exactly that version."""
+    words = stdout.split()
+    if len(words) < 2 or words[0] != name:
+        return False
+    return expected is None or words[1] == expected
+
+
+def versions(directory, expected=None):
     for name in BINARIES:
         output = subprocess.run(
             [binary(directory, name), "--version"],
             capture_output=True, text=True, timeout=TIMEOUT,
         )
-        check(output.returncode == 0 and output.stdout.startswith(name + " "),
-              f"{name} --version: {output.stdout.strip()}")
+        wanted = f" (expected {expected})" if expected else ""
+        check(output.returncode == 0 and version_reported(name, output.stdout, expected),
+              f"{name} --version: {output.stdout.strip()}{wanted}")
 
 
 def licence_path(directory):
@@ -209,9 +223,15 @@ def main():
     directory = sys.argv[1]
     if "--expect-signed" in sys.argv:
         signatures(directory)
+    expected = None
+    if "--expect-version" in sys.argv:
+        at = sys.argv.index("--expect-version") + 1
+        if at >= len(sys.argv):
+            sys.exit(__doc__)
+        expected = sys.argv[at]
     licence(directory)
     notices(directory)
-    versions(directory)
+    versions(directory, expected)
     pdf_export(directory)
     language_server(directory)
     mcp_server(directory)
