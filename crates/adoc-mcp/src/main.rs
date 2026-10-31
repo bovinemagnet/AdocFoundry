@@ -96,6 +96,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?
         .block_on(async move {
+            tokio::spawn(server.clone().pump_while_idle());
             if let (Some(address), Some(token)) = (listen, token) {
                 return http::serve(server, address, token).await;
             }

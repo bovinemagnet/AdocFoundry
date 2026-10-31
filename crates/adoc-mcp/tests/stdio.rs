@@ -456,3 +456,29 @@ fn pdf_export_reads_nothing_outside_the_roots() {
     );
     client.stop();
 }
+
+#[test]
+fn a_page_added_on_disk_is_indexed_while_the_server_is_idle() {
+    let (_directory, root) = scratch("references");
+    let mut client = Client::start(&root, false);
+    let titles = |client: &mut Client| {
+        client
+            .call("symbols", json!({ "query": "Added later" }))
+            .unwrap()["symbols"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(titles(&mut client), 0);
+
+    std::fs::write(root.join("added.adoc"), "= Added later\n\nText.\n").unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while titles(&mut client) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the change was never applied"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    client.stop();
+}
