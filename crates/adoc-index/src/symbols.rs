@@ -1,6 +1,6 @@
 //! Named things in a document that a workspace-wide search can find.
 
-use std::path::{Path, PathBuf};
+use std::{path::Path, sync::Arc};
 
 use adoc_core::{Document, SourceRange};
 
@@ -16,7 +16,7 @@ pub enum WorkspaceSymbolKind {
 pub struct WorkspaceSymbol {
     pub name: String,
     pub kind: WorkspaceSymbolKind,
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     /// The span to select when the symbol is chosen.
     pub range: SourceRange,
     /// The title of the document that declares the symbol.
@@ -24,12 +24,12 @@ pub struct WorkspaceSymbol {
 }
 
 /// A file's symbols in a fixed order: title, sections, anchors, attributes.
-pub(crate) fn document_symbols(path: &Path, document: &Document) -> Vec<WorkspaceSymbol> {
+pub(crate) fn document_symbols(path: &Arc<Path>, document: &Document) -> Vec<WorkspaceSymbol> {
     let container = document.title.as_ref().map(|title| title.text.clone());
     let symbol = |name: &str, kind, range| WorkspaceSymbol {
         name: name.to_owned(),
         kind,
-        path: path.to_path_buf(),
+        path: path.clone(),
         range,
         container: container.clone(),
     };
@@ -110,7 +110,10 @@ mod tests {
             "= Guide\n:product-name: Widget\n:draft!:\n\n[[auth-flow]]\n== Authentication Flow\n";
         let document = parse("file:///docs/guide.adoc", text).document;
 
-        let symbols = document_symbols(Path::new("/docs/guide.adoc"), &document);
+        let symbols = document_symbols(
+            &std::sync::Arc::from(Path::new("/docs/guide.adoc")),
+            &document,
+        );
 
         assert_eq!(
             symbols

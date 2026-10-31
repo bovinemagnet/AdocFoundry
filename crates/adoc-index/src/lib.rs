@@ -5,8 +5,7 @@ mod workspace;
 
 pub use diagnostics::{resolve_image_target, resolve_include_target, workspace_diagnostics};
 pub use index::{
-    AnchorKey, AnchorLocation, FileEntry, IncludeLocation, IndexReport, ReferenceLocation,
-    WorkspaceIndex,
+    AnchorLocation, FileEntry, IncludeLocation, IndexReport, ReferenceLocation, WorkspaceIndex,
 };
 pub use symbols::{WorkspaceSymbol, WorkspaceSymbolKind};
 pub use workspace::{
