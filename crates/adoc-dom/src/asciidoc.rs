@@ -25,7 +25,7 @@ use asciidoc_parser::{
 use crate::{
     AdmonitionKind, Align, Block, BlockKind, BlockMeta, Callout, CalloutItem, Cell, CellStyle,
     Column, ColumnWidth, DescriptionItem, Dom, DomWarning, IncludeResolver, Inline, ListItem,
-    ListKind, MediaKind, ParseInput, Row, SourceSpan,
+    ListKind, MediaKind, ParseInput, Row, SourceSpan, VAlign,
 };
 
 /// The block styles rendered as diagrams, as in the acdc implementation.
@@ -231,6 +231,10 @@ impl Converter<'_> {
                         })
                         .collect()
                 })
+                .unwrap_or_default(),
+            options: block
+                .attrlist()
+                .map(|attrlist| attrlist.options().into_iter().map(str::to_owned).collect())
                 .unwrap_or_default(),
         }
     }
@@ -506,6 +510,7 @@ impl Converter<'_> {
                                 u32::try_from(column.width()).unwrap_or(1),
                             ),
                             align: align(column.h_align()),
+                            valign: valign(column.v_align()),
                             style: cell_style(column.style()),
                         })
                         .collect(),
@@ -576,6 +581,7 @@ impl Converter<'_> {
             colspan: cell.colspan(),
             rowspan: cell.rowspan(),
             align: Some(align(cell.h_align())),
+            valign: Some(valign(cell.v_align())),
             style: Some(cell_style(cell.style())),
         }
     }
@@ -828,6 +834,14 @@ fn align(alignment: HorizontalAlignment) -> Align {
         HorizontalAlignment::Center => Align::Centre,
         HorizontalAlignment::Right => Align::End,
         _ => Align::Start,
+    }
+}
+
+fn valign(alignment: asciidoc_parser::blocks::VerticalAlignment) -> VAlign {
+    match alignment {
+        asciidoc_parser::blocks::VerticalAlignment::Middle => VAlign::Middle,
+        asciidoc_parser::blocks::VerticalAlignment::Bottom => VAlign::Bottom,
+        _ => VAlign::Top,
     }
 }
 

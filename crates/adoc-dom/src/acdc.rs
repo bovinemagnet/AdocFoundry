@@ -655,6 +655,11 @@ impl Converter<'_> {
                 .map(|role| (*role).to_owned())
                 .collect();
             meta.style = metadata.style.map(str::to_owned);
+            meta.options = metadata
+                .options
+                .iter()
+                .map(|option| (*option).to_owned())
+                .collect();
             meta.attributes = metadata
                 .attributes
                 .iter()
@@ -1031,6 +1036,7 @@ impl Converter<'_> {
                     colspan: cell.colspan.max(1),
                     rowspan: cell.rowspan.max(1),
                     align: cell.halign.as_ref().map(align),
+                    valign: cell.valign.as_ref().map(valign),
                     style: cell.style.as_ref().map(cell_style),
                 })
                 .collect(),
@@ -1046,6 +1052,7 @@ impl Converter<'_> {
                         _ => ColumnWidth::Auto,
                     },
                     align: align(&column.halign),
+                    valign: valign(&column.valign),
                     style: cell_style(&column.style),
                 })
                 .collect(),
@@ -1488,6 +1495,14 @@ fn align(halign: &acdc::HorizontalAlignment) -> Align {
         acdc::HorizontalAlignment::Left => Align::Start,
         acdc::HorizontalAlignment::Center => Align::Centre,
         acdc::HorizontalAlignment::Right => Align::End,
+    }
+}
+
+fn valign(valign: &acdc::VerticalAlignment) -> VAlign {
+    match valign {
+        acdc::VerticalAlignment::Top => VAlign::Top,
+        acdc::VerticalAlignment::Middle => VAlign::Middle,
+        acdc::VerticalAlignment::Bottom => VAlign::Bottom,
     }
 }
 

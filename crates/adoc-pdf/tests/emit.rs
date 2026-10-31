@@ -374,3 +374,97 @@ fn languages_without_a_grammar_keep_typst_s_highlighter() {
         !typst.source.contains("adoc-highlighted(((") && !typst.source.contains("lang: \"rust\"")
     );
 }
+
+#[test]
+fn emits_list_styles_and_table_options() {
+    let typst = typst_of(
+        "= Options\n\n\
+         [loweralpha,start=3]\n. three\n. four\n\n\
+         [%reversed]\n. two\n. one\n\n//-\n\n\
+         . outer\n.. nested\n\n\
+         [cols=\"1,1\",frame=ends,grid=rows,stripes=even,width=50%]\n|===\n|A |B\n|C |D\n|===\n\n\
+         [%autowidth]\n|===\n|Narrow\n|===\n\n\
+         .Shown on request\n[%collapsible]\n====\nInside.\n====\n",
+    );
+    let source = &typst.source;
+    // The style's letters from the start given, a count down, and the nested list's letters.
+    for markers in [
+        "#adoc-list(([#\"c.\"], [#\"d.\"],)",
+        "#adoc-list(([#\"2.\"], [#\"1.\"],)",
+        "#adoc-list(([#\"a.\"],)",
+    ] {
+        assert!(source.contains(markers), "no {markers} in\n{source}");
+    }
+    assert!(
+        source.contains(
+            "row-count: 2, frame: \"ends\", grid: \"rows\", stripes: \"even\", width: 50%)"
+        ),
+        "{source}"
+    );
+    assert!(source.contains("#adoc-table((auto,), none,"), "{source}");
+    assert!(source.contains(", width: auto)"), "{source}");
+    // A collapsible block is captioned `▼ Title`, unnumbered, and not framed as an example.
+    assert!(
+        source.contains("[#\"\u{25bc} \"#\"Shown on request\"]"),
+        "{source}"
+    );
+    assert!(source.contains("#adoc-collapsible("), "{source}");
+    assert!(!source.contains("Example 1."), "{source}");
+    let text = compiled_text(&typst);
+    for shown in [
+        "c.three",
+        "2.two",
+        "1.one",
+        "AB",
+        "Narrow",
+        "\u{25bc}ShownonrequestInside.",
+    ] {
+        assert!(text.contains(shown), "no {shown} in {text}");
+    }
+}
+
+#[test]
+fn emits_cell_vertical_alignment() {
+    let typst =
+        typst_of("= Cells\n\n[cols=\".^1,1\"]\n|===\n|Middle |Top .>|Bottom\n|Next\n|===\n");
+    let source = &typst.source;
+    for align in [
+        "align: left + horizon)[#\"Middle\"",
+        "align: left + top)[#\"Top\"",
+        "align: left + bottom)[#\"Bottom\"",
+    ] {
+        assert!(source.contains(align), "no {align} in\n{source}");
+    }
+    assert!(compiled_text(&typst).contains("MiddleTop"));
+}
+
+#[test]
+fn image_alignment_and_pdf_width_are_kept() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(
+        directory.path().join("dot.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &page,
+        "= Images\n\nimage::dot.svg[Dot,align=center,pdfwidth=40%,width=10]\n\nimage::dot.svg[Dot,float=right,link=https://example.org]\n",
+    )
+    .unwrap();
+    let typst = to_typst(
+        &common::article(common::view_of(&page)),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    let source = &typst.source;
+    assert!(
+        source.contains("width: 40%), align-to: \"center\")"),
+        "{source}"
+    );
+    assert!(
+        source.contains("#adoc-image(link(\"https://example.org\", image("),
+        "{source}"
+    );
+    assert!(source.contains(")), align-to: \"right\")"), "{source}");
+}

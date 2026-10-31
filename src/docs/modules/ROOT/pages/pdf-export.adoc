@@ -7,6 +7,8 @@ AdocFoundry exports a page, or a whole component version, as a paginated PDF.
 The PDF is typeset in process by Typst and styled by an asciidoctor-pdf theme, so a theme written for asciidoctor-pdf loads without edits.
 It needs no Ruby, Node.js, Java or network access.
 
+Block attributes and options are honoured: a list's numbering style, `start` and `%reversed`; a table's `frame`, `grid`, `stripes`, `width` and `%autowidth`; vertical cell alignment; an image's `align`, `float`, `link` and `pdfwidth`; and `%collapsible` blocks.
+
 == Exporting a page
 
 Export Page to PDF… (`export.pdf_page`) exports the active page as an article.

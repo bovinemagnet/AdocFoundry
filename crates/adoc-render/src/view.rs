@@ -9,7 +9,7 @@ use std::{
 use adoc_core::{Location, SourceRange};
 use adoc_dom::{
     AdmonitionKind, Align, Block, BlockKind, CellStyle, Column, Dom, Inline, ListKind, MediaKind,
-    SourceSpan,
+    SourceSpan, VAlign,
 };
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -43,12 +43,20 @@ pub struct ViewBlock {
     pub span: SourceSpan,
     pub id: Option<String>,
     pub roles: Vec<String>,
-    /// The block style, where it changes presentation: `qanda` and `horizontal` lists.
+    /// The block style, where it changes presentation: `qanda` and `horizontal` lists, and an
+    /// ordered list's numbering (`arabic`, `loweralpha`, `lowerroman`, `upperalpha`,
+    /// `upperroman`, …), its own or, as Asciidoctor gives one, by how deeply it is nested.
     pub style: Option<String>,
     pub title: Vec<ViewInline>,
     /// A numbered caption such as `Figure 1.` or `Table 2.`, for titled images, tables,
     /// examples and listings.
     pub caption: Option<String>,
+    /// The named attributes of the block's attribute list, for what they change in how it is
+    /// shown: a list's `start`, a table's `frame`, `grid`, `stripes` and `width`, an image's
+    /// `align`, `float`, `link` and `pdfwidth`.
+    pub attributes: BTreeMap<String, String>,
+    /// Its options: `reversed`, `autowidth`, `collapsible`, `open`.
+    pub options: std::collections::BTreeSet<String>,
     pub kind: ViewKind,
 }
 
@@ -82,6 +90,8 @@ pub struct ViewCell {
     pub colspan: usize,
     pub rowspan: usize,
     pub align: Align,
+    /// The cell's own vertical alignment, else its column's.
+    pub valign: VAlign,
     pub style: CellStyle,
 }
 
@@ -398,6 +408,7 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
             .get("toclevels")
             .and_then(|levels| levels.parse().ok())
             .unwrap_or(2),
+        ordered_depth: 0,
     };
     let blocks = builder.blocks(&dom.blocks);
     let title = dom.title.as_ref().map(|title| builder.inlines(title));
@@ -471,7 +482,18 @@ struct Builder<'r> {
     footnotes: Vec<ViewFootnote>,
     toc: Vec<TocEntry>,
     toc_levels: u8,
+    /// How many ordered lists the block being built is inside.
+    ordered_depth: usize,
 }
+
+/// The numbering styles of ordered lists that Asciidoctor gives by nesting depth, in turn.
+const ORDERED_STYLES: [&str; 5] = [
+    "arabic",
+    "loweralpha",
+    "lowerroman",
+    "upperalpha",
+    "upperroman",
+];
 
 /// The section styles Asciidoctor does not number, besides `appendix`, which it letters.
 const SPECIAL_SECTIONS: &[&str] = &[
@@ -508,9 +530,18 @@ impl Builder<'_> {
         if block.meta.title.is_empty() {
             return None;
         }
+        // A caption of the block's own replaces the number, and takes none.
+        if let Some(caption) = block.meta.attributes.get("caption") {
+            let caption = caption.trim_end();
+            return (!caption.is_empty()).then(|| caption.to_owned());
+        }
         let (counter, label) = match &block.kind {
             BlockKind::Image { .. } => (&mut self.figures, "Figure"),
             BlockKind::Table { .. } => (&mut self.tables, "Table"),
+            // A collapsible block is titled by its summary, as Asciidoctor counts it: unnumbered.
+            BlockKind::Example { .. } if block.meta.options.contains("collapsible") => {
+                return None;
+            }
             BlockKind::Example { .. } => (&mut self.examples, "Example"),
             BlockKind::Listing { .. } if block.meta.style.as_deref() == Some("source") => {
                 return None;
@@ -616,9 +647,10 @@ impl Builder<'_> {
                 title: self.inlines(title),
             },
             BlockKind::Paragraph { inlines } => ViewKind::Paragraph(self.inlines(inlines)),
-            BlockKind::List { kind, items } => ViewKind::List {
-                kind: *kind,
-                items: items
+            BlockKind::List { kind, items } => {
+                let ordered = *kind == ListKind::Ordered;
+                self.ordered_depth += usize::from(ordered);
+                let items = items
                     .iter()
                     .map(|item| ViewListItem {
                         span: item.span.clone(),
@@ -626,8 +658,10 @@ impl Builder<'_> {
                         content: self.inlines(&item.content),
                         blocks: self.blocks(&item.blocks),
                     })
-                    .collect(),
-            },
+                    .collect();
+                self.ordered_depth -= usize::from(ordered);
+                ViewKind::List { kind: *kind, items }
+            }
             BlockKind::DescriptionList { items } => ViewKind::DescriptionList(
                 items
                     .iter()
@@ -710,6 +744,10 @@ impl Builder<'_> {
                                     .align
                                     .or(column.map(|column| column.align))
                                     .unwrap_or(Align::Start),
+                                valign: cell
+                                    .valign
+                                    .or(column.map(|column| column.valign))
+                                    .unwrap_or_default(),
                                 style: cell
                                     .style
                                     .or(column.map(|column| column.style))
@@ -757,13 +795,24 @@ impl Builder<'_> {
                 source: source.clone(),
             },
         };
+        let style = match &block.kind {
+            BlockKind::List {
+                kind: ListKind::Ordered,
+                ..
+            } => Some(block.meta.style.clone().unwrap_or_else(|| {
+                ORDERED_STYLES[self.ordered_depth % ORDERED_STYLES.len()].to_owned()
+            })),
+            _ => block.meta.style.clone(),
+        };
         ViewBlock {
             span: block.meta.span.clone(),
             id: block.meta.id.clone(),
             roles: block.meta.roles.clone(),
-            style: block.meta.style.clone(),
+            style,
             title,
             caption,
+            attributes: block.meta.attributes.clone(),
+            options: block.meta.options.clone(),
             kind,
         }
     }

@@ -8,7 +8,8 @@ mod view;
 
 /// DOM value types the view tree shares, so renderers need not depend on the DOM crate.
 pub use adoc_dom::{
-    AdmonitionKind, Align, Callout, CellStyle, Column, ColumnWidth, ListKind, MediaKind, SourceSpan,
+    AdmonitionKind, Align, Callout, CellStyle, Column, ColumnWidth, ListKind, MediaKind,
+    SourceSpan, VAlign,
 };
 pub use asciidoctor::{MockRenderer, Renderer, SystemAsciidoctor};
 pub use formula::{formula_image, with_baseline, FormulaImage, INLINE_FORMULA_POINTS};
