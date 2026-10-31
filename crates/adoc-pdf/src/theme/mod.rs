@@ -283,6 +283,19 @@ enum ThemeFile {
     Path(PathBuf),
 }
 
+impl ThemeFile {
+    /// The file's name, or the bundled theme's.
+    fn name(&self) -> String {
+        match self {
+            Self::Bundled(name) => name.clone(),
+            Self::Path(path) => path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Loader {
     keys: ThemeKeys,
@@ -290,6 +303,8 @@ struct Loader {
     fallbacks: Vec<String>,
     warnings: Vec<ThemeWarning>,
     loaded: HashSet<ThemeFile>,
+    /// The files being read, each extending the next, to refuse a theme that extends itself.
+    loading: Vec<ThemeFile>,
     /// The file being read, for warnings.
     current: Option<PathBuf>,
     /// Which theme files may be read.
@@ -448,6 +463,31 @@ impl Loader {
     }
 
     fn load_file(&mut self, file: &ThemeFile, theme_dir: Option<&Path>) -> Result<(), ThemeError> {
+        // `!important` reads a file again however often it was read, so only the files still
+        // being read stop a cycle.
+        if self.loading.contains(file) {
+            let chain: Vec<String> = self
+                .loading
+                .iter()
+                .skip_while(|loading| *loading != file)
+                .chain([file])
+                .map(ThemeFile::name)
+                .collect();
+            return Err(ThemeError::Yaml {
+                path: match file {
+                    ThemeFile::Path(path) => Some(path.clone()),
+                    ThemeFile::Bundled(_) => None,
+                },
+                message: format!("the theme extends itself ({})", chain.join(" → ")),
+            });
+        }
+        self.loading.push(file.clone());
+        let loaded = self.read_file(file, theme_dir);
+        self.loading.pop();
+        loaded
+    }
+
+    fn read_file(&mut self, file: &ThemeFile, theme_dir: Option<&Path>) -> Result<(), ThemeError> {
         self.loaded.insert(file.clone());
         let previous = self.current.clone();
         let (text, path) = match file {
