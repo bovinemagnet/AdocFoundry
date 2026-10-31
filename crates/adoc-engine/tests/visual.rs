@@ -791,3 +791,90 @@ fn each_insert_is_one_undo_step_in_source() {
     type_over(&mut engine, id, caret, "flow.png");
     assert!(text(&engine, id).ends_with("second line\n\nimage::flow.png[]\n"));
 }
+
+fn source_insert_at(engine: &mut Engine, id: DocumentId, at: usize, typed: &str) {
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(at, at),
+                text: typed.to_owned(),
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_model_in_the_background_is_rebuilt_when_it_is_shown() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = page(directory.path(), "first.adoc", "First.\n");
+    let second = page(directory.path(), "second.adoc", "Second.\n");
+    let (mut engine, clock) = engine_with_clock();
+    let second_id = engine.open(&second).unwrap();
+    show_visual(&mut engine, second_id);
+    let first_id = engine.open(&first).unwrap();
+    show_visual(&mut engine, first_id);
+    assert_eq!(engine.active(), Some(first_id));
+
+    source_insert_at(&mut engine, second_id, "Second".len(), " page");
+    clock.advance(MODEL_SETTLE);
+    engine.pump();
+    assert_eq!(
+        shown(&engine, second_id),
+        ["Second."],
+        "not shown, not rebuilt"
+    );
+    assert!(!engine.has_pending(), "nothing waits for it either");
+
+    engine.set_active(second_id);
+    assert_eq!(shown(&engine, second_id), ["Second page."]);
+    assert_eq!(
+        engine.visual(second_id).unwrap().version,
+        version(&engine, second_id)
+    );
+}
+
+#[test]
+fn a_command_that_changes_nothing_leaves_a_settling_model_to_settle() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = page(directory.path(), "page.adoc", "First.\n");
+    let (mut engine, clock) = engine_with_clock();
+    let id = engine.open(&path).unwrap();
+    show_visual(&mut engine, id);
+    source_insert_at(&mut engine, id, "First".len(), " and second");
+    let receiver = engine.subscribe();
+
+    engine.invoke(ids::APP_ABOUT, CommandArgs::None).unwrap();
+    assert!(
+        !events(&receiver)
+            .iter()
+            .any(|event| matches!(event, EngineEvent::ModelChanged { .. })),
+        "a read-only command rebuilds nothing"
+    );
+    assert_eq!(shown(&engine, id), ["First."]);
+
+    clock.advance(MODEL_SETTLE);
+    engine.pump();
+    assert_eq!(shown(&engine, id), ["First and second."]);
+}
+
+#[test]
+fn closing_a_tab_shows_the_next_page_s_model_current() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = page(directory.path(), "first.adoc", "First.\n");
+    let second = page(directory.path(), "second.adoc", "Second.\n");
+    let (mut engine, clock) = engine_with_clock();
+    let second_id = engine.open(&second).unwrap();
+    show_visual(&mut engine, second_id);
+    let first_id = engine.open(&first).unwrap();
+    source_insert_at(&mut engine, second_id, "Second".len(), " page");
+    clock.advance(MODEL_SETTLE);
+    engine.pump();
+
+    engine
+        .invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(first_id))
+        .unwrap();
+    assert_eq!(engine.active(), Some(second_id));
+    assert_eq!(shown(&engine, second_id), ["Second page."]);
+}

@@ -109,6 +109,8 @@ pub(crate) struct VisualState {
     sessions: BTreeMap<DocumentId, Session>,
     /// The document a visual command is editing, whose model the command keeps current.
     applying: Option<DocumentId>,
+    /// Counts the times a model was made stale, so a command can tell that it made one so.
+    marked: u64,
 }
 
 impl VisualState {
@@ -216,6 +218,7 @@ impl Engine {
             if own || session.sources.contains(path) {
                 session.stale = true;
                 session.due = Some(due);
+                self.visual.marked += 1;
             }
         }
     }
@@ -227,36 +230,48 @@ impl Engine {
             session.stale = true;
             session.due = Some(due);
         }
+        self.visual.marked += 1;
     }
 
-    /// Rebuilds every stale model now: after any command other than source typing.
-    pub(crate) fn refresh_stale_visuals(&mut self) {
-        let stale: Vec<DocumentId> = self
-            .visual
-            .sessions
-            .iter()
-            .filter(|(_, session)| session.stale)
-            .map(|(id, _)| *id)
-            .collect();
-        for id in stale {
-            self.build_visual(id);
+    /// How many times a model has been made stale, for [`Engine::refresh_stale_visuals`].
+    pub(crate) fn visuals_marked(&self) -> u64 {
+        self.visual.marked
+    }
+
+    /// Rebuilds the active page's model now if a command made it stale (`marked` is
+    /// [`Engine::visuals_marked`] before it ran). Models of pages in the background wait until
+    /// they are shown, and a model only typing made stale waits for its settle.
+    pub(crate) fn refresh_stale_visuals(&mut self, marked: u64) {
+        if let Some(id) = self.active.filter(|_| self.visual.marked != marked) {
+            self.refresh_visual(id);
         }
     }
 
-    /// Rebuilds the models whose settle time has passed. Returns the number rebuilt.
+    /// Rebuilds the active page's model once its settle time has passed. Others are left
+    /// stale, to be rebuilt when they are shown. Returns the number rebuilt.
     pub(crate) fn rebuild_due_visuals(&mut self) -> usize {
         let now = self.clock.now();
+        let active = self.active;
+        let mut rebuilt = 0;
         let due: Vec<DocumentId> = self
             .visual
             .sessions
-            .iter()
+            .iter_mut()
             .filter(|(_, session)| session.due.is_some_and(|due| due <= now))
-            .map(|(id, _)| *id)
+            .filter_map(|(id, session)| {
+                if Some(*id) == active {
+                    return Some(*id);
+                }
+                session.stale = true;
+                session.due = None;
+                None
+            })
             .collect();
-        for id in &due {
-            self.build_visual(*id);
+        for id in due {
+            self.build_visual(id);
+            rebuilt += 1;
         }
-        due.len()
+        rebuilt
     }
 
     /// Rebuilds the views waiting for a diagram that finished.
