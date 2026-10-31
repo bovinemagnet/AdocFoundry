@@ -57,6 +57,8 @@ pub struct Engine {
     pub(crate) history: crate::navigation::History,
     /// The files made active, for Quick Open.
     pub(crate) recent: crate::quick_open::RecentFiles,
+    /// Quick Open's items, built from the index when first asked for after it changed.
+    pub(crate) quick_open: std::cell::RefCell<crate::quick_open::QuickOpenCache>,
     pub(crate) previews: BTreeMap<crate::PreviewId, crate::EditPreview>,
     pub(crate) next_preview: u64,
     pub(crate) next_search: u64,
@@ -163,6 +165,7 @@ impl Engine {
             watch_mode: crate::workspace::WatchMode::PLATFORM,
             history: crate::navigation::History::default(),
             recent: crate::quick_open::RecentFiles::default(),
+            quick_open: std::cell::RefCell::default(),
             previews: BTreeMap::new(),
             next_preview: 1,
             next_search: 1,

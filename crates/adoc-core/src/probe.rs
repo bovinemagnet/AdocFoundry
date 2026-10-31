@@ -26,9 +26,11 @@ pub enum Probe {
     ChildRefs,
     /// Inline content laid out as styled text for the preview.
     InlineLayout,
+    /// A file's Quick Open item made from the index.
+    QuickOpenItem,
 }
 
-const PROBES: usize = 9;
+const PROBES: usize = 10;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -70,4 +72,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::InlineLayout as usize == PROBES - 1);
+const _: () = assert!(Probe::QuickOpenItem as usize == PROBES - 1);
