@@ -19,6 +19,58 @@ struct CellAt<'m> {
     column: usize,
 }
 
+/// A table's `cols` value: a number of equal columns, or one spec per column.
+#[derive(Debug, PartialEq)]
+enum Columns {
+    Count(usize),
+    Specs(Vec<String>),
+}
+
+impl Columns {
+    /// As Asciidoctor reads it: a whole value that is a number is that many columns of equal
+    /// width, `cols=3` three of them; anything else is a spec per column.
+    fn read(value: &str) -> Self {
+        match value.trim().parse::<usize>() {
+            Ok(count) => Self::Count(count),
+            Err(_) => Self::Specs(
+                value
+                    .split([',', ';'])
+                    .map(|spec| spec.trim().to_owned())
+                    .collect(),
+            ),
+        }
+    }
+
+    /// The value with a column of width 1 after `column`.
+    fn inserted_after(self, column: usize) -> String {
+        match self {
+            Self::Count(count) => (count + 1).to_string(),
+            Self::Specs(mut specs) => {
+                specs.insert((column + 1).min(specs.len()), "1".to_owned());
+                specs.join(",")
+            }
+        }
+    }
+
+    /// The value without `column`. A single width is written `1`, since a lone number would be
+    /// a count of columns.
+    fn deleted(self, column: usize) -> String {
+        match self {
+            Self::Count(count) => count.saturating_sub(1).max(1).to_string(),
+            Self::Specs(mut specs) => {
+                if column < specs.len() {
+                    specs.remove(column);
+                }
+                if specs.len() <= 1 {
+                    "1".to_owned()
+                } else {
+                    specs.join(",")
+                }
+            }
+        }
+    }
+}
+
 impl Model {
     /// The regular table cell holding `at`.
     fn cell_at(&self, at: usize) -> Result<CellAt<'_>, StepError> {
@@ -134,7 +186,7 @@ impl Model {
     }
 
     /// The `cols` attribute of a table: the range of its value and the column specs.
-    fn column_specs(&self, table: &Node) -> Result<Option<(SourceRange, Vec<String>)>, StepError> {
+    fn column_specs(&self, table: &Node) -> Result<Option<(SourceRange, Columns)>, StepError> {
         let head_end = self.source[table.range.start..table.range.end]
             .find("|===")
             .map_or(table.range.start, |index| table.range.start + index);
@@ -159,10 +211,7 @@ impl Model {
                 "the column widths repeat with `*`; edit them in the source",
             ));
         }
-        let specs = value
-            .split([',', ';'])
-            .map(|spec| spec.trim().to_owned())
-            .collect();
+        let specs = Columns::read(value);
         Ok(Some((
             SourceRange::new(table.range.start + start, table.range.start + end),
             specs,
@@ -184,10 +233,8 @@ impl Model {
                 caret = target.range.end + 2;
             }
         }
-        if let Some((range, mut specs)) = self.column_specs(cell.table)? {
-            let column = (cell.column + 1).min(specs.len());
-            specs.insert(column, "1".to_owned());
-            edits.push(SourceEdit::new(range, specs.join(",")));
+        if let Some((range, columns)) = self.column_specs(cell.table)? {
+            edits.push(SourceEdit::new(range, columns.inserted_after(cell.column)));
         }
         let selection = crate::Mapping::new(&{
             let mut sorted = edits.clone();
@@ -223,11 +270,8 @@ impl Model {
             };
             edits.push(SourceEdit::delete(range));
         }
-        if let Some((range, mut specs)) = self.column_specs(cell.table)? {
-            if cell.column < specs.len() {
-                specs.remove(cell.column);
-            }
-            edits.push(SourceEdit::new(range, specs.join(",")));
+        if let Some((range, columns)) = self.column_specs(cell.table)? {
+            edits.push(SourceEdit::new(range, columns.deleted(cell.column)));
         }
         let start = self.line_start_of(cell.table.range.start);
         self.rebuilt(edits, SourceRange::new(start, start))
@@ -355,4 +399,29 @@ fn split_attributes(attributes: &str) -> Vec<(&str, usize)> {
     }
     parts.push((&attributes[start..], start));
     parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Columns;
+
+    #[test]
+    fn insert_column_on_integer_cols() {
+        assert_eq!(Columns::read("3"), Columns::Count(3));
+        assert_eq!(Columns::read(" 3 ").inserted_after(1), "4");
+    }
+
+    #[test]
+    fn delete_column_on_integer_cols() {
+        assert_eq!(Columns::read("3").deleted(1), "2");
+        assert_eq!(Columns::read("1").deleted(0), "1");
+    }
+
+    #[test]
+    fn delete_to_one_column_writes_one() {
+        assert_eq!(Columns::read("2,3").deleted(0), "1");
+        assert_eq!(Columns::read("1,2,3").deleted(1), "1,3");
+        assert_eq!(Columns::read("1,2").inserted_after(0), "1,1,2");
+        assert_eq!(Columns::read("<1;>2").deleted(1), "1");
+    }
 }
