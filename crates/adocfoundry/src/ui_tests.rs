@@ -935,6 +935,41 @@ fn draw_preview(workspace: &Entity<WorkspaceView>, cx: &mut VisualTestContext) {
 }
 
 #[gpui::test]
+fn preview_lays_out_only_visible_blocks(cx: &mut TestAppContext) {
+    let (_directory, _, _, _, workspace, mut cx) = previewing_paragraphs(2_000, cx);
+    draw_preview(&workspace, &mut cx);
+    let laid_out = cx.update(|_, cx| workspace.read(cx).preview().read(cx).laid_out());
+    assert!(laid_out > 0, "the first blocks are laid out");
+    assert!(laid_out <= 90, "{laid_out} blocks laid out");
+}
+
+#[gpui::test]
+fn scroll_sync_reaches_a_block_not_laid_out(cx: &mut TestAppContext) {
+    let (_directory, page, text, _, workspace, mut cx) = previewing_paragraphs(2_000, cx);
+    let (trail, _) = block_for(&workspace, &page, &text, "Paragraph 1500.", &mut cx);
+    let offset = text.find("Paragraph 1500.").unwrap();
+    cx.update(|window, cx| {
+        let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(offset, offset), window, cx);
+        });
+    });
+    for _ in 0..4 {
+        cx.run_until_parked();
+        draw_preview(&workspace, &mut cx);
+    }
+    let (extent, top) = cx.update(|_, cx| {
+        let preview = workspace.read(cx).preview().read(cx);
+        (preview.extent(&trail), preview.scroll_top())
+    });
+    let extent = extent.expect("the block is laid out");
+    assert!(
+        (extent.top - top - px(8.)).abs() <= px(2.),
+        "{extent:?} at {top:?}"
+    );
+}
+
+#[gpui::test]
 fn preview_lays_out_inline_text_once_per_block(cx: &mut TestAppContext) {
     use adoc_core::probe::{self, Probe};
     let (_directory, _, _, _, workspace, mut cx) = previewing_paragraphs(300, cx);
@@ -1278,13 +1313,14 @@ fn scroll_sync_works_both_ways(cx: &mut TestAppContext) {
     assert!((extent.top - top) <= gpui::px(10.), "{extent:?} at {top:?}");
 
     // Preview to source: the editor scrolls to the block at the preview's top, caret unmoved.
-    let (trail, _) = block_for(&workspace, &page, &text, "Paragraph 20.", &mut cx);
+    // Only blocks in view are laid out: one a little below the caret's.
+    let (trail, _) = block_for(&workspace, &page, &text, "Paragraph 64.", &mut cx);
     let extent = cx.update(|_, cx| preview.read(cx).extent(&trail)).unwrap();
     cx.update(|_, cx| {
         preview.update(cx, |preview, cx| preview.scroll_for_test(extent.top, cx));
     });
     cx.run_until_parked();
-    let line = text[..text.find("Paragraph 20.").unwrap()]
+    let line = text[..text.find("Paragraph 64.").unwrap()]
         .matches('\n')
         .count();
     let top_line = cx.update(|_, cx| {

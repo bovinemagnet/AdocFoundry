@@ -4,9 +4,10 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use gpui::{canvas, AnyElement, IntoElement as _, Pixels, ScrollHandle, Styled as _};
+use gpui::{canvas, AnyElement, IntoElement as _, ListState, Pixels, Styled as _};
 
-/// A block's vertical extent in the scrolled content, independent of the scroll position.
+/// A block's vertical extent in the scrolled content, independent of the scroll position: as
+/// far as the list has measured its rows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Extent {
     pub top: Pixels,
@@ -16,16 +17,18 @@ pub struct Extent {
 /// Block extents by trail, refreshed on every frame.
 pub type Extents = Rc<RefCell<HashMap<Vec<usize>, Extent>>>;
 
-/// An invisible element filling its block that records the block's extent when laid out. The
-/// block must be positioned relatively.
-pub fn recorder(trail: Vec<usize>, extents: &Extents, scroll: &ScrollHandle) -> AnyElement {
+/// An invisible element filling its block that records the block's extent when painted, in
+/// the content of `list`. The block must be positioned relatively.
+pub fn recorder(trail: Vec<usize>, extents: &Extents, list: &ListState) -> AnyElement {
     let extents = extents.clone();
-    let scroll = scroll.clone();
+    let list = list.clone();
     canvas(
-        move |bounds, _, _| {
-            let container = scroll.bounds();
-            let offset = scroll.offset();
-            let top = bounds.origin.y - container.origin.y - offset.y;
+        |_, _, _| {},
+        // While the list lays its rows out it holds its state; by painting it has let it go.
+        move |bounds, (), _, _| {
+            let viewport = list.viewport_bounds();
+            let scrolled = -list.scroll_px_offset_for_scrollbar().y;
+            let top = bounds.origin.y - viewport.origin.y + scrolled;
             extents.borrow_mut().insert(
                 trail.clone(),
                 Extent {
@@ -34,7 +37,6 @@ pub fn recorder(trail: Vec<usize>, extents: &Extents, scroll: &ScrollHandle) -> 
                 },
             );
         },
-        |_, _, _, _| {},
     )
     .absolute()
     .top_0()

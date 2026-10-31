@@ -36,7 +36,8 @@ pub struct Palette {
 pub struct BlockContext<'a> {
     pub inline: InlineStyle,
     pub extents: super::sync::Extents,
-    pub scroll: gpui::ScrollHandle,
+    /// The list the blocks are drawn in, when their extents are recorded.
+    pub list: Option<gpui::ListState>,
     pub palette: Palette,
     pub radius: Pixels,
     pub on_link: LinkHandler,
@@ -61,32 +62,108 @@ fn text_id(trail: &[usize], part: &str) -> ElementId {
     )))
 }
 
-/// The whole document: title, then each top-level block.
-pub fn document(view: &ViewTree, context: &BlockContext<'_>) -> Vec<AnyElement> {
+/// A row of the list the preview draws: the title, the contents, a block, or a section's
+/// heading alone, whose blocks are the rows after it, so that a page of sections is laid out a
+/// block at a time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Row {
+    Title,
+    Contents,
+    Block {
+        trail: Vec<usize>,
+        /// Only the section's heading.
+        heading: bool,
+    },
+}
+
+/// The rows of `view`, in document order.
+#[must_use]
+pub fn rows(view: &ViewTree) -> Vec<Row> {
+    fn visit(blocks: &[&ViewBlock], trail: &mut Vec<usize>, out: &mut Vec<Row>) {
+        for (index, block) in blocks.iter().enumerate() {
+            trail.push(index);
+            let section = matches!(block.kind, ViewKind::Section { .. });
+            out.push(Row::Block {
+                trail: trail.clone(),
+                heading: section,
+            });
+            if section {
+                visit(&block.child_refs(), trail, out);
+            }
+            trail.pop();
+        }
+    }
     let mut out = Vec::new();
-    if let Some(title) = &view.title {
-        out.push(
+    if view.title.is_some() {
+        out.push(Row::Title);
+    }
+    // `:toc: macro` places the contents at a `toc::[]` block instead.
+    if !view.toc.is_empty() && view.attributes.get("toc").map(String::as_str) != Some("macro") {
+        out.push(Row::Contents);
+    }
+    let roots: Vec<&ViewBlock> = view.blocks.iter().collect();
+    visit(&roots, &mut Vec::new(), &mut out);
+    out
+}
+
+/// The index of the row holding the block at `trail`.
+#[must_use]
+pub fn row_of(rows: &[Row], trail: &[usize]) -> Option<usize> {
+    // The title and contents come first, then blocks in the order of their trails: the last
+    // at or before `trail` is the one holding it.
+    rows.partition_point(|row| match row {
+        Row::Block { trail: other, .. } => other.as_slice() <= trail,
+        Row::Title | Row::Contents => true,
+    })
+    .checked_sub(1)
+    .filter(|index| matches!(rows[*index], Row::Block { .. }))
+}
+
+/// Row `index` of `rows`, the rows of `view`.
+pub fn row(view: &ViewTree, rows: &[Row], index: usize, context: &BlockContext<'_>) -> AnyElement {
+    let Some(row) = rows.get(index) else {
+        return gpui::Empty.into_any_element();
+    };
+    let element = match row {
+        Row::Title => view.title.as_ref().map(|title| {
             div()
                 .text_3xl()
                 .pb_2()
                 .child(inline_text("document-title".into(), context, || {
                     inlines::layout_bold(title, &context.inline)
                 }))
-                .into_any_element(),
-        );
+                .into_any_element()
+        }),
+        Row::Contents => Some(toc_element(view, context)),
+        Row::Block { trail, heading } => adoc_render::block_by_trail(view, trail).map(|block| {
+            match section_heading(block, trail, context) {
+                Some(title) if *heading => framed(block, trail, title, context),
+                _ => block_element(block, &mut trail.clone(), view, context),
+            }
+        }),
+    };
+    div()
+        .w_full()
+        .max_w(px(900.))
+        .px_4()
+        .pt(row_gap(rows, index))
+        .when(index + 1 == rows.len(), |row| row.pb_4())
+        .children(element)
+        .into_any_element()
+}
+
+/// The space above row `index`: the page's margin above the first, then the gap a column of the
+/// page's blocks (`gap_3`) or a section's (`gap_2`) puts between them.
+#[must_use]
+pub fn row_gap(rows: &[Row], index: usize) -> Pixels {
+    let in_section = matches!(rows.get(index), Some(Row::Block { trail, .. }) if trail.len() > 1);
+    if index == 0 {
+        px(16.)
+    } else if in_section {
+        px(8.)
+    } else {
+        px(12.)
     }
-    // `:toc: macro` places the contents at a `toc::[]` block instead.
-    if !view.toc.is_empty() && view.attributes.get("toc").map(String::as_str) != Some("macro") {
-        out.push(toc_element(view, context));
-    }
-    let mut trail = Vec::new();
-    out.extend(children(
-        &view.blocks.iter().collect::<Vec<_>>(),
-        &mut trail,
-        view,
-        context,
-    ));
-    out
 }
 
 /// One block of `view` at `trail`, as the preview draws it: for content the visual editor shows
@@ -183,23 +260,11 @@ fn block_element(
     let palette = &context.palette;
     let child_refs = block.child_refs();
     let body: AnyElement = match &block.kind {
-        ViewKind::Section {
-            level,
-            number,
-            title: heading,
-            ..
-        } => {
-            let mut content = Vec::new();
-            if let Some(number) = number {
-                content.push(ViewInline::Text(format!("{number} ")));
-            }
-            content.extend(heading.iter().cloned());
-            v_flex()
-                .gap_2()
-                .child(heading_element(*level, &content, trail, context))
-                .children(children(&child_refs, trail, view, context))
-                .into_any_element()
-        }
+        ViewKind::Section { .. } => v_flex()
+            .gap_2()
+            .children(section_heading(block, trail, context))
+            .children(children(&child_refs, trail, view, context))
+            .into_any_element(),
         ViewKind::Heading {
             level,
             title: heading,
@@ -521,6 +586,17 @@ fn block_element(
             .child(preformatted(source, context))
             .into_any_element(),
     };
+    framed(block, trail, body, context)
+}
+
+/// `body`, the drawing of `block` at `trail`: its extent recorded, and a click on it showing
+/// its source.
+fn framed(
+    block: &ViewBlock,
+    trail: &[usize],
+    body: AnyElement,
+    context: &BlockContext<'_>,
+) -> AnyElement {
     let span = block.span.clone();
     let on_block = context.on_block.clone();
     div()
@@ -528,16 +604,40 @@ fn block_element(
         .relative()
         .w_full()
         .child(body)
-        .child(super::sync::recorder(
-            trail.to_vec(),
-            &context.extents,
-            &context.scroll,
-        ))
+        .children(
+            context
+                .list
+                .as_ref()
+                .map(|list| super::sync::recorder(trail.to_vec(), &context.extents, list)),
+        )
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             on_block(&span, window, cx);
         })
         .into_any_element()
+}
+
+/// A section's numbered heading.
+fn section_heading(
+    block: &ViewBlock,
+    trail: &[usize],
+    context: &BlockContext<'_>,
+) -> Option<AnyElement> {
+    let ViewKind::Section {
+        level,
+        number,
+        title: heading,
+        ..
+    } = &block.kind
+    else {
+        return None;
+    };
+    let mut content = Vec::new();
+    if let Some(number) = number {
+        content.push(ViewInline::Text(format!("{number} ")));
+    }
+    content.extend(heading.iter().cloned());
+    Some(heading_element(*level, &content, trail, context))
 }
 
 /// Blocks nested in list items and cells are numbered across the whole list, as
