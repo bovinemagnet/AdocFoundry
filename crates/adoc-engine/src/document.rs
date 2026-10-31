@@ -65,4 +65,7 @@ impl OpenDocument {
 pub(crate) struct DocumentState {
     pub(crate) undo: crate::UndoStack,
     pub(crate) saved_hash: u64,
+    /// The file was reported changed on disk under unsaved edits; it is not reported again
+    /// until the page is saved or reloaded.
+    pub(crate) changed_on_disk: bool,
 }

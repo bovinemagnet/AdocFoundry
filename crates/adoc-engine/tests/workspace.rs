@@ -226,3 +226,159 @@ fn typing_does_not_report_indexing() {
     assert!(engine.has_pending());
     assert!(!engine.is_indexing());
 }
+
+/// Writes `barrier`, a file of its own, and pumps until the watcher has reported it, so that
+/// every change made before it has been seen too; returns how many times the page `id` was
+/// reported changed on disk meanwhile. `step` runs each round, to move a manual clock on.
+fn reports_until_barrier(
+    engine: &mut Engine,
+    events: &std::sync::mpsc::Receiver<EngineEvent>,
+    id: adoc_engine::DocumentId,
+    barrier: &Path,
+    mut step: impl FnMut(),
+) -> usize {
+    thread::sleep(Duration::from_millis(100));
+    fs::write(barrier, "= Barrier\n").unwrap();
+    let barrier = adoc_index::normalize_path(barrier);
+    let mut reported = 0;
+    let mut seen = false;
+    assert!(pump_until(engine, |_| {
+        step();
+        for event in events.try_iter() {
+            match event {
+                EngineEvent::DocumentChangedOnDisk(changed) if changed == id => reported += 1,
+                EngineEvent::DiagnosticsUpdated { path } if path == barrier => seen = true,
+                _ => {}
+            }
+        }
+        seen
+    }));
+    reported
+}
+
+fn type_at_start(engine: &mut Engine, id: adoc_engine::DocumentId, text: &str) {
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EDIT_INSERT_TEXT,
+            adoc_engine::CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(0, 0),
+                text: text.to_owned(),
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn own_save_followed_by_typing_is_not_reported() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let events = engine.subscribe();
+    let id = engine.open(&page).unwrap();
+    type_at_start(&mut engine, id, "// one\n");
+    engine
+        .invoke(
+            adoc_engine::commands::ids::DOCUMENT_SAVE,
+            adoc_engine::CommandArgs::Document(id),
+        )
+        .unwrap();
+    // Typing resumes before the watcher reports the save.
+    type_at_start(&mut engine, id, "// two\n");
+
+    let barrier = directory.path().join("barrier.adoc");
+    assert_eq!(
+        reports_until_barrier(&mut engine, &events, id, &barrier, || {}),
+        0
+    );
+    assert_eq!(
+        engine.document(id).unwrap().text.to_string(),
+        "// two\n// one\n= Page\n"
+    );
+}
+
+#[test]
+fn auto_save_does_not_report_own_write() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n").unwrap();
+    // Opening the workspace reads its settings file.
+    fs::write(
+        directory.path().join(".adocfoundry.toml"),
+        "[editor]\nauto_save = \"after_delay\"\n",
+    )
+    .unwrap();
+    let clock = adoc_engine::ManualClock::new();
+    let settings = Settings::load(None, None).unwrap().with_git_opt_in();
+    let mut engine = Engine::with_clock(settings, std::sync::Arc::new(clock.clone()));
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let events = engine.subscribe();
+    let id = engine.open(&page).unwrap();
+    type_at_start(&mut engine, id, "// one\n");
+    assert!(pump_until(&mut engine, |engine| {
+        clock.advance(adoc_engine::AUTO_SAVE_DELAY);
+        !engine.document(id).unwrap().dirty
+    }));
+    assert_eq!(fs::read_to_string(&page).unwrap(), "// one\n= Page\n");
+    type_at_start(&mut engine, id, "// two\n");
+
+    let barrier = directory.path().join("barrier.adoc");
+    let reported = reports_until_barrier(&mut engine, &events, id, &barrier, || {
+        clock.advance(adoc_engine::WATCH_DEBOUNCE / 4);
+    });
+    assert_eq!(reported, 0);
+}
+
+#[test]
+fn external_change_is_reported_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let events = engine.subscribe();
+    let id = engine.open(&page).unwrap();
+    type_at_start(&mut engine, id, "// mine\n");
+
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&page, "= Theirs\n").unwrap();
+    let first = directory.path().join("first.adoc");
+    assert_eq!(
+        reports_until_barrier(&mut engine, &events, id, &first, || {}),
+        1
+    );
+    fs::write(&page, "= Theirs again\n").unwrap();
+    let second = directory.path().join("second.adoc");
+    assert_eq!(
+        reports_until_barrier(&mut engine, &events, id, &second, || {}),
+        0,
+        "reported once until the page is saved or reloaded"
+    );
+
+    // After a reload, a new change is reported again.
+    engine
+        .invoke(
+            adoc_engine::commands::ids::DOCUMENT_RELOAD,
+            adoc_engine::CommandArgs::Document(id),
+        )
+        .unwrap();
+    type_at_start(&mut engine, id, "// mine\n");
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&page, "= Theirs once more\n").unwrap();
+    let third = directory.path().join("third.adoc");
+    assert_eq!(
+        reports_until_barrier(&mut engine, &events, id, &third, || {}),
+        1
+    );
+}

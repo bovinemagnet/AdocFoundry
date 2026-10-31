@@ -508,8 +508,18 @@ impl Engine {
             if document.text == text.as_str() {
                 return; // Our own save, or an identical write.
             }
+            let Some(state) = self.states.get_mut(&id) else {
+                return;
+            };
+            // What was last saved or read: our own write, though typing went on since.
+            if crate::document::hash_text(&text) == state.saved_hash {
+                return;
+            }
             if document.dirty {
-                self.emit(EngineEvent::DocumentChangedOnDisk(id));
+                if !state.changed_on_disk {
+                    state.changed_on_disk = true;
+                    self.emit(EngineEvent::DocumentChangedOnDisk(id));
+                }
                 return;
             }
             let whole = adoc_core::SourceRange::new(0, document.text.len());
