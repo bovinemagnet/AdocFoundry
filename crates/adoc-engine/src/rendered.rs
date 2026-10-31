@@ -762,7 +762,7 @@ impl ViewResolver for EngineResolver<'_> {
         let location = anchor
             .and_then(|anchor| index.resolve_anchor(&path, anchor))
             .map(|location| Location {
-                path: location.path.clone(),
+                path: location.path.to_path_buf(),
                 range: location.range,
             })
             .unwrap_or_else(|| Location {

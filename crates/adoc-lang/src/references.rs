@@ -27,7 +27,7 @@ pub fn references_at(ws: &WorkspaceState, path: &Path, text: &str, offset: usize
             Some(anchor) => anchor_references(ws, &anchor)
                 .into_iter()
                 .map(|location| Location {
-                    path: location.path.clone(),
+                    path: location.path.to_path_buf(),
                     range: location.reference.range,
                 })
                 .collect(),
@@ -46,7 +46,7 @@ pub fn page_references(ws: &WorkspaceState, target: &Path) -> Vec<Location> {
         includes_of(ws, &target)
             .into_iter()
             .map(|location| Location {
-                path: location.path.clone(),
+                path: location.path.to_path_buf(),
                 range: location.include.range,
             }),
     );
@@ -199,7 +199,7 @@ pub fn rename_anchor(
     let mut ids = anchor_ids(ws, &anchor);
     ids.sort_by_key(|id| std::cmp::Reverse(id.len()));
     for location in anchor_references(ws, &anchor) {
-        let Some(file) = ws.index.file(&location.path) else {
+        let Some(file) = ws.index.file(location.path) else {
             continue;
         };
         let range = ids
@@ -208,7 +208,7 @@ pub fn rename_anchor(
         if let Some(range) = range {
             edits.push((
                 Location {
-                    path: location.path.clone(),
+                    path: location.path.to_path_buf(),
                     range,
                 },
                 new_id.to_owned(),
@@ -224,12 +224,12 @@ pub fn rename_anchor(
 fn anchor_references<'a>(
     ws: &'a WorkspaceState,
     anchor: &AnchorTarget,
-) -> Vec<&'a ReferenceLocation> {
+) -> Vec<ReferenceLocation<'a>> {
     anchor_ids(ws, anchor)
         .iter()
         .flat_map(|id| ws.index.references_with_fragment(id))
         .filter(|location| {
-            fragment_target(ws, &location.path, &location.reference)
+            fragment_target(ws, location.path, location.reference)
                 .is_some_and(|(target, _)| target == anchor.path)
         })
         .collect()

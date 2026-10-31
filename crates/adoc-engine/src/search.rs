@@ -505,7 +505,7 @@ impl Engine {
             }
         }
         for location in adoc_lang::references::includes_of(&self.workspace, &from) {
-            if location.path == from {
+            if *location.path == *from {
                 continue;
             }
             let target = location.include.target.as_str();
@@ -537,7 +537,7 @@ impl Engine {
             });
             if replacement != target {
                 edits
-                    .entry(location.path.clone())
+                    .entry(location.path.to_path_buf())
                     .or_default()
                     .push(TextEdit::new(range, replacement));
             }

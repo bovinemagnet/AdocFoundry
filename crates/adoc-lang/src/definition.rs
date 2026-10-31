@@ -109,7 +109,7 @@ fn resource_definition(
     if let Some(anchor) = anchor.filter(|anchor| !anchor.is_empty()) {
         let location = index.resolve_anchor(&resource.source_path, anchor)?;
         return Some(DefinitionTarget {
-            path: location.path.clone(),
+            path: location.path.to_path_buf(),
             range: location.range,
         });
     }
@@ -155,7 +155,7 @@ pub fn resolve_reference(
     if let Some(anchor) = anchor {
         let location = index.resolve_anchor(&target_path, anchor.trim_start_matches('#'))?;
         return Some(DefinitionTarget {
-            path: location.path.clone(),
+            path: location.path.to_path_buf(),
             range: location.range,
         });
     }

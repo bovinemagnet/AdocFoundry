@@ -256,7 +256,7 @@ pub fn diagnosed_with(ws: &WorkspaceState, path: &Path) -> std::collections::BTr
     found.extend(
         ws.index
             .xrefs_naming(name)
-            .map(|location| location.path.clone()),
+            .map(|location| location.path.to_path_buf()),
     );
     // The files composing `path`, and those composing them, up to the include depth.
     let mut composing = vec![path.clone()];
@@ -268,8 +268,8 @@ pub fn diagnosed_with(ws: &WorkspaceState, path: &Path) -> std::collections::BTr
                 continue;
             };
             for location in ws.index.includes_naming(name) {
-                if seen.insert(location.path.clone()) {
-                    next.push(location.path.clone());
+                if seen.insert(location.path.to_path_buf()) {
+                    next.push(location.path.to_path_buf());
                 }
             }
         }
@@ -352,13 +352,13 @@ pub fn references_to(ws: &WorkspaceState, target: &Path) -> Vec<Location> {
                 && definition::reference_target_path(
                     &ws.index,
                     &ws.antora,
-                    &location.path,
+                    location.path,
                     file_part,
                 )
                 .is_some_and(|path| normalize_path(&path) == target)
         })
         .map(|location| Location {
-            path: location.path.clone(),
+            path: location.path.to_path_buf(),
             range: location.reference.range,
         })
         .collect();

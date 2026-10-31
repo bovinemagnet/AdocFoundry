@@ -153,7 +153,7 @@ impl Engine {
                 let symbol = |name: &str, kind, range: SourceRange| WorkspaceSymbol {
                     name: name.to_owned(),
                     kind,
-                    path: document.path.clone(),
+                    path: std::sync::Arc::from(document.path.as_path()),
                     range,
                     container: parsed.title.as_ref().map(|title| title.text.clone()),
                 };
@@ -199,7 +199,7 @@ impl Engine {
             .map(|symbol| SymbolMatch {
                 detail: self.symbol_detail(&symbol),
                 position: NavigationPosition {
-                    path: symbol.path,
+                    path: symbol.path.to_path_buf(),
                     offset: symbol.range.start,
                 },
                 name: symbol.name,
