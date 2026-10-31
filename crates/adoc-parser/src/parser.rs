@@ -193,6 +193,47 @@ image::diagram.png[Architecture]\n";
         );
     }
 
+    fn anchor_ids(source: &str) -> Vec<String> {
+        parse("file:///doc.adoc", source)
+            .document
+            .anchors
+            .into_iter()
+            .map(|anchor| anchor.id)
+            .collect()
+    }
+
+    #[test]
+    fn anchor_shorthand_stops_at_role() {
+        assert_eq!(anchor_ids("[#intro.lead]\n== Intro\n"), ["intro"]);
+        assert_eq!(anchor_ids("[#intro,role=lead]\n== Intro\n"), ["intro"]);
+        // Inline, before marked text.
+        assert_eq!(anchor_ids("Some [#key.big]#word# here.\n"), ["key"]);
+    }
+
+    #[test]
+    fn anchor_shorthand_stops_at_option() {
+        assert_eq!(
+            anchor_ids("[#notes%collapsible]\n====\nHidden.\n====\n"),
+            ["notes"]
+        );
+    }
+
+    #[test]
+    fn anchor_long_form_id_attribute() {
+        assert_eq!(anchor_ids("[id=intro]\n== Intro\n"), ["intro"]);
+        assert_eq!(
+            anchor_ids("[source,id=\"code\"]\n----\nx\n----\n"),
+            ["code"]
+        );
+        assert_eq!(
+            anchor_ids("[quote, id='said', Someone]\n____\nHi.\n____\n"),
+            ["said"]
+        );
+        // Only a block attribute line; prose mentioning one is not an anchor.
+        assert!(anchor_ids("Write [id=intro] above a block.\n").is_empty());
+        assert!(anchor_ids("[id=]\n").is_empty());
+    }
+
     #[test]
     fn reads_bibliography_anchors() {
         let source = "= Refs\n\nSee <<GOOGLE-LIMITS>>.\n\n[bibliography]\n- [[[GOOGLE-LIMITS, 2]]] Google sending limits\n";
