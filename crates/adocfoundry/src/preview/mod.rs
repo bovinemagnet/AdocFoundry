@@ -441,6 +441,7 @@ impl gpui::EventEmitter<PreviewEvent> for PreviewView {}
 
 impl Render for PreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::renders::rendered(crate::renders::View::Preview);
         // Repopulated as this frame's blocks are laid out.
         self.extents.borrow_mut().clear();
         let header = self.header(cx);

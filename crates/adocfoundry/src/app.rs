@@ -75,17 +75,20 @@ impl AppState {
         }
     }
 
-    /// Applies pending worker and watcher results and re-emits every engine event.
+    /// Applies pending worker and watcher results and re-emits the engine's events. Each view
+    /// redraws itself for the events it shows, so nothing is redrawn here; an event that says
+    /// only that something is ready to read again is passed on once however often it came.
     pub fn drain(&mut self, cx: &mut Context<Self>) {
         self.engine.pump();
-        let events: Vec<EngineEvent> = self.events.try_iter().collect();
-        if events.is_empty() {
-            return;
+        let mut events: Vec<EngineEvent> = Vec::new();
+        for event in self.events.try_iter() {
+            if !(is_idempotent(&event) && events.contains(&event)) {
+                events.push(event);
+            }
         }
         for event in events {
             cx.emit(event);
         }
-        cx.notify();
     }
 
     /// Invokes an engine command and publishes the events it caused before returning.
@@ -99,6 +102,25 @@ impl AppState {
         self.drain(cx);
         outcome
     }
+}
+
+/// Whether `event` only says that something is ready to read again, so that twice is once.
+/// Events that carry what changed (edits, results, failures) are each passed on.
+fn is_idempotent(event: &EngineEvent) -> bool {
+    matches!(
+        event,
+        EngineEvent::DiagnosticsUpdated { .. }
+            | EngineEvent::WordCountChanged(_)
+            | EngineEvent::SpellingChanged(_)
+            | EngineEvent::GitHunksChanged(_)
+            | EngineEvent::GitBlameChanged(_)
+            | EngineEvent::GitStatusChanged { .. }
+            | EngineEvent::ProblemsChanged
+            | EngineEvent::NavigationChanged
+            | EngineEvent::PreviewLayoutChanged
+            | EngineEvent::DirectoryListed(_)
+            | EngineEvent::ImageChanged(_)
+    )
 }
 
 /// The kinds of secondary window.

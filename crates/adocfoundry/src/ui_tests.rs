@@ -5640,3 +5640,125 @@ fn f2_on_a_heading_renames_its_section_id(cx: &mut TestAppContext) {
         "= Other\n\nRead xref:page.adoc#begin[the first steps].\n"
     );
 }
+
+/// A page open in the workspace, with every start-up event drained, for counting renders.
+fn settled_workspace(
+    text: &str,
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    std::fs::write(&page, text).unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| workspace.read(cx).active_editor_for_test().is_some())
+    }));
+    settle(&app, &mut cx);
+    (directory, app, workspace, cx)
+}
+
+/// Lets every debounce run out and drains what it produced.
+fn settle(app: &Entity<AppState>, cx: &mut VisualTestContext) {
+    for _ in 0..4 {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
+        cx.run_until_parked();
+    }
+}
+
+#[gpui::test]
+fn typing_renders_the_workspace_once_per_keystroke(cx: &mut TestAppContext) {
+    use crate::renders::{self, View};
+    let (_directory, app, _workspace, mut cx) = settled_workspace("= Page\n\nSome words.\n", cx);
+    renders::reset();
+    let mut each = Vec::new();
+    for key in "a b c d e f g h i j".split(' ') {
+        let before = renders::count(View::Workspace);
+        cx.simulate_keystrokes(key);
+        cx.run_until_parked();
+        each.push(renders::count(View::Workspace) - before);
+    }
+    let typed = renders::count(View::Workspace);
+    settle(&app, &mut cx);
+    let settled = renders::count(View::Workspace) - typed;
+    assert!(document_text(&app, &mut cx).contains("abcdefghij"));
+    // Once per keystroke, for the caret's line and column in the status bar, and once more as
+    // the first one marks the page's tab unsaved.
+    assert_eq!(each, [2, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+    assert!(
+        settled <= 4,
+        "the settles rendered the workspace {settled} times"
+    );
+    // The editor redraws for its own text, not for the settles.
+    assert!(
+        renders::count(View::Editor) <= 12,
+        "{}",
+        renders::count(View::Editor)
+    );
+}
+
+#[gpui::test]
+fn word_count_change_does_not_redraw_the_editor(cx: &mut TestAppContext) {
+    use crate::renders::{self, View};
+    let (_directory, app, _workspace, mut cx) = settled_workspace("= Page\n\nSome words.\n", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    renders::reset();
+    cx.update(|_, cx| {
+        app.update(cx, |_, cx| {
+            cx.emit(adoc_engine::EngineEvent::WordCountChanged(id))
+        })
+    });
+    cx.run_until_parked();
+    eprintln!(
+        "word count: workspace {}, editor {}",
+        renders::count(View::Workspace),
+        renders::count(View::Editor)
+    );
+    // The status bar shows it; the editor does not.
+    assert!(renders::count(View::Workspace) <= 1);
+    assert_eq!(renders::count(View::Editor), 0);
+
+    // An event no part of the workspace window shows draws nothing.
+    renders::reset();
+    cx.update(|_, cx| {
+        app.update(cx, |_, cx| {
+            cx.emit(adoc_engine::EngineEvent::DirectoryListed(
+                std::path::PathBuf::from("/elsewhere"),
+            ))
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(renders::count(View::Workspace), 0);
+    assert_eq!(renders::count(View::Editor), 0);
+}
+
+/// The visual editor draws the engine's misspellings, so a spelling change redraws it; an event
+/// it does not draw, such as a word count, does not.
+#[gpui::test]
+fn the_visual_editor_redraws_for_spelling_but_not_word_counts(cx: &mut TestAppContext) {
+    use crate::renders::{self, View};
+    let (app, _, _visual, id, mut cx) = visual_workspace("= Page\n\nSome wrods here.\n", cx);
+    cx.run_until_parked();
+    renders::reset();
+    cx.update(|_, cx| {
+        app.update(cx, |_, cx| {
+            cx.emit(adoc_engine::EngineEvent::WordCountChanged(id))
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(renders::count(View::Visual), 0);
+    cx.update(|_, cx| {
+        app.update(cx, |_, cx| {
+            cx.emit(adoc_engine::EngineEvent::SpellingChanged(id))
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(renders::count(View::Visual), 1);
+}
