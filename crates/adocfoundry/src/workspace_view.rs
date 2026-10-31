@@ -159,7 +159,6 @@ pub struct WorkspaceView {
     )>,
     problems: Entity<TreeState>,
     problem_count: usize,
-    problems_stale: bool,
     outline: Entity<TreeState>,
     outline_stale: bool,
     /// True from an edit until typing pauses; the outline and problems wait for the pause.
@@ -443,7 +442,6 @@ impl WorkspaceView {
             },
             problems: cx.new(|cx| TreeState::new(cx)),
             problem_count: 0,
-            problems_stale: true,
             outline: cx.new(|cx| TreeState::new(cx)),
             outline_stale: true,
             unsettled: false,
@@ -479,6 +477,8 @@ impl WorkspaceView {
         if restore {
             view.restore_session(window, cx);
         }
+        // The problems found before this window opened.
+        view.show_problems(cx);
         if let (Some(duration), Some(editor)) = (
             crate::typing_bench::requested(),
             view.active_editor().cloned(),
@@ -574,12 +574,8 @@ impl WorkspaceView {
         match event {
             EngineEvent::WorkspaceIndexed { .. } | EngineEvent::CatalogChanged { .. } => {
                 self.rebuild_catalog_trees(cx);
-                self.problems_stale = true;
             }
-            EngineEvent::DiagnosticsUpdated { .. } => {
-                self.problems_stale = true;
-                self.settle_later(cx);
-            }
+            EngineEvent::ProblemsChanged => self.show_problems(cx),
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
             EngineEvent::ExpansionChanged(panel) => self.show_tree(*panel, cx),
             EngineEvent::PreviewTabReplaced { old, new } => {
@@ -600,7 +596,6 @@ impl WorkspaceView {
                 self.outline_stale = true;
                 self.settle_later(cx);
             }
-            EngineEvent::DocumentMoved { .. } => self.problems_stale = true,
             EngineEvent::DocumentSaved(id) => self.reload_settings_if_edited(*id, cx),
             EngineEvent::DocumentChangedOnDisk(id) => {
                 let name = self.document_name(*id, cx);
@@ -966,11 +961,8 @@ impl WorkspaceView {
         }));
     }
 
-    fn refresh_problems(&mut self, cx: &mut Context<Self>) {
-        if !self.problems_stale || self.unsettled {
-            return;
-        }
-        self.problems_stale = false;
+    /// The Problems panel's rows, from the problems the engine keeps.
+    fn show_problems(&mut self, cx: &mut Context<Self>) {
         let (items, count) = {
             let engine = &self.app.read(cx).engine;
             sidebar::problems(engine, engine.roots())
@@ -1045,11 +1037,20 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// The labels of the Problems panel's rows, in order, every file's open.
+    #[cfg(test)]
+    pub fn problem_rows_for_test(&self, cx: &App) -> Vec<String> {
+        let state = self.problems.read(cx);
+        (0..)
+            .map_while(|ix| state.entry(ix))
+            .map(|entry| entry.item().label.to_string())
+            .collect()
+    }
+
     /// Shows the Problems panel.
     #[cfg(test)]
     pub fn show_problems_for_test(&mut self, cx: &mut Context<Self>) {
         self.sidebar_tab = SidebarTab::Problems;
-        self.problems_stale = true;
         cx.notify();
     }
 
@@ -2498,22 +2499,13 @@ impl WorkspaceView {
             let editor = editor.read(cx);
             (editor.document(), editor.cursor(cx))
         };
-        let Some(CommandOutcome::Location(location)) = self.invoke(
+        let Some(CommandOutcome::Peek { location, text }) = self.invoke(
             ids::NAVIGATE_PEEK_INCLUDE,
             CommandArgs::Offset { id, offset },
             window,
             cx,
         ) else {
             return;
-        };
-        let text = {
-            let engine = &self.app.read(cx).engine;
-            engine
-                .document_for_path(&location.path)
-                .and_then(|id| engine.document(id))
-                .map(|document| document.text.to_string())
-                .or_else(|| std::fs::read_to_string(&location.path).ok())
-                .unwrap_or_default()
         };
         let peek = cx.new(|cx| {
             let mut state = EditorState::new(window, cx)
@@ -3650,7 +3642,6 @@ impl WorkspaceView {
     }
 
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        self.refresh_problems(cx);
         let git = self.has_changes_panel(cx);
         if !git && self.sidebar_tab == SidebarTab::Changes {
             self.sidebar_tab = SidebarTab::Navigation;

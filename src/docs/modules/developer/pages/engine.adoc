@@ -34,9 +34,21 @@ Applying edits updates the rope, bumps the version, re-parses with `adoc-parser`
 It then publishes `DocumentChanged` and `DiagnosticsUpdated`.
 
 Re-parsing is synchronous on every edit, so the text and outline are always exact.
-A typed character is the one exception for the rest: re-indexing the document and refreshing diagnostics wait until typing pauses for `INDEX_SETTLE` (150 ms), when `pump` applies them.
+Re-indexing the document and refreshing diagnostics are different for the typing commands: `edit.insert_text`, `edit.replace_range`, `visual.insert_text`, `visual.delete_backward` and `visual.delete_forward` (`TYPING_COMMANDS` in `engine.rs`).
+A small edit made by one of them, one replacement of at most four bytes by at most one character (`is_small`), waits until typing pauses for `INDEX_SETTLE` (150 ms), when `pump` applies it.
+Larger edits, such as a paste, and edits made by any other command (Rename, Replace, undo, a reload) are indexed at once.
 On a 5,000-line document that work takes several milliseconds, too long to repeat on every keystroke.
-Every other command brings the index up to date before it runs, so search, rename, save and replace never see a stale index.
+The typing commands do not flush what earlier typing left pending.
+Any other command indexes what is pending before it runs, so search, rename, save and replace never see a stale index.
+
+When a document is indexed, only the open documents its change can affect are re-diagnosed.
+`Engine::refresh_diagnosed_with` re-diagnoses the open documents in `adoc_lang::diagnosed_with(ws, path)`, taken before and after the change.
+That set is the file itself, the files whose xrefs name its file name (`WorkspaceIndex::xrefs_naming`), the files whose includes name it (`includes_naming`), those including them in turn up to the include depth, and the files it composes (`includes::composed_files`).
+Name matches stand in for resolution, so the set is generous but never misses a file.
+Workspace-level changes (indexing, a descriptor, files changed on disk) still re-diagnose every open document.
+
+On a 5,000-line page in a 500-page workspace with 20 tabs open (release build), Backspace fell from a median of 3.8 ms to 0.7 ms per key and visual typing from 4.6 ms to 1.5 ms.
+The ignored probes `backspace_loop` and `visual_typing_loop` in `tests/perf.rs` measure this.
 
 == Auto-save
 
@@ -186,7 +198,7 @@ A `Command` has a `CommandSpec` and a `run` function.
 
 Commands are registered once in a `CommandRegistry`, and registering a duplicate id is an error.
 They are invoked with `Engine::invoke(id, args)`, where `CommandArgs` carries a document, an offset, a text edit, a path or a request.
-They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`, `Url`, `Preview`, `Committed` or `CommitDraft`.
+They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `External`, `Url`, `Preview`, `Committed` or `CommitDraft`.
 `OpenedImage(ImageId)` reports an image opened instead of a document, and `CommandOutcome::opened(item)` builds either from a `TabItem`.
 `Url(String)` carries an address for the front end to open (`cx.open_url`) or copy, so the engine needs no browser-opening crate.
 
@@ -783,6 +795,22 @@ Further engine methods serve it:
 * `Settings::with_git_opt_in()` leaves Git off unless the user settings file sets `[git] enabled = true`. It is kept across settings reloads.
 
 `page.rename` also rewrites includes: an Antora include keeps its family and coordinates, a relative one stays relative, and one written through an attribute is left as written.
+
+[[problems]]
+== Problems
+
+`src/problems.rs` keeps the diagnostics of the whole workspace, so a front end does not diagnose it again itself.
+A front end opts in with `Engine::enable_problems()`; the app does in `AppState::new`, while the CLI, `adoc-ls` and `adoc-mcp` do not and pay nothing.
+`Engine::problems()` returns each file with problems as a `BTreeMap<PathBuf, Vec<Problem>>`, and `Engine::problem_count()` returns their number.
+A `Problem` holds `range`, `line`, `column`, `severity`, `code` and `message`.
+`line` and `column` count from 1, the column in characters rather than bytes.
+They are computed from the index's own text of the file, or for a component descriptor from the file, read through the engine's `FileAccess`.
+
+Whenever every open document is re-diagnosed, a worker diagnoses the whole workspace again over a copy of `WorkspaceState`.
+It is started from `pump`, so a burst of changes runs one pass, and the generation of a newer pass drops an older result.
+After an edit, only the files `diagnosed_with` gives, open or not, are re-diagnosed at the next `pump`.
+Edits made while a full pass runs wait for its result.
+Each update publishes `EngineEvent::ProblemsChanged`, and `has_pending()` counts problems still to compute.
 
 == Reports and inspection
 

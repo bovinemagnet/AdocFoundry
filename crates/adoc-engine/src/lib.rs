@@ -37,6 +37,7 @@ mod new_page;
 #[cfg(feature = "typst")]
 mod pdf_preview;
 mod preview;
+mod problems;
 mod profiles;
 mod quick_open;
 mod recovery;
@@ -89,6 +90,7 @@ pub use pdf_preview::PdfPreview;
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };
+pub use problems::Problem;
 pub use profiles::{PdfProfile, PdfThemeChoice, ProfileContent, BUNDLED_THEMES};
 pub use quick_open::{QuickOpenItem, QUICK_OPEN_LIMIT};
 pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};

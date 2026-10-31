@@ -2412,6 +2412,35 @@ fn status_bar_follows_the_visual_caret(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_problems_panel_shows_the_engines_problems(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    // A character of two bytes before the problem: the column counts characters.
+    std::fs::write(root.join("café.adoc"), "= Café\n\nÉté: <<nowhere>>.\n").unwrap();
+    std::fs::write(root.join("fine.adoc"), "= Fine\n").unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1200.), px(800.)), |window, cx| {
+        let view = cx
+            .new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), Vec::new(), window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_problems_for_test(cx)));
+    let rows = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| workspace.read(cx).problem_rows_for_test(cx))
+    };
+    assert!(drain_until(&app, &mut cx, |cx| rows(cx).len() == 2));
+    assert_eq!(rows(&mut cx)[1], "3:6 Unresolved AsciiDoc anchor: nowhere");
+    assert!(rows(&mut cx)[0].contains("café.adoc"));
+    let count = cx.update(|_, cx| app.read(cx).engine.problem_count());
+    assert_eq!(count, 1);
+}
+
+#[gpui::test]
 fn long_diagnostics_show_in_full_on_hover(cx: &mut TestAppContext) {
     init(cx);
     let directory = tempfile::tempdir().unwrap();

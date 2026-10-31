@@ -105,6 +105,7 @@ See xref:command-line.adoc[Command line].
 
 * In the editor, as you type, for the open document and the documents that include it.
 * In the Problems tab of the sidebar, for the whole workspace.
+The tab updates when typing pauses and shows each problem's line and column, the column counted in characters.
 * In the output of `adocfoundry-cli check`.
 * In any editor using xref:language-server.adoc[the language server].
 

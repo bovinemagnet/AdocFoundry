@@ -10,7 +10,7 @@ use adoc_core::Document;
 use adoc_index::{normalize_path, resolve_include_target, WorkspaceIndex};
 
 /// Include chains are shallow in practice; the bound only stops pathological or cyclic input.
-const MAX_INCLUDE_DEPTH: usize = 16;
+pub(crate) const MAX_INCLUDE_DEPTH: usize = 16;
 
 /// Every file whose content is composed into `path`, `path` itself included.
 ///
