@@ -759,7 +759,7 @@ impl Render for SourceEditorView {
         let font_size = self.app.read(cx).engine.settings().editor.font_size as f32;
         let engine = &self.app.read(cx).engine;
         let hunks = if engine.settings().git.show_markers {
-            engine.git().hunks_for(self.document).to_vec()
+            changes::near_view(self.state.read(cx), engine.git().hunks_for(self.document))
         } else {
             Vec::new()
         };
