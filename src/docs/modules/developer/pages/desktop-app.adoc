@@ -202,6 +202,13 @@ With nothing selected, Bold, Italic, Code and Highlight toggle the marks the nex
 === Hit testing and layouts
 
 Each frame, every text block records its shaped layout under its path in the model.
+The text block holding the caret is found once per frame, in `blocks::document`, and each block compares its path with it.
+`Model::text_block_at` searches an index of the text blocks ordered by where they start.
+The index is built on the first lookup and is not carried by a clone (a model is cloned to be changed), so a lookup no longer walks the model.
+The misspellings and the Git hunks are sorted once per frame, and each block finds its own by binary search.
+The typeset formulas' gaps are measured again only when the model shown, the font or its size changes.
+The model shown changes with a new `VisualDocument`, not merely a new version, since formulas are typeset after the model is published.
+In the preview, each text holding formulas keeps its measured gaps as GPUI element state, keyed by the formulas' images and fonts and the text's size.
 A click looks up the layout under the pointer, finds the display offset, and asks the block for the nearest caret stop.
 Clicking read-only content does not place a caret: it shows the source in split mode and moves the source editor to the content, through `view.show_split` and `navigate.reveal`.
 

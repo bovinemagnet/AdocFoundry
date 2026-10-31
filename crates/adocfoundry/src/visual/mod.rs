@@ -111,6 +111,8 @@ pub struct VisualView {
     /// The typeset inline formulas as last drawn, so the text between frames is shown as it
     /// was drawn.
     formula_gaps: text::FormulaGaps,
+    /// What `formula_gaps` was measured for: the model, the font and its sizes.
+    measured: Option<Measured>,
     /// The spelling menu open on a misspelt word: where it was opened, and the menu.
     spelling_menu: Option<(
         gpui::Point<gpui::Pixels>,
@@ -159,6 +161,7 @@ impl VisualView {
             reveal: Rc::default(),
             highlights: Rc::default(),
             formula_gaps: text::FormulaGaps::new(),
+            measured: None,
             spelling_menu: None,
             _subscriptions: vec![subscription],
         };
@@ -855,6 +858,57 @@ impl VisualView {
     }
 }
 
+/// What the formulas' gaps were measured for.
+struct Measured {
+    shown: Arc<VisualDocument>,
+    font: gpui::Font,
+    font_size: gpui::Pixels,
+    line_height: gpui::Pixels,
+}
+
+impl PartialEq for Measured {
+    fn eq(&self, other: &Self) -> bool {
+        // The same model, not an equal one: a new one has the formulas typeset since.
+        Arc::ptr_eq(&self.shown, &other.shown)
+            && self.font == other.font
+            && self.font_size == other.font_size
+            && self.line_height == other.line_height
+    }
+}
+
+impl VisualView {
+    /// Measures the gaps of the typeset formulas again when the model shown, the font or its
+    /// size changed since they were last measured.
+    fn measure_formulas(&mut self, window: &Window) {
+        let style = window.text_style();
+        let font = style.font();
+        let measured = self.shown.as_ref().map(|shown| Measured {
+            shown: shown.clone(),
+            font: font.clone(),
+            font_size: style.font_size.to_pixels(window.rem_size()),
+            line_height: style.line_height_in_pixels(window.rem_size()),
+        });
+        if measured == self.measured {
+            return;
+        }
+        self.formula_gaps = self
+            .shown
+            .as_ref()
+            .map_or_else(text::FormulaGaps::new, |shown| {
+                shown
+                    .view
+                    .inline_formulas()
+                    .into_iter()
+                    .map(|(source, image)| {
+                        let gap = crate::preview::inlines::Gap::measure(&image, &font, window);
+                        (source, (gap, image.path))
+                    })
+                    .collect()
+            });
+        self.measured = measured;
+    }
+}
+
 impl gpui::EventEmitter<VisualEvent> for VisualView {}
 
 impl Focusable for VisualView {
@@ -868,21 +922,7 @@ impl Render for VisualView {
         crate::renders::rendered(crate::renders::View::Visual);
         // Repopulated as this frame's text blocks are drawn.
         self.layouts.borrow_mut().clear();
-        self.formula_gaps = self
-            .shown
-            .as_ref()
-            .map_or_else(text::FormulaGaps::new, |shown| {
-                let font = window.text_style().font();
-                shown
-                    .view
-                    .inline_formulas()
-                    .into_iter()
-                    .map(|(source, image)| {
-                        let gap = crate::preview::inlines::Gap::measure(&image, &font, window);
-                        (source, (gap, image.path))
-                    })
-                    .collect()
-            });
+        self.measure_formulas(window);
         let body = self
             .shown
             .clone()

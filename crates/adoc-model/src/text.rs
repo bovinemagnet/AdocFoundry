@@ -1,6 +1,6 @@
 //! Positions: a text block's display text and its source, mapped both ways.
 
-use std::ops::Range;
+use std::{fmt, ops::Range, sync::OnceLock};
 
 use adoc_core::SourceRange;
 
@@ -192,13 +192,76 @@ impl TextBlock {
     }
 }
 
+/// A model's text blocks ordered by where they start, built the first time one is looked up.
+/// A clone starts without one, since a model is cloned to be changed.
+#[derive(Default)]
+pub(crate) struct TextIndex(OnceLock<Vec<Indexed>>);
+
+struct Indexed {
+    range: SourceRange,
+    /// The furthest end of this block and every block before it here.
+    reach: usize,
+    /// Its place in document order.
+    order: usize,
+    path: BlockPath,
+}
+
+impl Clone for TextIndex {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for TextIndex {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl fmt::Debug for TextIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TextIndex")
+    }
+}
+
 impl Model {
+    fn text_index(&self) -> &[Indexed] {
+        self.text_index.0.get_or_init(|| {
+            let mut index: Vec<Indexed> = self
+                .text_blocks()
+                .enumerate()
+                .map(|(order, (path, _, text))| Indexed {
+                    range: text.range,
+                    reach: 0,
+                    order,
+                    path,
+                })
+                .collect();
+            index.sort_by_key(|entry| entry.range.start);
+            let mut reach = 0;
+            for entry in &mut index {
+                reach = reach.max(entry.range.end);
+                entry.reach = reach;
+            }
+            index
+        })
+    }
+
     /// The innermost node whose text block contains source offset `offset`, with its path.
     #[must_use]
     pub fn text_block_at(&self, offset: usize) -> Option<(BlockPath, &Node, &TextBlock)> {
-        self.text_blocks()
-            .filter(|(_, _, text)| text.range.start <= offset && offset <= text.range.end)
-            .last()
+        let index = self.text_index();
+        let after = index.partition_point(|entry| entry.range.start <= offset);
+        // Back from the last block starting at or before `offset`, while one could reach it;
+        // the last in document order wins, as the innermost.
+        let found = index[..after]
+            .iter()
+            .rev()
+            .take_while(|entry| entry.reach >= offset)
+            .filter(|entry| entry.range.end >= offset)
+            .max_by_key(|entry| entry.order)?;
+        let node = self.node(&found.path)?;
+        Some((found.path.clone(), node, node.text.as_ref()?))
     }
 
     /// The text block and display offset source offset `offset` shows at.

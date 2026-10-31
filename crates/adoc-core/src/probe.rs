@@ -18,9 +18,13 @@ pub enum Probe {
     Reconcile,
     /// A dictionary searching for replacements for a misspelt word.
     Suggest,
+    /// A walk over every node of a visual model.
+    Walk,
+    /// A typeset formula's gap measured in a font.
+    MeasureFormula,
 }
 
-const PROBES: usize = 5;
+const PROBES: usize = 7;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -62,4 +66,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::Suggest as usize == PROBES - 1);
+const _: () = assert!(Probe::MeasureFormula as usize == PROBES - 1);

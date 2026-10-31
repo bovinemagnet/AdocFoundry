@@ -10,5 +10,8 @@ adoc-core.workspace = true
 adoc-dom.workspace = true
 unicode-segmentation.workspace = true
 
+[dev-dependencies]
+adoc-core = { workspace = true, features = ["probe"] }
+
 [lints]
 workspace = true

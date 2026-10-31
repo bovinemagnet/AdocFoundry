@@ -31,10 +31,15 @@ No window is involved.
 The notices generator's tests are in `xtask/src/notices.rs`: `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice`.
 Add a test here rather than in the application crate whenever the behaviour can be reached through the engine.
 
-`adoc_core::probe` counts the work a keystroke does: `Probe::{Parse, HashText, Diff, Reconcile}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
-They count only with adoc-core's `probe` feature, which the engine's and the application's dev-dependencies turn on; in a normal build `hit` does nothing.
+`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
+They count only with adoc-core's `probe` feature, which the dev-dependencies of the engine, `adoc-model` and the application turn on; in a normal build `hit` does nothing.
 `tests/keystroke.rs` asserts them: `one_keystroke_parses_at_most_once`, `typing_never_hashes_the_document`, `completion_during_typing_does_not_reparse` and `only_typing_inside_something_that_completes_asks_for_completions`.
 In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` types 20 characters and expects 20 diffs and no reconcile, then expects an edit from the engine to reconcile once.
+`Suggest` counts a dictionary searching for replacements for a misspelt word, `Walk` a walk over every node of a visual model (`Model::walk`), and `MeasureFormula` a typeset formula's gap measured in a font (`Gap::measure`).
+`adoc-model`'s `tests/positions.rs` checks that `text_block_at` finds the block a walk finds at every offset of a page, and walks the model at most once over many lookups.
+`ui_tests::one_visual_frame_walks_the_model_at_most_twice` draws a 300-paragraph page in the visual editor.
+`ui_tests::formulas_are_measured_once` draws 20 inline formulas for 10 frames and expects at most 20 measurements.
+`ui_tests::preview_draws_inline_stem_in_the_line` expects none in the preview's frames after the first.
 
 == CLI snapshot tests
 
