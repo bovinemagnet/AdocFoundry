@@ -114,8 +114,16 @@ pub(crate) struct VisualState {
 }
 
 impl VisualState {
-    pub(crate) fn has_due(&self) -> bool {
+    /// Whether a model waits for its settle time, or `active` is shown visually and its model
+    /// was never built.
+    pub(crate) fn has_due(&self, active: Option<DocumentId>) -> bool {
         self.sessions.values().any(|session| session.due.is_some())
+            || active.is_some_and(|id| self.unbuilt(id))
+    }
+
+    /// Whether `id` is shown visually but its model was never built, as after a restored session.
+    fn unbuilt(&self, id: DocumentId) -> bool {
+        self.modes.contains_key(&id) && !self.sessions.contains_key(&id)
     }
 }
 
@@ -134,13 +142,15 @@ impl Engine {
             .map(|session| session.current.clone())
     }
 
-    /// Rebuilds the visual model of `id` now if it is out of date.
+    /// Rebuilds the visual model of `id` now if it is out of date, or builds it if it was
+    /// never built.
     pub fn refresh_visual(&mut self, id: DocumentId) {
-        if self
-            .visual
-            .sessions
-            .get(&id)
-            .is_some_and(|session| session.stale)
+        if self.visual.unbuilt(id)
+            || self
+                .visual
+                .sessions
+                .get(&id)
+                .is_some_and(|session| session.stale)
         {
             self.build_visual(id);
         }
@@ -159,6 +169,17 @@ impl Engine {
                 self.build_visual(id);
             }
         }
+        self.emit(EngineEvent::EditorModeChanged(id));
+    }
+
+    /// Shows `id` in `mode` without building its model, which waits until the page is active
+    /// and the engine is next pumped: restoring a session builds no model before the window
+    /// is drawn.
+    pub(crate) fn set_editor_mode_later(&mut self, id: DocumentId, mode: EditorMode) {
+        if mode == EditorMode::Source || self.editor_mode(id) == mode {
+            return;
+        }
+        self.visual.modes.insert(id, mode);
         self.emit(EngineEvent::EditorModeChanged(id));
     }
 
@@ -268,6 +289,10 @@ impl Engine {
             })
             .collect();
         for id in due {
+            self.build_visual(id);
+            rebuilt += 1;
+        }
+        if let Some(id) = active.filter(|id| self.visual.unbuilt(*id)) {
             self.build_visual(id);
             rebuilt += 1;
         }

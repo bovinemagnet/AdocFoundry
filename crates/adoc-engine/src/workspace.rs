@@ -370,7 +370,7 @@ impl Engine {
         self.workers_running > 0
             || !self.pending_index.is_empty()
             || self.rendered.has_scheduled()
-            || self.visual.has_due()
+            || self.visual.has_due(self.active)
             || self.git.has_pending()
             || self.has_due_word_count()
             || self.has_due_spelling()

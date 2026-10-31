@@ -99,6 +99,8 @@ pub struct VisualView {
     marks: MarkSet,
     /// IME text being composed at the caret, not yet in the document.
     composing: Option<String>,
+    /// Where to go once the first model arrives, for a page restored before it had one.
+    wanted: Option<usize>,
     /// A block begun with Enter at the end of another and not yet typed into: AsciiDoc has
     /// no empty paragraph, so it exists only here until its first character.
     pending: Option<Pending>,
@@ -162,6 +164,7 @@ impl VisualView {
             version,
             marks: MarkSet::EMPTY,
             composing: None,
+            wanted: None,
             pending: None,
             goal_x: None,
             dragging: false,
@@ -177,14 +180,19 @@ impl VisualView {
             spelling_menu: None,
             _subscriptions: vec![subscription],
         };
-        if let Some(first) = view
+        view.select_first_block(cx);
+        view
+    }
+
+    /// Puts the caret at the start of the first editable text block, if there is one.
+    fn select_first_block(&mut self, cx: &mut Context<Self>) {
+        if let Some(first) = self
             .text_blocks()
             .into_iter()
             .find(|(_, editable, _)| *editable)
         {
-            view.set_selection(Selection::caret(first.2.range.start), cx);
+            self.set_selection(Selection::caret(first.2.range.start), cx);
         }
-        view
     }
 
     pub fn document(&self) -> DocumentId {
@@ -241,11 +249,19 @@ impl VisualView {
 
     /// Shows the engine's latest model, keeping the selection inside the text.
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        let first = self.shown.is_none();
         self.shown = self.app.read(cx).engine.visual(self.document);
         if let Some(shown) = &self.shown {
             let length = shown.model.source.len();
             self.selection.anchor = self.selection.anchor.min(length);
             self.selection.head = self.selection.head.min(length);
+            // The model was built after the view was made, as for a restored page.
+            if first {
+                match self.wanted.take() {
+                    Some(offset) => self.go_to(offset, cx),
+                    None => self.select_first_block(cx),
+                }
+            }
         }
         cx.notify();
     }
@@ -340,6 +356,10 @@ impl VisualView {
     /// innermost block holding it, or nowhere when that block has none (a diagram, a
     /// passthrough), so that split mode does not send the source after a later block.
     pub fn go_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        if self.shown.is_none() {
+            self.wanted = Some(offset);
+            return;
+        }
         let has_text = self.shown.as_ref().is_some_and(|shown| {
             shown
                 .model

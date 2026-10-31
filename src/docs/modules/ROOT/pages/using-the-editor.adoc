@@ -546,6 +546,8 @@ Launched with no folder or file (`adocfoundry` with no arguments), the app reope
 
 Files and folders that have gone since are skipped.
 Untitled pages are not reopened, but their unsaved text is still offered by xref:#crash-recovery[crash recovery], which is separate.
+The window opens first, with the sidebar and an empty tab strip, and the tabs fill in straight after.
+A page in visual or split mode behind the active tab gets its visual editor when you switch to it.
 
 The session is saved when the app quits and when the main window closes.
 Launched with a folder or files (`adocfoundry [folder [file...]]`), the app opens those instead and does not restore the session.

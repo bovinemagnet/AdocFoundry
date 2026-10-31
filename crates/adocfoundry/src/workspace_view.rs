@@ -483,8 +483,15 @@ impl WorkspaceView {
                 cx,
             );
         }
+        // The session comes back once the window is on screen with its sidebar and an empty
+        // tab strip, and only if nothing was opened by then.
         if restore {
-            view.restore_session(window, cx);
+            after_first_frame(window, cx, move |this: &mut Self, window, cx| {
+                let engine = &this.app.read(cx).engine;
+                if engine.roots().is_empty() && engine.tab_order().is_empty() {
+                    this.restore_session(window, cx);
+                }
+            });
         }
         // The problems found before this window opened.
         view.show_problems(cx);
@@ -4488,3 +4495,23 @@ impl RowItem {
 
 /// A selection the status bar counted the words of: the page, its version and the range.
 type SelectionKey = (DocumentId, u64, usize, usize);
+
+/// Runs `f` on the view once the window's first frame is on screen. A next-frame callback runs
+/// as a frame begins, before it is presented, so the second runs after the first frame was.
+/// GPUI's test platform draws no frames, so there `f` runs at the end of the effect cycle,
+/// after the window's first draw.
+fn after_first_frame(
+    window: &mut Window,
+    cx: &mut Context<WorkspaceView>,
+    f: impl FnOnce(&mut WorkspaceView, &mut Window, &mut Context<WorkspaceView>) + 'static,
+) {
+    let view = cx.weak_entity();
+    let run = move |window: &mut Window, cx: &mut App| {
+        view.update(cx, |this, cx| f(this, window, cx)).ok();
+    };
+    if cfg!(test) {
+        window.defer(cx, run);
+    } else {
+        window.on_next_frame(move |window, _| window.on_next_frame(run));
+    }
+}

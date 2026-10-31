@@ -187,7 +187,9 @@ Without it, or without a state folder, nothing is read or written.
 The engine does not know where carets are, so the front end passes a map from `DocumentId` to caret offset: the visual editor's caret in visual mode, otherwise the source editor's.
 Untitled documents are left out.
 * `Engine::restore_session()` reads the file and opens the roots that are still directories as the workspace.
-It reopens each tab whose file still exists through `open_item`, with `OpenDisposition::Preview` for the tab that was the preview tab and `Persistent` for the rest, sets editor modes (AsciiDoc pages only) and activates the saved active tab.
+It reopens each tab whose file still exists through `open_item`, with `OpenDisposition::Preview` for the tab that was the preview tab and `Persistent` for the rest, sets editor modes (AsciiDoc pages only) without building their visual models (`set_editor_mode_later`), and activates the saved active tab.
+The active page's model is built the next time the engine is pumped, and every other page's when it is made active (`set_active`), so a restore builds none.
+The open pages' diagnostics are refreshed once, after the last tab is open, not as each page opens.
 It restores the preview layout, the PDF preview only when built with the `typst` feature.
 It returns a map from each reopened page's new `DocumentId` to its caret, clamped inside the text and to a character boundary, for the front end to place.
 A missing, damaged or other-version file restores nothing.
