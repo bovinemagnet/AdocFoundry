@@ -269,6 +269,13 @@ They cover:
 * the About dialog: `about_shows_the_version_and_each_components_licence`;
 * `every_command_is_in_the_palette` (in `editor/bindings.rs`), which fails when an engine command has no UI action, apart from those driven by typing and clicks.
 
+Redraws are counted by `crates/adocfoundry/src/renders.rs`, which in test builds counts the renders of `WorkspaceView`, `SourceEditorView`, `VisualView` and `PreviewView` per thread (`renders::rendered`, `count` and `reset`).
+Three tests in `ui_tests.rs` use it:
+
+* `typing_renders_the_workspace_once_per_keystroke`: each of 10 keystrokes renders the workspace once, the first once more as the tab marks the page unsaved, and the settles render it at most 4 times;
+* `word_count_change_does_not_redraw_the_editor`: a word count change renders the workspace once and the editor not at all, and a `DirectoryListed` draws nothing;
+* `the_visual_editor_redraws_for_spelling_but_not_word_counts`.
+
 The last one exercises the widget's input handler on the test platform.
 It is not evidence that a real input method works.
 

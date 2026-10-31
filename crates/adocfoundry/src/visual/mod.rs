@@ -196,7 +196,12 @@ impl VisualView {
             EngineEvent::ModelChanged { id, .. } if *id == self.document => {
                 self.refresh(cx);
             }
-            EngineEvent::GitHunksChanged(id) if *id == self.document => cx.notify(),
+            // The change markers and the misspelt words are drawn from the engine.
+            EngineEvent::GitHunksChanged(id) | EngineEvent::SpellingChanged(id)
+                if *id == self.document =>
+            {
+                cx.notify();
+            }
             EngineEvent::SettingsChanged => cx.notify(),
             // An edit from elsewhere moves the selection with the text.
             EngineEvent::DocumentChanged { id, version, edits }
@@ -860,6 +865,7 @@ impl Focusable for VisualView {
 
 impl Render for VisualView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::renders::rendered(crate::renders::View::Visual);
         // Repopulated as this frame's text blocks are drawn.
         self.layouts.borrow_mut().clear();
         self.formula_gaps = self

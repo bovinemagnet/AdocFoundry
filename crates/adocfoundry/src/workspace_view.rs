@@ -159,6 +159,8 @@ pub struct WorkspaceView {
     )>,
     problems: Entity<TreeState>,
     problem_count: usize,
+    /// The pages whose tabs show unsaved edits, as last drawn.
+    shown_dirty: std::collections::HashSet<DocumentId>,
     outline: Entity<TreeState>,
     outline_stale: bool,
     /// True from an edit until typing pauses; the outline and problems wait for the pause.
@@ -442,6 +444,7 @@ impl WorkspaceView {
             },
             problems: cx.new(|cx| TreeState::new(cx)),
             problem_count: 0,
+            shown_dirty: std::collections::HashSet::new(),
             outline: cx.new(|cx| TreeState::new(cx)),
             outline_stale: true,
             unsettled: false,
@@ -622,7 +625,45 @@ impl WorkspaceView {
             }
             _ => {}
         }
-        cx.notify();
+        if self.shows(event, cx) {
+            cx.notify();
+        }
+    }
+
+    /// Whether `event` changes what this window draws itself: its tabs, sidebar, status bar
+    /// and title. The editors, the preview, the Files panel, search results and images redraw
+    /// themselves for theirs.
+    fn shows(&mut self, event: &EngineEvent, cx: &App) -> bool {
+        match event {
+            EngineEvent::DirectoryListed(_)
+            | EngineEvent::SearchResults { .. }
+            | EngineEvent::PreviewReady { .. }
+            | EngineEvent::PdfPreviewReady { .. }
+            | EngineEvent::ModelChanged { .. }
+            | EngineEvent::SpellingChanged(_)
+            | EngineEvent::GitBlameChanged(_)
+            | EngineEvent::ImageChanged(_)
+            | EngineEvent::DiagnosticsUpdated { .. } => false,
+            // A tab marks a page with unsaved edits: an edit redraws it only when that flips.
+            EngineEvent::DocumentChanged { id, .. } => {
+                let dirty = self
+                    .app
+                    .read(cx)
+                    .engine
+                    .document(*id)
+                    .is_some_and(|document| document.dirty);
+                if dirty {
+                    self.shown_dirty.insert(*id)
+                } else {
+                    self.shown_dirty.remove(id)
+                }
+            }
+            EngineEvent::DocumentSaved(id) => {
+                self.shown_dirty.remove(id);
+                true
+            }
+            _ => true,
+        }
     }
 
     /// Creates or drops the visual editor of `id` to match its editor mode, and focuses the
@@ -3429,13 +3470,15 @@ impl WorkspaceView {
         let id = editor.read(cx).document();
         let mode = self.app.read(cx).engine.editor_mode(id);
         let visual = self.visuals.get(&id).cloned();
+        // Cached: they redraw when they change, not each time the window around them does.
+        let fill = || gpui::StyleRefinement::default().size_full();
         Some(match (mode, visual) {
-            (EditorMode::Visual, Some(visual)) => visual.into_any_element(),
+            (EditorMode::Visual, Some(visual)) => visual.cached(fill()).into_any_element(),
             (EditorMode::Split, Some(visual)) => h_resizable("source-visual")
-                .child(resizable_panel().child(editor))
-                .child(resizable_panel().child(visual))
+                .child(resizable_panel().child(editor.cached(fill())))
+                .child(resizable_panel().child(visual.cached(fill())))
                 .into_any_element(),
-            _ => editor.into_any_element(),
+            _ => editor.cached(fill()).into_any_element(),
         })
     }
 
@@ -4135,6 +4178,7 @@ impl Focusable for WorkspaceView {
 
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::renders::rendered(crate::renders::View::Workspace);
         self.refresh_outline(cx);
         let (can_back, can_forward, title) = {
             let engine = &self.app.read(cx).engine;
@@ -4348,10 +4392,16 @@ impl Render for WorkspaceView {
                         )
                         .child(
                             resizable_panel().child(match docked_preview {
-                                Some(preview) => h_resizable("editor-preview")
-                                    .child(resizable_panel().child(center))
-                                    .child(resizable_panel().size(px(520.)).child(preview))
-                                    .into_any_element(),
+                                Some(preview) => {
+                                    h_resizable("editor-preview")
+                                        .child(resizable_panel().child(center))
+                                        .child(resizable_panel().size(px(520.)).child(
+                                            preview.cached(
+                                                gpui::StyleRefinement::default().size_full(),
+                                            ),
+                                        ))
+                                        .into_any_element()
+                                }
                                 None => center,
                             }),
                         )

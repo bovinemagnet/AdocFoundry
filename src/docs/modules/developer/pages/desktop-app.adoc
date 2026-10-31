@@ -22,6 +22,24 @@ A background task pumps the engine every 16 ms while work is pending, such as in
 Each pump applies worker and watcher results and then re-emits every engine event to the views.
 `AppState::invoke` also drains events before it returns, so the effect of a command is visible immediately.
 
+=== Redraws
+
+In GPUI a `cx.notify()` on any entity redraws the window, and an uncached view's `render` runs on every redraw.
+`AppState::drain` therefore does not notify.
+It pumps the engine and re-emits its events, and each view redraws itself for the events it shows.
+Events that only say something is ready to read again (`DiagnosticsUpdated`, `WordCountChanged`, `SpellingChanged`, `GitHunksChanged`, `GitBlameChanged`, `GitStatusChanged`, `ProblemsChanged`, `NavigationChanged`, `PreviewLayoutChanged`, `DirectoryListed` and `ImageChanged`; see `is_idempotent`) are passed on once per drain however often they came.
+Events that carry what changed, such as `DocumentChanged` with its edits, search results and failures, are each passed on.
+
+`WorkspaceView::on_engine_event` notifies only for events that change what the workspace window itself draws: its tabs, sidebar, status bar and title.
+`WorkspaceView::shows` decides.
+It says no to `DirectoryListed`, `SearchResults`, `PreviewReady`, `PdfPreviewReady`, `ModelChanged`, `SpellingChanged`, `GitBlameChanged`, `ImageChanged` and `DiagnosticsUpdated`, because the Files panel, the search view, the preview, the editors and the image viewer redraw themselves for those.
+A `DocumentChanged` notifies only when the unsaved mark on the page's tab flips (`shown_dirty`).
+
+The source editor, the visual editor and the docked preview are embedded as cached views (`Entity::cached` with a full-size style), so a redraw of the workspace around them reuses their last frame.
+GPUI re-renders a cached view when it, or an entity it read while rendering, is notified.
+`SourceEditorView` notifies on the widget's state changes only when the caret or the scroll offset moved, because the change markers follow scrolling; the widget redraws its own text.
+The visual editor also redraws on `SpellingChanged` for its document, as it draws the engine's misspellings.
+
 == Keystroke flow
 
 .From keystroke to re-render

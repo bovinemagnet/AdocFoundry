@@ -101,6 +101,8 @@ pub struct SourceEditorView {
     document: DocumentId,
     readonly: bool,
     caret: Option<usize>,
+    /// The widget's scroll offset as last drawn, which the change markers follow.
+    scroll: Option<gpui::Point<gpui::Pixels>>,
     /// The document versions the widget's own edits made, which the engine's
     /// `DocumentChanged` for them need not reconcile.
     own_versions: std::collections::BTreeSet<u64>,
@@ -227,13 +229,21 @@ impl SourceEditorView {
         ));
 
         subscriptions.push(cx.observe(&state, |this: &mut Self, state, cx| {
-            let caret = state.read(cx).cursor();
-            if this.caret != Some(caret) {
+            let (caret, scroll) = {
+                let state = state.read(cx);
+                (state.cursor(), state.scroll_offset())
+            };
+            let moved = this.caret != Some(caret);
+            if moved {
                 this.caret = Some(caret);
                 cx.emit(SourceEditorEvent::CaretMoved(caret));
             }
-            // The change markers follow the editor's scrolling.
-            cx.notify();
+            // The change markers follow the editor's scrolling; nothing else here changes with
+            // the widget's state, which redraws itself.
+            if moved || this.scroll != Some(scroll) {
+                this.scroll = Some(scroll);
+                cx.notify();
+            }
         }));
 
         let mut view = Self {
@@ -241,6 +251,7 @@ impl SourceEditorView {
             document,
             readonly,
             caret: None,
+            scroll: None,
             own_versions: std::collections::BTreeSet::new(),
             state,
             marks: Rc::default(),
@@ -736,6 +747,7 @@ impl Focusable for SourceEditorView {
 
 impl Render for SourceEditorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::renders::rendered(crate::renders::View::Editor);
         let font_family = self
             .app
             .read(cx)
