@@ -79,6 +79,7 @@ pub struct Engine {
     pub(crate) words: crate::words::WordCounts,
     pub(crate) spelling: crate::spelling::Spelling,
     pub(crate) auto_saves: crate::auto_save::AutoSaveState,
+    pub(crate) writer: crate::writer::WriterState,
     pub(crate) recovery: crate::recovery::RecoveryState,
     /// Whether the last session and the recent folders are kept, and those folders.
     pub(crate) session: crate::session::SessionState,
@@ -174,6 +175,7 @@ impl Engine {
             words: crate::words::WordCounts::default(),
             spelling: crate::spelling::Spelling::default(),
             auto_saves: crate::auto_save::AutoSaveState::default(),
+            writer: crate::writer::WriterState::default(),
             recovery: crate::recovery::RecoveryState::default(),
             session: crate::session::SessionState::default(),
             problems: crate::problems::ProblemsState::default(),
@@ -454,54 +456,7 @@ impl Engine {
     }
 
     fn write_document(&mut self, id: DocumentId, overwrite: bool) -> Result<(), EngineError> {
-        let document = self
-            .documents
-            .get(&id)
-            .ok_or(EngineError::UnknownDocument(id))?;
-        if document.untitled {
-            return Err(EngineError::NotFound(format!(
-                "{} has never been saved and has no file",
-                document.path.display()
-            )));
-        }
-        let path = document.path.clone();
-        let on_disk = fs::read_to_string(&path);
-        if !overwrite {
-            let saved = self.states.get(&id).map(|state| state.saved_hash);
-            match &on_disk {
-                Ok(on_disk) if Some(hash_text(on_disk)) == saved => {}
-                // Deleted outside: writing it again loses nothing.
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                // Changed, or no longer text.
-                _ => return Err(EngineError::SaveConflict { path }),
-            }
-        }
-        // The text replaced, for the local history.
-        let previous = on_disk.ok().map(|text| {
-            let modified = fs::metadata(&path).and_then(|metadata| metadata.modified());
-            (
-                text,
-                modified.unwrap_or_else(|_| std::time::SystemTime::now()),
-            )
-        });
-        let text = document.text.to_string();
-        write_replacing(&path, &text).map_err(|error| EngineError::io(&path, error))?;
-        self.record_save(&path, previous, &text);
-        let Some(document) = self.documents.get_mut(&id) else {
-            return Err(EngineError::UnknownDocument(id));
-        };
-        document.dirty = false;
-        if let Some(state) = self.states.get_mut(&id) {
-            state.mark_saved(&text);
-            state.changed_on_disk = false;
-        }
-        self.auto_save_settled(id);
-        self.recovery_changed(id);
-        self.emit(EngineEvent::DocumentSaved(id));
-        self.keep_open(id);
-        self.schedule_hunks(id, false);
-        self.forget_blame(id);
-        Ok(())
+        self.save_now(id, overwrite)
     }
 
     /// Records `text` as the content on disk, so the document is clean when it matches.

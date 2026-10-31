@@ -57,6 +57,7 @@ mod versions;
 mod visual;
 mod words;
 mod workspace;
+mod writer;
 
 pub use about::{About, Notice, Notices, DOCUMENTATION};
 #[cfg(feature = "typst")]

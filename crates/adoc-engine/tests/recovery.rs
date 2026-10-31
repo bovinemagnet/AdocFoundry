@@ -84,9 +84,16 @@ fn type_text(engine: &mut Engine, id: DocumentId, text: &str) {
         .unwrap();
 }
 
+/// Lets typing pause long enough for a record, and waits for it to be written.
 fn settle(engine: &mut Engine, clock: &ManualClock) {
     clock.advance(RECOVERY_SETTLE);
     engine.pump();
+    written(engine);
+}
+
+/// Waits for the records written and removed so far, which the engine's writer does.
+fn written(engine: &mut Engine) {
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
 }
 
 fn text(engine: &Engine, id: DocumentId) -> String {
@@ -185,12 +192,14 @@ fn the_record_follows_typing_and_goes_once_the_page_is_saved_closed_or_clean() {
     settle(&mut engine, &clock);
     let before = setup.records();
     engine.save(id).unwrap();
+    written(&mut engine);
     assert_eq!(setup.records(), before - 1, "saving removes it");
 
     type_text(&mut engine, id, "again");
     settle(&mut engine, &clock);
     assert!(engine.undo(id));
     assert!(!engine.document(id).unwrap().dirty);
+    written(&mut engine);
     assert_eq!(
         setup.records(),
         before - 1,
@@ -200,6 +209,7 @@ fn the_record_follows_typing_and_goes_once_the_page_is_saved_closed_or_clean() {
     type_text(&mut engine, id, "more");
     settle(&mut engine, &clock);
     engine.close(id).unwrap();
+    written(&mut engine);
     assert_eq!(
         setup.records(),
         before - 1,
@@ -385,4 +395,20 @@ fn a_page_renamed_with_unsaved_edits_is_recovered_at_its_new_path() {
     let items = offered(&mut second);
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].path, renamed);
+}
+
+#[test]
+fn records_are_written_off_the_engine_thread_and_removed_after() {
+    let setup = Setup::new();
+    let (mut engine, clock) = setup.session();
+    let id = engine.open(&setup.page()).unwrap();
+    type_text(&mut engine, id, "Unsaved.\n");
+    clock.advance(RECOVERY_SETTLE);
+    engine.pump();
+    assert!(engine.has_pending(), "the record is being written");
+
+    // Saving at once removes the record, never before it is written.
+    engine.save(id).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    assert_eq!(setup.records(), 0);
 }

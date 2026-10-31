@@ -242,6 +242,8 @@ impl Engine {
     /// remembering is on, after writing those of the workspace left.
     pub(crate) fn open_expansion(&mut self) {
         self.save_expansion();
+        // The file is read below, so the write of the workspace left must be done.
+        self.flush_writes();
         let workspace = self
             .roots
             .iter()
@@ -297,7 +299,6 @@ impl Engine {
         ) else {
             return;
         };
-        let mut workspaces = read_state(&file).unwrap_or_default();
         let mut entry = Map::new();
         for panel in PANELS {
             let state = &self.expansion.panels[panel.index()];
@@ -308,9 +309,13 @@ impl Engine {
                 .collect();
             entry.insert(panel.name().to_owned(), Value::Object(branches));
         }
-        workspaces.insert(workspace, Value::Object(entry));
-        let text = json!({ "version": FORMAT_VERSION, "workspaces": workspaces }).to_string();
-        let _ = crate::engine::write_replacing(&file, &text);
+        // Read and written on the writer, after any earlier write of the file.
+        let target = file.clone();
+        self.write_later(file, move || {
+            let mut workspaces = read_state(&target).unwrap_or_default();
+            workspaces.insert(workspace, Value::Object(entry));
+            Some(json!({ "version": FORMAT_VERSION, "workspaces": workspaces }).to_string())
+        });
     }
 }
 
@@ -402,8 +407,10 @@ pub(crate) fn register_expansion(registry: &mut CommandRegistry) {
 }
 
 impl Drop for Engine {
-    /// Writes remembered branches still waiting for their pause, so quitting loses none.
+    /// Writes remembered branches still waiting for their pause, and waits for every write
+    /// started, so quitting loses none.
     fn drop(&mut self) {
         self.save_expansion();
+        self.flush_writes();
     }
 }

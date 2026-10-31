@@ -46,6 +46,15 @@ pub(crate) enum WorkerMessage {
         id: crate::SearchId,
         results: Vec<crate::SearchMatch>,
     },
+    Saved {
+        ticket: u64,
+        id: crate::DocumentId,
+        version: u64,
+        background: bool,
+        result: Result<crate::writer::Written, crate::writer::SaveFailure>,
+    },
+    /// A state file or recovery record written or removed.
+    Written,
     PreviewParsed {
         id: crate::DocumentId,
         generation: u64,
@@ -313,7 +322,7 @@ impl Engine {
         true
     }
 
-    fn apply_worker_message(&mut self, message: WorkerMessage) {
+    pub(crate) fn apply_worker_message(&mut self, message: WorkerMessage) {
         self.workers_running = self.workers_running.saturating_sub(1);
         match message {
             WorkerMessage::ProblemsComputed {
@@ -358,6 +367,14 @@ impl Engine {
                 self.visual_workspace_changed();
             }
             WorkerMessage::Search { id, results } => self.search_finished(id, results),
+            WorkerMessage::Saved {
+                id,
+                version,
+                background,
+                result,
+                ..
+            } => self.save_finished(id, version, background, result),
+            WorkerMessage::Written => {}
             WorkerMessage::PreviewParsed {
                 id,
                 generation,
@@ -509,6 +526,9 @@ impl Engine {
     fn file_changed_on_disk(&mut self, path: &Path) {
         let on_disk = fs::read_to_string(path).ok();
         if let Some(id) = self.document_for_path(path) {
+            if self.writer.is_saving(id) {
+                return; // Our own write, which the save's result settles.
+            }
             let Some(document) = self.documents.get(&id) else {
                 return;
             };

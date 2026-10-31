@@ -21,7 +21,7 @@ use crate::{
     commands::{ids, register, spec},
     engine::UndoMode,
     line_diff, CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry,
-    DiffLine, DocumentId, Engine, EngineError, TextEdit,
+    DiffLine, DocumentId, Engine, EngineError, HistorySettings, TextEdit,
 };
 
 /// The store's folder, in the app's state folder.
@@ -192,55 +192,25 @@ impl Engine {
         Ok(line_diff(&saved, &document.text.to_string()))
     }
 
-    /// Keeps `saved`, just written to `path`, and first `previous`, the file it replaced with
-    /// when it was last modified, when the history does not end with them already. A failure
-    /// costs only the version.
-    pub(crate) fn record_save(
-        &mut self,
-        path: &Path,
-        previous: Option<(String, SystemTime)>,
-        saved: &str,
-    ) {
-        let Some(folder) = self.history_folder(path) else {
-            return;
-        };
-        if fs::create_dir_all(&folder).is_err() {
-            return;
-        }
-        let path_file = folder.join(PATH_FILE);
-        if !path_file.exists() {
-            let _ = fs::write(&path_file, path.display().to_string());
-        }
-        let mut latest = stored(&folder)
-            .pop()
-            .map(|version| (version.millis, version.digest));
-        let candidates = previous
-            .map(|(text, modified)| (text, millis(modified)))
-            .into_iter()
-            .chain([(saved.to_owned(), millis(SystemTime::now()))]);
-        for (text, at) in candidates {
-            let digest = digest(&text);
-            if text.len() > HISTORY_MAX_PAGE
-                || latest.as_ref().is_some_and(|(_, last)| *last == digest)
-            {
-                continue;
-            }
-            // Strictly after the version before, so the order is the order of saving.
-            let at = latest.as_ref().map_or(at, |(last, _)| at.max(last + 1));
-            if fs::write(folder.join(format!("{at}-{digest}")), &text).is_ok() {
-                latest = Some((at, digest));
-            }
-        }
-        self.prune_history(&folder);
+    /// Where a save of the page at `path` keeps its versions, and whether it also sweeps the
+    /// whole store; `None` when no history is kept. Decided here, written by the saver.
+    pub(crate) fn history_job(&mut self, path: &Path) -> Option<HistoryJob> {
+        let store = self.history_store()?;
+        let folder = self.history_folder(path)?;
         let now = self.clock.now();
-        let due = self
+        let sweep = self
             .local_history
             .swept
             .is_none_or(|swept| now >= swept + HISTORY_SWEEP_INTERVAL);
-        if due {
+        if sweep {
             self.local_history.swept = Some(now);
-            self.sweep_history();
         }
+        Some(HistoryJob {
+            store,
+            folder,
+            settings: self.settings.history.clone(),
+            sweep,
+        })
     }
 
     /// Moves the history of the page at `from` to its new path `to`, joining any history
@@ -260,7 +230,7 @@ impl Engine {
             let _ = fs::remove_file(old.join(PATH_FILE));
             let _ = fs::remove_dir(&old);
         }
-        self.prune_history(&new);
+        prune_history(&new, &self.settings.history);
     }
 
     fn history_store(&self) -> Option<PathBuf> {
@@ -275,72 +245,6 @@ impl Engine {
     fn history_folder(&self, path: &Path) -> Option<PathBuf> {
         let key = digest(&path.display().to_string());
         self.history_store().map(|store| store.join(key))
-    }
-
-    /// Removes the versions in `folder` older than `keep_days` and beyond `max_versions`, and
-    /// the folder once it holds none.
-    fn prune_history(&self, folder: &Path) {
-        let settings = &self.settings.history;
-        let oldest =
-            millis(SystemTime::now()).saturating_sub(u64::from(settings.keep_days) * DAY_MILLIS);
-        let versions = stored(folder);
-        let surplus = versions
-            .len()
-            .saturating_sub(settings.max_versions as usize);
-        let mut kept = 0;
-        for (index, version) in versions.iter().enumerate() {
-            if index < surplus || version.millis < oldest {
-                let _ = fs::remove_file(folder.join(&version.id));
-            } else {
-                kept += 1;
-            }
-        }
-        if kept == 0 {
-            let _ = fs::remove_file(folder.join(PATH_FILE));
-            let _ = fs::remove_dir(folder);
-        }
-    }
-
-    /// Prunes every page's folder, for the pages not saved for a while, then removes the
-    /// oldest versions of any page until the whole history is under `max_size_mb`.
-    fn sweep_history(&self) {
-        let Some(store) = self.history_store() else {
-            return;
-        };
-        let Ok(entries) = fs::read_dir(store) else {
-            return;
-        };
-        let folders: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|folder| folder.is_dir())
-            .collect();
-        let mut versions = Vec::new();
-        for folder in &folders {
-            self.prune_history(folder);
-            for version in stored(folder) {
-                let file = folder.join(&version.id);
-                let size = fs::metadata(&file).map_or(0, |metadata| metadata.len());
-                versions.push((version.millis, file, size));
-            }
-        }
-        versions.sort();
-        let limit = u64::from(self.settings.history.max_size_mb) * MEGABYTE;
-        let mut total: u64 = versions.iter().map(|(_, _, size)| size).sum();
-        for (_, file, size) in versions {
-            if total <= limit {
-                break;
-            }
-            if fs::remove_file(&file).is_ok() {
-                total -= size;
-            }
-        }
-        for folder in &folders {
-            if stored(folder).is_empty() {
-                let _ = fs::remove_file(folder.join(PATH_FILE));
-                let _ = fs::remove_dir(folder);
-            }
-        }
     }
 }
 
@@ -380,4 +284,115 @@ fn millis(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH).map_or(0, |since| {
         u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
     })
+}
+
+/// Where and how one save keeps the page's versions.
+pub(crate) struct HistoryJob {
+    store: PathBuf,
+    folder: PathBuf,
+    settings: HistorySettings,
+    /// Whether this save also prunes every page's folder and the store's size.
+    sweep: bool,
+}
+
+impl HistoryJob {
+    /// Keeps `saved`, just written to `path`, and first `previous`, the file it replaced with
+    /// when it was last modified, when the history does not end with them already. A failure
+    /// costs only the version.
+    pub(crate) fn record(&self, path: &Path, previous: Option<(String, SystemTime)>, saved: &str) {
+        let folder = &self.folder;
+        if fs::create_dir_all(folder).is_err() {
+            return;
+        }
+        let path_file = folder.join(PATH_FILE);
+        if !path_file.exists() {
+            let _ = fs::write(&path_file, path.display().to_string());
+        }
+        let mut latest = stored(folder)
+            .pop()
+            .map(|version| (version.millis, version.digest));
+        let candidates = previous
+            .map(|(text, modified)| (text, millis(modified)))
+            .into_iter()
+            .chain([(saved.to_owned(), millis(SystemTime::now()))]);
+        for (text, at) in candidates {
+            let digest = digest(&text);
+            if text.len() > HISTORY_MAX_PAGE
+                || latest.as_ref().is_some_and(|(_, last)| *last == digest)
+            {
+                continue;
+            }
+            // Strictly after the version before, so the order is the order of saving.
+            let at = latest.as_ref().map_or(at, |(last, _)| at.max(last + 1));
+            if fs::write(folder.join(format!("{at}-{digest}")), &text).is_ok() {
+                latest = Some((at, digest));
+            }
+        }
+        prune_history(folder, &self.settings);
+        if self.sweep {
+            sweep_history(&self.store, &self.settings);
+        }
+    }
+}
+
+/// Removes the versions in `folder` older than `keep_days` and beyond `max_versions`, and
+/// the folder once it holds none.
+fn prune_history(folder: &Path, settings: &HistorySettings) {
+    let oldest =
+        millis(SystemTime::now()).saturating_sub(u64::from(settings.keep_days) * DAY_MILLIS);
+    let versions = stored(folder);
+    let surplus = versions
+        .len()
+        .saturating_sub(settings.max_versions as usize);
+    let mut kept = 0;
+    for (index, version) in versions.iter().enumerate() {
+        if index < surplus || version.millis < oldest {
+            let _ = fs::remove_file(folder.join(&version.id));
+        } else {
+            kept += 1;
+        }
+    }
+    if kept == 0 {
+        let _ = fs::remove_file(folder.join(PATH_FILE));
+        let _ = fs::remove_dir(folder);
+    }
+}
+
+/// Prunes every page's folder, for the pages not saved for a while, then removes the
+/// oldest versions of any page until the whole history is under `max_size_mb`.
+fn sweep_history(store: &Path, settings: &HistorySettings) {
+    let Ok(entries) = fs::read_dir(store) else {
+        return;
+    };
+    let folders: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|folder| folder.is_dir())
+        .collect();
+    let mut versions = Vec::new();
+    for folder in &folders {
+        prune_history(folder, settings);
+        for version in stored(folder) {
+            let file = folder.join(&version.id);
+            let size = fs::metadata(&file).map_or(0, |metadata| metadata.len());
+            versions.push((version.millis, file, size));
+        }
+    }
+    versions.sort();
+    let limit = u64::from(settings.max_size_mb) * MEGABYTE;
+    let mut total: u64 = versions.iter().map(|(_, _, size)| size).sum();
+    for (_, file, size) in versions {
+        if total <= limit {
+            break;
+        }
+        if fs::remove_file(&file).is_ok() {
+            total -= size;
+        }
+    }
+    for folder in &folders {
+        if stored(folder).is_empty() {
+            let _ = fs::remove_file(folder.join(PATH_FILE));
+            let _ = fs::remove_dir(folder);
+        }
+    }
 }
