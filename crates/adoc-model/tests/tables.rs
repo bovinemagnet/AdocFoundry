@@ -127,8 +127,22 @@ fn columns_are_inserted_and_deleted_with_their_widths() {
             at: offset(TABLE, "Name"),
         },
     );
-    assert_eq!(after, "[cols=\"2\"]\n|===\n|Value\n\n|1\n|2\n|===\n");
+    // One width is one column whatever it was: `cols="2"` would mean two columns.
+    assert_eq!(after, "[cols=\"1\"]\n|===\n|Value\n\n|1\n|2\n|===\n");
     assert_eq!(cells(&after), [["Value"], ["1"], ["2"]]);
+}
+
+#[test]
+fn delete_to_one_column_writes_one() {
+    let text = "[cols=\"2,3\"]\n|===\n|A |B\n\n|1 |2\n|===\n";
+    let (after, _) = apply(
+        text,
+        Step::DeleteTableColumn {
+            at: offset(text, "A"),
+        },
+    );
+    assert_eq!(after, "[cols=\"1\"]\n|===\n|B\n\n|2\n|===\n");
+    assert_eq!(cells(&after), [["B"], ["2"]]);
 }
 
 #[test]
