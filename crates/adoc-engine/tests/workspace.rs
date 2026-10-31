@@ -382,3 +382,128 @@ fn external_change_is_reported_once() {
         1
     );
 }
+
+/// True once the index holds `path`.
+fn indexed(engine: &Engine, path: &Path) -> bool {
+    engine.workspace().index.file(path).is_some()
+}
+
+#[test]
+fn opening_a_workspace_neither_watches_nor_indexes_on_the_callers_thread() {
+    let directory = tempfile::tempdir().unwrap();
+    for page in 0..100 {
+        fs::write(
+            directory.path().join(format!("page-{page}.adoc")),
+            "= Page\n",
+        )
+        .unwrap();
+    }
+    let modules = directory.path().join("node_modules");
+    for package in 0..20_000 {
+        fs::create_dir_all(modules.join(format!("package-{package}"))).unwrap();
+    }
+
+    let mut engine = engine_without_user_settings();
+    let started = Instant::now();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    let opened = started.elapsed();
+    assert!(
+        opened < Duration::from_millis(50),
+        "open_workspace took {opened:?}"
+    );
+    assert!(engine.wait_for_workers(Duration::from_secs(30)));
+    assert_eq!(engine.workspace().index.files().count(), 100);
+
+    // The watcher is in place once the index is: a page written now, beside the others or in a
+    // folder made after opening, is still reported.
+    let beside = directory.path().join("beside.adoc");
+    fs::write(&beside, "= Beside\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| indexed(engine, &beside)));
+    let folder = directory.path().join("later");
+    fs::create_dir(&folder).unwrap();
+    assert!(pump_until(&mut engine, |engine| !engine.is_indexing()));
+    let nested = folder.join("nested.adoc");
+    fs::write(&nested, "= Nested\n").unwrap();
+    assert!(
+        pump_until(&mut engine, |engine| indexed(engine, &nested)),
+        "a page in a new folder is reported"
+    );
+}
+
+#[test]
+fn workspace_ignore_setting_is_honoured_by_the_index() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join(".adocfoundry.toml"),
+        "[workspace]\nignore = [\"vendor\"]\n",
+    )
+    .unwrap();
+    let kept = directory.path().join("kept.adoc");
+    fs::write(&kept, "= Kept\n").unwrap();
+    let vendor = directory.path().join("vendor/docs");
+    fs::create_dir_all(vendor.join("modules/ROOT/pages")).unwrap();
+    fs::write(vendor.join("antora.yml"), "name: vendored\nversion: ~\n").unwrap();
+    let skipped = vendor.join("modules/ROOT/pages/index.adoc");
+    fs::write(&skipped, "= Vendored\n").unwrap();
+
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+
+    assert!(indexed(&engine, &kept));
+    assert!(
+        !indexed(&engine, &skipped),
+        "pages under vendor are not indexed"
+    );
+    assert!(
+        engine.workspace().antora.components().next().is_none(),
+        "nor are components under it discovered"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_subdirectory_does_not_abort_indexing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let readable = directory.path().join("readable.adoc");
+    fs::write(&readable, "= Readable\n").unwrap();
+    let locked = directory.path().join("locked");
+    fs::create_dir(&locked).unwrap();
+    fs::write(locked.join("hidden.adoc"), "= Hidden\n").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&locked).is_ok() {
+        // Running as root: nothing is unreadable.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let mut engine = engine_without_user_settings();
+    let events = engine.subscribe();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        indexed(&engine, &readable),
+        "the rest of the workspace is indexed"
+    );
+    let events: Vec<_> = events.try_iter().collect();
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, EngineEvent::WorkspaceIndexed { files: 1, .. })));
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            EngineEvent::CommandFailed { error, .. } if error.contains("locked")
+        )),
+        "the folder that could not be read is reported: {events:?}"
+    );
+}

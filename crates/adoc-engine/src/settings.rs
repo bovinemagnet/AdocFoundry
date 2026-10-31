@@ -110,9 +110,10 @@ pub struct WorkspaceSettings {
 impl Default for WorkspaceSettings {
     fn default() -> Self {
         Self {
-            ignore: ["node_modules", ".git", "build", "target", ".cache"]
-                .map(str::to_owned)
-                .to_vec(),
+            ignore: adoc_core::DEFAULT_IGNORED_DIRECTORIES
+                .iter()
+                .map(|&name| name.to_owned())
+                .collect(),
         }
     }
 }
@@ -688,7 +689,10 @@ mod tests {
         assert_eq!(settings.editor.font_size, 13);
         assert_eq!(settings.editor.tab_width, 2);
         assert!(settings.editor.soft_wrap);
-        assert_eq!(settings.workspace.ignore.len(), 5);
+        assert_eq!(
+            settings.workspace.ignore.len(),
+            adoc_core::DEFAULT_IGNORED_DIRECTORIES.len()
+        );
     }
 
     #[test]

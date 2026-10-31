@@ -17,7 +17,9 @@ pub use descriptor::{
     check_component_descriptor, parse_component_descriptor, read_component_descriptor,
     DescriptorError, DescriptorErrorKind,
 };
-pub use discovery::{discover_antora_workspace, DiscoveryResult};
+pub use discovery::{
+    discover_antora_workspace, discover_antora_workspace_ignoring, DiscoveryResult,
+};
 pub use module::Module;
 pub use nav::{parse_nav, NavEntry};
 pub use nav_tree::{nav_tree, nav_trees_of, NavError, NavItem, NavTree};

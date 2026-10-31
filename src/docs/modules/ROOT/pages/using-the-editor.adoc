@@ -21,7 +21,8 @@ Plain AsciiDoc folders work too, with relative-path resolution only.
 include::example$workspace-discovery.mmd[]
 ----
 
-Folders named in `workspace.ignore` (by default `node_modules`, `.git`, `build`, `target` and `.cache`) are skipped.
+Folders named in `workspace.ignore` (by default `.cache`, `.git`, `.zed`, `node_modules`, `build`, `target`, `dist`, `.idea` and `.gradle`) are skipped by indexing, Antora discovery and watching.
+A folder or file that cannot be read is skipped and reported once, and the rest of the workspace is indexed.
 See xref:settings.adoc[Settings].
 
 AdocFoundry watches the workspace.
@@ -182,7 +183,7 @@ A folder that cannot be read says "Permission denied — right-click to retry", 
 
 Ordinary dotfiles such as `.adocfoundry.toml` and `.gitignore` are shown.
 Folders and files named in `workspace.ignore` are hidden.
-By default these are `node_modules`, `.git`, `build`, `target` and `.cache`.
+By default these are `.cache`, `.git`, `.zed`, `node_modules`, `build`, `target`, `dist`, `.idea` and `.gradle`.
 A `.gitignore` file does not hide anything.
 Show Excluded Files, in the right-click menu, shows the hidden entries marked "(excluded)".
 It changes nothing else: not the settings, the index or Antora.

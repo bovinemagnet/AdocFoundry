@@ -5,11 +5,11 @@ use std::{
 };
 
 use adoc_antora::{
-    check_component_descriptor, discover_antora_workspace, AntoraCatalog, DescriptorError,
-    ReloadReport,
+    check_component_descriptor, discover_antora_workspace, discover_antora_workspace_ignoring,
+    AntoraCatalog, DescriptorError, DiscoveryResult, ReloadReport,
 };
 use adoc_core::{Diagnostic, Document};
-use adoc_index::{normalize_path, WorkspaceIndex};
+use adoc_index::{normalize_path, IndexReport, WorkspaceIndex};
 
 /// The semantic state of a workspace: the document index, the Antora catalog and any problems
 /// found in component descriptors. Front ends keep their own open-document bookkeeping.
@@ -33,6 +33,28 @@ impl WorkspaceState {
     pub fn index_roots(&mut self, roots: &[PathBuf]) -> io::Result<usize> {
         let indexed = self.index.index_roots(roots)?;
         let discovery = discover_antora_workspace(roots)?;
+        self.set_discovery(discovery);
+        Ok(indexed)
+    }
+
+    /// Indexes the AsciiDoc files beneath `roots` and discovers the Antora components in them,
+    /// as [`WorkspaceState::index_roots`] does, but never entering a folder named in `ignore`
+    /// and leaving out what cannot be read. `on_directory` sees each folder the index enters,
+    /// before it is read.
+    pub fn index_roots_with(
+        &mut self,
+        roots: &[PathBuf],
+        ignore: &[impl AsRef<str>],
+        on_directory: impl FnMut(&Path),
+    ) -> io::Result<IndexReport> {
+        let report = self.index.index_roots_with(roots, ignore, on_directory);
+        let discovery = discover_antora_workspace_ignoring(roots, ignore)?;
+        self.set_discovery(discovery);
+        Ok(report)
+    }
+
+    /// Replaces the catalog with a discovery's, and checks every descriptor it found.
+    fn set_discovery(&mut self, discovery: DiscoveryResult) {
         self.antora = discovery.catalog;
         self.descriptor_issues = discovery.issues;
         let descriptors: Vec<PathBuf> = self
@@ -49,7 +71,6 @@ impl WorkspaceState {
         for descriptor in descriptors {
             self.check_descriptor(&descriptor);
         }
-        Ok(indexed)
     }
 
     pub fn replace_document(&mut self, path: PathBuf, document: Document) {
