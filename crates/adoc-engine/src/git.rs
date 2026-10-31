@@ -5,14 +5,17 @@
 //! workspace outside any repository, or with `[git] enabled = false`, has no Git state at all.
 
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    sync::Arc,
     thread,
     time::Duration,
 };
 
-use adoc_git::{Change, FileStatus, Head, Hunk, Repository};
+use adoc_git::{BlameLine, Change, FileStatus, Head, Hunk, Repository};
 use adoc_index::normalize_path;
+use ropey::Rope;
 
 use crate::{
     commands::{ids, register, spec},
@@ -37,6 +40,8 @@ pub struct GitRepository {
     /// Commits on the current branch that `[git] remote` does not have; `None` when the branch
     /// has no remote-tracking branch there.
     pub ahead: Option<usize>,
+    /// The commit `HEAD` is at; `None` before the first commit.
+    pub commit: Option<String>,
 }
 
 /// What the engine knows about the workspace's repositories.
@@ -48,6 +53,13 @@ pub struct GitState {
     hunks: BTreeMap<DocumentId, Vec<Hunk>>,
     /// Documents whose hunks are due, with the time after which they are computed.
     pending_hunks: BTreeMap<DocumentId, std::time::Instant>,
+    /// The text in `HEAD` of each open document, read once and kept until `HEAD` moves, so a
+    /// recomputation only diffs.
+    head_texts: BTreeMap<DocumentId, Arc<str>>,
+    /// Bumped when `HEAD` moves, so hunks and texts read before are dropped.
+    head_generation: u64,
+    /// The working trees whose hunks are being computed: one job each at a time.
+    diffing: BTreeSet<PathBuf>,
     /// Discovery runs; a result from an older one is dropped.
     generation: u64,
     /// The latest refresh started for each working tree; older results are dropped.
@@ -62,6 +74,10 @@ pub struct GitState {
     blaming: BTreeSet<DocumentId>,
     /// Bumped whenever blame is forgotten, so a computation that started before is dropped.
     blame_generation: u64,
+    /// The blame last shown for each document.
+    blame_built: RefCell<BTreeMap<DocumentId, BuiltBlame>>,
+    /// Bumped whenever hunks or blame change, so blame built before is built again.
+    blame_stamp: u64,
 }
 
 impl GitState {
@@ -153,6 +169,8 @@ impl Engine {
         let had_hunks: Vec<DocumentId> = self.git.hunks.keys().copied().collect();
         self.git.hunks.clear();
         self.git.pending_hunks.clear();
+        self.git.diffing.clear();
+        self.forget_head_texts();
         if had_repositories {
             for root in forgotten {
                 self.emit(EngineEvent::GitStatusChanged { root });
@@ -185,6 +203,7 @@ impl Engine {
                     Ok(Some(repo)) => match snapshot(&repo, &remote) {
                         Ok(Snapshot {
                             head,
+                            commit,
                             status,
                             ahead,
                         }) => found.push((
@@ -194,6 +213,7 @@ impl Engine {
                                 head,
                                 roots: vec![root],
                                 ahead,
+                                commit,
                             },
                             status,
                         )),
@@ -286,6 +306,7 @@ impl Engine {
         }
         let Snapshot {
             head,
+            commit,
             status,
             ahead,
         } = match result {
@@ -324,9 +345,21 @@ impl Engine {
         for root in roots {
             self.emit(EngineEvent::GitStatusChanged { root });
         }
-        // A commit or a branch switch moves `HEAD` under the open documents.
+        // A commit or a branch switch moves `HEAD` under the open documents: their texts in
+        // `HEAD` are read again, and their blame. Anything else (a save, staging) only changes
+        // what the hunks are of.
+        if self.git.repositories[index].commit != commit {
+            self.git.repositories[index].commit = commit;
+            self.forget_head_texts();
+            self.forget_blames();
+        }
         self.schedule_all_hunks();
-        self.forget_blames();
+    }
+
+    /// Forgets every document's text in `HEAD`, when `HEAD` may have moved.
+    fn forget_head_texts(&mut self) {
+        self.git.head_texts.clear();
+        self.git.head_generation += 1;
     }
 
     fn replace_status(&mut self, workdir: &Path, status: Vec<FileStatus>) {
@@ -384,9 +417,19 @@ impl Engine {
         }
     }
 
+    /// Open document `id` moved: its text in `HEAD` is that of its new path, so it is read
+    /// again and its hunks computed against it.
+    pub(crate) fn git_document_moved(&mut self, id: DocumentId) {
+        self.git.head_texts.remove(&id);
+        self.forget_blame(id);
+        self.schedule_hunks(id, false);
+    }
+
     pub(crate) fn forget_hunks(&mut self, id: DocumentId) {
         self.git.hunks.remove(&id);
         self.git.pending_hunks.remove(&id);
+        self.git.head_texts.remove(&id);
+        self.git.blame_built.borrow_mut().remove(&id);
         self.forget_blame(id);
     }
 
@@ -394,13 +437,29 @@ impl Engine {
 
     /// Who last changed each line of open document `id`, once computed: its blame in `HEAD`
     /// carried over to the current text, with lines not committed yet marked so. `None` until
-    /// [`Engine::request_blame`] has been answered.
+    /// [`Engine::request_blame`] has been answered. Built once for each version of the text and
+    /// of its hunks, so asking on every frame costs nothing.
     #[must_use]
-    pub fn blame_for(&self, id: DocumentId) -> Option<Vec<adoc_git::BlameLine>> {
+    pub fn blame_for(&self, id: DocumentId) -> Option<Arc<Vec<BlameLine>>> {
         let head = self.git.blames.get(&id)?;
-        // Counted as `str::lines` does: a final newline ends the last line.
-        let lines = self.documents.get(&id)?.text.to_string().lines().count();
-        Some(adoc_git::blame_through(head, self.git.hunks_for(id), lines))
+        let document = self.documents.get(&id)?;
+        let stamp = self.git.blame_stamp;
+        if let Some(built) = self.git.blame_built.borrow().get(&id) {
+            if built.version == document.version && built.stamp == stamp {
+                return Some(built.lines.clone());
+            }
+        }
+        let lines = line_count(&document.text);
+        let blame = Arc::new(adoc_git::blame_through(head, self.git.hunks_for(id), lines));
+        self.git.blame_built.borrow_mut().insert(
+            id,
+            BuiltBlame {
+                version: document.version,
+                stamp,
+                lines: blame.clone(),
+            },
+        );
+        Some(blame)
     }
 
     /// Computes the blame of open document `id` on a worker thread, unless it is known or on
@@ -450,6 +509,7 @@ impl Engine {
         match blame {
             Ok(blame) => {
                 self.git.blames.insert(id, blame);
+                self.git.blame_stamp += 1;
                 self.emit(EngineEvent::GitBlameChanged(id));
             }
             Err(error) => self.emit(EngineEvent::CommandFailed {
@@ -462,6 +522,7 @@ impl Engine {
     /// Forgets the blame of `id`, on a save or a close.
     pub(crate) fn forget_blame(&mut self, id: DocumentId) {
         if self.git.blames.remove(&id).is_some() {
+            self.git.blame_stamp += 1;
             self.emit(EngineEvent::GitBlameChanged(id));
         }
     }
@@ -472,6 +533,7 @@ impl Engine {
         self.git.blaming.clear();
         let forgotten: Vec<DocumentId> = self.git.blames.keys().copied().collect();
         self.git.blames.clear();
+        self.git.blame_stamp += 1;
         for id in forgotten {
             self.emit(EngineEvent::GitBlameChanged(id));
         }
@@ -533,7 +595,10 @@ impl Engine {
             })
     }
 
-    /// Starts the hunk computations that are due. Returns the number started.
+    /// Starts the hunk computations that are due, one job for each working tree that is not
+    /// already computing; the others wait for it. Each job diffs against the texts in `HEAD`
+    /// already read, and opens the repository only for documents whose text it has not read.
+    /// Returns the number of documents started.
     pub(crate) fn start_due_hunks(&mut self) -> usize {
         let now = self.clock.now();
         let due: Vec<DocumentId> = self
@@ -543,62 +608,85 @@ impl Engine {
             .filter(|(_, deadline)| **deadline <= now)
             .map(|(id, _)| *id)
             .collect();
-        for id in &due {
-            self.git.pending_hunks.remove(id);
-            let Some(document) = self.documents.get(id) else {
+        let mut jobs: BTreeMap<PathBuf, Vec<HunkJob>> = BTreeMap::new();
+        for id in due {
+            let Some(document) = self.documents.get(&id) else {
+                self.git.pending_hunks.remove(&id);
                 continue;
             };
             let Some(repository) = self.git.repository_for(&document.path) else {
-                self.set_hunks(*id, Vec::new());
+                self.git.pending_hunks.remove(&id);
+                self.set_hunks(id, Vec::new());
                 continue;
             };
+            let workdir = repository.workdir.clone();
+            if self.git.diffing.contains(&workdir) {
+                continue; // Started once that working tree's job is done.
+            }
+            self.git.pending_hunks.remove(&id);
             // An untracked or ignored file has nothing in `HEAD` to differ from.
             let unversioned = self.git.status_for(&document.path).is_some_and(|status| {
                 matches!(status.worktree, Change::Untracked | Change::Ignored)
                     && status.index == Change::Unmodified
             });
             if unversioned {
-                self.set_hunks(*id, Vec::new());
+                self.set_hunks(id, Vec::new());
                 continue;
             }
-            let (path, text, version) = (
-                document.path.clone(),
-                document.text.to_string(),
-                document.version,
-            );
-            let workdir = repository.workdir.clone();
-            let sender = self.worker_sender.clone();
-            let id = *id;
-            self.workers_running += 1;
-            thread::spawn(move || {
-                let hunks = match Repository::discover(&workdir) {
-                    Ok(Some(repo)) => repo
-                        .line_diff(&path, Some(&text))
-                        .map_err(|error| error.to_string()),
-                    Ok(None) => Ok(Vec::new()),
-                    Err(error) => Err(error.to_string()),
-                };
-                let _ = sender.send(WorkerMessage::GitHunks { id, version, hunks });
+            jobs.entry(workdir).or_default().push(HunkJob {
+                id,
+                version: document.version,
+                path: document.path.clone(),
+                text: document.text.clone(),
+                head: self.git.head_texts.get(&id).cloned(),
             });
         }
-        due.len()
+        let mut started = 0;
+        for (workdir, jobs) in jobs {
+            started += jobs.len();
+            self.git.diffing.insert(workdir.clone());
+            let generation = self.git.head_generation;
+            let sender = self.worker_sender.clone();
+            self.workers_running += 1;
+            thread::spawn(move || {
+                let results = diff_documents(&workdir, jobs);
+                let _ = sender.send(WorkerMessage::GitHunks {
+                    workdir,
+                    generation,
+                    results,
+                });
+            });
+        }
+        started
     }
 
-    pub(crate) fn git_hunks(
-        &mut self,
-        id: DocumentId,
-        version: u64,
-        hunks: Result<Vec<Hunk>, String>,
-    ) {
-        if self.documents.get(&id).map(|document| document.version) != Some(version) {
-            return; // A newer edit has scheduled its own computation.
+    pub(crate) fn git_hunks(&mut self, workdir: &Path, generation: u64, results: Vec<HunkResult>) {
+        self.git.diffing.remove(workdir);
+        if generation != self.git.head_generation {
+            return; // `HEAD` moved, and every document is due again.
         }
-        match hunks {
-            Ok(hunks) => self.set_hunks(id, hunks),
-            Err(error) => self.emit(EngineEvent::CommandFailed {
-                command: ids::GIT_REFRESH,
-                error,
-            }),
+        for result in results {
+            if !self.documents.contains_key(&result.id) {
+                continue;
+            }
+            if let Some(head) = result.head {
+                self.git.head_texts.insert(result.id, head);
+            }
+            if self
+                .documents
+                .get(&result.id)
+                .map(|document| document.version)
+                != Some(result.version)
+            {
+                continue; // A newer edit has scheduled its own computation.
+            }
+            match result.hunks {
+                Ok(hunks) => self.set_hunks(result.id, hunks),
+                Err(error) => self.emit(EngineEvent::CommandFailed {
+                    command: ids::GIT_REFRESH,
+                    error,
+                }),
+            }
         }
     }
 
@@ -611,20 +699,97 @@ impl Engine {
         } else {
             self.git.hunks.insert(id, hunks);
         }
+        self.git.blame_stamp += 1;
         self.emit(EngineEvent::GitHunksChanged(id));
     }
+}
+
+/// A document's blame as last built, with the version of its text and `blame_stamp` then.
+struct BuiltBlame {
+    version: u64,
+    stamp: u64,
+    lines: Arc<Vec<BlameLine>>,
 }
 
 /// What a refresh reads from a repository.
 pub(crate) struct Snapshot {
     head: Head,
+    commit: Option<String>,
     status: Vec<FileStatus>,
     ahead: Option<usize>,
+}
+
+/// An open document whose hunks a worker computes: its text as it stood, and its text in
+/// `HEAD` when already read.
+struct HunkJob {
+    id: DocumentId,
+    version: u64,
+    path: PathBuf,
+    text: Rope,
+    head: Option<Arc<str>>,
+}
+
+pub(crate) struct HunkResult {
+    id: DocumentId,
+    version: u64,
+    hunks: Result<Vec<Hunk>, String>,
+    /// The document's text in `HEAD`, when this job read it.
+    head: Option<Arc<str>>,
+}
+
+/// The hunks of each of `jobs` in the working tree `workdir`, opening the repository once, and
+/// only when a document's text in `HEAD` has not been read yet.
+fn diff_documents(workdir: &Path, jobs: Vec<HunkJob>) -> Vec<HunkResult> {
+    let repo = jobs
+        .iter()
+        .any(|job| job.head.is_none())
+        .then(|| Repository::discover(workdir).map_err(|error| error.to_string()));
+    jobs.into_iter()
+        .map(|job| {
+            let (head, read) = match job.head {
+                Some(head) => (Ok(head), false),
+                None => (head_text(repo.as_ref(), &job.path), true),
+            };
+            let hunks = head
+                .as_ref()
+                .map(|head| adoc_git::line_hunks(head, &job.text.to_string()))
+                .map_err(Clone::clone);
+            HunkResult {
+                id: job.id,
+                version: job.version,
+                hunks,
+                head: head.ok().filter(|_| read),
+            }
+        })
+        .collect()
+}
+
+/// The text of `path` in `HEAD`: empty when it is not there, or there is no repository.
+fn head_text(
+    repo: Option<&Result<Option<Repository>, String>>,
+    path: &Path,
+) -> Result<Arc<str>, String> {
+    match repo {
+        Some(Ok(Some(repo))) => repo
+            .head_content(path)
+            .map(|text| Arc::from(text.unwrap_or_default()))
+            .map_err(|error| error.to_string()),
+        Some(Err(error)) => Err(error.clone()),
+        Some(Ok(None)) | None => Ok(Arc::from("")),
+    }
+}
+
+/// The lines of `text` as `str::lines` counts them: a final line break ends the last line.
+fn line_count(text: &Rope) -> usize {
+    let lines = text.len_lines(ropey::LineType::LF_CR);
+    let ends_with_break = text.len() == 0 || text.byte(text.len() - 1) == b'\n';
+    lines - usize::from(ends_with_break)
 }
 
 /// The head, status and unpushed commits of `repo`, with errors as text for the engine thread.
 fn snapshot(repo: &Repository, remote: &str) -> Result<Snapshot, String> {
     let head = repo.head().map_err(|error| error.to_string())?;
+    let commit = repo.head_commit_id();
     let status = repo.status().map_err(|error| error.to_string())?;
     let ahead = match &head {
         Head::Branch(branch) => repo.unpushed(remote, branch).ok().flatten(),
@@ -632,6 +797,7 @@ fn snapshot(repo: &Repository, remote: &str) -> Result<Snapshot, String> {
     };
     Ok(Snapshot {
         head,
+        commit,
         status,
         ahead,
     })

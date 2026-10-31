@@ -33,6 +33,8 @@ impl Engine {
 
     pub(crate) fn forget_hunks(&mut self, _: DocumentId) {}
 
+    pub(crate) fn git_document_moved(&mut self, _: DocumentId) {}
+
     pub(crate) fn forget_blame(&mut self, _: DocumentId) {}
 
     pub(crate) fn start_due_hunks(&mut self) -> usize {

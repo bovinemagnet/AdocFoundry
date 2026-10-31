@@ -103,7 +103,7 @@ pub fn now() -> i64 {
 /// Paints the blame of each visible line in a column `left` of the element it is placed in.
 pub fn column(
     state: Entity<EditorState>,
-    blame: Vec<BlameLine>,
+    blame: std::sync::Arc<Vec<BlameLine>>,
     font: Font,
     colour: Hsla,
     left: Pixels,

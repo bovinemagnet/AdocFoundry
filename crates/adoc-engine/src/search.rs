@@ -309,6 +309,7 @@ impl Engine {
                 to: to.clone(),
             });
             self.visual_source_changed(&to);
+            self.git_document_moved(id);
             // Unsaved text is recovered at the new path.
             self.recovery_changed(id);
         } else if let Ok(text) = fs::read_to_string(&to) {

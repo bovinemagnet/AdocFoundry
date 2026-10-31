@@ -47,6 +47,8 @@ impl Repository {
             return Ok(None);
         };
         let workdir = spelt_as(path, found);
+        #[cfg(feature = "test-support")]
+        crate::testing::count_discovery(&workdir);
         let git_dir = if repo.git_dir().starts_with(found) {
             workdir.join(
                 repo.git_dir()
