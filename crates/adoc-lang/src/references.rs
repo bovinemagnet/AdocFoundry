@@ -296,6 +296,11 @@ fn id_range(text: &str, range: SourceRange, id: &str) -> Option<SourceRange> {
     let source = text.get(range.start..range.end)?;
     let at = match source.find('#') {
         Some(hash) if source[hash + 1..].starts_with(id) => hash + 1,
+        // A block attribute list's `id=intro` or `id="intro"`.
+        _ if source.starts_with('[') && source.contains("id=") => {
+            let value = source.find("id=")? + 3;
+            value + usize::from(source[value..].starts_with(['"', '\'']))
+        }
         _ => ["[[", "<<", "xref:"]
             .iter()
             .filter_map(|opener| source.strip_prefix(opener).map(|_| opener.len()))
@@ -418,6 +423,38 @@ mod tests {
         assert_eq!(edits.len(), 3);
         assert!(rename_anchor(&ws, &index, &text, offset, "two words").is_none());
         assert!(rename_anchor(&ws, &index, &text, 2, "install").is_none());
+    }
+
+    #[test]
+    fn renaming_a_shorthand_or_long_form_anchor_edits_only_its_id() {
+        let mut ws = workspace();
+        let index = fixture("index.adoc");
+        let text = "= Guide\n\nSee <<begin>> and <<later>>.\n\n[#begin.lead]\n== Introduction\n\n[id=\"later\"]\n== Notes\n";
+        ws.index.index_source(&index, text);
+        let renamed = |at: &str, new_id: &str| {
+            let offset = text.find(at).unwrap() + 1;
+            let mut edits: Vec<_> = rename_anchor(&ws, &index, text, offset, new_id)
+                .unwrap()
+                .into_iter()
+                .filter(|(location, _)| location.path == index)
+                .collect();
+            edits.sort_by_key(|(location, _)| std::cmp::Reverse(location.range.start));
+            let mut out = text.to_owned();
+            for (location, new) in edits {
+                out.replace_range(location.range.start..location.range.end, &new);
+            }
+            out
+        };
+        assert_eq!(
+            renamed("begin.lead", "start"),
+            text.replace("<<begin>>", "<<start>>")
+                .replace("[#begin.lead]", "[#start.lead]")
+        );
+        assert_eq!(
+            renamed("later\"]", "after"),
+            text.replace("<<later>>", "<<after>>")
+                .replace("[id=\"later\"]", "[id=\"after\"]")
+        );
     }
 
     #[test]

@@ -287,6 +287,18 @@ mod tests {
     }
 
     #[test]
+    fn shorthand_anchor_with_role_resolves() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "= Guide\n\nSee <<begin>> and <<later>>.\n\n[#begin.lead]\n== Introduction\n\n[id=later]\n== Notes\n",
+        );
+
+        assert_eq!(workspace_diagnostics(&index, path), Vec::new());
+    }
+
+    #[test]
     fn resolves_references_to_implicit_section_ids() {
         let path = Path::new("docs/index.adoc");
         let mut index = WorkspaceIndex::new();

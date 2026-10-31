@@ -75,14 +75,44 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
         find_delimited(line, "[#", "]", offset)
             .into_iter()
             .filter_map(|(value, range)| {
-                let id = value.trim();
+                // `[#id.role]`, `[#id%option]` and `[#id,name=value]`: the id ends at the first
+                // role, option or further attribute.
+                let id = value.split(['.', '%', ',']).next()?.trim();
                 (!id.is_empty()).then(|| Anchor {
                     id: id.to_owned(),
                     range,
                 })
             }),
     );
+    anchors.extend(id_attribute(line, offset));
     anchors
+}
+
+/// The `id=…` entry of a line that is a whole block attribute list, `[id=intro]` or
+/// `[source,id="code"]`.
+fn id_attribute(line: &str, offset: usize) -> Option<Anchor> {
+    let trimmed = line.trim_end();
+    let list = trimmed.strip_prefix('[')?.strip_suffix(']')?;
+    if list.starts_with('[') || list.contains(['[', ']']) {
+        return None;
+    }
+    let id = list.split(',').find_map(|entry| {
+        let value = entry.trim().strip_prefix("id=")?.trim();
+        let value = value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .or_else(|| {
+                value
+                    .strip_prefix('\'')
+                    .and_then(|value| value.strip_suffix('\''))
+            })
+            .unwrap_or(value);
+        Some(value.trim())
+    })?;
+    (!id.is_empty()).then(|| Anchor {
+        id: id.to_owned(),
+        range: SourceRange::new(offset, offset + trimmed.len()),
+    })
 }
 
 pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
