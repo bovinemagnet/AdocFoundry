@@ -161,6 +161,10 @@ pub struct WorkspaceView {
     problem_count: usize,
     /// The pages whose tabs show unsaved edits, as last drawn.
     shown_dirty: std::collections::HashSet<DocumentId>,
+    /// The Changes panel's rows, built when Git status or the open pages change.
+    change_rows: Option<Vec<(Option<String>, Vec<sidebar::ChangeRow>)>>,
+    /// The words of the selection the status bar last counted, by page, version and range.
+    selection_words: std::cell::Cell<Option<(SelectionKey, usize)>>,
     outline: Entity<TreeState>,
     outline_stale: bool,
     /// True from an edit until typing pauses; the outline and problems wait for the pause.
@@ -445,6 +449,8 @@ impl WorkspaceView {
             problems: cx.new(|cx| TreeState::new(cx)),
             problem_count: 0,
             shown_dirty: std::collections::HashSet::new(),
+            change_rows: None,
+            selection_words: std::cell::Cell::new(None),
             outline: cx.new(|cx| TreeState::new(cx)),
             outline_stale: true,
             unsettled: false,
@@ -574,6 +580,19 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The Changes panel's rows follow Git and the open pages' hunks.
+        if matches!(
+            event,
+            EngineEvent::GitStatusChanged { .. }
+                | EngineEvent::GitHeadChanged { .. }
+                | EngineEvent::GitHunksChanged(_)
+                | EngineEvent::DocumentOpened(_)
+                | EngineEvent::DocumentClosed(_)
+                | EngineEvent::DocumentMoved { .. }
+                | EngineEvent::WorkspaceIndexed { .. }
+        ) {
+            self.change_rows = None;
+        }
         match event {
             EngineEvent::WorkspaceIndexed { .. } | EngineEvent::CatalogChanged { .. } => {
                 self.rebuild_catalog_trees(cx);
@@ -1107,7 +1126,10 @@ impl WorkspaceView {
     /// The Changes panel: Stage All and Commit…, then a row per changed file with a box to
     /// stage it; a click on its name opens it at its first change.
     fn render_changes(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let groups = sidebar::change_rows(&self.app.read(cx).engine);
+        let groups = self
+            .change_rows
+            .get_or_insert_with(|| sidebar::change_rows(&self.app.read(cx).engine))
+            .clone();
         let any = groups.iter().any(|(_, rows)| !rows.is_empty());
         let staged = groups
             .iter()
@@ -3593,7 +3615,8 @@ impl WorkspaceView {
         let workspace = cx.weak_entity();
         let panel_space = div().id(id).size_full().child(
             tree(state, move |index, entry, _selected, _window, cx| {
-                let item = entry.item().clone();
+                // The id and label only: a folder's item owns its whole subtree.
+                let item = RowItem::of(entry.item());
                 let icon = if entry.is_folder() {
                     if entry.is_expanded() {
                         IconName::FolderOpen
@@ -4049,10 +4072,27 @@ impl WorkspaceView {
             }
             None => editor.selection(cx),
         };
+        // Counted again only when the page or the selection changes, not on every frame.
         let selected = (!selection.is_empty())
-            .then(|| engine.text_in(id, SourceRange::new(selection.start, selection.end)))
-            .flatten()
-            .map(|text| count_words(&text));
+            .then(|| {
+                let key = (
+                    id,
+                    engine.document(id)?.version,
+                    selection.start,
+                    selection.end,
+                );
+                if let Some((counted, words)) = self.selection_words.get() {
+                    if counted == key {
+                        return Some(words);
+                    }
+                }
+                let words = count_words(
+                    &engine.text_in(id, SourceRange::new(selection.start, selection.end))?,
+                );
+                self.selection_words.set(Some((key, words)));
+                Some(words)
+            })
+            .flatten();
         let words = |count: usize| if count == 1 { "word" } else { "words" };
         Some(match selected {
             Some(selected) => (
@@ -4079,7 +4119,7 @@ impl WorkspaceView {
         let caret = self.caret_line_column(window, cx);
         let words = self.word_count(window, cx);
         let engine = &self.app.read(cx).engine;
-        let roots = engine.roots().to_vec();
+        let roots = engine.roots();
         let (location, path, file) = match self.active_editor() {
             Some(editor) => {
                 let editor = editor.read(cx);
@@ -4087,7 +4127,7 @@ impl WorkspaceView {
                 let document = engine.document(id);
                 let position =
                     caret.map(|(line, column)| format!("Ln {}, Col {}", line + 1, column + 1));
-                let path = document.map(|document| sidebar::display_path(&document.path, &roots));
+                let path = document.map(|document| sidebar::display_path(&document.path, roots));
                 (
                     position,
                     path,
@@ -4100,7 +4140,7 @@ impl WorkspaceView {
                     let file = engine.image(id).map(|image| image.path.clone());
                     let path = file
                         .as_deref()
-                        .map(|file| sidebar::display_path(file, &roots));
+                        .map(|file| sidebar::display_path(file, roots));
                     (None, path, file)
                 }
                 None => (None, None, None),
@@ -4430,3 +4470,21 @@ impl Render for WorkspaceView {
             .child(self.render_status(window, cx))
     }
 }
+
+/// What a sidebar row needs of its tree item, without the subtree a folder's item owns.
+struct RowItem {
+    id: SharedString,
+    label: SharedString,
+}
+
+impl RowItem {
+    fn of(item: &gpui_component::tree::TreeItem) -> Self {
+        Self {
+            id: item.id.clone(),
+            label: item.label.clone(),
+        }
+    }
+}
+
+/// A selection the status bar counted the words of: the page, its version and the range.
+type SelectionKey = (DocumentId, u64, usize, usize);

@@ -232,7 +232,6 @@ impl Engine {
             return;
         };
         let before = checked.misspellings.len();
-        let mut moved = false;
         checked.misspellings.retain_mut(|misspelling| {
             let mut delta: isize = 0;
             for edit in edits {
@@ -246,7 +245,6 @@ impl Engine {
                 }
             }
             if delta != 0 {
-                moved = true;
                 misspelling.range = SourceRange::new(
                     misspelling.range.start.saturating_add_signed(delta),
                     misspelling.range.end.saturating_add_signed(delta),
@@ -254,7 +252,8 @@ impl Engine {
             }
             true
         });
-        if moved || checked.misspellings.len() != before {
+        // Moving with the text is drawn from the edit itself; only one going is news.
+        if checked.misspellings.len() != before {
             self.emit(EngineEvent::SpellingChanged(id));
         }
     }

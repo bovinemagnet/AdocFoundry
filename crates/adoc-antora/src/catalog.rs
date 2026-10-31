@@ -42,6 +42,9 @@ pub struct AntoraCatalog {
     components: BTreeMap<ComponentKey, ComponentDescriptor>,
     modules: BTreeMap<ModuleKey, Module>,
     resources: BTreeMap<AntoraCoordinate, AntoraResource>,
+    /// Each file → the coordinates of the resources read from it, so a file is looked up
+    /// without visiting every resource.
+    by_path: BTreeMap<PathBuf, BTreeSet<AntoraCoordinate>>,
     /// Alias coordinate → the coordinate of the page that declares it.
     aliases: BTreeMap<AntoraCoordinate, AntoraCoordinate>,
     playbook: Option<crate::Playbook>,
@@ -85,7 +88,26 @@ impl AntoraCatalog {
                 self.aliases.insert(alias, resource.coordinate.clone());
             }
         }
-        self.resources.insert(resource.coordinate.clone(), resource)
+        self.by_path
+            .entry(resource.source_path.clone())
+            .or_default()
+            .insert(resource.coordinate.clone());
+        let replaced = self.resources.insert(resource.coordinate.clone(), resource);
+        if let Some(old) = &replaced {
+            if self.resources[&old.coordinate].source_path != old.source_path {
+                self.forget_path(&old.source_path, &old.coordinate);
+            }
+        }
+        replaced
+    }
+
+    fn forget_path(&mut self, path: &Path, coordinate: &AntoraCoordinate) {
+        if let Some(coordinates) = self.by_path.get_mut(path) {
+            coordinates.remove(coordinate);
+            if coordinates.is_empty() {
+                self.by_path.remove(path);
+            }
+        }
     }
 
     #[must_use]
@@ -279,13 +301,18 @@ impl AntoraCatalog {
             self.modules.retain(|module, _| {
                 !(module.component == key.name && module.version == key.version)
             });
-            self.resources.retain(|coordinate, _| {
+            let mut paths = Vec::new();
+            self.resources.retain(|coordinate, resource| {
                 let matches = coordinate.component == key.name && coordinate.version == key.version;
                 if matches {
                     removed.insert(coordinate.clone());
+                    paths.push((resource.source_path.clone(), coordinate.clone()));
                 }
                 !matches
             });
+            for (path, coordinate) in paths {
+                self.forget_path(&path, &coordinate);
+            }
         }
         self.aliases
             .retain(|_, target| self.resources.contains_key(target));
@@ -356,23 +383,18 @@ impl AntoraCatalog {
             .map(|(_, module)| module)
     }
 
-    /// The resource whose file is `source_path`.
+    /// The resource whose file is `source_path`: the first in coordinate order, should two
+    /// read the same file.
     #[must_use]
     pub fn resource_for_path(&self, source_path: &Path) -> Option<&AntoraResource> {
-        let source_path = normalize_path(source_path);
-        self.resources
-            .values()
-            .find(|resource| resource.source_path == source_path)
+        let coordinate = self.by_path.get(&normalize_path(source_path))?.first()?;
+        self.resources.get(coordinate)
     }
 
     #[must_use]
     pub fn context_for_path(&self, source_path: &Path) -> Option<AntoraContext> {
         let source_path = normalize_path(source_path);
-        if let Some(resource) = self
-            .resources
-            .values()
-            .find(|resource| resource.source_path == source_path)
-        {
+        if let Some(resource) = self.resource_for_path(&source_path) {
             return Some(AntoraContext {
                 component: resource.coordinate.component.clone(),
                 version: resource.coordinate.version.clone(),
@@ -415,8 +437,9 @@ impl AntoraCatalog {
 
     pub fn remove_source(&mut self, source_path: &Path) {
         let source_path = normalize_path(source_path);
-        self.resources
-            .retain(|_, resource| resource.source_path != source_path);
+        for coordinate in self.by_path.remove(&source_path).unwrap_or_default() {
+            self.resources.remove(&coordinate);
+        }
     }
 
     #[must_use]
@@ -748,5 +771,67 @@ mod tests {
         component.nav = vec!["modules/security/menu.adoc".to_owned()];
         catalog.insert_component(component);
         assert!(catalog.is_nav_file(&root.join("modules/security/menu.adoc")));
+    }
+
+    fn page(component: &str, path: &str, file: &str) -> AntoraResource {
+        AntoraResource {
+            coordinate: AntoraCoordinate {
+                component: component.to_owned(),
+                version: None,
+                module: "ROOT".to_owned(),
+                family: ResourceFamily::Page,
+                relative_path: PathBuf::from(path),
+            },
+            source_path: PathBuf::from(file),
+            aliases: Vec::new(),
+        }
+    }
+
+    /// Looking a file up is a map lookup, kept in step with every insert and removal.
+    #[test]
+    fn resources_are_found_by_path_after_inserts_and_removals() {
+        let mut catalog = AntoraCatalog::new();
+        for index in 0..1_000 {
+            catalog.insert(page(
+                "demo",
+                &format!("p{index}.adoc"),
+                &format!("/docs/modules/ROOT/pages/p{index}.adoc"),
+            ));
+        }
+        let found = catalog
+            .resource_for_path(std::path::Path::new("/docs/modules/ROOT/pages/./p7.adoc"))
+            .unwrap();
+        assert_eq!(found.coordinate.relative_path, PathBuf::from("p7.adoc"));
+        assert_eq!(
+            catalog
+                .context_for_path(std::path::Path::new("/docs/modules/ROOT/pages/p7.adoc"))
+                .map(|context| context.component),
+            Some("demo".to_owned())
+        );
+
+        // The same file read under another coordinate: the first in order answers.
+        catalog.insert(page("alpha", "p7.adoc", "/docs/modules/ROOT/pages/p7.adoc"));
+        assert_eq!(
+            catalog
+                .resource_for_path(std::path::Path::new("/docs/modules/ROOT/pages/p7.adoc"))
+                .unwrap()
+                .coordinate
+                .component,
+            "alpha"
+        );
+        // A coordinate given another file moves with it.
+        catalog.insert(page("demo", "p8.adoc", "/elsewhere/p8.adoc"));
+        assert!(catalog
+            .resource_for_path(std::path::Path::new("/docs/modules/ROOT/pages/p8.adoc"))
+            .is_none());
+        assert!(catalog
+            .resource_for_path(std::path::Path::new("/elsewhere/p8.adoc"))
+            .is_some());
+
+        catalog.remove_source(std::path::Path::new("/docs/modules/ROOT/pages/p7.adoc"));
+        assert!(catalog
+            .resource_for_path(std::path::Path::new("/docs/modules/ROOT/pages/p7.adoc"))
+            .is_none());
+        assert_eq!(catalog.len(), 999);
     }
 }

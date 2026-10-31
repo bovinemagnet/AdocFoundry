@@ -615,8 +615,10 @@ impl Render for FilesView {
             }
         };
         let list = tree(&self.tree, move |index, entry, _selected, _window, cx| {
-            let item = entry.item().clone();
-            let row = rows.get(&item.id).cloned();
+            // The id and label only: a folder's item owns its whole subtree.
+            let item = entry.item();
+            let (item_id, label) = (item.id.clone(), item.label.clone());
+            let row = rows.get(&item_id).cloned();
             let kind = row.as_ref().map(|row| row.kind.clone());
             let icon = match (&kind, entry.is_expanded()) {
                 (Some(RowKind::Root | RowKind::Directory), true) => IconName::FolderOpen,
@@ -637,7 +639,7 @@ impl Render for FilesView {
                 .unwrap_or_default()
                 .into();
             let files = files.clone();
-            let id = item.id.clone();
+            let id = item_id;
             ListItem::new(index)
                 .w_full()
                 .rounded(cx.theme().radius)
@@ -654,7 +656,7 @@ impl Render for FilesView {
                         .text_sm()
                         .when(muted, |row| row.text_color(cx.theme().muted_foreground))
                         .when(kind != Some(RowKind::Note), |row| row.child(icon))
-                        .child(div().truncate().child(item.label.clone()))
+                        .child(div().truncate().child(label))
                         .when(!full.is_empty(), |row| {
                             row.tooltip(move |window, cx| {
                                 Tooltip::new(full.clone()).build(window, cx)

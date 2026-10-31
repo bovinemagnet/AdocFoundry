@@ -214,6 +214,37 @@ fn misspellings_move_with_edits_and_go_when_typed_into() {
     assert!(engine.misspellings(id).is_empty(), "typed into");
 }
 
+/// Typing before a misspelling moves it with the text, which every view draws from the edit
+/// itself: only a misspelling going is news.
+#[test]
+fn typing_before_a_misspelling_announces_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let text = "= Page\n\nA qwzxy word.\n";
+    let path = page(&directory, "page.adoc", text);
+    let (mut engine, _clock) = engine_with_clock();
+    let id = engine.open(&path).unwrap();
+    settle(&mut engine);
+    let events = engine.subscribe();
+    let at = text.find("A qwzxy").unwrap();
+    for (index, typed) in "Big ".chars().enumerate() {
+        type_text(&mut engine, id, at + index, &typed.to_string());
+    }
+    let announced = |events: &std::sync::mpsc::Receiver<EngineEvent>| {
+        events
+            .try_iter()
+            .filter(|event| *event == EngineEvent::SpellingChanged(id))
+            .count()
+    };
+    assert_eq!(announced(&events), 0);
+    let start = text.find("qwzxy").unwrap() + 4;
+    assert_eq!(
+        engine.misspellings(id)[0].range,
+        SourceRange::new(start, start + 5)
+    );
+    type_text(&mut engine, id, start + 5, "s");
+    assert_eq!(announced(&events), 1, "the misspelling went");
+}
+
 #[test]
 fn a_misspelt_word_is_replaced_in_one_undo_step() {
     let directory = tempfile::tempdir().unwrap();
