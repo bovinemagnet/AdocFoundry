@@ -86,12 +86,22 @@ pub struct WorkspaceIndex {
     /// `(word, file, position in that file's symbols)`, so a query reaches its matches by an
     /// ordered range scan rather than by visiting every symbol.
     symbol_words: BTreeSet<(String, PathBuf, usize)>,
+    /// Counts the files added, replaced and removed, so a cache built from them can tell it
+    /// is stale.
+    revision: u64,
 }
 
 impl WorkspaceIndex {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A number that changes whenever a file is added, replaced or removed. Only the same
+    /// index's revisions compare: another index may have counted to the same number.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn index_source(&mut self, path: impl AsRef<Path>, text: &str) -> &FileEntry {
@@ -201,6 +211,7 @@ impl WorkspaceIndex {
     }
 
     pub fn remove(&mut self, path: &Path) -> Option<FileEntry> {
+        self.revision += 1;
         let path = normalize_path(path);
         self.anchors.retain(|key, _| key.path != path);
         self.references.retain(|reference| reference.path != path);
@@ -482,6 +493,23 @@ mod tests {
         assert!(index.resolve_anchor(&path, "new").is_some());
         assert!(index.references().is_empty());
         assert_eq!(index.files().count(), 1);
+    }
+
+    #[test]
+    fn the_revision_changes_with_every_file_added_replaced_or_removed() {
+        let path = PathBuf::from("docs/guide.adoc");
+        let mut index = WorkspaceIndex::new();
+        let mut seen = vec![index.revision()];
+        index.index_source(&path, "= One\n");
+        seen.push(index.revision());
+        index.index_source(&path, "= Two\n");
+        seen.push(index.revision());
+        index.remove(&path);
+        seen.push(index.revision());
+        seen.dedup();
+        assert_eq!(seen.len(), 4);
+        let _ = index.file(&path);
+        assert_eq!(index.revision(), seen[3]);
     }
 
     #[test]

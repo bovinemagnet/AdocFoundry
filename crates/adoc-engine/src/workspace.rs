@@ -21,7 +21,7 @@ use adoc_index::{is_asciidoc_path, normalize_path};
 use adoc_lang::WorkspaceState;
 use notify::{event::CreateKind, event::RemoveKind, EventKind, RecursiveMode, Watcher};
 
-use crate::{Engine, EngineError, EngineEvent, TextEdit};
+use crate::{quick_open::QuickOpenCache, Engine, EngineError, EngineEvent, TextEdit};
 
 /// File-system events closer together than this for one path are applied once.
 pub const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
@@ -40,6 +40,8 @@ pub(crate) enum WorkerMessage {
         generation: u64,
         roots: Vec<PathBuf>,
         state: Box<WorkspaceState>,
+        /// Quick Open's items, built from `state`.
+        quick_open: Box<QuickOpenCache>,
         files: usize,
         /// The folders and files that could not be read.
         unreadable: Vec<PathBuf>,
@@ -349,6 +351,7 @@ impl Engine {
             let message = match result {
                 Ok(report) => WorkerMessage::Indexed {
                     generation,
+                    quick_open: Box::new(QuickOpenCache::new(&state, &roots)),
                     roots,
                     state: Box::new(state),
                     files: report.files,
@@ -450,6 +453,7 @@ impl Engine {
                 generation,
                 roots,
                 state,
+                quick_open,
                 files,
                 unreadable,
                 entered,
@@ -474,6 +478,7 @@ impl Engine {
                     });
                 }
                 self.workspace = *state;
+                *self.quick_open.borrow_mut() = *quick_open;
                 self.restore_branch_versions();
                 // Open documents are newer than the files the worker read.
                 let open: Vec<_> = self
@@ -791,6 +796,7 @@ mod tests {
         let files = state.index_roots(roots).unwrap();
         WorkerMessage::Indexed {
             generation,
+            quick_open: Box::default(),
             roots: roots.to_vec(),
             state: Box::new(state),
             files,

@@ -50,6 +50,8 @@ pub struct AntoraCatalog {
     playbook: Option<crate::Playbook>,
     /// Which branch publishes each version, when the workspace's repository is known.
     branch_versions: Option<crate::BranchVersions>,
+    /// Counts the changes to the resources, so a cache built from them can tell it is stale.
+    revision: u64,
 }
 
 impl AntoraCatalog {
@@ -82,7 +84,15 @@ impl AntoraCatalog {
         )
     }
 
+    /// A number that changes whenever a resource is added or removed. Only the same catalog's
+    /// revisions compare: another catalog may have counted to the same number.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn insert(&mut self, resource: AntoraResource) -> Option<AntoraResource> {
+        self.revision += 1;
         for alias in &resource.aliases {
             if let Some(alias) = qualified_coordinate(alias) {
                 self.aliases.insert(alias, resource.coordinate.clone());
@@ -266,6 +276,7 @@ impl AntoraCatalog {
         &mut self,
         descriptor_path: &Path,
     ) -> Result<ReloadReport, DescriptorError> {
+        self.revision += 1;
         let root = normalize_path(descriptor_path.parent().unwrap_or_else(|| Path::new("")));
         let before = self.remove_component_at(&root);
         let descriptor = read_component_descriptor(&root)?;
@@ -436,6 +447,7 @@ impl AntoraCatalog {
     }
 
     pub fn remove_source(&mut self, source_path: &Path) {
+        self.revision += 1;
         let source_path = normalize_path(source_path);
         for coordinate in self.by_path.remove(&source_path).unwrap_or_default() {
             self.resources.remove(&coordinate);
@@ -833,5 +845,20 @@ mod tests {
             .resource_for_path(std::path::Path::new("/docs/modules/ROOT/pages/p7.adoc"))
             .is_none());
         assert_eq!(catalog.len(), 999);
+    }
+
+    #[test]
+    fn the_revision_changes_with_the_resources() {
+        let mut catalog = AntoraCatalog::new();
+        let mut seen = vec![catalog.revision()];
+        catalog.insert(page("demo", "a.adoc", "/docs/a.adoc"));
+        seen.push(catalog.revision());
+        catalog.remove_source(std::path::Path::new("/docs/a.adoc"));
+        seen.push(catalog.revision());
+        seen.dedup();
+        assert_eq!(seen.len(), 3);
+        // Reading leaves it as it is.
+        let _ = catalog.resource_for_path(std::path::Path::new("/docs/a.adoc"));
+        assert_eq!(catalog.revision(), seen[2]);
     }
 }

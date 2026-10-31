@@ -2,6 +2,8 @@
 
 use std::{fs, path::Path, time::Duration};
 
+use adoc_core::probe::{self, Probe};
+
 use adoc_engine::{commands::ids, CommandArgs, CommandOutcome, Engine, QuickOpenItem, Settings};
 
 fn open_workspace(root: &Path) -> Engine {
@@ -202,4 +204,157 @@ fn quick_open_finds_a_page_among_thousands() {
         "module-7/installing.adoc"
     );
     assert_eq!(engine.quick_open("", 100).len(), 100);
+}
+
+/// A component of `pages` pages below a fresh folder.
+fn component(pages: usize) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("antora.yml"),
+        "name: docs\nversion: '1.0'\n",
+    )
+    .unwrap();
+    let folder = directory.path().join("modules/ROOT/pages");
+    fs::create_dir_all(&folder).unwrap();
+    for page in 0..pages {
+        fs::write(
+            folder.join(format!("topic-{page}.adoc")),
+            format!("= Topic {page}\n"),
+        )
+        .unwrap();
+    }
+    directory
+}
+
+fn page(root: &Path, name: &str) -> std::path::PathBuf {
+    adoc_engine::normalize_path(&root.join("modules/ROOT/pages").join(name))
+}
+
+fn built() -> u64 {
+    probe::count(Probe::QuickOpenItem)
+}
+
+/// Pumps until `done` holds, as the watcher reports changes on disk.
+fn pump_until(engine: &mut Engine, mut done: impl FnMut(&Engine) -> bool) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        engine.pump();
+        if done(engine) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
+#[test]
+fn a_keystroke_makes_no_items_and_an_edit_remakes_none() {
+    let root = component(200);
+    let mut engine = open_workspace(root.path());
+    // The index worker made them, on its own thread.
+    probe::reset();
+    for query in ["", "t", "to", "top", "topic 12"] {
+        assert!(!engine.quick_open(query, 50).is_empty());
+    }
+    assert_eq!(built(), 0, "each keystroke reuses the items");
+
+    // Retitling an open page keeps every item, the page's with its new title.
+    let id = engine.open(&page(root.path(), "topic-12.adoc")).unwrap();
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(2, 2),
+                text: "Retitled ".to_owned(),
+            },
+        )
+        .unwrap();
+    let CommandOutcome::QuickOpen(items) = engine
+        .invoke(
+            ids::WORKSPACE_QUICK_OPEN,
+            CommandArgs::Query {
+                query: "retitled".to_owned(),
+                document: None,
+            },
+        )
+        .unwrap()
+    else {
+        panic!("expected matches");
+    };
+    assert_eq!(items[0].title.as_deref(), Some("Retitled Topic 12"));
+    assert_eq!(
+        items[0].resource_id.as_deref(),
+        Some("1.0@docs:ROOT:topic-12.adoc")
+    );
+    assert_eq!(built(), 0);
+
+    // A page opened from outside the index is the one item made.
+    let added = page(root.path(), "added.adoc");
+    fs::write(&added, "= Added Later\n").unwrap();
+    engine.open(&added).unwrap();
+    assert_eq!(
+        paths(&engine.quick_open("added later", 5)),
+        ["modules/ROOT/pages/added.adoc"]
+    );
+    assert_eq!(built(), 1);
+}
+
+#[test]
+fn quick_open_follows_pages_and_versions_changed_on_disk() {
+    let root = component(3);
+    let mut engine = open_workspace(root.path());
+    assert_eq!(engine.quick_open("topic", 10).len(), 3);
+
+    fs::remove_file(page(root.path(), "topic-1.adoc")).unwrap();
+    fs::write(page(root.path(), "fresh.adoc"), "= Fresh Page\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| {
+        let listed = paths(&engine.quick_open("", 10));
+        listed.contains(&"modules/ROOT/pages/fresh.adoc".to_owned())
+            && !listed.contains(&"modules/ROOT/pages/topic-1.adoc".to_owned())
+    }));
+
+    fs::write(
+        root.path().join("antora.yml"),
+        "name: docs\nversion: '2.0'\n",
+    )
+    .unwrap();
+    assert!(pump_until(&mut engine, |engine| {
+        engine.quick_open("topic-0", 1)[0].resource_id.as_deref()
+            == Some("2.0@docs:ROOT:topic-0.adoc")
+    }));
+}
+
+#[test]
+fn a_quick_open_keystroke_rebuilds_no_visual_model() {
+    let root = component(3);
+    let mut engine = open_workspace(root.path());
+    let id = engine.open(&page(root.path(), "topic-0.adoc")).unwrap();
+    engine
+        .invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(id))
+        .unwrap();
+    // Source typing leaves the model stale until it pauses.
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(7, 7),
+                text: "\nTyped.\n".to_owned(),
+            },
+        )
+        .unwrap();
+    let events = engine.subscribe();
+    engine
+        .invoke(
+            ids::WORKSPACE_QUICK_OPEN,
+            CommandArgs::Query {
+                query: "topic".to_owned(),
+                document: None,
+            },
+        )
+        .unwrap();
+    assert!(!events
+        .try_iter()
+        .any(|event| matches!(event, adoc_engine::EngineEvent::ModelChanged { .. })));
 }

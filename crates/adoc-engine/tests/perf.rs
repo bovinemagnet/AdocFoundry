@@ -328,13 +328,22 @@ fn pdf_preview_after_typing() {
     }
 }
 
+/// Quick Open over an Antora component of 20,000 pages, so every file has a resource id. Each
+/// query is asked twice: the first after the index changed, the second as the next keystroke.
 #[test]
 #[ignore = "timing probe"]
-fn quick_open_in_a_workspace_of_3000_pages() {
+fn quick_open_in_a_workspace_of_20000_pages() {
     let directory = tempfile::tempdir().unwrap();
-    for module in 0..30 {
-        let pages = directory.path().join(format!("module-{module}"));
-        fs::create_dir(&pages).unwrap();
+    fs::write(
+        directory.path().join("antora.yml"),
+        "name: docs\nversion: '1.0'\n",
+    )
+    .unwrap();
+    for module in 0..200 {
+        let pages = directory
+            .path()
+            .join(format!("modules/module-{module}/pages"));
+        fs::create_dir_all(&pages).unwrap();
         for page in 0..100 {
             fs::write(
                 pages.join(format!("topic-{page}.adoc")),
@@ -347,12 +356,48 @@ fn quick_open_in_a_workspace_of_3000_pages() {
     engine
         .open_workspace(vec![directory.path().to_path_buf()])
         .unwrap();
-    assert!(engine.wait_for_workers(std::time::Duration::from_secs(60)));
-    for query in ["", "t", "top", "topic 42", "mod 7 top 99"] {
-        let started = Instant::now();
-        let found = engine
-            .quick_open(query, adoc_engine::QUICK_OPEN_LIMIT)
-            .len();
-        println!("{query:?}: {found} files in {:?}", started.elapsed());
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(120)));
+    assert_eq!(engine.workspace().index.files().count(), 20_000);
+    let started = Instant::now();
+    let _ = engine.quick_open("", 1);
+    println!("first: {:?}", started.elapsed());
+    let mut worst = std::time::Duration::ZERO;
+    for query in ["", "t", "top", "topic 42", "mod 7 top 99", "docs:module-3"] {
+        for _ in 0..2 {
+            let started = Instant::now();
+            let found = engine
+                .quick_open(query, adoc_engine::QUICK_OPEN_LIMIT)
+                .len();
+            let took = started.elapsed();
+            println!("{query:?}: {found} files in {took:?}");
+            worst = worst.max(took);
+        }
     }
+    // After an edit only the edited page's item changes, as the palette opens.
+    let page = directory.path().join("modules/module-7/pages/topic-3.adoc");
+    let id = engine.open(&page).unwrap();
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(2, 2),
+                text: "Edited ".to_owned(),
+            },
+        )
+        .unwrap();
+    let started = Instant::now();
+    engine
+        .invoke(
+            ids::WORKSPACE_QUICK_OPEN,
+            CommandArgs::Query {
+                query: String::new(),
+                document: None,
+            },
+        )
+        .unwrap();
+    let took = started.elapsed();
+    println!("after an edit: {took:?}");
+    worst = worst.max(took);
+    println!("worst after the first: {worst:?}");
 }

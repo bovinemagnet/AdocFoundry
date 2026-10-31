@@ -168,13 +168,20 @@ The watcher's debounced changes relist the listed folders that hold them (`direc
 `quick_open.rs` holds the ranking behind `workspace.quick_open` (Quick Open…), so it is tested headlessly and the front ends only display the result.
 `Engine::quick_open(query, limit)` returns `Vec<QuickOpenItem>`, each with `path`, `relative_path`, `title` and `resource_id`.
 It reads the index, never the disk, so it lists AsciiDoc files only.
-The command takes `CommandArgs::Query(String)` and returns `CommandOutcome::QuickOpen(Vec<QuickOpenItem>)`, with at most `QUICK_OPEN_LIMIT` (100) items.
+The command takes `CommandArgs::Query { query, document }` (it ignores `document`) and returns `CommandOutcome::QuickOpen(Vec<QuickOpenItem>)`, with at most `QUICK_OPEN_LIMIT` (100) items.
 
 Each space-separated word of the query must match the file name, title, resource ID or path as an in-order, case-insensitive subsequence.
 File name matches score highest, then the title, with bonuses for word starts and runs.
 Recently active files come first, most recent first, then the rest by score; an empty query gives recent files, then every file by path.
 Recency is recorded whenever a document becomes the active tab (`Engine::set_active`, and `activate_last_tab` when a closed tab hands over), and is kept for the session only.
-The `quick_open_in_a_workspace_of_3000_pages` probe in `tests/perf.rs` measures about 5 ms a query in a release build.
+The items are kept in a `QuickOpenCache` on the engine, built from the index, the catalog and the roots.
+The index worker builds it alongside each full index, so the first query after indexing makes no items.
+`WorkspaceIndex::revision` and `AntoraCatalog::revision` count changes to the files and to the resources, so a query can tell whether the cache is still current.
+When only files changed, the cache is walked beside the index in path order: unchanged items are kept, a changed title is replaced, and an item is made only for a file added since.
+When the catalog or the roots changed, it is rebuilt.
+A query scores every item without allocating (`fuzzy_score` reads the candidate's characters in place, lowering each one as it goes), then keeps only the best `limit` (`select_nth_unstable_by`), and clones only those items.
+The `QuickOpenItem` probe counts items made, so a test can check that a keystroke makes none.
+The `quick_open_in_a_workspace_of_20000_pages` probe in `tests/perf.rs` (one Antora component of 20,000 pages) measures under 5 ms a query in a release build, and about 4 ms for the first query after an edit.
 
 [[sessions]]
 == Sessions and recent folders
