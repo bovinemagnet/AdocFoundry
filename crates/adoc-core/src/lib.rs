@@ -1,6 +1,7 @@
 mod access;
 mod diagnostic;
 mod document;
+pub mod probe;
 mod reference;
 mod symbol;
 

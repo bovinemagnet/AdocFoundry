@@ -31,6 +31,11 @@ No window is involved.
 The notices generator's tests are in `xtask/src/notices.rs`: `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice`.
 Add a test here rather than in the application crate whenever the behaviour can be reached through the engine.
 
+`adoc_core::probe` counts the work a keystroke does: `Probe::{Parse, HashText, Diff, Reconcile}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
+They count only with adoc-core's `probe` feature, which the engine's and the application's dev-dependencies turn on; in a normal build `hit` does nothing.
+`tests/keystroke.rs` asserts them: `one_keystroke_parses_at_most_once`, `typing_never_hashes_the_document`, `completion_during_typing_does_not_reparse` and `only_typing_inside_something_that_completes_asks_for_completions`.
+In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` types 20 characters and expects 20 diffs and no reconcile, then expects an edit from the engine to reconcile once.
+
 == CLI snapshot tests
 
 `crates/adocfoundry-cli/tests/cli.rs` runs the binary through `CARGO_BIN_EXE_adocfoundry-cli`.
@@ -280,7 +285,7 @@ cargo test --release -p adoc-engine --test perf -- --ignored --nocapture
 ----
 
 The budget is 5 ms.
-The recorded result is a median of 0.76 ms and a worst case of 3.8 ms over 200 keystrokes, and workspace diagnostics for 501 files take 2.3 ms.
+The recorded result is a median of 0.33 µs and a worst case of 50 µs for a keystroke (`keystroke_on_a_5000_line_document`), independent of the page's size, 0.29 µs for `backspace_loop` and 0.87 ms for `visual_typing_loop`, which is the visual model's rebuild; workspace diagnostics for 501 files take 2.3 ms.
 That leaves most of each 16 ms frame to the widget.
 
 [[manual-qa]]

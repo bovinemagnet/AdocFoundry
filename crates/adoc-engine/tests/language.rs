@@ -46,7 +46,7 @@ fn edit_reparses_and_updates_diagnostics() {
         .unwrap();
     assert!(codes(&engine).is_empty(), "the edit resolves the xref");
     assert_eq!(
-        engine.document(id).unwrap().parsed.references[0].target,
+        engine.document(id).unwrap().parsed().references[0].target,
         "present.adoc"
     );
     assert!(events.try_iter().any(|event| event
@@ -79,7 +79,7 @@ fn navigate_definition_returns_the_target_location() {
     let offset = engine
         .document(id)
         .unwrap()
-        .parsed
+        .parsed()
         .text
         .find("xref:")
         .unwrap()
@@ -174,7 +174,7 @@ fn typing_defers_reindexing_until_typing_pauses() {
     assert!(engine
         .document(id)
         .unwrap()
-        .parsed
+        .parsed()
         .text
         .starts_with("x= Page"));
     assert_eq!(indexed(&engine), "= Page\n\nSee xref:missing.adoc[].\n");

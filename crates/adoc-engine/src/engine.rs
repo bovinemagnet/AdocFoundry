@@ -285,7 +285,7 @@ impl Engine {
                 text: Rope::from_str(text),
                 version: 0,
                 dirty: false,
-                parsed,
+                parsed: std::cell::OnceCell::from(parsed),
                 diagnostics,
                 untitled,
                 asciidoc,
@@ -297,6 +297,7 @@ impl Engine {
             DocumentState {
                 undo: UndoStack::default(),
                 saved_hash: hash_text(text),
+                saved_len: text.len(),
                 changed_on_disk: false,
             },
         );
@@ -491,7 +492,7 @@ impl Engine {
         };
         document.dirty = false;
         if let Some(state) = self.states.get_mut(&id) {
-            state.saved_hash = hash_text(&text);
+            state.mark_saved(&text);
             state.changed_on_disk = false;
         }
         self.auto_save_settled(id);
@@ -506,7 +507,7 @@ impl Engine {
     /// Records `text` as the content on disk, so the document is clean when it matches.
     pub(crate) fn mark_saved(&mut self, id: DocumentId, text: &str) {
         if let Some(state) = self.states.get_mut(&id) {
-            state.saved_hash = hash_text(text);
+            state.mark_saved(text);
             state.changed_on_disk = false;
         }
         if let Some(document) = self.documents.get_mut(&id) {
@@ -810,10 +811,12 @@ impl Engine {
         let inverse = edit::apply(&mut document.text, &forward);
         let version_before = document.version;
         document.version += 1;
-        let text = document.text.to_string();
-        document.parsed = parse(&uri_for(&document.path), &text).document;
-        let saved_hash = self.states.get(&id).map_or(0, |state| state.saved_hash);
-        document.dirty = hash_text(&text) != saved_hash;
+        // Parsed again when something next reads it.
+        document.parsed = std::cell::OnceCell::new();
+        document.dirty = !self
+            .states
+            .get(&id)
+            .is_some_and(|state| state.is_saved(&document.text));
         let version_after = document.version;
         let path = document.path.clone();
         let untitled = document.untitled;
@@ -821,7 +824,7 @@ impl Engine {
         // What the change could re-diagnose, as the index stood before it.
         let mut before = None;
         if untitled {
-            document.diagnostics = document.parsed.diagnostics.clone();
+            document.diagnostics = document.parsed().diagnostics.clone();
         } else if !indexed {
             // Text that is not AsciiDoc: nothing to index or diagnose.
         } else if defer_index {
@@ -829,7 +832,7 @@ impl Engine {
             self.pending_index.insert(id, deadline);
         } else {
             self.pending_index.remove(&id);
-            let parsed = document.parsed.clone();
+            let parsed = document.parsed().clone();
             before = Some(adoc_lang::diagnosed_with(&self.workspace, &path));
             self.workspace.replace_document(path.clone(), parsed);
         }
@@ -903,7 +906,7 @@ impl Engine {
             let Some(document) = self.documents.get(id) else {
                 continue;
             };
-            let (path, parsed) = (document.path.clone(), document.parsed.clone());
+            let (path, parsed) = (document.path.clone(), document.parsed().clone());
             let before = adoc_lang::diagnosed_with(&self.workspace, &path);
             self.workspace.replace_document(path.clone(), parsed);
             self.refresh_diagnosed_with(&path, before);

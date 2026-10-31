@@ -170,7 +170,7 @@ impl Engine {
     ) -> Result<CommandOutcome, EngineError> {
         let document = self.document(id).ok_or(EngineError::UnknownDocument(id))?;
         let on_include = document
-            .parsed
+            .parsed()
             .includes
             .iter()
             .any(|include| include.range.start <= offset && offset < include.range.end);

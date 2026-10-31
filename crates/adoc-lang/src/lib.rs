@@ -65,6 +65,19 @@ pub fn definition_at_offset(
     offset: usize,
 ) -> Option<DefinitionTarget> {
     with_document(ws, path, text, |document| {
+        definition_in(ws, path, document, offset)
+    })
+}
+
+/// [`definition_at_offset`] in `document`, the parse of the text at `path` already in hand.
+#[must_use]
+pub fn definition_in(
+    ws: &WorkspaceState,
+    path: &Path,
+    document: &Document,
+    offset: usize,
+) -> Option<DefinitionTarget> {
+    {
         if let Some(target) =
             definition::definition_at_offset(&ws.index, &ws.antora, path, document, offset)
         {
@@ -86,7 +99,7 @@ pub fn definition_at_offset(
                 .map(DefinitionTarget::External);
         }
         attribute_definition(ws, path, document, offset).map(DefinitionTarget::Location)
-    })
+    }
 }
 
 /// Images and attachments are opened by the operating system rather than the editor.
@@ -168,8 +181,19 @@ pub fn hover_at_offset(
     offset: usize,
 ) -> Option<Hover> {
     with_document(ws, path, text, |document| {
-        hover::hover_at_offset(&ws.index, &ws.antora, path, document, offset)
+        hover_in(ws, path, document, offset)
     })
+}
+
+/// [`hover_at_offset`] in `document`, the parse of the text at `path` already in hand.
+#[must_use]
+pub fn hover_in(
+    ws: &WorkspaceState,
+    path: &Path,
+    document: &Document,
+    offset: usize,
+) -> Option<Hover> {
+    hover::hover_at_offset(&ws.index, &ws.antora, path, document, offset)
 }
 
 #[must_use]
@@ -180,8 +204,19 @@ pub fn completion_at_offset(
     offset: usize,
 ) -> Vec<CompletionItem> {
     with_document(ws, path, text, |document| {
-        completion::completion_at_offset(&ws.index, &ws.antora, path, document, offset)
+        completion_in(ws, path, document, offset)
     })
+}
+
+/// [`completion_at_offset`] in `document`, the parse of the text at `path` already in hand.
+#[must_use]
+pub fn completion_in(
+    ws: &WorkspaceState,
+    path: &Path,
+    document: &Document,
+    offset: usize,
+) -> Vec<CompletionItem> {
+    completion::completion_at_offset(&ws.index, &ws.antora, path, document, offset)
 }
 
 /// Every diagnostic for the indexed file at `path`, including problems with the component

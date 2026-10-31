@@ -187,7 +187,7 @@ impl ProtocolServer {
 
     /// The parsed text of open document `id`, which diagnostics and positions refer to.
     fn text_of(&self, id: DocumentId) -> Option<&str> {
-        Some(self.engine.document(id)?.parsed.text.as_str())
+        Some(self.engine.document(id)?.parsed().text.as_str())
     }
 
     /// The text positions in the file at `path` refer to: its open buffer, else the indexed
@@ -195,7 +195,7 @@ impl ProtocolServer {
     fn file_text(&self, path: &Path) -> String {
         if let Some(id) = self.engine.document_for_path(path) {
             if let Some(document) = self.engine.document(id) {
-                return document.parsed.text.clone();
+                return document.parsed().text.clone();
             }
         }
         self.engine
@@ -398,7 +398,7 @@ impl ProtocolServer {
                 Some(Diagnostic {
                     range: self
                         .encoding
-                        .range(&document.parsed.text, diagnostic.range)?,
+                        .range(&document.parsed().text, diagnostic.range)?,
                     severity: Some(match diagnostic.severity {
                         CoreDiagnosticSeverity::Information => DiagnosticSeverity::INFORMATION,
                         CoreDiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
@@ -411,7 +411,7 @@ impl ProtocolServer {
                 })
             })
             .collect();
-        let text = &document.parsed.text;
+        let text = &document.parsed().text;
         diagnostics.extend(
             self.engine
                 .misspellings(id)

@@ -23,7 +23,7 @@ fn offset_of(engine: &Engine, id: DocumentId, needle: &str) -> usize {
     engine
         .document(id)
         .unwrap()
-        .parsed
+        .parsed()
         .text
         .find(needle)
         .unwrap_or_else(|| panic!("{needle} not found"))

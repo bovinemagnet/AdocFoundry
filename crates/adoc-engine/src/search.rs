@@ -299,8 +299,8 @@ impl Engine {
             if let Some(document) = self.documents.get_mut(&id) {
                 document.path.clone_from(&to);
                 let text = document.text.to_string();
-                document.parsed = parse(&uri_for(&to), &text).document;
-                let parsed = document.parsed.clone();
+                document.parsed = std::cell::OnceCell::from(parse(&uri_for(&to), &text).document);
+                let parsed = document.parsed().clone();
                 self.workspace.replace_document(to.clone(), parsed);
             }
             self.emit(EngineEvent::DocumentMoved {

@@ -42,9 +42,8 @@ impl EngineProviders {
     /// Brings the engine up to date with the widget's text before asking it anything.
     fn sync(&self, text: &Rope, cx: &mut App) -> Option<gpui::Entity<AppState>> {
         let app = self.app.upgrade()?;
-        let text = text.to_string();
         app.update(cx, |app, cx| {
-            sync_widget_to_engine(app, self.document, &text, cx)
+            sync_widget_to_engine(app, self.document, text, cx)
         });
         Some(app)
     }
@@ -77,7 +76,7 @@ fn file_uri(path: &Path) -> Uri {
 /// The range of the xref, include, image or attribute reference at `offset`, which is what the
 /// editor underlines while hovering with the modifier held.
 fn link_range(app: &AppState, document: DocumentId, offset: usize) -> Option<SourceRange> {
-    let parsed = &app.engine.document(document)?.parsed;
+    let parsed = &app.engine.document(document)?.parsed();
     let contains = |range: &SourceRange| range.start <= offset && offset < range.end;
     parsed
         .references
@@ -187,12 +186,13 @@ impl CompletionProvider for EngineProviders {
         Task::ready(Ok(CompletionResponse::Array(items)))
     }
 
-    fn is_completion_trigger(&self, _offset: usize, new_text: &str, _cx: &mut App) -> bool {
-        // The engine decides from context whether anything completes; typing inside a target
-        // or after `{`, `$`, `:` or `#` is where it will.
-        new_text
-            .chars()
-            .last()
-            .is_some_and(|character| !character.is_whitespace() && character != ']')
+    fn is_completion_trigger(&self, offset: usize, new_text: &str, cx: &mut App) -> bool {
+        // Only typing inside something that completes asks the engine: a target being typed,
+        // `<<`, or an attribute reference. Prose never does, so typing it costs no sync.
+        self.app.upgrade().is_some_and(|app| {
+            app.read(cx)
+                .engine
+                .completes_after(self.document, offset, new_text)
+        })
     }
 }

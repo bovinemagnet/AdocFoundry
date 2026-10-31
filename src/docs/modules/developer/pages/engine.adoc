@@ -30,10 +30,14 @@ The rope in the engine is the truth.
 Front ends mirror it, they do not own it.
 
 A text mutation is a list of `TextEdit` values, each a byte range in the pre-edit text and a replacement.
-Applying edits updates the rope, bumps the version, re-parses with `adoc-parser`, replaces the index entry and recomputes diagnostics for the open documents.
+Applying edits updates the rope, bumps the version and drops the document's semantic parse, then replaces the index entry and recomputes diagnostics for the open documents.
 It then publishes `DocumentChanged` and `DiagnosticsUpdated`.
 
-Re-parsing is synchronous on every edit, so the text and outline are always exact.
+The parse is lazy.
+`OpenDocument::parsed()` holds it in a `OnceCell`, and the first read after an edit runs `adoc-parser` on the text again, so the outline is always exact when it is read.
+A typed character therefore parses nothing: the index parses it once when typing pauses, or a language feature does when it asks.
+Edits that are indexed at once parse at once.
+Whether a page is unsaved is decided without hashing it: `DocumentState` keeps `saved_len` beside `saved_hash` (`mark_saved`, `is_saved`), text of another length is unsaved, and only text of the saved length is hashed.
 Re-indexing the document and refreshing diagnostics are different for the typing commands: `edit.insert_text`, `edit.replace_range`, `visual.insert_text`, `visual.delete_backward` and `visual.delete_forward` (`TYPING_COMMANDS` in `engine.rs`).
 A small edit made by one of them, one replacement of at most four bytes by at most one character (`is_small`), waits until typing pauses for `INDEX_SETTLE` (150 ms), when `pump` applies it.
 Larger edits, such as a paste, and edits made by any other command (Rename, Replace, undo, a reload) are indexed at once.
@@ -783,6 +787,8 @@ Redo writes the file again and reopens it without changing the active tab.
 
 The engine delegates definition, hover, completion and diagnostics to `adoc-lang`.
 That is why the editor, the command-line checker and the language server give identical answers.
+For an open page the engine calls `adoc_lang::definition_in`, `hover_in` and `completion_in` with the page's own parse; `definition_at_offset`, `hover_at_offset` and `completion_at_offset` take text, parse it with `with_document` and call them, and `adoc-ls` uses those.
+`Engine::completes_after(id, offset, typed)` reads only the caret's line (`adoc_parser::completion_context`) and says whether typing `typed` there is inside something that completes: a target being typed, `<<`, or an attribute reference.
 
 `adoc-ls` is a front end of the engine.
 It opens workspace folders with the engine, and keeps client buffers in it with `Engine::open_text(path, text)`, which works for a file that does not exist.

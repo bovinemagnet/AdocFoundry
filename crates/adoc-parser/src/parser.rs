@@ -30,6 +30,7 @@ impl DocumentParser for AsciiDocParser {
 
 #[must_use]
 pub fn parse(uri: &str, text: &str) -> ParseResult {
+    adoc_core::probe::hit(adoc_core::probe::Probe::Parse);
     AsciiDocParser.parse(uri, text)
 }
 
