@@ -16,9 +16,11 @@ pub enum Probe {
     Diff,
     /// The editor replacing text in its buffer to match the engine's.
     Reconcile,
+    /// A dictionary searching for replacements for a misspelt word.
+    Suggest,
 }
 
-const PROBES: usize = 4;
+const PROBES: usize = 5;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -60,4 +62,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::Reconcile as usize == PROBES - 1);
+const _: () = assert!(Probe::Suggest as usize == PROBES - 1);

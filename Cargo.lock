@@ -343,6 +343,7 @@ dependencies = [
 name = "adoc-spell"
 version = "0.4.0"
 dependencies = [
+ "adoc-core",
  "spellbook",
  "tempfile",
  "unicode-segmentation",
