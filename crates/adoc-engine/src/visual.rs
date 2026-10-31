@@ -174,7 +174,7 @@ impl Engine {
         let (version, path, text) = (input.version, input.path.clone(), input.text.clone());
         let (dom, sources) = input.parse(parser.as_ref());
         let model = Model::build(&path, &text, &dom);
-        let (view, wanted) = self.view_of(&path, &dom, true);
+        let (view, waiting) = self.view_of(&path, &dom, true);
         let current = Arc::new(VisualDocument {
             document: id,
             version,
@@ -192,10 +192,7 @@ impl Engine {
                 sources,
                 stale: false,
                 due: None,
-                waiting: wanted
-                    .iter()
-                    .map(adoc_diagrams::DiagramRequest::checksum)
-                    .collect(),
+                waiting,
             },
         );
         if !unchanged {
@@ -276,15 +273,12 @@ impl Engine {
                 continue;
             };
             let (path, dom) = (session.current.model.path.clone(), session.dom.clone());
-            let (view, wanted) = self.view_of(&path, &dom, true);
+            let (view, waiting) = self.view_of(&path, &dom, true);
             if let Some(session) = self.visual.sessions.get_mut(&id) {
                 let mut current = (*session.current).clone();
                 current.view = view;
                 session.current = Arc::new(current);
-                session.waiting = wanted
-                    .iter()
-                    .map(adoc_diagrams::DiagramRequest::checksum)
-                    .collect();
+                session.waiting = waiting;
                 let version = session.current.version;
                 self.emit(EngineEvent::ModelChanged { id, version });
             }

@@ -610,7 +610,7 @@ impl Engine {
         let mut waiting = BTreeSet::new();
         for (path, dom) in &doms {
             let (view, wanted) = self.view_of(path, dom, false);
-            waiting.extend(wanted.iter().map(adoc_diagrams::DiagramRequest::checksum));
+            waiting.extend(wanted);
             views.push((path.clone(), view));
         }
         if let Some(state) = self.export.jobs.get_mut(&job) {
