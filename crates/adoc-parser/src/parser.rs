@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use adoc_core::{
-    Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle, Section, SourceRange,
+    Anchor, Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle, Section,
+    SourceRange,
 };
 
 use crate::line_parser::{
@@ -12,7 +13,14 @@ use crate::line_parser::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParseResult {
     pub document: Document,
-    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl ParseResult {
+    /// The parse's diagnostics, which the document carries.
+    #[must_use]
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.document.diagnostics
+    }
 }
 
 pub trait DocumentParser: Send + Sync {
@@ -36,10 +44,8 @@ pub fn parse(uri: &str, text: &str) -> ParseResult {
 
 fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut document = Document::new(uri, text);
-    let mut diagnostics = Vec::new();
     let mut active_delimiter: Option<String> = None;
     let mut pending_anchor: Option<String> = None;
-    let mut anchor_offsets = HashMap::<String, SourceRange>::new();
     let mut offset = 0;
 
     for line in text.split_inclusive('\n') {
@@ -78,19 +84,6 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         let anchor_only = anchors.len() == 1
             && anchors[0].range == SourceRange::new(offset, offset + line_content.len());
         for anchor in anchors {
-            if let Some(first_range) = anchor_offsets.get(&anchor.id) {
-                diagnostics.push(Diagnostic {
-                    code: DiagnosticCode::DuplicateAnchor,
-                    severity: DiagnosticSeverity::Warning,
-                    message: format!(
-                        "duplicate anchor `{}`; first declared at byte {}",
-                        anchor.id, first_range.start
-                    ),
-                    range: anchor.range,
-                });
-            } else {
-                anchor_offsets.insert(anchor.id.clone(), anchor.range);
-            }
             if anchor_only {
                 pending_anchor = Some(anchor.id.clone());
             }
@@ -127,11 +120,31 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         offset += line.len();
     }
 
-    document.diagnostics.clone_from(&diagnostics);
-    ParseResult {
-        document,
-        diagnostics,
+    document.diagnostics = duplicate_anchors(&document.anchors);
+    ParseResult { document }
+}
+
+/// A warning for each anchor whose id an earlier one declared.
+fn duplicate_anchors(anchors: &[Anchor]) -> Vec<Diagnostic> {
+    let mut first = HashMap::<&str, SourceRange>::new();
+    let mut diagnostics = Vec::new();
+    for anchor in anchors {
+        match first.get(anchor.id.as_str()) {
+            Some(first_range) => diagnostics.push(Diagnostic {
+                code: DiagnosticCode::DuplicateAnchor,
+                severity: DiagnosticSeverity::Warning,
+                message: format!(
+                    "duplicate anchor `{}`; first declared at byte {}",
+                    anchor.id, first_range.start
+                ),
+                range: anchor.range,
+            }),
+            None => {
+                first.insert(&anchor.id, anchor.range);
+            }
+        }
     }
+    diagnostics
 }
 
 #[cfg(test)]
@@ -171,7 +184,7 @@ image::diagram.png[Architecture]\n";
         assert_eq!(document.references[1].kind, ReferenceKind::LocalAnchor);
         assert_eq!(document.includes[0].target, "partials/setup.adoc");
         assert_eq!(document.images[0].target, "diagram.png");
-        assert!(result.diagnostics.is_empty());
+        assert!(document.diagnostics.is_empty());
     }
 
     #[test]
@@ -345,8 +358,8 @@ image::diagram.png[Architecture]\n";
         let result = parse("file:///duplicates.adoc", source);
 
         assert_eq!(result.document.sections.len(), 2);
-        assert_eq!(result.diagnostics.len(), 1);
-        assert!(result.diagnostics[0].message.contains("duplicate anchor"));
+        assert_eq!(result.diagnostics().len(), 1);
+        assert!(result.diagnostics()[0].message.contains("duplicate anchor"));
     }
 
     fn reference_targets(text: &str) -> Vec<String> {
