@@ -56,6 +56,7 @@ pub mod ids {
     pub const WORKSPACE_REPLACE: CommandId = CommandId::new("workspace.replace");
     pub const WORKSPACE_APPLY_PREVIEW: CommandId = CommandId::new("workspace.apply_preview");
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
+    pub const PAGE_NEW: CommandId = CommandId::new("page.new");
     pub const ANCHOR_RENAME: CommandId = CommandId::new("anchor.rename");
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
     pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
@@ -535,6 +536,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::expansion::register_expansion(registry);
     crate::quick_open::register_quick_open(registry);
     crate::session::register_session(registry);
+    crate::new_page::register_new_page(registry);
     #[cfg(feature = "git")]
     {
         crate::git::register_git(registry);

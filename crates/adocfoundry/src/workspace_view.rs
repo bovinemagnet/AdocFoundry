@@ -24,6 +24,7 @@ use gpui::{
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     command::{Command, CommandItem, CommandState},
     h_flex,
     input::{Editor, EditorState, Input, InputState},
@@ -31,6 +32,7 @@ use gpui_component::{
     menu::{ContextMenuExt as _, PopupMenuItem},
     notification::Notification,
     resizable::{h_resizable, resizable_panel},
+    select::{Select, SelectState},
     status_bar::StatusBar,
     tab::{Tab, TabBar},
     tooltip::Tooltip,
@@ -2063,6 +2065,84 @@ impl WorkspaceView {
                     }),
             )
         });
+    }
+
+    /// Asks for a new page's title and module, the active page's to begin with, and whether to
+    /// add it to the module's navigation, then makes it and opens it.
+    fn on_new_page(&mut self, _: &NewPage, window: &mut Window, cx: &mut Context<Self>) {
+        let modules = Rc::new(self.app.read(cx).engine.new_page_modules());
+        if modules.is_empty() {
+            window.push_notification("Open a folder holding an Antora component first.", cx);
+            return;
+        }
+        let selected = modules.iter().position(|module| module.active).unwrap_or(0);
+        let labels: Vec<String> = modules.iter().map(|module| module.label.clone()).collect();
+        let module = cx.new(|cx| {
+            SelectState::new(
+                labels,
+                Some(gpui_component::IndexPath::new(selected)),
+                window,
+                cx,
+            )
+        });
+        let title = cx.new(|cx| InputState::new(window, cx).placeholder("Title"));
+        let add_to_nav = Rc::new(Cell::new(true));
+        let first = title.clone();
+        let workspace = cx.weak_entity();
+        window.open_alert_dialog(cx, move |dialog, _, cx| {
+            let (selection, modules) = (module.clone(), modules.clone());
+            let chosen = move |cx: &App| {
+                selection
+                    .read(cx)
+                    .selected_index(cx)
+                    .and_then(|index| modules.get(index.row))
+                    .cloned()
+            };
+            let has_nav = chosen(cx).is_some_and(|module| module.nav.is_some());
+            let (title, add_to_nav, workspace) =
+                (title.clone(), add_to_nav.clone(), workspace.clone());
+            let toggle = add_to_nav.clone();
+            dialog
+                .title("New Page")
+                .width(px(640.))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(Input::new(&title))
+                        .child(Select::new(&module))
+                        .child(
+                            Checkbox::new("new-page-nav")
+                                .label("Add to the module\u{2019}s navigation")
+                                .checked(has_nav && add_to_nav.get())
+                                .disabled(!has_nav)
+                                .on_click(move |checked, window, _| {
+                                    toggle.set(*checked);
+                                    window.refresh();
+                                }),
+                        ),
+                )
+                .confirm()
+                .ok_text("Create")
+                .on_ok(move |_, window, cx| {
+                    let Some(module) = chosen(cx) else {
+                        return true;
+                    };
+                    let request = adoc_engine::NewPage {
+                        add_to_nav: module.nav.is_some() && add_to_nav.get(),
+                        module: module.root,
+                        title: title.read(cx).value().to_string(),
+                    };
+                    // A refusal keeps the dialog open, to choose another title.
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .invoke(ids::PAGE_NEW, CommandArgs::NewPage(request), window, cx)
+                                .is_some()
+                        })
+                        .unwrap_or(true)
+                })
+        });
+        first.update(cx, |input, cx| input.focus(window, cx));
     }
 
     /// Lists the workspace's files in the palette, ranked by the engine as the query changes,
@@ -4134,6 +4214,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_open_file))
             .on_action(cx.listener(Self::on_quick_open))
             .on_action(cx.listener(Self::on_open_recent))
+            .on_action(cx.listener(Self::on_new_page))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_reload))

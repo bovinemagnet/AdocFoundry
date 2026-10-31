@@ -236,6 +236,9 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `External`
 |`workspace.search`, `workspace.replace`, `workspace.apply_preview`, `page.rename`
 |Search, replace and rename.
 
+|`page.new`
+|Make a page and add it to the navigation. See <<new-page>>.
+
 |`settings.open`, `settings.reload`
 |Settings.
 
@@ -742,6 +745,27 @@ Rename finds every xref that resolves to the page using the index and the resolv
 `Engine::rename_preview` also adds `outgoing_edits` for the moved page itself.
 It resolves each of the page's xref, include and image targets from its current place with `adoc_lang::definition_at_offset`, and rewrites those whose meaning the move would change (`rewritten`): `relative_path` for folder-relative targets and `antora_id` for resource IDs.
 Attribute-based targets, URLs and pure fragment references are left as written, and the edits belong to the same preview and undo group.
+
+[[new-page]]
+== New Page
+
+`new_page.rs` makes a page in an Antora module.
+`page.new` takes `CommandArgs::NewPage(NewPage { module, title, add_to_nav })`, where `module` is the module's root (`.../modules/<name>`), and returns `CommandOutcome::Opened(id)`.
+`Engine::new_page(&NewPage)` does the work.
+`Engine::new_page_modules()` returns the `PageModule { root, label, nav, active }` values a front end offers: `label` is `version@component:module` (or `component:module`), `nav` is the module's `nav.adoc` if it has one, and `active` marks the module of the active page.
+
+The file is created with `create_new`, so an existing page is never overwritten.
+The component's descriptor is then reloaded so that the catalog knows the page, which emits `CatalogChanged` and rebuilds the Navigation panel.
+The engine opens the page, pushes an empty undo marker in its history, and applies the navigation edit in the same `UndoGroup`.
+The group's documents are recorded in `group_documents`, so it undoes only as a whole, and the file in `group_created`.
+If opening the page or editing the navigation file fails, the file is removed and nothing remains in the undo history.
+
+The entry's position comes from `Engine::nav_trees_of` for that file, which reads buffers and not the disk.
+Each entry's resolved target is matched against the active page's Antora coordinate.
+
+`Engine::undo` and `Engine::redo` call `replay_creations` after `replay_moves`.
+Undo deletes the file only while it holds exactly what New Page wrote and the page has no unsaved edits.
+Redo writes the file again and reopens it without changing the active tab.
 
 == Language features
 

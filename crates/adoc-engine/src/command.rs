@@ -99,6 +99,8 @@ pub enum CommandArgs {
     Custom(serde_json::Value),
     /// A sidebar tree, for the commands that open and close its branches.
     Panel(crate::SidebarPanel),
+    /// A page to make, for `page.new`.
+    NewPage(crate::NewPage),
     /// What to look for, across the workspace or in one document.
     Query {
         query: String,

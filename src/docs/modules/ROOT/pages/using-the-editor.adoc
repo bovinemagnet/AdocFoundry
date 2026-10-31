@@ -862,6 +862,49 @@ It is undone only as a whole, under the rule described in <<Rename a page>>.
 The preview shows the text each file will be changed from, so for a page with unsaved edits it shows the editor's text, not the file on disk.
 Apply refuses, and changes nothing, if a listed file has changed since the preview was made; make the preview again.
 
+[[new-page]]
+== Make a new page
+
+New Page… (`page.new`) makes a page in an Antora module and adds it to the module's navigation.
+It is in the File menu after Open Recent Folder… and in the command palette, and its shortcut is kbd:[Cmd+N] on macOS or kbd:[Ctrl+N] on Linux and Windows.
+It is available only when the workspace has an Antora component; in the menu it is greyed out otherwise.
+If no open folder holds an Antora component, a notification says so.
+
+The New Page dialog asks for:
+
+* A title.
+* A module, chosen from every module of every component version, written `version@component:module`, or `component:module` for a component without a version.
+The list is sorted by component, newest version first, then module, and starts on the module of the active page, else the first.
+* Whether to add the page to the module's navigation.
+"Add to the module's navigation" is ticked by default, and greyed out when the chosen module has no `nav.adoc`.
+
+Create writes `modules/<module>/pages/<slug>.adoc`, holding only `= Title` and a newline, and opens it in a tab that stays open and becomes active.
+The page resolves at once: xrefs to it have no diagnostic, and it appears in the Navigation panel.
+
+The file name is the title's letters and digits in lower case, with one hyphen for each run of anything else.
+Apostrophes are dropped, so the letters around them join.
+"Release Notes" becomes `release-notes.adoc`, "What's New" becomes `whats-new.adoc`, and "Getting Started: Part 2" becomes `getting-started-part-2.adoc`.
+
+With the box ticked, the entry `+* xref:<slug>.adoc[]+` is added to the module's `nav.adoc`.
+The link text is empty, so Antora shows the page's title.
+The entry goes right after the active page's entry and the entries nested beneath it, at the same level.
+When the active page has no entry in that file, it goes at the end of the file at level one.
+An entry naming the page itself is preferred over one naming a `#fragment` of it.
+The navigation file is changed in its editor buffer, opened as a tab, and left unsaved, as Rename Page leaves the pages it edits; save it as usual.
+
+Nothing is written, and the dialog stays open so that you can try another title, when:
+
+* the title has no letter or digit,
+* a page of that name already exists, or
+* the navigation box is ticked for a module without a navigation file.
+
+A notification gives the reason.
+
+Making the page and adding its entry are one undo step, from either the new page or the navigation file.
+Undo takes the entry out, deletes the new file and closes its tab, but only while the file still holds exactly what New Page wrote and the page has no unsaved edits; otherwise the file is kept.
+Redo writes the file again, reopens it without changing the active tab, and puts the entry back.
+Like other changes to several files, it is undone only as a whole, so if the new page or the navigation file has been edited since, undo that edit first.
+
 == Rename a page
 
 Rename Page (kbd:[F2]) renames the active page.
@@ -940,7 +983,7 @@ An item whose command cannot run just now is greyed out instead of hidden, for e
 A command the build lacks, such as PDF export in a build without Typst, is left out.
 
 File::
-Open, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, settings and re-indexing.
+Open, New Page, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, settings and re-indexing.
 
 Edit::
 Undo, Redo, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.

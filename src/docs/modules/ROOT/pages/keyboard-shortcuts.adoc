@@ -33,6 +33,11 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Ctrl-P
 |`workspace.quick_open`
 
+|New page
+|Cmd-N
+|Ctrl-N
+|`page.new`
+
 |Save
 |Cmd-S
 |Ctrl-S

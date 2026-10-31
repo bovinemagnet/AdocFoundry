@@ -268,7 +268,7 @@ impl Engine {
 
     /// Records an undo entry with no edits, so a document whose only change is a move takes
     /// part in the group's undo.
-    fn push_marker(&mut self, id: DocumentId, group: UndoGroup) {
+    pub(crate) fn push_marker(&mut self, id: DocumentId, group: UndoGroup) {
         let version = self
             .documents
             .get(&id)

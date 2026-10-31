@@ -45,6 +45,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::WORKSPACE_QUICK_OPEN),
             Command(ids::WORKSPACE_OPEN_FOLDER),
             Command(ids::WORKSPACE_OPEN_RECENT),
+            Command(ids::PAGE_NEW),
             Separator,
             Command(ids::DOCUMENT_SAVE),
             Command(ids::DOCUMENT_SAVE_ALL),

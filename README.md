@@ -104,6 +104,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 - Find in the workspace, with regular expression, case and whole-word options.
 - Replace across the workspace shows every change first; applying it is one undo step.
+- New Page… (Cmd/Ctrl-N, also in the File menu, in an Antora workspace) asks for a title and a module, the active page's to begin with, writes `pages/<slug>.adoc` holding `= Title` (`Release Notes` gives `release-notes.adoc`) and opens it. Unless told not to, it adds `* xref:<slug>.adoc[]` to the module's `nav.adoc` after the active page's entry, at its level, or else at the end, so the page resolves and is in the Navigation panel at once. One undo takes the entry out and deletes the file, as long as the file is still as it was made.
 - Rename Page moves the file and rewrites every xref that leads to it, shown as a preview first; one undo moves the page back and restores every xref.
 - F2 on an anchor (`[[id]]`, `[#id]`), a section heading or a reference to one renames the anchor instead (Rename Anchor): its declaration and every `<<id>>` and `xref:page.adoc#id[]` that names it, in every page, shown as a preview first and undone as one step. A section without an anchor gets `[[new-id]]` above its heading, and references written with its generated id (Antora's or Asciidoctor's form) are rewritten. Elsewhere F2 renames the page.
 - A replace or rename is undone and redone only as a whole. If one of its pages was edited afterwards, undo says which; undo that page's later edits first.
@@ -146,6 +147,7 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Command palette | Cmd-Shift-P | Ctrl-Shift-P |
 | Open folder / file | Cmd-Shift-O / Cmd-O | Ctrl-Shift-O / Ctrl-O |
 | Quick Open | Cmd-P | Ctrl-P |
+| New page | Cmd-N | Ctrl-N |
 | Save / Save all / Close | Cmd-S / Cmd-Alt-S / Cmd-W | Ctrl-S / Ctrl-Alt-S / Ctrl-W |
 | Undo / Redo | Cmd-Z / Cmd-Shift-Z | Ctrl-Z / Ctrl-Shift-Z |
 | Follow link | Cmd-click, F12, Cmd-Enter | Ctrl-click, F12, Ctrl-Enter |
