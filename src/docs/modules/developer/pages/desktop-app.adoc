@@ -157,6 +157,13 @@ A click on a block invokes `navigate.reveal` with the position of its source, wh
 A click on a resolved xref invokes `navigate.go_to`, so it is recorded in history.
 External links open in the browser and file links in the system's default application.
 Block lookups use `adoc_render::block_at` and `block_by_trail`, which map between source offsets and a block's index trail.
+When a new preview arrives, the view builds an `adoc_render::BlockIndex`: each file's blocks sorted by where their spans start, each with its nearest enclosing block in the same file.
+`reveal_source` (scroll sync from the caret) finds the caret's block with a binary search and a climb through enclosing blocks, as `block_at` would, without walking the view tree.
+It scrolls and redraws only when the scroll position would change, so a caret moving within a block leaves the preview as it is.
+Inline text is laid out once per element and kept in an `InlineCache` keyed by the element's id; it is cleared when a new view tree arrives or the text style (font or theme) changes.
+The visual editor's read-only blocks pass no cache.
+The highlight cache is keyed by theme brightness and a hash of the language and text, checks the language and text on a hit, and returns the styles as a shared `Highlights` (`Rc<[..]>`), so a hit copies nothing.
+A code block's styles are divided among its lines in one pass (`styles_by_line`).
 
 The application depends on `adoc-render` for the view types only; `adoc-dom` and the parser crates stay behind the engine.
 

@@ -9,8 +9,8 @@ use adoc_antora::{discover_antora_workspace, parse_resource_id, AntoraCatalog, A
 use adoc_core::{Location, SourceRange};
 use adoc_dom::{AcdcParser, DocumentParser, ParseInput};
 use adoc_render::{
-    block_at, block_by_trail, build_view, to_html, DiagramView, HtmlOptions, LocalResolver,
-    ResolvedLink, ViewInline, ViewKind, ViewResolver, ViewTree,
+    block_at, block_by_trail, build_view, to_html, BlockIndex, DiagramView, HtmlOptions,
+    LocalResolver, ResolvedLink, ViewInline, ViewKind, ViewResolver, ViewTree,
 };
 
 fn fixtures() -> PathBuf {
@@ -421,6 +421,34 @@ fn block_at_finds_the_innermost_block() {
         ViewKind::Paragraph(_)
     ));
     assert_eq!(block_at(&view, Path::new("/elsewhere.adoc"), 0), None);
+}
+
+#[test]
+fn the_block_index_finds_what_block_at_finds() {
+    let partial = fixtures().join("render/partials/included.adoc");
+    for name in [
+        "blocks.adoc",
+        "block-options.adoc",
+        "inline.adoc",
+        "tables.adoc",
+    ] {
+        let path = fixtures().join("render").join(name);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let view = view_of(&path, &text, &LocalResolver);
+        let index = BlockIndex::new(&view);
+        let partial = adoc_render_path(&view, &partial);
+        let partial_len = std::fs::read_to_string(&partial).map_or(0, |text| text.len());
+        for (file, len) in [(&path, text.len()), (&partial, partial_len)] {
+            for offset in 0..=len {
+                assert_eq!(
+                    index.block_at(file, offset),
+                    block_at(&view, file, offset).as_deref(),
+                    "{name}: {} at {offset}",
+                    file.display()
+                );
+            }
+        }
+    }
 }
 
 /// The partial's path as the parser recorded it (the page directory joined with the target).

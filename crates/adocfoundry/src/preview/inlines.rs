@@ -32,7 +32,7 @@ pub enum Link {
 pub type LinkHandler = Rc<dyn Fn(&Link, &mut Window, &mut App)>;
 
 /// The fonts and colours inline text is drawn with.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct InlineStyle {
     pub font: Font,
     pub mono_family: SharedString,
@@ -45,6 +45,9 @@ pub struct InlineStyle {
     /// Behind a typeset formula, which is drawn black: white in a dark theme.
     pub formula_backing: Option<Hsla>,
 }
+
+/// Inline text laid out for the preview, by the id of its element.
+pub type InlineCache = std::cell::RefCell<std::collections::HashMap<ElementId, InlineText>>;
 
 /// Inline content laid out as one string.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -354,6 +357,7 @@ pub fn layout_italic(inlines: &[ViewInline], style: &InlineStyle) -> InlineText 
 }
 
 fn layout_with(inlines: &[ViewInline], style: &InlineStyle, state: State) -> InlineText {
+    adoc_core::probe::hit(adoc_core::probe::Probe::InlineLayout);
     let mut builder = Builder {
         style,
         out: InlineText::default(),

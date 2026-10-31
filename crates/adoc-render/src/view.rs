@@ -1003,6 +1003,111 @@ pub fn block_at(view: &ViewTree, path: &Path, offset: usize) -> Option<Vec<usize
     search(&roots, path, offset, &mut trail).then_some(trail)
 }
 
+/// The blocks of a view tree by where their spans start, for finding the block at a source
+/// offset as [`block_at`] does without walking the tree: built once per view tree.
+#[derive(Debug, Default)]
+pub struct BlockIndex {
+    by_path: HashMap<PathBuf, Vec<Indexed>>,
+}
+
+#[derive(Debug)]
+struct Indexed {
+    start: usize,
+    /// Exclusive; an empty span holds its start.
+    end: usize,
+    trail: Vec<usize>,
+    /// The nearest enclosing block with a span in the same file, as an index into its list.
+    parent: Option<usize>,
+}
+
+impl BlockIndex {
+    #[must_use]
+    pub fn new(view: &ViewTree) -> Self {
+        /// Each block in document order, with the order index of its nearest ancestor in the
+        /// same file.
+        fn visit<'v>(
+            blocks: &[&'v ViewBlock],
+            trail: &mut Vec<usize>,
+            ancestors: &mut Vec<(&'v Path, usize)>,
+            out: &mut Vec<(&'v Path, Indexed)>,
+        ) {
+            for (index, block) in blocks.iter().enumerate() {
+                trail.push(index);
+                let path = block.span.path.as_path();
+                let range = block.span.range;
+                let parent = ancestors
+                    .iter()
+                    .rev()
+                    .find(|(other, _)| *other == path)
+                    .map(|(_, at)| *at);
+                ancestors.push((path, out.len()));
+                out.push((
+                    path,
+                    Indexed {
+                        start: range.start,
+                        end: range.end.max(range.start + 1),
+                        trail: trail.clone(),
+                        parent,
+                    },
+                ));
+                visit(&block.child_refs(), trail, ancestors, out);
+                ancestors.pop();
+                trail.pop();
+            }
+        }
+        let roots: Vec<&ViewBlock> = view.blocks.iter().collect();
+        let mut ordered = Vec::new();
+        visit(&roots, &mut Vec::new(), &mut Vec::new(), &mut ordered);
+        // Each file's blocks by start, a block after those enclosing it; parents renumbered
+        // into their file's list.
+        let mut by_path: HashMap<PathBuf, Vec<(usize, Indexed)>> = HashMap::new();
+        for (order, (path, entry)) in ordered.into_iter().enumerate() {
+            by_path
+                .entry(path.to_path_buf())
+                .or_default()
+                .push((order, entry));
+        }
+        let by_path = by_path
+            .into_iter()
+            .map(|(path, mut entries)| {
+                entries.sort_by_key(|(order, entry)| (entry.start, *order));
+                let position: HashMap<usize, usize> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(at, (order, _))| (*order, at))
+                    .collect();
+                let entries = entries
+                    .into_iter()
+                    .map(|(_, mut entry)| {
+                        entry.parent = entry.parent.and_then(|order| position.get(&order).copied());
+                        entry
+                    })
+                    .collect();
+                (path, entries)
+            })
+            .collect();
+        Self { by_path }
+    }
+
+    /// The trail of the innermost block whose span in `path` contains `offset`.
+    #[must_use]
+    pub fn block_at(&self, path: &Path, offset: usize) -> Option<&[usize]> {
+        let entries = self.by_path.get(path)?;
+        // The last block starting at or before `offset`; if it ends before `offset`, the block
+        // holding it is among those enclosing it.
+        let mut at = entries
+            .partition_point(|entry| entry.start <= offset)
+            .checked_sub(1)?;
+        loop {
+            let entry = &entries[at];
+            if offset < entry.end {
+                return Some(&entry.trail);
+            }
+            at = entry.parent?;
+        }
+    }
+}
+
 /// The block at `trail`, as returned by [`block_at`].
 #[must_use]
 pub fn block_by_trail<'v>(view: &'v ViewTree, trail: &[usize]) -> Option<&'v ViewBlock> {
@@ -1018,6 +1123,7 @@ impl ViewBlock {
     /// The blocks directly inside this one, in order (list items' and cells' blocks included).
     #[must_use]
     pub fn child_refs(&self) -> Vec<&ViewBlock> {
+        adoc_core::probe::hit(adoc_core::probe::Probe::ChildRefs);
         match &self.kind {
             ViewKind::Section { blocks, .. }
             | ViewKind::Admonition { blocks, .. }
