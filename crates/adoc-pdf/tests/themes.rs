@@ -281,6 +281,40 @@ fn malformed_theme_reports_an_error() {
     ));
 }
 
+#[test]
+fn extends_cycle_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a-theme.yml");
+    let b = dir.path().join("b-theme.yml");
+    std::fs::write(
+        &a,
+        "extends: ./b-theme.yml !important\nbase:\n  font-color: #111111\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &b,
+        "extends: ./a-theme.yml !important\nbase:\n  font-color: #222222\n",
+    )
+    .unwrap();
+    match load_theme(&ThemeSource::File(a.clone())) {
+        Err(ThemeError::Yaml { message, .. }) => {
+            assert!(message.contains("extends itself"), "{message}");
+            assert!(
+                message.contains("a-theme.yml → b-theme.yml → a-theme.yml"),
+                "{message}"
+            );
+        }
+        other => panic!("expected an error, got {other:?}"),
+    }
+
+    let own = dir.path().join("own-theme.yml");
+    std::fs::write(&own, "extends: [default, ./own-theme.yml !important]\n").unwrap();
+    assert!(matches!(
+        load_theme(&ThemeSource::File(own)),
+        Err(ThemeError::Yaml { .. })
+    ));
+}
+
 /// Themes outside the repository against asciidoctor-pdf's key maps for them:
 /// `ADOC_PDF_THEME_CORPUS=<themes dir>:<expected dir>`, with `<name>.json` in the second for each
 /// `<name>-theme.yml` in the first, written as `expected/README.md` describes.
