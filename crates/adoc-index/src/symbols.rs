@@ -19,13 +19,16 @@ pub struct WorkspaceSymbol {
     pub path: Arc<Path>,
     /// The span to select when the symbol is chosen.
     pub range: SourceRange,
-    /// The title of the document that declares the symbol.
-    pub container: Option<String>,
+    /// The title of the document that declares the symbol, shared by its symbols.
+    pub container: Option<Arc<str>>,
 }
 
 /// A file's symbols in a fixed order: title, sections, anchors, attributes.
 pub(crate) fn document_symbols(path: &Arc<Path>, document: &Document) -> Vec<WorkspaceSymbol> {
-    let container = document.title.as_ref().map(|title| title.text.clone());
+    let container: Option<Arc<str>> = document
+        .title
+        .as_ref()
+        .map(|title| title.text.as_str().into());
     let symbol = |name: &str, kind, range| WorkspaceSymbol {
         name: name.to_owned(),
         kind,

@@ -173,8 +173,8 @@ fn located(
     if diagnostics.is_empty() {
         return Vec::new();
     }
-    let text = match ws.index.file(path) {
-        Some(file) => file.document.text.to_string(),
+    let text = match ws.index.file(path).and_then(adoc_index::FileEntry::text) {
+        Some(text) => text.into_owned(),
         None => access.read_to_string(path).unwrap_or_default(),
     };
     let lines = LineIndex::new(&text);

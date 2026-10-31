@@ -235,7 +235,8 @@ mod tests {
         let mut index = WorkspaceIndex::new();
         index.index_roots(&[root]).unwrap();
         let document = &index.file(&path).unwrap().document;
-        let offset = document.text.find("partials/intro").unwrap();
+        let text = index.file(&path).unwrap().text().unwrap();
+        let offset = text.find("partials/intro").unwrap();
 
         let target =
             super::definition_at_offset(&index, &AntoraCatalog::default(), &path, document, offset)
@@ -256,7 +257,8 @@ mod tests {
 
         let index_path = root.join("modules/ROOT/pages/index.adoc");
         let document = &index.file(&index_path).unwrap().document;
-        let offset = document.text.find("security:").unwrap();
+        let text = index.file(&index_path).unwrap().text().unwrap();
+        let offset = text.find("security:").unwrap();
         let target =
             super::definition_at_offset(&index, &antora, &index_path, document, offset).unwrap();
         assert!(target
@@ -265,7 +267,8 @@ mod tests {
 
         let authentication_path = root.join("modules/security/pages/authentication.adoc");
         let document = &index.file(&authentication_path).unwrap().document;
-        let offset = document.text.find("partial$").unwrap();
+        let text = index.file(&authentication_path).unwrap().text().unwrap();
+        let offset = text.find("partial$").unwrap();
         let target =
             super::definition_at_offset(&index, &antora, &authentication_path, document, offset)
                 .unwrap();
@@ -285,7 +288,8 @@ mod tests {
             .catalog;
         let nav = root.join("modules/ROOT/nav.adoc");
         let document = index.file(&nav).expect("nav is indexed").document.clone();
-        let offset = document.text.find("security:").expect("fixture xref");
+        let text = index.file(&nav).unwrap().text().unwrap();
+        let offset = text.find("security:").expect("fixture xref");
 
         let target = definition_at_offset(&index, &antora, &nav, &document, offset)
             .expect("the xref resolves");

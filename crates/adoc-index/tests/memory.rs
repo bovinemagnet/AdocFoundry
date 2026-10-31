@@ -45,7 +45,8 @@ fn index_memory_probe() {
     for number in 0..pages {
         let text = page(number);
         bytes += text.len();
-        index.index_source(PathBuf::from(format!("/probe/page-{number}.adoc")), &text);
+        // As the workspace's index does, keeping each page's parse but not its text.
+        index.index_file(PathBuf::from(format!("/probe/page-{number}.adoc")), &text);
     }
     println!(
         "{pages} pages, {:.1} MB of text, indexed in {:?}",
@@ -57,7 +58,7 @@ fn index_memory_probe() {
         let text = page(0);
         let started = Instant::now();
         for _ in 0..20 {
-            index.index_source(PathBuf::from("/probe/page-0.adoc"), &text);
+            index.index_file(PathBuf::from("/probe/page-0.adoc"), &text);
         }
         println!("replacing one page: {:?}", started.elapsed() / 20);
         for query in ["s", "section 3", "page 42", "zzz"] {

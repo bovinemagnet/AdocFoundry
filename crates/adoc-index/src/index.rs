@@ -1,6 +1,9 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    fs, io,
+    borrow::Cow,
+    collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet},
+    fs,
+    hash::{Hash, Hasher},
+    io,
     ops::Bound,
     path::{Path, PathBuf},
     sync::Arc,
@@ -53,11 +56,59 @@ pub struct IncludeLocation {
     pub include: IncludeDirective,
 }
 
+/// An indexed file. A document indexed from disk does not keep its text, which is most of
+/// what the index would otherwise hold: [`FileEntry::text`] reads it back. One given to
+/// [`WorkspaceIndex::replace`], an open page's, keeps it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub uri: String,
+    /// The parse; its `text` is empty for a file indexed from disk.
     pub document: Document,
+    /// The length and hash of the text parsed, so text read back is known to be that text.
+    text_len: usize,
+    text_hash: u64,
+}
+
+impl FileEntry {
+    /// The text the document was parsed from: the one kept, else the file's, read again.
+    /// `None` when the file no longer holds that text, so offsets into the parse would not
+    /// fit it, or cannot be read.
+    #[must_use]
+    pub fn text(&self) -> Option<Cow<'_, str>> {
+        if self.document.text.len() == self.text_len {
+            return Some(Cow::Borrowed(&self.document.text));
+        }
+        let text = fs::read_to_string(&self.path).ok()?;
+        (text.len() == self.text_len && hash_text(&text) == self.text_hash)
+            .then_some(Cow::Owned(text))
+    }
+}
+
+/// A parse, and the length and hash of its text, which it may or may not keep.
+struct Parsed {
+    document: Document,
+    text_len: usize,
+    text_hash: u64,
+}
+
+impl Parsed {
+    fn keeping_text(document: Document) -> Self {
+        Self {
+            text_len: document.text.len(),
+            text_hash: hash_text(&document.text),
+            document,
+        }
+    }
+
+    fn without_text(mut document: Document) -> Self {
+        let text = std::mem::take(&mut document.text);
+        Self {
+            text_len: text.len(),
+            text_hash: hash_text(&text),
+            document,
+        }
+    }
 }
 
 /// A reference by the file it is in and its place among that file's references.
@@ -113,7 +164,32 @@ impl WorkspaceIndex {
         self.replace(path, document)
     }
 
+    /// Indexes the text of a file read from disk, keeping its parse but not its text.
+    pub fn index_file(&mut self, path: impl AsRef<Path>, text: &str) -> &FileEntry {
+        let path = normalize_path(path.as_ref());
+        let uri = path_to_uri(&path);
+        let document = parse(&uri, text).document;
+        self.replace_from_disk(path, document)
+    }
+
+    /// Replaces the entry for `path` with `document`, keeping its text: an open page's, whose
+    /// text is not the file's.
     pub fn replace(&mut self, path: PathBuf, document: Document) -> &FileEntry {
+        self.insert(path, Parsed::keeping_text(document))
+    }
+
+    /// Replaces the entry for `path` with `document`, parsed from the file, without keeping
+    /// its text: [`FileEntry::text`] reads it back.
+    pub fn replace_from_disk(&mut self, path: PathBuf, document: Document) -> &FileEntry {
+        self.insert(path, Parsed::without_text(document))
+    }
+
+    fn insert(&mut self, path: PathBuf, parsed: Parsed) -> &FileEntry {
+        let Parsed {
+            document,
+            text_len,
+            text_hash,
+        } = parsed;
         let path = normalize_path(&path);
         self.remove(&path);
         let shared: Arc<Path> = Arc::from(path.as_path());
@@ -182,6 +258,8 @@ impl WorkspaceIndex {
             path,
             uri,
             document,
+            text_len,
+            text_hash,
         })
     }
 
@@ -283,9 +361,10 @@ impl WorkspaceIndex {
                         chunk
                             .iter()
                             .map(|path| {
-                                let document = fs::read_to_string(path)
-                                    .map(|text| parse(&path_to_uri(path), &text).document);
-                                (path, document)
+                                let parsed = fs::read_to_string(path).map(|text| {
+                                    Parsed::without_text(parse(&path_to_uri(path), &text).document)
+                                });
+                                (path, parsed)
                             })
                             .collect::<Vec<_>>()
                     })
@@ -297,10 +376,10 @@ impl WorkspaceIndex {
                 .collect()
         });
         let mut files = 0;
-        for (path, document) in parsed {
-            match document {
-                Ok(document) => {
-                    self.replace(path.clone(), document);
+        for (path, parsed) in parsed {
+            match parsed {
+                Ok(parsed) => {
+                    self.insert(path.clone(), parsed);
                     files += 1;
                 }
                 Err(_) => unreadable.push(path.clone()),
@@ -463,6 +542,12 @@ fn target_fragment(reference: &Reference) -> Option<&str> {
     };
     let fragment = fragment.trim();
     (!fragment.is_empty()).then_some(fragment)
+}
+
+fn hash_text(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn path_to_uri(path: &Path) -> String {
@@ -790,5 +875,50 @@ mod tests {
             .resolve_anchor(Path::new("docs/page.adoc"), "twice")
             .unwrap();
         assert_eq!(location.range.start, 0);
+    }
+
+    #[test]
+    fn a_file_indexed_from_disk_reads_its_text_back_while_it_is_unchanged() {
+        let directory =
+            std::env::temp_dir().join(format!("adoc-index-text-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("page.adoc");
+        std::fs::write(&path, "= Page\n\nOn disk.\n").unwrap();
+        let mut index = WorkspaceIndex::new();
+        index.index_file(&path, "= Page\n\nOn disk.\n");
+
+        let entry = index.file(&path).unwrap();
+        assert!(entry.document.text.is_empty(), "not kept");
+        assert_eq!(entry.document.title.as_ref().unwrap().text, "Page");
+        assert_eq!(entry.text().as_deref(), Some("= Page\n\nOn disk.\n"));
+
+        // Changed since, the file's text no longer fits the parse's offsets.
+        std::fs::write(&path, "= Page\n\nOn disk, changed.\n").unwrap();
+        assert_eq!(index.file(&path).unwrap().text(), None);
+
+        // An open page's text is kept, whatever the file holds.
+        let open = adoc_parser::parse("file:///page.adoc", "= Open\n").document;
+        index.replace(path.clone(), open);
+        let entry = index.file(&path).unwrap();
+        assert!(matches!(
+            entry.text(),
+            Some(std::borrow::Cow::Borrowed("= Open\n"))
+        ));
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn indexing_roots_keeps_no_text() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/includes");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(&[root]).unwrap();
+        assert!(index.files().count() > 1);
+        for file in index.files() {
+            assert!(file.document.text.is_empty(), "{}", file.path.display());
+            assert_eq!(
+                file.text().as_deref(),
+                Some(std::fs::read_to_string(&file.path).unwrap().as_str())
+            );
+        }
     }
 }

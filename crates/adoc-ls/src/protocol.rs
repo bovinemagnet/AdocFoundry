@@ -202,7 +202,7 @@ impl ProtocolServer {
             .workspace()
             .index
             .file(path)
-            .map(|file| file.document.text.to_string())
+            .and_then(|file| file.text().map(std::borrow::Cow::into_owned))
             .or_else(|| fs::read_to_string(path).ok())
             .unwrap_or_default()
     }
@@ -1027,7 +1027,7 @@ impl ProtocolServer {
                         path_to_uri(&symbol.path)?,
                         self.encoding.range(text, symbol.range)?,
                     ),
-                    container_name: symbol.container.clone(),
+                    container_name: symbol.container.as_deref().map(str::to_owned),
                 })
             })
             .collect();

@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use adoc_core::{Document, Location, Reference, ReferenceKind, Section, SourceRange};
-use adoc_index::{normalize_path, IncludeLocation, ReferenceLocation};
+use adoc_index::{normalize_path, FileEntry, IncludeLocation, ReferenceLocation};
 
 use crate::{definition::reference_target_path, with_document, WorkspaceState};
 
@@ -172,7 +172,7 @@ pub fn rename_anchor(
     } else {
         let file = ws.index.file(&anchor.path)?;
         (
-            declared(&file.document, &file.document.text),
+            declared(&file.document, &file.text()?),
             generated(&file.document),
         )
     };
@@ -199,12 +199,12 @@ pub fn rename_anchor(
     let mut ids = anchor_ids(ws, &anchor);
     ids.sort_by_key(|id| std::cmp::Reverse(id.len()));
     for location in anchor_references(ws, &anchor) {
-        let Some(file) = ws.index.file(location.path) else {
+        let Some(text) = ws.index.file(location.path).and_then(FileEntry::text) else {
             continue;
         };
         let range = ids
             .iter()
-            .find_map(|id| id_range(&file.document.text, location.reference.range, id));
+            .find_map(|id| id_range(&text, location.reference.range, id));
         if let Some(range) = range {
             edits.push((
                 Location {

@@ -379,7 +379,7 @@ impl Engine {
         if document.indexed() {
             match fs::read_to_string(&document.path) {
                 Ok(text) => {
-                    self.workspace.index.index_source(&document.path, &text);
+                    self.workspace.index.index_file(&document.path, &text);
                 }
                 Err(_) => self.workspace.remove_document(&document.path),
             }

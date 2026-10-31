@@ -1028,3 +1028,50 @@ fn a_search_started_over_another_still_lets_both_finish() {
     assert!(ended.contains(&first) && ended.contains(&second));
     assert_eq!(second_found, 50 * 50);
 }
+
+#[test]
+fn a_rename_waits_for_a_referencing_page_changed_on_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    fs::write(root.join("target.adoc"), "= Target\n").unwrap();
+    fs::write(
+        root.join("linking.adoc"),
+        "= Linking\n\nSee xref:target.adoc[].\n",
+    )
+    .unwrap();
+    let mut engine = open_workspace(&root);
+    let target = engine.open(&root.join("target.adoc")).unwrap();
+
+    // Changed on disk and not read again yet, its references' offsets no longer fit it.
+    fs::write(
+        root.join("linking.adoc"),
+        "= Linking\n\nFirst, xref:target.adoc[].\n",
+    )
+    .unwrap();
+    let refused = engine.rename_preview(target, &root.join("renamed.adoc"));
+    assert!(
+        matches!(&refused, Err(error) if error.to_string().contains("linking.adoc changed on disk")),
+        "{refused:?}"
+    );
+
+    // Once the watcher has the change, the rename goes ahead and rewrites it.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let preview = loop {
+        engine.pump();
+        if let Ok(preview) = engine.rename_preview(target, &root.join("renamed.adoc")) {
+            break preview;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the change was never read"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let linking = preview
+        .edits
+        .iter()
+        .find(|file| file.path.ends_with("linking.adoc"))
+        .unwrap();
+    assert_eq!(linking.base, "= Linking\n\nFirst, xref:target.adoc[].\n");
+    assert_eq!(linking.edits[0].replacement, "renamed.adoc");
+}

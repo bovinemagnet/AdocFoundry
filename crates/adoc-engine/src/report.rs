@@ -80,7 +80,7 @@ impl Engine {
                 .workspace
                 .index
                 .file(&path)
-                .map(|file| file.document.text.to_string())
+                .and_then(|file| file.text().map(std::borrow::Cow::into_owned))
                 .or_else(|| std::fs::read_to_string(&path).ok())
                 .unwrap_or_default();
             let lines = LineIndex::new(&text);

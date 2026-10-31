@@ -55,12 +55,12 @@ impl Engine {
         let page = self
             .document_for_path(&from)
             .and_then(|id| self.document(id))
-            .map(|document| document.parsed().text.clone())
+            .map(|document| document.parsed().text.to_string())
             .or_else(|| {
                 self.workspace
                     .index
                     .file(&from)
-                    .map(|file| file.document.text.clone())
+                    .and_then(|file| file.text().map(std::borrow::Cow::into_owned))
             })
             .unwrap_or_default();
         let text = format!("{page}\n\n{line}\n");
