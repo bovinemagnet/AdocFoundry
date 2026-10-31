@@ -31,15 +31,19 @@ No window is involved.
 The notices generator's tests are in `xtask/src/notices.rs`: `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice`.
 Add a test here rather than in the application crate whenever the behaviour can be reached through the engine.
 
-`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
+`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula, ChildRefs, InlineLayout}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
 They count only with adoc-core's `probe` feature, which the dev-dependencies of the engine, `adoc-model` and the application turn on; in a normal build `hit` does nothing.
 `tests/keystroke.rs` asserts them: `one_keystroke_parses_at_most_once`, `typing_never_hashes_the_document`, `completion_during_typing_does_not_reparse` and `only_typing_inside_something_that_completes_asks_for_completions`.
 In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` types 20 characters and expects 20 diffs and no reconcile, then expects an edit from the engine to reconcile once.
-`Suggest` counts a dictionary searching for replacements for a misspelt word, `Walk` a walk over every node of a visual model (`Model::walk`), and `MeasureFormula` a typeset formula's gap measured in a font (`Gap::measure`).
+`Suggest` counts a dictionary searching for replacements for a misspelt word, `Walk` a walk over every node of a visual model (`Model::walk`), and `MeasureFormula` a typeset formula's gap measured in a font (`Gap::measure`), `ChildRefs` a list of a view block's children (`ViewBlock::child_refs`) and `InlineLayout` inline content laid out as styled text for the preview.
 `adoc-model`'s `tests/positions.rs` checks that `text_block_at` finds the block a walk finds at every offset of a page, and walks the model at most once over many lookups.
 `ui_tests::one_visual_frame_walks_the_model_at_most_twice` draws a 300-paragraph page in the visual editor.
 `ui_tests::formulas_are_measured_once` draws 20 inline formulas for 10 frames and expects at most 20 measurements.
 `ui_tests::preview_draws_inline_stem_in_the_line` expects none in the preview's frames after the first.
+`ui_tests::preview_lays_out_inline_text_once_per_block` draws 300 paragraphs for 10 frames and expects at most 300 layouts.
+`ui_tests::typing_in_one_paragraph_does_not_rerender_the_preview` types 20 characters with scroll sync on and expects at most two renders of the preview (the existing `renders` counter).
+`ui_tests::reveal_source_is_logarithmic` moves the caret 200 times in 500 paragraphs and expects at most 1,800 lists of children.
+`adoc-render`'s `the_block_index_finds_what_block_at_finds` compares the index with `block_at` at every offset of the render fixtures and their partial.
 
 == CLI snapshot tests
 

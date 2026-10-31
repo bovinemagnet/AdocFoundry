@@ -22,9 +22,13 @@ pub enum Probe {
     Walk,
     /// A typeset formula's gap measured in a font.
     MeasureFormula,
+    /// A list of a view block's children, `ViewBlock::child_refs`.
+    ChildRefs,
+    /// Inline content laid out as styled text for the preview.
+    InlineLayout,
 }
 
-const PROBES: usize = 7;
+const PROBES: usize = 9;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -66,4 +70,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::MeasureFormula as usize == PROBES - 1);
+const _: () = assert!(Probe::InlineLayout as usize == PROBES - 1);

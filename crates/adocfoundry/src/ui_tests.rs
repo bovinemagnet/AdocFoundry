@@ -902,6 +902,90 @@ fn clicking_a_link_in_the_preview_navigates(cx: &mut TestAppContext) {
     assert_eq!(active, other);
 }
 
+/// A page of `count` one-line paragraphs, previewed.
+fn previewing_paragraphs(
+    count: usize,
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    String,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("long.adoc"));
+    let mut text = String::from("= Long\n");
+    for number in 1..=count {
+        text.push_str(&format!("\nParagraph {number}.\n"));
+    }
+    std::fs::write(&page, &text).unwrap();
+    let (app, workspace, cx) = previewing(vec![page.clone()], cx);
+    (directory, page, text, app, workspace, cx)
+}
+
+/// Draws a frame of the preview, rendering it again.
+fn draw_preview(workspace: &Entity<WorkspaceView>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        let preview = workspace.read(cx).preview().clone();
+        preview.update(cx, |_, cx| cx.notify());
+        window.draw(cx).clear(cx);
+    });
+}
+
+#[gpui::test]
+fn preview_lays_out_inline_text_once_per_block(cx: &mut TestAppContext) {
+    use adoc_core::probe::{self, Probe};
+    let (_directory, _, _, _, workspace, mut cx) = previewing_paragraphs(300, cx);
+    probe::reset();
+    for _ in 0..10 {
+        draw_preview(&workspace, &mut cx);
+    }
+    let laid_out = probe::count(Probe::InlineLayout);
+    assert!(laid_out <= 300, "inline text laid out {laid_out} times");
+}
+
+#[gpui::test]
+fn typing_in_one_paragraph_does_not_rerender_the_preview(cx: &mut TestAppContext) {
+    use crate::renders::{self, View};
+    let (_directory, _, text, _, workspace, mut cx) = previewing_paragraphs(80, cx);
+    let offset = text.find("Paragraph 40.").unwrap() + "Paragraph".len();
+    cx.update(|window, cx| {
+        let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(offset, offset), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    renders::reset();
+    for _ in 0..20 {
+        cx.simulate_keystrokes("x");
+        cx.run_until_parked();
+    }
+    let rendered = renders::count(View::Preview);
+    assert!(rendered <= 2, "the preview rendered {rendered} times");
+}
+
+#[gpui::test]
+fn reveal_source_is_logarithmic(cx: &mut TestAppContext) {
+    use adoc_core::probe::{self, Probe};
+    let (_directory, page, text, _, workspace, mut cx) = previewing_paragraphs(500, cx);
+    let offsets: Vec<usize> = (1..=200)
+        .map(|number| text.find(&format!("Paragraph {}.", number * 2)).unwrap())
+        .collect();
+    probe::reset();
+    cx.update(|_, cx| {
+        let preview = workspace.read(cx).preview().clone();
+        for offset in offsets {
+            preview.update(cx, |preview, cx| preview.reveal_source(&page, offset, cx));
+        }
+    });
+    let walked = probe::count(Probe::ChildRefs);
+    // 200 × log₂ 500.
+    assert!(walked <= 1_800, "{walked} lists of children");
+}
+
 #[gpui::test]
 fn moving_the_caret_to_the_title_scrolls_the_preview_to_the_top(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
@@ -1910,9 +1994,9 @@ fn visual_code_blocks_are_highlighted(cx: &mut TestAppContext) {
             .read(cx)
             .highlights
             .borrow()
-            .iter()
-            .find(|((_, language, text), _)| language == "rust" && text == code)
-            .map(|(_, styles)| styles.len())
+            .values()
+            .find(|(language, text, _)| language == "rust" && text == code)
+            .map(|(_, _, styles)| styles.len())
     });
     assert!(styles.is_some_and(|count| count > 0), "{styles:?}");
 }

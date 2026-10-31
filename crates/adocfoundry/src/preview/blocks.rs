@@ -17,7 +17,7 @@ use gpui_component::{h_flex, v_flex};
 use super::inlines::{self, InlineStyle, LinkHandler};
 
 pub type BlockHandler = Rc<dyn Fn(&SourceSpan, &mut Window, &mut App)>;
-pub type Highlighter<'a> = &'a dyn Fn(&str, &str) -> Vec<(Range<usize>, HighlightStyle)>;
+pub type Highlighter<'a> = &'a dyn Fn(&str, &str) -> super::Highlights;
 
 /// Colours for block decoration.
 #[derive(Clone)]
@@ -42,6 +42,8 @@ pub struct BlockContext<'a> {
     pub on_link: LinkHandler,
     pub on_block: BlockHandler,
     pub highlight: Highlighter<'a>,
+    /// Inline text as laid out in earlier frames, when the view keeps it.
+    pub inline_cache: Option<Rc<inlines::InlineCache>>,
 }
 
 /// The element id of the block at `trail`, as [`adoc_render::block_at`] returns it.
@@ -67,11 +69,9 @@ pub fn document(view: &ViewTree, context: &BlockContext<'_>) -> Vec<AnyElement> 
             div()
                 .text_3xl()
                 .pb_2()
-                .child(inlines::element(
-                    "document-title".into(),
-                    inlines::layout_bold(title, &context.inline),
-                    &context.on_link,
-                ))
+                .child(inline_text("document-title".into(), context, || {
+                    inlines::layout_bold(title, &context.inline)
+                }))
                 .into_any_element(),
         );
     }
@@ -124,11 +124,30 @@ fn text(
     part: &str,
     context: &BlockContext<'_>,
 ) -> AnyElement {
-    inlines::element(
-        text_id(trail, part),
-        inlines::layout(content, &context.inline),
-        &context.on_link,
-    )
+    inline_text(text_id(trail, part), context, || {
+        inlines::layout(content, &context.inline)
+    })
+}
+
+/// The element for inline text laid out by `lay_out`, or as it was laid out for the element
+/// `id` while the preview shows the same view tree in the same style.
+fn inline_text(
+    id: ElementId,
+    context: &BlockContext<'_>,
+    lay_out: impl FnOnce() -> inlines::InlineText,
+) -> AnyElement {
+    let text = match &context.inline_cache {
+        Some(cache) => {
+            let kept = cache.borrow().get(&id).cloned();
+            kept.unwrap_or_else(|| {
+                let text = lay_out();
+                cache.borrow_mut().insert(id.clone(), text.clone());
+                text
+            })
+        }
+        None => lay_out(),
+    };
+    inlines::element(id, text, &context.on_link)
 }
 
 pub(crate) fn title(
@@ -148,11 +167,9 @@ pub(crate) fn title(
         div()
             .text_sm()
             .pb_1()
-            .child(inlines::element(
-                text_id(trail, "title"),
-                inlines::layout_italic(&content, &context.inline),
-                &context.on_link,
-            ))
+            .child(inline_text(text_id(trail, "title"), context, || {
+                inlines::layout_italic(&content, &context.inline)
+            }))
             .into_any_element(),
     )
 }
@@ -236,10 +253,10 @@ fn block_element(
                     let first = nested;
                     nested += item_children.len();
                     v_flex()
-                        .child(inlines::element(
+                        .child(inline_text(
                             text_id(trail, &format!("term{index}")),
-                            inlines::layout_bold(&item.term, &context.inline),
-                            &context.on_link,
+                            context,
+                            || inlines::layout_bold(&item.term, &context.inline),
                         ))
                         .child(
                             v_flex()
@@ -322,10 +339,10 @@ fn block_element(
             text: code,
             callouts,
         } => {
-            let styles = language
-                .as_deref()
-                .map(|language| (context.highlight)(language, code))
-                .unwrap_or_default();
+            let styles = language.as_deref().map_or_else(
+                || Rc::from([]),
+                |language| (context.highlight)(language, code),
+            );
             v_flex()
                 .children(title(block, trail, context))
                 .child(
@@ -550,11 +567,11 @@ fn heading_element(
     trail: &[usize],
     context: &BlockContext<'_>,
 ) -> AnyElement {
-    let element = div().pt_2().child(inlines::element(
-        text_id(trail, "heading"),
-        inlines::layout_bold(content, &context.inline),
-        &context.on_link,
-    ));
+    let element = div()
+        .pt_2()
+        .child(inline_text(text_id(trail, "heading"), context, || {
+            inlines::layout_bold(content, &context.inline)
+        }));
     match level {
         0 | 1 => element.text_2xl(),
         2 => element.text_xl(),
@@ -698,6 +715,35 @@ fn callout_badge(number: usize, context: &BlockContext<'_>) -> AnyElement {
         .into_any_element()
 }
 
+/// The styles of each line of `code`, relative to the line: each style given to the lines it
+/// covers, in one pass over the styles.
+fn styles_by_line(
+    code: &str,
+    styles: &[(Range<usize>, HighlightStyle)],
+) -> Vec<Vec<(Range<usize>, HighlightStyle)>> {
+    let mut lines: Vec<Range<usize>> = Vec::new();
+    let mut start = 0;
+    for line in code.split('\n') {
+        lines.push(start..start + line.len());
+        start += line.len() + 1;
+    }
+    let mut by_line: Vec<Vec<(Range<usize>, HighlightStyle)>> = vec![Vec::new(); lines.len()];
+    for (style_range, style) in styles {
+        let first = lines.partition_point(|line| line.end <= style_range.start);
+        for (range, line_styles) in lines[first..].iter().zip(&mut by_line[first..]) {
+            if range.start >= style_range.end {
+                break;
+            }
+            let from = style_range.start.max(range.start);
+            let to = style_range.end.min(range.end);
+            if from < to {
+                line_styles.push((from - range.start..to - range.start, *style));
+            }
+        }
+    }
+    by_line
+}
+
 /// One element per source line, highlighted, with each line's callout badges after it.
 fn code_lines(
     code: &str,
@@ -705,20 +751,10 @@ fn code_lines(
     callouts: &[adoc_render::Callout],
     context: &BlockContext<'_>,
 ) -> Vec<AnyElement> {
-    let mut start = 0;
     code.split('\n')
+        .zip(styles_by_line(code, styles))
         .enumerate()
-        .map(|(line_number, line)| {
-            let range = start..start + line.len();
-            start = range.end + 1;
-            let line_styles: Vec<(Range<usize>, HighlightStyle)> = styles
-                .iter()
-                .filter_map(|(style_range, style)| {
-                    let from = style_range.start.max(range.start);
-                    let to = style_range.end.min(range.end);
-                    (from < to).then(|| (from - range.start..to - range.start, *style))
-                })
-                .collect();
+        .map(|(line_number, (line, line_styles))| {
             let content = if line.is_empty() {
                 // An empty line still takes a line's height.
                 StyledText::new(" ")
@@ -795,4 +831,44 @@ fn table_element(
         .rounded(context.radius)
         .children(rows)
         .into_any_element()
+}
+
+#[cfg(test)]
+mod code_tests {
+    use super::*;
+
+    #[test]
+    fn each_line_gets_the_styles_over_it() {
+        let code = "let a = 1;\n\n/* one\ntwo */ b\n";
+        let style = |weight| HighlightStyle {
+            font_weight: Some(gpui::FontWeight(weight)),
+            ..HighlightStyle::default()
+        };
+        // A keyword, a comment across two lines, one on the newline, and a style past the end.
+        let styles = [
+            (0..3, style(100.)),
+            (12..24, style(200.)),
+            (10..11, style(300.)),
+            (25..40, style(400.)),
+        ];
+        // As each line filtering every style found them.
+        let mut expected = Vec::new();
+        let mut start = 0;
+        for line in code.split('\n') {
+            let range = start..start + line.len();
+            start = range.end + 1;
+            expected.push(
+                styles
+                    .iter()
+                    .filter_map(|(style_range, style)| {
+                        let from = style_range.start.max(range.start);
+                        let to = style_range.end.min(range.end);
+                        (from < to).then(|| (from - range.start..to - range.start, *style))
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(styles_by_line(code, &styles), expected);
+        assert_eq!(styles_by_line(code, &styles)[2], [(0..6, style(200.))]);
+    }
 }

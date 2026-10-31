@@ -19,7 +19,7 @@ pub use result::{RenderError, RenderOutput};
 pub use text::to_text;
 pub use view::{
     block_at, block_by_trail, build_view, inline_stem_attributes, source_location, stem_kind,
-    DiagramView, LocalResolver, ResolvedLink, TocEntry, ViewBlock, ViewCallout, ViewCell,
-    ViewDescription, ViewFootnote, ViewImage, ViewInline, ViewKind, ViewListItem, ViewResolver,
-    ViewTable, ViewTree,
+    BlockIndex, DiagramView, LocalResolver, ResolvedLink, TocEntry, ViewBlock, ViewCallout,
+    ViewCell, ViewDescription, ViewFootnote, ViewImage, ViewInline, ViewKind, ViewListItem,
+    ViewResolver, ViewTable, ViewTree,
 };

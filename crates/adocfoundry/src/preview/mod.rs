@@ -27,9 +27,12 @@ use crate::app::AppState;
 
 pub use inlines::Link;
 
-/// Highlighted code, by theme brightness, language and text.
-pub(crate) type HighlightCache =
-    HashMap<(bool, String, String), Vec<(Range<usize>, HighlightStyle)>>;
+/// Highlighted code, by theme brightness and a hash of its language and text, with the language
+/// and text it is of.
+pub(crate) type HighlightCache = HashMap<(bool, u64), (String, String, Highlights)>;
+
+/// The styles of highlighted code, shared by the cache and whoever draws it.
+pub(crate) type Highlights = Rc<[(Range<usize>, HighlightStyle)]>;
 
 /// What the preview tells the window around it.
 #[derive(Clone, Debug, PartialEq)]
@@ -47,6 +50,11 @@ pub struct PreviewView {
     scroll: ScrollHandle,
     positions: HashMap<DocumentId, Point<Pixels>>,
     highlights: Rc<RefCell<HighlightCache>>,
+    /// Inline text as laid out for the view tree shown, in the style it was laid out in.
+    inline_cache: Rc<inlines::InlineCache>,
+    inline_for: Option<(Arc<RenderedPreview>, inlines::InlineStyle)>,
+    /// A sorted index of the blocks shown, for following the caret.
+    blocks: Option<adoc_render::BlockIndex>,
     /// The target's PDF pages, while the preview shows them.
     pdf: pdf::PdfPages,
     _subscription: Subscription,
@@ -81,6 +89,9 @@ impl PreviewView {
             scroll: ScrollHandle::new(),
             positions: HashMap::new(),
             highlights: Rc::default(),
+            inline_cache: Rc::default(),
+            inline_for: None,
+            blocks: None,
             pdf: pdf::PdfPages::default(),
             _subscription: subscription,
         };
@@ -112,6 +123,16 @@ impl PreviewView {
                 .and_then(|after| self.positions.get(&after).copied())
                 .unwrap_or_default();
             self.scroll.set_offset(offset);
+        }
+        let changed = match (&self.shown, &latest) {
+            (Some(shown), Some(latest)) => !Arc::ptr_eq(shown, latest),
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
+            self.blocks = latest
+                .as_ref()
+                .map(|shown| adoc_render::BlockIndex::new(&shown.view));
         }
         self.shown = latest;
         let pdf = {
@@ -168,7 +189,10 @@ impl PreviewView {
         let Some(shown) = &self.shown else {
             return;
         };
-        let Some(trail) = adoc_render::block_at(&shown.view, path, offset) else {
+        let Some(blocks) = &self.blocks else {
+            return;
+        };
+        let Some(trail) = blocks.block_at(path, offset) else {
             // The title and header are not blocks: a caret above the first block shows the top.
             let view = &shown.view;
             if path == view.source
@@ -177,17 +201,24 @@ impl PreviewView {
                     .first()
                     .is_none_or(|block| offset < block.span.range.start)
             {
-                self.scroll.set_offset(gpui::point(px(0.), px(0.)));
-                cx.notify();
+                self.scroll_to(px(0.), cx);
             }
             return;
         };
-        let Some(extent) = self.extents.borrow().get(&trail).copied() else {
+        let Some(extent) = self.extents.borrow().get(trail).copied() else {
             return;
         };
-        let top = (extent.top - px(8.)).max(px(0.));
-        self.scroll.set_offset(gpui::point(px(0.), -top));
-        cx.notify();
+        self.scroll_to((extent.top - px(8.)).max(px(0.)), cx);
+    }
+
+    /// Scrolls so content position `top` is at the top, redrawing only when that moves it: the
+    /// caret moving within a block leaves the preview as it is.
+    fn scroll_to(&mut self, top: Pixels, cx: &mut Context<Self>) {
+        let offset = gpui::point(px(0.), -top);
+        if self.scroll.offset() != offset {
+            self.scroll.set_offset(offset);
+            cx.notify();
+        }
     }
 
     /// Reports the block now at the top after the user scrolled.
@@ -341,7 +372,7 @@ impl PreviewView {
                 window.push_notification(error.to_string(), cx);
             }
         });
-        block_context(
+        let mut context = block_context(
             &self.app,
             self.extents.clone(),
             self.scroll.clone(),
@@ -349,7 +380,9 @@ impl PreviewView {
             highlight,
             window,
             cx,
-        )
+        );
+        context.inline_cache = Some(self.inline_cache.clone());
+        context
     }
 }
 
@@ -414,6 +447,7 @@ pub(crate) fn block_context<'a>(
         on_link,
         on_block,
         highlight,
+        inline_cache: None,
     }
 }
 
@@ -424,16 +458,23 @@ pub(crate) fn highlight(
     theme: &gpui_component::highlighter::HighlightTheme,
     language: &str,
     text: &str,
-) -> Vec<(Range<usize>, HighlightStyle)> {
-    let key = (dark, language.to_owned(), text.to_owned());
-    if let Some(styles) = cache.borrow().get(&key) {
-        return styles.clone();
+) -> Highlights {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (language, text).hash(&mut hasher);
+    let key = (dark, hasher.finish());
+    if let Some((cached_language, cached_text, styles)) = cache.borrow().get(&key) {
+        if cached_language == language && cached_text == text {
+            return styles.clone();
+        }
     }
     let mut highlighter = SyntaxHighlighter::new(language);
     let rope = ropey::Rope::from_str(text);
     highlighter.update(None, &rope, None);
-    let styles = highlighter.styles(&(0..text.len()), theme);
-    cache.borrow_mut().insert(key, styles.clone());
+    let styles: Highlights = highlighter.styles(&(0..text.len()), theme).into();
+    cache
+        .borrow_mut()
+        .insert(key, (language.to_owned(), text.to_owned(), styles.clone()));
     styles
 }
 
@@ -453,6 +494,15 @@ impl Render for PreviewView {
             let highlight =
                 move |language: &str, text: &str| highlight(&cache, dark, &theme, language, text);
             let context = self.context(&highlight, window, cx);
+            // Laid out again for a new view tree, or a new font or theme.
+            let current = self
+                .inline_for
+                .as_ref()
+                .is_some_and(|(of, style)| Arc::ptr_eq(of, &shown) && *style == context.inline);
+            if !current {
+                self.inline_cache.borrow_mut().clear();
+                self.inline_for = Some((shown.clone(), context.inline.clone()));
+            }
             blocks::document(&shown.view, &context)
         });
         let window_title = self.standalone.then(|| {
