@@ -120,6 +120,17 @@ pub fn parse_resource_id(input: &str) -> Result<AntoraResourceId, ResourceIdPars
     if input.matches('$').count() > 1 {
         return Err(ResourceIdParseError::UnknownFamily(input.to_owned()));
     }
+    // As in Antora's resource id pattern, a version comes first and belongs to the whole id:
+    // `2.0@index.adoc` and `2.0@module:page.adoc` keep the current component.
+    let (version, input) = match input.split_once('@') {
+        Some((version, rest)) if !version.contains([':', '$']) => {
+            if version.is_empty() || rest.contains('@') {
+                return Err(ResourceIdParseError::InvalidVersionCoordinate);
+            }
+            (Some(version.to_owned()), rest)
+        }
+        _ => (None, input),
+    };
 
     let (scope, family, path) = if let Some((prefix, path)) = input.split_once('$') {
         let (scope, family) = prefix.rsplit_once(':').unwrap_or(("", prefix));
@@ -140,7 +151,7 @@ pub fn parse_resource_id(input: &str) -> Result<AntoraResourceId, ResourceIdPars
     validate_path(path)?;
     let scope = parse_scope(scope)?;
     Ok(AntoraResourceId {
-        version: scope.version,
+        version,
         component: scope.component,
         module: scope.module,
         family,
@@ -149,18 +160,21 @@ pub fn parse_resource_id(input: &str) -> Result<AntoraResourceId, ResourceIdPars
 }
 
 struct ParsedScope {
-    version: Option<String>,
     component: Option<String>,
     module: Option<String>,
 }
 
+/// The coordinates before the path, the version already taken off: `module`, or
+/// `component:module`, where an empty module is `ROOT`.
 fn parse_scope(scope: &str) -> Result<ParsedScope, ResourceIdParseError> {
     if scope.is_empty() {
         return Ok(ParsedScope {
-            version: None,
             component: None,
             module: None,
         });
+    }
+    if scope.contains('@') {
+        return Err(ResourceIdParseError::InvalidVersionCoordinate);
     }
     let mut segments = scope.split(':').collect::<Vec<_>>();
     // `component::page.adoc` names the component's ROOT module.
@@ -172,42 +186,15 @@ fn parse_scope(scope: &str) -> Result<ParsedScope, ResourceIdParseError> {
     }
 
     match segments.as_slice() {
-        [module] if !module.contains('@') => Ok(ParsedScope {
-            version: None,
+        [module] => Ok(ParsedScope {
             component: None,
             module: Some((*module).to_owned()),
         }),
-        [component] => {
-            let (version, component) = parse_component(component)?;
-            Ok(ParsedScope {
-                version,
-                component: Some(component),
-                module: None,
-            })
-        }
-        [component, module] => {
-            let (version, component) = parse_component(component)?;
-            Ok(ParsedScope {
-                version,
-                component: Some(component),
-                module: Some((*module).to_owned()),
-            })
-        }
+        [component, module] => Ok(ParsedScope {
+            component: Some((*component).to_owned()),
+            module: Some((*module).to_owned()),
+        }),
         _ => Err(ResourceIdParseError::TooManyCoordinates),
-    }
-}
-
-fn parse_component(coordinate: &str) -> Result<(Option<String>, String), ResourceIdParseError> {
-    if coordinate.matches('@').count() > 1 {
-        return Err(ResourceIdParseError::InvalidVersionCoordinate);
-    }
-    if let Some((version, component)) = coordinate.split_once('@') {
-        if version.is_empty() || component.is_empty() {
-            return Err(ResourceIdParseError::InvalidVersionCoordinate);
-        }
-        Ok((Some(version.to_owned()), component.to_owned()))
-    } else {
-        Ok((None, coordinate.to_owned()))
     }
 }
 
@@ -257,6 +244,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_version_with_module_only() {
+        // The component coordinate needs a colon of its own: one segment is the module.
+        let id = parse_resource_id("2.0@security:index.adoc").unwrap();
+        assert_eq!(id.version.as_deref(), Some("2.0"));
+        assert_eq!(id.component, None);
+        assert_eq!(id.module.as_deref(), Some("security"));
+        assert_eq!(id.path, "index.adoc");
+    }
+
+    #[test]
+    fn parses_version_with_path_only() {
+        let id = parse_resource_id("2.0@index.adoc").unwrap();
+        assert_eq!(id.version.as_deref(), Some("2.0"));
+        assert_eq!(id.component, None);
+        assert_eq!(id.module, None);
+        assert_eq!(id.path, "index.adoc");
+
+        let partial = parse_resource_id("2.0@partial$note.adoc").unwrap();
+        assert_eq!(partial.version.as_deref(), Some("2.0"));
+        assert_eq!(partial.module, None);
+        assert_eq!(partial.family, Some(ResourceFamily::Partial));
+        assert_eq!(partial.path, "note.adoc");
+
+        let both = parse_resource_id("2.0@demo:security:index.adoc").unwrap();
+        assert_eq!(both.version.as_deref(), Some("2.0"));
+        assert_eq!(both.component.as_deref(), Some("demo"));
+        assert_eq!(both.module.as_deref(), Some("security"));
+    }
+
+    #[test]
     fn rejects_ambiguous_or_unsafe_ids() {
         assert_eq!(
             parse_resource_id("demo:module:extra:index.adoc"),
@@ -266,5 +283,16 @@ mod tests {
             parse_resource_id("partial$../secret.adoc"),
             Err(ResourceIdParseError::InvalidPath(_))
         ));
+        for id in [
+            "@index.adoc",
+            "1.0@2.0@index.adoc",
+            "demo:1.0@ROOT:index.adoc",
+        ] {
+            assert_eq!(
+                parse_resource_id(id),
+                Err(ResourceIdParseError::InvalidVersionCoordinate),
+                "{id}"
+            );
+        }
     }
 }

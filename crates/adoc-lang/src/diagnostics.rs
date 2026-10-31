@@ -473,6 +473,23 @@ mod tests {
     }
 
     #[test]
+    fn versioned_xref_without_component_has_no_diagnostic() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-versions");
+        let roots = vec![fixture.join("v1"), fixture.join("v2")];
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(&roots).unwrap();
+        let antora = discover_antora_workspace(&roots).unwrap().catalog;
+        let page = adoc_index::normalize_path(&roots[1].join("modules/ROOT/pages/index.adoc"));
+        index.index_source(
+            &page,
+            "= Home\n\nSee xref:1.0@feature.adoc[] and xref:1.0@ROOT:feature.adoc[].\n",
+        );
+        let found = diagnostics(&index, &antora, &page);
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
     fn no_playbook_no_version_diagnostic() {
         let (index, antora, page) = version_workspace(None);
         assert!(antora.branch_versions().is_none());
