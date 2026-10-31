@@ -48,7 +48,7 @@ fn keystroke_on_a_5000_line_document() {
         .unwrap();
     engine.wait_for_workers(std::time::Duration::from_secs(30));
     let id = engine.open(&path).unwrap();
-    let lines = engine.document(id).unwrap().parsed.text.lines().count();
+    let lines = engine.document(id).unwrap().parsed().text.lines().count();
 
     let mut samples = Vec::new();
     for offset in (100..20_100).step_by(100) {

@@ -419,7 +419,7 @@ impl Engine {
             &document.path,
             document.text.to_string(),
             document.version,
-            &document.parsed,
+            document.parsed(),
         ))
     }
 

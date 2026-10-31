@@ -1,4 +1,5 @@
 use std::{
+    cell::OnceCell,
     hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
 };
@@ -26,7 +27,8 @@ pub struct OpenDocument {
     pub text: Rope,
     pub version: u64,
     pub dirty: bool,
-    pub parsed: Document,
+    /// The text parsed, once something reads it after an edit (see [`OpenDocument::parsed`]).
+    pub(crate) parsed: OnceCell<Document>,
     pub diagnostics: Vec<Diagnostic>,
     /// True for a document created with `open_untitled` that has never been saved.
     pub untitled: bool,
@@ -47,12 +49,23 @@ pub(crate) fn uri_for(path: &std::path::Path) -> String {
 }
 
 pub(crate) fn hash_text(text: &str) -> u64 {
+    adoc_core::probe::hit(adoc_core::probe::Probe::HashText);
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
 }
 
 impl OpenDocument {
+    /// The semantic parse of the text as it stands. An edit drops it, and the first read
+    /// after parses the text again, so typing parses nothing until something asks: the index,
+    /// once typing pauses, or a language feature.
+    #[must_use]
+    pub fn parsed(&self) -> &Document {
+        self.parsed.get_or_init(|| {
+            adoc_parser::parse(&uri_for(&self.path), &self.text.to_string()).document
+        })
+    }
+
     /// The document text as a string.
     #[must_use]
     pub fn text_string(&self) -> String {
@@ -65,7 +78,22 @@ impl OpenDocument {
 pub(crate) struct DocumentState {
     pub(crate) undo: crate::UndoStack,
     pub(crate) saved_hash: u64,
+    /// The saved text's length: text of another length is not it, without hashing.
+    pub(crate) saved_len: usize,
     /// The file was reported changed on disk under unsaved edits; it is not reported again
     /// until the page is saved or reloaded.
     pub(crate) changed_on_disk: bool,
+}
+
+impl DocumentState {
+    /// Records `text` as the text on disk.
+    pub(crate) fn mark_saved(&mut self, text: &str) {
+        self.saved_hash = hash_text(text);
+        self.saved_len = text.len();
+    }
+
+    /// Whether `text` is the text on disk. Only text of the saved length is hashed.
+    pub(crate) fn is_saved(&self, text: &Rope) -> bool {
+        text.len() == self.saved_len && hash_text(&text.to_string()) == self.saved_hash
+    }
 }

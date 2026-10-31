@@ -36,6 +36,9 @@ The editor widget owns a display buffer for speed, and the engine rope is the tr
 
 The widget reports that its text changed but not the edit range.
 The application therefore recovers each edit as the single replacement between the common prefix and suffix of the widget text and the engine text, in `editor/sync.rs`.
+It compares the widget's rope and the engine's rope (both `ropey` 2) chunk against chunk from the start and the end, with slice comparisons and no copy of either text, and allocates only the replacement.
+`sync_widget_to_engine` takes the widget's rope, which a clone shares, and returns the version its edit made.
+`SourceEditorView` keeps those versions (`own_versions`) and does not reconcile the engine's `DocumentChanged` for them; an edit from elsewhere still reconciles.
 That is exact for typing, deletion and paste, and still correct, if wider, for anything else.
 Typing arrives at the engine one character at a time, so undo coalescing works.
 
@@ -49,6 +52,7 @@ They therefore take precedence and go through the engine instead of the widget's
 gpui-component's definition, hover and completion hooks take and return `lsp-types` values.
 `editor/providers.rs` translates the engine's answers into those types.
 Every answer comes from the engine, and so from `adoc-lang`, exactly as `adoc-ls` gives it.
+The completion provider asks `Engine::completes_after` in `is_completion_trigger`, so typing prose never asks for completions.
 This module is the only place the app uses `lsp-types`; see xref:architecture.adoc[Architecture].
 
 Link detection under the pointer and modifier-click handling live in the editor module.

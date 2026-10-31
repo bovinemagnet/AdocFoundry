@@ -96,6 +96,63 @@ fn typing_reaches_the_engine_and_undo_goes_through_it(cx: &mut TestAppContext) {
     assert_eq!(widget_text(&editor, &mut cx), "= Page\n");
 }
 
+/// A typed character is found by one diff of the widget's and the engine's text, and the
+/// engine's echo of it is not applied back: nothing per keystroke is the whole page twice.
+#[gpui::test]
+fn typing_diffs_once_and_never_reconciles(cx: &mut TestAppContext) {
+    use adoc_core::probe::{self, Probe};
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("page.adoc");
+    std::fs::write(&path, "= Page\n").unwrap();
+    let mut engine = Engine::new(Settings::default());
+    let document = engine.open(&path).unwrap();
+    let app = app_with(engine, cx);
+    let (editor, window) = editor_window(&app, document, cx);
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(7, 7), window, cx)
+        });
+    });
+    cx.run_until_parked();
+    probe::reset();
+    for character in "typing some prose here"
+        .split("")
+        .filter(|c| !c.is_empty())
+        .take(20)
+    {
+        let key = if character == " " { "space" } else { character };
+        cx.simulate_keystrokes(key);
+        cx.run_until_parked();
+    }
+    assert_eq!(document_text(&app, &mut cx), "= Page\ntyping some prose he");
+    assert_eq!(probe::count(Probe::Diff), 20);
+    assert_eq!(probe::count(Probe::Reconcile), 0);
+
+    // An edit made elsewhere is still applied to the widget.
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id: document,
+                    range: SourceRange::new(0, 0),
+                    text: "// note\n".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        widget_text(&editor, &mut cx),
+        "// note\n= Page\ntyping some prose he"
+    );
+    assert_eq!(probe::count(Probe::Reconcile), 1);
+}
+
 #[gpui::test]
 fn engine_edits_reach_the_widget(cx: &mut TestAppContext) {
     init(cx);
@@ -148,7 +205,7 @@ fn following_a_link_opens_a_tab_and_records_history(cx: &mut TestAppContext) {
     let (document, offset) = cx.update(|_, cx| {
         let engine = &app.read(cx).engine;
         let id = engine.active().unwrap();
-        let text = &engine.document(id).unwrap().parsed.text;
+        let text = &engine.document(id).unwrap().parsed().text;
         (id, text.find("xref:beta::index.adoc").unwrap() + 6)
     });
     cx.update(|window, cx| {
@@ -3064,7 +3121,7 @@ fn the_tab_bar_s_arrows_go_back_and_forward(cx: &mut TestAppContext) {
     let (document, offset) = cx.update(|_, cx| {
         let engine = &app.read(cx).engine;
         let id = engine.active().unwrap();
-        let text = &engine.document(id).unwrap().parsed.text;
+        let text = &engine.document(id).unwrap().parsed().text;
         (id, text.find("xref:beta::index.adoc").unwrap() + 6)
     });
     cx.update(|window, cx| {

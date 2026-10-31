@@ -81,7 +81,7 @@ fn preview_request(engine: &Engine, uri: &str) -> Result<(PathBuf, RenderRequest
         .ok_or_else(|| PreviewError::NotOpen(uri.to_owned()))?;
     let antora = &engine.workspace().antora;
 
-    let text = source_for_render(&open.parsed, antora, &source, &scratch_directory());
+    let text = source_for_render(open.parsed(), antora, &source, &scratch_directory());
     let mut request = RenderRequest::from_source(source.clone(), text);
     // Component attributes first, so the page and family attributes Antora computes itself
     // win should `antora.yml` name one of them.

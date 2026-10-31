@@ -342,7 +342,7 @@ impl Engine {
                     .documents
                     .values()
                     .filter(|document| document.indexed())
-                    .map(|document| (document.path.clone(), document.parsed.clone()))
+                    .map(|document| (document.path.clone(), document.parsed().clone()))
                     .collect();
                 for (path, parsed) in open {
                     self.workspace.replace_document(path, parsed);
@@ -522,7 +522,9 @@ impl Engine {
                 return;
             };
             // What was last saved or read: our own write, though typing went on since.
-            if crate::document::hash_text(&text) == state.saved_hash {
+            if text.len() == state.saved_len
+                && crate::document::hash_text(&text) == state.saved_hash
+            {
                 return;
             }
             if document.dirty {

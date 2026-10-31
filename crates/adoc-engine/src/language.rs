@@ -36,23 +36,38 @@ impl Engine {
     #[must_use]
     pub fn definition(&self, id: DocumentId, offset: usize) -> Option<DefinitionTarget> {
         let document = self.document(id)?;
-        adoc_lang::definition_at_offset(
-            &self.workspace,
-            &document.path,
-            &document.parsed.text,
-            offset,
-        )
+        adoc_lang::definition_in(&self.workspace, &document.path, document.parsed(), offset)
     }
 
     #[must_use]
     pub fn hover(&self, id: DocumentId, offset: usize) -> Option<Hover> {
         let document = self.document(id)?;
-        adoc_lang::hover_at_offset(
-            &self.workspace,
-            &document.path,
-            &document.parsed.text,
-            offset,
-        )
+        adoc_lang::hover_in(&self.workspace, &document.path, document.parsed(), offset)
+    }
+
+    /// Whether typing `typed` at `offset` in document `id` puts the caret inside something
+    /// that completes: a target being typed, `<<`, or an attribute reference. Only the line is
+    /// read, so a front end can ask on every keystroke, and ask for [`Engine::completions`]
+    /// only when this holds.
+    #[must_use]
+    pub fn completes_after(&self, id: DocumentId, offset: usize, typed: &str) -> bool {
+        let Some(document) = self.document(id) else {
+            return false;
+        };
+        let text = &document.text;
+        let offset = text.floor_char_boundary(offset.min(text.len()));
+        // Back from the caret to the line's start: lines are short, and ropey's line metrics
+        // depend on its features.
+        let mut start = offset;
+        for character in text.chars_at(offset).reversed() {
+            if character == '\n' {
+                break;
+            }
+            start -= character.len_utf8();
+        }
+        let mut line = text.slice(start..offset).to_string();
+        line.push_str(typed);
+        adoc_parser::completion_context(&line, line.len()).is_some()
     }
 
     #[must_use]
@@ -60,12 +75,7 @@ impl Engine {
         let Some(document) = self.document(id) else {
             return Vec::new();
         };
-        adoc_lang::completion_at_offset(
-            &self.workspace,
-            &document.path,
-            &document.parsed.text,
-            offset,
-        )
+        adoc_lang::completion_in(&self.workspace, &document.path, document.parsed(), offset)
     }
 
     /// The references to what is at `offset` in document `id`: to the anchor there, or to the
@@ -78,7 +88,7 @@ impl Engine {
         adoc_lang::references::references_at(
             &self.workspace,
             &document.path,
-            &document.parsed.text,
+            &document.parsed().text,
             offset,
         )
     }
@@ -124,7 +134,7 @@ impl Engine {
     #[must_use]
     pub fn anchor_at(&self, id: DocumentId, offset: usize) -> Option<String> {
         let document = self.document(id)?;
-        adoc_lang::references::anchor_at(&self.workspace, &document.path, &document.parsed, offset)
+        adoc_lang::references::anchor_at(&self.workspace, &document.path, document.parsed(), offset)
             .map(|anchor| anchor.id)
     }
 
@@ -139,7 +149,7 @@ impl Engine {
                 let Some(document) = self.document(id) else {
                     return Vec::new();
                 };
-                let parsed = &document.parsed;
+                let parsed = &document.parsed();
                 let symbol = |name: &str, kind, range: SourceRange| WorkspaceSymbol {
                     name: name.to_owned(),
                     kind,
@@ -238,7 +248,7 @@ impl Engine {
         let edits = adoc_lang::references::rename_anchor(
             &self.workspace,
             &document.path,
-            &document.parsed.text,
+            &document.parsed().text,
             offset,
             new_id,
         )?;
@@ -281,7 +291,7 @@ impl Engine {
             .document_for_path(to)
             .and_then(|open| self.document(open))
         {
-            Some(open) => &open.parsed,
+            Some(open) => open.parsed(),
             None => &self.workspace.index.file(to)?.document,
         };
         adoc_lang::xref_to(&self.workspace, from, to, target, section)
@@ -295,9 +305,9 @@ impl Engine {
             return Vec::new();
         };
         if self.workspace.antora.is_nav_file(&document.path) {
-            adoc_lang::symbols::nav_symbols(&document.parsed)
+            adoc_lang::symbols::nav_symbols(document.parsed())
         } else {
-            adoc_lang::document_symbols(&document.parsed)
+            adoc_lang::document_symbols(document.parsed())
         }
     }
 

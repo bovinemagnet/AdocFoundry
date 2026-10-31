@@ -55,7 +55,7 @@ impl Engine {
         let page = self
             .document_for_path(&from)
             .and_then(|id| self.document(id))
-            .map(|document| document.parsed.text.clone())
+            .map(|document| document.parsed().text.clone())
             .or_else(|| {
                 self.workspace
                     .index

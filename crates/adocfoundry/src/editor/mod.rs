@@ -30,20 +30,16 @@ use gpui_component::{
 use crate::{app::AppState, sidebar::DraggedLink};
 use providers::EngineProviders;
 
-/// Sends the difference between the engine's text and `widget_text` to the engine as one edit.
+/// Sends the difference between the engine's text and `widget_text` to the engine as one edit,
+/// returning the document's version after it: the version whose change the widget has already.
 pub fn sync_widget_to_engine(
     app: &mut AppState,
     document: DocumentId,
-    widget_text: &str,
+    widget_text: &ropey::Rope,
     cx: &mut Context<AppState>,
-) {
-    let Some(open) = app.engine.document(document) else {
-        return;
-    };
-    let engine_text = open.text.to_string();
-    let Some((range, replacement)) = sync::diff(&engine_text, widget_text) else {
-        return;
-    };
+) -> Option<u64> {
+    let open = app.engine.document(document)?;
+    let (range, replacement) = sync::diff(&open.text, widget_text)?;
     let command = if range.is_empty() {
         ids::EDIT_INSERT_TEXT
     } else {
@@ -52,13 +48,15 @@ pub fn sync_widget_to_engine(
     let args = CommandArgs::Text {
         id: document,
         range: SourceRange::new(range.start, range.end),
-        text: replacement.to_owned(),
+        text: replacement,
     };
     if let Err(error) = app.invoke(command, args, cx) {
         // The widget and engine disagree in a way an edit cannot express; the engine wins
         // when the editor next reconciles.
         eprintln!("adocfoundry: edit rejected: {error}");
+        return None;
     }
+    app.engine.document(document).map(|open| open.version)
 }
 
 /// The character boundary under `point` nearest to it, among the rows the editor has laid out.
@@ -103,6 +101,9 @@ pub struct SourceEditorView {
     document: DocumentId,
     readonly: bool,
     caret: Option<usize>,
+    /// The document versions the widget's own edits made, which the engine's
+    /// `DocumentChanged` for them need not reconcile.
+    own_versions: std::collections::BTreeSet<u64>,
     state: Entity<EditorState>,
     /// The change markers as last painted.
     marks: Rc<RefCell<Vec<changes::GutterMark>>>,
@@ -184,19 +185,24 @@ impl SourceEditorView {
 
         let mut subscriptions = vec![cx.subscribe(&state, |this, state, event, cx| {
             if matches!(event, InputEvent::Change) {
-                let text = state.read(cx).text().to_string();
+                // A rope clone shares the text.
+                let text = state.read(cx).text().clone();
                 let document = this.document;
-                this.app.update(cx, |app, cx| {
+                let version = this.app.update(cx, |app, cx| {
                     sync_widget_to_engine(app, document, &text, cx)
                 });
+                this.own_versions.extend(version);
             }
         })];
         subscriptions.push(cx.subscribe_in(
             &app,
             window,
             |this, _, event, window, cx| match event {
-                EngineEvent::DocumentChanged { id, .. } if *id == this.document => {
-                    this.reconcile(window, cx);
+                // The engine echoing an edit the widget made needs nothing applied back.
+                EngineEvent::DocumentChanged { id, version, .. } if *id == this.document => {
+                    if !this.own_versions.remove(version) {
+                        this.reconcile(window, cx);
+                    }
                 }
                 EngineEvent::GitHunksChanged(id) | EngineEvent::GitBlameChanged(id)
                     if *id == this.document =>
@@ -235,6 +241,7 @@ impl SourceEditorView {
             document,
             readonly,
             caret: None,
+            own_versions: std::collections::BTreeSet::new(),
             state,
             marks: Rc::default(),
             open_change: None,
@@ -402,14 +409,15 @@ impl SourceEditorView {
             .read(cx)
             .engine
             .document(self.document)
-            .map(|open| open.text.to_string())
+            .map(|open| open.text.clone())
         else {
             return;
         };
+        // Whatever the widget made before is settled now.
+        self.own_versions.clear();
         self.state.update(cx, |state, cx| {
-            let widget_text = state.text().to_string();
-            if let Some((range, replacement)) = sync::diff(&widget_text, &engine_text) {
-                let replacement = replacement.to_owned();
+            if let Some((range, replacement)) = sync::diff(state.text(), &engine_text) {
+                adoc_core::probe::hit(adoc_core::probe::Probe::Reconcile);
                 state.set_selected_range(range, cx);
                 state.replace(replacement, window, cx);
             }

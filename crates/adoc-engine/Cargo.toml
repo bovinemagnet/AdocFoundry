@@ -38,6 +38,7 @@ typst = ["dep:adoc-pdf", "dep:adoc-math"]
 git = ["dep:adoc-git"]
 
 [dev-dependencies]
+adoc-core = { workspace = true, features = ["probe"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 insta.workspace = true
 

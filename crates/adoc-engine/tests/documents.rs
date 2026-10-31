@@ -44,7 +44,7 @@ fn open_edit_save_round_trip() {
         engine
             .document(id)
             .unwrap()
-            .parsed
+            .parsed()
             .title
             .as_ref()
             .unwrap()
@@ -199,7 +199,7 @@ fn undo_redo_single_group() {
         .unwrap();
     assert_eq!(text(&engine, id), "== Title\n");
     assert_eq!(
-        engine.document(id).unwrap().parsed.sections[0].title,
+        engine.document(id).unwrap().parsed().sections[0].title,
         "Title"
     );
 

@@ -264,7 +264,7 @@ fn save_and_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutc
         .ok_or(EngineError::UnknownDocument(id))?;
     let path = document.path.clone();
     let title = document
-        .parsed
+        .parsed()
         .title
         .as_ref()
         .map(|title| title.text.clone())
