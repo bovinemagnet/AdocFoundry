@@ -514,8 +514,14 @@ Showing the source again drops it.
 The text is the truth, so the model is rebuilt from a parse whenever it could differ from it.
 
 * A typed source edit marks the model stale and schedules a rebuild after `MODEL_SETTLE`.
-`pump` performs it.
-* Any other command rebuilds a stale model before it returns, so undo, replace, rename, a reload from disk and an edit to an included file are never seen through an old model.
+When that time passes, `pump` rebuilds the model of the active page.
+* After a command other than source typing, the active page's model is rebuilt before the command returns, but only if that command made a model stale.
+So undo, replace, rename, a reload from disk and an edit to an included file are never seen through an old model on the page being shown.
+* A read-only command (Quick Open, hover, About and so on) rebuilds nothing.
+A model that only earlier source typing made stale keeps waiting for its `MODEL_SETTLE` rebuild.
+* Only the model of the active page is rebuilt eagerly.
+The model of a page in a background tab is left stale.
+It is rebuilt when its page becomes active again, through `Engine::set_active` or the tab activated after a close.
 * A visual command checks the version first.
 A command whose `VisualArgs::version` is older than the document's is refused, because its selection may point at different text.
 A model that is merely stale is rebuilt first.

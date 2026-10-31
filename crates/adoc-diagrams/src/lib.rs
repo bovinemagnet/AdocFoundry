@@ -6,9 +6,10 @@ mod external;
 mod mermaid;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fmt, io,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 pub use cache::DiagramCache;
@@ -64,11 +65,13 @@ impl DiagramRequest {
                 hasher.update(part.as_bytes());
             }
         }
-        hasher
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut checksum = String::with_capacity(64);
+        for byte in hasher.finalize() {
+            checksum.push(char::from(HEX[usize::from(byte >> 4)]));
+            checksum.push(char::from(HEX[usize::from(byte & 0xf)]));
+        }
+        checksum
     }
 }
 
@@ -137,6 +140,9 @@ pub trait DiagramProvider: Send + Sync {
 pub struct Diagrams {
     providers: Vec<Box<dyn DiagramProvider>>,
     cache: DiagramCache,
+    /// Checksums whose images are known to be in the cache. Images are named by their
+    /// content, so once there an image is never out of date, and the disk is not asked again.
+    present: Mutex<HashSet<String>>,
 }
 
 impl Diagrams {
@@ -166,7 +172,11 @@ impl Diagrams {
 
     #[must_use]
     pub fn with_providers(cache: DiagramCache, providers: Vec<Box<dyn DiagramProvider>>) -> Self {
-        Self { providers, cache }
+        Self {
+            providers,
+            cache,
+            present: Mutex::default(),
+        }
     }
 
     /// These providers and one more, for kinds a layer above renders (formulas).
@@ -191,7 +201,22 @@ impl Diagrams {
     /// The cached image for `request`, without rendering.
     #[must_use]
     pub fn cached(&self, request: &DiagramRequest) -> Option<PathBuf> {
-        self.cache.get(request)
+        self.cached_at(&request.checksum())
+    }
+
+    /// The cached image for the request whose [`DiagramRequest::checksum`] is `checksum`.
+    #[must_use]
+    pub fn cached_at(&self, checksum: &str) -> Option<PathBuf> {
+        let mut present = self
+            .present
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if present.contains(checksum) {
+            return Some(self.cache.path(checksum));
+        }
+        let path = self.cache.get(checksum)?;
+        present.insert(checksum.to_owned());
+        Some(path)
     }
 
     /// The image for `request`, rendering and caching it when it is not cached yet.
@@ -201,14 +226,32 @@ impl Diagrams {
     /// When no provider handles the kind, its tool is missing, rendering fails, or the cache
     /// cannot be written.
     pub fn render(&self, request: &DiagramRequest) -> Result<PathBuf, DiagramError> {
-        if let Some(path) = self.cached(request) {
+        self.render_at(&request.checksum(), request)
+    }
+
+    /// [`Diagrams::render`] for a request whose checksum is already known.
+    ///
+    /// # Errors
+    ///
+    /// As [`Diagrams::render`].
+    pub fn render_at(
+        &self,
+        checksum: &str,
+        request: &DiagramRequest,
+    ) -> Result<PathBuf, DiagramError> {
+        if let Some(path) = self.cached_at(checksum) {
             return Ok(path);
         }
         let provider = self
             .provider(&request.kind)
             .ok_or_else(|| DiagramError::UnsupportedKind(request.kind.clone()))?;
         let svg = provider.render(request)?;
-        Ok(self.cache.put(request, &svg)?)
+        let path = self.cache.put(checksum, &svg)?;
+        self.present
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(checksum.to_owned());
+        Ok(path)
     }
 }
 
@@ -267,6 +310,33 @@ mod tests {
             self.0.fetch_add(1, Ordering::SeqCst);
             MermaidProvider.render(request)
         }
+    }
+
+    #[test]
+    fn checksums_keep_the_names_images_are_cached_under() {
+        assert_eq!(
+            DiagramRequest::new("mermaid", "graph TD\n  A --> B\n").checksum(),
+            "cdd76dd39e9373fdcca4bb961e0506754e84dba92274cd852168e41664640289"
+        );
+    }
+
+    #[test]
+    fn an_image_known_to_be_cached_is_not_looked_for_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let diagrams = Diagrams::in_process(DiagramCache::for_workspace(dir.path()));
+        let request = mermaid();
+        let checksum = request.checksum();
+        let path = diagrams.render(&request).unwrap();
+
+        // Images are named by their content, so one found once stays found.
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(diagrams.cached_at(&checksum), Some(path.clone()));
+
+        // Another renderer over the same folder looks on disk.
+        let fresh = Diagrams::in_process(DiagramCache::for_workspace(dir.path()));
+        assert_eq!(fresh.cached_at(&checksum), None);
+        std::fs::write(&path, "<svg/>").unwrap();
+        assert_eq!(fresh.cached_at(&checksum), Some(path));
     }
 
     #[test]

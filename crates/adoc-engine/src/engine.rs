@@ -533,6 +533,8 @@ impl Engine {
                 self.auto_save_left(left);
             }
             self.recent.touch(&self.documents[&id].path);
+            // A model left stale in the background is rebuilt as it is shown.
+            self.refresh_visual(id);
             self.emit(EngineEvent::NavigationChanged);
             self.sync_preview_target();
         }
@@ -555,16 +557,18 @@ impl Engine {
             self.flush_index();
         }
         self.typing = typing;
+        let marked = self.visuals_marked();
         let result = handler.run(self, args);
         self.typing = false;
-        // Source typing rebuilds visual models once it pauses; anything else, now.
+        // Source typing rebuilds visual models once it pauses; anything else that changed one,
+        // now.
         let typing = [
             commands::ids::EDIT_INSERT_TEXT,
             commands::ids::EDIT_REPLACE_RANGE,
         ]
         .contains(&command);
         if !typing {
-            self.refresh_stale_visuals();
+            self.refresh_stale_visuals(marked);
         }
         if let Err(error) = &result {
             self.emit(EngineEvent::CommandFailed {

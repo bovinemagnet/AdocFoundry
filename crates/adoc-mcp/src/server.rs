@@ -5,7 +5,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::{mpsc::Receiver, Arc, Mutex, MutexGuard},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use adoc_core::{DiagnosticSeverity, SourceRange};
@@ -41,6 +41,9 @@ const MAX_TEXT: usize = 200_000;
 
 /// How long a render, search, Git status or export may take.
 const TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How often the engine is pumped between tool calls.
+const IDLE_PUMP: Duration = Duration::from_millis(250);
 
 const ASCIIDOC: &str = "text/asciidoc";
 
@@ -248,6 +251,37 @@ impl State {
 }
 
 impl Server {
+    /// Pumps the engine every [`IDLE_PUMP`] while no tool is using it, so files changed on disk
+    /// are applied between calls, and drops the events no tool reads, so neither the watcher's
+    /// channel nor the events pile up on a long-running server.
+    pub async fn pump_while_idle(self) {
+        let mut interval = tokio::time::interval(IDLE_PUMP);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            let state = self.state.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                let mut state = match state.try_lock() {
+                    Ok(state) => state,
+                    Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                    // A tool has the engine, and pumps it as it needs.
+                    Err(std::sync::TryLockError::WouldBlock) => return,
+                };
+                state.engine.pump();
+                state.events.try_iter().for_each(drop);
+            })
+            .await;
+        }
+    }
+}
+
+fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
+    state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+impl Server {
     pub fn new(mut engine: Engine, roots: Vec<PathBuf>, allow_write: bool) -> Self {
         let events = engine.subscribe();
         let mut tool_router = Self::tool_router();
@@ -266,10 +300,17 @@ impl Server {
         }
     }
 
-    fn state(&self) -> MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// Runs `work` with the engine on the runtime's blocking threads, so a long render, search
+    /// or export never holds up the runtime: other requests and sessions are answered meanwhile,
+    /// and wait only for the engine itself.
+    async fn blocking<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut State) -> T + Send + 'static,
+    ) -> Result<T, ErrorData> {
+        let state = self.state.clone();
+        tokio::task::spawn_blocking(move || work(&mut lock(&state)))
+            .await
+            .map_err(|error| ErrorData::internal_error(error.to_string(), None))
     }
 }
 
@@ -279,7 +320,7 @@ impl Server {
         description = "List each Antora component version: name, version, title, start page and nav files."
     )]
     async fn list_components(&self) -> Answer {
-        let state = self.state();
+        let components = self.blocking(|state| {
         let components: Vec<Value> = state
             .engine
             .workspace()
@@ -296,6 +337,8 @@ impl Server {
                 })
             })
             .collect();
+        components
+        }).await?;
         answer(Ok(limited("components", components)))
     }
 
@@ -303,8 +346,7 @@ impl Server {
         description = "The navigation trees of a component version, with each entry's page path and resource id."
     )]
     async fn get_nav(&self, Parameters(args): Parameters<GetNavArgs>) -> Answer {
-        let state = self.state();
-        let result = state
+        answer(self.blocking(move |state| state
             .engine
             .nav_trees(&args.component, args.version.as_deref())
             .map_err(|error| format!("{error:?}"))
@@ -319,16 +361,14 @@ impl Server {
                     })
                     .collect();
                 json!({ "trees": trees })
-            });
-        answer(result)
+            })).await?)
     }
 
     #[tool(
         description = "Read a page by path or Antora resource id: its text (the unsaved buffer if it has one), title, attributes and includes."
     )]
     async fn read_page(&self, Parameters(args): Parameters<ReadPageArgs>) -> Answer {
-        let state = self.state();
-        answer((|| {
+        answer(self.blocking(move |state| {
             let path = match (&args.path, &args.resource_id) {
                 (Some(path), _) => state.confine(path)?,
                 (None, Some(id)) => {
@@ -393,15 +433,14 @@ impl Server {
                 value["truncated"] = json!({ "shown_bytes": MAX_TEXT, "total_bytes": total });
             }
             Ok(value)
-        })())
+        }).await?)
     }
 
     #[tool(
         description = "What an xref, include or image target resolves to from a page, or that it does not."
     )]
     async fn resolve(&self, Parameters(args): Parameters<ResolveArgs>) -> Answer {
-        let state = self.state();
-        answer((|| {
+        answer(self.blocking(move |state| {
             let from = state.confine(&args.from)?;
             Ok(match state.engine.resolve_target(&from, &args.target) {
                 Some(DefinitionTarget::Location(location)) => {
@@ -427,93 +466,100 @@ impl Server {
                     "reason": format!("`{}` names no page, file or anchor from {}", args.target, state.shown(&from)),
                 }),
             })
-        })())
+        }).await?)
     }
 
     #[tool(
         description = "The workspace's diagnostics, as `adocfoundry-cli check --format json` gives them, and whether any meets `fail_on`."
     )]
     async fn check(&self, Parameters(args): Parameters<CheckArgs>) -> Answer {
-        let state = self.state();
-        answer((|| {
-            let threshold = match args.fail_on.as_deref().unwrap_or("error") {
-                "error" => DiagnosticSeverity::Error,
-                "warning" => DiagnosticSeverity::Warning,
-                other => return Err(format!("unknown fail_on level `{other}`")),
-            };
-            let scope = args
-                .scope
-                .as_deref()
-                .map(|scope| state.confine(scope))
-                .transpose()?;
-            let entries = state.engine.check_report(state.root(), scope.as_deref());
-            let failed = entries.iter().any(|entry| entry.meets(threshold));
-            let mut value = limited("diagnostics", entries);
-            value["failed"] = json!(failed);
-            Ok(value)
-        })())
+        answer(
+            self.blocking(move |state| {
+                let threshold = match args.fail_on.as_deref().unwrap_or("error") {
+                    "error" => DiagnosticSeverity::Error,
+                    "warning" => DiagnosticSeverity::Warning,
+                    other => return Err(format!("unknown fail_on level `{other}`")),
+                };
+                let scope = args
+                    .scope
+                    .as_deref()
+                    .map(|scope| state.confine(scope))
+                    .transpose()?;
+                let entries = state.engine.check_report(state.root(), scope.as_deref());
+                let failed = entries.iter().any(|entry| entry.meets(threshold));
+                let mut value = limited("diagnostics", entries);
+                value["failed"] = json!(failed);
+                Ok(value)
+            })
+            .await?,
+        )
     }
 
     #[tool(
         description = "Workspace symbols (titles, sections, anchors, attributes) matching a query."
     )]
     async fn symbols(&self, Parameters(args): Parameters<SymbolsArgs>) -> Answer {
-        let state = self.state();
-        let symbols: Vec<Value> = state
-            .engine
-            .workspace_symbols(&args.query)
-            .into_iter()
-            .map(|symbol| {
-                let line = state
-                    .text(&symbol.path)
-                    .map(|text| {
-                        text[..symbol.range.start.min(text.len())]
-                            .matches('\n')
-                            .count()
-                            + 1
+        let symbols = self
+            .blocking(move |state| {
+                let symbols: Vec<Value> = state
+                    .engine
+                    .workspace_symbols(&args.query)
+                    .into_iter()
+                    .map(|symbol| {
+                        let line = state
+                            .text(&symbol.path)
+                            .map(|text| {
+                                text[..symbol.range.start.min(text.len())]
+                                    .matches('\n')
+                                    .count()
+                                    + 1
+                            })
+                            .ok();
+                        json!({
+                            "name": symbol.name,
+                            "kind": format!("{:?}", symbol.kind).to_lowercase(),
+                            "path": state.shown(&symbol.path),
+                            "line": line,
+                            "container": symbol.container,
+                        })
                     })
-                    .ok();
-                json!({
-                    "name": symbol.name,
-                    "kind": format!("{:?}", symbol.kind).to_lowercase(),
-                    "path": state.shown(&symbol.path),
-                    "line": line,
-                    "container": symbol.container,
-                })
+                    .collect();
+                symbols
             })
-            .collect();
+            .await?;
         answer(Ok(limited("symbols", symbols)))
     }
 
     #[tool(description = "Search the workspace's pages, with the line of each match.")]
     async fn search(&self, Parameters(args): Parameters<SearchArgs>) -> Answer {
-        let mut state = self.state();
-        answer((|| {
-            let scope = args
-                .scope
-                .as_deref()
-                .map(|scope| state.confine(scope))
-                .transpose()?;
-            state.events.try_iter().for_each(drop);
-            state
-                .engine
-                .invoke(
-                    ids::WORKSPACE_SEARCH,
-                    CommandArgs::Search(SearchRequest {
-                        query: args.query.clone(),
-                        regex: args.regex,
-                        case_sensitive: args.case_sensitive,
-                        whole_word: args.whole_word,
-                        scope,
-                    }),
-                )
-                .map_err(|error| error.to_string())?;
-            let deadline = Instant::now() + TIMEOUT;
-            let mut matches = Vec::new();
-            loop {
-                state.engine.pump();
+        answer(
+            self.blocking(move |state| {
+                let scope = args
+                    .scope
+                    .as_deref()
+                    .map(|scope| state.confine(scope))
+                    .transpose()?;
+                state.events.try_iter().for_each(drop);
+                state
+                    .engine
+                    .invoke(
+                        ids::WORKSPACE_SEARCH,
+                        CommandArgs::Search(SearchRequest {
+                            query: args.query.clone(),
+                            regex: args.regex,
+                            case_sensitive: args.case_sensitive,
+                            whole_word: args.whole_word,
+                            scope,
+                        }),
+                    )
+                    .map_err(|error| error.to_string())?;
+                // The search runs on one worker, which reports every match at once.
+                if !state.engine.wait_for_workers(TIMEOUT) {
+                    return Err("the search did not finish".to_owned());
+                }
+                let mut matches = Vec::new();
                 let mut done = false;
-                for event in state.events.try_iter().collect::<Vec<_>>() {
+                for event in state.events.try_iter() {
                     if let EngineEvent::SearchResults {
                         results,
                         done: finished,
@@ -524,76 +570,79 @@ impl Server {
                         done |= finished;
                     }
                 }
-                if done {
-                    break;
-                }
-                if Instant::now() > deadline {
+                if !done {
                     return Err("the search did not finish".to_owned());
                 }
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            let matches: Vec<Value> = matches
-                .iter()
-                .map(|found| {
-                    json!({
-                        "path": state.shown(&found.path),
-                        "line": found.line + 1,
-                        "text": found.line_text,
+                let matches: Vec<Value> = matches
+                    .iter()
+                    .map(|found| {
+                        json!({
+                            "path": state.shown(&found.path),
+                            "line": found.line + 1,
+                            "text": found.line_text,
+                        })
                     })
-                })
-                .collect();
-            Ok(limited("matches", matches))
-        })())
+                    .collect();
+                Ok(limited("matches", matches))
+            })
+            .await?,
+        )
     }
 
     #[tool(
         description = "Render a page through the engine: plain text from its view tree, or HTML."
     )]
     async fn render_page(&self, Parameters(args): Parameters<RenderPageArgs>) -> Answer {
-        let mut state = self.state();
-        answer((|| {
-            let path = state.confine(&args.path)?;
-            let html = match args.format.as_deref().unwrap_or("text") {
-                "text" => false,
-                "html" => true,
-                other => return Err(format!("unknown format `{other}`; use `text` or `html`")),
-            };
-            let (id, opened) = state.open(&path)?;
-            let rendered = state.engine.render_blocking(id, TIMEOUT);
-            if opened {
-                let _ = state.engine.close(id);
-            }
-            let preview = rendered.ok_or_else(|| format!("{} did not render", args.path))?;
-            let output = if html {
-                adoc_engine::to_html(
-                    &preview.view,
-                    &adoc_engine::HtmlOptions { standalone: true },
-                )
-            } else {
-                adoc_engine::to_text(&preview.view)
-            };
-            let (output, total) = limited_text(&output);
-            let mut value = json!({ "path": state.shown(&path), "content": output });
-            if let Some(total) = total {
-                value["truncated"] = json!({ "shown_bytes": MAX_TEXT, "total_bytes": total });
-            }
-            Ok(value)
-        })())
+        answer(
+            self.blocking(move |state| {
+                let path = state.confine(&args.path)?;
+                let html = match args.format.as_deref().unwrap_or("text") {
+                    "text" => false,
+                    "html" => true,
+                    other => return Err(format!("unknown format `{other}`; use `text` or `html`")),
+                };
+                let (id, opened) = state.open(&path)?;
+                let rendered = state.engine.render_blocking(id, TIMEOUT);
+                if opened {
+                    let _ = state.engine.close(id);
+                }
+                let preview = rendered.ok_or_else(|| format!("{} did not render", args.path))?;
+                let output = if html {
+                    adoc_engine::to_html(
+                        &preview.view,
+                        &adoc_engine::HtmlOptions { standalone: true },
+                    )
+                } else {
+                    adoc_engine::to_text(&preview.view)
+                };
+                let (output, total) = limited_text(&output);
+                let mut value = json!({ "path": state.shown(&path), "content": output });
+                if let Some(total) = total {
+                    value["truncated"] = json!({ "shown_bytes": MAX_TEXT, "total_bytes": total });
+                }
+                Ok(value)
+            })
+            .await?,
+        )
     }
 
     #[tool(
         description = "Each root's Git branch and changed AsciiDoc files, as `adocfoundry-cli git-status --format json` gives them."
     )]
     async fn git_status(&self) -> Answer {
-        let mut state = self.state();
-        let roots = state.roots.clone();
-        let reports: Vec<Value> = roots
-            .iter()
-            .map(|root| match state.engine.git_status_report(root, TIMEOUT) {
-                Ok(report) => json!({ "root": root, "status": report }),
-                Err(error) => json!({ "root": root, "error": error.to_string() }),
+        let reports = self
+            .blocking(|state| {
+                let roots = state.roots.clone();
+                let reports: Vec<Value> = roots
+                    .iter()
+                    .map(|root| match state.engine.git_status_report(root, TIMEOUT) {
+                        Ok(report) => json!({ "root": root, "status": report }),
+                        Err(error) => json!({ "root": root, "error": error.to_string() }),
+                    })
+                    .collect();
+                reports
             })
-            .collect();
+            .await?;
         answer(Ok(json!({ "roots": reports })))
     }
 
@@ -601,148 +650,151 @@ impl Server {
         description = "Edit a page: each edit replaces text that occurs exactly once, or a byte range, through the engine's edit command, in order. With `save`, the page is written to disk."
     )]
     async fn edit_page(&self, Parameters(args): Parameters<EditPageArgs>) -> Answer {
-        let mut state = self.state();
-        answer((|| {
-            let path = state.confine(&args.path)?;
-            let (id, _) = state.open(&path)?;
-            let mut applied = 0;
-            let result = (|| {
-                for (number, edit) in args.edits.iter().enumerate() {
-                    let text = state
-                        .engine
-                        .document(id)
-                        .map(adoc_engine::OpenDocument::text_string)
-                        .unwrap_or_default();
-                    let range = match (&edit.old_text, &edit.range) {
-                        (Some(old), None) => {
-                            let found: Vec<usize> =
-                                text.match_indices(old.as_str()).map(|(at, _)| at).collect();
-                            match found.as_slice() {
-                                [at] => SourceRange::new(*at, at + old.len()),
-                                [] => {
-                                    return Err(format!(
-                                        "edit {}: `old_text` is not in the page",
-                                        number + 1
-                                    ))
-                                }
-                                _ => {
-                                    return Err(format!(
+        answer(
+            self.blocking(move |state| {
+                let path = state.confine(&args.path)?;
+                let (id, _) = state.open(&path)?;
+                let mut applied = 0;
+                let result = (|| {
+                    for (number, edit) in args.edits.iter().enumerate() {
+                        let text = state
+                            .engine
+                            .document(id)
+                            .map(adoc_engine::OpenDocument::text_string)
+                            .unwrap_or_default();
+                        let range = match (&edit.old_text, &edit.range) {
+                            (Some(old), None) => {
+                                let found: Vec<usize> =
+                                    text.match_indices(old.as_str()).map(|(at, _)| at).collect();
+                                match found.as_slice() {
+                                    [at] => SourceRange::new(*at, at + old.len()),
+                                    [] => {
+                                        return Err(format!(
+                                            "edit {}: `old_text` is not in the page",
+                                            number + 1
+                                        ))
+                                    }
+                                    _ => {
+                                        return Err(format!(
                                         "edit {}: `old_text` occurs {} times; give more context",
                                         number + 1,
                                         found.len()
                                     ))
+                                    }
                                 }
                             }
-                        }
-                        (None, Some(range)) => SourceRange::new(range.start, range.end),
-                        _ => {
-                            return Err(format!(
-                                "edit {}: give either `old_text` or `range`",
-                                number + 1
-                            ))
-                        }
-                    };
+                            (None, Some(range)) => SourceRange::new(range.start, range.end),
+                            _ => {
+                                return Err(format!(
+                                    "edit {}: give either `old_text` or `range`",
+                                    number + 1
+                                ))
+                            }
+                        };
+                        state
+                            .engine
+                            .invoke(
+                                ids::EDIT_REPLACE_RANGE,
+                                CommandArgs::Text {
+                                    id,
+                                    range,
+                                    text: edit.new_text.clone(),
+                                },
+                            )
+                            .map_err(|error| format!("edit {}: {error}", number + 1))?;
+                        applied += 1;
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    // All or nothing: the edits already made are undone.
+                    for _ in 0..applied {
+                        state.engine.undo(id);
+                    }
+                    return Err(error);
+                }
+                if args.save {
                     state
                         .engine
-                        .invoke(
-                            ids::EDIT_REPLACE_RANGE,
-                            CommandArgs::Text {
-                                id,
-                                range,
-                                text: edit.new_text.clone(),
-                            },
-                        )
-                        .map_err(|error| format!("edit {}: {error}", number + 1))?;
-                    applied += 1;
+                        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
+                        .map_err(|error| error.to_string())?;
                 }
-                Ok(())
-            })();
-            if let Err(error) = result {
-                // All or nothing: the edits already made are undone.
-                for _ in 0..applied {
-                    state.engine.undo(id);
-                }
-                return Err(error);
-            }
-            if args.save {
-                state
+                let length = state
                     .engine
-                    .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
-                    .map_err(|error| error.to_string())?;
-            }
-            let length = state
-                .engine
-                .document(id)
-                .map_or(0, |document| document.text.len());
-            Ok(json!({
-                "path": state.shown(&path),
-                "edits": applied,
-                "saved": args.save,
-                "length": length,
-            }))
-        })())
+                    .document(id)
+                    .map_or(0, |document| document.text.len());
+                Ok(json!({
+                    "path": state.shown(&path),
+                    "edits": applied,
+                    "saved": args.save,
+                    "length": length,
+                }))
+            })
+            .await?,
+        )
     }
 
     #[tool(
         description = "Rename a page, rewriting the xrefs, nav entries and includes that name it, and save every file changed."
     )]
     async fn rename_page(&self, Parameters(args): Parameters<RenamePageArgs>) -> Answer {
-        let mut state = self.state();
-        answer((|| {
-            let path = state.confine(&args.path)?;
-            let parent = path.parent().unwrap_or_else(|| Path::new(""));
-            let new_path = state.confine(&parent.join(&args.new_name).to_string_lossy())?;
-            let (id, _) = state.open(&path)?;
-            let CommandOutcome::Preview(preview) = state
-                .engine
-                .invoke(
-                    ids::PAGE_RENAME,
-                    CommandArgs::Rename {
-                        id,
-                        new_path: new_path.clone(),
-                    },
-                )
-                .map_err(|error| error.to_string())?
-            else {
-                return Err("the rename produced no change".to_owned());
-            };
-            state
-                .engine
-                .invoke(
-                    ids::WORKSPACE_APPLY_PREVIEW,
-                    CommandArgs::Custom(json!({ "preview_id": preview.id.get() })),
-                )
-                .map_err(|error| error.to_string())?;
-            let mut changed = Vec::new();
-            for file in preview
-                .edits
-                .iter()
-                .map(|file| &file.path)
-                .chain([&new_path])
-            {
-                let file = if *file == path { &new_path } else { file };
-                if let Some(document) = state.engine.document_for_path(file) {
-                    state
-                        .engine
-                        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(document))
-                        .map_err(|error| error.to_string())?;
+        answer(
+            self.blocking(move |state| {
+                let path = state.confine(&args.path)?;
+                let parent = path.parent().unwrap_or_else(|| Path::new(""));
+                let new_path = state.confine(&parent.join(&args.new_name).to_string_lossy())?;
+                let (id, _) = state.open(&path)?;
+                let CommandOutcome::Preview(preview) = state
+                    .engine
+                    .invoke(
+                        ids::PAGE_RENAME,
+                        CommandArgs::Rename {
+                            id,
+                            new_path: new_path.clone(),
+                        },
+                    )
+                    .map_err(|error| error.to_string())?
+                else {
+                    return Err("the rename produced no change".to_owned());
+                };
+                state
+                    .engine
+                    .invoke(
+                        ids::WORKSPACE_APPLY_PREVIEW,
+                        CommandArgs::Custom(json!({ "preview_id": preview.id.get() })),
+                    )
+                    .map_err(|error| error.to_string())?;
+                let mut changed = Vec::new();
+                for file in preview
+                    .edits
+                    .iter()
+                    .map(|file| &file.path)
+                    .chain([&new_path])
+                {
+                    let file = if *file == path { &new_path } else { file };
+                    if let Some(document) = state.engine.document_for_path(file) {
+                        state
+                            .engine
+                            .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(document))
+                            .map_err(|error| error.to_string())?;
+                    }
+                    changed.push(state.shown(file));
                 }
-                changed.push(state.shown(file));
-            }
-            changed.sort();
-            changed.dedup();
-            Ok(json!({
-                "from": state.shown(&path),
-                "to": state.shown(&new_path),
-                "changed": changed,
-            }))
-        })())
+                changed.sort();
+                changed.dedup();
+                Ok(json!({
+                    "from": state.shown(&path),
+                    "to": state.shown(&new_path),
+                    "changed": changed,
+                }))
+            })
+            .await?,
+        )
     }
 
     #[tool(description = "Export a page as an article, or a component version as a book, to PDF.")]
     async fn export_pdf(&self, Parameters(args): Parameters<ExportPdfArgs>) -> Answer {
-        let mut state = self.state();
-        answer((|| {
+        answer(self.blocking(move |state| {
             let output = state.confine(&args.output)?;
             let target = match (&args.path, &args.component) {
                 (Some(path), None) => {
@@ -785,7 +837,7 @@ impl Server {
                 "pages": summary.pages,
                 "warnings": summary.diagnostics.iter().map(ToString::to_string).collect::<Vec<_>>(),
             }))
-        })())
+        }).await?)
     }
 }
 
@@ -820,22 +872,26 @@ impl ServerHandler for Server {
         _: Option<PaginatedRequestParams>,
         _: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let state = self.state();
-        let mut resources: Vec<Resource> = state
-            .engine
-            .workspace()
-            .index
-            .files()
-            .map(|file| {
-                let name = state.shown(&file.path);
-                let mut resource =
-                    Resource::new(file_uri(&file.path), name).with_mime_type(ASCIIDOC);
-                if let Some(title) = &file.document.title {
-                    resource = resource.with_title(title.text.clone());
-                }
-                resource
+        let mut resources = self
+            .blocking(|state| {
+                let resources: Vec<Resource> = state
+                    .engine
+                    .workspace()
+                    .index
+                    .files()
+                    .map(|file| {
+                        let name = state.shown(&file.path);
+                        let mut resource =
+                            Resource::new(file_uri(&file.path), name).with_mime_type(ASCIIDOC);
+                        if let Some(title) = &file.document.title {
+                            resource = resource.with_title(title.text.clone());
+                        }
+                        resource
+                    })
+                    .collect();
+                resources
             })
-            .collect();
+            .await?;
         resources.sort_by(|a, b| a.uri.cmp(&b.uri));
         Ok(ListResourcesResult::with_all_items(resources))
     }
@@ -859,23 +915,25 @@ impl ServerHandler for Server {
         request: ReadResourceRequestParams,
         _: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let state = self.state();
-        let not_found = |message: String| ErrorData::resource_not_found(message, None);
-        let path = if let Some(id) = request.uri.strip_prefix("antora:") {
-            state
-                .engine
-                .resolve_resource_id(id, None)
-                .map_err(|error| not_found(error.to_string()))?
-        } else if let Some(path) = request.uri.strip_prefix("file://") {
-            PathBuf::from(path)
-        } else {
-            return Err(not_found(format!("unknown resource {}", request.uri)));
-        };
-        let path = state.confine(&path.to_string_lossy()).map_err(not_found)?;
-        let text = state.text(&path).map_err(not_found)?;
-        Ok(ReadResourceResult::new(vec![
-            ResourceContents::text(text, request.uri.clone()).with_mime_type(ASCIIDOC)
-        ])
-        .into())
+        self.blocking(move |state| {
+            let not_found = |message: String| ErrorData::resource_not_found(message, None);
+            let path = if let Some(id) = request.uri.strip_prefix("antora:") {
+                state
+                    .engine
+                    .resolve_resource_id(id, None)
+                    .map_err(|error| not_found(error.to_string()))?
+            } else if let Some(path) = request.uri.strip_prefix("file://") {
+                PathBuf::from(path)
+            } else {
+                return Err(not_found(format!("unknown resource {}", request.uri)));
+            };
+            let path = state.confine(&path.to_string_lossy()).map_err(not_found)?;
+            let text = state.text(&path).map_err(not_found)?;
+            Ok(ReadResourceResult::new(vec![
+                ResourceContents::text(text, request.uri.clone()).with_mime_type(ASCIIDOC)
+            ])
+            .into())
+        })
+        .await?
     }
 }

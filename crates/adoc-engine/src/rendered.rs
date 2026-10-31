@@ -89,7 +89,7 @@ pub(crate) struct PreviewState {
     parser: Option<Arc<dyn DocumentParser>>,
     rendering: BTreeSet<String>,
     /// Diagrams waiting for one of the [`DIAGRAM_WORKERS`].
-    queued: std::collections::VecDeque<(Arc<Diagrams>, DiagramRequest)>,
+    queued: std::collections::VecDeque<(Arc<Diagrams>, String, DiagramRequest)>,
     /// Diagram renders running on workers.
     running: usize,
     failed: BTreeMap<String, String>,
@@ -557,14 +557,14 @@ impl Engine {
         self.publish_preview(id);
     }
 
-    /// The view of `dom`, with the diagrams it still needs, which are started. Formulas are
+    /// The view of `dom`, with the checksums of the diagrams it still needs, which are started. Formulas are
     /// rendered as images only for views that draw them (`formulas`); a PDF typesets its own.
     pub(crate) fn view_of(
         &mut self,
         path: &Path,
         dom: &Dom,
         formulas: bool,
-    ) -> (ViewTree, Vec<DiagramRequest>) {
+    ) -> (ViewTree, BTreeSet<String>) {
         let diagrams = self.diagrams();
         let resolver = EngineResolver {
             workspace: &self.workspace,
@@ -574,11 +574,12 @@ impl Engine {
             wanted: RefCell::default(),
         };
         let view = build_view(path, dom, &resolver);
-        let wanted = resolver.wanted.into_inner();
-        for request in &wanted {
-            self.spawn_diagram(&diagrams, request.clone());
+        let mut waiting = BTreeSet::new();
+        for (checksum, request) in resolver.wanted.into_inner() {
+            waiting.insert(checksum.clone());
+            self.spawn_diagram(&diagrams, checksum, request);
         }
-        (view, wanted)
+        (view, waiting)
     }
 
     /// Builds the view from the cached parse, starts any diagram it is missing, and publishes.
@@ -587,7 +588,7 @@ impl Engine {
             return;
         };
         let (path, dom) = (parsed.path.clone(), parsed.dom.clone());
-        let (view, wanted) = self.view_of(&path, &dom, true);
+        let (view, waiting) = self.view_of(&path, &dom, true);
         let Some(parsed) = self.rendered.parsed.get(&id) else {
             return;
         };
@@ -598,7 +599,7 @@ impl Engine {
             view,
         });
         if let Some(parsed) = self.rendered.parsed.get_mut(&id) {
-            parsed.waiting = wanted.iter().map(DiagramRequest::checksum).collect();
+            parsed.waiting = waiting;
         }
         let version = preview.version;
         self.rendered.published.insert(id, preview);
@@ -676,25 +677,33 @@ impl Engine {
     }
 
     /// Renders `request` on a worker, or queues it while all [`DIAGRAM_WORKERS`] are busy.
-    fn spawn_diagram(&mut self, diagrams: &Arc<Diagrams>, request: DiagramRequest) {
-        if !self.rendered.rendering.insert(request.checksum()) {
+    fn spawn_diagram(
+        &mut self,
+        diagrams: &Arc<Diagrams>,
+        checksum: String,
+        request: DiagramRequest,
+    ) {
+        if !self.rendered.rendering.insert(checksum.clone()) {
             return;
         }
-        self.rendered.queued.push_back((diagrams.clone(), request));
+        self.rendered
+            .queued
+            .push_back((diagrams.clone(), checksum, request));
         self.start_queued_diagrams();
     }
 
     fn start_queued_diagrams(&mut self) {
         while self.rendered.running < DIAGRAM_WORKERS {
-            let Some((diagrams, request)) = self.rendered.queued.pop_front() else {
+            let Some((diagrams, checksum, request)) = self.rendered.queued.pop_front() else {
                 return;
             };
             let sender = self.worker_sender.clone();
             self.rendered.running += 1;
             self.workers_running += 1;
             thread::spawn(move || {
-                let checksum = request.checksum();
-                let result = diagrams.render(&request).map_err(|error| error.to_string());
+                let result = diagrams
+                    .render_at(&checksum, &request)
+                    .map_err(|error| error.to_string());
                 let _ = sender.send(WorkerMessage::DiagramRendered { checksum, result });
             });
         }
@@ -731,7 +740,7 @@ struct EngineResolver<'e> {
     /// Whether formulas are rendered as images for this view.
     formulas: bool,
     /// Diagrams to render, gathered while building because the view is built immutably.
-    wanted: RefCell<Vec<DiagramRequest>>,
+    wanted: RefCell<Vec<(String, DiagramRequest)>>,
 }
 
 impl ViewResolver for EngineResolver<'_> {
@@ -810,7 +819,8 @@ impl ViewResolver for EngineResolver<'_> {
             source: source.to_owned(),
             attributes: attributes.clone(),
         };
-        if let Some(path) = self.diagrams.cached(&request) {
+        let checksum = request.checksum();
+        if let Some(path) = self.diagrams.cached_at(&checksum) {
             return DiagramView::Svg(path);
         }
         if !self.formulas && kind.starts_with("stem-") {
@@ -824,13 +834,13 @@ impl ViewResolver for EngineResolver<'_> {
             message,
             source: source.to_owned(),
         };
-        if let Some(message) = self.failed.get(&request.checksum()) {
+        if let Some(message) = self.failed.get(&checksum) {
             return failed(message.clone());
         }
         if !self.diagrams.supports(kind) {
             return failed(format!("no renderer for {kind} diagrams"));
         }
-        self.wanted.borrow_mut().push(request);
+        self.wanted.borrow_mut().push((checksum, request));
         DiagramView::Pending {
             kind: kind.to_owned(),
             source: source.to_owned(),

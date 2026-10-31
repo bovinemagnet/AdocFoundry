@@ -6,10 +6,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+adoc-core.workspace = true
 spellbook.workspace = true
 unicode-segmentation.workspace = true
 
 [dev-dependencies]
+adoc-core = { workspace = true, features = ["probe"] }
 tempfile.workspace = true
 
 [lints]

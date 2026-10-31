@@ -66,15 +66,23 @@ impl std::error::Error for SpellError {
     }
 }
 
+/// The most words whose suggestions a dictionary remembers; past it, it starts again.
+const REMEMBERED_SUGGESTIONS: usize = 10_000;
+
 /// A parsed dictionary.
 pub struct Checker {
     dictionary: spellbook::Dictionary,
+    /// The suggestions found for each word, since finding them is the costly part of checking.
+    suggested: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl Checker {
     fn parse(name: &str, aff: &str, dic: &str) -> Result<Self, SpellError> {
         spellbook::Dictionary::new(aff, dic)
-            .map(|dictionary| Self { dictionary })
+            .map(|dictionary| Self {
+                dictionary,
+                suggested: Mutex::default(),
+            })
             .map_err(|error| SpellError::Parse {
                 name: name.to_owned(),
                 message: error.to_string(),
@@ -88,14 +96,30 @@ impl Checker {
         self.dictionary.check(&apostrophes(word))
     }
 
-    /// At most [`MAX_SUGGESTIONS`] replacements for `word`, best first.
+    /// At most [`MAX_SUGGESTIONS`] replacements for `word`, best first. Each word's are found
+    /// once and remembered.
     #[must_use]
     pub fn suggest(&self, word: &str) -> Vec<String> {
+        if let Some(suggestions) = self.lock_suggested().get(word).cloned() {
+            return suggestions;
+        }
+        adoc_core::probe::hit(adoc_core::probe::Probe::Suggest);
         let mut suggestions = Vec::new();
         self.dictionary
             .suggest(&apostrophes(word), &mut suggestions);
         suggestions.truncate(MAX_SUGGESTIONS);
+        let mut suggested = self.lock_suggested();
+        if suggested.len() >= REMEMBERED_SUGGESTIONS {
+            suggested.clear();
+        }
+        suggested.insert(word.to_owned(), suggestions.clone());
         suggestions
+    }
+
+    fn lock_suggested(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<String>>> {
+        self.suggested
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 }
 
@@ -250,6 +274,17 @@ mod tests {
             "{suggestions:?}"
         );
         assert!(suggestions.len() <= MAX_SUGGESTIONS);
+    }
+
+    #[test]
+    fn a_word_s_suggestions_are_found_once() {
+        let gb = bundled().load("en_GB").unwrap();
+        adoc_core::probe::reset();
+        let first = gb.suggest("seperate");
+        assert_eq!(gb.suggest("seperate"), first);
+        assert_eq!(adoc_core::probe::count(adoc_core::probe::Probe::Suggest), 1);
+        let _ = gb.suggest("definately");
+        assert_eq!(adoc_core::probe::count(adoc_core::probe::Probe::Suggest), 2);
     }
 
     #[test]

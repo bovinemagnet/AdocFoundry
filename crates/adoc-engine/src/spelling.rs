@@ -112,37 +112,36 @@ impl Engine {
 
     /// The open AsciiDoc documents not checked at their version and generation, the active
     /// one first; none while a check runs.
-    fn unchecked(&self) -> Vec<(DocumentId, u64)> {
-        if !self.spelling_on() || self.spelling.checking.is_some() {
-            return Vec::new();
-        }
+    fn unchecked(&self) -> impl Iterator<Item = (DocumentId, u64)> + '_ {
+        let idle = self.spelling_on() && self.spelling.checking.is_none();
         let generation = self.spelling.generation;
-        let mut ids: Vec<DocumentId> = self.active.into_iter().collect();
-        ids.extend(self.documents.keys().filter(|id| Some(**id) != self.active));
-        ids.into_iter()
-            .filter_map(|id| {
+        let others = self.documents.keys().filter(|id| Some(**id) != self.active);
+        self.active
+            .iter()
+            .chain(others)
+            .filter(move |_| idle)
+            .filter_map(move |id| {
                 let document = self
                     .documents
-                    .get(&id)
+                    .get(id)
                     .filter(|document| document.asciidoc)?;
-                let current = self.spelling.results.get(&id).is_some_and(|checked| {
+                let current = self.spelling.results.get(id).is_some_and(|checked| {
                     checked.version == document.version && checked.generation == generation
                 });
-                (!current).then_some((id, document.version))
+                (!current).then_some((*id, document.version))
             })
-            .collect()
     }
 
     /// True while a page waits to be checked.
     pub(crate) fn has_due_spelling(&self) -> bool {
-        !self.unchecked().is_empty()
+        self.unchecked().next().is_some()
     }
 
     /// Starts checking the first page that has gone unchanged for [`SPELLING_SETTLE`]. Returns
     /// the number of checks started.
     pub(crate) fn start_due_spelling(&mut self) -> usize {
         let now = self.clock.now();
-        let due = self.unchecked().into_iter().find(|(id, _)| {
+        let due = self.unchecked().find(|(id, _)| {
             self.spelling
                 .changed
                 .get(id)

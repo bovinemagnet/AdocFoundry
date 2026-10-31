@@ -229,6 +229,7 @@ impl Engine {
                 if let Some(document) = self.documents.get(&id) {
                     self.recent.touch(&document.path);
                 }
+                self.refresh_visual(id);
             }
             Some(TabItem::Image(id)) => self.images.active = Some(id),
             None => {}
