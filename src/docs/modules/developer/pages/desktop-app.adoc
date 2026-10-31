@@ -199,10 +199,23 @@ Offsets are converted to display positions only when painting and hit testing, t
 The caret carries the marks of the text before it, so typed text continues a mark.
 With nothing selected, Bold, Italic, Code and Highlight toggle the marks the next typed text carries; the view holds them and resets them when the caret moves.
 
+=== Drawing a row at a time
+
+The visual editor draws through a GPUI `list` (`gpui::list`) over a `ListState` held by `VisualView`, so a long page is not laid out in full each frame.
+The list's rows (`blocks::Row`, built by `blocks::rows` once per model) are the top-level nodes of the page.
+A section is the exception: it is a row for its heading followed by a row for each of its blocks, and so on for nested sections, so a page divided into sections is still laid out a block at a time.
+Only the rows in view, and 400 px beyond them (`LIST_OVERDRAW`), are rendered and laid out.
+What every row shares (the caret's block, the sorted hunks and misspellings, and focus) is worked out once per frame in `blocks::frame`, and `blocks::row` draws one row.
+When a new model arrives, rows past the old count are added or dropped, and every other row is measured again where it is next laid out, so the scroll position holds.
+When the caret's row was not laid out in the last frame, the list scrolls to put that row at the top (`reveal_row`).
+Once the row is laid out, the caret scrolls itself into view as it is painted (`ListState::scroll_by`).
+`reveal_offset`, which split mode uses to follow the source caret, scrolls by the block's bounds when the block is laid out and to its row otherwise.
+Moving up or down with nothing drawn beyond the current block goes to the start of the next text block, or the end of the previous one, which may be out of view; the caret reveal then scrolls to it.
+
 === Hit testing and layouts
 
-Each frame, every text block records its shaped layout under its path in the model.
-The text block holding the caret is found once per frame, in `blocks::document`, and each block compares its path with it.
+Each text block laid out in a frame records its shaped layout under its path in the model, so a block out of view has none.
+The text block holding the caret is found once per frame, in `blocks::frame`, and each block compares its path with it.
 `Model::text_block_at` searches an index of the text blocks ordered by where they start.
 The index is built on the first lookup and is not carried by a clone (a model is cloned to be changed), so a lookup no longer walks the model.
 The misspellings and the Git hunks are sorted once per frame, and each block finds its own by binary search.

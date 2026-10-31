@@ -7,7 +7,7 @@ use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc
 use adoc_engine::{Atom, BlockPath, Mark, MarkSet, Piece, TextBlock, TextContext};
 use gpui::{
     canvas, fill, px, size, AnyElement, Bounds, FontStyle, FontWeight, HighlightStyle, Hsla,
-    IntoElement as _, ParentElement as _, Pixels, Point, ScrollHandle, SharedString, Styled as _,
+    IntoElement as _, ListState, ParentElement as _, Pixels, Point, SharedString, Styled as _,
     StyledText, TextLayout, TextRun, UnderlineStyle,
 };
 
@@ -341,7 +341,7 @@ pub struct Overlay {
     /// Behind a typeset formula.
     pub formula_backing: Option<Hsla>,
     /// Scroll so the caret is visible, once.
-    pub reveal: Option<(ScrollHandle, Rc<std::cell::Cell<bool>>)>,
+    pub reveal: Option<(ListState, Rc<std::cell::Cell<bool>>)>,
 }
 
 /// The element for a text block: its text, and an overlay that records the layout under
@@ -423,18 +423,15 @@ pub fn element(
         .into_any_element()
 }
 
-/// Adjusts `scroll` so `caret` is inside its visible bounds.
-fn scroll_into_view(scroll: &ScrollHandle, caret: Bounds<Pixels>) {
-    let visible = scroll.bounds();
-    let mut offset = scroll.offset();
+/// Scrolls `list` so `caret` is inside its visible bounds.
+fn scroll_into_view(list: &ListState, caret: Bounds<Pixels>) {
+    let visible = list.viewport_bounds();
     let margin = caret.size.height;
     if caret.top() < visible.top() + margin {
-        offset.y += visible.top() + margin - caret.top();
+        list.scroll_by(caret.top() - (visible.top() + margin));
     } else if caret.bottom() > visible.bottom() - margin {
-        offset.y -= caret.bottom() - (visible.bottom() - margin);
+        list.scroll_by(caret.bottom() - (visible.bottom() - margin));
     }
-    offset.y = offset.y.min(px(0.));
-    scroll.set_offset(offset);
 }
 
 /// The rectangles covering `range` of the laid-out text, one per line.
