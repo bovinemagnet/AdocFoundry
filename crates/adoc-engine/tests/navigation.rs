@@ -139,7 +139,7 @@ fn images_open_in_image_tabs_and_includes_peek() {
     assert_eq!(engine.active(), Some(guide));
 
     let include = offset_of(&engine, guide, "include::chapters");
-    let CommandOutcome::Location(location) = engine
+    let CommandOutcome::Peek { location, text } = engine
         .invoke(
             ids::NAVIGATE_PEEK_INCLUDE,
             CommandArgs::Offset {
@@ -152,6 +152,9 @@ fn images_open_in_image_tabs_and_includes_peek() {
         panic!("an include can be peeked");
     };
     assert!(location.path.ends_with("chapters/setup.adoc"));
+    // The included file's text comes with it, so the front end reads nothing.
+    assert_eq!(text, std::fs::read_to_string(&location.path).unwrap());
+    assert_eq!(location.range, adoc_core::SourceRange::new(0, text.len()));
     assert!(
         engine.document_for_path(&location.path).is_none(),
         "peek does not open"

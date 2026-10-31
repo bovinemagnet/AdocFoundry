@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use adoc_core::{LineIndex, SourceRange};
+use adoc_core::SourceRange;
 use adoc_engine::{
     Branch, DocumentId, DocumentSymbol, Engine, GitChange, NavItem, SidebarPanel, WorkspaceState,
 };
@@ -406,36 +406,29 @@ pub fn families(engine: &Engine) -> Vec<Node> {
         .collect()
 }
 
-/// Workspace diagnostics grouped by file, each opening its location.
+/// The workspace's problems grouped by file, each opening its location: what the engine
+/// keeps, so nothing is diagnosed or read here.
 pub fn problems(engine: &Engine, roots: &[PathBuf]) -> (Vec<TreeItem>, usize) {
     let mut count = 0;
     let mut salt = 0;
     let items = engine
-        .workspace_diagnostics()
-        .into_iter()
-        .map(|(path, diagnostics)| {
-            let text = engine
-                .document_for_path(&path)
-                .and_then(|id| engine.document(id))
-                .map(|document| document.text.to_string())
-                .or_else(|| std::fs::read_to_string(&path).ok())
-                .unwrap_or_default();
-            let lines = LineIndex::new(&text);
-            let children = diagnostics
+        .problems()
+        .iter()
+        .map(|(path, problems)| {
+            let children = problems
                 .iter()
-                .map(|diagnostic| {
+                .map(|problem| {
                     count += 1;
                     salt += 1;
-                    let (line, column) = lines.line_column(diagnostic.range.start);
                     TreeItem::new(
-                        target_id(&path, diagnostic.range, salt),
-                        format!("{}:{} {}", line + 1, column + 1, diagnostic.message),
+                        target_id(path, problem.range, salt),
+                        format!("{}:{} {}", problem.line, problem.column, problem.message),
                     )
                 })
                 .collect();
             folder(
                 path.display().to_string(),
-                display_path(&path, roots),
+                display_path(path, roots),
                 children,
             )
         })

@@ -115,6 +115,12 @@ pub enum CommandOutcome {
     /// An image opened, or activated, in an image tab.
     OpenedImage(crate::ImageId),
     Location(Location),
+    /// A file to show read-only, as `navigate.peek_include` gives it: where it is (the whole
+    /// file) and its text, from its open buffer, the index or the disk.
+    Peek {
+        location: Location,
+        text: String,
+    },
     External(PathBuf),
     Preview(EditPreview),
     /// The references to an anchor or a page, in file order.

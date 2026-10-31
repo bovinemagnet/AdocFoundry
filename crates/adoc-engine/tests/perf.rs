@@ -81,6 +81,104 @@ fn keystroke_on_a_5000_line_document() {
     );
 }
 
+/// The synthetic document open in a workspace of 500 linked pages, with `tabs` of those pages
+/// open as well, as tabs are.
+fn typing_workspace(tabs: usize) -> (tempfile::TempDir, Engine, adoc_engine::DocumentId) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("synthetic.adoc");
+    fs::write(&path, synthetic_document()).unwrap();
+    fs::write(directory.path().join("other.adoc"), "= Other\n").unwrap();
+    for page in 0..500 {
+        fs::write(
+            directory.path().join(format!("page-{page}.adoc")),
+            format!(
+                "= Page {page}\n\n== Body\n\nSee xref:page-{}.adoc#body[next] and xref:missing-{page}.adoc[].\n",
+                (page + 1) % 500
+            ),
+        )
+        .unwrap();
+    }
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    engine.wait_for_workers(std::time::Duration::from_secs(30));
+    for page in 0..tabs {
+        engine
+            .open(&directory.path().join(format!("page-{page}.adoc")))
+            .unwrap();
+    }
+    let id = engine.open(&path).unwrap();
+    (directory, engine, id)
+}
+
+fn report(what: &str, mut samples: Vec<std::time::Duration>) {
+    samples.sort();
+    println!(
+        "{what}: median {:?}, worst {:?}",
+        samples[samples.len() / 2],
+        samples[samples.len() - 1]
+    );
+}
+
+/// Backspace held down: one-byte deletions through `edit.replace_range`, with 20 tabs open.
+#[test]
+#[ignore = "timing probe"]
+fn backspace_loop() {
+    let (_directory, mut engine, id) = typing_workspace(20);
+    let mut samples = Vec::new();
+    for _ in 0..200 {
+        let end = engine.document(id).unwrap().text.len();
+        let started = Instant::now();
+        engine
+            .invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(end - 1, end),
+                    text: String::new(),
+                },
+            )
+            .unwrap();
+        samples.push(started.elapsed());
+    }
+    report("backspace (20 tabs)", samples);
+}
+
+/// Typing in the visual editor: one character at a time through `visual.insert_text`, with
+/// 20 tabs open.
+#[test]
+#[ignore = "timing probe"]
+fn visual_typing_loop() {
+    let (_directory, mut engine, id) = typing_workspace(20);
+    engine
+        .invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(id))
+        .unwrap();
+    let start = engine
+        .document(id)
+        .unwrap()
+        .text_string()
+        .find("The ")
+        .unwrap()
+        + 4;
+    let mut samples = Vec::new();
+    for at in start..start + 200 {
+        let args = adoc_engine::VisualArgs {
+            id,
+            version: engine.document(id).unwrap().version,
+            selection: SourceRange::new(at, at),
+            marks: adoc_engine::MarkSet::EMPTY,
+            value: adoc_engine::VisualValue::Text("x".to_owned()),
+        };
+        let started = Instant::now();
+        engine
+            .invoke(ids::VISUAL_INSERT_TEXT, CommandArgs::Visual(args))
+            .unwrap();
+        samples.push(started.elapsed());
+    }
+    report("visual typing (20 tabs)", samples);
+}
+
 /// A book's export, for its time and peak memory: 300 pages of sections, admonitions, code and
 /// tables in one component's navigation. Run it under `/usr/bin/time -l` (macOS) or
 /// `/usr/bin/time -v` (Linux) to read the peak; a 1,833-page documentation book peaked at

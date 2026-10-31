@@ -67,6 +67,8 @@ pub struct Engine {
     /// Documents whose typed edits are parsed but not yet in the index, with the time after
     /// which `pump` indexes them.
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
+    /// A typing command is running: a small edit it makes waits for a pause to be indexed.
+    pub(crate) typing: bool,
     pub(crate) rendered: crate::rendered::PreviewState,
     pub(crate) visual: crate::visual::VisualState,
     pub(crate) git: crate::git::GitState,
@@ -80,6 +82,8 @@ pub struct Engine {
     pub(crate) recovery: crate::recovery::RecoveryState,
     /// Whether the last session and the recent folders are kept, and those folders.
     pub(crate) session: crate::session::SessionState,
+    /// The workspace's problems, for a front end that shows them.
+    pub(crate) problems: crate::problems::ProblemsState,
     pub(crate) local_history: crate::local_history::LocalHistory,
     pub(crate) html_exports: crate::html_export::HtmlExports,
     #[cfg(feature = "typst")]
@@ -91,6 +95,22 @@ pub struct Engine {
 /// Typed characters re-parse their document at once but re-index it, and refresh diagnostics,
 /// only once typing pauses this long. Every other command indexes first.
 pub const INDEX_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// The commands typing sends, one keystroke each: a small edit they make is indexed once
+/// typing pauses, and they do not index what earlier typing left pending.
+const TYPING_COMMANDS: [CommandId; 5] = [
+    commands::ids::EDIT_INSERT_TEXT,
+    commands::ids::EDIT_REPLACE_RANGE,
+    commands::ids::VISUAL_INSERT_TEXT,
+    commands::ids::VISUAL_DELETE_BACKWARD,
+    commands::ids::VISUAL_DELETE_FORWARD,
+];
+
+/// One keystroke's edit: a single replacement of at most a character (up to four bytes) by at
+/// most one character.
+fn is_small(edits: &[TextEdit]) -> bool {
+    matches!(edits, [edit] if edit.range.len() <= 4 && edit.replacement.chars().count() <= 1)
+}
 
 /// How an edit is recorded in undo history.
 #[derive(Clone, Copy, Debug)]
@@ -143,6 +163,7 @@ impl Engine {
             group_created: BTreeMap::new(),
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
+            typing: false,
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
             git: crate::git::GitState::default(),
@@ -155,6 +176,7 @@ impl Engine {
             auto_saves: crate::auto_save::AutoSaveState::default(),
             recovery: crate::recovery::RecoveryState::default(),
             session: crate::session::SessionState::default(),
+            problems: crate::problems::ProblemsState::default(),
             local_history: crate::local_history::LocalHistory::default(),
             html_exports: crate::html_export::HtmlExports::default(),
             #[cfg(feature = "typst")]
@@ -526,10 +548,14 @@ impl Engine {
             .registry
             .shared(command)
             .ok_or(EngineError::UnknownCommand(command))?;
-        if command != commands::ids::EDIT_INSERT_TEXT {
+        // Typing reads nothing from the index, so what earlier typing left pending stays so.
+        let typing = TYPING_COMMANDS.contains(&command);
+        if !typing {
             self.flush_index();
         }
+        self.typing = typing;
         let result = handler.run(self, args);
+        self.typing = false;
         // Source typing rebuilds visual models once it pauses; anything else, now.
         let typing = [
             commands::ids::EDIT_INSERT_TEXT,
@@ -733,7 +759,8 @@ impl Engine {
             }
             _ => None,
         };
-        let applied = self.edit_document(id, edits, typed.is_some())?;
+        let defer = typed.is_some() || (self.typing && is_small(&edits));
+        let applied = self.edit_document(id, edits, defer)?;
         let now = self.clock.now();
         if let Some((offset, text)) = &typed {
             let coalesced = self.states.get_mut(&id).is_some_and(|state| {
@@ -791,6 +818,8 @@ impl Engine {
         let path = document.path.clone();
         let untitled = document.untitled;
         let indexed = document.indexed();
+        // What the change could re-diagnose, as the index stood before it.
+        let mut before = None;
         if untitled {
             document.diagnostics = document.parsed.diagnostics.clone();
         } else if !indexed {
@@ -801,6 +830,7 @@ impl Engine {
         } else {
             self.pending_index.remove(&id);
             let parsed = document.parsed.clone();
+            before = Some(adoc_lang::diagnosed_with(&self.workspace, &path));
             self.workspace.replace_document(path.clone(), parsed);
         }
 
@@ -822,8 +852,8 @@ impl Engine {
         }
         if untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
-        } else if indexed && !defer_index {
-            self.refresh_open_diagnostics(Some(&path));
+        } else if let Some(before) = before {
+            self.refresh_diagnosed_with(&path, before);
         }
         Ok(AppliedEdits {
             forward,
@@ -874,8 +904,9 @@ impl Engine {
                 continue;
             };
             let (path, parsed) = (document.path.clone(), document.parsed.clone());
+            let before = adoc_lang::diagnosed_with(&self.workspace, &path);
             self.workspace.replace_document(path.clone(), parsed);
-            self.refresh_open_diagnostics(Some(&path));
+            self.refresh_diagnosed_with(&path, before);
         }
         ready.len()
     }
@@ -888,7 +919,34 @@ impl Engine {
 
     /// Recomputes the diagnostics of every open document, publishing `DiagnosticsUpdated` for
     /// each whose diagnostics changed and always for `changed`.
+    /// Re-diagnoses the open documents a change to `changed` can affect: those
+    /// [`adoc_lang::diagnosed_with`] gives now and gave before it (`before`), not every one.
+    pub(crate) fn refresh_diagnosed_with(
+        &mut self,
+        changed: &Path,
+        mut before: std::collections::BTreeSet<PathBuf>,
+    ) {
+        before.extend(adoc_lang::diagnosed_with(&self.workspace, changed));
+        self.problems_changed_in(&before);
+        let mut updated = Vec::new();
+        for document in self
+            .documents
+            .values_mut()
+            .filter(|document| document.indexed() && before.contains(&document.path))
+        {
+            let fresh = adoc_lang::diagnostics(&self.workspace, &document.path);
+            if fresh != document.diagnostics || document.path == changed {
+                document.diagnostics = fresh;
+                updated.push(document.path.clone());
+            }
+        }
+        for path in updated {
+            self.emit(EngineEvent::DiagnosticsUpdated { path });
+        }
+    }
+
     pub(crate) fn refresh_open_diagnostics(&mut self, changed: Option<&Path>) {
+        self.problems_changed_everywhere();
         let mut updated = Vec::new();
         for document in self
             .documents

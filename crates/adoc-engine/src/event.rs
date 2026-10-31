@@ -9,6 +9,8 @@ pub enum EngineEvent {
         roots: Vec<PathBuf>,
         files: usize,
     },
+    /// The workspace's problems (`Engine::problems`) changed.
+    ProblemsChanged,
     DocumentOpened(DocumentId),
     DocumentChanged {
         id: DocumentId,

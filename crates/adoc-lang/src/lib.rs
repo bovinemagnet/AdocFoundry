@@ -199,6 +199,54 @@ pub fn diagnostics(ws: &WorkspaceState, path: &Path) -> Vec<Diagnostic> {
     found
 }
 
+/// The files whose diagnostics the text of `path` can decide, `path` among them: those whose
+/// xrefs name its file name, those whose includes do, and the files including those in turn,
+/// and the files `path` composes. Name matches stand in for resolution, so the set is generous
+/// but never misses a file; a front end re-diagnoses these after an edit, not every file, and
+/// calls this before and after the edit, since an edit can change what `path` composes.
+#[must_use]
+pub fn diagnosed_with(ws: &WorkspaceState, path: &Path) -> std::collections::BTreeSet<PathBuf> {
+    let path = normalize_path(path);
+    let mut found = std::collections::BTreeSet::from([path.clone()]);
+    let context = ws.antora.context_for_path(&path);
+    found.extend(includes::composed_files(
+        &ws.index,
+        &ws.antora,
+        context.as_ref(),
+        &path,
+    ));
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return found;
+    };
+    found.extend(
+        ws.index
+            .xrefs_naming(name)
+            .map(|location| location.path.clone()),
+    );
+    // The files composing `path`, and those composing them, up to the include depth.
+    let mut composing = vec![path.clone()];
+    let mut seen = std::collections::BTreeSet::from([path]);
+    for _ in 0..=includes::MAX_INCLUDE_DEPTH {
+        let mut next = Vec::new();
+        for file in &composing {
+            let Some(name) = file.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            for location in ws.index.includes_naming(name) {
+                if seen.insert(location.path.clone()) {
+                    next.push(location.path.clone());
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        found.extend(next.iter().cloned());
+        composing = next;
+    }
+    found
+}
+
 /// Diagnostics for every indexed file and every component descriptor with problems, sorted by
 /// path and omitting files without diagnostics.
 #[must_use]

@@ -227,6 +227,10 @@ The workspace's tabs are `TabView::{Editor, Image}`, following the engine's `Tab
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 
+The Problems panel (`sidebar::problems`) builds its rows from `Engine::problems()` when `EngineEvent::ProblemsChanged` arrives and when a window opens, each labelled `line:column message`.
+It does not diagnose the workspace or read files, and nothing is computed while the sidebar renders.
+Peek Include shows the text in the `CommandOutcome::Peek` that `navigate.peek_include` returns, and reads nothing itself.
+
 The engine owns the expansion settings (`ExpansionPolicy` and `SidebarSettings`) and the expansion state (`src/expansion.rs`).
 The front end builds the trees and passes their branches, as `Branch { key, children }`, to `Engine::resolve_expansion`, which gives every branch it sees its policy default once.
 After that `Engine::branch_expanded` reports a branch and `Engine::set_branch_expanded` records the user's choice.

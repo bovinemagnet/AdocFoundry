@@ -181,13 +181,20 @@ impl Engine {
         }
         match self.definition(id, offset) {
             Some(DefinitionTarget::Location(location)) => {
-                let len = std::fs::metadata(&location.path)
-                    .map(|metadata| metadata.len() as usize)
-                    .unwrap_or(0);
-                Ok(CommandOutcome::Location(Location {
-                    path: location.path,
-                    range: SourceRange::new(0, len),
-                }))
+                let text = match self.document_for_path(&location.path) {
+                    Some(open) => self.documents[&open].text.to_string(),
+                    None => match self.workspace.index.file(&location.path) {
+                        Some(file) => file.document.text.clone(),
+                        None => self.read_text(&location.path)?,
+                    },
+                };
+                Ok(CommandOutcome::Peek {
+                    location: Location {
+                        path: location.path,
+                        range: SourceRange::new(0, text.len()),
+                    },
+                    text,
+                })
             }
             _ => Err(EngineError::NotFound(format!(
                 "the include at offset {offset} does not resolve"

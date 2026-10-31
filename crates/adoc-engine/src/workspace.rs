@@ -23,6 +23,10 @@ use crate::{Engine, EngineError, EngineEvent, TextEdit};
 pub const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
 
 pub(crate) enum WorkerMessage {
+    ProblemsComputed {
+        generation: u64,
+        problems: std::collections::BTreeMap<PathBuf, Vec<crate::Problem>>,
+    },
     DirectoryListed {
         request: u64,
         dir: PathBuf,
@@ -252,6 +256,7 @@ impl Engine {
             || self.has_due_auto_save()
             || self.has_due_recovery()
             || self.has_due_html_export()
+            || self.has_due_problems()
             || self
                 .watcher
                 .as_ref()
@@ -291,6 +296,7 @@ impl Engine {
             + self.save_due_documents()
             + self.write_due_recovery()
             + self.write_due_html_exports()
+            + self.update_due_problems()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the
@@ -310,6 +316,10 @@ impl Engine {
     fn apply_worker_message(&mut self, message: WorkerMessage) {
         self.workers_running = self.workers_running.saturating_sub(1);
         match message {
+            WorkerMessage::ProblemsComputed {
+                generation,
+                problems,
+            } => self.problems_computed(generation, problems),
             WorkerMessage::DirectoryListed {
                 request,
                 dir,

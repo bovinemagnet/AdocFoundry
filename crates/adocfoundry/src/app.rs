@@ -45,6 +45,8 @@ impl AppState {
         engine.enable_local_history();
         // The last session and the folders opened recently are kept for the next launch.
         engine.enable_sessions();
+        // The workspace's problems, for the Problems panel, kept by the engine off the render.
+        engine.enable_problems();
         let events = engine.subscribe();
         let pump = cx.spawn(async move |this, cx| loop {
             let busy = this
