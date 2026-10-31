@@ -1,12 +1,12 @@
-//! `[editor] auto_save`: pages saved through `document.save` once typing stops, or when the
-//! page or the window loses focus.
+//! `[editor] auto_save`: pages saved, as `document.save` saves them but without waiting for the
+//! write, once typing stops, or when the page or the window loses focus.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::{Duration, Instant},
 };
 
-use crate::{commands::ids, AutoSave, CommandArgs, DocumentId, Engine};
+use crate::{commands::ids, AutoSave, DocumentId, Engine, EngineError, EngineEvent};
 
 /// How long a page must go unedited before `after_delay` saves it.
 pub const AUTO_SAVE_DELAY: Duration = Duration::from_secs(1);
@@ -90,8 +90,9 @@ impl Engine {
         self.auto_saves.refused.remove(&id);
     }
 
-    /// Saves `id` through `document.save` when it has unsaved edits and a file, and has not
-    /// been refused already. A refusal is reported as the command's failure.
+    /// Starts saving `id` when it has unsaved edits and a file, and has not been refused
+    /// already. A refusal is reported as `document.save`'s failure once the write is done. A
+    /// page still being written is saved again once its edits next pause.
     fn auto_save(&mut self, id: DocumentId) {
         let wanted = self
             .documents
@@ -100,11 +101,21 @@ impl Engine {
         if !wanted || self.auto_saves.refused.contains(&id) {
             return;
         }
-        if self
-            .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
-            .is_err()
-        {
-            self.auto_saves.refused.insert(id);
+        if self.writer.is_saving(id) {
+            self.auto_saves.edited.insert(id, self.clock.now());
+            return;
         }
+        if let Err(error) = self.start_save(id, false, true) {
+            self.auto_save_refused(id, &error);
+        }
+    }
+
+    /// An auto-save of `id` failed: it is reported, and left alone until saved by hand.
+    pub(crate) fn auto_save_refused(&mut self, id: DocumentId, error: &EngineError) {
+        self.auto_saves.refused.insert(id);
+        self.emit(EngineEvent::CommandFailed {
+            command: ids::DOCUMENT_SAVE,
+            error: error.to_string(),
+        });
     }
 }

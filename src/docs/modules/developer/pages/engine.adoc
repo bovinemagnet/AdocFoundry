@@ -63,9 +63,34 @@ The ignored probes `backspace_loop` and `visual_typing_loop` in `tests/perf.rs` 
 `pump` saves the pages left unedited for `AUTO_SAVE_DELAY` (1 s) when the setting is `AfterDelay`, and `has_pending` stays true meanwhile.
 * `Engine::set_active` and `set_active_image` save the page left when the setting is `OnFocusChange`.
 * `Engine::focus_lost()` saves every edited page with `OnFocusChange` and does nothing otherwise.
-* Saves go through `invoke(document.save)`, so the watcher and Git behave as after a manual save and a failure is the `CommandFailed` event.
+* `start_save` snapshots the page's text, a rope clone that costs O(1), and returns at once.
+The write runs on the <<writer>>, as `document.save` writes it but without waiting.
+When it is done, `pump` applies the result: the page is clean against what was written, unless it was edited after the snapshot, and then it stays dirty.
+`DocumentSaved` is emitted.
+* A failure is the `CommandFailed` event for `document.save`, and the page is left alone until it is saved by hand.
+* A save of a page that is already being written waits for the next pause in its edits.
 Untitled documents and documents without unsaved edits are skipped.
 * A page whose save is refused, such as by the changed-on-disk check, is remembered and not auto-saved again until a successful save, overwrite or reload.
+
+[#writer]
+== The writer
+
+`writer.rs` holds the engine's writer.
+It is one background thread, started on first use, that writes files in the order they were asked for.
+No write, and none of its `fsync`, runs on the thread that serves the front end, and a later write never lands before an earlier one.
+Each job counts in `has_pending` until `pump` applies its result, and `wait_for_workers` waits for it too.
+
+Its jobs are:
+
+* page saves: the changed-on-disk check, the temporary file and rename, and the local-history versions;
+* recovery records, and their removal;
+* the sidebar state file (`sidebar-state.json`), which is read, merged and written on the writer;
+* the recent folders file (`recent-folders.json`).
+
+Opening a workspace waits for pending writes before it reads the sidebar state file.
+
+The session file is not one of the writer's jobs.
+`write_session` still writes it directly, and only when the app quits or the window closes.
 
 [#crash-recovery]
 == Crash recovery
@@ -79,8 +104,11 @@ Only the app's `main.rs` sets one, with `.with_state_dir(Settings::default_state
 * Records are JSON files in `RECOVERY_DIR` (`recovery`) in the state folder, named `<session>-<document id>.json`.
 * A session is named `<pid>-<milliseconds>.<n>` and holds an exclusive lock (`File::try_lock`) on `<session>.lock` from its first record until the engine is dropped.
 * An edit that leaves the page dirty schedules a record, and `pump` writes it `RECOVERY_SETTLE` (2 s) later (`write_due_recovery`); `has_pending` stays true meanwhile.
-An edit that leaves the page clean removes the record, as do save, `mark_saved` (reload) and close.
-* `Engine::write_recovery_now()` writes every waiting record; the app calls it from `cx.on_app_quit`.
+An edit that leaves the page clean removes the record, as do save, `mark_saved` (reload), close and undo to the saved text.
+* A record's text is copied and serialised on the <<writer>>.
+Removing a record is queued after the write that made it.
+* `Engine::write_recovery_now()` writes the waiting records and then waits for every write the engine has started, saves included; the app calls it from `cx.on_app_quit`.
+Dropping the engine also waits for every write.
 * `Engine::recoverable()` lists the records of other sessions whose lock can be taken, newest first, as `Recoverable` values.
 A running session's records, and the engine's own, are never listed.
 * `Engine::recovery_diff(&Recoverable)` diffs the file on disk, which is empty for an untitled or deleted page, against the record, using <<line-diff>>.
@@ -99,8 +127,10 @@ A front end calls `Engine::enable_local_history()`, as the app does in `AppState
 * Each page has a folder in `HISTORY_DIR` (`history`) in the state folder, named from a SHA-256 digest of the page's path.
 It holds a `path` file naming the page and one file per version, named `<milliseconds>-<first 16 hex digits of the text's SHA-256>`.
 Each name is strictly later than the one before.
-* `write_document` reads the file before writing it and calls `record_save(path, previous, saved)` after a successful write.
-That keeps the previous text when the history does not hold it yet, then the saved text.
+* A save keeps its versions in two steps.
+The engine thread decides where the versions go and whether the save sweeps the store (`history_job`, which also tracks `HISTORY_SWEEP_INTERVAL`).
+The <<writer>> keeps the versions and prunes (`HistoryJob::record`).
+A save keeps the previous text when the history does not hold it yet, then the saved text.
 Saving text the history already holds as its latest version keeps nothing, and text over `HISTORY_MAX_PAGE` (4 MiB) is not kept.
 * `Engine::local_history(path)` returns `Vec<SavedVersion>`, each with `id`, `saved` and `size`, newest first.
 `saved_version(path, id)` reads only a version the history lists.
@@ -618,6 +648,9 @@ A `notify` watcher, with a 250 ms debounce, feeds the pump.
 * A changed file that is open as an image calls `images_changed`, which reloads it.
 
 Saving checks the same thing.
+The check and the write run on the <<writer>>.
+`save` and `overwrite` first wait for any auto-save of that page already being written, then queue theirs and wait for it, so they still return their result.
+While a save of a page is being written, the watcher ignores changes to that page's file, because the save's result settles them.
 `Engine::save` returns `EngineError::SaveConflict { path }` when the file's contents differ from the hash of what the engine last read or wrote (`saved_hash`), and writes nothing.
 `save_all` saves the other documents and reports the conflict, and `git.save_and_commit` stops at it.
 `Engine::overwrite` and `Engine::reload` are the two explicit choices, behind the `document.overwrite` and `document.reload` commands: `overwrite` writes the buffer regardless, and `reload` replaces the buffer with the file as one undo step and leaves the document clean.

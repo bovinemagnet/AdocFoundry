@@ -1325,6 +1325,8 @@ fn the_window_losing_focus_saves_with_on_focus_change(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(cx.update(|window, _| window.is_window_active()));
     cx.deactivate_window();
+    // The page is written off the UI thread.
+    settle_engine(&app, &mut cx);
     assert_eq!(
         std::fs::read_to_string(&page).unwrap(),
         "= Page\n\nEdited.\n",

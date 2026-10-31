@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     commands::{ids, register, spec},
-    engine::{write_replacing, UndoMode},
+    engine::UndoMode,
     line_diff, CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry,
     DiffLine, DocumentId, Engine, EngineError, TextEdit,
 };
@@ -191,13 +191,15 @@ impl Engine {
         line_diff(&on_disk, &item.text)
     }
 
-    /// Writes every page waiting for [`RECOVERY_SETTLE`] now: for an app about to quit.
+    /// Writes every page waiting for [`RECOVERY_SETTLE`] now, and waits for every write the
+    /// engine has started, saves included: for an app about to quit.
     pub fn write_recovery_now(&mut self) {
         let due: Vec<DocumentId> = self.recovery.due.keys().copied().collect();
         for id in due {
             self.recovery.due.remove(&id);
             self.write_record(id);
         }
+        self.flush_writes();
     }
 
     /// Notes that `id` changed, or was saved or read back: an unsaved page is written once
@@ -222,7 +224,8 @@ impl Engine {
     pub(crate) fn forget_recovery(&mut self, id: DocumentId) {
         self.recovery.due.remove(&id);
         if let Some(record) = self.recovery.written.remove(&id) {
-            let _ = fs::remove_file(record);
+            // After the write that made it, which may not have happened yet.
+            self.remove_later(record);
         }
     }
 
@@ -247,20 +250,18 @@ impl Engine {
         due.len()
     }
 
-    /// Writes `id`'s text as its record, replacing the one before. A failure costs only the
-    /// chance to recover it.
+    /// Writes `id`'s text as its record, replacing the one before, on the writer. A failure
+    /// costs only the chance to recover it.
     fn write_record(&mut self, id: DocumentId) {
         let Some(document) = self.documents.get(&id).filter(|document| document.dirty) else {
             self.forget_recovery(id);
             return;
         };
-        let record = Record {
-            version: FORMAT_VERSION,
-            path: document.path.clone(),
-            untitled: document.untitled,
-            written: millis(SystemTime::now()),
-            text: document.text.to_string(),
-        };
+        let (path, untitled, text) = (
+            document.path.clone(),
+            document.untitled,
+            document.text.clone(),
+        );
         let Some(session) = self.recovery_session() else {
             return;
         };
@@ -268,12 +269,18 @@ impl Engine {
             return;
         };
         let file = store.join(format!("{session}-{}.{RECORD_EXTENSION}", id.get()));
-        let Ok(json) = serde_json::to_string(&record) else {
-            return;
-        };
-        if write_replacing(&file, &json).is_ok() {
-            self.recovery.written.insert(id, file);
-        }
+        // The text is copied and written on the writer, so a long page costs typing nothing.
+        self.write_later(file.clone(), move || {
+            serde_json::to_string(&Record {
+                version: FORMAT_VERSION,
+                path,
+                untitled,
+                written: millis(SystemTime::now()),
+                text: text.to_string(),
+            })
+            .ok()
+        });
+        self.recovery.written.insert(id, file);
     }
 
     /// This session's name, starting the session (creating the store and taking its lock)

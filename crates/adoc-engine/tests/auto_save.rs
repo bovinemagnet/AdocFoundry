@@ -40,6 +40,11 @@ fn type_text(engine: &mut Engine, id: DocumentId, text: &str) {
         .unwrap();
 }
 
+/// Waits for the saves started so far, which are written off the engine thread.
+fn written(engine: &mut Engine) {
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+}
+
 fn dirty(engine: &Engine, id: DocumentId) -> bool {
     engine.document(id).unwrap().dirty
 }
@@ -90,6 +95,7 @@ fn after_delay_saves_once_typing_stops() {
 
     clock.advance(Duration::from_millis(1));
     engine.pump();
+    written(&mut engine);
     assert!(!dirty(&engine, id), "the unsaved marker clears");
     assert_eq!(fs::read_to_string(&path).unwrap(), "= Page\n\nOne two.\n");
     assert!(events
@@ -127,10 +133,12 @@ fn on_focus_change_saves_the_page_left_and_every_page_when_the_window_is() {
     assert!(dirty(&engine, second), "not after a delay");
 
     engine.set_active(first);
+    written(&mut engine);
     assert!(!dirty(&engine, second), "the tab left is saved");
 
     type_text(&mut engine, first, "\nAlso.\n");
     engine.focus_lost();
+    written(&mut engine);
     assert!(!dirty(&engine, first), "the window losing focus saves it");
 }
 
@@ -146,6 +154,7 @@ fn a_refused_save_is_reported_once_until_saved_by_hand() {
     fs::write(&path, "= Page\n\nTheirs.\n").unwrap();
     clock.advance(AUTO_SAVE_DELAY);
     engine.pump();
+    written(&mut engine);
     assert_eq!(failures(&events), 1);
     assert!(dirty(&engine, id));
     assert_eq!(fs::read_to_string(&path).unwrap(), "= Page\n\nTheirs.\n");
@@ -163,6 +172,7 @@ fn a_refused_save_is_reported_once_until_saved_by_hand() {
     type_text(&mut engine, id, "Last.\n");
     clock.advance(AUTO_SAVE_DELAY);
     engine.pump();
+    written(&mut engine);
     assert!(!dirty(&engine, id));
     assert!(fs::read_to_string(&path).unwrap().ends_with("Last.\n"));
 }
@@ -179,4 +189,111 @@ fn untitled_pages_are_left_alone() {
     assert!(dirty(&engine, id));
     assert_eq!(failures(&events), 0);
     assert!(!engine.has_pending());
+}
+
+/// An engine with a workspace open on `dir`, so the watcher sees the engine's own writes. The
+/// workspace's settings turn `after_delay` on, since opening it reloads them.
+fn workspace_engine(dir: &Path) -> (Engine, ManualClock) {
+    fs::write(
+        dir.join(".adocfoundry.toml"),
+        "[editor]\nauto_save = \"after_delay\"\n",
+    )
+    .unwrap();
+    let (mut engine, clock) = engine(AutoSave::AfterDelay);
+    engine.open_workspace(vec![dir.to_path_buf()]).unwrap();
+    engine.wait_for_workers(Duration::from_secs(10));
+    (engine, clock)
+}
+
+fn saved(events: &Receiver<EngineEvent>) -> usize {
+    events
+        .try_iter()
+        .filter(|event| matches!(event, EngineEvent::DocumentSaved(_)))
+        .count()
+}
+
+/// Pumps until the watcher has had time to report the engine's own write.
+fn settle_watcher(engine: &mut Engine) {
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_millis(50));
+        engine.pump();
+    }
+}
+
+#[test]
+fn an_auto_save_is_written_off_the_engine_thread() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = page(dir.path(), "page.adoc");
+    let (mut engine, clock) = workspace_engine(dir.path());
+    let id = engine.open(&path).unwrap();
+    let events = engine.subscribe();
+    let long = "A line of a long page.\n".repeat(45_000);
+    type_text(&mut engine, id, &long);
+
+    clock.advance(AUTO_SAVE_DELAY);
+    engine.pump();
+    assert!(engine.has_pending(), "the save is in flight");
+    assert!(dirty(&engine, id), "not saved until the write is done");
+    assert_eq!(saved(&events), 0);
+
+    written(&mut engine);
+    assert!(!dirty(&engine, id));
+    assert_eq!(saved(&events), 1);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        format!("= Page\n{long}")
+    );
+
+    settle_watcher(&mut engine);
+    assert!(!dirty(&engine, id));
+    assert!(!events
+        .try_iter()
+        .any(|event| matches!(event, EngineEvent::DocumentChangedOnDisk(_))));
+}
+
+#[test]
+fn typing_during_an_auto_save_leaves_the_page_dirty_and_saveable() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = page(dir.path(), "page.adoc");
+    let (mut engine, clock) = workspace_engine(dir.path());
+    let id = engine.open(&path).unwrap();
+    let events = engine.subscribe();
+    type_text(&mut engine, id, "First.\n");
+    clock.advance(AUTO_SAVE_DELAY);
+    engine.pump();
+    type_text(&mut engine, id, "Second.\n");
+
+    written(&mut engine);
+    assert!(dirty(&engine, id), "the second edit is not on disk");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "= Page\nFirst.\n");
+    settle_watcher(&mut engine);
+    assert!(!events
+        .try_iter()
+        .any(|event| matches!(event, EngineEvent::DocumentChangedOnDisk(_))));
+
+    engine.save(id).unwrap();
+    assert!(!dirty(&engine, id));
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "= Page\nFirst.\nSecond.\n"
+    );
+}
+
+#[test]
+fn saving_by_hand_waits_for_an_auto_save_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = page(dir.path(), "page.adoc");
+    let (mut engine, clock) = workspace_engine(dir.path());
+    let id = engine.open(&path).unwrap();
+    type_text(&mut engine, id, "First.\n");
+    clock.advance(AUTO_SAVE_DELAY);
+    engine.pump();
+    type_text(&mut engine, id, "Second.\n");
+
+    engine.save(id).unwrap();
+    assert!(!dirty(&engine, id));
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "= Page\nFirst.\nSecond.\n"
+    );
 }

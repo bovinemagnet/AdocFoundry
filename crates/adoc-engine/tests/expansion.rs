@@ -341,6 +341,7 @@ fn unreadable_state_falls_back_to_the_default() {
         engine.pump();
         clock.advance(EXPANSION_SAVE_SETTLE + Duration::from_millis(1));
         engine.pump();
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
         let saved =
             fs::read_to_string(directory.path().join(adoc_engine::EXPANSION_STATE_FILE)).unwrap();
         assert!(saved.contains("c@1/a"), "{corrupt}: {saved}");

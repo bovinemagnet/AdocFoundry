@@ -156,8 +156,13 @@ impl Engine {
             version: FORMAT_VERSION,
             folders: self.session.recent.clone(),
         };
-        // A failure costs only the list.
-        let _ = self.write_state_file(RECENT_FOLDERS_FILE, &saved);
+        // Written on the writer; a failure costs only the list.
+        if let (Some(file), Ok(json)) = (
+            self.state_file(RECENT_FOLDERS_FILE),
+            serde_json::to_string_pretty(&saved),
+        ) {
+            self.write_later(file, move || Some(json));
+        }
     }
 
     /// Writes the session for the next launch to bring back: the roots, the tabs in order with
