@@ -692,3 +692,121 @@ fn push_disabled_without_git_executable() {
         .to_string();
     assert!(error.contains("[tools] git"), "{error}");
 }
+
+#[test]
+fn typing_does_not_reopen_the_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    repository(dir.path());
+    let mut engine = engine();
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&dir.path().join("docs/page.adoc")).unwrap();
+    pump_until(&mut engine, |engine| !engine.has_pending());
+    let opened = adoc_git::testing::discoveries(dir.path());
+    assert!(opened > 0);
+
+    for typed in 1..=10 {
+        let end = engine.document(id).unwrap().text.len();
+        engine
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(end, end),
+                    text: "x".to_owned(),
+                },
+            )
+            .unwrap();
+        assert!(pump_until(&mut engine, |engine| !engine.has_pending()));
+        assert_eq!(engine.git().hunks_for(id).len(), 1, "after {typed} typed");
+    }
+    assert_eq!(
+        adoc_git::testing::discoveries(dir.path()),
+        opened,
+        "each settle diffs against the HEAD text already read"
+    );
+}
+
+#[test]
+fn blame_is_built_once_until_something_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\ntwo\nthree\n");
+    test.commit_all("Write the page");
+    let mut engine = engine();
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&dir.path().join("page.adoc")).unwrap();
+    pump_until(&mut engine, |engine| !engine.has_pending());
+    engine.request_blame(id);
+    assert!(pump_until(&mut engine, |engine| engine
+        .blame_for(id)
+        .is_some()));
+
+    let first = engine.blame_for(id).unwrap();
+    assert!(std::sync::Arc::ptr_eq(
+        &first,
+        &engine.blame_for(id).unwrap()
+    ));
+
+    replace(&mut engine, id, "two\n", "two, edited\n");
+    assert!(pump_until(&mut engine, |engine| !engine
+        .git()
+        .hunks_for(id)
+        .is_empty()));
+    let edited = engine.blame_for(id).unwrap();
+    assert!(!std::sync::Arc::ptr_eq(&first, &edited));
+    assert_eq!(edited[1].commit, None);
+    assert!(std::sync::Arc::ptr_eq(
+        &edited,
+        &engine.blame_for(id).unwrap()
+    ));
+}
+
+#[test]
+fn a_renamed_page_is_compared_with_its_new_path_in_head() {
+    let dir = tempfile::tempdir().unwrap();
+    repository(dir.path());
+    let mut engine = engine();
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&dir.path().join("docs/page.adoc")).unwrap();
+    pump_until(&mut engine, |engine| !engine.has_pending());
+    assert!(engine.git().hunks_for(id).is_empty());
+
+    let renamed = adoc_engine::normalize_path(&dir.path().join("docs/renamed.adoc"));
+    let Ok(adoc_engine::CommandOutcome::Preview(preview)) = engine.invoke(
+        ids::PAGE_RENAME,
+        CommandArgs::Rename {
+            id,
+            new_path: renamed,
+        },
+    ) else {
+        panic!("no rename preview");
+    };
+    engine
+        .invoke(
+            ids::WORKSPACE_APPLY_PREVIEW,
+            CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+        )
+        .unwrap();
+
+    // `docs/renamed.adoc` is not in `HEAD`: every line is added.
+    assert!(
+        pump_until(&mut engine, |engine| engine
+            .git()
+            .hunks_for(id)
+            .first()
+            .is_some_and(
+                |hunk| hunk.kind == HunkKind::Added && hunk.lines == (0..3)
+            )),
+        "{:?}",
+        engine.git().hunks_for(id)
+    );
+}

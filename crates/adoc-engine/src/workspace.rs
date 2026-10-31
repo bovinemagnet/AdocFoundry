@@ -92,9 +92,9 @@ pub(crate) enum WorkerMessage {
     },
     #[cfg(feature = "git")]
     GitHunks {
-        id: crate::DocumentId,
-        version: u64,
-        hunks: Result<Vec<adoc_git::Hunk>, String>,
+        workdir: PathBuf,
+        generation: u64,
+        results: Vec<crate::git::HunkResult>,
     },
     #[cfg(feature = "git")]
     BranchVersions {
@@ -408,7 +408,11 @@ impl Engine {
                 result,
             } => self.git_refreshed(generation, &workdir, refresh, result),
             #[cfg(feature = "git")]
-            WorkerMessage::GitHunks { id, version, hunks } => self.git_hunks(id, version, hunks),
+            WorkerMessage::GitHunks {
+                workdir,
+                generation,
+                results,
+            } => self.git_hunks(&workdir, generation, results),
             #[cfg(feature = "git")]
             WorkerMessage::BranchVersions {
                 generation,

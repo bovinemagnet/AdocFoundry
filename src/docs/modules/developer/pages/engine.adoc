@@ -662,7 +662,8 @@ The command-line tool and the MCP server return the conflict's message to their 
 == Git
 
 `Engine::git()` returns a `GitState`, built on the `adoc-git` crate.
-It holds one `GitRepository` (`workdir`, `git_dir`, `head`, `ahead` and the `roots` it serves) per repository, however many workspace roots lie inside it.
+It holds one `GitRepository` (`workdir`, `git_dir`, `head`, `commit`, `ahead` and the `roots` it serves) per repository, however many workspace roots lie inside it.
+`commit` is the commit `HEAD` is at, or `None` before the first commit.
 `repositories()`, `repository_for(path)`, `head_for(root)`, `status_for(path)`, `statuses()` and `hunks_for(DocumentId)` read it.
 
 `open_workspace` discovers each root's repository and reads its status on a worker thread, and the result arrives through `pump()` as indexing does.
@@ -670,6 +671,11 @@ A workspace outside any repository, or with `git.enabled` turned off, has no rep
 
 The hunks of an open document are its changes against HEAD, computed from the buffer text and not from the file on disk.
 They are recomputed `GIT_SETTLE` (150 ms) after typing pauses, at once on open, save and any other edit, and after every status refresh.
+The engine keeps each open document's text in `HEAD`, read once and kept until `HEAD`'s commit moves (a commit, a branch switch or rediscovery).
+A recomputation therefore only diffs the buffer against that text, without opening the repository.
+The documents due are computed in one job per working tree, on a worker.
+A working tree still computing makes its documents wait for that job, so there is never more than one hunk job per repository.
+Results from before `HEAD` moved are dropped.
 Untracked and ignored files have no hunks.
 
 The file watcher also watches each repository's `.git/HEAD`, `index`, `packed-refs` and `refs/`, which are otherwise ignored along with `.git`.
@@ -736,7 +742,9 @@ A `BlameLine` is `{ line, commit: Option<short id>, author, time (Unix seconds),
 
 `Engine::request_blame(id)` computes the HEAD blame lazily on a worker and publishes `EngineEvent::GitBlameChanged(id)` when it is ready.
 `Engine::blame_for(id)` returns the blame overlaid with the document's current hunks.
-The blame is forgotten on save, on a status refresh and on rediscovery.
+It returns an `Arc<Vec<BlameLine>>`, built once for each version of the text, hunks and blame, so the front end can ask for it on every frame.
+The blame is forgotten on save, when `HEAD`'s commit moves and on rediscovery.
+A status refresh that leaves `HEAD` where it was (a save, staging) keeps it.
 
 `git.show_blame` (Toggle Blame, View category, no default binding) shows or hides the column in the front end.
 `Engine::remote_link(id, offset)` builds the address of the line at an offset.

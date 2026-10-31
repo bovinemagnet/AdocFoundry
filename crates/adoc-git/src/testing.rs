@@ -1,11 +1,34 @@
 //! Temporary repositories for tests, built with `gix`, never a developer's checkout.
 
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use gix::object::tree::EntryKind;
+
+/// How many times each working tree has been opened by [`crate::Repository::discover`].
+static DISCOVERIES: Mutex<BTreeMap<PathBuf, usize>> = Mutex::new(BTreeMap::new());
+
+pub(crate) fn count_discovery(workdir: &Path) {
+    let mut discoveries = DISCOVERIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    *discoveries.entry(workdir.to_path_buf()).or_default() += 1;
+}
+
+/// How many times the repository whose working tree is `workdir`, spelt as it was discovered,
+/// has been opened by [`crate::Repository::discover`] in this process. Tests use their own
+/// temporary repositories, so running side by side they do not see each other's.
+#[must_use]
+pub fn discoveries(workdir: &Path) -> usize {
+    let discoveries = DISCOVERIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    discoveries.get(workdir).copied().unwrap_or_default()
+}
 
 /// A repository in a test's temporary directory, with `HEAD` on `main` and an identity set.
 pub struct TestRepo {
