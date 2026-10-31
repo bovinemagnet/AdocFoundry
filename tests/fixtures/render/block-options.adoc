@@ -1,0 +1,54 @@
+= Block options
+
+Attributes and options of blocks that change how they are shown.
+
+== Ordered lists
+
+[loweralpha,start=3]
+. Third, as a letter
+. Fourth
+
+[%reversed]
+. Counted down
+. To one
+
+[upperroman]
+. One in Roman numerals
+. Two
+
+== Tables
+
+[cols="1,1",frame=none,grid=rows,stripes=even,width=50%]
+|===
+|A |B
+
+.^|Middle .>|Bottom
+|===
+
+[%autowidth]
+|===
+|Only as wide as its text
+|===
+
+[cols=".^1,.>1",frame=ends,grid=cols]
+|===
+|Middle column |Bottom column
+|===
+
+== Images
+
+image::centred.png[Centred,align=center]
+
+image::floated.png[Floated,float=right,link=https://example.org]
+
+.With its own caption
+[caption="Exhibit A. "]
+image::captioned.png[Captioned]
+
+== Collapsible blocks
+
+.Details
+[%collapsible]
+====
+Shown when opened.
+====

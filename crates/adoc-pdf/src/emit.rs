@@ -13,7 +13,7 @@ use adoc_core::FileAccess;
 
 use adoc_render::{
     AdmonitionKind, Align, CellStyle, ColumnWidth, DiagramView, ListKind, MediaKind, SourceSpan,
-    ViewBlock, ViewCell, ViewImage, ViewInline, ViewKind, ViewTable, ViewTree,
+    VAlign, ViewBlock, ViewCell, ViewImage, ViewInline, ViewKind, ViewTable, ViewTree,
 };
 
 use crate::highlight::{Highlighter, Style};
@@ -339,6 +339,14 @@ impl<'a> Emitter<'a> {
     }
 
     fn caption_text(&mut self, block: &ViewBlock) -> Option<String> {
+        if matches!(block.kind, ViewKind::Example(_)) && block.options.contains("collapsible") {
+            let title = if block.title.is_empty() {
+                text("Details")
+            } else {
+                self.inlines(&block.title)
+            };
+            return Some(format!("{}{title}", text("\u{25bc} ")));
+        }
         if block.title.is_empty() {
             return None;
         }
@@ -413,8 +421,10 @@ impl<'a> Emitter<'a> {
                     ListKind::Ordered => {
                         self.olist_depth += 1;
                         let depth = self.olist_depth;
-                        let markers = (1..=items.len())
-                            .map(|number| typst::text(&ordered_marker(depth, number)))
+                        let style = block.style.as_deref().unwrap_or("arabic");
+                        let markers = ordered_numbers(block, items.len())
+                            .into_iter()
+                            .map(|number| typst::text(&ordered_marker(style, number)))
                             .collect();
                         (markers, depth)
                     }
@@ -605,6 +615,11 @@ impl<'a> Emitter<'a> {
                     "#adoc-container({fits}\"sidebar\", {title}, {body})\n"
                 );
             }
+            ViewKind::Example(blocks) if block.options.contains("collapsible") => {
+                // As asciidoctor-pdf draws one: its caption, then its blocks, indented.
+                let body = self.content(blocks);
+                let _ = writeln!(self.out, "#adoc-collapsible({body})\n");
+            }
             ViewKind::Example(blocks) => {
                 let body = self.content(blocks);
                 let fits = fits_argument(block);
@@ -618,10 +633,10 @@ impl<'a> Emitter<'a> {
                 let _ = writeln!(self.out, "#adoc-open({body})\n");
             }
             ViewKind::Table(table) => {
-                self.table(table);
+                self.table(block, table);
             }
             ViewKind::Image(image) => {
-                self.block_image(image, &block.span);
+                self.block_image(block, image);
             }
             ViewKind::Media { kind, targets } => {
                 let name = match kind {
@@ -697,31 +712,47 @@ impl<'a> Emitter<'a> {
         Some(path)
     }
 
-    fn block_image(&mut self, image: &ViewImage, span: &SourceSpan) {
-        let Some(path) = self.usable_image(image, span) else {
+    fn block_image(&mut self, block: &ViewBlock, image: &ViewImage) {
+        let Some(path) = self.usable_image(image, &block.span) else {
             let _ = writeln!(self.out, "#adoc-missing-image({})\n", string(&image.alt));
             return;
         };
         let path = self.file(path);
-        let width = image
-            .width
-            .as_deref()
+        // As asciidoctor-pdf sizes it: `pdfwidth`, else `scaledwidth`, else `width`.
+        let width = ["pdfwidth", "scaledwidth"]
+            .iter()
+            .find_map(|name| block.attributes.get(*name).map(String::as_str))
+            .or(image.width.as_deref())
             .and_then(image_size)
             .map(|width| format!(", width: {width}"))
             .unwrap_or_default();
-        let _ = writeln!(
-            self.out,
-            "#adoc-image(image({}, alt: {}{width}))\n",
+        // A float places it as an alignment does.
+        let align = ["float", "align"]
+            .iter()
+            .find_map(|name| block.attributes.get(*name))
+            .map(|align| format!(", align-to: {}", string(align)))
+            .unwrap_or_default();
+        let shown = format!(
+            "image({}, alt: {}{width})",
             string(&path),
             string(&alt_text(image))
         );
+        // `link=` makes the image a link, as asciidoctor-pdf does.
+        let shown = match block.attributes.get("link") {
+            Some(link) => format!("link({}, {shown})", string(link)),
+            None => shown,
+        };
+        let _ = writeln!(self.out, "#adoc-image({shown}{align})\n");
     }
 
-    fn table(&mut self, table: &ViewTable) {
+    fn table(&mut self, block: &ViewBlock, table: &ViewTable) {
+        let autowidth = block.options.contains("autowidth");
         let columns: Vec<String> = table
             .columns
             .iter()
             .map(|column| match column.width {
+                // An automatic width sizes each column to its content.
+                _ if autowidth => "auto".to_owned(),
                 ColumnWidth::Proportional(width) => format!("{}fr", width.max(1)),
                 ColumnWidth::Percentage(width) => format!("{width}%"),
                 ColumnWidth::Auto => "auto".to_owned(),
@@ -733,7 +764,7 @@ impl<'a> Emitter<'a> {
                 .as_ref()
                 .or(table.rows.first())
                 .map_or(1, |row| row.iter().map(|cell| cell.colspan.max(1)).sum());
-            vec!["1fr".to_owned(); count]
+            vec![if autowidth { "auto" } else { "1fr" }.to_owned(); count]
         } else {
             columns
         };
@@ -757,9 +788,33 @@ impl<'a> Emitter<'a> {
                 format!("({},)", cells.join(", "))
             },
         );
+        // Every row, the header's and footer's too: the last draws the frame's bottom.
+        let row_count = table.rows.len()
+            + usize::from(table.header.is_some())
+            + usize::from(table.footer.is_some());
+        let mut options = format!(", row-count: {row_count}");
+        for name in ["frame", "grid", "stripes"] {
+            if let Some(value) = block.attributes.get(name) {
+                let _ = write!(options, ", {name}: {}", string(value));
+            }
+        }
+        // `width` as a percentage of the page; with `%autowidth` and no width, the content's.
+        let width = block
+            .attributes
+            .get("width")
+            .and_then(|width| width.trim().trim_end_matches('%').parse::<f64>().ok())
+            .filter(|width| *width > 0.0);
+        match width {
+            Some(width) => {
+                let width = typst::number(width.min(100.0));
+                let _ = write!(options, ", width: {}%", width.trim_end_matches(".0"));
+            }
+            None if autowidth => options.push_str(", width: auto"),
+            None => {}
+        }
         let _ = writeln!(
             self.out,
-            "#adoc-table(({},), {header}, ({}), {footer})\n",
+            "#adoc-table(({},), {header}, ({}), {footer}{options})\n",
             columns.join(", "),
             rows.iter()
                 .map(|row| format!("{row}, "))
@@ -808,6 +863,12 @@ impl<'a> Emitter<'a> {
             Align::Centre => "center",
             Align::End => "right",
         };
+        let valign = match cell.valign {
+            VAlign::Top => "top",
+            VAlign::Middle => "horizon",
+            VAlign::Bottom => "bottom",
+        };
+        let align = format!("{align} + {valign}");
         format!(
             "table.cell(colspan: {}, rowspan: {}, align: {align})[{body}]",
             cell.colspan.max(1),
@@ -1187,13 +1248,42 @@ fn unordered_marker(depth: usize) -> &'static str {
     }
 }
 
-fn ordered_marker(depth: usize, number: usize) -> String {
-    let label = match (depth - 1) % 5 {
-        0 => number.to_string(),
-        1 => alpha(number, false),
-        2 => roman(number).to_lowercase(),
-        3 => alpha(number, true),
-        _ => roman(number),
+/// The numbers of an ordered list's `count` items, as asciidoctor-pdf counts them: from
+/// `start`, or for a `%reversed` list from `start` or the number of items, down.
+fn ordered_numbers(block: &ViewBlock, count: usize) -> Vec<i64> {
+    let reversed = block.options.contains("reversed");
+    let start = block
+        .attributes
+        .get("start")
+        .and_then(|start| start.trim().parse::<i64>().ok())
+        .unwrap_or(if reversed { count as i64 } else { 1 });
+    (0..count as i64)
+        .map(|index| {
+            if reversed {
+                start - index
+            } else {
+                start + index
+            }
+        })
+        .collect()
+}
+
+/// An ordered list item's marker in the list's numbering `style`, as asciidoctor-pdf writes
+/// it. A letter or numeral has no number below one, so such a number is written in figures.
+fn ordered_marker(style: &str, number: i64) -> String {
+    let positive = usize::try_from(number).ok().filter(|number| *number > 0);
+    let label = match (style, positive) {
+        ("unstyled" | "unnumbered" | "no-bullet" | "none", _) => return String::new(),
+        ("decimal", _) if number.abs() < 10 => {
+            format!("{}0{}", if number < 0 { "-" } else { "" }, number.abs())
+        }
+        ("loweralpha", Some(number)) => alpha(number, false),
+        ("upperalpha", Some(number)) => alpha(number, true),
+        ("lowerroman", Some(number)) => roman(number).to_lowercase(),
+        ("upperroman", Some(number)) => roman(number),
+        ("lowergreek", Some(number)) => char::from_u32(0x03b1 + (number as u32 - 1) % 25)
+            .map_or_else(|| number.to_string(), String::from),
+        _ => number.to_string(),
     };
     format!("{label}.")
 }
@@ -1466,11 +1556,18 @@ mod tests {
     use super::{alpha, image_size, ordered_marker, roman, with_callouts};
 
     #[test]
-    fn ordered_markers_follow_the_nesting_depth() {
-        assert_eq!(ordered_marker(1, 3), "3.");
-        assert_eq!(ordered_marker(2, 2), "b.");
-        assert_eq!(ordered_marker(3, 4), "iv.");
-        assert_eq!(ordered_marker(4, 27), "AA.");
+    fn ordered_markers_follow_the_list_style() {
+        assert_eq!(ordered_marker("arabic", 3), "3.");
+        assert_eq!(ordered_marker("loweralpha", 2), "b.");
+        assert_eq!(ordered_marker("lowerroman", 4), "iv.");
+        assert_eq!(ordered_marker("upperalpha", 27), "AA.");
+        assert_eq!(ordered_marker("upperroman", 9), "IX.");
+        assert_eq!(ordered_marker("decimal", 7), "07.");
+        assert_eq!(ordered_marker("decimal", 12), "12.");
+        assert_eq!(ordered_marker("lowergreek", 2), "\u{3b2}.");
+        assert_eq!(ordered_marker("arabic", 0), "0.");
+        assert_eq!(ordered_marker("loweralpha", 0), "0.");
+        assert_eq!(ordered_marker("unstyled", 1), "");
         assert_eq!(alpha(26, false), "z");
         assert_eq!(roman(1994), "MCMXCIV");
     }

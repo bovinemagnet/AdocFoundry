@@ -199,6 +199,8 @@ mod tests {
             style: None,
             title: Vec::new(),
             caption: None,
+            attributes: std::collections::BTreeMap::new(),
+            options: std::collections::BTreeSet::new(),
             kind,
         };
         let tree = ViewTree {

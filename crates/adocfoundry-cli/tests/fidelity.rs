@@ -79,6 +79,52 @@ fn structure(html: &str) -> Vec<String> {
     blocks
 }
 
+/// How blocks are shown, where a block's attributes and options decide it: each ordered
+/// list's classes and `type`, `start` and `reversed`; each table's classes and width; each
+/// table cell's alignment; each image block's classes and link; and each collapsible block.
+fn presentation(html: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = html;
+    while let Some(start) = rest.find('<') {
+        rest = &rest[start + 1..];
+        let end = rest.find('>').unwrap_or(rest.len());
+        let tag = &rest[..end];
+        let name = tag.split_whitespace().next().unwrap_or("");
+        let classes = attribute(tag, "class");
+        let first = classes.split_whitespace().next().unwrap_or("");
+        let shown = match name {
+            "ol" => {
+                let reversed = tag.split_whitespace().any(|word| word == "reversed");
+                Some(format!(
+                    "ol class={classes:?} type={:?} start={:?} reversed={reversed}",
+                    attribute(tag, "type"),
+                    attribute(tag, "start")
+                ))
+            }
+            // A diagram is a listing to Asciidoctor without its diagram extension.
+            "div" if classes.split_whitespace().any(|class| class == "diagram") => None,
+            "div" if matches!(first, "olist" | "imageblock") => Some(format!("{name} {classes}")),
+            "table" => Some(format!(
+                "table {classes} style={:?}",
+                attribute(tag, "style")
+            )),
+            "td" | "th" => Some(format!("{name} {classes}")),
+            "a" if first == "image" => Some(format!("a image href={:?}", attribute(tag, "href"))),
+            "details" | "summary" => Some(name.to_owned()),
+            _ => None,
+        };
+        found.extend(shown);
+    }
+    found
+}
+
+/// The value of `name` in an element's opening tag, or empty.
+fn attribute<'a>(tag: &'a str, name: &str) -> &'a str {
+    tag.split_once(&format!(" {name}=\""))
+        .and_then(|(_, value)| value.split_once('"'))
+        .map_or("", |(value, _)| value)
+}
+
 /// The text of every `<p>`, tags removed and whitespace collapsed.
 fn paragraphs(html: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -173,6 +219,21 @@ fn normalising_keeps_blocks_and_paragraph_text() {
     );
     assert_eq!(paragraphs(html), ["Some bold text", "1"]);
     assert_eq!(
+        presentation(
+            "<div class=\"olist loweralpha\"><ol class=\"loweralpha\" type=\"a\" start=\"3\" reversed>\
+             <table class=\"tableblock frame-none\" style=\"width: 50%;\"><td class=\"tableblock valign-top\">\
+             <details><summary class=\"title\">"
+        ),
+        [
+            "div olist loweralpha",
+            "ol class=\"loweralpha\" type=\"a\" start=\"3\" reversed=true",
+            "table tableblock frame-none style=\"width: 50%;\"",
+            "td tableblock valign-top",
+            "details",
+            "summary",
+        ]
+    );
+    assert_eq!(
         decode_entities("&#169; &amp; &#x2192; &bogus"),
         "\u{a9} & \u{2192} &bogus"
     );
@@ -226,6 +287,21 @@ fn fidelity_block_structure_matches_asciidoctor() {
         if our_blocks != their_blocks {
             mismatched.push(format!(
                 "{name}: block structure differs\n  ours:   {our_blocks:?}\n  theirs: {their_blocks:?}"
+            ));
+        }
+        let (our_shown, their_shown) = (presentation(&ours), presentation(&theirs));
+        if our_shown != their_shown {
+            let differences: Vec<String> = our_shown
+                .iter()
+                .zip(&their_shown)
+                .filter(|(our, their)| our != their)
+                .map(|(our, their)| format!("  ours:   {our}\n  theirs: {their}"))
+                .collect();
+            mismatched.push(format!(
+                "{name}: presentation differs ({} here, {} from asciidoctor)\n{}",
+                our_shown.len(),
+                their_shown.len(),
+                differences.join("\n")
             ));
         }
         let (our_text, their_text) = (paragraphs(&ours), paragraphs(&theirs));

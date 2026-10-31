@@ -41,6 +41,8 @@ pub struct BlockMeta {
     pub style: Option<String>,
     /// Named attributes from the block's attribute list.
     pub attributes: BTreeMap<String, String>,
+    /// Options, `%collapsible` or `opts=autowidth`.
+    pub options: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -136,6 +138,15 @@ pub enum Align {
     End,
 }
 
+/// Where a cell's content sits between its top and bottom edges.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum VAlign {
+    #[default]
+    Top,
+    Middle,
+    Bottom,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CellStyle {
     AsciiDoc,
@@ -158,6 +169,7 @@ pub enum ColumnWidth {
 pub struct Column {
     pub width: ColumnWidth,
     pub align: Align,
+    pub valign: VAlign,
     pub style: CellStyle,
 }
 
@@ -167,6 +179,7 @@ pub struct Cell {
     pub colspan: usize,
     pub rowspan: usize,
     pub align: Option<Align>,
+    pub valign: Option<VAlign>,
     pub style: Option<CellStyle>,
 }
 

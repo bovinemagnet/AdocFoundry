@@ -40,7 +40,7 @@ It also follows a link in `tests/fixtures/xrefs/`.
 == Preview and render tests
 
 [[render-tests]]
-The render corpus is `tests/fixtures/render/`: `blocks.adoc`, `inline.adoc` and `tables.adoc`, with a `partials/` directory for includes.
+The render corpus is `tests/fixtures/render/`: `blocks.adoc`, `block-options.adoc`, `inline.adoc` and `tables.adoc`, with a `partials/` directory for includes.
 `crates/adoc-dom/tests/` checks each parser over the corpus, and `crates/adoc-render/tests/view.rs` checks the view tree.
 `crates/adoc-engine/tests/preview.rs` drives the preview service headlessly: the settle time, included-file changes, stale results, diagram completion, following and pinning, history for `navigate.go_to` and `navigate.reveal`, and `render_blocking`.
 
@@ -49,6 +49,12 @@ It normalises both to their block structure and paragraph text.
 Block structure must match, and text differences are reported.
 The harness is skipped, with a message, when `asciidoctor --version` does not succeed, because a broken installation is as unusable as a missing one.
 It treats a rendered diagram as the listing block Asciidoctor writes without its diagram extension.
+
+It also compares a third normalisation, `presentation`, and fails on a difference.
+That covers each ordered list's classes and `type`, `start` and `reversed`, each table's classes and width style, each cell's alignment classes, each image block's classes and link, and each `<details>` and `<summary>`.
+Rendered diagrams are skipped there too.
+`block-options.adoc` holds the lists, tables, images and a collapsible block that this exercises.
+It is a file of its own because the snapshot, round-trip and word-count tests of other crates read `blocks.adoc` and `tables.adoc`.
 
 Application tests for the preview are in `ui_tests.rs`: rendering the active document, the detached preview following edits, click-to-source (including into a partial) and scroll sync in both directions.
 
@@ -119,7 +125,7 @@ As with the other application tests, `ime_composition_commits_once` is not evide
 |The loader: `loads_every_bundled_theme`, `default_theme_values_match_asciidoctor_pdf`, `extends_applies_in_order`, `variables_and_arithmetic_evaluate`, `units_normalise_to_points`, `colours_normalise`, `font_catalogue_merges_and_resolves`, `unknown_keys_warn_and_load`, `custom_theme_loads_without_edits` and `malformed_theme_reports_an_error`.
 
 |`emit.rs`
-|The emitter: `emits_every_block_kind`, `emits_every_inline_kind`, `escapes_typst_markup`, `text_round_trips_through_compilation`, `labels_are_namespaced_per_page` and `passthrough_is_text`.
+|The emitter: `emits_every_block_kind`, `emits_every_inline_kind`, `escapes_typst_markup`, `text_round_trips_through_compilation`, `labels_are_namespaced_per_page`, `passthrough_is_text`, `emits_list_styles_and_table_options`, `emits_cell_vertical_alignment` and `image_alignment_and_pdf_width_are_kept`.
 
 |`compile.rs`
 |The world and compilation: `compiles_with_bundled_fonts_only`, `world_reaches_only_listed_files`, `errors_map_to_asciidoc_lines`, `missing_image_is_a_diagnostic_not_a_failure` and `compile_is_deterministic`.

@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use adoc_dom::{Align, CellStyle, ColumnWidth, ListKind, MediaKind};
+use adoc_dom::{Align, CellStyle, ColumnWidth, ListKind, MediaKind, VAlign};
 
 use crate::view::{
     DiagramView, ResolvedLink, ViewBlock, ViewImage, ViewInline, ViewKind, ViewTree,
@@ -174,14 +174,21 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             let _ = writeln!(out, "<p>{}</p></div>", inlines(content));
         }
         ViewKind::List { kind, items } => {
-            let (class, tag) = match kind {
-                ListKind::Unordered => ("ulist", "ul"),
-                ListKind::Checklist => ("ulist checklist", "ul"),
-                ListKind::Ordered => ("olist arabic", "ol"),
+            let (class, tag, list) = match kind {
+                ListKind::Unordered => ("ulist".to_owned(), "ul", String::new()),
+                ListKind::Checklist => ("ulist checklist".to_owned(), "ul", String::new()),
+                ListKind::Ordered => {
+                    let style = block.style.as_deref().unwrap_or("arabic");
+                    (
+                        format!("olist {}", escape(style)),
+                        "ol",
+                        ordered_list_attributes(style, block),
+                    )
+                }
             };
-            let _ = writeln!(out, "<div{id} class=\"{}\">", classes(class, block));
+            let _ = writeln!(out, "<div{id} class=\"{}\">", classes(&class, block));
             block_title(out, block);
-            let _ = writeln!(out, "<{tag}>");
+            let _ = writeln!(out, "<{tag}{list}>");
             for item in items {
                 out.push_str("<li><p>");
                 if let Some(checked) = item.checked {
@@ -350,13 +357,39 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             out.push_str("</div>\n");
         }
         ViewKind::Sidebar(blocks) => container(out, view, block, "sidebarblock", blocks),
+        ViewKind::Example(blocks) if block.options.contains("collapsible") => {
+            // As Asciidoctor writes it: a disclosure, titled `Details` unless the block is.
+            let class = classes("", block);
+            let class = class.trim();
+            let class = if class.is_empty() {
+                String::new()
+            } else {
+                format!(" class=\"{class}\"")
+            };
+            let open = if block.options.contains("open") {
+                " open"
+            } else {
+                ""
+            };
+            let _ = writeln!(out, "<details{id}{class}{open}>");
+            let summary = if block.title.is_empty() {
+                "Details".to_owned()
+            } else {
+                inlines(&block.title)
+            };
+            let _ = writeln!(out, "<summary class=\"title\">{summary}</summary>");
+            out.push_str("<div class=\"content\">\n");
+            render_blocks(out, view, blocks);
+            out.push_str("</div>\n</details>\n");
+        }
         ViewKind::Example(blocks) => container(out, view, block, "exampleblock", blocks),
         ViewKind::Open(blocks) => container(out, view, block, "openblock", blocks),
         ViewKind::Table(table) => {
+            let (class, style) = table_presentation(block);
             let _ = writeln!(
                 out,
-                "<table{id} class=\"{}\">",
-                classes("tableblock frame-all grid-all stretch", block)
+                "<table{id} class=\"{}\"{style}>",
+                classes(&class, block)
             );
             if !block.title.is_empty() {
                 let caption = block
@@ -416,9 +449,14 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                         Align::Centre => "center",
                         Align::End => "right",
                     };
+                    let valign = match cell.valign {
+                        VAlign::Top => "top",
+                        VAlign::Middle => "middle",
+                        VAlign::Bottom => "bottom",
+                    };
                     let _ = write!(
                         out,
-                        "<{tag} class=\"tableblock halign-{align} valign-top\"{span}>"
+                        "<{tag} class=\"tableblock halign-{align} valign-{valign}\"{span}>"
                     );
                     if cell.style == CellStyle::AsciiDoc {
                         // An AsciiDoc cell is a nested document: its blocks render as blocks.
@@ -464,8 +502,23 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             out.push_str("</table>\n");
         }
         ViewKind::Image(image) => {
-            let _ = writeln!(out, "<div{id} class=\"{}\">", classes("imageblock", block));
-            let _ = writeln!(out, "<div class=\"content\">\n{}\n</div>", img(image));
+            let mut class = "imageblock".to_owned();
+            if let Some(float) = block.attributes.get("float") {
+                let _ = write!(class, " {}", escape(float));
+            }
+            if let Some(align) = block.attributes.get("align") {
+                let _ = write!(class, " text-{}", escape(align));
+            }
+            let _ = writeln!(out, "<div{id} class=\"{}\">", classes(&class, block));
+            let shown = match block.attributes.get("link") {
+                Some(link) => format!(
+                    "<a class=\"image\" href=\"{}\">{}</a>",
+                    escape(link),
+                    img(image)
+                ),
+                None => img(image),
+            };
+            let _ = writeln!(out, "<div class=\"content\">\n{shown}\n</div>");
             block_title(out, block);
             out.push_str("</div>\n");
         }
@@ -610,6 +663,55 @@ fn file_url(path: &std::path::Path) -> String {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     url::Url::from_file_path(&absolute)
         .map_or_else(|()| format!("file://{}", absolute.display()), String::from)
+}
+
+/// An ordered list's `class`, `type`, `start` and `reversed`, as Asciidoctor writes them.
+fn ordered_list_attributes(style: &str, block: &ViewBlock) -> String {
+    let mut attributes = format!(" class=\"{}\"", escape(style));
+    let marker = match style {
+        "loweralpha" => Some("a"),
+        "upperalpha" => Some("A"),
+        "lowerroman" => Some("i"),
+        "upperroman" => Some("I"),
+        _ => None,
+    };
+    if let Some(marker) = marker {
+        let _ = write!(attributes, " type=\"{marker}\"");
+    }
+    if let Some(start) = block.attributes.get("start") {
+        let _ = write!(attributes, " start=\"{}\"", escape(start));
+    }
+    if block.options.contains("reversed") {
+        attributes.push_str(" reversed");
+    }
+    attributes
+}
+
+/// A table's classes and any `style` attribute, as Asciidoctor gives them: its frame, grid and
+/// stripes, then `fit-content` for an automatic width, `stretch` for the full width, or else
+/// the width as a style, then a float.
+fn table_presentation(block: &ViewBlock) -> (String, String) {
+    let attribute = |name: &str| block.attributes.get(name).map(String::as_str);
+    let frame = match attribute("frame").unwrap_or("all") {
+        "topbot" => "ends",
+        frame => frame,
+    };
+    let grid = attribute("grid").unwrap_or("all");
+    let mut class = format!("tableblock frame-{} grid-{}", escape(frame), escape(grid));
+    if let Some(stripes) = attribute("stripes") {
+        let _ = write!(class, " stripes-{}", escape(stripes));
+    }
+    let width = attribute("width").map(|width| width.trim_end_matches('%'));
+    let mut style = String::new();
+    match width {
+        None if block.options.contains("autowidth") => class.push_str(" fit-content"),
+        None | Some("100") => class.push_str(" stretch"),
+        Some(width) => style = format!(" style=\"width: {}%;\"", escape(width)),
+    }
+    if let Some(float) = attribute("float") {
+        let _ = write!(class, " {}", escape(float));
+    }
+    (class, style)
 }
 
 fn img(image: &ViewImage) -> String {

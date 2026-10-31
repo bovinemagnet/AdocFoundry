@@ -480,8 +480,16 @@
 
 #let adoc-missing-image(alt) = block(text(fill: base-color.lighten(40%), [\[#alt\]]))
 
-// A table: frame and grid from the theme, header row emphasised, optional stripes.
-#let adoc-table(columns, header, rows, footer, stripes: none) = {
+// A collapsible block, as asciidoctor-pdf draws it open: its caption (`▼ Title`) comes first,
+// then its blocks, indented by the marker, without the example's frame.
+#let adoc-collapsible(body) = context pad(left: measure(text("\u{25bc} ")).width, body)
+
+// A table: frame and grid from the theme, header row emphasised, optional stripes. As
+// asciidoctor-pdf reads them, `frame` keeps the outer border on every side (`all`), the top and
+// bottom (`ends`, `topbot`), the sides (`sides`) or none; `grid` keeps the inner lines between
+// rows and columns (`all`), rows (`rows`), columns (`cols`) or none; `width` is the table's
+// share of the page, or `auto` for its content's.
+#let adoc-table(columns, header, rows, footer, row-count: none, stripes: none, frame: "all", grid: "all", width: 100%) = {
   let border-color = pick("table_border_color", "base_border_color", default: luma(200))
   let grid-color = pick("table_grid_color", "table_border_color", "base_border_color", default: luma(200))
   let border-width = pick("table_border_width", default: 0.5pt)
@@ -489,6 +497,12 @@
   let head-bottom = pick("table_head_border_bottom_width", default: grid-width)
   let stripe = pick("table_body_stripe_background_color")
   let head-rows = if header == none { 0 } else { 1 }
+  let frame-ends = frame in ("all", "ends", "topbot")
+  let frame-sides = frame in ("all", "sides")
+  let grid-rows = grid in ("all", "rows")
+  let grid-cols = grid in ("all", "cols")
+  let outer(on, width, color) = if on { border(width, color) } else { none }
+  let column-count = if type(columns) == array { columns.len() } else { columns }
   let body-fill(y) = {
     let row = y - head-rows
     if y < head-rows { pick("table_head_background_color") }
@@ -497,18 +511,20 @@
     else if stripe != none and stripes == "all" { stripe }
     else { pick("table_background_color") }
   }
-  block(width: 100%, {
+  block(width: width, {
     set par(justify: false)
     set text(size: resolve-size(pick("table_font_size", default: base-size), base-size))
     table(
       columns: columns,
       inset: inset(pick("table_cell_padding", default: 2pt)),
       fill: (_, y) => body-fill(y),
+      // Each cell draws its top and left edges; the last row and column draw the frame's
+      // bottom and right.
       stroke: (x, y) => (
-        top: if y == 0 { border(border-width, border-color) } else if y == head-rows and head-rows > 0 { border(head-bottom, grid-color) } else { border(grid-width, grid-color) },
-        bottom: border(grid-width, grid-color),
-        left: border(if x == 0 { border-width } else { grid-width }, if x == 0 { border-color } else { grid-color }),
-        right: border(border-width, border-color),
+        top: if y == 0 { outer(frame-ends, border-width, border-color) } else if y == head-rows and head-rows > 0 { border(head-bottom, grid-color) } else { outer(grid-rows, grid-width, grid-color) },
+        bottom: if y == row-count - 1 { outer(frame-ends, border-width, border-color) } else { none },
+        left: if x == 0 { outer(frame-sides, border-width, border-color) } else { outer(grid-cols, grid-width, grid-color) },
+        right: if x == column-count - 1 { outer(frame-sides, border-width, border-color) } else { none },
       ),
       ..if header != none { (table.header(..header.map(cell => [#styled(("table_head",), cell)])),) } else { () },
       ..rows,
