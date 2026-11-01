@@ -121,9 +121,19 @@ pub(crate) fn item_args(item: TabItem) -> CommandArgs {
     }
 }
 
+/// What the user chose when asked about unsaved pages on closing the window.
+#[derive(Clone, Copy)]
+enum CloseAnswer {
+    Save,
+    Discard,
+    Cancel,
+}
+
 pub struct WorkspaceView {
     app: Entity<AppState>,
     focus_handle: FocusHandle,
+    /// Closing the window was answered: it closes without asking again.
+    closing: bool,
     tabs: Vec<TabView>,
     /// The visual editor of each document shown in visual or split mode.
     visuals: HashMap<DocumentId, Entity<VisualView>>,
@@ -408,9 +418,10 @@ impl WorkspaceView {
             }),
         ];
         let closing = cx.weak_entity();
-        window.on_window_should_close(cx, move |_, cx| {
-            let _ = closing.update(cx, |this, cx| this.write_session(cx));
-            true
+        window.on_window_should_close(cx, move |window, cx| {
+            closing
+                .update(cx, |this, cx| this.window_should_close(window, cx))
+                .unwrap_or(true)
         });
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace.clone(), window, cx));
@@ -424,6 +435,7 @@ impl WorkspaceView {
         let focus_handle = cx.focus_handle();
         let app_menu = cx.new(|_| AppMenu::new(app.clone(), focus_handle.clone()));
         let mut view = Self {
+            closing: false,
             focus_handle,
             tabs: Vec::new(),
             visuals: HashMap::new(),
@@ -2331,6 +2343,103 @@ impl WorkspaceView {
                 cx,
             );
         }
+    }
+
+    /// Whether the window may close now. With pages unsaved it asks first, and closes once
+    /// answered: Save saves them, Don't Save closes them without saving (so recovery offers
+    /// nothing back), Cancel keeps the window.
+    fn window_should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.closing {
+            return true;
+        }
+        let engine = &self.app.read(cx).engine;
+        let unsaved: Vec<DocumentId> = engine
+            .documents()
+            .filter(|document| document.dirty)
+            .map(|document| document.id)
+            .collect();
+        if unsaved.is_empty() {
+            self.write_session(cx);
+            return true;
+        }
+        let untitled = unsaved.iter().any(|id| {
+            engine
+                .document(*id)
+                .is_some_and(|document| document.untitled)
+        });
+        let names: Vec<String> = unsaved
+            .iter()
+            .map(|id| self.document_name(*id, cx))
+            .collect();
+        let mut message = match &names[..] {
+            [name] => format!("{name} has unsaved changes."),
+            [rest @ .., last] => format!("{} and {last} have unsaved changes.", rest.join(", ")),
+            [] => unreachable!(),
+        };
+        if untitled {
+            message.push_str(
+                " Save keeps untitled pages for Recover Unsaved Changes the next time you open \
+                 AdocFoundry.",
+            );
+        }
+        let workspace = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let choice = |selector: &'static str, label: &'static str, answer: CloseAnswer| {
+                let workspace = workspace.clone();
+                Button::new(selector)
+                    .label(label)
+                    .debug_selector(move || selector.to_owned())
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        if let Some(workspace) = workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.close_window(answer, window, cx);
+                            });
+                        }
+                    })
+            };
+            dialog.title("Save changes before closing?").child(
+                v_flex().gap_3().child(message.clone()).child(
+                    h_flex()
+                        .gap_2()
+                        .justify_end()
+                        .child(choice("close-window-cancel", "Cancel", CloseAnswer::Cancel))
+                        .child(
+                            choice("close-window-discard", "Don't Save", CloseAnswer::Discard)
+                                .danger(),
+                        )
+                        .child(choice("close-window-save", "Save", CloseAnswer::Save).primary()),
+                ),
+            )
+        });
+        false
+    }
+
+    /// Closes the window as `answer` says, once asked about unsaved pages.
+    fn close_window(&mut self, answer: CloseAnswer, window: &mut Window, cx: &mut Context<Self>) {
+        match answer {
+            CloseAnswer::Cancel => return,
+            // A page that changed on disk shows its own dialog, and the window stays.
+            CloseAnswer::Save => {
+                if self
+                    .invoke(ids::DOCUMENT_SAVE_ALL, CommandArgs::None, window, cx)
+                    .is_none()
+                {
+                    return;
+                }
+                self.write_session(cx);
+            }
+            CloseAnswer::Discard => {
+                // The session keeps the tabs; closing them without saving drops their
+                // recovery records.
+                self.write_session(cx);
+                self.app.update(cx, |app, cx| {
+                    let _ = app.invoke(ids::DOCUMENT_CLOSE_ALL, CommandArgs::None, cx);
+                });
+            }
+        }
+        self.closing = true;
+        window.remove_window();
     }
 
     /// Runs `command` (Close, or Close Others, Left, Right, Clean or All) on the tab of `item`,

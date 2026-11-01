@@ -6188,3 +6188,89 @@ fn a_save_conflict_asks_without_a_notification(cx: &mut TestAppContext) {
         0
     );
 }
+
+/// A window on one page with an unsaved edit.
+fn window_with_an_unsaved_page(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    (directory, page, app, cx)
+}
+
+/// The pages with unsaved edits, read without the window, which may have closed.
+fn unsaved(app: &Entity<AppState>, cx: &mut VisualTestContext) -> usize {
+    cx.cx.update(|cx| {
+        app.read(cx)
+            .engine
+            .documents()
+            .filter(|document| document.dirty)
+            .count()
+    })
+}
+
+/// Whether the test's one window is still open.
+fn window_is_open(cx: &mut VisualTestContext) -> bool {
+    cx.cx.update(|cx| !cx.windows().is_empty())
+}
+
+#[gpui::test]
+fn closing_the_window_asks_about_unsaved_pages(cx: &mut TestAppContext) {
+    let (_directory, page, app, mut cx) = window_with_an_unsaved_page(cx);
+    assert!(!cx.simulate_close(), "the window stays while it asks");
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    // Cancel keeps the window and the edit.
+    click_selector("close-window-cancel", gpui::MouseButton::Left, &mut cx);
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(window_is_open(&mut cx));
+    assert_eq!(unsaved(&app, &mut cx), 1);
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
+}
+
+#[gpui::test]
+fn closing_the_window_can_save_first(cx: &mut TestAppContext) {
+    let (_directory, page, app, mut cx) = window_with_an_unsaved_page(cx);
+    assert!(!cx.simulate_close());
+    cx.run_until_parked();
+    click_selector("close-window-save", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "x= Page\n");
+    assert_eq!(unsaved(&app, &mut cx), 0);
+    assert!(!window_is_open(&mut cx));
+}
+
+#[gpui::test]
+fn closing_the_window_can_discard(cx: &mut TestAppContext) {
+    let (_directory, page, app, mut cx) = window_with_an_unsaved_page(cx);
+    assert!(!cx.simulate_close());
+    cx.run_until_parked();
+    click_selector("close-window-discard", gpui::MouseButton::Left, &mut cx);
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
+    // Closed without saving, so recovery has nothing to offer back.
+    assert_eq!(unsaved(&app, &mut cx), 0);
+    assert!(!window_is_open(&mut cx));
+}
+
+#[gpui::test]
+fn a_window_with_nothing_unsaved_closes_at_once(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    assert!(cx.simulate_close());
+}

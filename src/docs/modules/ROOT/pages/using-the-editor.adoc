@@ -76,7 +76,7 @@ Untitled pages are kept too.
 The copy is removed as soon as the page is saved, closed without saving, or its edits are undone back to the saved text.
 
 If the app ends without saving, the next launch opens the Recover Unsaved Changes dialog.
-This happens when the app crashes, is killed, the machine loses power, or you quit with pages unsaved.
+This happens when the app crashes, is killed, the machine loses power, you quit with pages unsaved, or you close the window with pages unsaved and choose Save with untitled pages open (see xref:#closing-the-window[closing the window]).
 The dialog lists each page, with untitled pages marked "(untitled)", and when it was edited.
 Beside the list it shows the lines the unsaved text changes compared with the file on disk now.
 Removed lines are red and start with `-`, added lines are green and start with `+`, and three unchanged lines are shown around each change.
@@ -391,6 +391,24 @@ Right-clicking the empty part of the tab bar offers only Close Clean and Close A
 The same commands are in the palette and act on the active tab; see xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for their keys.
 When any of the tabs to be closed has unsaved changes, you are asked once, naming them (for example "a.adoc and b.adoc have unsaved changes."): Discard closes them all and Cancel closes none.
 Close Clean never asks, since it leaves unsaved tabs open.
+
+[#closing-the-window]
+Closing the main window while pages have unsaved changes asks first, in a dialog titled "Save changes before closing?" that names the pages.
+With nothing unsaved, the window closes at once.
+
+Save::
+Saves every page that has a file.
+If one of them changed on disk, the usual "<file> changed on disk" dialog appears and the window stays open.
+Untitled pages have no file to save to, so Save keeps them for xref:#crash-recovery[Recover Unsaved Changes] the next time AdocFoundry opens; the dialog says so when there are any.
+
+Don't Save::
+Closes the pages without saving, so nothing is offered back by recovery.
+The session still reopens the tabs, with each file's saved text.
+
+Cancel::
+Keeps the window open.
+
+Quitting the app, rather than closing its window, does not ask: unsaved text is kept for Recover Unsaved Changes.
 
 The ← and → buttons at the start of the tab bar are Go Back and Go Forward through the places you have followed links to.
 Each is greyed out when there is nowhere to go.
