@@ -2,7 +2,7 @@ flowchart TD
     push["Push or pull request"] --> ci
     subgraph ci["CI workflow"]
         lint["lint: cargo fmt, clippy -D warnings,<br/>cargo deny, cargo xtask layers"]
-        test["test matrix: ubuntu, macos-14, windows<br/>cargo test --workspace --exclude adocfoundry,<br/>then cargo build -p adocfoundry"]
+        test["test matrix: ubuntu, macos-15, windows<br/>cargo test --workspace --exclude adocfoundry,<br/>then cargo build -p adocfoundry"]
         grammar["grammar: tree-sitter corpus tests<br/>and queries compile"]
     end
     tag["Tag v*"] --> version["version: the tag matches Cargo.toml,<br/>src/docs/antora.yml and CHANGELOG.md"]
