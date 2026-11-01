@@ -47,7 +47,7 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 |On Ubuntu: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny` and `cargo xtask layers`.
 
 |`test`
-|On Ubuntu, macOS 14 and Windows: `cargo test --workspace --exclude adocfoundry`, then `cargo build -p adocfoundry`. Building needs no display.
+|On Ubuntu, macOS 15 and Windows: `cargo test --workspace --exclude adocfoundry`, then `cargo build -p adocfoundry`. Building needs no display.
 On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15, so the fidelity test and `pdf_regression` run instead of skipping. These tools are needed only by CI, never at runtime.
 On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
 

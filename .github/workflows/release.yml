@@ -31,7 +31,7 @@ jobs:
 
   macos:
     needs: version
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       # Signing and notarisation need the Developer ID secrets; without them the app is signed
       # ad hoc, as before.
@@ -313,7 +313,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             artefact: macos
           - runner: windows-latest
             artefact: windows-x64
