@@ -70,6 +70,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        # The app crate's grammar is a workspace member's dependency, so Cargo needs it to
+        # resolve the workspace at all.
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo bench -p adoc-engine --bench budgets
 

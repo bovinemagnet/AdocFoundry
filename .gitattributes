@@ -7,3 +7,6 @@
 # (`spans_are_the_same_with_crlf_line_endings`).
 tests/fixtures/** -text
 crates/*/tests/snapshots/*.snap -text
+
+# Generated, and compared byte for byte with what the generator writes (`theme_keys.rs`).
+src/docs/modules/ROOT/partials/theme-keys.adoc -text
