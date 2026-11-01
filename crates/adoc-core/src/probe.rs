@@ -28,9 +28,11 @@ pub enum Probe {
     InlineLayout,
     /// A file's Quick Open item made from the index.
     QuickOpenItem,
+    /// Every open document diagnosed again, `Engine::refresh_open_diagnostics`.
+    DiagnoseOpen,
 }
 
-const PROBES: usize = 10;
+const PROBES: usize = 11;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -72,4 +74,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::QuickOpenItem as usize == PROBES - 1);
+const _: () = assert!(Probe::DiagnoseOpen as usize == PROBES - 1);

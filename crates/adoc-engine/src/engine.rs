@@ -925,6 +925,7 @@ impl Engine {
     }
 
     pub(crate) fn refresh_open_diagnostics(&mut self, changed: Option<&Path>) {
+        adoc_core::probe::hit(adoc_core::probe::Probe::DiagnoseOpen);
         self.problems_changed_everywhere();
         let mut updated = Vec::new();
         for document in self
