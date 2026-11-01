@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use adoc_core::SourceRange;
 use adoc_dom::{AcdcParser, BlockKind, DocumentParser, Inline, ParseInput};
-use adoc_model::{Access, Model, Node, NodeKind, Piece, ReadOnly};
+use adoc_model::{Access, Model, Node, NodeKind, Piece, ReadOnly, ViewText};
 
 fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -472,5 +472,75 @@ fn half_typed_input_does_not_panic() {
     ] {
         let model = build_text(Path::new("page.adoc"), text);
         assert!(check_tiling(&model).is_empty(), "{text:?}");
+    }
+}
+
+/// The DOM block at `trail`, counted as `Block::children` counts, as a view tree's trails are.
+fn dom_block<'d>(dom: &'d adoc_dom::Dom, trail: &[usize]) -> Option<&'d adoc_dom::Block> {
+    let (first, rest) = trail.split_first()?;
+    let mut block = dom.blocks.get(*first)?;
+    for index in rest {
+        block = block.children().into_iter().nth(*index)?;
+    }
+    Some(block)
+}
+
+/// Every node of `nodes`, depth first.
+fn all(nodes: &[Node]) -> Vec<&Node> {
+    nodes
+        .iter()
+        .flat_map(|node| std::iter::once(node).chain(all(&node.children)))
+        .collect()
+}
+
+#[test]
+fn text_without_substitutions_is_drawn_as_parsed() {
+    let path = Path::new("page.adoc");
+    let text = "= Page\n\n[subs=none]\nSome *literal stars* here.\n";
+    let dom = AcdcParser.parse(&ParseInput::new(path, text));
+    let model = Model::build(path, text, &dom);
+    let paragraph = all(&model.blocks)
+        .into_iter()
+        .find(|node| node.kind == NodeKind::Paragraph)
+        .expect("a paragraph");
+    assert_eq!(paragraph.access, Access::ReadOnly(ReadOnly::Unchecked));
+    // Its text is drawn as the parser read it: the whole block at its origin.
+    assert_eq!(paragraph.drawn_from_view(), Some(&ViewText::Block));
+    let block = dom_block(&dom, paragraph.origin.as_deref().unwrap()).unwrap();
+    assert!(matches!(block.kind, BlockKind::Paragraph { .. }));
+}
+
+#[test]
+fn a_bibliography_item_is_drawn_as_parsed() {
+    let path = Path::new("page.adoc");
+    let text = "= Page\n\n[bibliography]\n== References\n\n* [[[ref]]] Reference.\n";
+    let dom = AcdcParser.parse(&ParseInput::new(path, text));
+    let model = Model::build(path, text, &dom);
+    let item = all(&model.blocks)
+        .into_iter()
+        .find(|node| matches!(node.kind, NodeKind::ListItem { .. }))
+        .expect("a list item");
+    assert_eq!(item.access, Access::ReadOnly(ReadOnly::Unchecked));
+    let Some(ViewText::Item { list, index }) = item.drawn_from_view() else {
+        panic!("{:?}", item.drawn_from_view());
+    };
+    // The item is found in the tree the view is built from.
+    let BlockKind::List { items, .. } = &dom_block(&dom, list).unwrap().kind else {
+        panic!("no list at {list:?}");
+    };
+    assert!(items[*index].content.iter().any(|inline| matches!(
+        inline,
+        adoc_dom::Inline::Text(text) if text.contains("Reference.")
+    )));
+}
+
+#[test]
+fn text_the_model_reads_as_the_parser_does_is_drawn_from_the_model() {
+    let path = Path::new("page.adoc");
+    let text = "= Page\n\n== Part\n\nA *bold* word.\n\n* An item\n\nTerm:: Its description.\n";
+    let dom = AcdcParser.parse(&ParseInput::new(path, text));
+    let model = Model::build(path, text, &dom);
+    for node in all(&model.blocks) {
+        assert_eq!(node.drawn_from_view(), None, "{:?}", node.kind);
     }
 }

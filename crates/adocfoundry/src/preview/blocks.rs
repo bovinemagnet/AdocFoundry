@@ -617,6 +617,79 @@ fn framed(
         .into_any_element()
 }
 
+/// The text of a visual editor node at `place`, drawn as the preview draws it, for a node
+/// whose own reading of the text disagrees with the parser's (`Node::drawn_from_view`).
+/// A click goes to its source, as a click on a read-only block does. `None` when the view
+/// tree has nothing there.
+pub(crate) fn parsed_text(
+    view: &ViewTree,
+    origin: Option<&[usize]>,
+    place: &adoc_engine::ViewText,
+    selector: String,
+    context: &BlockContext<'_>,
+) -> Option<AnyElement> {
+    use adoc_engine::ViewText;
+    let at = |trail: &[usize]| adoc_render::block_by_trail(view, trail);
+    let (span, body) = match place {
+        ViewText::Block => {
+            let trail = origin?;
+            let block = at(trail)?;
+            let body = match &block.kind {
+                ViewKind::Paragraph(content) => text(content, trail, "body", context),
+                _ => block_element(block, &mut trail.to_vec(), view, context),
+            };
+            (block.span.clone(), body)
+        }
+        ViewText::Title => {
+            let trail = origin?;
+            let block = at(trail)?;
+            let body = match &block.kind {
+                ViewKind::Section { .. } => section_heading(block, trail, context)?,
+                ViewKind::Heading { level, title } => {
+                    heading_element(*level, title, trail, context)
+                }
+                _ => return None,
+            };
+            (block.span.clone(), body)
+        }
+        ViewText::Item { list, index } => {
+            let ViewKind::List { items, .. } = &at(list)?.kind else {
+                return None;
+            };
+            let item = items.get(*index)?;
+            let body = text(&item.content, list, &format!("item{index}"), context);
+            (item.span.clone(), body)
+        }
+        ViewText::Term { list, index } | ViewText::Description { list, index } => {
+            let ViewKind::DescriptionList(items) = &at(list)?.kind else {
+                return None;
+            };
+            let item = items.get(*index)?;
+            let body = if matches!(place, ViewText::Term { .. }) {
+                inline_text(text_id(list, &format!("term{index}")), context, || {
+                    inlines::layout_bold(&item.term, &context.inline)
+                })
+            } else {
+                text(&item.content, list, &format!("dd{index}"), context)
+            };
+            (item.span.clone(), body)
+        }
+    };
+    let on_block = context.on_block.clone();
+    let id = ElementId::Name(SharedString::from(selector.clone()));
+    Some(
+        div()
+            .id(id)
+            .debug_selector(move || selector)
+            .child(body)
+            .on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                on_block(&span, window, cx);
+            })
+            .into_any_element(),
+    )
+}
+
 /// A section's numbered heading.
 fn section_heading(
     block: &ViewBlock,

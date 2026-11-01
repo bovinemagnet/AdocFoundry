@@ -35,6 +35,24 @@ pub struct Node {
     /// The trail of the DOM block it was built from (as `adoc_dom::Block::children` counts),
     /// which is also its trail in a view tree built from the same DOM.
     pub origin: Option<Vec<usize>>,
+    /// Where its text is in a view tree built from the same DOM, as the parser read it.
+    pub view_text: Option<ViewText>,
+}
+
+/// Where a node's text is in a view tree built from the same DOM, for drawing it as the
+/// parser read it when the model reads it otherwise ([`Node::drawn_from_view`]).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ViewText {
+    /// The block at the node's `origin`: a paragraph, or a cell's paragraph.
+    Block,
+    /// The title of the section or discrete heading at the node's `origin`.
+    Title,
+    /// The principal text of item `index` of the list at `list`.
+    Item { list: Vec<usize>, index: usize },
+    /// The term of item `index` of the description list at `list`.
+    Term { list: Vec<usize>, index: usize },
+    /// The description of item `index` of the description list at `list`.
+    Description { list: Vec<usize>, index: usize },
 }
 
 /// Whether a node may be edited in place.
@@ -337,6 +355,18 @@ impl Node {
     #[must_use]
     pub fn is_editable(&self) -> bool {
         self.access == Access::Editable
+    }
+
+    /// Where to draw this node's text from instead of its own reading: set when that reading
+    /// disagrees with the parser's (`ReadOnly::Unchecked`), so the text is shown as the page
+    /// renders, not as the model misreads it. `None` draws the node's own text.
+    #[must_use]
+    pub fn drawn_from_view(&self) -> Option<&ViewText> {
+        if self.access == Access::ReadOnly(ReadOnly::Unchecked) {
+            self.view_text.as_ref()
+        } else {
+            None
+        }
     }
 
     /// The node at `path` below this one.

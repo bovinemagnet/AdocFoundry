@@ -319,6 +319,8 @@ The title is not editable in the visual editor; edit it in the source editor.
 The directives and the branch that is not in use are kept exactly as written.
 * A block is also read-only when the editor and the parser read its text differently.
 This is deliberate: it is better to show a block read-only than to edit it wrongly.
+Such text is shown as the page renders it, not as the editor read it.
+A paragraph with `[subs=none]` shows its asterisks (`Some *literal stars* here.`) instead of bold text, and a bibliography list item such as `* [[[ref]]] Reference.` is shown without a stray `[]`.
 
 Clicking read-only content switches to Split mode and moves the source caret to that content, so you can edit it in the source.
 Clicking read-only text shows a message saying the same.

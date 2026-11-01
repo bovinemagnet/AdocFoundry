@@ -6274,3 +6274,96 @@ fn a_window_with_nothing_unsaved_closes_at_once(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(cx.simulate_close());
 }
+
+/// The path of the first node of `visual`'s model that `wanted` picks, as its debug
+/// selectors spell it.
+fn visual_path(
+    visual: &Entity<crate::visual::VisualView>,
+    cx: &mut VisualTestContext,
+    wanted: impl Fn(&adoc_engine::Node) -> bool,
+) -> String {
+    fn find(
+        nodes: &[adoc_engine::Node],
+        path: &mut Vec<usize>,
+        wanted: &dyn Fn(&adoc_engine::Node) -> bool,
+    ) -> Option<Vec<usize>> {
+        for (index, node) in nodes.iter().enumerate() {
+            path.push(index);
+            if wanted(node) {
+                return Some(path.clone());
+            }
+            if let Some(found) = find(&node.children, path, wanted) {
+                return Some(found);
+            }
+            path.pop();
+        }
+        None
+    }
+    cx.update(|_, cx| {
+        let shown = visual.read(cx).shown().cloned().expect("a model");
+        let path = find(&shown.model.blocks, &mut Vec::new(), &wanted).expect("the node");
+        path.iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join("-")
+    })
+}
+
+#[gpui::test]
+fn a_paragraph_without_substitutions_is_drawn_with_its_asterisks(cx: &mut TestAppContext) {
+    let text = "= Page\n\n[subs=none]\nSome *literal stars* here.\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    draw_visual(&visual, &mut cx);
+    let path = visual_path(&visual, &mut cx, |node| {
+        node.kind == adoc_engine::NodeKind::Paragraph
+    });
+    assert!(
+        cx.debug_bounds(format!("visual-parsed-{path}").leak())
+            .is_some(),
+        "drawn as parsed"
+    );
+    // What it is drawn from keeps the asterisks.
+    let parsed = cx.update(|_, cx| {
+        let shown = visual.read(cx).shown().cloned().unwrap();
+        shown
+            .view
+            .blocks
+            .iter()
+            .find_map(|block| match &block.kind {
+                adoc_render::ViewKind::Paragraph(content) => {
+                    Some(adoc_render::ViewInline::plain_text(content))
+                }
+                _ => None,
+            })
+            .unwrap()
+    });
+    assert_eq!(parsed, "Some *literal stars* here.");
+}
+
+#[gpui::test]
+fn a_bibliography_item_is_drawn_without_a_stray_marker(cx: &mut TestAppContext) {
+    let text = "= Page\n\n[bibliography]\n== References\n\n* [[[ref]]] Reference.\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    draw_visual(&visual, &mut cx);
+    let path = visual_path(&visual, &mut cx, |node| {
+        matches!(node.kind, adoc_engine::NodeKind::ListItem { .. })
+    });
+    assert!(
+        cx.debug_bounds(format!("visual-parsed-{path}").leak())
+            .is_some(),
+        "drawn as parsed"
+    );
+    let parsed = cx.update(|_, cx| {
+        let shown = visual.read(cx).shown().cloned().unwrap();
+        let mut stack: Vec<&adoc_render::ViewBlock> = shown.view.blocks.iter().collect();
+        while let Some(block) = stack.pop() {
+            if let adoc_render::ViewKind::List { items, .. } = &block.kind {
+                return adoc_render::ViewInline::plain_text(&items[0].content);
+            }
+            stack.extend(block.child_refs());
+        }
+        panic!("no list");
+    });
+    assert!(!parsed.contains("[]"), "{parsed:?}");
+    assert!(parsed.contains("Reference."), "{parsed:?}");
+}
