@@ -18,7 +18,7 @@ Open Settings creates it if it is missing.
 |`.adocfoundry.toml` at the root of the workspace.
 |===
 
-Saving either file applies it.
+Saving either file applies it, whether in AdocFoundry or in another editor while a workspace is open.
 Reload Settings re-reads both.
 
 [#state-folder]

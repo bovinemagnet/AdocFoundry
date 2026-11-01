@@ -720,6 +720,10 @@ The file watcher also watches each repository's `.git/HEAD`, `index`, `packed-re
 A commit, a branch switch or staging therefore refreshes the status and the head.
 A change to any file in the working tree refreshes the status as well, after the watcher's 250 ms debounce.
 
+`apply_file_changes` reloads the settings when a changed path is the user or workspace settings file (`is_settings_file`).
+The user file lies outside the roots, so its folder is watched non-recursively (`watch_settings_folder`).
+`settings_loaded` holds a fingerprint of both files as last loaded, so a write that changes nothing, such as the app's own save, does not reload them twice.
+
 `git.refresh` (Refresh Git Status, Workspace category, no default binding) runs discovery again.
 
 `Engine::hunks_now(id)` computes a document's changes on the engine thread from its current text.

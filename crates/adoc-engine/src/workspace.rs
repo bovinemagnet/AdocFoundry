@@ -276,6 +276,16 @@ impl FileWatcher {
         }
     }
 
+    /// Also watches the folder of the user settings file, outside the roots, for that file.
+    /// Watching is a convenience: a failure is ignored.
+    pub(crate) fn watch_settings_folder(&mut self, user_file: &Path) {
+        if let Some(folder) = user_file.parent() {
+            let _ = lock(&self.watches)
+                .watcher
+                .watch(folder, RecursiveMode::NonRecursive);
+        }
+    }
+
     /// The folders watched one by one, for tests.
     #[cfg(test)]
     pub(crate) fn watched(&self) -> BTreeSet<PathBuf> {
@@ -313,6 +323,10 @@ impl Engine {
                 None
             }
         };
+        if let (Some(watcher), Some(user_file)) = (self.watcher.as_mut(), self.settings.user_file())
+        {
+            watcher.watch_settings_folder(user_file);
+        }
         self.record_recent_folders();
         self.reindex();
         self.discover_git();
@@ -677,9 +691,12 @@ impl Engine {
         self.images_changed(&listed);
         self.word_lists_changed(&listed);
         let mut reindex = false;
+        let mut settings = false;
         for (path, change) in &ready {
             if *change == Change::Directory {
                 reindex = true;
+            } else if self.is_settings_file(path) {
+                settings = true;
             } else if path.file_name().is_some_and(|name| name == "antora.yml") {
                 self.reload_descriptor(path);
             } else if path
@@ -692,10 +709,41 @@ impl Engine {
                 self.file_changed_on_disk(path);
             }
         }
+        if settings {
+            self.settings_files_changed();
+        }
         if reindex {
             self.reindex();
         }
         ready.len()
+    }
+
+    fn is_settings_file(&self, path: &Path) -> bool {
+        Some(path) == self.settings.user_file() || Some(path) == self.settings.workspace_file()
+    }
+
+    /// A fingerprint of the user and workspace settings files as they are on disk now.
+    pub(crate) fn settings_files(&self) -> u64 {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for file in [self.settings.user_file(), self.settings.workspace_file()] {
+            file.and_then(|file| fs::read(file).ok()).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// A settings file changed on disk: the settings are read again unless they are as last
+    /// loaded.
+    fn settings_files_changed(&mut self) {
+        if self.settings_loaded == Some(self.settings_files()) {
+            return;
+        }
+        if let Err(error) = self.reload_settings() {
+            self.emit(EngineEvent::CommandFailed {
+                command: crate::commands::ids::SETTINGS_RELOAD,
+                error: error.to_string(),
+            });
+        }
     }
 
     /// Re-reads one component descriptor and refreshes the diagnostics of open documents.

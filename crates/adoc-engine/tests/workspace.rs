@@ -580,3 +580,67 @@ fn reload_replaces_only_what_changed() {
     assert_eq!(engine.document(id).unwrap().text.to_string(), AFTER);
     assert!(!engine.document(id).unwrap().dirty);
 }
+
+#[test]
+fn settings_reload_on_external_change() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings_file = directory.path().join(adoc_engine::WORKSPACE_SETTINGS_FILE);
+    fs::write(&settings_file, "[editor]\ntab_width = 4\n").unwrap();
+    fs::write(directory.path().join("page.adoc"), "= Page\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert_eq!(engine.settings().editor.tab_width, 4);
+    let events = engine.subscribe();
+
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&settings_file, "[editor]\ntab_width = 2\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| {
+        engine.settings().editor.tab_width == 2
+    }));
+    // Pumped a while longer, the change is applied once.
+    let deadline = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < deadline {
+        engine.pump();
+        thread::sleep(Duration::from_millis(25));
+    }
+    let reloads = events
+        .try_iter()
+        .filter(|event| matches!(event, EngineEvent::SettingsChanged))
+        .count();
+    assert_eq!(reloads, 1);
+}
+
+#[test]
+fn user_settings_reload_on_external_change() {
+    let user = tempfile::tempdir().unwrap();
+    // The folder as the watcher reports it: macOS's temporary folder is behind a link, and
+    // Windows would give a resolved path its `\\?\` form.
+    let folder = if cfg!(target_os = "macos") {
+        fs::canonicalize(user.path()).unwrap()
+    } else {
+        user.path().to_path_buf()
+    };
+    let user_file = folder.join(adoc_engine::USER_SETTINGS_FILE);
+    fs::write(&user_file, "[editor]\nfont_size = 14\n").unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    fs::write(workspace.path().join("page.adoc"), "= Page\n").unwrap();
+    let mut engine = Engine::new(
+        Settings::load(Some(&user_file), None)
+            .unwrap()
+            .with_git_opt_in(),
+    );
+    engine
+        .open_workspace(vec![workspace.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert_eq!(engine.settings().editor.font_size, 14);
+
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&user_file, "[editor]\nfont_size = 18\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| {
+        engine.settings().editor.font_size == 18
+    }));
+}
