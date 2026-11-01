@@ -379,7 +379,7 @@ impl VisualView {
         &mut self,
         command: CommandId,
         value: VisualValue,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let args = VisualArgs {
@@ -419,10 +419,8 @@ impl VisualView {
                 cx.notify();
                 true
             }
-            Err(error) => {
-                window.push_notification(error.to_string(), cx);
-                false
-            }
+            // Reported by the window, through `EngineEvent::CommandFailed`.
+            Err(_) => false,
         }
     }
 
@@ -727,10 +725,9 @@ impl VisualView {
                 suggested |= replace;
                 let app = app.clone();
                 menu = menu.item(gpui_component::menu::PopupMenuItem::new(label).on_click(
-                    move |_, window, cx| {
-                        if let Err(error) = crate::spelling::apply(&app, document, &choice, cx) {
-                            window.push_notification(error.to_string(), cx);
-                        }
+                    move |_, _, cx| {
+                        // A failure is reported by the window.
+                        let _ = crate::spelling::apply(&app, document, &choice, cx);
                     },
                 ));
             }

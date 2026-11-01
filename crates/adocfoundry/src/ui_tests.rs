@@ -6149,3 +6149,42 @@ fn visual_caret_survives_an_edit_elsewhere(cx: &mut TestAppContext) {
     let moved = end + ", changed".len();
     assert_eq!((selection.anchor, selection.head), (moved, moved));
 }
+
+#[gpui::test]
+fn a_failed_command_is_reported_once(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    // There is nowhere to go back to.
+    cx.dispatch_action(crate::editor::bindings::GoBack);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len()),
+        1
+    );
+}
+
+#[gpui::test]
+fn a_save_conflict_asks_without_a_notification(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    // Someone else writes the file before the page is saved.
+    std::fs::write(&page, "= Changed elsewhere\n").unwrap();
+    cx.dispatch_action(crate::editor::bindings::Save);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len()),
+        0
+    );
+}

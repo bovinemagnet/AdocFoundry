@@ -22,6 +22,10 @@ A background task pumps the engine every 16 ms while work is pending, such as in
 Each pump applies worker and watcher results and then re-emits every engine event to the views.
 `AppState::invoke` also drains events before it returns, so the effect of a command is visible immediately.
 
+A failed command is reported once, by the window, as a notification of the engine's `EngineEvent::CommandFailed` ("<command>: <error>").
+Views that invoke a command through `AppState::invoke` do not show the error they get back.
+The one exception is a save conflict: `AppState::invoke` leaves out its `CommandFailed`, because the caller answers it with the "changed on disk" dialog.
+
 === Redraws
 
 In GPUI a `cx.notify()` on any entity redraws the window, and an uncached view's `render` runs on every redraw.
