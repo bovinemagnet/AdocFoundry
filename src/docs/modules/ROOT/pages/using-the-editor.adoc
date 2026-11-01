@@ -27,6 +27,7 @@ See xref:settings.adoc[Settings].
 
 AdocFoundry watches the workspace.
 A file changed on disk is re-indexed, and `antora.yml` is re-read when it changes.
+An open page with no unsaved edits follows its file, changing only what differs, so the caret stays where it was and one undo goes back to the text before.
 A buffer with unsaved edits is never overwritten: you are told that the file changed on disk and your buffer is kept.
 
 Saving a page whose file changed on disk since you opened or last saved it is refused, so an outside change is never written over without asking.

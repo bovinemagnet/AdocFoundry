@@ -13,7 +13,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Opens a folder and discovers every `antora.yml` beneath it, so several components and versions live in one workspace. Plain AsciiDoc folders work too, with relative-path resolution.
 - Resolves Antora resource IDs in all five coordinates (`version@component:module:family$path`) following Antora 3.2: a component without a version means its latest version (the versionless `~` version first, then released versions above `prerelease` ones); a component without a module means its `ROOT` module.
 - Honours `:page-aliases:`: an xref to an alias resolves to the page and carries an information diagnostic suggesting the current id.
-- Re-reads `antora.yml` when it changes, and re-indexes files changed on disk. A buffer with unsaved edits is never overwritten; you are told the file changed. Saving it then asks whether to reload the file's version (Undo brings your edits back) or overwrite it with yours, rather than silently writing over the change. Saves go through a temporary file, so a failed write never leaves a truncated page.
+- Re-reads `antora.yml` when it changes, and re-indexes files changed on disk. An open page with no unsaved edits follows its file, replacing only what changed, so the caret stays put and one Undo goes back; a buffer with unsaved edits is never overwritten; you are told the file changed. Saving it then asks whether to reload the file's version (Undo brings your edits back) or overwrite it with yours, rather than silently writing over the change. Saves go through a temporary file, so a failed write never leaves a truncated page.
 
 **Sidebar**
 

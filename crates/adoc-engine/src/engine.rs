@@ -456,14 +456,10 @@ impl Engine {
         let Some(document) = self.documents.get(&id) else {
             return Err(EngineError::UnknownDocument(id));
         };
-        if document.text != text.as_str() {
-            let whole = SourceRange::new(0, document.text.len());
+        // Only what changed is replaced, so carets elsewhere stay and undo keeps only that.
+        if let Some(edit) = crate::edit::minimal(&document.text.to_string(), &text) {
             let group = self.new_group();
-            self.apply_edits(
-                id,
-                vec![TextEdit::new(whole, text.clone())],
-                UndoMode::Group(group),
-            )?;
+            self.apply_edits(id, vec![edit], UndoMode::Group(group))?;
         }
         self.mark_saved(id, &text);
         Ok(())

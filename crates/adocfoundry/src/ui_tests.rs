@@ -6091,3 +6091,61 @@ fn a_restored_session_s_pages_open_after_the_first_draw(cx: &mut TestAppContext)
     });
     assert_eq!(head, caret);
 }
+
+/// A page whose earlier line changes on disk while the caret is on its last.
+const BEFORE_RELOAD: &str = "= Page\n\nFirst.\n\nLast.\n";
+
+fn reload_with_an_earlier_line_changed(
+    app: &Entity<AppState>,
+    id: adoc_engine::DocumentId,
+    cx: &mut VisualTestContext,
+) -> String {
+    let path = cx.update(|_, cx| app.read(cx).engine.document(id).unwrap().path.clone());
+    let after = BEFORE_RELOAD.replace("First.", "First, changed.");
+    std::fs::write(&path, &after).unwrap();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::DOCUMENT_RELOAD, CommandArgs::Document(id), cx)
+                .unwrap();
+        });
+    });
+    cx.run_until_parked();
+    after
+}
+
+#[gpui::test]
+fn caret_survives_an_edit_elsewhere(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, BEFORE_RELOAD).unwrap();
+    let mut engine = Engine::new(Settings::default());
+    let id = engine.open(&page).unwrap();
+    let app = app_with(engine, cx);
+    let (editor, window) = editor_window(&app, id, cx);
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let end = BEFORE_RELOAD.len() - 1;
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(end, end), window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let after = reload_with_an_earlier_line_changed(&app, id, &mut cx);
+    assert_eq!(widget_text(&editor, &mut cx), after);
+    let moved = end + ", changed".len();
+    assert_eq!(cx.update(|_, cx| editor.read(cx).cursor(cx)), moved);
+}
+
+#[gpui::test]
+fn visual_caret_survives_an_edit_elsewhere(cx: &mut TestAppContext) {
+    let (app, _, visual, id, mut cx) = visual_workspace(BEFORE_RELOAD, cx);
+    let end = BEFORE_RELOAD.len() - 1;
+    place_caret(&visual, end, &mut cx);
+
+    reload_with_an_earlier_line_changed(&app, id, &mut cx);
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    let moved = end + ", changed".len();
+    assert_eq!((selection.anchor, selection.head), (moved, moved));
+}

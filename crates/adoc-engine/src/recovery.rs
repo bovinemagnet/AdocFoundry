@@ -15,14 +15,13 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use adoc_core::SourceRange;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     commands::{ids, register, spec},
     engine::UndoMode,
     line_diff, CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry,
-    DiffLine, DocumentId, Engine, EngineError, TextEdit,
+    DiffLine, DocumentId, Engine, EngineError,
 };
 
 /// How long a page must go unedited before its unsaved text is written to the store.
@@ -134,16 +133,9 @@ fn recover(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, Eng
         .document(id)
         .map(|document| document.text.to_string())
         .unwrap_or_default();
-    if current != item.text {
+    if let Some(edit) = crate::edit::minimal(&current, &item.text) {
         let group = engine.new_group();
-        engine.apply_edits(
-            id,
-            vec![TextEdit::new(
-                SourceRange::new(0, current.len()),
-                item.text.clone(),
-            )],
-            UndoMode::Group(group),
-        )?;
+        engine.apply_edits(id, vec![edit], UndoMode::Group(group))?;
     }
     engine.remove_offered(&item);
     Ok(CommandOutcome::Opened(id))

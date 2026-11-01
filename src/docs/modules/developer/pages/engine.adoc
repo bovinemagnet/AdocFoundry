@@ -684,7 +684,8 @@ The check and the write run on the <<writer>>.
 While a save of a page is being written, the watcher ignores changes to that page's file, because the save's result settles them.
 `Engine::save` returns `EngineError::SaveConflict { path }` when the file's contents differ from the hash of what the engine last read or wrote (`saved_hash`), and writes nothing.
 `save_all` saves the other documents and reports the conflict, and `git.save_and_commit` stops at it.
-`Engine::overwrite` and `Engine::reload` are the two explicit choices, behind the `document.overwrite` and `document.reload` commands: `overwrite` writes the buffer regardless, and `reload` replaces the buffer with the file as one undo step and leaves the document clean.
+`Engine::overwrite` and `Engine::reload` are the two explicit choices, behind the `document.overwrite` and `document.reload` commands: `overwrite` writes the buffer regardless, and `reload` replaces only what differs between the buffer and the file (`edit::minimal`, which keeps the common prefix and suffix) as one undo step and leaves the document clean.
+A clean document changed on disk, and restoring a local history version or recovering unsaved changes, use the same minimal edit, so `DocumentChanged.edits` is exact and views keep their carets by mapping.
 A file that no longer exists is written again by `save`.
 Every write goes to a temporary file in the same directory and is renamed over the page, keeping the file's permissions; a symbolic link has its target written and the link kept.
 The command-line tool and the MCP server return the conflict's message to their caller.

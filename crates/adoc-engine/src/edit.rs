@@ -86,6 +86,38 @@ pub(crate) fn apply(rope: &mut Rope, edits: &[TextEdit]) -> Vec<TextEdit> {
     inverse
 }
 
+/// The single edit turning `before` into `after`: their common prefix and suffix left alone.
+pub(crate) fn minimal(before: &str, after: &str) -> Option<TextEdit> {
+    if before == after {
+        return None;
+    }
+    let mut prefix = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(left, right)| left == right)
+        .count();
+    while !before.is_char_boundary(prefix) || !after.is_char_boundary(prefix) {
+        prefix -= 1;
+    }
+    let longest = before.len().min(after.len()) - prefix;
+    let mut suffix = before
+        .bytes()
+        .rev()
+        .zip(after.bytes().rev())
+        .take(longest)
+        .take_while(|(left, right)| left == right)
+        .count();
+    while !before.is_char_boundary(before.len() - suffix)
+        || !after.is_char_boundary(after.len() - suffix)
+    {
+        suffix -= 1;
+    }
+    Some(TextEdit::new(
+        SourceRange::new(prefix, before.len() - suffix),
+        &after[prefix..after.len() - suffix],
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

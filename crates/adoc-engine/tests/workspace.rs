@@ -507,3 +507,76 @@ fn unreadable_subdirectory_does_not_abort_indexing() {
         "the folder that could not be read is reported: {events:?}"
     );
 }
+
+/// The edits of the first `DocumentChanged` of `id` among `events`.
+fn changed_edits(
+    events: &std::sync::mpsc::Receiver<EngineEvent>,
+    id: adoc_engine::DocumentId,
+) -> Option<Vec<adoc_engine::TextEdit>> {
+    events.try_iter().find_map(|event| match event {
+        EngineEvent::DocumentChanged {
+            id: changed, edits, ..
+        } if changed == id => Some(edits),
+        _ => None,
+    })
+}
+
+const BEFORE: &str = "= Page\n\nFirst.\n\nLast.\n";
+const AFTER: &str = "= Page\n\nFirst, changed.\n\nLast.\n";
+
+/// Only the words written in, at the offset they were written at.
+fn the_change() -> Vec<adoc_engine::TextEdit> {
+    vec![adoc_engine::TextEdit::insert(
+        "= Page\n\nFirst".len(),
+        ", changed",
+    )]
+}
+
+#[test]
+fn clean_document_follows_disk_with_minimal_edit() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, BEFORE).unwrap();
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&page).unwrap();
+    let events = engine.subscribe();
+
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&page, AFTER).unwrap();
+    let mut edits = None;
+    assert!(pump_until(&mut engine, |_| {
+        edits = edits.take().or_else(|| changed_edits(&events, id));
+        edits.is_some()
+    }));
+    assert_eq!(edits.unwrap(), the_change());
+    let document = engine.document(id).unwrap();
+    assert_eq!(document.text.to_string(), AFTER);
+    assert!(!document.dirty);
+
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EDIT_UNDO,
+            adoc_engine::CommandArgs::Document(id),
+        )
+        .unwrap();
+    assert_eq!(engine.document(id).unwrap().text.to_string(), BEFORE);
+}
+
+#[test]
+fn reload_replaces_only_what_changed() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, BEFORE).unwrap();
+    let mut engine = engine_without_user_settings();
+    let id = engine.open(&page).unwrap();
+    let events = engine.subscribe();
+    fs::write(&page, AFTER).unwrap();
+    engine.reload(id).unwrap();
+    assert_eq!(changed_edits(&events, id), Some(the_change()));
+    assert_eq!(engine.document(id).unwrap().text.to_string(), AFTER);
+    assert!(!engine.document(id).unwrap().dirty);
+}
