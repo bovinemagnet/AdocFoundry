@@ -31,11 +31,12 @@ No window is involved.
 The notices generator's tests are in `xtask/src/notices.rs`: `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice`.
 Add a test here rather than in the application crate whenever the behaviour can be reached through the engine.
 
-`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula, ChildRefs, InlineLayout}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
+`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula, ChildRefs, InlineLayout, QuickOpenItem}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
 They count only with adoc-core's `probe` feature, which the dev-dependencies of the engine, `adoc-model` and the application turn on; in a normal build `hit` does nothing.
 `tests/keystroke.rs` asserts them: `one_keystroke_parses_at_most_once`, `typing_never_hashes_the_document`, `completion_during_typing_does_not_reparse` and `only_typing_inside_something_that_completes_asks_for_completions`.
 In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` types 20 characters and expects 20 diffs and no reconcile, then expects an edit from the engine to reconcile once.
-`Suggest` counts a dictionary searching for replacements for a misspelt word, `Walk` a walk over every node of a visual model (`Model::walk`), and `MeasureFormula` a typeset formula's gap measured in a font (`Gap::measure`), `ChildRefs` a list of a view block's children (`ViewBlock::child_refs`) and `InlineLayout` inline content laid out as styled text for the preview.
+`Suggest` counts a dictionary searching for replacements for a misspelt word, `Walk` a walk over every node of a visual model (`Model::walk`), and `MeasureFormula` a typeset formula's gap measured in a font (`Gap::measure`), `ChildRefs` a list of a view block's children (`ViewBlock::child_refs`), `InlineLayout` inline content laid out as styled text for the preview, and `QuickOpenItem` a file's Quick Open item made from the index.
+`tests/quick_open.rs`'s `a_keystroke_makes_no_items_and_an_edit_remakes_none` asserts it.
 `adoc-model`'s `tests/positions.rs` checks that `text_block_at` finds the block a walk finds at every offset of a page, and walks the model at most once over many lookups.
 `ui_tests::one_visual_frame_walks_the_model_at_most_twice` draws a 300-paragraph page in the visual editor.
 `ui_tests::formulas_are_measured_once` draws 20 inline formulas for 10 frames and expects at most 20 measurements.
@@ -44,6 +45,60 @@ In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` typ
 `ui_tests::typing_in_one_paragraph_does_not_rerender_the_preview` types 20 characters with scroll sync on and expects at most two renders of the preview (the existing `renders` counter).
 `ui_tests::reveal_source_is_logarithmic` moves the caret 200 times in 500 paragraphs and expects at most 1,800 lists of children.
 `adoc-render`'s `the_block_index_finds_what_block_at_finds` compares the index with `block_at` at every offset of the render fixtures and their partial.
+
+== Benchmarks
+
+`cargo bench -p adoc-engine` runs `crates/adoc-engine/benches/budgets.rs`, a benchmark harness with no dependencies (`harness = false`).
+It times engine paths on the engine thread, the median and worst of each, and fails when a median is over its budget.
+`BENCH_RECORD=1` records every bench without failing.
+The table is printed, and appended to `$GITHUB_STEP_SUMMARY` when CI sets it.
+CI's `bench` job runs it on Ubuntu.
+
+[cols="2,3,2"]
+|===
+| Bench | What it times | Budget
+
+| `parse_whole`
+| `adoc_parser::parse` of the synthetic page at 1,000, 5,000, 20,000 and 100,000 lines
+| 30 ms a megabyte
+
+| `keystroke_insert`, `keystroke_backspace`
+| One typed character and one backspace through `edit.insert_text` and `edit.replace_range`, at the same sizes
+| 100 µs at 20,000 lines; recorded at the other sizes
+
+| `settle_index`
+| The `pump` at `INDEX_SETTLE` after a keystroke on a 20,000-line page
+| Recorded: parsing and diagnosing the page run on the engine thread, about 7 ms
+
+| `settle_git`
+| The `pump` at `GIT_SETTLE` in a repository, the index flushed first
+| 1 ms (the diff runs on a worker)
+
+| `settle_recovery`
+| The `pump` at `RECOVERY_SETTLE` on a dirty 1 MB page
+| 1 ms (the record is written on the writer)
+
+| `build_visual`
+| Show Visual Editor on a 5,000-line page
+| Recorded
+
+| `quick_open`
+| `quick_open` over 20,000 files, for `a` and for `topic 42`
+| 5 ms for `a`; the second recorded
+
+| `workspace_open`
+| `open_workspace` returning, beside 20,000 folders of `node_modules`
+| 50 ms
+
+| `index_memory`
+| Resident memory added by indexing 10,000 pages of about 8 KB, from `/proc/self/statm`, so on Linux only
+| 2.5 times the text
+|===
+
+The budgets are for a CI runner, a few times slower than a developer's machine.
+A median far under its budget locally may still be close to it on CI.
+The ignored timing and memory probes in `crates/adoc-engine/tests/perf.rs` and `crates/adoc-index/tests/memory.rs` print figures and assert nothing.
+They are for investigating a path, not for guarding it.
 
 == CLI snapshot tests
 

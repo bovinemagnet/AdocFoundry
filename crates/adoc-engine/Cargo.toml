@@ -42,5 +42,9 @@ adoc-core = { workspace = true, features = ["probe"] }
 adoc-git = { workspace = true, features = ["test-support"] }
 insta.workspace = true
 
+[[bench]]
+name = "budgets"
+harness = false
+
 [lints]
 workspace = true
