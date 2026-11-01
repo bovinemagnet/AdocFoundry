@@ -644,3 +644,51 @@ fn user_settings_reload_on_external_change() {
         engine.settings().editor.font_size == 18
     }));
 }
+
+#[test]
+fn a_burst_of_changed_pages_diagnoses_the_open_ones_a_few_times() {
+    use adoc_core::probe::{self, Probe};
+
+    let directory = tempfile::tempdir().unwrap();
+    let pages: Vec<PathBuf> = (0..200)
+        .map(|n| directory.path().join(format!("page-{n:03}.adoc")))
+        .collect();
+    for (n, page) in pages.iter().enumerate() {
+        fs::write(page, format!("= Page {n}\n\nSee xref:page-000.adoc[].\n")).unwrap();
+    }
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    for page in &pages[..3] {
+        engine.open(page).unwrap();
+    }
+
+    // A branch switch, say, rewrites every page at once.
+    thread::sleep(Duration::from_millis(100));
+    probe::reset();
+    for (n, page) in pages.iter().enumerate() {
+        fs::write(page, format!("= Page {n}, again\n")).unwrap();
+    }
+    assert!(pump_until(&mut engine, |engine| {
+        engine.document_for_path(&pages[0]).is_some_and(|id| {
+            engine
+                .document(id)
+                .is_some_and(|document| document.text == "= Page 0, again\n")
+        }) && engine
+            .workspace()
+            .index
+            .file(&adoc_index::normalize_path(&pages[199]))
+            .is_some_and(|file| {
+                file.document
+                    .title
+                    .as_ref()
+                    .is_some_and(|title| title.text == "Page 199, again")
+            })
+    }));
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    engine.pump();
+    let passes = probe::count(Probe::DiagnoseOpen);
+    assert!(passes <= 4, "{passes} passes over the open pages");
+}

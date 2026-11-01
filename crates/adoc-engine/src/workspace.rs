@@ -25,6 +25,10 @@ use crate::{quick_open::QuickOpenCache, Engine, EngineError, EngineEvent, TextEd
 /// File-system events closer together than this for one path are applied once.
 pub const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
 
+/// More pages than this changed on disk at once (a branch switch, a pull) are indexed again
+/// on a worker, as a changed folder is, rather than one by one.
+pub const FILE_BURST: usize = 50;
+
 pub(crate) enum WorkerMessage {
     ProblemsComputed {
         generation: u64,
@@ -692,6 +696,17 @@ impl Engine {
         self.word_lists_changed(&listed);
         let mut reindex = false;
         let mut settings = false;
+        let closed_pages = ready
+            .iter()
+            .filter(|(path, change)| {
+                *change == Change::File
+                    && is_asciidoc_path(path)
+                    && self.document_for_path(path).is_none()
+            })
+            .count();
+        let burst = closed_pages > FILE_BURST;
+        // Pages not open were indexed again: their dependants are diagnosed once, after all.
+        let mut indexed = false;
         for (path, change) in &ready {
             if *change == Change::Directory {
                 reindex = true;
@@ -706,11 +721,19 @@ impl Engine {
                 // Playbook attributes apply to every page: index everything again.
                 reindex = true;
             } else if is_asciidoc_path(path) {
-                self.file_changed_on_disk(path);
+                if burst && self.document_for_path(path).is_none() {
+                    reindex = true;
+                } else {
+                    indexed |= self.file_changed_on_disk(path);
+                }
             }
         }
         if settings {
             self.settings_files_changed();
+        }
+        // Indexing everything again diagnoses the open pages when it finishes.
+        if indexed && !reindex {
+            self.refresh_open_diagnostics(None);
         }
         if reindex {
             self.reindex();
@@ -758,36 +781,39 @@ impl Engine {
         self.visual_workspace_changed();
     }
 
-    fn file_changed_on_disk(&mut self, path: &Path) {
+    /// Applies one file's change on disk: an open page follows it, or tells that it changed
+    /// under unsaved edits; any other page is indexed again. Returns whether the index
+    /// changed, so the open pages are to be diagnosed again.
+    fn file_changed_on_disk(&mut self, path: &Path) -> bool {
         let on_disk = fs::read_to_string(path).ok();
         if let Some(id) = self.document_for_path(path) {
             if self.writer.is_saving(id) {
-                return; // Our own write, which the save's result settles.
+                return false; // Our own write, which the save's result settles.
             }
             let Some(document) = self.documents.get(&id) else {
-                return;
+                return false;
             };
             let Some(text) = on_disk else {
-                return; // Deleted underneath an open document: keep the buffer.
+                return false; // Deleted underneath an open document: keep the buffer.
             };
             if document.text == text.as_str() {
-                return; // Our own save, or an identical write.
+                return false; // Our own save, or an identical write.
             }
             let Some(state) = self.states.get_mut(&id) else {
-                return;
+                return false;
             };
             // What was last saved or read: our own write, though typing went on since.
             if text.len() == state.saved_len
                 && crate::document::hash_text(&text) == state.saved_hash
             {
-                return;
+                return false;
             }
             if document.dirty {
                 if !state.changed_on_disk {
                     state.changed_on_disk = true;
                     self.emit(EngineEvent::DocumentChangedOnDisk(id));
                 }
-                return;
+                return false;
             }
             // Only what changed is replaced, so carets elsewhere stay and undo keeps only that.
             let edits: Vec<TextEdit> = crate::edit::minimal(&document.text.to_string(), &text)
@@ -800,7 +826,7 @@ impl Engine {
             {
                 self.mark_saved(id, &text);
             }
-            return;
+            return false;
         }
         match on_disk {
             Some(text) => {
@@ -813,7 +839,7 @@ impl Engine {
         self.emit(EngineEvent::DiagnosticsUpdated {
             path: path.to_path_buf(),
         });
-        self.refresh_open_diagnostics(None);
+        true
     }
 }
 

@@ -673,6 +673,14 @@ The `Watches` are shared, and the index worker locks them to add each watch.
 In `Folders` mode `Indexed` also carries the folders `entered`.
 When the engine applies a current-generation result, it unwatches every folder not in that set, such as one that was removed or is now ignored.
 A result from a superseded job is discarded and changes no watches.
+
+The changes ready in one pump are applied together (`apply_file_changes`).
+An open page follows its file, or is marked changed under unsaved edits, one by one.
+Each changed page that is not open is indexed again (`file_changed_on_disk`).
+The open pages are diagnosed again once, after all of them, not once per file.
+
+When more than `FILE_BURST` (50) pages that are not open change at once, as on a branch switch or a pull, they are not read one by one.
+The workspace is indexed again on a worker, as for a changed folder, and the open pages are diagnosed when that finishes.
 The watcher never follows symbolic links, as the index never did.
 If a watch cannot be added, for example at Linux's `fs.inotify.max_user_watches` limit, the engine reports it once as `CommandFailed` for `workspace.open_folder` ("file watching is incomplete: …") and keeps working.
 
