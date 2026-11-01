@@ -2,7 +2,7 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.5.0 — 2026-11-01
 
 ### Added
 
@@ -16,12 +16,47 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - Spell checking of prose in the source and visual editors and in `adoc-ls`: misspelt words are underlined, with suggestions and Add to Workspace Dictionary or Add to User Dictionary in the context menu. Pages are checked in their `lang`, else `[spelling] language` (British English by default), with bundled British and American English dictionaries and any Hunspell dictionaries in `[spelling] dictionaries` (#65).
 
 - Help › About AdocFoundry: the version, build and licence, links to the repository and the documentation, and every third-party component the app is built from with its version, licence and full licence text, ready to copy. The list is generated at build time from Cargo's metadata (every crate of the release build) and the bundled fonts, dictionaries and PDF themes, and each package ships it as `THIRD-PARTY-NOTICES.txt`; a dependency without a licence text fails the build and a test (#161).
+- Quick Open (Cmd-P on macOS, Ctrl-P elsewhere; File menu, palette) is a fuzzy finder over the workspace's indexed files: each word typed matches the file name, title, Antora resource id or path, and files made active recently come first (#71).
+- Go to Symbol in Workspace (Cmd/Ctrl-T) picks from the section titles, anchors and page titles of the whole workspace, and Go to Symbol in Page (Cmd/Ctrl-R) from the active page's, in page order (#70).
+- Find References (Alt-Shift-F12, Go menu, palette) lists every reference to the anchor or page at the caret, across components, in a panel below the editor (#68).
+- Rename Anchor (F2 on an anchor, a section heading or a reference to one; Edit menu, palette) renames an anchor, or a section's generated id, and rewrites every reference to it in every page and component as one undo step; F2 anywhere else still renames the page (#69).
+- New Page… (Cmd/Ctrl-N, File menu, palette; in an Antora workspace) creates a page in a chosen module from its title and adds it to the module's navigation after the active page's entry (#72).
+- Started with no folder or file, the app brings back the last session: the workspace's folders, the open tabs in order with each page's editor mode and caret, the active and preview tabs, and the preview's layout. File › Open Recent Folder… lists the folders opened recently (#75).
+- Dragging a page from Navigation or Modules, or a section from the Outline, into the source or visual editor inserts an xref to it, with the shortest resource id that resolves from the page being edited and the page's or section's title as its text (#74).
+- Crash recovery: two seconds after typing stops, and when the app quits, the text of every page with unsaved edits is kept; after a crash the next launch offers Recover Unsaved Changes, listing each page with the lines it would change (#107).
+- Local history: every save keeps the version saved, and File › Local History… lists a page's versions, shows what has changed since one and restores it as one undo step. `[history]` sets how much is kept (30 days, 50 versions a page and 256 MB in all by default) (#107).
+- Optional auto-save: `[editor] auto_save = "after_delay"` saves a page a second after its last edit, and `"on_focus_change"` when you leave its tab or the window. It is off by default, and never overwrites a file changed on disk (#76).
+- The status bar shows the active page's word count and reading time, for example `120 words · 1 min read`, or the words in the selection (#77).
+- File › Export Page to HTML… writes the page as one HTML file, as `adocfoundry-cli render` does, with its unsaved edits and with local images and diagrams embedded (#78).
+- Format › Format Table lines up the `|` separators of the table at the caret as one undo step, and leaves a table it cannot format safely as it is, saying why (#84).
+- Insert Table, Code Block, Admonition, Image and Link work in the source editor as well as the visual editor, each as one undo step (#83).
+- Problems inside `antora.yml` are reported at their lines, as warnings: a missing `name` or `version`, a top-level key Antora does not use, a `nav` entry naming a file that does not exist, and an attribute value that is a list or mapping (#67).
+- `[tools] dot`, `plantuml` and `d2` set the paths of Graphviz, PlantUML and D2, for an app started from the Dock, which does not see a shell's `PATH` (#64). `[tools] diagram_timeout` (30 seconds by default) stops a diagram tool that runs too long or writes more than 32 MB, and at most four diagrams render at once (#94).
+
+### Changed
+
+- Faster on long pages and large workspaces (#200–#209):
+  - A keystroke no longer copies the page or parses it again, so typing in a long page costs about what it does in a short one, and only the views a change affects are redrawn (#201, #202).
+  - The visual editor and the preview lay out only the blocks in view, so long pages open and scroll without waiting for the whole page (#203, #204).
+  - Saves, recovery records and the app's state files are written off the UI thread, and Git's change markers are diffed against `HEAD`'s text read once, not on every change (#205, #207).
+  - At start-up, folders are watched and indexed off the UI thread, and the last session comes back after the window is first drawn, building each page's visual editor only when its tab is shown (#206).
+  - Quick Open keeps its list between keystrokes, Find in Workspace streams its results from a worker and stops at 10,000 matches, and indexing a large workspace needs about a quarter of the memory it did (#208).
+  - The Problems panel is worked out by the engine, the whole workspace on a worker, instead of while the sidebar is drawn, and typing waits for a pause before updating the index (#181, #182).
+- A change made to several files at once (a page rename or Replace All) is undone and redone only as a whole: undo is refused, naming the page, while a page it changed has been edited since (#95).
+- Releases: a tag that disagrees with the version in `Cargo.toml`, `src/docs/antora.yml` or this changelog fails before anything is built, and a release is published only once CI passes on the tagged commit (#97, #193).
 
 ### Fixed
 
 - PDF export reads `index_columns` for the number of index columns, as asciidoctor-pdf does, instead of `index_column_count`; a theme that set it no longer fails to typeset (#106).
 - Bold, italic, monospace and highlighted text broken over two lines of a paragraph is highlighted in the editor.
 - On Linux the app's windows show the AdocFoundry icon in the task bar and window switcher instead of the desktop's placeholder: every window now has the app id `io.github.bovinemagnet.AdocFoundry`, which the desktop entry's name and `StartupWMClass` match (#153).
+- Antora resource ids with a version before a module or path are read as Antora reads them: `2.0@index.adoc` is version 2.0 of the current module, and `2.0@security:index.adoc` module `security` of it (#172).
+- Insert Column and Delete Column handle `cols` given as a count, such as `[cols=3]` (#173).
+- Anchor ids written with a role, an option or `id=` (`[#intro.lead]`, `[#intro%collapsible]`, `[id=intro]`) are indexed, so references to them resolve and Rename Anchor rewrites them in place (#174).
+- Typing straight after a save or auto-save no longer reports the editor's own write as a change on disk (#180).
+- A PDF theme that extends itself, directly or through another theme, is refused with the chain of files instead of crashing the app (#189).
+- HTML and PDF export keep block attributes and options: list numbering styles, table options, image placement, collapsible blocks and vertical cell alignment (#186).
+- When two indexes of the workspace finished out of order, the older could replace the newer; it is now dropped (#93).
 
 ## 0.4.0 — 2026-10-27
 
