@@ -173,7 +173,7 @@ Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the pr
 
 ## Settings
 
-Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*`, `workspace.ignore` and `pdf.*` in `.adocfoundry.toml` at its root. Saving either file applies it. Unknown keys produce a warning, never an error.
+Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*`, `workspace.ignore` and `pdf.*` in `.adocfoundry.toml` at its root. Saving either file applies it, in the app or in another editor while a workspace is open. Unknown keys produce a warning, never an error.
 
 ```toml
 [editor]

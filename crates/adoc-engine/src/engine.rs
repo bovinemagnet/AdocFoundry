@@ -76,6 +76,9 @@ pub struct Engine {
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
     /// A typing command is running: a small edit it makes waits for a pause to be indexed.
     pub(crate) typing: bool,
+    /// The settings files as last loaded, so a write that leaves them as they were (the app's
+    /// own save, reloaded already) does not reload them again.
+    pub(crate) settings_loaded: Option<u64>,
     /// A session is being restored: the open pages' diagnostics are refreshed once at the end,
     /// not as each page opens.
     pub(crate) restoring: bool,
@@ -178,6 +181,7 @@ impl Engine {
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
             typing: false,
+            settings_loaded: None,
             restoring: false,
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
@@ -943,6 +947,7 @@ impl Engine {
         let git_was_enabled = self.settings.git.enabled;
         let tools_before = self.settings.tools.clone();
         self.settings.reload()?;
+        self.settings_loaded = Some(self.settings_files());
         self.emit(EngineEvent::SettingsChanged);
         self.spelling_settings_changed();
         self.diagram_tools_changed(&tools_before);
