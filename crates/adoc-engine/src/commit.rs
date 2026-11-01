@@ -5,7 +5,6 @@
 use std::{
     path::{Path, PathBuf},
     process::Command,
-    thread,
 };
 
 use adoc_git::{Change, FileStatus, Head, Repository};
@@ -302,7 +301,12 @@ fn git_push(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, Engin
     }
     let sender = engine.worker_sender.clone();
     engine.workers_running += 1;
-    thread::spawn(move || {
+    let pushing = workdir.clone();
+    let crashed = move |error| WorkerMessage::Pushed {
+        workdir: pushing,
+        result: Err(format!("git push crashed: {error}")),
+    };
+    crate::worker::spawn(sender, crashed, move |sender| {
         let result = run_git(&git, &workdir, &["push", &remote, &branch])
             .map(|()| format!("Pushed {branch} to {remote}"))
             .map_err(|error| error.to_string());

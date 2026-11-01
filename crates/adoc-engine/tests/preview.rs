@@ -222,7 +222,7 @@ fn diagram_completion_republishes_preview() {
     let cache = DiagramCache::new(directory.path().join("cache"));
     engine.set_diagrams(Diagrams::with_providers(
         cache,
-        vec![Box::new(MermaidProvider)],
+        vec![Box::new(MermaidProvider::default())],
     ));
     let events = engine.subscribe();
     let id = engine.open(&page).unwrap();
@@ -370,7 +370,7 @@ fn render_blocking_waits_for_diagrams() {
     let (mut engine, _clock) = engine_with_clock();
     engine.set_diagrams(Diagrams::with_providers(
         DiagramCache::new(directory.path().join("cache")),
-        vec![Box::new(MermaidProvider)],
+        vec![Box::new(MermaidProvider::default())],
     ));
     let id = engine.open(&page).unwrap();
     let preview = engine.render_blocking(id, WAIT).unwrap();
@@ -652,4 +652,87 @@ fn many_diagrams_render_through_a_bounded_pool() {
         .filter(|block| matches!(block.kind, ViewKind::Diagram(DiagramView::Svg(_))))
         .count();
     assert_eq!(svgs, 50);
+}
+
+/// A renderer with a bug: every render panics.
+struct Panics;
+
+impl adoc_diagrams::DiagramProvider for Panics {
+    fn kinds(&self) -> &[&str] {
+        &["mermaid"]
+    }
+
+    fn render(
+        &self,
+        _: &adoc_diagrams::DiagramRequest,
+    ) -> Result<String, adoc_diagrams::DiagramError> {
+        panic!("a bug in the renderer")
+    }
+}
+
+fn engine_with_panicking_diagrams(directory: &Path) -> (Engine, DocumentId) {
+    let page = directory.join("page.adoc");
+    fs::write(
+        &page,
+        "= Page\n\n[mermaid]\n----\ngraph TD\n  A --> B\n----\n",
+    )
+    .unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    engine.set_diagrams(Diagrams::with_providers(
+        DiagramCache::new(directory.join("cache")),
+        vec![Box::new(Panics)],
+    ));
+    let id = engine.open(&page).unwrap();
+    (engine, id)
+}
+
+#[cfg(feature = "typst")]
+fn export_page(engine: &mut Engine, id: DocumentId, output: PathBuf) {
+    use adoc_engine::{ExportArgs, ExportTarget};
+
+    let summary = engine.export_blocking(
+        ExportArgs {
+            target: ExportTarget::Page(id),
+            output: output.clone(),
+            theme: None,
+            standards: Vec::new(),
+            fonts_dir: None,
+            typst: None,
+            attributes: Vec::new(),
+        },
+        WAIT,
+    );
+    summary.unwrap_or_else(|error| panic!("{error}"));
+    assert!(fs::read(&output).unwrap().starts_with(b"%PDF-"));
+}
+
+#[test]
+fn a_panicking_diagram_provider_is_reported() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_panicking_diagrams(directory.path());
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT), "the worker reported back");
+    engine.pump();
+    let message = blocks(&engine, id)
+        .into_iter()
+        .find_map(|block| match block.kind {
+            ViewKind::Diagram(DiagramView::Failed { message, .. }) => Some(message),
+            _ => None,
+        })
+        .expect("the diagram failed");
+    assert!(message.contains("a bug in the renderer"), "{message}");
+    assert!(!engine.has_pending());
+
+    #[cfg(feature = "typst")]
+    export_page(&mut engine, id, directory.path().join("page.pdf"));
+}
+
+#[cfg(feature = "typst")]
+#[test]
+fn an_export_whose_diagram_renderer_panics_finishes() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id) = engine_with_panicking_diagrams(directory.path());
+    export_page(&mut engine, id, directory.path().join("page.pdf"));
+    assert!(!engine.has_pending());
 }

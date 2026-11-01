@@ -10,7 +10,6 @@ use std::{
     fs,
     path::{Component, Path, PathBuf},
     sync::atomic::Ordering,
-    thread,
     time::{Duration, Instant},
 };
 
@@ -133,7 +132,14 @@ impl Engine {
         let latest = self.latest_search.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        // The matches sent before the panic stand, as if the search had ended there.
+        let crashed = move |_| WorkerMessage::Search {
+            id,
+            results: Vec::new(),
+            done: true,
+            limited: false,
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let mut batch = Vec::new();
             let mut found = 0;
             let mut sent = Instant::now();

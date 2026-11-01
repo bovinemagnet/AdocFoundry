@@ -46,7 +46,7 @@ fn book_workspace(workspace_settings: &str) -> (tempfile::TempDir, PathBuf, Engi
     let mut engine = Engine::new(settings);
     engine.set_diagrams(Diagrams::with_providers(
         DiagramCache::new(directory.path().join("cache")),
-        vec![Box::new(MermaidProvider)],
+        vec![Box::new(MermaidProvider::default())],
     ));
     engine.open_workspace(vec![root.clone()]).unwrap();
     assert!(engine.wait_for_workers(WAIT));

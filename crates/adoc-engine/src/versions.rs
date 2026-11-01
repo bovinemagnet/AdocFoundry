@@ -4,10 +4,7 @@
 //! The table of branches comes from the playbook's content sources and each matching branch's
 //! `antora.yml`, read from the repository on a worker thread; nothing is fetched or checked out.
 
-use std::{
-    path::{Path, PathBuf},
-    thread,
-};
+use std::path::{Path, PathBuf};
 
 use adoc_antora::{
     parse_component_descriptor, AntoraCoordinate, BranchVersions, PublishedVersions,
@@ -95,7 +92,12 @@ impl Engine {
         let remote = self.settings.git.remote.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        // No versions published from branches, as when there is no repository.
+        let crashed = move |_| WorkerMessage::BranchVersions {
+            generation,
+            versions: None,
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let versions = Repository::discover(&workdir).ok().flatten().map(|repo| {
                 let published =
                     published_versions(&repo, &playbook, &directory, &workdir, &current, &remote);

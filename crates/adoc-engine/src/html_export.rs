@@ -4,7 +4,7 @@
 //! that render is current and no diagram is pending, the file is written on a worker and the
 //! result arrives as [`EngineEvent::ExportFinished`].
 
-use std::{path::PathBuf, sync::Arc, thread};
+use std::{path::PathBuf, sync::Arc};
 
 use adoc_render::HtmlOptions;
 
@@ -89,7 +89,12 @@ impl Engine {
     fn write_html(&mut self, preview: Arc<RenderedPreview>, output: PathBuf) {
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let written = output.clone();
+        let crashed = move |error| WorkerMessage::HtmlExported {
+            output: written,
+            result: Err(format!("writing the HTML crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let html = adoc_render::embed_local_files(&adoc_render::to_html(
                 &preview.view,
                 &HtmlOptions { standalone: true },

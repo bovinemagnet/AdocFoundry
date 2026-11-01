@@ -9,7 +9,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
-    thread,
     time::Duration,
 };
 
@@ -187,7 +186,12 @@ impl Engine {
         let remote = self.settings.git.remote.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let crashed = move |error| WorkerMessage::GitDiscovered {
+            generation,
+            found: Vec::new(),
+            errors: vec![format!("finding the repositories crashed: {error}")],
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let mut found: Vec<(GitRepository, Vec<FileStatus>)> = Vec::new();
             let mut errors = Vec::new();
             for root in roots {
@@ -279,7 +283,14 @@ impl Engine {
         let remote = self.settings.git.remote.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let refreshing = workdir.clone();
+        let crashed = move |error| WorkerMessage::GitRefreshed {
+            generation,
+            workdir: refreshing,
+            refresh,
+            result: Err(format!("reading the repository crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let result = match Repository::discover(&workdir) {
                 Ok(Some(repo)) => snapshot(&repo, &remote),
                 Ok(None) => Err(format!("{} is no longer a repository", workdir.display())),
@@ -479,7 +490,12 @@ impl Engine {
         self.git.blaming.insert(id);
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let crashed = move |error| WorkerMessage::GitBlame {
+            id,
+            generation,
+            blame: Err(format!("blame crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let blame = match Repository::discover(&workdir) {
                 Ok(Some(repo)) => repo.head_blame(&path).map_err(|error| error.to_string()),
                 Ok(None) => Ok(Vec::new()),
@@ -648,7 +664,14 @@ impl Engine {
             let generation = self.git.head_generation;
             let sender = self.worker_sender.clone();
             self.workers_running += 1;
-            thread::spawn(move || {
+            // The changes shown stay as they were.
+            let diffed = workdir.clone();
+            let crashed = move |_| WorkerMessage::GitHunks {
+                workdir: diffed,
+                generation,
+                results: Vec::new(),
+            };
+            crate::worker::spawn(sender, crashed, move |sender| {
                 let results = diff_documents(&workdir, jobs);
                 let _ = sender.send(WorkerMessage::GitHunks {
                     workdir,

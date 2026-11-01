@@ -12,7 +12,6 @@ use std::{
     collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
-    thread,
 };
 
 use adoc_index::normalize_path;
@@ -272,7 +271,15 @@ impl Engine {
         let ignore = self.settings.workspace.ignore.clone();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let listed = dir.clone();
+        let crashed = move |error| WorkerMessage::DirectoryListed {
+            request,
+            dir: listed,
+            listing: Listing::Failed(DirectoryError::Unavailable(format!(
+                "listing the folder crashed: {error}"
+            ))),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let listing = read_listing(&dir, &ignore);
             let _ = sender.send(WorkerMessage::DirectoryListed {
                 request,

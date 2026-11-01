@@ -61,7 +61,7 @@ git = ""                         # optional absolute path; discovered on PATH if
 dot = ""                         # optional absolute path; discovered on PATH if empty
 plantuml = ""                    # optional absolute path; discovered on PATH if empty
 d2 = ""                          # optional absolute path; discovered on PATH if empty
-diagram_timeout = 30             # seconds a diagram tool may run before it is stopped
+diagram_timeout = 30             # seconds a diagram may render (Mermaid included) before it is stopped
 
 [git]
 enabled = true                   # false: no repository is discovered
@@ -186,7 +186,7 @@ check = true                     # look for a newer release at start-up
 |`tools.diagram_timeout`
 |integer
 |`30`
-|The number of seconds a Graphviz, PlantUML or D2 process may run before it is stopped. It must be a positive whole number; `0` or any other value is a warning and keeps the default. Like the other `[tools]` keys, it is read from the user settings file only.
+|The number of seconds a diagram may render before it is stopped: a Graphviz, PlantUML or D2 process is killed, and Mermaid, which renders in process, is stopped at the same deadline. It must be a positive whole number; `0` or any other value is a warning and keeps the default. Like the other `[tools]` keys, it is read from the user settings file only.
 
 |`git.enabled`
 |boolean

@@ -57,6 +57,7 @@ pub mod updates;
 mod versions;
 mod visual;
 mod words;
+mod worker;
 mod workspace;
 mod writer;
 

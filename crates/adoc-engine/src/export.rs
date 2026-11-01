@@ -14,7 +14,6 @@ use crate::{DocumentId, PdfStandard};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::Path,
-    thread,
     time::{Duration, Instant},
 };
 
@@ -346,7 +345,11 @@ impl Engine {
         let parser = self.document_parser();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let crashed = move |error| WorkerMessage::ExportFinished {
+            job,
+            result: Err(format!("reading the pages crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let doms = inputs
                 .into_iter()
                 .map(|input| {
@@ -645,7 +648,11 @@ impl Engine {
         let options = self.export_options(&args, &attributes, first_page.as_deref());
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let crashed = move |error| WorkerMessage::ExportFinished {
+            job,
+            result: Err(format!("typesetting crashed: {error}")),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let result = theme
                 .and_then(|theme| typeset(&document, &theme, &options, &args))
                 .map(|mut summary| {

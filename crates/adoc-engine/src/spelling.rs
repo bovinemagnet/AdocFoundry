@@ -7,7 +7,6 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
-    thread,
     time::{Duration, Instant},
 };
 
@@ -161,7 +160,15 @@ impl Engine {
         let parser = self.document_parser();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let crashed = move |error| WorkerMessage::Crashed {
+            job: crate::worker::Crashed::Spelling {
+                id,
+                version,
+                generation,
+            },
+            error,
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let (path, text) = (input.path.clone(), input.text.clone());
             let (dom, _) = input.parse(parser.as_ref());
             let model = Model::build(&path, &text, &dom);
@@ -218,6 +225,35 @@ impl Engine {
         if changed {
             self.emit(EngineEvent::SpellingChanged(id));
         }
+    }
+
+    /// The check of `id` at `version` crashed. Its misspellings stay as they were, and the page
+    /// counts as checked, so it is not checked again until it changes.
+    pub(crate) fn spelling_crashed(&mut self, id: DocumentId, version: u64, generation: u64) {
+        if self.spelling.checking == Some((id, version, generation)) {
+            self.spelling.checking = None;
+        }
+        let current = self
+            .documents
+            .get(&id)
+            .is_some_and(|document| document.version == version);
+        if !current || generation != self.spelling.generation {
+            return;
+        }
+        let misspellings = self
+            .spelling
+            .results
+            .remove(&id)
+            .map(|checked| checked.misspellings)
+            .unwrap_or_default();
+        self.spelling.results.insert(
+            id,
+            Checked {
+                version,
+                generation,
+                misspellings,
+            },
+        );
     }
 
     /// Records that document `id` changed, so it is checked only once it settles, and moves its
