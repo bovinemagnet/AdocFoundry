@@ -256,8 +256,8 @@ The command always exits with 0, even when it reports a missing tool or font.
 AdocFoundry diagnostics
 
 Program
-  Version:  adocfoundry-cli 0.4.0
-  Engine:   adoc-engine 0.4.0
+  Version:  adocfoundry-cli 0.5.0
+  Engine:   adoc-engine 0.5.0
   Build:    release
   Features: typst, git
 
@@ -318,7 +318,7 @@ The paths of the user and workspace settings files, each marked `(not found)` wh
     {
       "title": "Program",
       "lines": [
-        { "label": "Version", "value": "adocfoundry-cli 0.4.0" }
+        { "label": "Version", "value": "adocfoundry-cli 0.5.0" }
       ]
     }
   ]
