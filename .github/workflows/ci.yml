@@ -64,6 +64,15 @@ jobs:
       - run: cargo build -p adoc-ls
       - run: cargo build -p adoc-ls --all-features
 
+  bench:
+    # The engine's benchmarks, on the engine thread, each held to its budget; the table goes in
+    # the run's summary. Index memory is measured here only, from /proc.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo bench -p adoc-engine --bench budgets
+
   pdf-standards:
     # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1,
     # and the article as PDF/A-1b and PDF/A-1a (the book's Mermaid diagram uses transparency,
