@@ -168,6 +168,7 @@ It scrolls and redraws only when the scroll position would change, so a caret mo
 Inline text is laid out once per element and kept in an `InlineCache` keyed by the element's id; it is cleared when a new view tree arrives or the text style (font or theme) changes.
 The visual editor's read-only blocks pass no cache.
 The highlight cache is keyed by theme brightness and a hash of the language and text, checks the language and text on a hit, and returns the styles as a shared `Highlights` (`Rc<[..]>`), so a hit copies nothing.
+The cache holds at most `HIGHLIGHT_CACHE_LIMIT` (256) highlighted blocks and is emptied when it reaches that, because typing in a code block adds an entry for each version of its text; `preview::highlight` applies the limit for the preview and the visual editor alike, each of which keeps its own cache.
 A code block's styles are divided among its lines in one pass (`styles_by_line`).
 
 === Rows and scroll sync
