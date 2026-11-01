@@ -1,14 +1,14 @@
 //! Link following and back/forward history. History is engine state so that every front end,
 //! and the CLI tests, share it.
 
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::Path, path::PathBuf};
 
 use adoc_core::SourceRange;
 use adoc_lang::{DefinitionTarget, Location};
 
 use crate::{
     is_image_path, CommandOutcome, DocumentId, Engine, EngineError, EngineEvent, OpenDisposition,
-    TabItem,
+    TabItem, TextEdit,
 };
 
 /// A place in the workspace the user has been.
@@ -23,9 +23,46 @@ pub(crate) struct History {
     back: Vec<NavigationPosition>,
     forward: Vec<NavigationPosition>,
     current: Option<NavigationPosition>,
+    /// Each document's caret, as its front end last reported it.
+    carets: BTreeMap<DocumentId, usize>,
 }
 
 impl Engine {
+    /// Records that document `id`'s caret is at `offset`, so leaving the page keeps the place
+    /// to come back to.
+    pub fn caret_moved(&mut self, id: DocumentId, offset: usize) {
+        self.history.carets.insert(id, offset);
+    }
+
+    /// Moves the positions in `path` that history keeps, and document `id`'s caret, through
+    /// `edits`, so going back arrives where the text it left now is.
+    pub(crate) fn navigation_edited(&mut self, id: DocumentId, path: &Path, edits: &[TextEdit]) {
+        let mapping = adoc_model::Mapping::new(
+            &edits
+                .iter()
+                .map(|edit| adoc_model::SourceEdit::new(edit.range, edit.replacement.clone()))
+                .collect::<Vec<_>>(),
+        );
+        let map = |offset: usize| mapping.map(offset, adoc_model::Assoc::Before);
+        let history = &mut self.history;
+        for position in history
+            .back
+            .iter_mut()
+            .chain(history.forward.iter_mut())
+            .chain(history.current.iter_mut())
+            .filter(|position| position.path == path)
+        {
+            position.offset = map(position.offset);
+        }
+        if let Some(caret) = history.carets.get_mut(&id) {
+            *caret = map(*caret);
+        }
+    }
+
+    pub(crate) fn forget_caret(&mut self, id: DocumentId) {
+        self.history.carets.remove(&id);
+    }
+
     #[must_use]
     pub fn can_go_back(&self) -> bool {
         !self.history.back.is_empty()
@@ -154,11 +191,14 @@ impl Engine {
     }
 
     fn active_position(&self) -> Option<NavigationPosition> {
-        let path = match self.active_item()? {
-            TabItem::Document(id) => self.document(id)?.path.clone(),
-            TabItem::Image(id) => self.image(id)?.path.clone(),
+        let (path, offset) = match self.active_item()? {
+            TabItem::Document(id) => (
+                self.document(id)?.path.clone(),
+                self.history.carets.get(&id).copied().unwrap_or(0),
+            ),
+            TabItem::Image(id) => (self.image(id)?.path.clone(), 0),
         };
-        Some(NavigationPosition { path, offset: 0 })
+        Some(NavigationPosition { path, offset })
     }
 
     /// The included file at `offset`, for a read-only inline view. Only include directives

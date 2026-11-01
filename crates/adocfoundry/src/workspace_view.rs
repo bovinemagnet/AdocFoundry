@@ -741,6 +741,8 @@ impl WorkspaceView {
         if self.active_document(cx) != Some(id) {
             return;
         }
+        self.app
+            .update(cx, |app, _| app.engine.caret_moved(id, offset));
         // Side by side, the source follows the visual editor's caret.
         if self.app.read(cx).engine.editor_mode(id) == EditorMode::Split {
             if let Some(editor) = self.active_editor().cloned() {
@@ -807,8 +809,11 @@ impl WorkspaceView {
         if self.active_editor() != Some(&editor) {
             return;
         }
-        // Side by side, the visual editor follows the source caret.
         let id = editor.read(cx).document();
+        // Where Back returns to once another page is shown.
+        self.app
+            .update(cx, |app, _| app.engine.caret_moved(id, offset));
+        // Side by side, the visual editor follows the source caret.
         if self.app.read(cx).engine.editor_mode(id) == EditorMode::Split {
             if let Some(visual) = self.visuals.get(&id).cloned() {
                 visual.update(cx, |visual, cx| visual.reveal_offset(offset, cx));

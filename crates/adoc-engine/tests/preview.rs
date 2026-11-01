@@ -359,6 +359,41 @@ fn go_to_records_history_and_reveal_does_not() {
 }
 
 #[test]
+fn going_back_returns_to_the_caret_through_later_edits() {
+    use adoc_engine::NavigationPosition;
+
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    let other = directory.path().join("other.adoc");
+    fs::write(&page, "= Page\n\nSome text.\n").unwrap();
+    fs::write(&other, "= Other\n").unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    let page_id = engine.open(&page).unwrap();
+    let caret = "= Page\n\nSome".len();
+    engine.caret_moved(page_id, caret);
+
+    engine
+        .invoke(
+            ids::NAVIGATE_GO_TO,
+            CommandArgs::Position(NavigationPosition {
+                path: other.clone(),
+                offset: 0,
+            }),
+        )
+        .unwrap();
+    // The page is edited above where the caret was, while it is not shown.
+    type_text(&mut engine, page_id, "= Page\n".len(), "Intro.\n");
+    engine
+        .invoke(ids::NAVIGATE_BACK, CommandArgs::None)
+        .unwrap();
+    assert_eq!(engine.active(), Some(page_id));
+    assert_eq!(
+        engine.navigation_position().unwrap().offset,
+        caret + "Intro.\n".len()
+    );
+}
+
+#[test]
 fn render_blocking_waits_for_diagrams() {
     let directory = tempfile::tempdir().unwrap();
     let page = directory.path().join("page.adoc");

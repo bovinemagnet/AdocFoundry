@@ -221,9 +221,14 @@ impl Engine {
         }
     }
 
-    /// Makes the last tab active, after the active one closed.
-    pub(crate) fn activate_last_tab(&mut self) {
-        match self.tabs.order.last().copied() {
+    /// After the active tab closed from position `closed_at`, makes the tab that took its
+    /// place active, or the one before it when it was the last.
+    pub(crate) fn activate_neighbour(&mut self, closed_at: usize) {
+        let order = &self.tabs.order;
+        match order
+            .get(closed_at.min(order.len().saturating_sub(1)))
+            .copied()
+        {
             Some(TabItem::Document(id)) => {
                 self.active = Some(id);
                 if let Some(document) = self.documents.get(&id) {
