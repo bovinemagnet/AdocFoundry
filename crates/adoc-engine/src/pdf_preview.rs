@@ -4,7 +4,7 @@
 //! the source of each line ([`EngineEvent::PdfPreviewReady`]). One typesetting runs at a time;
 //! a view that arrives meanwhile waits, and only the newest is typeset next.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc, thread};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use adoc_pdf::{Document, PageView, PreviewPage};
 
@@ -75,7 +75,16 @@ impl Engine {
         let version = preview.version;
         self.pdf_preview.running = true;
         self.workers_running += 1;
-        thread::spawn(move || {
+        let path = preview.path.clone();
+        let crashed = move |error| WorkerMessage::PdfPreviewTypeset {
+            preview: Box::new(PdfPreview {
+                document: id,
+                version,
+                path,
+                pages: Err(format!("typesetting crashed: {error}")),
+            }),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let pages = adoc_pdf::load_theme_within(&source, &access)
                 .map_err(|error| error.to_string())
                 .and_then(|theme| {

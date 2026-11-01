@@ -12,6 +12,10 @@ The engine is single-threaded by design.
 One `Engine` is owned by the front end and mutated through `&mut self` on the thread that owns it.
 Long work, such as the initial indexing of a workspace, runs on a `std::thread` worker.
 The worker sends its result back over a channel, and the front end applies it by calling `Engine::pump()`.
+Every worker counted in `workers_running` is started through `worker::spawn` (`crates/adoc-engine/src/worker.rs`), which runs the job under `catch_unwind`.
+If the job panics, the engine is sent the failure that job reports in place of its result, for example `DiagramRendered` or `ExportFinished` with an error, or `IndexFailed`.
+Jobs with no failure of their own (the preview parse, word count, spelling and the Problems pass) send `WorkerMessage::Crashed`, which `pump` reports as a notification or ignores, leaving the last result.
+So `workers_running`, a diagram's worker slot, an export's stage and each job's running flag are always released, and nothing waits for a worker that has crashed.
 This keeps the engine testable without an async runtime.
 
 == Documents
@@ -79,6 +83,7 @@ Untitled documents and documents without unsaved edits are skipped.
 It is one background thread, started on first use, that writes files in the order they were asked for.
 No write, and none of its `fsync`, runs on the thread that serves the front end, and a later write never lands before an earlier one.
 Each job counts in `has_pending` until `pump` applies its result, and `wait_for_workers` waits for it too.
+The writer runs each save and write under `worker::guarded`, so one that panics fails on its own ("saving crashed: ...") and the writer goes on to the next job.
 
 Its jobs are:
 

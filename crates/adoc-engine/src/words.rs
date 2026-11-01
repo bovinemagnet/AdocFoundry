@@ -3,7 +3,6 @@
 
 use std::{
     collections::BTreeMap,
-    thread,
     time::{Duration, Instant},
 };
 
@@ -118,7 +117,11 @@ impl Engine {
         let parser = self.document_parser();
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let crashed = |error| WorkerMessage::Crashed {
+            job: crate::worker::Crashed::WordCount,
+            error,
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let (dom, _) = input.parse(parser.as_ref());
             let _ = sender.send(WorkerMessage::WordsCounted {
                 id,

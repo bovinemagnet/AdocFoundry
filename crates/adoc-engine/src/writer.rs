@@ -89,7 +89,13 @@ impl Engine {
                 for job in queue {
                     let message = match job {
                         Job::Save(job) => {
-                            let result = save(&job);
+                            // A panic fails this save; the writer goes on to the next job.
+                            let result =
+                                crate::worker::guarded(|| save(&job)).unwrap_or_else(|error| {
+                                    Err(SaveFailure::Io(io::Error::other(format!(
+                                        "saving crashed: {error}"
+                                    ))))
+                                });
                             WorkerMessage::Saved {
                                 ticket: job.ticket,
                                 id: job.id,
@@ -99,12 +105,14 @@ impl Engine {
                             }
                         }
                         Job::Write { file, contents } => {
-                            if let Some(contents) = contents() {
-                                let _ = file
-                                    .parent()
-                                    .map_or(Ok(()), fs::create_dir_all)
-                                    .and_then(|()| write_replacing(&file, &contents));
-                            }
+                            let _ = crate::worker::guarded(|| {
+                                if let Some(contents) = contents() {
+                                    let _ = file
+                                        .parent()
+                                        .map_or(Ok(()), fs::create_dir_all)
+                                        .and_then(|()| write_replacing(&file, &contents));
+                                }
+                            });
                             WorkerMessage::Written
                         }
                         Job::Remove(file) => {

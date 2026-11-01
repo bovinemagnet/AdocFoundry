@@ -7,7 +7,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -19,7 +18,11 @@ use adoc_index::normalize_path;
 use adoc_lang::WorkspaceState;
 use adoc_render::{build_view, DiagramView, ResolvedLink, ViewResolver, ViewTree};
 
-use crate::{workspace::WorkerMessage, DocumentId, Engine, EngineEvent};
+use crate::{
+    worker::{self, Crashed},
+    workspace::WorkerMessage,
+    DocumentId, Engine, EngineEvent,
+};
 
 /// Edits re-render the preview once they pause this long.
 pub const PREVIEW_SETTLE: Duration = Duration::from_millis(100);
@@ -494,7 +497,11 @@ impl Engine {
     fn spawn_preview(&mut self, snapshot: Snapshot) {
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        thread::spawn(move || {
+        let crashed = |error| WorkerMessage::Crashed {
+            job: Crashed::Preview,
+            error,
+        };
+        worker::spawn(sender, crashed, move |sender| {
             let Snapshot {
                 parser,
                 id,
@@ -700,7 +707,12 @@ impl Engine {
             let sender = self.worker_sender.clone();
             self.rendered.running += 1;
             self.workers_running += 1;
-            thread::spawn(move || {
+            let failed = checksum.clone();
+            let crashed = move |error| WorkerMessage::DiagramRendered {
+                checksum: failed,
+                result: Err(format!("the diagram renderer crashed: {error}")),
+            };
+            worker::spawn(sender, crashed, move |sender| {
                 let result = diagrams
                     .render_at(&checksum, &request)
                     .map_err(|error| error.to_string());

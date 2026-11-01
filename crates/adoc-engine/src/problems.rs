@@ -11,7 +11,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    thread,
 };
 
 use adoc_core::{
@@ -105,7 +104,11 @@ impl Engine {
             let access = self.file_access.clone();
             let sender = self.worker_sender.clone();
             self.workers_running += 1;
-            thread::spawn(move || {
+            let crashed = move |error| WorkerMessage::Crashed {
+                job: crate::worker::Crashed::Problems { generation },
+                error,
+            };
+            crate::worker::spawn(sender, crashed, move |sender| {
                 let problems = workspace_problems(&state, &access);
                 let _ = sender.send(WorkerMessage::ProblemsComputed {
                     generation,
@@ -128,6 +131,14 @@ impl Engine {
         }
         self.emit(EngineEvent::ProblemsChanged);
         1
+    }
+
+    /// Pass `generation` crashed: the problems found before stay, and the next change
+    /// starts another.
+    pub(crate) fn problems_crashed(&mut self, generation: u64) {
+        if self.problems.running == Some(generation) {
+            self.problems.running = None;
+        }
     }
 
     pub(crate) fn problems_computed(

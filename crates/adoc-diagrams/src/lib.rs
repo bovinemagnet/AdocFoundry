@@ -155,7 +155,8 @@ impl Diagrams {
     /// Mermaid in process, and Graphviz, PlantUML and D2 run from `tools`.
     #[must_use]
     pub fn with_tools(cache: DiagramCache, tools: &ToolPaths) -> Self {
-        let mut providers: Vec<Box<dyn DiagramProvider>> = vec![Box::new(MermaidProvider)];
+        let mut providers: Vec<Box<dyn DiagramProvider>> =
+            vec![Box::new(MermaidProvider::with_timeout(tools.timeout))];
         providers.extend(
             ExternalProvider::for_tools(tools)
                 .into_iter()
@@ -167,7 +168,7 @@ impl Diagrams {
     /// Mermaid only: no external tool is ever run.
     #[must_use]
     pub fn in_process(cache: DiagramCache) -> Self {
-        Self::with_providers(cache, vec![Box::new(MermaidProvider)])
+        Self::with_providers(cache, vec![Box::new(MermaidProvider::default())])
     }
 
     #[must_use]
@@ -283,18 +284,29 @@ mod tests {
 
     #[test]
     fn mermaid_renders_svg_in_process() {
-        let svg = MermaidProvider.render(&mermaid()).unwrap();
+        let svg = MermaidProvider::default().render(&mermaid()).unwrap();
         assert!(svg.contains("<svg"), "{svg}");
         assert!(svg.contains("Start") && svg.contains("Done"), "{svg}");
         // Labels are SVG text: native SVG renderers do not draw HTML in `foreignObject`.
         assert!(!svg.contains("foreignObject"), "{svg}");
 
-        let error = MermaidProvider
+        let error = MermaidProvider::default()
             .render(&DiagramRequest::new("mermaid", "graph TD\n  A -->"))
             .map(|svg| svg.len());
         assert!(
             !matches!(error, Err(DiagramError::Io(_))),
             "a broken diagram is a render failure, not a crash: {error:?}"
+        );
+    }
+
+    #[test]
+    fn mermaid_stops_at_its_deadline() {
+        let error = MermaidProvider::with_timeout(std::time::Duration::from_nanos(1))
+            .render(&mermaid())
+            .unwrap_err();
+        assert!(
+            matches!(&error, DiagramError::TimedOut { program, .. } if program == "Mermaid"),
+            "{error:?}"
         );
     }
 
@@ -308,7 +320,7 @@ mod tests {
 
         fn render(&self, request: &DiagramRequest) -> Result<String, DiagramError> {
             self.0.fetch_add(1, Ordering::SeqCst);
-            MermaidProvider.render(request)
+            MermaidProvider::default().render(request)
         }
     }
 

@@ -13,7 +13,6 @@ use std::{
         mpsc::{self, Receiver},
         Arc, Mutex, MutexGuard, PoisonError,
     },
-    thread,
     time::{Duration, Instant},
 };
 
@@ -142,6 +141,11 @@ pub(crate) enum WorkerMessage {
     #[cfg(feature = "typst")]
     PdfPreviewTypeset {
         preview: Box<crate::PdfPreview>,
+    },
+    /// A worker whose job has no failure of its own panicked, saying `error`.
+    Crashed {
+        job: crate::worker::Crashed,
+        error: String,
     },
 }
 
@@ -335,7 +339,11 @@ impl Engine {
         self.indexing += 1;
         self.index_generation += 1;
         let generation = self.index_generation;
-        thread::spawn(move || {
+        let crashed = move |error| WorkerMessage::IndexFailed {
+            generation,
+            error: format!("indexing crashed: {error}"),
+        };
+        crate::worker::spawn(sender, crashed, move |sender| {
             let mode = watches.as_deref().map(|watches| lock(watches).mode);
             if let (Some(watches), Some(WatchMode::Roots)) = (&watches, mode) {
                 let mut watches = lock(watches);
@@ -577,6 +585,7 @@ impl Engine {
             WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
             #[cfg(feature = "typst")]
             WorkerMessage::PdfPreviewTypeset { preview } => self.pdf_preview_typeset(*preview),
+            WorkerMessage::Crashed { job, error } => self.worker_crashed(job, error),
             WorkerMessage::IndexFailed { generation, error } => {
                 self.indexing = self.indexing.saturating_sub(1);
                 if generation != self.index_generation {
@@ -853,7 +862,7 @@ mod tests {
             if done(engine) {
                 return true;
             }
-            thread::sleep(Duration::from_millis(25));
+            std::thread::sleep(Duration::from_millis(25));
         }
         false
     }
