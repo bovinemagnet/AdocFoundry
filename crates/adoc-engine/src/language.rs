@@ -109,9 +109,8 @@ impl Engine {
                         .workspace
                         .index
                         .file(&location.path)?
-                        .document
-                        .text
-                        .clone(),
+                        .text()?
+                        .into_owned(),
                 };
                 let lines = LineIndex::new(&text);
                 let (line, _) = lines.line_column(location.range.start);
@@ -155,7 +154,10 @@ impl Engine {
                     kind,
                     path: std::sync::Arc::from(document.path.as_path()),
                     range,
-                    container: parsed.title.as_ref().map(|title| title.text.clone()),
+                    container: parsed
+                        .title
+                        .as_ref()
+                        .map(|title| title.text.as_str().into()),
                 };
                 let mut found: Vec<WorkspaceSymbol> = parsed
                     .title
@@ -212,12 +214,16 @@ impl Engine {
     fn symbol_detail(&self, symbol: &WorkspaceSymbol) -> String {
         let page = match symbol.kind {
             WorkspaceSymbolKind::Title => "Page".to_owned(),
-            _ => symbol.container.clone().unwrap_or_else(|| {
-                symbol
-                    .path
-                    .file_name()
-                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
-            }),
+            _ => symbol
+                .container
+                .as_deref()
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    symbol
+                        .path
+                        .file_name()
+                        .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
+                }),
         };
         let place = match self.workspace.antora.context_for_path(&symbol.path) {
             Some(context) => match context.version {
@@ -263,7 +269,7 @@ impl Engine {
                         .workspace
                         .index
                         .file(&location.path)
-                        .map(|file| file.document.text.clone())
+                        .and_then(|file| file.text().map(std::borrow::Cow::into_owned))
                         .unwrap_or_default();
                     files.push(crate::FileEdits {
                         path: location.path,

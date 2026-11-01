@@ -183,8 +183,13 @@ impl Engine {
             Some(DefinitionTarget::Location(location)) => {
                 let text = match self.document_for_path(&location.path) {
                     Some(open) => self.documents[&open].text.to_string(),
-                    None => match self.workspace.index.file(&location.path) {
-                        Some(file) => file.document.text.clone(),
+                    None => match self
+                        .workspace
+                        .index
+                        .file(&location.path)
+                        .and_then(adoc_index::FileEntry::text)
+                    {
+                        Some(text) => text.into_owned(),
                         None => self.read_text(&location.path)?,
                     },
                 };

@@ -72,7 +72,7 @@ fn open_documents_survive_a_reindex() {
         .unwrap();
     assert!(engine.wait_for_workers(Duration::from_secs(10)));
     let indexed = engine.workspace().index.file(&page).unwrap();
-    assert_eq!(indexed.document.text, "= Edited\n");
+    assert_eq!(&*indexed.document.text, "= Edited\n");
 }
 
 #[test]

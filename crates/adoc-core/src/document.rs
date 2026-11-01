@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{Anchor, Diagnostic, ImageDirective, IncludeDirective, Reference, Section};
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -47,7 +49,9 @@ pub struct AttributeDeclaration {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Document {
     pub uri: String,
-    pub text: String,
+    /// The text parsed, shared by every copy of the document: the engine's parse of an open
+    /// page and the index's entry for it hold the one allocation.
+    pub text: Arc<str>,
     pub title: Option<DocumentTitle>,
     pub sections: Vec<Section>,
     pub attributes: Vec<AttributeDeclaration>,
@@ -60,7 +64,7 @@ pub struct Document {
 
 impl Document {
     #[must_use]
-    pub fn new(uri: impl Into<String>, text: impl Into<String>) -> Self {
+    pub fn new(uri: impl Into<String>, text: impl Into<Arc<str>>) -> Self {
         Self {
             uri: uri.into(),
             text: text.into(),

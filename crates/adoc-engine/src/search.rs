@@ -5,6 +5,7 @@
 //! move, so one undo restores everything.
 
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
@@ -83,9 +84,9 @@ fn find_matches(regex: &Regex, path: &Path, text: &str, limit: usize, out: &mut 
 
 impl Engine {
     /// The text of every indexed file in `scope`, open buffers included, in path order.
-    fn searchable_files(&self, scope: Option<&Path>) -> Vec<(&Path, &str)> {
+    fn searchable_files(&self, scope: Option<&Path>) -> Vec<(&Path, Cow<'_, str>)> {
         let scope = scope.map(normalize_path);
-        let mut files: Vec<(&Path, &str)> = self
+        let mut files: Vec<(&Path, Cow<'_, str>)> = self
             .workspace
             .index
             .files()
@@ -94,7 +95,7 @@ impl Engine {
                     .as_ref()
                     .is_none_or(|scope| file.path.starts_with(scope))
             })
-            .map(|file| (file.path.as_path(), file.document.text.as_str()))
+            .filter_map(|file| Some((file.path.as_path(), file.text()?)))
             .collect();
         files.sort_by(|left, right| left.0.cmp(right.0));
         files
@@ -211,7 +212,7 @@ impl Engine {
         let mut edits = Vec::new();
         for (path, text) in self.searchable_files(request.scope.as_deref()) {
             let mut file_edits = Vec::new();
-            for captures in regex.captures_iter(text) {
+            for captures in regex.captures_iter(&text) {
                 let Some(found) = captures.get(0).filter(|found| !found.is_empty()) else {
                     continue;
                 };
@@ -235,7 +236,7 @@ impl Engine {
                 edits.push(FileEdits {
                     path: path.to_path_buf(),
                     edits: file_edits,
-                    base: text.to_owned(),
+                    base: text.into_owned(),
                 });
             }
         }
@@ -397,7 +398,7 @@ impl Engine {
             // Unsaved text is recovered at the new path.
             self.recovery_changed(id);
         } else if let Ok(text) = fs::read_to_string(&to) {
-            self.workspace.index.index_source(&to, &text);
+            self.workspace.index.index_file(&to, &text);
         }
         // The page's Antora coordinate changed: re-read its component.
         let descriptors: Vec<PathBuf> = self
@@ -458,6 +459,22 @@ impl Engine {
 
     /// Computes moving the page of document `id` to `new_path` and rewriting every xref that
     /// resolves to it and every include that includes it.
+    /// The text the index parsed `path` from, which the offsets of its references are into.
+    /// Refused while the file has changed on disk and is not indexed again yet, rather than
+    /// leaving its references out of the change.
+    fn indexed_text(&self, path: &Path) -> Result<Cow<'_, str>, EngineError> {
+        let file =
+            self.workspace.index.file(path).ok_or_else(|| {
+                EngineError::NotFound(format!("{} is not indexed", path.display()))
+            })?;
+        file.text().ok_or_else(|| {
+            EngineError::Refused(format!(
+                "{} changed on disk; try again once it is read",
+                path.display()
+            ))
+        })
+    }
+
     pub fn rename_preview(
         &mut self,
         id: DocumentId,
@@ -485,11 +502,8 @@ impl Engine {
             if location.path == from {
                 continue;
             }
-            let Some(file) = self.workspace.index.file(&location.path) else {
-                continue;
-            };
-            let text = &file.document.text;
-            let Some((range, file_part)) = xref_file_part(text, location.range) else {
+            let text = self.indexed_text(&location.path)?;
+            let Some((range, file_part)) = xref_file_part(&text, location.range) else {
                 continue;
             };
             let context = self.workspace.antora.context_for_path(&location.path);
@@ -513,11 +527,8 @@ impl Engine {
             if target.contains('{') {
                 continue;
             }
-            let Some(file) = self.workspace.index.file(&location.path) else {
-                continue;
-            };
-            let Some(range) = include_target_range(&file.document.text, location.include.range)
-            else {
+            let text = self.indexed_text(&location.path)?;
+            let Some(range) = include_target_range(&text, location.include.range) else {
                 continue;
             };
             let antora = parse_resource_id(target)
@@ -558,7 +569,7 @@ impl Engine {
                     .workspace
                     .index
                     .file(&path)
-                    .map(|file| file.document.text.clone())
+                    .and_then(|file| file.text().map(Cow::into_owned))
                     .unwrap_or_default();
                 FileEdits { path, edits, base }
             })
@@ -578,7 +589,10 @@ impl Engine {
             return Vec::new();
         };
         let document = &file.document;
-        let text = document.text.as_str();
+        let Some(text) = file.text() else {
+            return Vec::new();
+        };
+        let text = &*text;
         let move_ = Move {
             from,
             to,

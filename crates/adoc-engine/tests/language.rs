@@ -177,7 +177,7 @@ fn typing_defers_reindexing_until_typing_pauses() {
         .parsed()
         .text
         .starts_with("x= Page"));
-    assert_eq!(indexed(&engine), "= Page\n\nSee xref:missing.adoc[].\n");
+    assert_eq!(&*indexed(&engine), "= Page\n\nSee xref:missing.adoc[].\n");
     assert!(engine.has_pending());
 
     let events = engine.subscribe();

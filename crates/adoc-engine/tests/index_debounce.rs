@@ -27,7 +27,7 @@ fn indexed(engine: &Engine, path: &Path) -> String {
         .unwrap()
         .document
         .text
-        .clone()
+        .to_string()
 }
 
 fn replace(engine: &mut Engine, id: DocumentId, range: SourceRange, text: &str) {

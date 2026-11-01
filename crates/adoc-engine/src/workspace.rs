@@ -748,7 +748,7 @@ impl Engine {
         }
         match on_disk {
             Some(text) => {
-                self.workspace.index.index_source(path, &text);
+                self.workspace.index.index_file(path, &text);
             }
             None => self.workspace.remove_document(path),
         }
