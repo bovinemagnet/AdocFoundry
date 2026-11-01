@@ -14,14 +14,13 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use adoc_core::SourceRange;
 use sha2::{Digest, Sha256};
 
 use crate::{
     commands::{ids, register, spec},
     engine::UndoMode,
     line_diff, CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry,
-    DiffLine, DocumentId, Engine, EngineError, HistorySettings, TextEdit,
+    DiffLine, DocumentId, Engine, EngineError, HistorySettings,
 };
 
 /// The store's folder, in the app's state folder.
@@ -131,14 +130,9 @@ fn restore_version(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutc
         .document(id)
         .ok_or(EngineError::UnknownDocument(id))?;
     let text = engine.saved_version(&document.path, version)?;
-    let current = document.text.to_string();
-    if current != text {
+    if let Some(edit) = crate::edit::minimal(&document.text.to_string(), &text) {
         let group = engine.new_group();
-        engine.apply_edits(
-            id,
-            vec![TextEdit::new(SourceRange::new(0, current.len()), text)],
-            UndoMode::Group(group),
-        )?;
+        engine.apply_edits(id, vec![edit], UndoMode::Group(group))?;
     }
     Ok(CommandOutcome::Done)
 }

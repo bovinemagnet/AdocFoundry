@@ -413,7 +413,8 @@ impl SourceEditorView {
         Some(state.display_map().display_row_to_buffer_line(row))
     }
 
-    /// Applies the engine's text to the widget when they differ, as one replacement.
+    /// Applies the engine's text to the widget when they differ, as one replacement, keeping
+    /// the selection on the text it was on.
     fn reconcile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(engine_text) = self
             .app
@@ -429,8 +430,12 @@ impl SourceEditorView {
         self.state.update(cx, |state, cx| {
             if let Some((range, replacement)) = sync::diff(state.text(), &engine_text) {
                 adoc_core::probe::hit(adoc_core::probe::Probe::Reconcile);
-                state.set_selected_range(range, cx);
+                let selection = state.selected_range();
+                let inserted = replacement.len();
+                state.set_selected_range(range.clone(), cx);
                 state.replace(replacement, window, cx);
+                let mapped = |offset| sync::map_offset(offset, &range, inserted);
+                state.set_selected_range(mapped(selection.start)..mapped(selection.end), cx);
             }
         });
     }

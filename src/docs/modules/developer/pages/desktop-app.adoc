@@ -61,6 +61,7 @@ That is exact for typing, deletion and paste, and still correct, if wider, for a
 Typing arrives at the engine one character at a time, so undo coalescing works.
 
 In the other direction, a change that originates elsewhere (undo, replace, rename or a reload from disk) arrives as an engine event and is applied back to the widget.
+The widget's selection is kept through it, mapped by `sync::map_offset`: text before or after the change keeps its place, and a caret inside it or at either end goes to the end of the new text.
 
 Undo, redo, go to definition, follow link and peek include are bound in the editor's key context after gpui-component's own bindings.
 They therefore take precedence and go through the engine instead of the widget's own history.

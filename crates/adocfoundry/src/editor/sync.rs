@@ -110,11 +110,24 @@ fn common_suffix(a: &Rope, b: &Rope, limit: usize) -> usize {
     shared
 }
 
+/// Where `offset` is once `range` is replaced by `inserted` bytes. Text before or after the
+/// range keeps its place; an offset within it, or at either end, goes to the end of the
+/// replacement, as a caret does after typing, undo or redo there.
+pub fn map_offset(offset: usize, range: &Range<usize>, inserted: usize) -> usize {
+    if offset < range.start {
+        offset
+    } else if offset > range.end {
+        offset - (range.end - range.start) + inserted
+    } else {
+        range.start + inserted
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use ropey::Rope;
 
-    use super::diff;
+    use super::{diff, map_offset};
 
     fn of(old: &str, new: &str) -> Option<(std::ops::Range<usize>, String)> {
         diff(&Rope::from_str(old), &Rope::from_str(new))
@@ -125,6 +138,20 @@ mod tests {
             return old.to_owned();
         };
         format!("{}{}{}", &old[..range.start], text, &old[range.end..])
+    }
+
+    #[test]
+    fn offsets_outside_a_replacement_keep_their_text() {
+        // "First." becoming "First, changed." at 13..13.
+        let range = 13..13;
+        assert_eq!(map_offset(5, &range, 9), 5);
+        assert_eq!(map_offset(20, &range, 9), 29);
+        // A caret where the text went in ends up after it.
+        assert_eq!(map_offset(13, &range, 9), 22);
+        // Within or at the end of a deletion, the caret goes to where it was.
+        assert_eq!(map_offset(15, &(10..20), 0), 10);
+        assert_eq!(map_offset(20, &(10..20), 0), 10);
+        assert_eq!(map_offset(25, &(10..20), 0), 15);
     }
 
     #[test]

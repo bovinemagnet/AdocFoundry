@@ -741,14 +741,13 @@ impl Engine {
                 }
                 return;
             }
-            let whole = adoc_core::SourceRange::new(0, document.text.len());
+            // Only what changed is replaced, so carets elsewhere stay and undo keeps only that.
+            let edits: Vec<TextEdit> = crate::edit::minimal(&document.text.to_string(), &text)
+                .into_iter()
+                .collect();
             let group = self.new_group();
             if self
-                .apply_edits(
-                    id,
-                    vec![TextEdit::new(whole, text.clone())],
-                    crate::engine::UndoMode::Group(group),
-                )
+                .apply_edits(id, edits, crate::engine::UndoMode::Group(group))
                 .is_ok()
             {
                 self.mark_saved(id, &text);

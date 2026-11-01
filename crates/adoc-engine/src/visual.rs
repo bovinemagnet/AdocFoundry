@@ -357,7 +357,7 @@ impl Engine {
         // One edit, so the step is one undo entry: from the first change to the last.
         let edits = match result.edits.as_slice() {
             [edit] => vec![TextEdit::new(edit.range, edit.text.clone())],
-            _ => whole_edit(before, &apply_edits(before, &result.edits))
+            _ => crate::edit::minimal(before, &apply_edits(before, &result.edits))
                 .into_iter()
                 .collect(),
         };
@@ -382,38 +382,6 @@ impl Engine {
         }
         Ok(CommandOutcome::Selection(result.selection))
     }
-}
-
-/// The single edit turning `before` into `after`: their common prefix and suffix left alone.
-fn whole_edit(before: &str, after: &str) -> Option<TextEdit> {
-    if before == after {
-        return None;
-    }
-    let mut prefix = before
-        .bytes()
-        .zip(after.bytes())
-        .take_while(|(left, right)| left == right)
-        .count();
-    while !before.is_char_boundary(prefix) || !after.is_char_boundary(prefix) {
-        prefix -= 1;
-    }
-    let longest = before.len().min(after.len()) - prefix;
-    let mut suffix = before
-        .bytes()
-        .rev()
-        .zip(after.bytes().rev())
-        .take(longest)
-        .take_while(|(left, right)| left == right)
-        .count();
-    while !before.is_char_boundary(before.len() - suffix)
-        || !after.is_char_boundary(after.len() - suffix)
-    {
-        suffix -= 1;
-    }
-    Some(TextEdit::new(
-        SourceRange::new(prefix, before.len() - suffix),
-        &after[prefix..after.len() - suffix],
-    ))
 }
 
 // --- commands --------------------------------------------------------------------------------
@@ -874,7 +842,7 @@ fn visual_insert_text(
         inserted.edits.clone()
     } else {
         let after = apply_edits(&base.source, &inserted.edits);
-        whole_edit(&model.source, &after)
+        crate::edit::minimal(&model.source, &after)
             .map(|edit| vec![adoc_model::SourceEdit::new(edit.range, edit.replacement)])
             .unwrap_or_default()
     };
@@ -1112,7 +1080,7 @@ fn split_block(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
     };
     let split = base.apply(&Step::SplitBlock { at }).map_err(refused)?;
     let after = apply_edits(&base.source, &split.edits);
-    let edits = whole_edit(&model.source, &after)
+    let edits = crate::edit::minimal(&model.source, &after)
         .map(|edit| vec![adoc_model::SourceEdit::new(edit.range, edit.replacement)])
         .unwrap_or_default();
     let result = StepResult {
