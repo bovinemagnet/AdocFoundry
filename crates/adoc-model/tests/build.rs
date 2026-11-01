@@ -270,6 +270,54 @@ fn included_content_is_read_only() {
 }
 
 #[test]
+fn listings_with_included_content_are_read_only() {
+    // A listing or literal block whose lines come from an include shows the parser's expanded
+    // text through the preview, so it is a read-only node over the block as written; ordinary
+    // code and literal blocks stay editable.
+    let path = repository().join("tests/fixtures/includes/listings/page.adoc");
+    let original = std::fs::read_to_string(&path).unwrap();
+    let dom = AcdcParser.parse(&ParseInput::new(&path, &original));
+    let model = Model::build(&path, &original, &dom);
+    assert_eq!(model.source, original);
+    let kinds: Vec<String> = model.blocks.iter().map(kind_name).collect();
+    assert_eq!(
+        kinds,
+        [
+            "Title",
+            "verbatim:listing",
+            "verbatim:listing",
+            "verbatim:literal",
+            "Code",
+            "Literal"
+        ]
+    );
+    let expanded = [
+        "SELECT id, name\nFROM users;",
+        "-- Users first.\nSELECT id, name\nFROM users;",
+        "id | name\n 1 | Ada",
+    ];
+    for (node, expected) in model.blocks[1..4].iter().zip(expanded) {
+        assert_eq!(node.access, Access::ReadOnly(ReadOnly::Verbatim));
+        assert!(node.text.is_none(), "{:?} has editable text", node.kind);
+        let written = &original[node.range.start..node.range.end];
+        assert!(written.contains("include::"), "{written:?}");
+        // The view tree, drawn at the node's origin, holds the included text.
+        let trail = node.origin.as_deref().unwrap();
+        let block = &dom.blocks[trail[0]];
+        let text = match &block.kind {
+            BlockKind::Listing { text, .. } | BlockKind::Literal { text } => text,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(text.trim_end(), expected);
+    }
+    for node in &model.blocks[4..] {
+        assert!(node.is_editable(), "{:?} is read-only", node.kind);
+    }
+    assert_eq!(model.blocks[4].text.as_ref().unwrap().display, "SELECT 1;");
+    assert!(check_tiling(&model).is_empty());
+}
+
+#[test]
 fn includes_written_with_attributes_find_their_directives() {
     // The directives name their targets through attributes, and two include one file by
     // different tags: each is one include node over its own line, and none is left as text.

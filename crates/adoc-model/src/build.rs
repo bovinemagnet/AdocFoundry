@@ -487,6 +487,14 @@ impl<'a> Builder<'a> {
                 admonition.children = self.contained(blocks, &trail, range);
                 admonition
             }
+            // Included lines are shown expanded by the preview's renderer, not as the directive.
+            BlockKind::Listing { .. } | BlockKind::Literal { .. }
+                if self
+                    .delimiters(range)
+                    .is_some_and(|(content, _)| self.has_include(content)) =>
+            {
+                verbatim(block, range)
+            }
             BlockKind::Listing { language, .. } => match self.delimiters(range) {
                 Some((content, delimiter)) if delimiter.starts_with('-') => {
                     let mut code = node(
@@ -629,6 +637,16 @@ impl<'a> Builder<'a> {
         let start = (open.end + 1).min(close.start);
         let end = close.start.saturating_sub(1).max(start);
         Some((SourceRange::new(start, end), delimiter))
+    }
+
+    /// Whether `content` has an include directive line, which the parser replaces with the
+    /// included file's lines (`\include::` is kept as written).
+    fn has_include(&self, content: SourceRange) -> bool {
+        self.lines(content).into_iter().any(|line| {
+            self.line_text(line)
+                .strip_prefix("include::")
+                .is_some_and(|rest| rest.trim_end().ends_with(']'))
+        })
     }
 
     fn container(
