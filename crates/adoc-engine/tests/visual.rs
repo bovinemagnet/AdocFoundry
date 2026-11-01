@@ -359,6 +359,51 @@ fn included_files_rebuild_the_model() {
 }
 
 #[test]
+fn antora_example_includes_show_in_listings() {
+    // A listing that includes an Antora example shows the example's lines, read-only, and
+    // leaves the directive in the source; the ordinary listing after it stays editable.
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::write(root.join("antora.yml"), "name: demo\nversion: ~\n").unwrap();
+    let module = root.join("modules/ROOT");
+    fs::create_dir_all(module.join("pages")).unwrap();
+    fs::create_dir_all(module.join("examples/sql")).unwrap();
+    fs::write(
+        module.join("examples/sql/query.sql"),
+        "SELECT id\nFROM users;\n",
+    )
+    .unwrap();
+    let source = "= Queries\n\n[source,sql]\n----\ninclude::example$sql/query.sql[]\n----\n\n\
+                  [source,sql]\n----\nSELECT 1;\n----\n";
+    let path = page(&module.join("pages"), "queries.adoc", source);
+    let (mut engine, _) = engine_with_clock();
+    engine.open_workspace(vec![root.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&path).unwrap();
+    show_visual(&mut engine, id);
+
+    let visual = engine.visual(id).expect("a visual model");
+    let included = &visual.model.blocks[1];
+    assert_eq!(
+        included.kind,
+        adoc_model::NodeKind::Verbatim {
+            name: "listing".to_owned()
+        }
+    );
+    assert!(!included.is_editable());
+    let block = adoc_render::block_by_trail(&visual.view, included.origin.as_deref().unwrap())
+        .expect("the listing in the view tree");
+    let adoc_render::ViewKind::Code { text: shown, .. } = &block.kind else {
+        panic!("{:?}", block.kind);
+    };
+    assert_eq!(shown.trim_end(), "SELECT id\nFROM users;");
+    let ordinary = &visual.model.blocks[2];
+    assert!(matches!(ordinary.kind, adoc_model::NodeKind::Code { .. }));
+    assert!(ordinary.is_editable());
+    assert_eq!(text(&engine, id), source);
+}
+
+#[test]
 fn marks_and_links_are_one_undo_step_each() {
     let directory = tempfile::tempdir().unwrap();
     let path = page(directory.path(), "page.adoc", "Some plain words.\n");

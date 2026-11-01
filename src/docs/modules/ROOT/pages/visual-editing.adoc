@@ -307,6 +307,10 @@ It is drawn with the preview's renderer, and anything with a dashed border or a 
 * Included content is drawn in place under a dashed border, headed "Included from" and the target.
 An *Edit partial* button opens the included file in a tab.
 You cannot edit inside an include from the including page.
+* A code or literal block that contains an `include::` directive line, such as `include::example$sql/query.sql[]` or `include::query.sql[]`, is read-only, whether the directive is alone or mixed with lines written in the page.
+It is drawn as the preview draws it, with the included file's lines in place of the directive.
+The block and its directive are kept exactly as written; edit it in the source editor.
+Code and literal blocks without includes stay editable.
 * Diagrams, STEM, passthroughs, attribute entries, extension and unknown macros, and tables with AsciiDoc (`a`) cells are shown as the preview shows them.
 * A block's title (the `.Title` line above a table, image, code block, list or admonition) is drawn above the block as the preview draws it, for example "Table 1. Spans".
 The title is not editable in the visual editor; edit it in the source editor.

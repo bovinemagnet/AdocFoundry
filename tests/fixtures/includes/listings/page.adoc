@@ -1,0 +1,25 @@
+= Listings With Includes
+
+[source,sql]
+----
+include::query.sql[]
+----
+
+[source,sql]
+----
+-- Users first.
+include::query.sql[]
+----
+
+....
+include::output.txt[]
+....
+
+[source,sql]
+----
+SELECT 1;
+----
+
+....
+Plain literal.
+....

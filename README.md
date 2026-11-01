@@ -77,7 +77,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Enter splits a paragraph, heading or list item, and at the end of one starts another; Backspace at a block's start joins or lifts it. A block-type picker turns paragraphs into headings, admonitions, code blocks and quotes; lists are made, changed and indented (Tab, Shift-Tab) from the toolbar or the keyboard, and checkboxes toggle on click.
 - Table cells are edited in place; rows and columns are inserted and deleted from the Table menu (tables without spans). Images are inserted, and clicking one edits its target and alt text.
 - Undo and redo are shared with the source editor: one history whichever editor made the change. In Split mode each side follows the other's caret.
-- Included content, diagrams, STEM, passthroughs, attribute entries, conditionals and anything the editor and the parser read differently are shown read-only; clicking them shows their source. Block titles show above their blocks and are edited in the source.
+- Included content (code and literal blocks with an `include::` line show the included lines), diagrams, STEM, passthroughs, attribute entries, conditionals and anything the editor and the parser read differently are shown read-only; clicking them shows their source. Block titles show above their blocks and are edited in the source.
 
 **Git**
 
