@@ -1,0 +1,65 @@
+= Transformed Listings
+:name: Foundry
+:on:
+
+[source,sql]
+----
+ifdef::never[]
+DROP TABLE users;
+endif::[]
+SELECT 1;
+----
+
+[source,sql]
+----
+ifdef::on[]
+SELECT 2;
+endif::[]
+----
+
+....
+ifndef::never[]
+shown
+endif::[]
+....
+
+----
+ifeval::["{name}" == "Foundry"]
+evaluated
+endif::[]
+----
+
+[source,text,subs=attributes]
+----
+Hello {name}
+----
+
+[subs=attributes]
+....
+Hello {name}
+....
+
+----
+\ifdef::never[]
+escaped
+----
+
+[source,rust]
+----
+fn main() { // <1>
+    let x = 1; // <2>
+}
+----
+<1> Entry point.
+<2> A binding.
+
+[source,sql]
+----
+
+SELECT 3;
+
+----
+
+....
+Plain literal.
+....

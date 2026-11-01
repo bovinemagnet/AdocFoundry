@@ -331,6 +331,20 @@ fn shown_target(file: &str) -> String {
     }
 }
 
+/// A block's `subs` value as an attribute list would give it: `none` for no substitutions.
+fn written_subs(subs: &acdc::SubstitutionSpec) -> String {
+    let entries: Vec<String> = match subs {
+        acdc::SubstitutionSpec::Source(entries) => entries.clone(),
+        acdc::SubstitutionSpec::Explicit(list) => list.iter().map(ToString::to_string).collect(),
+        acdc::SubstitutionSpec::Modifiers(ops) => ops.iter().map(ToString::to_string).collect(),
+    };
+    if entries.is_empty() {
+        "none".to_owned()
+    } else {
+        entries.join(",")
+    }
+}
+
 /// The lines of `text` inside the regions tagged with any of `tags`, as Asciidoctor selects
 /// them: every tag directive line (`tag::name[]`, `end::name[]`) is left out.
 fn select_tagged(text: &str, tags: &[String]) -> String {
@@ -671,6 +685,11 @@ impl Converter<'_> {
                     _ => None,
                 })
                 .collect();
+            // acdc reads `subs` into the block's substitutions, not its attributes.
+            if let Some(subs) = &metadata.substitutions {
+                meta.attributes
+                    .insert("subs".to_owned(), written_subs(subs));
+            }
         }
         meta
     }

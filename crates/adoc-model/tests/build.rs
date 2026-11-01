@@ -318,6 +318,71 @@ fn listings_with_included_content_are_read_only() {
 }
 
 #[test]
+fn listings_the_parser_transforms_are_read_only() {
+    // Conditionals, escaped directives and substitutions change a listing's or literal's
+    // lines, so it is read-only and drawn from the parsed text; callouts, blank edge lines and
+    // untransformed blocks keep the block editable.
+    let path = repository().join("tests/fixtures/listings/transformed.adoc");
+    let original = std::fs::read_to_string(&path).unwrap();
+    let dom = AcdcParser.parse(&ParseInput::new(&path, &original));
+    let model = Model::build(&path, &original, &dom);
+    assert_eq!(model.source, original);
+    let blocks: Vec<&Node> = model
+        .blocks
+        .iter()
+        .filter(|node| {
+            matches!(
+                node.kind,
+                NodeKind::Code { .. } | NodeKind::Literal | NodeKind::Verbatim { .. }
+            ) && !matches!(&node.kind, NodeKind::Verbatim { name } if name != "listing" && name != "literal")
+        })
+        .collect();
+    let kinds: Vec<String> = blocks.iter().map(|node| kind_name(node)).collect();
+    assert_eq!(
+        kinds,
+        [
+            "verbatim:listing",
+            "verbatim:listing",
+            "verbatim:literal",
+            "verbatim:listing",
+            "verbatim:listing",
+            "verbatim:literal",
+            "verbatim:listing",
+            "Code",
+            "Code",
+            "Literal"
+        ]
+    );
+    let parsed = [
+        "SELECT 1;",
+        "SELECT 2;",
+        "shown",
+        "evaluated",
+        "Hello Foundry",
+        "Hello Foundry",
+        "ifdef::never[]\nescaped",
+    ];
+    for (node, expected) in blocks.iter().zip(parsed) {
+        assert_eq!(node.access, Access::ReadOnly(ReadOnly::Verbatim));
+        assert!(node.text.is_none(), "{:?} has editable text", node.kind);
+        let block = &dom.blocks[node.origin.as_deref().unwrap()[0]];
+        let text = match &block.kind {
+            BlockKind::Listing { text, .. } | BlockKind::Literal { text } => text,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(text.trim_end(), expected);
+    }
+    for node in &blocks[7..] {
+        assert!(node.is_editable(), "{:?} is read-only", node.kind);
+    }
+    assert_eq!(
+        blocks[7].text.as_ref().unwrap().display,
+        "fn main() { // <1>\n    let x = 1; // <2>\n}"
+    );
+    assert!(check_tiling(&model).is_empty());
+}
+
+#[test]
 fn includes_written_with_attributes_find_their_directives() {
     // The directives name their targets through attributes, and two include one file by
     // different tags: each is one include node over its own line, and none is left as text.
