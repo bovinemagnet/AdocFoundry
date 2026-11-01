@@ -215,6 +215,7 @@ It holds a selection and a few pieces of view state, invokes visual commands, an
 
 |`blocks.rs`
 |Model nodes to elements. Text blocks are drawn for editing. What the model keeps read-only (images, diagrams, included content, verbatim source) is drawn by the preview's block renderer from the `ViewTree` built with the model.
+A text block that the model reads otherwise than the parser does (`Node::drawn_from_view`) is drawn from the view tree too, with `preview::blocks::parsed_text`, at the place its `view_text` names.
 
 |`format.rs`
 |Marks on the selection or on the text typed next, and the link and image dialogs.

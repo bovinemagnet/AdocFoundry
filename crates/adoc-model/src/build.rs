@@ -17,7 +17,7 @@ use crate::{
     scan::{push_plain, Scanner},
     tree::{
         Access, Atom, Mark, MarkSet, Model, Node, NodeKind, Piece, ReadOnly, RowSection, TextBlock,
-        TextContext,
+        TextContext, ViewText,
     },
 };
 
@@ -78,6 +78,7 @@ fn node(kind: NodeKind, range: SourceRange) -> Node {
         text: None,
         children: Vec::new(),
         origin: None,
+        view_text: None,
     }
 }
 
@@ -552,6 +553,11 @@ impl<'a> Builder<'a> {
             ),
             _ => verbatim(block, range),
         };
+        built.view_text = match built.kind {
+            NodeKind::Paragraph => Some(ViewText::Block),
+            NodeKind::Section { .. } | NodeKind::Heading { .. } => Some(ViewText::Title),
+            _ => None,
+        };
         built.origin = Some(trail);
         built
     }
@@ -688,8 +694,12 @@ impl<'a> Builder<'a> {
                     (block, trail)
                 })
                 .collect();
-            list.children
-                .push(self.list_item(item, &blocks, item_range));
+            let mut built = self.list_item(item, &blocks, item_range);
+            built.view_text = Some(ViewText::Item {
+                list: trail.to_vec(),
+                index,
+            });
+            list.children.push(built);
         }
         list
     }
@@ -777,8 +787,16 @@ impl<'a> Builder<'a> {
                     (block, trail)
                 })
                 .collect();
-            list.children
-                .push(self.description_item(item, &blocks, item_range));
+            let mut built = self.description_item(item, &blocks, item_range);
+            for child in &mut built.children {
+                let (list, index) = (trail.to_vec(), index);
+                child.view_text = match child.kind {
+                    NodeKind::Term => Some(ViewText::Term { list, index }),
+                    NodeKind::Description => Some(ViewText::Description { list, index }),
+                    _ => continue,
+                };
+            }
+            list.children.push(built);
         }
         list
     }
@@ -948,6 +966,7 @@ impl<'a> Builder<'a> {
             None => built.access = Access::ReadOnly(ReadOnly::Verbatim),
         }
         built.origin = trails.into_iter().next();
+        built.view_text = Some(ViewText::Block);
         built
     }
 

@@ -748,7 +748,20 @@ impl VisualView {
         draw: &Draw<'_>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let element = self.text_inner(path, node, draw, cx);
+        // Text the model reads otherwise than the parser is drawn as the page renders.
+        let parsed = node.drawn_from_view().and_then(|place| {
+            preview::blocks::parsed_text(
+                &draw.document.view,
+                node.origin.as_deref(),
+                place,
+                format!("visual-parsed-{}", joined(path)),
+                &draw.context,
+            )
+        });
+        let element = match parsed {
+            Some(parsed) => parsed,
+            None => self.text_inner(path, node, draw, cx),
+        };
         let Some(block) = node.text.as_ref() else {
             return element;
         };

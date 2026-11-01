@@ -148,5 +148,5 @@ pub use adoc_lang::{
 pub use adoc_model::{next_word_end, previous_word_start, word_at};
 pub use adoc_model::{
     Access, Assoc, Atom, BlockPath, BlockType, Mapping, Mark, MarkSet, Model, NewBlock, Node,
-    NodeKind, Piece, ReadOnly, RowSection, Segment, SourceEdit, TextBlock, TextContext,
+    NodeKind, Piece, ReadOnly, RowSection, Segment, SourceEdit, TextBlock, TextContext, ViewText,
 };
