@@ -77,6 +77,39 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo bench -p adoc-engine --bench budgets
 
+  typing:
+    # The real app types into a 1 MB page for twenty seconds, through the editor widget and the
+    # engine, and the frame intervals go in the run's summary. Recorded only: macOS draws no
+    # frames for a window it cannot show, so a run with none says so rather than failing.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p adocfoundry
+      - name: Type into a 1 MB page
+        run: |
+          page="$RUNNER_TEMP/typing/page.adoc"
+          mkdir -p "$(dirname "$page")"
+          python3 - "$page" <<'EOF'
+          import sys
+          lines, n = ["= A long page", ""], 0
+          while sum(len(line) + 1 for line in lines) < 1_000_000:
+              n += 1
+              if n % 40 == 1:
+                  lines += [f"== Section {n // 40 + 1}", ""]
+              lines += [f"Paragraph {n} with *bold*, _emphasis_, `code` and xref:other.adoc[a link].", ""]
+          open(sys.argv[1], "w").write("\n".join(lines))
+          EOF
+          # macOS has no `timeout`; the app quits itself once the benchmark ends.
+          ADOCFOUNDRY_TYPING_BENCH=20 perl -e 'alarm shift; exec @ARGV' 300 \
+            target/release/adocfoundry "$(dirname "$page")" "$page" 2> typing.log || tail -20 typing.log
+          result=$(grep 'typing benchmark' typing.log || echo 'typing benchmark: no result')
+          echo "$result"
+          printf '### Typing\n\nA character every 35 ms for 20 s into a 1 MB page: %s\n' \
+            "${result#typing benchmark: }" >> "$GITHUB_STEP_SUMMARY"
+
   pdf-standards:
     # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1,
     # and the article as PDF/A-1b and PDF/A-1a (the book's Mermaid diagram uses transparency,
