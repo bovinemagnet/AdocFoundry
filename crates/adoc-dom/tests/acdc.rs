@@ -315,6 +315,27 @@ fn ifeval_arithmetic_is_evaluated() {
 }
 
 #[test]
+fn a_block_s_subs_is_one_of_its_attributes() {
+    // acdc reads `subs` into the block's substitutions rather than its attributes.
+    let text = "[source,text,subs=attributes]\n----\nA\n----\n\n[subs=\"+quotes,-callouts\"]\n....\nB\n....\n\n[subs=none]\nC\n\n----\nD\n----\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let subs: Vec<Option<&str>> = dom
+        .blocks
+        .iter()
+        .map(|block| block.meta.attributes.get("subs").map(String::as_str))
+        .collect();
+    assert_eq!(
+        subs,
+        [
+            Some("attributes"),
+            Some("+quotes,-callouts"),
+            Some("none"),
+            None
+        ]
+    );
+}
+
+#[test]
 fn spans_cover_the_whole_block() {
     // Location ends are exclusive byte offsets, including after a multi-byte character.
     let text = "= Page\n:toc:\n\nSome text.\n\nEnds in é\n\n|===\n|1 |22\n|===\n";

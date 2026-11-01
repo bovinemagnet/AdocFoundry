@@ -487,11 +487,13 @@ impl<'a> Builder<'a> {
                 admonition.children = self.contained(blocks, &trail, range);
                 admonition
             }
-            // Included lines are shown expanded by the preview's renderer, not as the directive.
-            BlockKind::Listing { .. } | BlockKind::Literal { .. }
-                if self
-                    .delimiters(range)
-                    .is_some_and(|(content, _)| self.has_include(content)) =>
+            // Lines the parser changed (includes, conditionals, escaped directives,
+            // substitutions) are shown as parsed by the preview's renderer, not as written.
+            BlockKind::Listing { text, .. } | BlockKind::Literal { text }
+                if block.meta.attributes.contains_key("subs")
+                    || self
+                        .delimiters(range)
+                        .is_some_and(|(content, _)| !reads_as(self.text(content), text)) =>
             {
                 verbatim(block, range)
             }
@@ -504,9 +506,6 @@ impl<'a> Builder<'a> {
                         range,
                     );
                     self.set_text(&mut code, content, TextContext::Verbatim, None);
-                    if block.meta.attributes.contains_key("subs") {
-                        code.access = Access::ReadOnly(ReadOnly::Verbatim);
-                    }
                     code
                 }
                 _ => verbatim(block, range),
@@ -637,16 +636,6 @@ impl<'a> Builder<'a> {
         let start = (open.end + 1).min(close.start);
         let end = close.start.saturating_sub(1).max(start);
         Some((SourceRange::new(start, end), delimiter))
-    }
-
-    /// Whether `content` has an include directive line, which the parser replaces with the
-    /// included file's lines (`\include::` is kept as written).
-    fn has_include(&self, content: SourceRange) -> bool {
-        self.lines(content).into_iter().any(|line| {
-            self.line_text(line)
-                .strip_prefix("include::")
-                .is_some_and(|rest| rest.trim_end().ends_with(']'))
-        })
     }
 
     fn container(
@@ -1065,6 +1054,62 @@ fn is_attribute_entry(line: &str) -> bool {
     })
 }
 
+/// Whether a verbatim block's content as written reads as the parser's text of it: the same
+/// lines, ignoring blank lines at either end, trailing whitespace and the callout markers the
+/// parser takes off (`// <1>`).
+fn reads_as(written: &str, parsed: &str) -> bool {
+    fn lines(text: &str) -> Vec<&str> {
+        let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
+        let start = lines.iter().position(|line| !line.is_empty());
+        let end = lines.iter().rposition(|line| !line.is_empty());
+        match (start, end) {
+            (Some(start), Some(end)) => lines[start..=end].to_vec(),
+            _ => Vec::new(),
+        }
+    }
+    let (written, parsed) = (lines(written), lines(parsed));
+    written.len() == parsed.len()
+        && written.iter().zip(&parsed).all(|(written, parsed)| {
+            written
+                .strip_prefix(parsed)
+                .is_some_and(|rest| rest.is_empty() || is_callouts(rest))
+        })
+}
+
+/// Callout markers ending a line: `<1>`, `<.>` or `<!--1-->`, one or more, after an optional
+/// line comment (`//`, `#`, `--`, `;;`).
+fn is_callouts(rest: &str) -> bool {
+    let mut rest = rest.trim();
+    for comment in ["//", "#", "--", ";;"] {
+        if let Some(after) = rest.strip_prefix(comment) {
+            rest = after.trim_start();
+            break;
+        }
+    }
+    if rest.is_empty() {
+        return false;
+    }
+    while !rest.is_empty() {
+        let (open, close) = if rest.starts_with("<!--") {
+            ("<!--", "-->")
+        } else {
+            ("<", ">")
+        };
+        let Some(inner) = rest.strip_prefix(open) else {
+            return false;
+        };
+        let Some(end) = inner.find(close) else {
+            return false;
+        };
+        let number = &inner[..end];
+        if !(number == "." || (!number.is_empty() && number.chars().all(|c| c.is_ascii_digit()))) {
+            return false;
+        }
+        rest = inner[end + close.len()..].trim_start();
+    }
+    true
+}
+
 /// A list item's marker, checkbox, and the offset of its text in `line`.
 pub(crate) fn list_marker(line: &str) -> Option<(&str, Option<bool>, usize)> {
     let indent = line.len() - line.trim_start().len();
@@ -1207,6 +1252,20 @@ mod tests {
         assert_eq!(list_marker("  * Indented"), Some(("*", None, 4)));
         assert_eq!(list_marker("*bold* text"), None);
         assert_eq!(list_marker("Plain"), None);
+    }
+
+    #[test]
+    fn verbatim_text_reads_as_the_parser_s_without_callouts() {
+        assert!(reads_as("a\n  b", "a\n  b"));
+        assert!(reads_as("\na  \n\n", "a"));
+        assert!(reads_as("x(); // <1>\ny(); # <2> <3>", "x();\ny();"));
+        assert!(reads_as("<a/> <!--1-->\nz <.>", "<a/>\nz"));
+        assert!(!reads_as("x <b>", "x"));
+        assert!(!reads_as("x //", "x"));
+        assert!(!reads_as("Hello {name}", "Hello Foundry"));
+        assert!(!reads_as("ifdef::on[]\nA\nendif::[]", "A"));
+        assert!(!reads_as("\\ifdef::x[]", "ifdef::x[]"));
+        assert!(!reads_as("a\n\nb", "a\nb"));
     }
 
     #[test]
