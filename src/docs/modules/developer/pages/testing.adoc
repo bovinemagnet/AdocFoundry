@@ -68,7 +68,7 @@ CI's `bench` job runs it on Ubuntu.
 
 | `settle_index`
 | The `pump` at `INDEX_SETTLE` after a keystroke on a 20,000-line page
-| Recorded: parsing and diagnosing the page run on the engine thread, about 7 ms
+| Recorded: parsing and diagnosing the page run on the engine thread, about 14 ms on a CI runner, and moving them off the thread is issue #238
 
 | `settle_git`
 | The `pump` at `GIT_SETTLE` in a repository, the index flushed first
@@ -99,6 +99,19 @@ The budgets are for a CI runner, a few times slower than a developer's machine.
 A median far under its budget locally may still be close to it on CI.
 The ignored timing and memory probes in `crates/adoc-engine/tests/perf.rs` and `crates/adoc-index/tests/memory.rs` print figures and assert nothing.
 They are for investigating a path, not for guarding it.
+
+=== Typing frame times
+
+CI's `typing` job runs the release app on a macOS runner with `ADOCFOUNDRY_TYPING_BENCH=20`, which types a character every 35 ms for twenty seconds into a generated 1 MB page, through the editor widget and the engine (`crates/adocfoundry/src/typing_bench.rs`).
+It records the interval between drawn frames and prints the count, the median, the 99th percentile, the worst, and how many were over 16.7 ms, 25 ms and 33 ms.
+The job appends that line to the run's summary.
+It is recorded, never held to a budget: macOS draws no frames for a window that is covered, minimised or on a locked screen, and the benchmark then says that no frames were drawn rather than failing.
+The same command runs locally, with the window visible:
+
+[source,sh]
+----
+ADOCFOUNDRY_TYPING_BENCH=10 adocfoundry <folder> <file>
+----
 
 == CLI snapshot tests
 

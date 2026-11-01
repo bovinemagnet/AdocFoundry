@@ -33,7 +33,7 @@ Automated coverage for reference: the engine's headless tests (`crates/adoc-engi
 - [ ] Completion appears after `xref:`, `include::`, `image::`, `{` and `#`.
 - [ ] A file changed on disk while open and clean reloads; while dirty, a notification appears and the buffer is kept.
 - [ ] Typing in a 5,000-line file is smooth: no dropped frames during a 10-second burst. Measure on an idle desktop with the window visible:
-  `ADOCFOUNDRY_TYPING_BENCH=10 adocfoundry <folder> <5000-line file>` types into the editor for ten seconds and prints the frame intervals (median, p99, worst, and counts over 16.7 ms and 25 ms). Run it once on a three-line file as a control; at 60 Hz the median is about 16.7 ms, and frames over 25 ms are dropped.
+  `ADOCFOUNDRY_TYPING_BENCH=10 adocfoundry <folder> <5000-line file>` types into the editor for ten seconds and prints the frame intervals (median, p99, worst, and counts over 16.7 ms, 25 ms and 33 ms). CI's `typing` job runs it on a 1 MB page on macOS and puts the line in the run's summary. Run it once on a three-line file as a control; at 60 Hz the median is about 16.7 ms, and frames over 25 ms are dropped.
 - [ ] IME: Japanese input composes and commits correctly (macOS, Windows); ibus on Linux.
 
 ## Link following

@@ -89,7 +89,8 @@ fn track(frames: Rc<RefCell<Frames>>, end: Instant, window: &mut Window) {
 
 fn report(intervals: &[Duration]) {
     if intervals.is_empty() {
-        eprintln!("typing benchmark: no frames were drawn");
+        // macOS stops drawing a window that is covered, minimised or on a locked screen.
+        eprintln!("typing benchmark: no frames were drawn (was the window hidden?)");
         return;
     }
     let mut sorted = intervals.to_vec();
@@ -102,12 +103,13 @@ fn report(intervals: &[Duration]) {
             .count()
     };
     eprintln!(
-        "typing benchmark: {} frames; interval median {:?}, p99 {:?}, worst {:?}; over 16.7 ms: {}; over 25 ms: {}",
+        "typing benchmark: {} frames; interval median {:?}, p99 {:?}, worst {:?}; over 16.7 ms: {}; over 25 ms: {}; over 33 ms: {}",
         intervals.len(),
         percentile(0.5),
         percentile(0.99),
         sorted[sorted.len() - 1],
         over(Duration::from_micros(16_700)),
         over(Duration::from_millis(25)),
+        over(Duration::from_millis(33)),
     );
 }
