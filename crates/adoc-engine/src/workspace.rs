@@ -891,10 +891,14 @@ mod tests {
             .file(&page)
             .is_some()));
 
-        // A removed folder is let go.
-        fs::remove_dir(root.join("pages/nested")).unwrap();
-        assert!(pump_until(&mut engine, |engine| !watched(engine)
-            .contains(&root.join("pages/nested"))));
+        // A removed folder is let go. Windows reports a removal without saying it was of a
+        // folder, and there each root is watched whole, never folder by folder.
+        #[cfg(not(windows))]
+        {
+            fs::remove_dir(root.join("pages/nested")).unwrap();
+            assert!(pump_until(&mut engine, |engine| !watched(engine)
+                .contains(&root.join("pages/nested"))));
+        }
     }
 
     #[test]
