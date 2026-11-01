@@ -363,13 +363,11 @@ impl PreviewView {
         &self,
         command: adoc_engine::CommandId,
         args: CommandArgs,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) {
-        let result = self.app.update(cx, |app, cx| app.invoke(command, args, cx));
-        if let Err(error) = result {
-            window.push_notification(error.to_string(), cx);
-        }
+        // A failure is reported by the window.
+        let _ = self.app.update(cx, |app, cx| app.invoke(command, args, cx));
     }
 
     fn header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -456,17 +454,15 @@ impl PreviewView {
         cx: &App,
     ) -> blocks::BlockContext<'a> {
         let app = self.app.clone();
-        let on_block: blocks::BlockHandler = Rc::new(move |span, window, cx| {
+        let on_block: blocks::BlockHandler = Rc::new(move |span, _, cx| {
             let position = NavigationPosition {
                 path: span.path.clone(),
                 offset: span.range.start,
             };
-            let result = app.update(cx, |app, cx| {
+            // A failure is reported by the window.
+            let _ = app.update(cx, |app, cx| {
                 app.invoke(ids::NAVIGATE_REVEAL, CommandArgs::Position(position), cx)
             });
-            if let Err(error) = result {
-                window.push_notification(error.to_string(), cx);
-            }
         });
         let mut context = block_context(
             &self.app,
@@ -504,12 +500,10 @@ pub(crate) fn block_context<'a>(
                     path: target.path.clone(),
                     offset: target.range.start,
                 };
-                let result = app.update(cx, |app, cx| {
+                // A failure is reported by the window.
+                let _ = app.update(cx, |app, cx| {
                     app.invoke(ids::NAVIGATE_GO_TO, CommandArgs::Position(position), cx)
                 });
-                if let Err(error) = result {
-                    window.push_notification(error.to_string(), cx);
-                }
             }
             None => window.push_notification("This reference does not resolve.", cx),
         },

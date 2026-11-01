@@ -18,7 +18,7 @@ use gpui::{
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex, ActiveTheme as _, Sizable as _, WindowExt as _,
+    h_flex, v_flex, ActiveTheme as _, Sizable as _,
 };
 
 use super::{text, VisualView};
@@ -149,18 +149,16 @@ pub fn row(
         move |language: &str, code: &str| preview::highlight(&cache, dark, &theme, language, code);
     let app = view.app.clone();
     // A click on read-only content shows its source beside the visual editor.
-    let on_block: preview::blocks::BlockHandler = Rc::new(move |span, window, cx| {
+    let on_block: preview::blocks::BlockHandler = Rc::new(move |span, _, cx| {
         let position = adoc_engine::NavigationPosition {
             path: span.path.clone(),
             offset: span.range.start,
         };
-        let result = app.update(cx, |app, cx| {
+        // A failure is reported by the window.
+        let _ = app.update(cx, |app, cx| {
             app.invoke(ids::VIEW_SHOW_SPLIT, CommandArgs::None, cx)?;
             app.invoke(ids::NAVIGATE_REVEAL, CommandArgs::Position(position), cx)
         });
-        if let Err(error) = result {
-            window.push_notification(error.to_string(), cx);
-        }
     });
     // The visual editor records no extents: its scrolling is its own list's.
     let context = preview::block_context(
@@ -644,17 +642,15 @@ impl VisualView {
                         .ghost()
                         .xsmall()
                         .label("Edit partial")
-                        .on_click(move |_, window, cx| {
-                            let result = app.update(cx, |app, cx| {
+                        .on_click(move |_, _, cx| {
+                            // A failure is reported by the window.
+                            let _ = app.update(cx, |app, cx| {
                                 app.invoke(
                                     ids::DOCUMENT_OPEN,
                                     CommandArgs::Path(partial.clone()),
                                     cx,
                                 )
                             });
-                            if let Err(error) = result {
-                                window.push_notification(error.to_string(), cx);
-                            }
                         }),
                 )
             });

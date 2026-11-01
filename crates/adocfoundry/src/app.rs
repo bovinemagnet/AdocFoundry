@@ -79,9 +79,19 @@ impl AppState {
     /// redraws itself for the events it shows, so nothing is redrawn here; an event that says
     /// only that something is ready to read again is passed on once however often it came.
     pub fn drain(&mut self, cx: &mut Context<Self>) {
+        self.drain_answered(None, cx);
+    }
+
+    /// Drains as [`AppState::drain`] does, leaving out the failure of `answered`, which its
+    /// caller answers itself.
+    fn drain_answered(&mut self, answered: Option<CommandId>, cx: &mut Context<Self>) {
         self.engine.pump();
         let mut events: Vec<EngineEvent> = Vec::new();
         for event in self.events.try_iter() {
+            if matches!(&event, EngineEvent::CommandFailed { command, .. } if Some(*command) == answered)
+            {
+                continue;
+            }
             if !(is_idempotent(&event) && events.contains(&event)) {
                 events.push(event);
             }
@@ -91,7 +101,10 @@ impl AppState {
         }
     }
 
-    /// Invokes an engine command and publishes the events it caused before returning.
+    /// Invokes an engine command and publishes the events it caused before returning. A
+    /// failure is reported once, by the window, through `EngineEvent::CommandFailed`: callers
+    /// do not show the error they get back. A save conflict is the exception, answered by its
+    /// caller with a dialog.
     pub fn invoke(
         &mut self,
         command: CommandId,
@@ -99,7 +112,8 @@ impl AppState {
         cx: &mut Context<Self>,
     ) -> Result<CommandOutcome, EngineError> {
         let outcome = self.engine.invoke(command, args);
-        self.drain(cx);
+        let answered = matches!(outcome, Err(EngineError::SaveConflict { .. })).then_some(command);
+        self.drain_answered(answered, cx);
         outcome
     }
 }

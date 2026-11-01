@@ -59,7 +59,7 @@ pub fn follow_link(
     app: Entity<AppState>,
     document: DocumentId,
     offset: usize,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut App,
 ) {
     let outcome = app.update(cx, |app, cx| {
@@ -72,10 +72,9 @@ pub fn follow_link(
             cx,
         )
     });
-    match outcome {
-        Ok(CommandOutcome::External(path)) => cx.open_with_system(&path),
-        Ok(_) => {}
-        Err(error) => window.push_notification(error.to_string(), cx),
+    // A failure is reported by the window, through `EngineEvent::CommandFailed`.
+    if let Ok(CommandOutcome::External(path)) = outcome {
+        cx.open_with_system(&path);
     }
 }
 
@@ -1851,10 +1850,8 @@ impl WorkspaceView {
                 self.offer_save_conflict(&path, window, cx);
                 None
             }
-            Err(error) => {
-                window.push_notification(error.to_string(), cx);
-                None
-            }
+            // Reported by the window, through `EngineEvent::CommandFailed`.
+            Err(_) => None,
         }
     }
 
@@ -2028,7 +2025,7 @@ impl WorkspaceView {
                 )
                 .confirm()
                 .ok_text("Apply")
-                .on_ok(move |_, window, cx| {
+                .on_ok(move |_, _, cx| {
                     let result = app_ok.update(cx, |app, cx| {
                         app.invoke(
                             ids::WORKSPACE_APPLY_PREVIEW,
@@ -2037,9 +2034,8 @@ impl WorkspaceView {
                         )
                     });
                     applied_ok.set(true);
-                    if let Err(error) = result {
-                        window.push_notification(error.to_string(), cx);
-                    }
+                    // A failure is reported by the window.
+                    let _ = result;
                     true
                 })
                 .on_close(move |_, _, cx| {

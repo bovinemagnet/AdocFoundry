@@ -358,8 +358,8 @@ impl SourceEditorView {
                 cx,
             )
         });
-        if let Err(error) = inserted {
-            window.push_notification(error.to_string(), cx);
+        // A failure is reported by the window.
+        if inserted.is_err() {
             return;
         }
         self.reconcile(window, cx);
@@ -849,18 +849,15 @@ impl Render for SourceEditorView {
             });
         gpui_component::h_flex()
             .size_full()
-            .on_action(cx.listener(
-                |this, action: &crate::spelling::ApplySpelling, window, cx| {
+            .on_action(
+                cx.listener(|this, action: &crate::spelling::ApplySpelling, _, cx| {
                     if action.document != this.document {
                         return;
                     }
-                    if let Err(error) =
-                        crate::spelling::apply(&this.app, action.document, &action.choice, cx)
-                    {
-                        window.push_notification(error.to_string(), cx);
-                    }
-                },
-            ))
+                    // A failure is reported by the window.
+                    let _ = crate::spelling::apply(&this.app, action.document, &action.choice, cx);
+                }),
+            )
             .when(self.show_blame, |row| {
                 row.child(
                     div()
