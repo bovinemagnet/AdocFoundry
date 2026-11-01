@@ -359,6 +359,7 @@ impl Engine {
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
         let item = crate::TabItem::Document(id);
+        let closed_at = self.tabs.order.iter().position(|open| *open == item);
         self.tabs.order.retain(|open| *open != item);
         if self.tabs.preview == Some(item) {
             self.tabs.preview = None;
@@ -372,6 +373,7 @@ impl Engine {
         self.forget_auto_save(id);
         self.forget_recovery(id);
         self.forget_html_exports(id);
+        self.forget_caret(id);
         if self.rendered.layout.pinned == Some(id) {
             self.rendered.layout.pinned = None;
             self.emit(EngineEvent::PreviewLayoutChanged);
@@ -387,7 +389,7 @@ impl Engine {
         }
         if self.active == Some(id) {
             self.active = None;
-            self.activate_last_tab();
+            self.activate_neighbour(closed_at.unwrap_or(usize::MAX));
         }
         self.sync_preview_target();
         self.emit(EngineEvent::DocumentClosed(id));
@@ -819,6 +821,7 @@ impl Engine {
         self.keep_open(id);
         self.preview_source_changed(&path);
         self.visual_source_changed(&path);
+        self.navigation_edited(id, &path, &forward);
         if !untitled {
             self.schedule_hunks(id, defer_index);
         }

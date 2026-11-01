@@ -178,7 +178,8 @@ The command takes `CommandArgs::Query { query, document }` (it ignores `document
 Each space-separated word of the query must match the file name, title, resource ID or path as an in-order, case-insensitive subsequence.
 File name matches score highest, then the title, with bonuses for word starts and runs.
 Recently active files come first, most recent first, then the rest by score; an empty query gives recent files, then every file by path.
-Recency is recorded whenever a document becomes the active tab (`Engine::set_active`, and `activate_last_tab` when a closed tab hands over), and is kept for the session only.
+Recency is recorded whenever a document becomes the active tab (`Engine::set_active`, and `activate_neighbour` when a closed tab hands over), and is kept for the session only.
+When the active tab closes, the tab that took its place becomes active, or the one before it when the closed tab was the last.
 The items are kept in a `QuickOpenCache` on the engine, built from the index, the catalog and the roots.
 The index worker builds it alongside each full index, so the first query after indexing makes no items.
 `WorkspaceIndex::revision` and `AntoraCatalog::revision` count changes to the files and to the resources, so a query can tell whether the cache is still current.
@@ -972,3 +973,5 @@ Without `typst`, the export commands are not registered and `export_blocking` fa
 
 Back and forward history is engine state, so every front end and the command-line tests share it.
 `navigate.follow_link` opens and activates the target and records the position that was left.
+The position left is the page's caret as the front end last reported it through `Engine::caret_moved(id, offset)`, which the app reports from both the source and the visual editor, so going back returns to where the caret was, not the top of the page.
+The positions that history keeps, and each page's caret, are mapped through every later edit of that page (`navigation_edited`, through `adoc_model::Mapping`), so they still point at the same text.

@@ -97,6 +97,28 @@ fn open_ids(engine: &Engine) -> Vec<DocumentId> {
 }
 
 #[test]
+fn closing_the_active_tab_activates_its_neighbour() {
+    let mut engine = Engine::new(Settings::default());
+    let tabs = open_tabs(&mut engine, 6);
+    let close = |engine: &mut Engine, id| {
+        engine
+            .invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(id))
+            .unwrap();
+    };
+    // The tab after the closed one takes its place.
+    engine.set_active(tabs[1]);
+    close(&mut engine, tabs[1]);
+    assert_eq!(engine.active(), Some(tabs[2]));
+    // The last tab closed gives way to the one before it.
+    engine.set_active(tabs[5]);
+    close(&mut engine, tabs[5]);
+    assert_eq!(engine.active(), Some(tabs[4]));
+    // A tab closed in the background leaves the active one alone.
+    close(&mut engine, tabs[0]);
+    assert_eq!(engine.active(), Some(tabs[4]));
+}
+
+#[test]
 fn close_others_left_right_clean_and_all() {
     let mut engine = Engine::new(Settings::default());
     let tabs = open_tabs(&mut engine, 5);
