@@ -56,6 +56,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 |L2
 |`adoc-diagrams`
 |Diagram rendering for the preview. Mermaid is rendered in process through `merman`, other kinds (Graphviz, PlantUML, D2) through external tools run from the paths given (`ToolPaths`, from the engine's `[tools]` settings) or discovered on the `PATH`, and every result is cached on disk by checksum.
+`DiagramRequest::directory` is the page's folder, in which the external tools run, `DiagramProvider::identity` is empty by default and, for `ExternalProvider`, holds the program's fingerprint (resolved path, size and modification time) and that folder, and `Diagrams::checksum` folds a non-empty identity into `DiagramRequest::checksum`, so Mermaid keeps its key.
 `ExternalProvider` writes the source on a thread, reads both outputs on threads capped at `MAX_OUTPUT` (32 MB), and polls the child against a deadline (`with_timeout`, `ToolPaths::timeout`, `DEFAULT_TIMEOUT` of 30 s, from `[tools] diagram_timeout`), killing it and returning `DiagramError::TimedOut` or a `Failed` message.
 `MermaidProvider` (`with_timeout`) gives merman's `OperationControl` the same deadline and returns `DiagramError::TimedOut` when it passes.
 

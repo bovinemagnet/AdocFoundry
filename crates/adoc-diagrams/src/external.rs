@@ -5,7 +5,7 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     thread,
     time::{Duration, Instant},
@@ -52,6 +52,8 @@ pub struct ExternalProvider {
     args: Vec<String>,
     timeout: Duration,
     max_output: usize,
+    /// Which program `program` finds, worked out once: part of every cache key.
+    fingerprint: Arc<OnceLock<String>>,
 }
 
 impl ExternalProvider {
@@ -63,6 +65,7 @@ impl ExternalProvider {
             args,
             timeout: DEFAULT_TIMEOUT,
             max_output: MAX_OUTPUT,
+            fingerprint: Arc::default(),
         }
     }
 
@@ -108,11 +111,39 @@ impl ExternalProvider {
     pub fn program(&self) -> &Path {
         &self.program
     }
+
+    /// The program `program` finds, by where it is, its size and when it last changed, so
+    /// another program, or an upgrade of it, renders afresh. Worked out the first time it is
+    /// needed; a provider is made again when the settings name another program.
+    fn fingerprint(&self) -> &str {
+        self.fingerprint.get_or_init(|| {
+            let Some(found) = find_program(&self.program) else {
+                return format!("{} (not found)", self.program.display());
+            };
+            let metadata = std::fs::metadata(&found).ok();
+            let modified = metadata
+                .as_ref()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |since| since.as_nanos());
+            let size = metadata.map_or(0, |metadata| metadata.len());
+            format!("{} {size} {modified}", found.display())
+        })
+    }
 }
 
 impl DiagramProvider for ExternalProvider {
     fn kinds(&self) -> &[&str] {
         &self.kinds
+    }
+
+    fn identity(&self, request: &DiagramRequest) -> String {
+        let folder = request
+            .directory
+            .as_deref()
+            .map(|folder| folder.display().to_string())
+            .unwrap_or_default();
+        format!("{}\n{folder}", self.fingerprint())
     }
 
     fn render(&self, request: &DiagramRequest) -> Result<String, DiagramError> {
@@ -121,7 +152,16 @@ impl DiagramProvider for ExternalProvider {
             program: self.program.display().to_string(),
         };
         let program = find_program(&self.program).ok_or_else(missing)?;
-        let mut child = Command::new(program)
+        let mut command = Command::new(program);
+        // In the page's folder, so the diagram's own relative includes resolve against it.
+        if let Some(folder) = request
+            .directory
+            .as_deref()
+            .filter(|folder| folder.is_dir())
+        {
+            command.current_dir(folder);
+        }
+        let mut child = command
             .args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

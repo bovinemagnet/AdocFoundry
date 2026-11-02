@@ -771,3 +771,47 @@ fn an_export_whose_diagram_renderer_panics_finishes() {
     export_page(&mut engine, id, directory.path().join("page.pdf"));
     assert!(!engine.has_pending());
 }
+
+/// A renderer that records the folder each request names.
+struct Folders(Arc<std::sync::Mutex<Vec<Option<PathBuf>>>>);
+
+impl adoc_diagrams::DiagramProvider for Folders {
+    fn kinds(&self) -> &[&str] {
+        &["graphviz"]
+    }
+
+    fn render(
+        &self,
+        request: &adoc_diagrams::DiagramRequest,
+    ) -> Result<String, adoc_diagrams::DiagramError> {
+        self.0.lock().unwrap().push(request.directory.clone());
+        Ok("<svg/>".to_owned())
+    }
+}
+
+#[test]
+fn diagrams_are_rendered_for_their_page_s_folder() {
+    let directory = tempfile::tempdir().unwrap();
+    let folder = directory.path().join("guides");
+    fs::create_dir_all(&folder).unwrap();
+    let page = folder.join("page.adoc");
+    fs::write(
+        &page,
+        "= Page\n\n[graphviz]\n....\ndigraph { a -> b }\n....\n",
+    )
+    .unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    let folders = Arc::new(std::sync::Mutex::new(Vec::new()));
+    engine.set_diagrams(Diagrams::with_providers(
+        DiagramCache::new(directory.path().join("cache")),
+        vec![Box::new(Folders(folders.clone()))],
+    ));
+    let id = engine.open(&page).unwrap();
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    assert_eq!(
+        *folders.lock().unwrap(),
+        [Some(adoc_index::normalize_path(&folder))]
+    );
+}
