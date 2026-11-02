@@ -226,6 +226,7 @@ Four preview commands also have no default binding and are available from the pa
 Toggle Preview is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
 See xref:preview.adoc[The preview].
 Reset Graph Layout (`graph.reset_layout`) has no default binding and is available from the palette and the View menu.
+Export Graph… (`graph.export`) has no default binding and is available from the palette and the File menu.
 Show Graph and Show Local Graph are chords like Toggle Preview.
 See xref:graph-view.adoc[The link graph].
 Go to Location (`navigate.go_to`) and Reveal in Editor (`navigate.reveal`) take a position and are driven by clicks in the preview rather than bound to keys.

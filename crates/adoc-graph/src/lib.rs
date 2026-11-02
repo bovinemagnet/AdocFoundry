@@ -1,6 +1,7 @@
 //! A graph of how files link to each other, with no AsciiDoc knowledge: its keys, nodes and
 //! edges, the [`LinkStore`] of each file's links kept by file, walks outwards from a node,
-//! snapshots filtered for display, and a force-directed [`Layout`].
+//! snapshots filtered for display, a force-directed [`Layout`], and the graph drawn as SVG
+//! ([`to_svg`]) in the colours the app's canvas uses.
 //!
 //! The engine decides what the links are and when they change; this crate only keeps them.
 //! Nothing here knows about a UI framework, so the layout is tested and benchmarked headlessly.
@@ -8,12 +9,16 @@
 mod layout;
 mod snapshot;
 mod store;
+mod style;
+mod svg;
 
 use std::{collections::BTreeSet, path::Path, sync::Arc};
 
 pub use layout::{Layout, Point, SETTLED};
 pub use snapshot::NodeInput;
 pub use store::{LinkStore, StoredLink};
+pub use style::{colour_groups, node_colour, node_radius, ColourBy, Hsl};
+pub use svg::{to_svg, to_svg_laid_out, SvgStyle, EXPORT_SEED};
 
 /// A node of the graph: a file, or a link target that does not resolve.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

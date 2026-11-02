@@ -7036,6 +7036,39 @@ fn creating_a_ghost_includes_partial_from_its_menu_opens_it(cx: &mut TestAppCont
     );
 }
 
+/// Exports the graph to `output`, answering the save dialog.
+fn export_graph_to(output: &Path, cx: &mut VisualTestContext) {
+    cx.dispatch_action(crate::editor::bindings::ExportGraph);
+    cx.run_until_parked();
+    assert!(cx.did_prompt_for_new_path());
+    let chosen = output.to_path_buf();
+    cx.simulate_new_path_selection(move |_| Some(chosen));
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn exporting_the_graph_writes_an_svg_and_a_png(cx: &mut TestAppContext) {
+    let (directory, _root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    // With no graph window, the workspace's graph is laid out afresh.
+    let svg = directory.path().join("graph.svg");
+    export_graph_to(&svg, &mut cx);
+    let text = std::fs::read_to_string(&svg).unwrap();
+    assert!(text.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+    assert!(text.contains(">Install</text>"), "{text}");
+    assert_eq!(text.matches("class=\"node nav\"").count(), 1);
+
+    // With the window open, its drawing, as a PNG.
+    let (_, view, _graph_cx) = open_graph_window(&workspace, &mut cx);
+    let drawn = cx.update(|_, cx| view.read(cx).to_svg(false));
+    assert!(drawn.contains(">Install</text>"));
+    let png = directory.path().join("graph.png");
+    export_graph_to(&png, &mut cx);
+    let bytes = std::fs::read(&png).unwrap();
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    let image = image::load_from_memory(&bytes).unwrap();
+    assert!(image.width() > 100 && image.height() > 100);
+}
+
 #[gpui::test]
 fn hovering_a_node_highlights_it_and_its_neighbours(cx: &mut TestAppContext) {
     let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);

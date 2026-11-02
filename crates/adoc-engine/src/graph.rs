@@ -970,6 +970,7 @@ pub(crate) fn register_graph(registry: &mut CommandRegistry) {
             Some("cmd-k shift-g"),
         ),
         (ids::GRAPH_RESET_LAYOUT, "Reset Graph Layout", None),
+        (ids::GRAPH_EXPORT, "Export Graph…", None),
     ] {
         registry
             .register(Box::new(FnCommand {

@@ -12,6 +12,7 @@ use adoc_core::{DiagnosticSeverity, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, CommandArgs, CommandOutcome, DefinitionTarget, Engine,
     EngineEvent, ExportArgs, ExportTarget, GraphFilter, GraphScope, NavItem, SearchRequest,
+    SvgStyle,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -163,6 +164,10 @@ struct LinkGraphArgs {
     orphans: Option<bool>,
     /// Show targets that do not resolve; false by default.
     unresolved: Option<bool>,
+    /// `json` (the default), or `svg` for the graph laid out and drawn as an SVG image.
+    format: Option<String>,
+    /// Draw the SVG for a dark background; false by default.
+    dark: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -645,7 +650,7 @@ impl Server {
     }
 
     #[tool(
-        description = "How pages link: the pages, partials and navigation files of the workspace, or of a page and its neighbours, with the xrefs, includes and navigation entries between them, as `adocfoundry-cli graph` gives them."
+        description = "How pages link: the pages, partials and navigation files of the workspace, or of a page and its neighbours, with the xrefs, includes and navigation entries between them, as `adocfoundry-cli graph` gives them; with `format: svg`, drawn as an SVG image."
     )]
     async fn link_graph(&self, Parameters(args): Parameters<LinkGraphArgs>) -> Answer {
         answer(
@@ -672,6 +677,25 @@ impl Server {
                     unresolved: args.unresolved.unwrap_or(defaults.unresolved),
                     components: None,
                 };
+                match args.format.as_deref().unwrap_or("json") {
+                    "json" => {}
+                    "svg" => {
+                        let style = SvgStyle {
+                            colour_by: state.engine.settings().graph.colour_by,
+                            dark: args.dark.unwrap_or(false),
+                        };
+                        let svg = state.engine.graph_svg(&scope, &filter, &style);
+                        if svg.len() > MAX_TEXT {
+                            return Err(format!(
+                                "the SVG is {} bytes, over the {MAX_TEXT} allowed; draw a page's \
+                                 neighbourhood with `scope: page`",
+                                svg.len()
+                            ));
+                        }
+                        return Ok(json!({ "svg": svg }));
+                    }
+                    other => return Err(format!("unknown format `{other}`")),
+                }
                 let report = state.engine.graph_report(state.root(), &scope, &filter);
                 let nodes = limited("nodes", report.nodes);
                 let edges = limited("edges", report.edges);

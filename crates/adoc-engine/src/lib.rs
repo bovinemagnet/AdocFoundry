@@ -120,8 +120,9 @@ pub use words::{count_words, WordCount, WORDS_PER_MINUTE, WORD_COUNT_SETTLE};
 
 pub use adoc_core::FileAccess;
 pub use adoc_graph::{
-    EdgeKind, GraphEdge, GraphFilter, GraphKey, GraphNode, GraphSnapshot, Layout, NodeCoordinate,
-    NodeKind as GraphNodeKind, Point,
+    colour_groups, node_colour, node_radius, to_svg, to_svg_laid_out, EdgeKind, GraphEdge,
+    GraphFilter, GraphKey, GraphNode, GraphSnapshot, Hsl, Layout, NodeCoordinate,
+    NodeKind as GraphNodeKind, Point, SvgStyle,
 };
 pub use adoc_index::{is_asciidoc_path, normalize_path};
 #[cfg(feature = "typst")]
