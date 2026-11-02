@@ -248,6 +248,41 @@ fn references_and_anchor_renames_reach_every_page() {
 }
 
 #[test]
+fn an_anchor_rename_right_after_typing_edits_the_current_text() {
+    let mut engine = Engine::new(Settings::default());
+    let id = engine.open_text(
+        Path::new("/nowhere/page.adoc"),
+        "[[here]]\n\nSee <<here>>.\n",
+    );
+    // A keystroke before the reference: re-indexing waits for typing to pause.
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(10, 10),
+                text: "X".to_owned(),
+            },
+        )
+        .unwrap();
+    let text = engine.document(id).unwrap().text_string();
+
+    let files = engine.anchor_rename_edits(id, 2, "there").unwrap();
+    assert_eq!(files.len(), 1, "{files:?}");
+    assert_eq!(
+        files[0].base, text,
+        "the edits are against the current text"
+    );
+    let mut renamed = text;
+    let mut edits = files[0].edits.clone();
+    edits.sort_by_key(|edit| std::cmp::Reverse(edit.range.start));
+    for edit in edits {
+        renamed.replace_range(edit.range.start..edit.range.end, &edit.replacement);
+    }
+    assert_eq!(renamed, "[[there]]\n\nXSee <<there>>.\n");
+}
+
+#[test]
 fn targets_and_resource_ids_resolve_without_an_open_page() {
     let root =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-single-component");
