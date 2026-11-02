@@ -142,6 +142,8 @@ pub struct GraphView {
     search: Option<Entity<InputState>>,
     query: String,
     snapshot: GraphSnapshot,
+    /// Each edge's ends, by their places among the snapshot's nodes.
+    edge_places: Vec<(usize, usize)>,
     layout: Layout,
     zoom: f32,
     /// Where the layout's origin is drawn, from the canvas's centre, in pixels.
@@ -196,6 +198,7 @@ impl GraphView {
             search,
             query: String::new(),
             snapshot: GraphSnapshot::default(),
+            edge_places: Vec::new(),
             layout: Layout::new(SEED),
             zoom: 1.0,
             pan: (0.0, 0.0),
@@ -253,7 +256,7 @@ impl GraphView {
                     depth: self.depth,
                 },
                 None => {
-                    self.snapshot = GraphSnapshot::default();
+                    self.set_snapshot(GraphSnapshot::default());
                     self.layout.sync(&self.snapshot);
                     cx.notify();
                     return;
@@ -264,7 +267,7 @@ impl GraphView {
         };
         let snapshot = self.app.read(cx).engine.graph(&scope, &self.filter);
         let recentre = self.local && snapshot.nodes.len() != self.snapshot.nodes.len();
-        self.snapshot = snapshot;
+        self.set_snapshot(snapshot);
         self.layout.sync(&self.snapshot);
         if recentre {
             self.fitting = true;
@@ -580,17 +583,25 @@ impl GraphView {
     fn drawing(&self, cx: &App) -> Drawing {
         let theme = cx.theme();
         let dark = theme.mode.is_dark();
-        let focus = self.hovered.as_ref().or(self.selected.as_ref());
-        let near: std::collections::HashSet<&GraphKey> = focus
-            .map(|focus| {
-                self.snapshot
-                    .edges
-                    .iter()
-                    .filter(|edge| edge.from == *focus || edge.to == *focus)
-                    .flat_map(|edge| [&edge.from, &edge.to])
-                    .collect()
-            })
-            .unwrap_or_default();
+        let nodes_shown = &self.snapshot.nodes;
+        // Everything below works by place among the nodes: a path compares slowly, and a
+        // drawing of thousands of nodes is made every frame while the layout moves.
+        let focus = self
+            .hovered
+            .as_ref()
+            .or(self.selected.as_ref())
+            .and_then(|key| self.place(key));
+        let selected = self.selected.as_ref().and_then(|key| self.place(key));
+        let mut near = vec![false; nodes_shown.len()];
+        if let Some(focus) = focus {
+            near[focus] = true;
+            for &(from, to) in &self.edge_places {
+                if from == focus || to == focus {
+                    near[from] = true;
+                    near[to] = true;
+                }
+            }
+        }
         let matches = |node: &adoc_engine::GraphNode| {
             self.query.is_empty()
                 || node.title.to_lowercase().contains(&self.query)
@@ -600,22 +611,29 @@ impl GraphView {
                     .is_some_and(|path| path.to_string_lossy().to_lowercase().contains(&self.query))
         };
         let groups = colour_groups(&self.snapshot, self.colour_by);
-        let all_labels = self.zoom >= LABEL_ZOOM || self.snapshot.nodes.len() <= 12;
-        let nodes: Vec<DrawnNode> = self
-            .snapshot
-            .nodes
+        let all_labels = self.zoom >= LABEL_ZOOM || nodes_shown.len() <= 12;
+        // The layout holds its nodes in the snapshot's order.
+        let positions: Vec<LayoutPoint> = if self.layout.len() == nodes_shown.len() {
+            self.layout.positions().map(|(_, at)| at).collect()
+        } else {
+            nodes_shown
+                .iter()
+                .map(|node| self.layout.position(&node.key).unwrap_or_default())
+                .collect()
+        };
+        let nodes: Vec<DrawnNode> = nodes_shown
             .iter()
-            .map(|node| {
-                let emphasised =
-                    focus.is_none_or(|focus| near.contains(&node.key) || node.key == *focus);
+            .enumerate()
+            .map(|(place, node)| {
+                let emphasised = focus.is_none() || near[place];
                 let found = matches(node);
                 let dim = !emphasised || !found;
                 let label = all_labels
                     || (focus.is_some() && emphasised)
                     || (!self.query.is_empty() && found)
-                    || self.selected.as_ref() == Some(&node.key);
+                    || selected == Some(place);
                 DrawnNode {
-                    at: self.layout.position(&node.key).unwrap_or_default(),
+                    at: positions[place],
                     radius: node_radius(node.links_in + node.links_out),
                     kind: node.kind,
                     colour: node_colour(
@@ -627,7 +645,7 @@ impl GraphView {
                     ),
                     label: label.then(|| node.title.clone().into()),
                     dim,
-                    selected: self.selected.as_ref() == Some(&node.key),
+                    selected: selected == Some(place),
                 }
             })
             .collect();
@@ -635,18 +653,17 @@ impl GraphView {
             .snapshot
             .edges
             .iter()
-            .filter_map(|edge| {
-                let from = self.place(&edge.from)?;
-                let to = self.place(&edge.to)?;
-                let emphasised = focus.is_none_or(|focus| edge.from == *focus || edge.to == *focus);
-                Some(DrawnEdge {
+            .zip(&self.edge_places)
+            .map(|(edge, &(from, to))| {
+                let emphasised = focus.is_none_or(|focus| from == focus || to == focus);
+                DrawnEdge {
                     from,
                     to,
                     kind: edge.kind,
                     count: edge.count,
                     unresolved: matches!(edge.to, GraphKey::Unresolved(_)),
                     dim: !emphasised || nodes[from].dim && nodes[to].dim,
-                })
+                }
             })
             .collect();
         Drawing {
@@ -666,6 +683,23 @@ impl GraphView {
             .nodes
             .binary_search_by(|node| node.key.cmp(key))
             .ok()
+    }
+
+    /// Takes `snapshot`, noting where each edge's ends are among its nodes.
+    fn set_snapshot(&mut self, snapshot: GraphSnapshot) {
+        let places: std::collections::HashMap<&GraphKey, usize> = snapshot
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(place, node)| (&node.key, place))
+            .collect();
+        // A snapshot's edges always join two of its nodes.
+        self.edge_places = snapshot
+            .edges
+            .iter()
+            .map(|edge| (places[&edge.from], places[&edge.to]))
+            .collect();
+        self.snapshot = snapshot;
     }
 
     fn render_canvas(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
