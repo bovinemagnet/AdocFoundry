@@ -208,11 +208,141 @@ pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
         .collect()
 }
 
-/// Comment blocks are the one delimited block Asciidoctor does not expand includes in.
-pub(crate) const COMMENT_DELIMITER: &str = "////";
+/// Where a line falls among the blocks whose content Asciidoctor does not parse: listing,
+/// literal, passthrough and comment blocks, ```` ``` ```` fences, and paragraphs styled
+/// `[source]`, `[listing]` or `[literal]`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Verbatim {
+    /// Ordinary text.
+    No,
+    /// A line that opens or closes a delimited verbatim block.
+    Delimiter,
+    /// Content of a verbatim block or paragraph, where only includes are processed.
+    Content,
+    /// Content of a comment block, where nothing is.
+    Comment,
+}
 
-pub(crate) fn is_verbatim_delimiter(line: &str) -> bool {
-    matches!(line.trim(), "----" | "...." | "++++" | "////")
+/// Follows the verbatim blocks line by line (each line trimmed).
+#[derive(Debug, Default)]
+pub(crate) struct VerbatimBlocks<'a> {
+    /// The line that closes the open delimited block.
+    open: Option<&'a str>,
+    /// A verbatim style was given and its block has not begun.
+    styled: bool,
+    /// Inside a verbatim-styled paragraph.
+    paragraph: bool,
+}
+
+impl<'a> VerbatimBlocks<'a> {
+    pub(crate) fn line(&mut self, trimmed: &'a str) -> Verbatim {
+        if let Some(close) = self.open {
+            if trimmed == close {
+                self.open = None;
+                return Verbatim::Delimiter;
+            }
+            return if close.starts_with('/') {
+                Verbatim::Comment
+            } else {
+                Verbatim::Content
+            };
+        }
+        if self.paragraph {
+            if trimmed.is_empty() {
+                self.paragraph = false;
+                return Verbatim::No;
+            }
+            return Verbatim::Content;
+        }
+        if let Some(close) = verbatim_delimiter(trimmed) {
+            self.open = Some(close);
+            self.styled = false;
+            return Verbatim::Delimiter;
+        }
+        if self.styled {
+            // Block attributes reach past blank lines, titles, comments and further
+            // attribute lines.
+            if trimmed.is_empty()
+                || trimmed.starts_with('[')
+                || trimmed.starts_with("//")
+                || is_block_title(trimmed)
+            {
+                return Verbatim::No;
+            }
+            self.styled = false;
+            if !trimmed.starts_with('=') && !is_compound_delimiter(trimmed) {
+                self.paragraph = true;
+                return Verbatim::Content;
+            }
+            return Verbatim::No;
+        }
+        self.styled = has_verbatim_style(trimmed);
+        Verbatim::No
+    }
+
+    /// What a line of text typed next would be.
+    pub(crate) fn next(&self) -> Verbatim {
+        match self.open {
+            Some(close) if close.starts_with('/') => Verbatim::Comment,
+            Some(_) => Verbatim::Content,
+            None if self.paragraph || self.styled => Verbatim::Content,
+            None => Verbatim::No,
+        }
+    }
+}
+
+/// The line that closes the verbatim block `line` opens: a run of four or more of one of
+/// `-`, `.`, `+` or `/`, closed by the same run, or a ```` ``` ```` fence, perhaps naming
+/// its language.
+fn verbatim_delimiter(line: &str) -> Option<&str> {
+    if line
+        .strip_prefix("```")
+        .is_some_and(|rest| !rest.starts_with('`'))
+    {
+        return Some("```");
+    }
+    let first = line.chars().next()?;
+    ("-.+/".contains(first) && is_run(line, first)).then_some(line)
+}
+
+/// A delimiter of a block that holds other blocks.
+fn is_compound_delimiter(line: &str) -> bool {
+    line == "--"
+        || line.starts_with("|===")
+        || line
+            .chars()
+            .next()
+            .is_some_and(|first| "=*_".contains(first) && is_run(line, first))
+}
+
+fn is_run(line: &str, character: char) -> bool {
+    line.len() >= 4 && line.chars().all(|c| c == character)
+}
+
+/// A `.Title` line.
+fn is_block_title(line: &str) -> bool {
+    line.strip_prefix('.')
+        .and_then(|title| title.chars().next())
+        .is_some_and(|first| first != '.' && !first.is_whitespace())
+}
+
+/// A block attribute line whose style is `source`, `listing` or `literal`, such as
+/// `[source,ruby]` or `[source#id.role]`.
+fn has_verbatim_style(line: &str) -> bool {
+    let Some(attributes) = line
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .filter(|attributes| !attributes.starts_with('['))
+    else {
+        return false;
+    };
+    let first = attributes.split(',').next().unwrap_or_default();
+    let style = first
+        .split(['#', '.', '%'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    matches!(style, "source" | "listing" | "literal")
 }
 
 fn nonempty(value: &str) -> Option<String> {

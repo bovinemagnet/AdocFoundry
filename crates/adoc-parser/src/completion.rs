@@ -1,6 +1,6 @@
 use adoc_core::SourceRange;
 
-use crate::line_parser::{content, is_boundary, is_verbatim_delimiter, COMMENT_DELIMITER};
+use crate::line_parser::{content, is_boundary, Verbatim, VerbatimBlocks};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompletionKind {
@@ -64,20 +64,14 @@ enum BlockState {
 }
 
 fn block_state(text: &str, line_start: usize) -> BlockState {
-    let mut active: Option<&str> = None;
+    let mut verbatim = VerbatimBlocks::default();
     for line in text[..line_start].split_inclusive('\n') {
-        let trimmed = content(line).trim();
-        match active {
-            Some(delimiter) if trimmed == delimiter => active = None,
-            Some(_) => {}
-            None if is_verbatim_delimiter(trimmed) => active = Some(trimmed),
-            None => {}
-        }
+        verbatim.line(content(line).trim());
     }
-    match active {
-        None => BlockState::Body,
-        Some(COMMENT_DELIMITER) => BlockState::Comment,
-        Some(_) => BlockState::Verbatim,
+    match verbatim.next() {
+        Verbatim::Comment => BlockState::Comment,
+        Verbatim::Content => BlockState::Verbatim,
+        Verbatim::No | Verbatim::Delimiter => BlockState::Body,
     }
 }
 
@@ -291,6 +285,38 @@ mod tests {
     #[test]
     fn resumes_after_a_verbatim_block_closes() {
         let text = "= Demo\n\n----\ncode\n----\n\nSee xref:get";
+        let context = completion_context(text, text.len()).expect("a context");
+
+        assert_eq!(context.kind, CompletionKind::XrefTarget);
+    }
+
+    #[test]
+    fn offers_nothing_but_includes_in_longer_blocks_fences_and_styled_paragraphs() {
+        for opening in [
+            "------\n----\n----\n",
+            "```ruby\n",
+            "[source,ruby]\n",
+            "[literal]\nfirst line\n",
+        ] {
+            let text = format!("= Demo\n\n{opening}See xref:get");
+            assert_eq!(completion_context(&text, text.len()), None, "{opening}");
+
+            let text = format!("= Demo\n\n{opening}include::example$q");
+            let context = completion_context(&text, text.len()).expect("a context");
+            assert_eq!(context.kind, CompletionKind::IncludeTarget, "{opening}");
+        }
+    }
+
+    #[test]
+    fn offers_nothing_in_a_longer_comment_block() {
+        let text = "= Demo\n\n//////\n////\n////\ninclude::example$q";
+
+        assert_eq!(completion_context(text, text.len()), None);
+    }
+
+    #[test]
+    fn resumes_after_a_styled_paragraph_ends() {
+        let text = "= Demo\n\n[source]\ncode\n\nSee xref:get";
         let context = completion_context(text, text.len()).expect("a context");
 
         assert_eq!(context.kind, CompletionKind::XrefTarget);

@@ -6,8 +6,8 @@ use adoc_core::{
 };
 
 use crate::line_parser::{
-    content, find_anchors, find_images, find_includes, find_references, is_verbatim_delimiter,
-    mask_passthroughs, parse_attribute, parse_heading, COMMENT_DELIMITER,
+    content, find_anchors, find_images, find_includes, find_references, mask_passthroughs,
+    parse_attribute, parse_heading, Verbatim, VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,7 +44,7 @@ pub fn parse(uri: &str, text: &str) -> ParseResult {
 
 fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut document = Document::new(uri, text);
-    let mut active_delimiter: Option<String> = None;
+    let mut verbatim = VerbatimBlocks::default();
     let mut pending_anchor: Option<String> = None;
     let mut offset = 0;
 
@@ -52,24 +52,24 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         let line_content = content(line);
         let trimmed = line_content.trim();
 
-        if let Some(delimiter) = active_delimiter.as_deref() {
-            if trimmed == delimiter {
-                active_delimiter = None;
-            } else if delimiter != COMMENT_DELIMITER {
+        match verbatim.line(trimmed) {
+            Verbatim::No => {}
+            Verbatim::Delimiter => {
+                pending_anchor = None;
+                offset += line.len();
+                continue;
+            }
+            kind => {
                 // Asciidoctor processes includes inside listing, literal and passthrough
                 // blocks — a code sample pulled into a `[source]` block is the commonest
                 // use of the `example$` family. Everything else in the block is content.
-                document.includes.extend(find_includes(line, offset));
+                if kind == Verbatim::Content {
+                    document.includes.extend(find_includes(line, offset));
+                }
+                pending_anchor = None;
+                offset += line.len();
+                continue;
             }
-            offset += line.len();
-            continue;
-        }
-
-        if is_verbatim_delimiter(trimmed) {
-            active_delimiter = Some(trimmed.to_owned());
-            pending_anchor = None;
-            offset += line.len();
-            continue;
         }
 
         if trimmed.starts_with("//") {
@@ -340,6 +340,105 @@ image::diagram.png[Architecture]\n";
 
         assert!(document.references.is_empty());
         assert!(document.anchors.is_empty());
+    }
+
+    #[test]
+    fn long_delimiter_hides_references() {
+        let source = "= Demo\n\n------\nxref:x.adoc[]\n[[x]]\n------\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        assert!(document.references.is_empty());
+        assert!(document.anchors.is_empty());
+    }
+
+    /// A block closes only on a line matching its own delimiter, so a longer one can show a
+    /// shorter one, even half of one, as content.
+    #[test]
+    fn nested_delimiters_close_by_length() {
+        let source = "= Demo\n\n------\n----\nxref:inner.adoc[]\n------\n\n[[later]]\n== Later\n\nSee xref:after.adoc[].\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let anchors: Vec<_> = document.anchors.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(anchors, ["later"]);
+        let targets: Vec<_> = document
+            .references
+            .iter()
+            .map(|r| r.target.as_str())
+            .collect();
+        assert_eq!(targets, ["after.adoc"]);
+        assert_eq!(document.sections.len(), 1);
+    }
+
+    #[test]
+    fn backtick_fence_is_verbatim() {
+        let source = "= Demo\n\n```ruby\nxref:not-real.adoc[]\n[[not-real]]\ninclude::example$q.rb[]\n```\n\nSee xref:real.adoc[].\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let targets: Vec<_> = document
+            .references
+            .iter()
+            .map(|r| r.target.as_str())
+            .collect();
+        assert_eq!(targets, ["real.adoc"]);
+        assert!(document.anchors.is_empty());
+        assert_eq!(document.includes.len(), 1);
+    }
+
+    #[test]
+    fn source_styled_paragraph_is_verbatim() {
+        for style in [
+            "[source]",
+            "[source,ruby]",
+            "[listing]",
+            "[literal]",
+            "[source#id.role,ruby]",
+        ] {
+            let source = format!(
+                "= Demo\n\n{style}\nxref:not-real.adoc[]\n[[not-real]]\n\nSee xref:real.adoc[].\n"
+            );
+            let document = parse("file:///demo.adoc", &source).document;
+
+            let targets: Vec<_> = document
+                .references
+                .iter()
+                .map(|r| r.target.as_str())
+                .collect();
+            assert_eq!(targets, ["real.adoc"], "{style}");
+            assert!(document.anchors.is_empty(), "{style}");
+        }
+    }
+
+    /// The style also reaches a paragraph past blank lines, a title, a comment and an anchor
+    /// line, and a delimited block after it is read as the block it is.
+    #[test]
+    fn verbatim_style_reaches_past_titles_and_blank_lines() {
+        let source = "= Demo\n\n[source]\n.Sample\n[[sample]]\n// a note\n\nxref:not-real.adoc[]\n\n[source]\n----\nxref:in-block.adoc[]\n----\nxref:real.adoc[]\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let targets: Vec<_> = document
+            .references
+            .iter()
+            .map(|r| r.target.as_str())
+            .collect();
+        assert_eq!(targets, ["real.adoc"]);
+        let anchors: Vec<_> = document.anchors.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(anchors, ["sample"]);
+    }
+
+    #[test]
+    fn longer_comment_blocks_hide_includes() {
+        let source = "= Demo\n\n//////\n////\ninclude::example$q.sql[]\n////\n//////\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        assert!(document.includes.is_empty());
+    }
+
+    #[test]
+    fn short_and_mixed_runs_are_not_delimiters() {
+        let source = "= Demo\n\n---\nxref:a.adoc[]\n-----.\nxref:b.adoc[]\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        assert_eq!(document.references.len(), 2);
     }
 
     #[test]
