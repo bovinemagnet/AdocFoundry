@@ -3466,6 +3466,64 @@ impl WorkspaceView {
         }
     }
 
+    /// Asks where to save the link graph as an image, and writes it there off the UI thread:
+    /// the graph window's graph as it is drawn, else the workspace's laid out afresh with the
+    /// `[graph]` settings, on the theme's background. A name ending in `.png` gets a PNG, any
+    /// other an SVG.
+    fn on_export_graph(&mut self, _: &ExportGraph, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::GRAPH_EXPORT, CommandArgs::None, window, cx);
+        let dark = cx.theme().mode.is_dark();
+        let engine = &self.app.read(cx).engine;
+        let settings = &engine.settings().graph;
+        let style = adoc_engine::SvgStyle {
+            colour_by: settings.colour_by,
+            dark,
+        };
+        // The window's drawing, else the snapshot to lay out on the worker.
+        let source = match &self.graph_window {
+            Some((_, view)) => Ok(view.read(cx).to_svg(dark)),
+            None => Err(engine.graph(&adoc_engine::GraphScope::Workspace, &settings.filter())),
+        };
+        let directory = engine.roots().first().cloned().unwrap_or_default();
+        let chosen = cx.prompt_for_new_path(&directory, Some("graph.svg"));
+        cx.spawn_in(window, async move |_, cx| {
+            let output = chosen.await.ok()?.ok()??;
+            let written = cx
+                .background_spawn({
+                    let output = output.clone();
+                    async move {
+                        let svg = source.unwrap_or_else(|snapshot| {
+                            adoc_engine::to_svg_laid_out(&snapshot, &style)
+                        });
+                        crate::graph_view::write_graph_image(&output, &svg)
+                    }
+                })
+                .await;
+            cx.update(|window, cx| {
+                let name = output
+                    .file_name()
+                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+                match written {
+                    Ok(()) => window.push_notification(
+                        Notification::new()
+                            .message(format!("Exported the graph to {name}."))
+                            .action(move |_, _, _| {
+                                let path = output.clone();
+                                Button::new("open-graph-image")
+                                    .label("Open")
+                                    .on_click(move |_, _, cx| cx.open_with_system(&path))
+                            }),
+                        cx,
+                    ),
+                    Err(error) => window
+                        .push_notification(format!("The graph could not be exported: {error}"), cx),
+                }
+            })
+            .ok()
+        })
+        .detach();
+    }
+
     /// Shows `path` in the graph window, selected.
     pub(crate) fn show_in_graph(&mut self, path: &Path, cx: &mut Context<Self>) {
         if let Some(view) = self.open_graph_window(cx) {
@@ -4631,6 +4689,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_show_graph))
             .on_action(cx.listener(Self::on_show_local_graph))
             .on_action(cx.listener(Self::on_reset_graph_layout))
+            .on_action(cx.listener(Self::on_export_graph))
             .on_action(cx.listener(Self::on_open_in_version))
             .on_action(cx.listener(Self::on_toggle_blame))
             .on_action(cx.listener(Self::on_open_on_remote))

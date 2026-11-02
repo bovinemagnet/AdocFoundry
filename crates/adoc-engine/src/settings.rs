@@ -233,13 +233,7 @@ impl Default for SpellingSettings {
 }
 
 /// What colours the link graph's nodes.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum GraphColour {
-    #[default]
-    Component,
-    Module,
-    Family,
-}
+pub use adoc_graph::ColourBy as GraphColour;
 
 /// The `[graph]` table: what the link graph shows when it is first opened.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -230,8 +230,9 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
 /// the limits say so.
 const SVG_LONG_SIDE: f32 = 2048.0;
 
-fn decode_svg(bytes: &[u8], file_bytes: u64, limits: Limits) -> Result<Decoded, DecodeError> {
-    let options = usvg::Options {
+/// How an SVG is read: with the system's fonts, and nothing loaded from outside it.
+fn svg_options() -> usvg::Options<'static> {
+    usvg::Options {
         resources_dir: None,
         fontdb: fonts(),
         image_href_resolver: usvg::ImageHrefResolver {
@@ -240,8 +241,48 @@ fn decode_svg(bytes: &[u8], file_bytes: u64, limits: Limits) -> Result<Decoded, 
             resolve_string: Box::new(|_, _| None),
         },
         ..usvg::Options::default()
-    };
-    let tree = usvg::Tree::from_data(bytes, &options)
+    }
+}
+
+/// `svg` drawn at `scale` times its own size, no larger than the default limits allow, as a
+/// PNG file's bytes.
+pub fn svg_to_png(svg: &str, scale: f32) -> Result<Vec<u8>, DecodeError> {
+    let tree = usvg::Tree::from_data(svg.as_bytes(), &svg_options())
+        .map_err(|error| DecodeError::Corrupt(error.to_string()))?;
+    let size = tree.size();
+    let limits = Limits::DEFAULT;
+    let scale = scale
+        .min(limits.max_side as f32 / size.width().max(size.height()))
+        .min((limits.max_pixels as f32 / (size.width() * size.height())).sqrt());
+    let width = (size.width() * scale).round().max(1.0) as u32;
+    let height = (size.height() * scale).round().max(1.0) as u32;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| DecodeError::TooLarge(format!("{width} × {height} pixels")))?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let mut pixels = RgbaImage::from_raw(width, height, pixmap.take())
+        .ok_or_else(|| DecodeError::Corrupt("the drawing has the wrong size".to_owned()))?;
+    // Premultiplied RGBA to straight.
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        let alpha = u16::from(pixel[3]);
+        for channel in &mut pixel[..3] {
+            if let Some(straight) = (u16::from(*channel) * 255).checked_div(alpha) {
+                *channel = straight.min(255) as u8;
+            }
+        }
+    }
+    let mut png = Vec::new();
+    DynamicImage::ImageRgba8(pixels)
+        .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+        .map_err(|error| DecodeError::Corrupt(error.to_string()))?;
+    Ok(png)
+}
+
+fn decode_svg(bytes: &[u8], file_bytes: u64, limits: Limits) -> Result<Decoded, DecodeError> {
+    let tree = usvg::Tree::from_data(bytes, &svg_options())
         .map_err(|error| DecodeError::Corrupt(error.to_string()))?;
     let size = tree.size();
     let (intrinsic_width, intrinsic_height) = (size.width(), size.height());
@@ -468,6 +509,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!((svg.info.width, svg.info.height), (600, 300));
+    }
+
+    #[test]
+    fn an_svg_is_written_as_a_png_at_a_scale() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
+            <rect width="40" height="20" fill="#ff0000"/></svg>"##;
+        let png = svg_to_png(svg, 2.0).unwrap();
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let decoded = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(decoded.dimensions(), (80, 40));
+        assert_eq!(decoded.get_pixel(10, 10).0, [255, 0, 0, 255]);
+        assert!(svg_to_png("<not svg", 1.0).is_err());
     }
 
     #[test]

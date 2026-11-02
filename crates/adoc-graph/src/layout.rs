@@ -198,6 +198,16 @@ impl Layout {
         self.heat >= COLD
     }
 
+    /// Steps until the layout settles, or `limit` steps have been taken, for a drawing with no
+    /// frames to wait for.
+    pub fn settle(&mut self, limit: usize) {
+        for _ in 0..limit {
+            if !self.step(1.0) {
+                break;
+            }
+        }
+    }
+
     /// Whether the layout is still moving.
     #[must_use]
     pub fn is_moving(&self) -> bool {

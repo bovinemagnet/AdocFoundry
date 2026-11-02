@@ -220,6 +220,23 @@ fn link_graph_tool_returns_a_local_graph() {
         ]
     );
 
+    let drawn = client
+        .call(
+            "link_graph",
+            json!({
+                "scope": "page",
+                "path": "guide/modules/ROOT/pages/configure.adoc",
+                "format": "svg",
+            }),
+        )
+        .unwrap();
+    let svg = drawn["svg"].as_str().unwrap();
+    assert!(svg.starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+    assert_eq!(svg.matches("class=\"node page\"").count(), 3);
+    assert!(client
+        .call("link_graph", json!({ "format": "png" }))
+        .is_err());
+
     let whole = client
         .call("link_graph", json!({ "unresolved": true }))
         .unwrap();

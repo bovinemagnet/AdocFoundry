@@ -144,7 +144,7 @@ These tools are always offered.
 
 |`link_graph`
 |`scope?`, `path?`, `depth?`, `partials?`, `nav?`, `orphans?`, `unresolved?`
-|The link graph, as `adocfoundry-cli graph` prints it in JSON. `scope` is `workspace` (the default) or `page`; a `page` scope needs `path`, absolute or relative to the first root, and follows links both ways to `depth` (1 to 3, default 1). `partials`, `nav` and `orphans` default to true and `unresolved` to false. Nodes and edges are each cut at 500, with `truncated` saying how many were shown. See xref:graph-view.adoc[The link graph].
+|The link graph, as `adocfoundry-cli graph` prints it in JSON. `scope` is `workspace` (the default) or `page`; a `page` scope needs `path`, absolute or relative to the first root, and follows links both ways to `depth` (1 to 3, default 1). `partials`, `nav` and `orphans` default to true and `unresolved` to false. Nodes and edges are each cut at 500, with `truncated` saying how many were shown. `format` is `json` (the default) or `svg`, and `dark` (a boolean, default false) draws the SVG for a dark background. With `svg` the answer is `{ "svg": "<svg …>" }`, the image described in xref:graph-view.adoc#_export_the_graph[Export the graph]; an SVG over 200,000 bytes is refused with a message suggesting `scope: page`. See xref:graph-view.adoc[The link graph].
 |===
 
 == Write tools

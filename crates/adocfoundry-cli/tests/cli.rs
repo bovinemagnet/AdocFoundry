@@ -158,6 +158,20 @@ fn graph_prints_dot() {
 }
 
 #[test]
+fn graph_prints_svg() {
+    let output = cli(&[
+        "graph",
+        "tests/fixtures/graph",
+        "--page",
+        "tests/fixtures/graph/guide/modules/ROOT/pages/configure.adoc",
+        "--format",
+        "svg",
+    ]);
+    assert!(output.status.success());
+    insta::assert_snapshot!(stdout(&output));
+}
+
+#[test]
 fn check_text_format_and_fail_on() {
     let output = cli(&["check", "tests/fixtures/antora-invalid-descriptor"]);
     assert_eq!(

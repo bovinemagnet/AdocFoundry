@@ -147,6 +147,18 @@ impl GraphReport {
 }
 
 impl Engine {
+    /// The link graph `scope` covers, as `filter` allows, laid out until it settles and drawn
+    /// as SVG.
+    #[must_use]
+    pub fn graph_svg(
+        &self,
+        scope: &crate::GraphScope,
+        filter: &crate::GraphFilter,
+        style: &crate::SvgStyle,
+    ) -> String {
+        crate::to_svg_laid_out(&self.graph(scope, filter), style)
+    }
+
     /// The link graph `scope` covers, as `filter` allows, with paths relative to `root`.
     #[must_use]
     pub fn graph_report(

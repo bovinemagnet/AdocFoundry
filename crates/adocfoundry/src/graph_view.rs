@@ -470,7 +470,8 @@ impl GraphView {
 
     /// The node under the window position `at`.
     fn node_under(&self, at: gpui::Point<Pixels>) -> Option<GraphKey> {
-        let reach = (node_radius(16) * self.zoom.clamp(0.6, 1.6) + HIT_SLOP) / self.zoom;
+        let reach =
+            (adoc_engine::node_radius(16) * self.zoom.clamp(0.6, 1.6) + HIT_SLOP) / self.zoom;
         self.layout.node_at(self.to_layout(at), reach).cloned()
     }
 
@@ -646,6 +647,25 @@ impl GraphView {
 
     // --- drawing -----------------------------------------------------------------------------
 
+    /// The graph as it is shown, its scope, filters, colours and every node where the layout
+    /// has it, pinned or not, drawn as SVG on a light or dark background.
+    pub(crate) fn to_svg(&self, dark: bool) -> String {
+        let positions: Vec<LayoutPoint> = self
+            .snapshot
+            .nodes
+            .iter()
+            .map(|node| self.layout.position(&node.key).unwrap_or_default())
+            .collect();
+        adoc_engine::to_svg(
+            &self.snapshot,
+            &positions,
+            &adoc_engine::SvgStyle {
+                colour_by: self.colour_by,
+                dark,
+            },
+        )
+    }
+
     /// The nodes and edges to paint, emphasised and labelled as the hover, selection, search
     /// and zoom say.
     fn drawing(&self, cx: &App) -> Drawing {
@@ -678,7 +698,7 @@ impl GraphView {
                     .path()
                     .is_some_and(|path| path.to_string_lossy().to_lowercase().contains(&self.query))
         };
-        let groups = colour_groups(&self.snapshot, self.colour_by);
+        let groups = adoc_engine::colour_groups(&self.snapshot, self.colour_by);
         let all_labels = self.zoom >= LABEL_ZOOM || nodes_shown.len() <= 12;
         // The layout holds its nodes in the snapshot's order.
         let positions: Vec<LayoutPoint> = if self.layout.len() == nodes_shown.len() {
@@ -702,7 +722,7 @@ impl GraphView {
                     || selected == Some(place);
                 DrawnNode {
                     at: positions[place],
-                    radius: node_radius(node.links_in + node.links_out),
+                    radius: adoc_engine::node_radius(node.links_in + node.links_out),
                     kind: node.kind,
                     colour: node_colour(
                         node,
@@ -1494,34 +1514,8 @@ impl Render for GraphView {
     }
 }
 
-/// The radius of a node with `links` edges, in pixels at zoom 1.
-fn node_radius(links: usize) -> f32 {
-    (4.0 + (links as f32).sqrt() * 1.6).min(14.0)
-}
-
-/// Each colour group's place, in name order: components, modules or families.
-fn colour_groups(snapshot: &GraphSnapshot, by: GraphColour) -> Vec<String> {
-    let mut groups: Vec<String> = snapshot
-        .nodes
-        .iter()
-        .filter_map(|node| group_of(node, by))
-        .collect();
-    groups.sort();
-    groups.dedup();
-    groups
-}
-
-fn group_of(node: &adoc_engine::GraphNode, by: GraphColour) -> Option<String> {
-    let coordinate = node.coordinate.as_ref()?;
-    Some(match by {
-        GraphColour::Component => coordinate.component.clone(),
-        GraphColour::Module => format!("{}:{}", coordinate.component, coordinate.module),
-        GraphColour::Family => coordinate.family.clone(),
-    })
-}
-
-/// A node's colour: its group's place in a palette of hues that also differ in lightness, set
-/// for the light theme or the dark. Nodes outside Antora, and unresolved targets, are grey.
+/// A node's colour on the canvas: its group's, from the palette exported images share, or
+/// `grey` outside Antora.
 fn node_colour(
     node: &adoc_engine::GraphNode,
     groups: &[String],
@@ -1529,20 +1523,22 @@ fn node_colour(
     dark: bool,
     grey: Hsla,
 ) -> Hsla {
-    const HUES: [f32; 8] = [0.58, 0.08, 0.36, 0.92, 0.15, 0.75, 0.48, 0.0];
-    let Some(group) = group_of(node, by) else {
-        return grey;
+    adoc_engine::node_colour(node, groups, by, dark)
+        .map_or(grey, |colour| gpui::hsla(colour.h, colour.s, colour.l, 1.0))
+}
+
+/// Writes the graph image `svg` to `output`: drawn as a PNG at twice its size when the name
+/// ends in `.png`, else as the SVG itself.
+pub(crate) fn write_graph_image(output: &Path, svg: &str) -> Result<(), String> {
+    let png = output
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+    let bytes = if png {
+        crate::image_decode::svg_to_png(svg, 2.0).map_err(|error| error.to_string())?
+    } else {
+        svg.as_bytes().to_vec()
     };
-    let place = groups.iter().position(|known| *known == group).unwrap_or(0);
-    let hue = HUES[place % HUES.len()];
-    let lighter = (place / HUES.len()) % 2 == 1;
-    let lightness = match (dark, lighter) {
-        (false, false) => 0.42,
-        (false, true) => 0.58,
-        (true, false) => 0.62,
-        (true, true) => 0.76,
-    };
-    gpui::hsla(hue, 0.65, lightness, 1.0)
+    std::fs::write(output, bytes).map_err(|error| format!("{}: {error}", output.display()))
 }
 
 fn paint(drawing: &Drawing, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {

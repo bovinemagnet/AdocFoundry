@@ -200,6 +200,36 @@ The side panel lists the selected node's *Links out* and *Backlinks*, one row fo
 A row names every kind of link between the two, such as `xref · nav`.
 Clicking a row selects that node.
 
+== Export the graph
+
+Export Graph… (`graph.export`, in the File menu and the command palette) saves the link graph as an image.
+It has no default key binding.
+It asks where to save.
+A file name ending in `.png` gets a PNG drawn at twice the graph's size.
+Any other name gets an SVG.
+
+With the graph window open, the image is what the window shows: its scope (workspace or local), its filters, its colouring and every node where the layout has it, pinned nodes included.
+With no graph window, the whole workspace is laid out afresh with the `[graph]` settings.
+The image is drawn on a light or a dark background, following the app's theme.
+A notification says where the file was saved, with an Open button.
+
+=== What the image holds
+
+Nodes and edges look as they do on the canvas:
+
+* Pages are filled, partials are hollow, unresolved targets have a dashed outline and navigation files are squares.
+* Xrefs are solid, includes are dashed, navigation links are dotted and bowed, and links to unresolved targets are dash-dot.
+Repeated links make a heavier edge.
+* Nodes are coloured by component, module or family, as in the window.
+* Every node is labelled with its title.
+In a browser, hovering over a node shows its title.
+
+The image holds titles only, never file paths.
+The same layout always gives the same file.
+
+The same image is available without the app.
+`adocfoundry-cli graph --format svg` prints it, as described in xref:command-line.adoc#graph[the command line reference], and the xref:mcp-server.adoc[MCP server]'s `link_graph` tool returns it with `format: svg`.
+
 == The local graph
 
 The *Graph* tab is the last tab of the sidebar.

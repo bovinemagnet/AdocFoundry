@@ -10,8 +10,8 @@
 //!     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 //! adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 //! adocfoundry-cli git-status <root> [--format text|json]
-//! adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot] [--no-partials]
-//!     [--no-nav] [--unresolved]
+//! adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot|svg] [--no-partials]
+//!     [--no-nav] [--unresolved] [--dark]
 //! adocfoundry-cli doctor [<root>] [--format text|json]
 //! adocfoundry-cli --version
 //! ```
@@ -28,7 +28,7 @@ use adoc_engine::{
     pdf_standard,
     report::{display_path, severity_name, ChangedFile},
     CommandArgs, CommandOutcome, Engine, EngineError, ExportArgs, ExportTarget, GraphFilter,
-    GraphScope, Settings,
+    GraphScope, Settings, SvgStyle,
 };
 
 const USAGE: &str = "usage:
@@ -41,8 +41,8 @@ const USAGE: &str = "usage:
       [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
   adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
   adocfoundry-cli git-status <root> [--format text|json]
-  adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot] [--no-partials]
-      [--no-nav] [--unresolved]
+  adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot|svg] [--no-partials]
+      [--no-nav] [--unresolved] [--dark]
   adocfoundry-cli doctor [<root>] [--format text|json]
   adocfoundry-cli --version";
 
@@ -480,10 +480,11 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The link graph of the workspace at `root`, or of a page and its neighbours, as JSON or DOT.
+/// The link graph of the workspace at `root`, or of a page and its neighbours, as JSON, DOT or
+/// an SVG image.
 fn graph(arguments: &[String]) -> Result<ExitCode, String> {
     // Flags take no value: take them out before the options.
-    let flags = ["--no-partials", "--no-nav", "--unresolved"];
+    let flags = ["--no-partials", "--no-nav", "--unresolved", "--dark"];
     let flag = |name: &str| arguments.iter().any(|argument| argument == name);
     let rest: Vec<String> = arguments
         .iter()
@@ -494,11 +495,10 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
     let [root] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let dot = match option(&options, "format").unwrap_or("json") {
-        "json" => false,
-        "dot" => true,
-        other => return Err(format!("unknown format `{other}`")),
-    };
+    let format = option(&options, "format").unwrap_or("json");
+    if !["json", "dot", "svg"].contains(&format) {
+        return Err(format!("unknown format `{format}`"));
+    }
     let depth = match option(&options, "depth") {
         None => 1,
         Some(_) if option(&options, "page").is_none() => {
@@ -535,8 +535,16 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
             ));
         }
     }
+    if format == "svg" {
+        let style = SvgStyle {
+            colour_by: engine.settings().graph.colour_by,
+            dark: flag("--dark"),
+        };
+        print!("{}", engine.graph_svg(&scope, &filter, &style));
+        return Ok(ExitCode::SUCCESS);
+    }
     let report = engine.graph_report(&root, &scope, &filter);
-    if dot {
+    if format == "dot" {
         print!("{}", report.to_dot());
     } else {
         let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
