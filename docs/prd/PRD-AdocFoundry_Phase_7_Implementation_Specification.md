@@ -39,7 +39,7 @@ Phase 7 must provide:
 | Drawing | `gpui::canvas` with `PathBuilder` for edges and nodes, as `image_view.rs` already uses `canvas`. Labels appear only above a zoom threshold, on hover, and for the selection and its neighbours | One element draws thousands of nodes, and the labels stay readable. |
 | Opening a node | through `navigate.go_to`: a click opens with `OpenDisposition::Preview`, a double click with `Persistent` | No new navigation path, and preview tabs behave as everywhere else. |
 | Dependencies | no new external dependency | The layout and hit testing are a few hundred lines of plain Rust. Nothing needs `cargo deny` changes. |
-| Saved state | the graph window's filters and colouring are kept in memory per workspace. Pinned node positions are not saved | Saving a layout across sessions can follow if it is asked for (§9). |
+| Saved state | the graph window's size and position are remembered: the engine keeps them and writes them with the session (§6). Its filters and colouring are kept in memory per workspace. Pinned node positions are not saved | The window comes back where the user put it, often on a second screen. Saving a layout across sessions can follow if it is asked for (§9). |
 
 ## 3. Architecture
 
@@ -178,6 +178,22 @@ Acceptance tests:
 ## 6. The graph window (WP 7.3, #272)
 
 - **Window:** `WindowKind::Graph`, opened by `view.graph` from the workspace window through `open_secondary_window`. It shows the workspace's graph and keeps a `Layout` of its own.
+- **Size and position:** the window opens where it was last, at the size it last had.
+
+  ```rust
+  // adoc-engine
+  pub struct WindowPlacement { pub x: f32, pub y: f32, pub width: f32, pub height: f32, pub maximised: bool }   // logical pixels
+  impl Engine {
+      pub fn graph_window(&self) -> Option<WindowPlacement>;
+      pub fn set_graph_window(&mut self, placement: WindowPlacement);
+  }
+  ```
+
+  - **Recording:** the app records the window's bounds whenever it is moved, resized, maximised or closed. A record changes only the engine's memory and writes nothing.
+  - **Saving:** `write_session` writes the placement into `session.json` as an optional `graph_window` field, read with `#[serde(default)]`. `FORMAT_VERSION` stays 1, so older session files still load, and `restore_session` brings the placement back. With sessions disabled, the placement lasts only until the app quits.
+  - **Opening:** the app passes the placement to `open_secondary_window` as the window's bounds, maximised if it was maximised. The first time, with nothing saved, the window opens centred at 1100 × 760.
+  - **A missing display:** if less than half of the saved bounds lies on a connected display (a monitor unplugged, a smaller screen), the window opens centred on the main display at the saved size, shrunk to fit it.
+  - **Scope:** only the graph window is remembered. The detached preview and the mirror keep opening centred, as now.
 - **Toolbar:**
   - a search box that highlights matching nodes by title or path and dims the rest;
   - toggles for partials, navigation, orphans and unresolved targets;
@@ -208,6 +224,9 @@ Acceptance tests (`ui_tests.rs`, on GPUI's test platform):
 - `double_clicking_a_node_keeps_its_page_open`
 - `graph_window_refreshes_on_graph_changed`
 - `opening_the_graph_again_focuses_its_window`
+- `graph_window_reopens_where_it_was` (app): a window moved and resized, then closed and opened again, has the bounds it had.
+- `graph_window_placement_survives_a_session` (engine): a placement set, written with `write_session` and brought back by `restore_session`, is the same. A session file without `graph_window` still restores, with no placement.
+- `graph_window_off_screen_is_recentred` (app): a placement that lies off every display opens centred on the main display, at a size that fits it.
 
 ## 7. The local graph panel (WP 7.4, #272)
 
@@ -273,7 +292,7 @@ Out of scope:
 
 Open questions, to settle before the package that needs them:
 
-- [ ] **WP 7.3:** whether the graph window should remember its size and position per workspace, as the detached preview does.
+- [x] **WP 7.3:** whether the graph window should remember its size and position: it does, written with the session (§6). The detached preview does not remember its own, and stays as it is.
 
 Implementation notes, as each package lands:
 
@@ -296,6 +315,7 @@ The fixture `tests/fixtures/graph/` is added in WP 7.1. It holds an Antora compo
 
 - The graph window shows the workspace's pages, partials and navigation files, with xref, include and navigation edges. Partials, navigation, orphans and unresolved targets can each be filtered.
 - Pan, zoom, drag, hover highlighting, search, a click to open as a preview and a double click to open persistently all work. The local graph panel follows the active tab.
+- The graph window reopens at its last size and position, across restarts, and recentres when that place is no longer on a display.
 - The graph stays current while typing and when files change on disk, with no full rebuild except after a catalog change.
 - A workspace of a few thousand pages stays interactive, and the benchmark holds its budget.
 - Every acceptance test above exists and passes. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo deny check` and `cargo xtask layers` pass.
