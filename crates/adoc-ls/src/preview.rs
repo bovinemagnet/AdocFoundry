@@ -151,13 +151,21 @@ impl<L: Launcher> BrowserSink<L> {
         &self.launcher
     }
 
-    /// Artefact path for `source`. Stable across renders so the browser tab can be reloaded.
+    /// Artefact path for `source`: its stem and a hash of its whole path, so pages with the
+    /// same name in different folders (every module's `index.adoc`) keep their own. Stable
+    /// across renders and runs, so the browser tab can be reloaded.
     fn artefact_path(&self, source: &Path) -> PathBuf {
+        use sha2::{Digest, Sha256};
         let stem = source
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or("preview");
-        self.directory.join(format!("{stem}.html"))
+        let digest = Sha256::digest(source.as_os_str().as_encoded_bytes());
+        let hash: String = digest[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        self.directory.join(format!("{stem}-{hash}.html"))
     }
 }
 
@@ -336,7 +344,11 @@ mod tests {
             )
             .expect("deliver");
 
-        assert_eq!(artefact.file_name().unwrap(), "guide.html");
+        let name = artefact.file_name().unwrap().to_str().unwrap();
+        assert!(
+            name.starts_with("guide-") && name.ends_with(".html"),
+            "{name}"
+        );
         assert_eq!(fs::read_to_string(&artefact).unwrap(), "<h1>Guide</h1>");
     }
 
@@ -377,6 +389,48 @@ mod tests {
     }
 
     #[test]
+    fn pages_with_the_same_name_in_different_folders_get_their_own_artefacts() {
+        let dir = tempdir("same-name");
+        let sink = BrowserSink::new(dir, RecordingLauncher::default());
+
+        let admin = sink
+            .deliver(
+                &output("<p>admin</p>"),
+                Path::new("/docs/modules/admin/pages/index.adoc"),
+                PreviewMode::Static,
+            )
+            .expect("admin");
+        let root = sink
+            .deliver(
+                &output("<p>root</p>"),
+                Path::new("/docs/modules/ROOT/pages/index.adoc"),
+                PreviewMode::Static,
+            )
+            .expect("root");
+
+        assert_ne!(admin, root);
+        assert_eq!(fs::read_to_string(&admin).unwrap(), "<p>admin</p>");
+        assert_eq!(fs::read_to_string(&root).unwrap(), "<p>root</p>");
+    }
+
+    #[test]
+    fn an_artefact_has_the_same_name_in_every_run() {
+        let dir = tempdir("same-every-run");
+        let sink = BrowserSink::new(dir, RecordingLauncher::default());
+
+        let artefact = sink
+            .deliver(
+                &output("<p>x</p>"),
+                Path::new("/docs/guide.adoc"),
+                PreviewMode::Static,
+            )
+            .expect("deliver");
+
+        // The first 16 hex digits of the SHA-256 of `/docs/guide.adoc`.
+        assert_eq!(artefact.file_name().unwrap(), "guide-ce009aab83da2c06.html");
+    }
+
+    #[test]
     fn a_source_without_a_stem_still_produces_an_artefact() {
         let dir = tempdir("no-stem");
         let sink = BrowserSink::new(dir, RecordingLauncher::default());
@@ -385,7 +439,11 @@ mod tests {
             .deliver(&output("<p>x</p>"), Path::new("/"), PreviewMode::Static)
             .expect("deliver");
 
-        assert_eq!(artefact.file_name().unwrap(), "preview.html");
+        let name = artefact.file_name().unwrap().to_str().unwrap();
+        assert!(
+            name.starts_with("preview-") && name.ends_with(".html"),
+            "{name}"
+        );
     }
 
     /// A directory unique to one test: these run in parallel and share a filename.
