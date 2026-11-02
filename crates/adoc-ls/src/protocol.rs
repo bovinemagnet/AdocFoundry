@@ -1163,7 +1163,7 @@ mod tests {
             Notification as LspNotification, PublishDiagnostics,
         },
         request::{
-            DocumentSymbolRequest, ExecuteCommand, GotoDefinition, Initialize,
+            DocumentSymbolRequest, ExecuteCommand, GotoDefinition, Initialize, Rename,
             Request as LspRequest, Shutdown,
         },
         ClientCapabilities, CodeActionContext, CodeActionOrCommand, CodeActionParams, Diagnostic,
@@ -1171,9 +1171,9 @@ mod tests {
         DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
         ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
         InitializedParams, Location, NumberOrString, PartialResultParams, Position,
-        PublishDiagnosticsParams, Range, SymbolKind, TextDocumentContentChangeEvent,
+        PublishDiagnosticsParams, Range, RenameParams, SymbolKind, TextDocumentContentChangeEvent,
         TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Uri,
-        VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceFolder,
+        VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceEdit, WorkspaceFolder,
         WorkspaceSymbolParams, WorkspaceSymbolResponse,
     };
 
@@ -1656,6 +1656,53 @@ mod tests {
                     vec!["adoc.unresolved-xref-file".to_owned()]
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn renames_an_anchor_in_the_text_just_typed() {
+        let page = file_uri(&std::env::temp_dir().join("docs").join("rename.adoc"));
+        let mut server = server();
+        open(&mut server, page.as_str(), "[[here]]\n\nSee <<here>>.\n");
+        // A small change, so re-indexing waits for typing to pause.
+        server
+            .handle_notification(Notification::new(
+                DidChangeTextDocument::METHOD.to_owned(),
+                DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier::new(page.clone(), 2),
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: Some(Range::new(Position::new(2, 0), Position::new(2, 0))),
+                        range_length: None,
+                        text: "X".to_owned(),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let (response, _) = server.handle_request(Request::new(
+            RequestId::from(1),
+            Rename::METHOD.to_owned(),
+            RenameParams {
+                text_document_position: TextDocumentPositionParams::new(
+                    TextDocumentIdentifier::new(page.clone()),
+                    Position::new(0, 3),
+                ),
+                new_name: "there".to_owned(),
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            },
+        ));
+        let edit: WorkspaceEdit =
+            serde_json::from_value(response.response_result.unwrap()).unwrap();
+        let mut edits = edit.changes.unwrap().remove(&page).unwrap();
+        edits.sort_by_key(|edit| (edit.range.start.line, edit.range.start.character));
+        let ranges: Vec<Range> = edits.iter().map(|edit| edit.range).collect();
+        assert_eq!(
+            ranges,
+            [
+                Range::new(Position::new(0, 2), Position::new(0, 6)),
+                Range::new(Position::new(2, 7), Position::new(2, 11)),
+            ],
+            "the anchor and the reference in `XSee <<here>>.`"
         );
     }
 

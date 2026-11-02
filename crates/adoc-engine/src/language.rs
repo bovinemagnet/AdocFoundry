@@ -243,13 +243,15 @@ impl Engine {
 
     /// The edits that rename the anchor at `offset` in document `id`, and every reference to
     /// it, to `new_id`, by file. `None` when there is no anchor there or `new_id` is not an id.
+    /// Indexes what typing left pending first, so every range is in the current text.
     #[must_use]
     pub fn anchor_rename_edits(
-        &self,
+        &mut self,
         id: DocumentId,
         offset: usize,
         new_id: &str,
     ) -> Option<Vec<crate::FileEdits>> {
+        self.flush_index();
         let document = self.document(id)?;
         let edits = adoc_lang::references::rename_anchor(
             &self.workspace,
