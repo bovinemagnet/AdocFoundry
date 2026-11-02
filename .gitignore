@@ -34,3 +34,6 @@ rustc-ice-*.txt
 # Diagram caches, written beside any workspace opened in the app
 .cache/
 .DS_Store
+
+# Local planning scratch; PRDs that are kept move to docs/prd
+/tmp/
