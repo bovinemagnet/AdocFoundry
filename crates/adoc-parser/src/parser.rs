@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use adoc_core::{
-    Anchor, Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle, Section,
-    SourceRange,
+    Anchor, Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle,
+    IncludeDirective, Section, SourceRange,
 };
 
 use crate::line_parser::{
-    content, find_anchors, find_images, find_includes, find_references, mask_passthroughs,
-    parse_attribute, parse_heading, Verbatim, VerbatimBlocks,
+    conditional_directive, content, find_anchors, find_images, find_includes, find_references,
+    mask_passthroughs, parse_attribute, parse_heading, Conditional, Verbatim, VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,11 +46,35 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut document = Document::new(uri, text);
     let mut verbatim = VerbatimBlocks::default();
     let mut pending_anchor: Option<String> = None;
+    // How many `ifdef`, `ifndef` and `ifeval` blocks are open.
+    let mut conditionals = 0_usize;
     let mut offset = 0;
 
     for line in text.split_inclusive('\n') {
         let line_content = content(line);
         let trimmed = line_content.trim();
+
+        // The preprocessor reads conditionals everywhere but in comment blocks, and removes
+        // their lines before the parser sees them.
+        if verbatim.next() != Verbatim::Comment {
+            if let Some(directive) = conditional_directive(line_content) {
+                conditionals = match directive {
+                    Conditional::Open => conditionals + 1,
+                    Conditional::Close => conditionals.saturating_sub(1),
+                };
+                offset += line.len();
+                continue;
+            }
+        }
+        let conditional = conditionals > 0;
+        let includes = |line: &str, offset: usize| {
+            find_includes(line, offset)
+                .into_iter()
+                .map(move |include| IncludeDirective {
+                    conditional,
+                    ..include
+                })
+        };
 
         match verbatim.line(trimmed) {
             Verbatim::No => {}
@@ -64,7 +88,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                 // blocks — a code sample pulled into a `[source]` block is the commonest
                 // use of the `example$` family. Everything else in the block is content.
                 if kind == Verbatim::Content {
-                    document.includes.extend(find_includes(line, offset));
+                    document.includes.extend(includes(line, offset));
                 }
                 pending_anchor = None;
                 offset += line.len();
@@ -83,7 +107,8 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         let anchors = find_anchors(&inline, offset);
         let anchor_only = anchors.len() == 1
             && anchors[0].range == SourceRange::new(offset, offset + line_content.len());
-        for anchor in anchors {
+        for mut anchor in anchors {
+            anchor.conditional = conditional;
             if anchor_only {
                 pending_anchor = Some(anchor.id.clone());
             }
@@ -115,7 +140,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         }
 
         document.references.extend(find_references(&inline, offset));
-        document.includes.extend(find_includes(line, offset));
+        document.includes.extend(includes(line, offset));
         document.images.extend(find_images(&inline, offset));
         offset += line.len();
     }
@@ -124,11 +149,12 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     ParseResult { document }
 }
 
-/// A warning for each anchor whose id an earlier one declared.
+/// A warning for each anchor whose id an earlier one declared. Anchors inside conditionals
+/// are left out: two branches commonly declare the same id, and only one is ever built.
 fn duplicate_anchors(anchors: &[Anchor]) -> Vec<Diagnostic> {
     let mut first = HashMap::<&str, SourceRange>::new();
     let mut diagnostics = Vec::new();
-    for anchor in anchors {
+    for anchor in anchors.iter().filter(|anchor| !anchor.conditional) {
         match first.get(anchor.id.as_str()) {
             Some(first_range) => diagnostics.push(Diagnostic {
                 code: DiagnosticCode::DuplicateAnchor,
@@ -439,6 +465,72 @@ image::diagram.png[Architecture]\n";
         let document = parse("file:///demo.adoc", source).document;
 
         assert_eq!(document.references.len(), 2);
+    }
+
+    #[test]
+    fn anchors_in_conditional_branches_do_not_collide() {
+        let source = "= Demo\n\nifdef::backend-pdf[]\n[[intro]]\n== Introduction (print)\nendif::[]\nifndef::backend-pdf[]\n[[intro]]\n== Introduction\nendif::[]\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+        assert_eq!(document.anchors.len(), 2);
+        assert!(document.anchors.iter().all(|anchor| anchor.conditional));
+        let ids: Vec<_> = document.sections.iter().map(|s| s.id.as_deref()).collect();
+        assert_eq!(ids, [Some("intro"), Some("intro")]);
+    }
+
+    /// Duplicates outside any conditional are still reported, after a conditional one and
+    /// after the conditional closes; nested conditionals close one at a time.
+    #[test]
+    fn unconditional_duplicates_are_still_reported() {
+        let source = "[[a]]\nifdef::x[]\nifeval::[{n} > 1]\n[[b]]\nendif::[]\n[[c]]\nendif::x[]\n[[a]]\n[[b]]\n[[b]]\n[[c]]\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let conditional: Vec<_> = document
+            .anchors
+            .iter()
+            .map(|anchor| (anchor.id.as_str(), anchor.conditional))
+            .collect();
+        assert_eq!(
+            conditional,
+            [
+                ("a", false),
+                ("b", true),
+                ("c", true),
+                ("a", false),
+                ("b", false),
+                ("b", false),
+                ("c", false)
+            ]
+        );
+        let duplicates: Vec<_> = document.diagnostics.iter().map(|d| d.range.start).collect();
+        let second_a = source.rfind("[[a]]").unwrap();
+        let second_b = source.rfind("[[b]]").unwrap();
+        assert_eq!(duplicates, [second_a, second_b]);
+    }
+
+    /// `ifdef::attr[text]` is a single line, not the start of a conditional block, and
+    /// directives are lines of their own.
+    #[test]
+    fn single_line_and_indented_directives_open_nothing() {
+        let source = "ifdef::x[Some text.]\n  ifdef::y[]\n[[a]]\ninclude::a.adoc[]\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        assert!(!document.anchors[0].conditional);
+        assert!(!document.includes[0].conditional);
+    }
+
+    #[test]
+    fn includes_in_conditionals_and_verbatim_blocks_are_conditional() {
+        let source = "ifndef::env-site[]\n----\ninclude::example$a.rb[]\n----\nendif::[]\ninclude::b.adoc[]\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let conditional: Vec<_> = document.includes.iter().map(|i| i.conditional).collect();
+        assert_eq!(conditional, [true, false]);
     }
 
     #[test]

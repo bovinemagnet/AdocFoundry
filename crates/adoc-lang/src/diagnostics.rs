@@ -152,6 +152,9 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
                     continue;
                 }
             };
+            if include.conditional {
+                continue;
+            }
             diagnose_resolution(
                 AntoraResolver::resolve(antora, &id, &context),
                 &include.target,
@@ -542,6 +545,25 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(codes.contains(&DiagnosticCode::AntoraUnknownModule));
         assert!(codes.contains(&DiagnosticCode::AntoraUnknownResource));
+    }
+
+    /// A conditional include of a resource that does not resolve is not reported.
+    #[test]
+    fn leaves_conditional_antora_includes_unresolved() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/antora-single-component");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+        let index_path = root.join("modules/ROOT/pages/index.adoc");
+
+        index.index_source(
+            &index_path,
+            "= Home\n\nifdef::env-github[]\ninclude::partial$missing.adoc[]\ninclude::missing:partial$x.adoc[]\nendif::[]\n",
+        );
+        assert_eq!(diagnostics(&index, &antora, &index_path), Vec::new());
     }
 
     #[test]
