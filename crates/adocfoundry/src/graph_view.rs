@@ -362,6 +362,19 @@ impl GraphView {
         });
     }
 
+    /// Makes the page the unresolved target `key` names, where its links expect it, and opens
+    /// it.
+    fn create_page(&mut self, key: &GraphKey, cx: &mut Context<Self>) {
+        let GraphKey::Unresolved(target) = key else {
+            return;
+        };
+        self.app.update(cx, |app, cx| {
+            if let Some(request) = app.engine.new_page_for(target) {
+                let _ = app.invoke(ids::PAGE_NEW, CommandArgs::NewPage(request), cx);
+            }
+        });
+    }
+
     fn find_references(&mut self, key: &GraphKey, cx: &mut Context<Self>) {
         if let (Some(path), Some(workspace)) = (key.path(), self.workspace.upgrade()) {
             let path = path.to_path_buf();
@@ -780,7 +793,7 @@ impl GraphView {
                         .child(message),
                 )
             })
-            .context_menu(move |menu, _, _| {
+            .context_menu(move |menu, _, cx| {
                 let Some(key) = menu_target.borrow().clone() else {
                     return menu;
                 };
@@ -793,9 +806,18 @@ impl GraphView {
                         }
                     })
                 };
-                let file = key.path().is_some();
-                if !file {
-                    return menu.item(PopupMenuItem::new("Unresolved target").disabled(true));
+                if let GraphKey::Unresolved(target) = &key {
+                    let creatable = view.upgrade().is_some_and(|view| {
+                        let engine = &view.read(cx).app.read(cx).engine;
+                        engine.new_page_for(target).is_some()
+                    });
+                    return menu
+                        .item(PopupMenuItem::new("Unresolved target").disabled(true))
+                        .separator()
+                        .item(
+                            item("Create Page", |view, key, cx| view.create_page(key, cx))
+                                .disabled(!creatable),
+                        );
                 }
                 menu.item(item("Open", |view, key, cx| view.open(key, true, cx)))
                     .item(item("Open to the Side", |view, key, cx| {

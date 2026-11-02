@@ -2228,6 +2228,7 @@ impl WorkspaceView {
                         add_to_nav: module.nav.is_some() && add_to_nav.get(),
                         module: module.root,
                         title: title.read(cx).value().to_string(),
+                        file: None,
                     };
                     // A refusal keeps the dialog open, to choose another title.
                     workspace

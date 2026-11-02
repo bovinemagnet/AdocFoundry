@@ -71,6 +71,7 @@ impl Setup {
                 module,
                 title: title.to_owned(),
                 add_to_nav,
+                file: None,
             }),
         )
     }
@@ -274,6 +275,42 @@ fn a_new_page_is_refused_without_a_name_a_module_or_a_free_file() {
         ))
         .unwrap()
     );
+}
+
+#[test]
+fn a_new_page_can_name_its_file() {
+    let mut setup = Setup::new();
+    let alpha = setup.alpha();
+    let request = |file: &str| NewPage {
+        module: alpha.clone(),
+        title: "Roles".to_owned(),
+        add_to_nav: true,
+        file: Some(PathBuf::from(file)),
+    };
+    let made = request("setup/user-roles.adoc");
+    setup
+        .engine
+        .invoke(ids::PAGE_NEW, CommandArgs::NewPage(made))
+        .unwrap();
+    let page = setup.alpha().join("pages/setup/user-roles.adoc");
+    assert_eq!(fs::read_to_string(&page).unwrap(), "= Roles\n");
+    assert!(setup
+        .text(&setup.nav())
+        .contains("xref:setup/user-roles.adoc[]"));
+
+    // A file leaving the pages folder, one that is not AsciiDoc, and one there already.
+    for file in [
+        "../escape.adoc",
+        "/tmp/absolute.adoc",
+        "notes.txt",
+        "setup/user-roles.adoc",
+    ] {
+        let refused = setup
+            .engine
+            .invoke(ids::PAGE_NEW, CommandArgs::NewPage(request(file)));
+        assert!(refused.is_err(), "{file}: {refused:?}");
+    }
+    assert!(!setup.alpha().join("escape.adoc").exists());
 }
 
 #[test]

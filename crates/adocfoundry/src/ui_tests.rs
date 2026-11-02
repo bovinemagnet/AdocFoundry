@@ -6922,6 +6922,33 @@ fn dragging_a_node_pins_it_and_alt_lets_it_go(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn creating_a_ghosts_page_from_its_menu_opens_it(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    click_selector("graph-unresolved", gpui::MouseButton::Left, &mut graph_cx);
+    let ghost = adoc_engine::GraphKey::Unresolved("missing.adoc".to_owned());
+    let at = graph_cx.update(|_, cx| view.read(cx).node_position_for_test(&ghost).unwrap());
+    graph_cx.simulate_mouse_down(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+    graph_cx.simulate_mouse_up(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    // Create Page is the menu's last item.
+    graph_cx.simulate_keystrokes("up enter");
+    graph_cx.run_until_parked();
+
+    let page = root.join(GRAPH_PAGES).join("missing.adoc");
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Missing\n");
+    assert_eq!(
+        active_page(&app, &mut cx).map(|(path, _)| path),
+        Some(adoc_index::normalize_path(&page))
+    );
+    let made = graph_key(&page);
+    assert!(drain_until(&app, &mut cx, |cx| cx.update(|_, cx| {
+        let snapshot = view.read(cx).snapshot_for_test();
+        snapshot.node(&made).is_some() && snapshot.node(&ghost).is_none()
+    })));
+}
+
+#[gpui::test]
 fn hovering_a_node_highlights_it_and_its_neighbours(cx: &mut TestAppContext) {
     let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);
     let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);

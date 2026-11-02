@@ -10,7 +10,7 @@ use std::{
 };
 
 use adoc_antora::{AntoraCoordinate, NavItem, ResourceFamily};
-use adoc_index::normalize_path;
+use adoc_index::{is_asciidoc_path, normalize_path};
 
 use crate::{
     commands::{ids, register, spec},
@@ -29,6 +29,8 @@ pub struct NewPage {
     pub title: String,
     /// Whether to add the page to the module's navigation file.
     pub add_to_nav: bool,
+    /// The page's path in the module's `pages` folder, when it is not named from the title.
+    pub file: Option<PathBuf>,
 }
 
 /// A module a new page can go in.
@@ -123,12 +125,30 @@ impl Engine {
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        let slug = slug(&title);
-        if slug.is_empty() {
-            return Err(EngineError::InvalidRequest(
-                "the page needs a title with a letter or digit to name its file after".to_owned(),
-            ));
-        }
+        let file = match &request.file {
+            Some(file) => {
+                let plain = file
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)));
+                if !plain || !is_asciidoc_path(file) || title.is_empty() {
+                    return Err(EngineError::InvalidRequest(format!(
+                        "{} is not a page in the module's pages folder, with a title",
+                        file.display()
+                    )));
+                }
+                file.clone()
+            }
+            None => {
+                let slug = slug(&title);
+                if slug.is_empty() {
+                    return Err(EngineError::InvalidRequest(
+                        "the page needs a title with a letter or digit to name its file after"
+                            .to_owned(),
+                    ));
+                }
+                PathBuf::from(format!("{slug}.adoc"))
+            }
+        };
         let root = normalize_path(&request.module);
         let module = self
             .workspace
@@ -139,7 +159,7 @@ impl Engine {
             .ok_or_else(|| {
                 EngineError::InvalidRequest(format!("{} is not a module", root.display()))
             })?;
-        let path = module.root.join("pages").join(format!("{slug}.adoc"));
+        let path = normalize_path(&module.root.join("pages").join(&file));
         if path.exists() || self.document_for_path(&path).is_some() {
             return Err(EngineError::InvalidRequest(format!(
                 "{} already exists",
@@ -168,7 +188,11 @@ impl Engine {
                 let id = self.open(nav)?;
                 Some((
                     id,
-                    self.nav_entry(nav, after.as_ref(), &format!("{slug}.adoc"))?,
+                    self.nav_entry(
+                        nav,
+                        after.as_ref(),
+                        &file.to_string_lossy().replace('\\', "/"),
+                    )?,
                 ))
             }
             None => None,
