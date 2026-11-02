@@ -96,15 +96,8 @@ pub fn row_of(rows: &[Row], path: &[usize]) -> Option<usize> {
         .checked_sub(1)
 }
 
-/// Highlighted blocks kept before the cache is emptied.
-const HIGHLIGHT_CACHE_LIMIT: usize = 256;
-
 /// What this frame's rows share.
 pub fn frame(view: &VisualView, document: Arc<VisualDocument>, window: &Window, cx: &App) -> Frame {
-    // Typing adds an entry for each version of a block's text; start afresh before that grows.
-    if view.highlights.borrow().len() > HIGHLIGHT_CACHE_LIMIT {
-        view.highlights.borrow_mut().clear();
-    }
     let mut changes = {
         let engine = &view.app.read(cx).engine;
         if engine.settings().git.show_markers {

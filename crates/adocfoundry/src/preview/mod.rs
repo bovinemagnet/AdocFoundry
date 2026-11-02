@@ -547,7 +547,12 @@ fn inline_style(window: &Window, cx: &App) -> inlines::InlineStyle {
     }
 }
 
-/// Highlights `text` as `language` with the editor's tree-sitter grammars, cached.
+/// Highlighted blocks kept before the cache is emptied. Typing in a code block adds an
+/// entry for each version of its text.
+pub(crate) const HIGHLIGHT_CACHE_LIMIT: usize = 256;
+
+/// Highlights `text` as `language` with the editor's tree-sitter grammars, cached; the
+/// cache is emptied rather than grow past [`HIGHLIGHT_CACHE_LIMIT`].
 pub(crate) fn highlight(
     cache: &RefCell<HighlightCache>,
     dark: bool,
@@ -568,9 +573,11 @@ pub(crate) fn highlight(
     let rope = ropey::Rope::from_str(text);
     highlighter.update(None, &rope, None);
     let styles: Highlights = highlighter.styles(&(0..text.len()), theme).into();
-    cache
-        .borrow_mut()
-        .insert(key, (language.to_owned(), text.to_owned(), styles.clone()));
+    let mut cache = cache.borrow_mut();
+    if cache.len() >= HIGHLIGHT_CACHE_LIMIT {
+        cache.clear();
+    }
+    cache.insert(key, (language.to_owned(), text.to_owned(), styles.clone()));
     styles
 }
 
@@ -776,5 +783,35 @@ mod highlight_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use std::cell::RefCell;
+
+    use gpui_component::highlighter::HighlightTheme;
+
+    use super::{highlight, HighlightCache, HIGHLIGHT_CACHE_LIMIT};
+
+    #[test]
+    fn the_highlight_cache_stays_bounded() {
+        let cache = RefCell::new(HighlightCache::default());
+        let theme = HighlightTheme::default_light();
+        // Typing in a code block highlights each version of its text once.
+        for version in 0..HIGHLIGHT_CACHE_LIMIT * 2 {
+            highlight(
+                &cache,
+                false,
+                &theme,
+                "rust",
+                &format!("let x = {version};\n"),
+            );
+            assert!(cache.borrow().len() <= HIGHLIGHT_CACHE_LIMIT);
+        }
+        // What is cached is served from it.
+        let first = highlight(&cache, false, &theme, "rust", "fn main() {}\n");
+        let again = highlight(&cache, false, &theme, "rust", "fn main() {}\n");
+        assert!(std::rc::Rc::ptr_eq(&first, &again));
     }
 }
