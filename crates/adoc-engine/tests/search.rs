@@ -1075,3 +1075,69 @@ fn a_rename_waits_for_a_referencing_page_changed_on_disk() {
     assert_eq!(linking.base, "= Linking\n\nFirst, xref:target.adoc[].\n");
     assert_eq!(linking.edits[0].replacement, "renamed.adoc");
 }
+
+/// The names in `directory`, as the file system stores them.
+fn names_in(directory: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_case_only_rename_renames_the_page_and_its_references() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    write_files(
+        &root,
+        &[
+            ("Page.adoc", "= Page\n"),
+            ("index.adoc", "= Index\n\nSee xref:Page.adoc[].\n"),
+        ],
+    );
+    let mut engine = open_workspace(&root);
+    let index = engine.open(&root.join("index.adoc")).unwrap();
+
+    // On macOS and Windows `page.adoc` already "exists": it is `Page.adoc`.
+    rename_and_apply(
+        &mut engine,
+        &root.join("Page.adoc"),
+        &root.join("page.adoc"),
+    );
+    assert_eq!(names_in(&root), ["index.adoc", "page.adoc"]);
+    assert!(current_text(&engine, &root.join("index.adoc")).contains("xref:page.adoc[]"));
+
+    // Undo gives the page its old name back.
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(index))
+        .unwrap();
+    assert_eq!(names_in(&root), ["Page.adoc", "index.adoc"]);
+    assert!(current_text(&engine, &root.join("index.adoc")).contains("xref:Page.adoc[]"));
+}
+
+#[test]
+fn a_case_only_rename_onto_another_file_is_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    write_files(
+        &root,
+        &[("Page.adoc", "= Page\n"), ("page.adoc", "= Other\n")],
+    );
+    if names_in(&root).len() < 2 {
+        // This file system ignores case: the two names are one file, as above.
+        return;
+    }
+    let mut engine = open_workspace(&root);
+    let id = engine.open(&root.join("Page.adoc")).unwrap();
+    assert!(engine
+        .invoke(
+            ids::PAGE_RENAME,
+            CommandArgs::Rename {
+                id,
+                new_path: root.join("page.adoc"),
+            },
+        )
+        .is_err());
+}
