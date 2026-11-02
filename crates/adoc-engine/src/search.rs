@@ -397,6 +397,8 @@ impl Engine {
         let to = normalize_path(to);
         self.move_history(&from, &to);
         self.workspace.remove_document(&from);
+        self.graph_file_changed(&from);
+        self.graph_file_changed(&to);
         if let Some(id) = self.document_for_path(&from) {
             if let Some(document) = self.documents.get_mut(&id) {
                 document.path.clone_from(&to);
@@ -429,6 +431,7 @@ impl Engine {
             .collect();
         for descriptor in descriptors {
             let _ = self.workspace.reload_descriptor(&descriptor);
+            self.graph_catalog_changed();
         }
         Ok(())
     }

@@ -23,6 +23,7 @@ adoc-dom = { path = "crates/adoc-dom" }
 # Front ends choose its features: `typst` (PDF export, typeset STEM) and `git`.
 adoc-engine = { path = "crates/adoc-engine", default-features = false }
 adoc-git = { path = "crates/adoc-git" }
+adoc-graph = { path = "crates/adoc-graph" }
 adoc-index = { path = "crates/adoc-index" }
 adoc-mcp = { path = "crates/adoc-mcp" }
 adoc-lang = { path = "crates/adoc-lang" }

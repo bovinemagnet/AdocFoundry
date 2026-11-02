@@ -7,6 +7,7 @@ pub mod attributes;
 pub mod completion;
 pub mod definition;
 pub mod diagnostics;
+pub mod graph;
 pub mod hover;
 pub mod images;
 pub mod includes;

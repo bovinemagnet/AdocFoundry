@@ -30,9 +30,11 @@ pub enum Probe {
     QuickOpenItem,
     /// Every open document diagnosed again, `Engine::refresh_open_diagnostics`.
     DiagnoseOpen,
+    /// A node of the link graph made for a snapshot.
+    GraphNode,
 }
 
-const PROBES: usize = 11;
+const PROBES: usize = 12;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -74,4 +76,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::DiagnoseOpen as usize == PROBES - 1);
+const _: () = assert!(Probe::GraphNode as usize == PROBES - 1);

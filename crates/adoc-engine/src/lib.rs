@@ -22,6 +22,7 @@ mod files;
 mod format_table;
 #[cfg(feature = "git")]
 mod git;
+mod graph;
 mod html_export;
 mod images;
 // Without Git, the engine behaves as with `[git] enabled = false`.
@@ -81,6 +82,7 @@ pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
 pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};
 #[cfg(feature = "git")]
 pub use git::{GitRepository, GitState, GIT_SETTLE};
+pub use graph::{GraphScope, NavCrumb, NavPlace, Neighbour};
 pub use images::{is_image_path, ImageId, OpenImage, IMAGE_EXTENSIONS};
 pub use inspect::resource_id_string;
 pub use language::{SymbolMatch, SYMBOL_RESULTS};
@@ -100,9 +102,10 @@ pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use session::{RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE};
 pub use settings::{
-    pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, HistorySettings,
-    PdfSettings, Settings, SidebarSettings, SpellingSettings, ThemePreference, ToolSettings,
-    UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, GraphColour,
+    GraphSettings, HistorySettings, PdfSettings, Settings, SidebarSettings, SpellingSettings,
+    ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE,
+    WORKSPACE_SETTINGS_FILE,
 };
 pub use spelling::{
     Misspelling, MAX_SUGGESTED_WORDS, SPELLING_CODE, SPELLING_SETTLE, USER_WORDS_FILE,
@@ -114,6 +117,10 @@ pub use tabs::{OpenDisposition, TabItem};
 pub use words::{count_words, WordCount, WORDS_PER_MINUTE, WORD_COUNT_SETTLE};
 
 pub use adoc_core::FileAccess;
+pub use adoc_graph::{
+    EdgeKind, GraphEdge, GraphFilter, GraphKey, GraphNode, GraphSnapshot, Layout, NodeCoordinate,
+    NodeKind as GraphNodeKind, Point,
+};
 pub use adoc_index::{is_asciidoc_path, normalize_path};
 #[cfg(feature = "typst")]
 pub use adoc_pdf::PdfStandard;

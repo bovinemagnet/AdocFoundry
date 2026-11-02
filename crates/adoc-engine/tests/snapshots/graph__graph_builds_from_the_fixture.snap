@@ -1,0 +1,113 @@
+---
+source: crates/adoc-engine/tests/graph.rs
+expression: "serde_json::json!({ \"nodes\": nodes, \"edges\": edges })"
+---
+{
+  "nodes": [
+    {
+      "node": "guide/modules/ROOT/nav.adoc",
+      "title": "nav.adoc",
+      "kind": "Nav",
+      "coordinate": "1.0@guide:ROOT:nav",
+      "out": 3,
+      "in": 0
+    },
+    {
+      "node": "guide/modules/ROOT/pages/configure.adoc",
+      "title": "Configure",
+      "kind": "Page",
+      "coordinate": "1.0@guide:ROOT:page",
+      "out": 1,
+      "in": 2
+    },
+    {
+      "node": "guide/modules/ROOT/pages/index.adoc",
+      "title": "Home",
+      "kind": "Page",
+      "coordinate": "1.0@guide:ROOT:page",
+      "out": 4,
+      "in": 3
+    },
+    {
+      "node": "guide/modules/ROOT/pages/install.adoc",
+      "title": "Install",
+      "kind": "Page",
+      "coordinate": "1.0@guide:ROOT:page",
+      "out": 4,
+      "in": 3
+    },
+    {
+      "node": "guide/modules/ROOT/pages/orphan.adoc",
+      "title": "Orphan",
+      "kind": "Page",
+      "coordinate": "1.0@guide:ROOT:page",
+      "out": 0,
+      "in": 0
+    },
+    {
+      "node": "guide/modules/ROOT/partials/note.adoc",
+      "title": "note.adoc",
+      "kind": "Partial",
+      "coordinate": "1.0@guide:ROOT:partial",
+      "out": 0,
+      "in": 2
+    },
+    {
+      "node": "guide/modules/admin/pages/users.adoc",
+      "title": "Users",
+      "kind": "Page",
+      "coordinate": "1.0@guide:admin:page",
+      "out": 1,
+      "in": 2
+    },
+    {
+      "node": "loose/_part.adoc",
+      "title": "_part.adoc",
+      "kind": "Partial",
+      "coordinate": null,
+      "out": 0,
+      "in": 1
+    },
+    {
+      "node": "loose/chapter.adoc",
+      "title": "Chapter",
+      "kind": "Page",
+      "coordinate": null,
+      "out": 1,
+      "in": 0
+    },
+    {
+      "node": "reference/modules/ROOT/pages/api.adoc",
+      "title": "API",
+      "kind": "Page",
+      "coordinate": "~@reference:ROOT:page",
+      "out": 1,
+      "in": 1
+    },
+    {
+      "node": "?missing.adoc",
+      "title": "missing.adoc",
+      "kind": "Unresolved",
+      "coordinate": null,
+      "out": 0,
+      "in": 1
+    }
+  ],
+  "edges": [
+    "guide/modules/ROOT/nav.adoc -Nav×1-> guide/modules/ROOT/pages/index.adoc",
+    "guide/modules/ROOT/nav.adoc -Nav×2-> guide/modules/ROOT/pages/install.adoc",
+    "guide/modules/ROOT/nav.adoc -Nav×1-> guide/modules/admin/pages/users.adoc",
+    "guide/modules/ROOT/pages/configure.adoc -Xref×1-> guide/modules/ROOT/pages/index.adoc",
+    "guide/modules/ROOT/pages/index.adoc -Xref×2-> guide/modules/ROOT/pages/install.adoc",
+    "guide/modules/ROOT/pages/index.adoc -Include×1-> guide/modules/ROOT/partials/note.adoc",
+    "guide/modules/ROOT/pages/index.adoc -Xref×1-> guide/modules/admin/pages/users.adoc",
+    "guide/modules/ROOT/pages/index.adoc -Xref×1-> reference/modules/ROOT/pages/api.adoc",
+    "guide/modules/ROOT/pages/install.adoc -Xref×1-> guide/modules/ROOT/pages/configure.adoc",
+    "guide/modules/ROOT/pages/install.adoc -Nav×1-> guide/modules/ROOT/pages/configure.adoc",
+    "guide/modules/ROOT/pages/install.adoc -Include×1-> guide/modules/ROOT/partials/note.adoc",
+    "guide/modules/ROOT/pages/install.adoc -Xref×1-> ?missing.adoc",
+    "guide/modules/admin/pages/users.adoc -Xref×1-> guide/modules/ROOT/pages/install.adoc",
+    "loose/chapter.adoc -Include×1-> loose/_part.adoc",
+    "reference/modules/ROOT/pages/api.adoc -Xref×1-> guide/modules/ROOT/pages/index.adoc"
+  ]
+}

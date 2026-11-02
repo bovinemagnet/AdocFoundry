@@ -1,0 +1,7 @@
+= Home
+
+Start with xref:install.adoc[installing] the guide, then read about xref:admin:users.adoc[users].
+The xref:reference::api.adoc[API] is described in its own component.
+The old xref:setup.adoc[setup page] still works.
+
+include::partial$note.adoc[]

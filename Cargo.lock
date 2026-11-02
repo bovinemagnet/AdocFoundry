@@ -179,6 +179,7 @@ dependencies = [
  "adoc-diagrams",
  "adoc-dom",
  "adoc-git",
+ "adoc-graph",
  "adoc-index",
  "adoc-lang",
  "adoc-math",
@@ -209,6 +210,10 @@ dependencies = [
  "gix",
  "tempfile",
 ]
+
+[[package]]
+name = "adoc-graph"
+version = "0.5.0"
 
 [[package]]
 name = "adoc-index"

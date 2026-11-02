@@ -11,6 +11,10 @@ pub enum EngineEvent {
     },
     /// The workspace's problems (`Engine::problems`) changed.
     ProblemsChanged,
+    /// The link graph (`Engine::graph`) changed, and now has this revision.
+    GraphChanged {
+        revision: u64,
+    },
     DocumentOpened(DocumentId),
     DocumentChanged {
         id: DocumentId,

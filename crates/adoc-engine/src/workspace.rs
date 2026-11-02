@@ -45,6 +45,8 @@ pub(crate) enum WorkerMessage {
         state: Box<WorkspaceState>,
         /// Quick Open's items, built from `state`.
         quick_open: Box<QuickOpenCache>,
+        /// The link graph, built from `state`.
+        graph: Box<crate::graph::Built>,
         files: usize,
         /// The folders and files that could not be read.
         unreadable: Vec<PathBuf>,
@@ -145,6 +147,10 @@ pub(crate) enum WorkerMessage {
     #[cfg(feature = "typst")]
     PdfPreviewTypeset {
         preview: Box<crate::PdfPreview>,
+    },
+    GraphBuilt {
+        generation: u64,
+        built: Box<crate::graph::Built>,
     },
     /// A worker whose job has no failure of its own panicked, saying `error`.
     Crashed {
@@ -381,6 +387,7 @@ impl Engine {
                 Ok(report) => WorkerMessage::Indexed {
                     generation,
                     quick_open: Box::new(QuickOpenCache::new(&state, &roots)),
+                    graph: Box::new(crate::graph::build(&state, &BTreeMap::new())),
                     roots,
                     state: Box::new(state),
                     files: report.files,
@@ -410,6 +417,7 @@ impl Engine {
             || self.has_due_recovery()
             || self.has_due_html_export()
             || self.has_due_problems()
+            || self.has_due_graph()
             || self
                 .watcher
                 .as_ref()
@@ -450,6 +458,7 @@ impl Engine {
             + self.write_due_recovery()
             + self.write_due_html_exports()
             + self.update_due_problems()
+            + self.update_due_graph()
     }
 
     /// Blocks until every running worker has reported back, or `timeout` passes, applying the
@@ -485,6 +494,7 @@ impl Engine {
                 roots,
                 state,
                 quick_open,
+                graph,
                 files,
                 unreadable,
                 entered,
@@ -510,6 +520,7 @@ impl Engine {
                 }
                 self.workspace = *state;
                 *self.quick_open.borrow_mut() = *quick_open;
+                self.graph_indexed(*graph);
                 self.restore_branch_versions();
                 // Open documents are newer than the files the worker read.
                 let open: Vec<_> = self
@@ -519,6 +530,7 @@ impl Engine {
                     .map(|document| (document.path.clone(), document.parsed().clone()))
                     .collect();
                 for (path, parsed) in open {
+                    self.graph_file_changed(&path);
                     self.workspace.replace_document(path, parsed);
                 }
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
@@ -603,6 +615,7 @@ impl Engine {
             WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
             #[cfg(feature = "typst")]
             WorkerMessage::PdfPreviewTypeset { preview } => self.pdf_preview_typeset(*preview),
+            WorkerMessage::GraphBuilt { generation, built } => self.graph_built(generation, *built),
             WorkerMessage::Crashed { job, error } => self.worker_crashed(job, error),
             WorkerMessage::IndexFailed { generation, error } => {
                 self.indexing = self.indexing.saturating_sub(1);
@@ -773,6 +786,7 @@ impl Engine {
     pub(crate) fn reload_descriptor(&mut self, descriptor: &Path) {
         // A failure is recorded in the workspace's descriptor issues and reported as a diagnostic.
         let _ = self.workspace.reload_descriptor(descriptor);
+        self.graph_catalog_changed();
         self.emit(EngineEvent::CatalogChanged {
             descriptor: descriptor.to_path_buf(),
         });
@@ -834,6 +848,7 @@ impl Engine {
             }
             None => self.workspace.remove_document(path),
         }
+        self.graph_file_changed(path);
         self.preview_source_changed(path);
         self.visual_source_changed(path);
         self.emit(EngineEvent::DiagnosticsUpdated {
@@ -889,6 +904,7 @@ mod tests {
         WorkerMessage::Indexed {
             generation,
             quick_open: Box::default(),
+            graph: Box::default(),
             roots: roots.to_vec(),
             state: Box::new(state),
             files,

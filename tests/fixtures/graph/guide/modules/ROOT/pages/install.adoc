@@ -1,0 +1,13 @@
+= Install
+:page-aliases: setup.adoc
+
+See xref:configure.adoc[] once installed, and xref:missing.adoc[the missing page].
+Pages from xref:elsewhere::page.adoc[another site] are published elsewhere.
+
+include::partial$note.adoc[]
+
+include::{snippets}/example.adoc[]
+
+ifdef::with-options[]
+include::partial$optional.adoc[]
+endif::[]

@@ -1,0 +1,228 @@
+//! One file's links, for the engine's link graph: each xref and include resolved to the file it
+//! reaches, or kept as an unresolved target.
+
+use std::path::{Path, PathBuf};
+
+use adoc_antora::{parse_resource_id, ResolutionError};
+use adoc_core::{Document, ReferenceKind, SourceRange};
+use adoc_index::{is_asciidoc_path, normalize_path, resolve_include_target};
+
+use crate::{definition::reference_target_path, WorkspaceState};
+
+/// What a link is.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum LinkKind {
+    Xref,
+    Include,
+    Nav,
+}
+
+/// Where a link leads.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum LinkTarget {
+    /// A normalised path.
+    File(PathBuf),
+    /// A target that does not resolve, as written, without its fragment.
+    Unresolved(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Link {
+    pub kind: LinkKind,
+    pub target: LinkTarget,
+    /// The xref or include directive.
+    pub range: SourceRange,
+}
+
+/// The xrefs and includes of the indexed file at `path`, in source order, each resolved as
+/// following it would. A link to the file itself, an anchor-only xref, a dynamic target
+/// (`include::{attr}/x.adoc[]`), an xref into a component or version published elsewhere and
+/// an include that is not AsciiDoc make no link. A conditional include that does not resolve
+/// makes none either, as it is left out of the diagnostics.
+#[must_use]
+pub fn links_from(ws: &WorkspaceState, path: &Path) -> Vec<Link> {
+    let path = normalize_path(path);
+    let Some(file) = ws.index.file(&path) else {
+        return Vec::new();
+    };
+    let mut links = Vec::new();
+    xrefs(ws, &path, &file.document, &mut links);
+    includes(ws, &path, &file.document, &mut links);
+    links.retain(|link| link.target != LinkTarget::File(path.clone()));
+    links.sort_by_key(|link| link.range);
+    links
+}
+
+fn xrefs(ws: &WorkspaceState, path: &Path, document: &Document, links: &mut Vec<Link>) {
+    // A page often names one target many times: each is resolved once.
+    let mut resolved: std::collections::BTreeMap<&str, Option<LinkTarget>> =
+        std::collections::BTreeMap::new();
+    for reference in &document.references {
+        if reference.kind != ReferenceKind::Xref {
+            continue;
+        }
+        let target = reference
+            .target
+            .split_once('#')
+            .map_or(reference.target.as_str(), |(file, _)| file)
+            .trim();
+        if target.is_empty() || is_dynamic(target) || target.contains("://") {
+            continue;
+        }
+        let target = resolved.entry(target).or_insert_with(|| {
+            match reference_target_path(&ws.index, &ws.antora, path, target) {
+                Some(found) => Some(LinkTarget::File(normalize_path(&found))),
+                None if published_elsewhere(ws, path, target) => None,
+                None => Some(LinkTarget::Unresolved(target.to_owned())),
+            }
+        });
+        let Some(target) = target.clone() else {
+            continue;
+        };
+        links.push(Link {
+            kind: LinkKind::Xref,
+            target,
+            range: reference.range,
+        });
+    }
+}
+
+fn includes(ws: &WorkspaceState, path: &Path, document: &Document, links: &mut Vec<Link>) {
+    for include in &document.includes {
+        let target = include.target.trim();
+        if target.is_empty() || target.contains("://") {
+            continue;
+        }
+        // As `includes_of` resolves them: relative and attribute targets, then resource ids.
+        let resolved = resolve_include_target(document, path, target)
+            .filter(|found| ws.index.file(found).is_some() || found.is_file())
+            .or_else(|| reference_target_path(&ws.index, &ws.antora, path, target));
+        let target = match resolved {
+            Some(found) if is_asciidoc_path(&found) => LinkTarget::File(normalize_path(&found)),
+            Some(_) => continue,
+            None if include.conditional
+                || is_dynamic(target)
+                || published_elsewhere(ws, path, target) =>
+            {
+                continue
+            }
+            None if is_asciidoc_path(Path::new(resource_path(target))) => {
+                LinkTarget::Unresolved(target.to_owned())
+            }
+            None => continue,
+        };
+        links.push(Link {
+            kind: LinkKind::Include,
+            target,
+            range: include.range,
+        });
+    }
+}
+
+/// An Antora target naming a component or version missing from the workspace: published from
+/// elsewhere in the playbook, so not a broken link.
+fn published_elsewhere(ws: &WorkspaceState, path: &Path, target: &str) -> bool {
+    let (Some(context), Ok(id)) = (ws.antora.context_for_path(path), parse_resource_id(target))
+    else {
+        return false;
+    };
+    matches!(
+        ws.antora.resolve_detailed(&id, &context),
+        Err(ResolutionError::UnknownComponent { .. } | ResolutionError::UnknownVersion { .. })
+    )
+}
+
+/// The path part of a target, after any resource id's coordinates.
+fn resource_path(target: &str) -> &str {
+    let after_family = target.rsplit_once('$').map_or(target, |(_, path)| path);
+    after_family
+        .rsplit_once(':')
+        .map_or(after_family, |(_, path)| path)
+}
+
+fn is_dynamic(target: &str) -> bool {
+    target.contains('{') || target.contains('}')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> PathBuf {
+        normalize_path(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/graph")
+                .join(name),
+        )
+    }
+
+    fn workspace() -> WorkspaceState {
+        let mut ws = WorkspaceState::new();
+        ws.index_roots(&[fixture("")]).unwrap();
+        ws
+    }
+
+    fn targets(ws: &WorkspaceState, page: &str) -> Vec<(LinkKind, String)> {
+        let root = fixture("");
+        links_from(ws, &fixture(page))
+            .into_iter()
+            .map(|link| {
+                let target = match link.target {
+                    LinkTarget::File(path) => path
+                        .strip_prefix(&root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                    LinkTarget::Unresolved(text) => format!("?{text}"),
+                };
+                (link.kind, target)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn links_from_resolves_xrefs_and_includes() {
+        let ws = workspace();
+        let found = targets(&ws, "guide/modules/ROOT/pages/index.adoc");
+        let expected = [
+            (LinkKind::Xref, "guide/modules/ROOT/pages/install.adoc"),
+            (LinkKind::Xref, "guide/modules/admin/pages/users.adoc"),
+            (LinkKind::Xref, "reference/modules/ROOT/pages/api.adoc"),
+            // Through the `page-aliases` of `install.adoc`.
+            (LinkKind::Xref, "guide/modules/ROOT/pages/install.adoc"),
+            (LinkKind::Include, "guide/modules/ROOT/partials/note.adoc"),
+        ];
+        for (kind, path) in expected {
+            assert!(
+                found.contains(&(kind, path.to_owned())),
+                "{kind:?} {path} in {found:?}"
+            );
+        }
+        // A relative include outside any module resolves too.
+        let plain = targets(&ws, "loose/chapter.adoc");
+        assert_eq!(plain, [(LinkKind::Include, "loose/_part.adoc".to_owned())]);
+    }
+
+    #[test]
+    fn links_from_keeps_unresolved_and_skips_dynamic() {
+        let ws = workspace();
+        let found = targets(&ws, "guide/modules/ROOT/pages/install.adoc");
+        assert!(found.contains(&(LinkKind::Xref, "?missing.adoc".to_owned())));
+        // The dynamic include and the conditional one that does not resolve make no link,
+        // nor does an xref into a component published elsewhere.
+        assert!(found
+            .iter()
+            .all(|(_, target)| !target.contains("{") && !target.contains("optional")));
+        assert!(found
+            .iter()
+            .all(|(_, target)| !target.contains("elsewhere")));
+
+        let mut half_typed = WorkspaceState::new();
+        let page = Path::new("/docs/page.adoc");
+        half_typed.index.index_source(
+            page,
+            "= Page\n\nxref:[] and xref:#top[] and xref:: and include::[]\ninclude::{\n",
+        );
+        assert!(links_from(&half_typed, page).is_empty());
+    }
+}

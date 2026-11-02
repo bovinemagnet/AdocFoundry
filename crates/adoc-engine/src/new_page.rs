@@ -277,6 +277,7 @@ impl Engine {
                     let _ = self.close(id);
                 }
                 self.workspace.remove_document(&file.path);
+                self.graph_file_changed(&file.path);
                 self.catalog_changed_at(&file.path);
             } else if !file.path.exists() && create_file(&file.path, &file.text).is_ok() {
                 self.catalog_changed_at(&file.path);

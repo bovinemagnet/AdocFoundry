@@ -71,6 +71,9 @@ pub mod ids {
     pub const VIEW_SHOW_SOURCE: CommandId = CommandId::new("view.show_source");
     pub const VIEW_SHOW_VISUAL: CommandId = CommandId::new("view.show_visual");
     pub const VIEW_SHOW_SPLIT: CommandId = CommandId::new("view.show_split");
+    pub const VIEW_GRAPH: CommandId = CommandId::new("view.graph");
+    pub const VIEW_LOCAL_GRAPH: CommandId = CommandId::new("view.local_graph");
+    pub const GRAPH_RESET_LAYOUT: CommandId = CommandId::new("graph.reset_layout");
     pub const VISUAL_INSERT_TEXT: CommandId = CommandId::new("visual.insert_text");
     pub const VISUAL_DELETE_BACKWARD: CommandId = CommandId::new("visual.delete_backward");
     pub const VISUAL_DELETE_FORWARD: CommandId = CommandId::new("visual.delete_forward");
@@ -537,6 +540,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::quick_open::register_quick_open(registry);
     crate::session::register_session(registry);
     crate::new_page::register_new_page(registry);
+    crate::graph::register_graph(registry);
     #[cfg(feature = "git")]
     {
         crate::git::register_git(registry);

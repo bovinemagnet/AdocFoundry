@@ -23,6 +23,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-lang", 1),
     ("adoc-math", 1),
     ("adoc-spell", 1),
+    ("adoc-graph", 1),
     ("adoc-render", 2),
     ("adoc-diagrams", 2),
     ("adoc-model", 2),
