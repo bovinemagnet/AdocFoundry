@@ -34,6 +34,12 @@ impl Engine {
         self.history.carets.insert(id, offset);
     }
 
+    /// Document `id`'s caret, as its front end last reported it.
+    #[must_use]
+    pub fn caret(&self, id: DocumentId) -> Option<usize> {
+        self.history.carets.get(&id).copied()
+    }
+
     /// Moves the positions in `path` that history keeps, and document `id`'s caret, through
     /// `edits`, so going back arrives where the text it left now is.
     pub(crate) fn navigation_edited(&mut self, id: DocumentId, path: &Path, edits: &[TextEdit]) {

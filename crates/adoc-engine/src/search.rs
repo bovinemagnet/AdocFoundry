@@ -784,7 +784,7 @@ fn image_target_range(text: &str, directive: SourceRange) -> Option<SourceRange>
 
 /// `id` with `family$` before its path: `partial$notes/token.adoc` from `notes/token.adoc`, or
 /// `security:partial$token.adoc` from `security:token.adoc`.
-fn with_family(id: String, family: ResourceFamily) -> String {
+pub(crate) fn with_family(id: String, family: ResourceFamily) -> String {
     match id.rsplit_once(':') {
         Some((coordinates, path)) => format!("{coordinates}:{family}${path}"),
         None => format!("{family}${id}"),
@@ -793,7 +793,11 @@ fn with_family(id: String, family: ResourceFamily) -> String {
 
 /// The shortest resource id that names `coordinate` from `context`, keeping the explicit
 /// coordinates the original target `original` used.
-fn antora_id(context: &AntoraContext, coordinate: &AntoraCoordinate, original: &str) -> String {
+pub(crate) fn antora_id(
+    context: &AntoraContext,
+    coordinate: &AntoraCoordinate,
+    original: &str,
+) -> String {
     let path = slash_path(&coordinate.relative_path);
     let original = parse_resource_id(original).ok();
     let had_component = original.as_ref().is_some_and(|id| id.component.is_some());
@@ -822,7 +826,7 @@ fn antora_id(context: &AntoraContext, coordinate: &AntoraCoordinate, original: &
 }
 
 /// `to` relative to the directory `from`, with `/` separators.
-fn relative_path(from: &Path, to: &Path) -> String {
+pub(crate) fn relative_path(from: &Path, to: &Path) -> String {
     let from = normalize_path(from);
     let from: Vec<Component> = from.components().collect();
     let to_components: Vec<Component> = to.components().collect();
@@ -841,7 +845,7 @@ fn relative_path(from: &Path, to: &Path) -> String {
     parts.join("/")
 }
 
-fn slash_path(path: &Path) -> String {
+pub(crate) fn slash_path(path: &Path) -> String {
     path.components()
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()

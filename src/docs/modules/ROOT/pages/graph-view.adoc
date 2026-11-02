@@ -133,12 +133,30 @@ Right-click a node for its menu:
 |Open to the Side
 |Opens the page in a tab and pins the docked xref:preview.adoc[preview] to it, so it shows beside the page you are editing. The app has no editor split, so the preview is the side.
 
+|Insert Xref at Caret
+|Page nodes only.
+Writes `+xref:<target>[]+` into the active page in the main window at its caret, or at the end of the page if the caret has not moved since it opened.
+It is set apart by a space when it would follow a word.
+
+|Include at Caret
+|Partial nodes only.
+Writes `+include::<target>[]+` on the caret's line when that line is blank, otherwise on a new line after it.
+
 |Find References
 |Lists the references to the page.
 
 |Reveal in Files
 |Selects the file in the Files panel.
 |===
+
+The target is the shortest resource id that names the file from the active page.
+For example, it is `+configure.adoc+` in the same module, `+admin:users.adoc+` in another module, `+reference:ROOT:api.adoc+` in another component, and `+partial$note.adoc+` for an include.
+A version is written only when it is needed to reach the file.
+Outside Antora it is a path relative to the active page.
+The link is checked to resolve before it is written.
+
+Insert Xref at Caret and Include at Caret are greyed out when there is no active AsciiDoc page, when the node is the active page itself, or when the page cannot name the file, such as an Antora page and a file outside any component.
+Either one is an ordinary edit, so Undo takes it out, and the new edge appears in the graph as the page is re-indexed.
 
 Right-click an unresolved target, shown when the Unresolved toggle is on, and its menu offers *Create Page* below the greyed-out "Unresolved target" label.
 It makes the page the broken link expects and opens it in a tab.
@@ -151,14 +169,32 @@ Create Page is `page.new` underneath, so one Undo takes it back on the same term
 The file is deleted and its tab closed only while it still holds what was written and has no unsaved edits.
 Once the page exists, the unresolved target becomes a page node with its edges, with no rebuild.
 
-Create Page is greyed out when there is no page to make:
+An unresolved target of an include offers *Create Partial* instead.
+It makes an empty file where the include expects it and opens it.
+For a resource id with a family, such as `+include::partial$tips.adoc[]+`, the file goes in that family's folder of the module, so this makes `modules/ROOT/partials/tips.adoc`.
+For a plain path, such as `+include::parts/_gone.adoc[]+`, the file goes relative to the including page's folder, which also works outside Antora.
+The file must be inside a workspace folder.
+Undo deletes it on the same terms as New Page.
+
+The menu shows Create Page for the targets of xrefs and Create Partial for the targets of includes, and both when a target is named both ways.
+When neither can be made, Create Page shows greyed out.
+
+Create Page is unavailable when:
 
 * The link is outside an Antora module.
-* The link is an include rather than an xref.
 * The target is in another family, such as `partial$`.
 * The target is in a module or component the workspace does not have.
 * The path leaves the `pages` folder with `../`.
 * Different links that share the target's text expect different files.
+
+Create Partial is unavailable when:
+
+* The target is dynamic (it uses an attribute, such as `+{snippets}/x.adoc+`) or is a URL.
+* The target is not an AsciiDoc file.
+* A resource id names a component, version or module the workspace does not have.
+* A resource id's path leaves its family's folder with `../`.
+* The file would fall outside every workspace folder.
+* Different includes that share the target's text expect different files.
 
 The side panel lists the selected node's *Links out* and *Backlinks*, one row for each neighbour.
 A row names every kind of link between the two, such as `xref · nav`.

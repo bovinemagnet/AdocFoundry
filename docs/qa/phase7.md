@@ -32,6 +32,8 @@ Automated coverage for reference:
 - [ ] Click a node: its page opens in the preview tab of the main window, and the side panel lists its links out and backlinks with their kinds (`xref · nav` for Configure from Install). Double click: the page is kept open.
 - [ ] Right-click a node: Open, Open to the Side (the page opens and the docked preview is pinned to it), Find References (the panel below the editor lists them) and Reveal in Files.
 - [ ] With Unresolved on, right-click `missing.adoc`: Create Page makes `guide/modules/ROOT/pages/missing.adoc` titled "Missing" and opens it, and the ghost becomes a page linked from Install. Undo takes it back.
+- [ ] Type `include::partial$tips.adoc[]` into a page; with Unresolved on, right-click its ghost: Create Partial makes an empty `partials/tips.adoc` and opens it.
+- [ ] With `orphan.adoc` active and its caret in a paragraph, right-click Configure: Insert Xref at Caret writes `xref:configure.adoc[]` there; right-click `note.adoc`: Include at Caret writes `include::partial$note.adoc[]` on a line of its own. The edges appear, and Undo takes each out.
 - [ ] Search for `inst`: Install is highlighted and labelled, the rest dimmed.
 - [ ] The toggles hide and show partials, navigation, orphans (`orphan.adoc`) and unresolved targets; the component menu hides `reference`; Colour cycles component, module and family; Local shows the active page's neighbourhood at depths 1 to 3; Reset Layout lays it out again and unpins.
 - [ ] Tab and Shift-Tab move the selection through the nodes in title order, and Enter opens the selected one.

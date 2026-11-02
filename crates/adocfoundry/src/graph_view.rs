@@ -8,12 +8,17 @@
 //! neighbours. A click selects a node and opens its page as a preview, a double click keeps it
 //! open, and both go through `navigate.go_to` as every other way of opening a page does.
 
-use std::{cell::Cell, cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::Cell,
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use adoc_engine::{
-    commands::ids, CommandArgs, CommandOutcome, EdgeKind, EngineEvent, GraphColour, GraphFilter,
-    GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, Layout, NavPlace, NavigationPosition,
-    Neighbour, Point as LayoutPoint, TabItem,
+    commands::ids, CommandArgs, CommandOutcome, DocumentId, EdgeKind, Engine, EngineEvent,
+    GraphColour, GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, Layout,
+    LinkStyle, NavPlace, NavigationPosition, Neighbour, Point as LayoutPoint, TabItem, TextEdit,
 };
 use gpui::{
     actions, canvas, div, point, prelude::FluentBuilder as _, px, quad, size, App, AppContext as _,
@@ -37,6 +42,22 @@ use crate::{
 };
 
 actions!(adocfoundry, [NextNode, PreviousNode, OpenNode]);
+
+/// The active page and the edit linking it to the file at `path` at its caret, or at its end
+/// before any caret has been reported.
+fn link_from_active(
+    engine: &Engine,
+    path: &Path,
+    style: LinkStyle,
+) -> Option<(DocumentId, TextEdit)> {
+    let id = engine.active()?;
+    let offset = engine
+        .caret(id)
+        .or_else(|| engine.document(id).map(|document| document.text.len()))?;
+    engine
+        .link_edit(id, offset, path, style)
+        .map(|edit| (id, edit))
+}
 
 /// The key context of the graph's canvas, where Tab, Shift-Tab and Enter move between nodes
 /// and open one rather than moving focus.
@@ -371,6 +392,40 @@ impl GraphView {
         self.app.update(cx, |app, cx| {
             if let Some(request) = app.engine.new_page_for(target) {
                 let _ = app.invoke(ids::PAGE_NEW, CommandArgs::NewPage(request), cx);
+            }
+        });
+    }
+
+    /// Makes the file the unresolved include target `key` names, where its includes expect it,
+    /// and opens it.
+    fn create_partial(&mut self, key: &GraphKey, cx: &mut Context<Self>) {
+        let GraphKey::Unresolved(target) = key else {
+            return;
+        };
+        self.app.update(cx, |app, cx| {
+            if let Some(path) = app.engine.new_partial_for(target) {
+                let _ = app.invoke(ids::PAGE_NEW_PARTIAL, CommandArgs::Path(path), cx);
+            }
+        });
+    }
+
+    /// Writes a link to `key`'s file into the active page at its caret, as an xref or an
+    /// include.
+    fn link_from_active(&mut self, key: &GraphKey, style: LinkStyle, cx: &mut Context<Self>) {
+        let Some(path) = key.path().map(Path::to_path_buf) else {
+            return;
+        };
+        self.app.update(cx, |app, cx| {
+            if let Some((id, edit)) = link_from_active(&app.engine, &path, style) {
+                let _ = app.invoke(
+                    ids::EDIT_INSERT_TEXT,
+                    CommandArgs::Text {
+                        id,
+                        range: edit.range,
+                        text: edit.replacement,
+                    },
+                    cx,
+                );
             }
         });
     }
@@ -806,30 +861,82 @@ impl GraphView {
                         }
                     })
                 };
-                if let GraphKey::Unresolved(target) = &key {
-                    let creatable = view.upgrade().is_some_and(|view| {
-                        let engine = &view.read(cx).app.read(cx).engine;
-                        engine.new_page_for(target).is_some()
-                    });
-                    return menu
+                let Some(this) = view.upgrade() else {
+                    return menu;
+                };
+                let (page, partial, xref, include) = {
+                    let graph = this.read(cx);
+                    let engine = &graph.app.read(cx).engine;
+                    match &key {
+                        GraphKey::Unresolved(target) => (
+                            engine.new_page_for(target).is_some(),
+                            engine.new_partial_for(target).is_some(),
+                            None,
+                            None,
+                        ),
+                        GraphKey::File(path) => {
+                            let kind = graph.snapshot.node(&key).map(|node| node.kind);
+                            let linkable =
+                                |style| link_from_active(engine, path, style).is_some();
+                            (
+                                false,
+                                false,
+                                (kind == Some(GraphNodeKind::Page))
+                                    .then(|| linkable(LinkStyle::Xref)),
+                                (kind == Some(GraphNodeKind::Partial))
+                                    .then(|| linkable(LinkStyle::Include)),
+                            )
+                        }
+                    }
+                };
+                if key.path().is_none() {
+                    let mut menu = menu
                         .item(PopupMenuItem::new("Unresolved target").disabled(true))
-                        .separator()
-                        .item(
+                        .separator();
+                    if page || !partial {
+                        menu = menu.item(
                             item("Create Page", |view, key, cx| view.create_page(key, cx))
-                                .disabled(!creatable),
+                                .disabled(!page),
                         );
+                    }
+                    if partial {
+                        menu = menu.item(item("Create Partial", |view, key, cx| {
+                            view.create_partial(key, cx);
+                        }));
+                    }
+                    return menu;
                 }
-                menu.item(item("Open", |view, key, cx| view.open(key, true, cx)))
+                let mut menu = menu
+                    .item(item("Open", |view, key, cx| view.open(key, true, cx)))
                     .item(item("Open to the Side", |view, key, cx| {
                         view.open_to_the_side(key, cx);
                     }))
-                    .separator()
-                    .item(item("Find References", |view, key, cx| {
-                        view.find_references(key, cx);
-                    }))
-                    .item(item("Reveal in Files", |view, key, cx| {
-                        view.reveal_in_files(key, cx);
-                    }))
+                    .separator();
+                if let Some(enabled) = xref {
+                    menu = menu.item(
+                        item("Insert Xref at Caret", |view, key, cx| {
+                            view.link_from_active(key, LinkStyle::Xref, cx);
+                        })
+                        .disabled(!enabled),
+                    );
+                }
+                if let Some(enabled) = include {
+                    menu = menu.item(
+                        item("Include at Caret", |view, key, cx| {
+                            view.link_from_active(key, LinkStyle::Include, cx);
+                        })
+                        .disabled(!enabled),
+                    );
+                }
+                if xref.is_some() || include.is_some() {
+                    menu = menu.separator();
+                }
+                menu.item(item("Find References", |view, key, cx| {
+                    view.find_references(key, cx);
+                }))
+                .item(item("Reveal in Files", |view, key, cx| {
+                    view.reveal_in_files(key, cx);
+                }))
             })
             .into_any_element()
     }

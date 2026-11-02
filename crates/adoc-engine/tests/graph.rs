@@ -15,8 +15,8 @@ use adoc_core::{
 };
 use adoc_engine::{
     commands::ids, normalize_path, CommandArgs, CommandOutcome, EdgeKind, Engine, EngineEvent,
-    GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, ManualClock, NavCrumb,
-    NewPage, Settings, INDEX_SETTLE,
+    GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, LinkStyle, ManualClock,
+    NavCrumb, NewPage, Settings, INDEX_SETTLE,
 };
 
 fn fixture() -> PathBuf {
@@ -338,6 +338,172 @@ fn a_ghost_offers_the_page_its_links_expect() {
         EdgeKind::Xref
     ));
     assert_eq!(copy.engine.new_page_for("missing.adoc"), None);
+}
+
+/// Opens `path` and types `text` at its end, and waits for the graph to follow.
+fn type_at_end(copy: &mut Copy, path: &Path, text: &str) -> adoc_engine::DocumentId {
+    let id = copy.engine.open(path).unwrap();
+    let end = copy.engine.document(id).unwrap().text.len();
+    copy.engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(end, end),
+                text: text.to_owned(),
+            },
+        )
+        .unwrap();
+    copy.clock.advance(INDEX_SETTLE);
+    assert!(copy.until_graph_changed());
+    id
+}
+
+#[test]
+fn a_ghost_include_offers_the_partial_it_expects() {
+    let mut copy = Copy::new();
+    let install = copy.page("install.adoc");
+    type_at_end(&mut copy, &install, "\ninclude::partial$tips.adoc[]\n");
+    let partial = copy.root.join("guide/modules/ROOT/partials/tips.adoc");
+    assert_eq!(
+        copy.engine.new_partial_for("partial$tips.adoc"),
+        Some(partial.clone())
+    );
+    // An xref's ghost is a page's, not a partial's.
+    assert_eq!(copy.engine.new_partial_for("missing.adoc"), None);
+    assert_eq!(copy.engine.new_page_for("partial$tips.adoc"), None);
+
+    let outcome = copy
+        .engine
+        .invoke(ids::PAGE_NEW_PARTIAL, CommandArgs::Path(partial.clone()))
+        .unwrap();
+    let CommandOutcome::Opened(id) = outcome else {
+        panic!("expected the partial opened, got {outcome:?}");
+    };
+    assert_eq!(copy.engine.active(), Some(id));
+    assert_eq!(fs::read_to_string(&partial).unwrap(), "");
+    assert!(copy.until_graph_changed());
+    let after = copy.engine.graph(&GraphScope::Workspace, &everything());
+    assert!(after
+        .node(&GraphKey::Unresolved("partial$tips.adoc".to_owned()))
+        .is_none());
+    assert_eq!(
+        after.node(&file(&partial)).unwrap().kind,
+        GraphNodeKind::Partial
+    );
+    assert!(has_edge(
+        &after,
+        &copy.root,
+        "guide/modules/ROOT/pages/install.adoc",
+        "guide/modules/ROOT/partials/tips.adoc",
+        EdgeKind::Include
+    ));
+
+    // One undo takes it back; a file there already, or outside the workspace, is refused.
+    copy.engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+        .unwrap();
+    assert!(!partial.exists());
+    for path in [
+        copy.page("install.adoc"),
+        PathBuf::from("/tmp/elsewhere.adoc"),
+    ] {
+        let refused = copy
+            .engine
+            .invoke(ids::PAGE_NEW_PARTIAL, CommandArgs::Path(path.clone()));
+        assert!(refused.is_err(), "{}: {refused:?}", path.display());
+    }
+}
+
+#[test]
+fn a_ghost_include_outside_antora_is_made_beside_its_page() {
+    let mut copy = Copy::new();
+    let chapter = copy.root.join("loose/chapter.adoc");
+    type_at_end(&mut copy, &chapter, "\ninclude::parts/_gone.adoc[]\n");
+    assert_eq!(
+        copy.engine.new_partial_for("parts/_gone.adoc"),
+        Some(copy.root.join("loose/parts/_gone.adoc"))
+    );
+}
+
+#[test]
+fn a_link_from_the_active_page_is_written_as_it_resolves() {
+    let mut copy = Copy::new();
+    let install = copy.page("install.adoc");
+    let id = copy.engine.open(&install).unwrap();
+    let text = copy.engine.document(id).unwrap().text.to_string();
+    let link = |copy: &Copy, offset: usize, target: &Path, style: LinkStyle| {
+        copy.engine
+            .link_edit(id, offset, target, style)
+            .map(|edit| (edit.range.start, edit.replacement))
+    };
+    // An xref goes at the offset, the shortest id that names the page from here.
+    let after_see = text.find("See ").unwrap() + "See ".len();
+    for (target, written) in [
+        (copy.page("configure.adoc"), "xref:configure.adoc[]"),
+        (
+            copy.root.join("guide/modules/admin/pages/users.adoc"),
+            "xref:admin:users.adoc[]",
+        ),
+        (
+            copy.root.join("reference/modules/ROOT/pages/api.adoc"),
+            "xref:reference:ROOT:api.adoc[]",
+        ),
+    ] {
+        assert_eq!(
+            link(&copy, after_see, &target, LinkStyle::Xref),
+            Some((after_see, written.to_owned()))
+        );
+    }
+    // Straight after a word it is set apart by a space.
+    let in_word = text.find("See").unwrap() + "See".len();
+    assert_eq!(
+        link(
+            &copy,
+            in_word,
+            &copy.page("configure.adoc"),
+            LinkStyle::Xref
+        ),
+        Some((in_word, " xref:configure.adoc[]".to_owned()))
+    );
+    // An include goes on a line of its own after the offset's line, or on the offset's line
+    // when that is blank.
+    let note = copy.root.join("guide/modules/ROOT/partials/note.adoc");
+    let line_end = after_see + text[after_see..].find('\n').unwrap();
+    assert_eq!(
+        link(&copy, after_see, &note, LinkStyle::Include),
+        Some((line_end, "\ninclude::partial$note.adoc[]".to_owned()))
+    );
+    let blank = text.find("\n\n").unwrap() + 1;
+    assert_eq!(
+        link(&copy, blank, &note, LinkStyle::Include),
+        Some((blank, "include::partial$note.adoc[]".to_owned()))
+    );
+    // Nothing links a page to itself, or to a file it cannot name.
+    assert_eq!(link(&copy, 0, &install, LinkStyle::Xref), None);
+    assert_eq!(
+        link(
+            &copy,
+            0,
+            &copy.root.join("loose/chapter.adoc"),
+            LinkStyle::Xref
+        ),
+        None
+    );
+
+    // Outside Antora, a link is a relative path.
+    let chapter = copy.root.join("loose/chapter.adoc");
+    let loose = copy.engine.open(&chapter).unwrap();
+    let edit = copy
+        .engine
+        .link_edit(
+            loose,
+            0,
+            &copy.root.join("loose/_part.adoc"),
+            LinkStyle::Include,
+        )
+        .unwrap();
+    assert_eq!(edit.replacement, "\ninclude::_part.adoc[]");
 }
 
 #[test]

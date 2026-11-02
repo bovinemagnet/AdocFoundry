@@ -600,6 +600,29 @@ impl Engine {
         })
     }
 
+    /// The file to make for the unresolved include target `target`, where the includes naming
+    /// it expect it: a partial (or other family) in its module, or a file beside the including
+    /// page. `None` when no include names a file inside the workspace's roots, or two expect
+    /// different files.
+    #[must_use]
+    pub fn new_partial_for(&self, target: &str) -> Option<PathBuf> {
+        let key = GraphKey::Unresolved(target.to_owned());
+        let mut expected = self
+            .graph
+            .store
+            .links_to(&key)
+            .filter(|link| link.kind == EdgeKind::Include)
+            .map(|link| adoc_lang::graph::missing_include(&self.workspace, &link.from, target));
+        let first = expected.next()??;
+        if expected.any(|other| other.as_ref() != Some(&first)) {
+            return None;
+        }
+        self.roots()
+            .iter()
+            .any(|root| first.starts_with(root))
+            .then_some(first)
+    }
+
     /// Whether `filter` shows the node `key`.
     fn shown(&self, key: &GraphKey, filter: &GraphFilter) -> bool {
         filter.allows_kind(self.node_kind(key))
