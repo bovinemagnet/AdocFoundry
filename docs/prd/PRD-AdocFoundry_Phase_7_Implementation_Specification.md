@@ -185,13 +185,17 @@ Acceptance tests:
   - colour by component, module or family;
   - a Workspace or Local switch, with a depth control from 1 to 3 when Local is chosen;
   - Reset Layout (`graph.reset_layout`).
-- **Canvas:** pan by dragging the background, zoom with the wheel or a pinch around the pointer, and buttons for zoom in, zoom out and fit. Nodes are sized by their links, partials are hollow, unresolved targets have a dashed outline, and navigation files are squares. `Xref` edges are solid, `Include` dashed and `Nav` dotted.
+- **Canvas:** pan by dragging the background, zoom with the wheel or a pinch around the pointer, and buttons for zoom in, zoom out and fit. Nodes are sized by their links, partials are hollow, unresolved targets have a dashed outline, and navigation files are squares.
+- **Edge styles:**
+  - `Xref` edges are solid lines and `Include` edges dashed.
+  - `Nav` edges are dotted, in their own colour, and bowed into a gentle curve. Where a nav edge and an xref join the same two pages, both stay visible.
+  - An edge to an unresolved target is dash-dot.
 - **Interaction:**
   - hovering a node highlights it, its neighbours and their edges, and dims the rest;
   - a click selects the node and opens its page in the preview tab, and a double click opens it persistently;
   - dragging a node pins it, and releasing it with Alt held unpins it;
   - the context menu offers Open, Open to the Side, Find References and Reveal in Files;
-  - a side panel lists the selected node's links out and backlinks, and clicking one selects it.
+  - a side panel lists the selected node's links out and backlinks, and clicking one selects it. Each neighbour has one row, naming every kind of link between the two (`xref · nav`). For a navigation file it lists the top-level entries.
 - **Colours:** from the active gpui-component theme. The component and module palette is chosen to work in both light and dark themes, and the colours also differ in lightness.
 - **Keyboard:** Tab moves between nodes in title order and Enter opens the focused one. Each node's accessible label is its title and resource id.
 - **Updates:** on `GraphChanged` the window queries the engine again and calls `Layout::sync`. While the full build is running it shows "Building graph…".
@@ -207,17 +211,39 @@ Acceptance tests (`ui_tests.rs`, on GPUI's test platform):
 
 ## 7. The local graph panel (WP 7.4, #272)
 
-- **Panel:** `SidebarTab::Graph`, after Changes, titled Graph. It shows the active page's local graph to the depth set in its header, with a partials toggle and a button that opens the graph window.
+- **Panel:** `SidebarTab::Graph`, after Changes, titled Graph. It shows the active page's local graph to the depth set in its header, with partials and navigation toggles and a button that opens the graph window.
 - **Following:** it follows `EngineEvent::NavigationChanged`. With an image or a non-AsciiDoc file active, it says "No page" and draws nothing.
-- **Lists:** below the canvas, Links out and Backlinks list the page's neighbours, and a click opens one as a preview.
+- **Place in navigation:** below the canvas, a trail shows where the page sits in the navigation. It starts at the nav file, runs through the entries above the page to the page itself (shown in bold), and ends with the page's child entries (`nav.adoc › Introduction › Configuration › Settings reference`).
+  - A page listed in several places, or in several nav files, has one trail for each.
+  - A page in no navigation says "Not in any navigation".
+  - Clicking an entry that has a page opens it as a preview, and clicking the nav file opens that file.
+  - The trails hide with the navigation toggle.
+- **Lists:** below the trail, Links out and Backlinks list the page's neighbours, one row for each neighbour, naming every kind of link between the two (`xref · nav`). A click opens one as a preview.
 - **Sharing code:** the panel draws through the same `GraphView` as the window, with the toolbar reduced.
 - `view.local_graph` shows the panel, and is in `MENUS`.
+- **The engine's part:** the trails and the merged rows come from the engine, so the panel only draws them:
+
+  ```rust
+  // adoc-engine
+  pub struct NavCrumb { pub title: String, pub path: Option<PathBuf> }   // None: a text-only entry
+  pub struct NavPlace { pub nav: PathBuf, pub ancestors: Vec<NavCrumb>, pub page: NavCrumb, pub children: Vec<NavCrumb> }
+  pub struct Neighbour { pub key: GraphKey, pub title: String, pub kinds: Vec<EdgeKind> }   // kinds in Xref, Include, Nav order
+  impl Engine {
+      pub fn nav_places(&self, path: &Path) -> Vec<NavPlace>;   // in catalog order, then source order
+      pub fn neighbours(&self, path: &Path, filter: &GraphFilter) -> (Vec<Neighbour>, Vec<Neighbour>);   // links out, backlinks
+  }
+  ```
+
+  `nav_places` reads the nav trees the graph already holds and visits no other file. The graph window's side panel uses `neighbours` too.
 
 Acceptance tests:
 
 - `local_graph_follows_the_active_tab`
 - `local_graph_is_empty_for_an_image`
 - `local_graph_lists_links_and_backlinks`
+- `nav_places_trail_a_page_through_its_nav` (engine): over the fixture, a nested page's trail has its nav file, its ancestors and its children. A text-only ancestor is a crumb with no path, a page listed twice has two places, and a page in no navigation has none.
+- `neighbours_merge_kinds_per_page` (engine): a page that is both an xref target and a nav child of the active page is one neighbour with the kinds `[Xref, Nav]`. With navigation filtered out, it has the kind `[Xref]` only.
+- `local_graph_shows_the_place_in_navigation` (app): the panel draws the trail for a nested page, and "Not in any navigation" for an orphan.
 
 ## 8. Headless access (WP 7.5, #272)
 
