@@ -906,6 +906,7 @@ Further engine methods serve it:
 * `Engine::anchor_rename_edits(id, offset, new_id)` returns the edits that rename an anchor and every reference to it.
 * `Engine::asciidoctor_executable()` returns the Asciidoctor in use, from `tools.asciidoctor` or `PATH`.
 * `Settings::with_git_opt_in()` leaves Git off unless the user settings file sets `[git] enabled = true`. It is kept across settings reloads.
+* `Settings::without_auto_save()` turns `[editor] auto_save` off whatever the settings files say. It is kept across settings reloads. `adoc-ls` uses it because its client owns saving.
 
 `page.rename` also rewrites includes: an Antora include keeps its family and coordinates, a relative one stays relative, and one written through an attribute is left as written.
 

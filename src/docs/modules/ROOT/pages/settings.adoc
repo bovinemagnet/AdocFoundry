@@ -126,7 +126,7 @@ check = true                     # look for a newer release at start-up
 |`editor.auto_save`
 |`"off"`, `"on_focus_change"` or `"after_delay"`
 |`"off"`
-|Save pages without asking. `"after_delay"` saves a page one second after your last edit to it. `"on_focus_change"` saves a page when you leave its tab and every edited page when the AdocFoundry window loses focus. Any other value is ignored with a warning and leaves auto-save off. See xref:using-the-editor.adoc#auto-save[Auto-save].
+|Save pages without asking. `"after_delay"` saves a page one second after your last edit to it. `"on_focus_change"` saves a page when you leave its tab and every edited page when the AdocFoundry window loses focus. Any other value is ignored with a warning and leaves auto-save off. See xref:using-the-editor.adoc#auto-save[Auto-save]. The xref:language-server.adoc[language server] ignores this setting and never saves.
 
 |`editor.theme`
 |`"auto"`, `"light"` or `"dark"`

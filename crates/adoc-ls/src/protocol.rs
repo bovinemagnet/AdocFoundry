@@ -64,17 +64,22 @@ const INDEX_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a PDF export may take.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// The settings the server runs with: the files the app reads, the user settings file at
+/// `user_file` and the workspace's `.adocfoundry.toml` (which `open_workspace` loads). Git is
+/// opt-in here, and auto-save always off: the client owns its buffers and saves them.
+fn lsp_settings(user_file: Option<&Path>) -> Settings {
+    Settings::load(user_file, None)
+        .unwrap_or_default()
+        .with_git_opt_in()
+        .without_auto_save()
+}
+
 pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
     let (initialize_id, initialize_value) = connection.initialize_start()?;
     let initialize_params: InitializeParams = serde_json::from_value(initialize_value)?;
     let encoding = PositionEncoding::negotiate(&initialize_params.capabilities);
     let roots = workspace_roots(&initialize_params);
-    // The files the app reads: the user settings file and the workspace's `.adocfoundry.toml`
-    // (which `open_workspace` loads). Git is opt-in here.
-    let settings = Settings::load(Settings::default_user_file().as_deref(), None)
-        .unwrap_or_default()
-        .with_git_opt_in();
-    let mut engine = Engine::new(settings);
+    let mut engine = Engine::new(lsp_settings(Settings::default_user_file().as_deref()));
     engine.enable_spelling();
     let mut server = ProtocolServer::new(
         encoding,
@@ -1931,6 +1936,50 @@ mod tests {
             engine,
             Box::new(BrowserSink::new(directory.join("previews"), Unopened)),
         )
+    }
+
+    #[test]
+    fn a_change_is_never_saved_for_the_client_whatever_the_settings_say() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("settings.toml");
+        fs::write(&user, "[editor]\nauto_save = \"after_delay\"\n").unwrap();
+        let path = directory.path().join("page.adoc");
+        fs::write(&path, "= Page\n").unwrap();
+        let clock = adoc_engine::ManualClock::new();
+        let mut server = ProtocolServer::new(
+            PositionEncoding::Utf16,
+            Engine::with_clock(
+                super::lsp_settings(Some(&user)),
+                std::sync::Arc::new(clock.clone()),
+            ),
+            Box::new(BrowserSink::new(
+                directory.path().join("previews"),
+                Unopened,
+            )),
+        );
+        let uri = file_uri(&path);
+        open(&mut server, uri.as_str(), "= Page\n");
+
+        server
+            .handle_notification(Notification::new(
+                DidChangeTextDocument::METHOD.to_owned(),
+                DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier::new(uri, 2),
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: Some(Range::new(Position::new(1, 0), Position::new(1, 0))),
+                        range_length: None,
+                        text: "\nTyped.\n".to_owned(),
+                    }],
+                },
+            ))
+            .unwrap();
+        clock.advance(adoc_engine::AUTO_SAVE_DELAY * 2);
+        server.tick();
+        assert!(server
+            .engine
+            .wait_for_workers(std::time::Duration::from_secs(10)));
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "= Page\n");
     }
 
     /// The spelling diagnostics of each publish, by URI.

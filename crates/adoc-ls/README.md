@@ -91,7 +91,7 @@ enabled = true        # off in adoc-ls unless the user file turns it on
 theme = "default"     # a bundled theme, a name in themes_dir, or a .yml file
 ```
 
-Git is opt-in for `adoc-ls`: it looks for no repository unless the user settings file sets `[git] enabled = true`. The full list of settings is in the [AdocFoundry README](../../README.md#settings).
+Git is opt-in for `adoc-ls`: it looks for no repository unless the user settings file sets `[git] enabled = true`. `[editor] auto_save` has no effect here: the editor owns its buffers and saves them, and `adoc-ls` never writes a file on its own. The full list of settings is in the [AdocFoundry README](../../README.md#settings).
 
 ## Diagnostic codes
 
