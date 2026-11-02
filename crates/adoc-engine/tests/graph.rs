@@ -285,6 +285,7 @@ fn adding_the_missing_page_resolves_a_ghost() {
                 module: copy.root.join("guide/modules/ROOT"),
                 title: "Missing".to_owned(),
                 add_to_nav: false,
+                file: None,
             }),
         )
         .unwrap();
@@ -302,6 +303,41 @@ fn adding_the_missing_page_resolves_a_ghost() {
         EdgeKind::Xref
     ));
     assert_eq!(copy.engine.graph_builds(), 1, "no full build");
+}
+
+#[test]
+fn a_ghost_offers_the_page_its_links_expect() {
+    let mut copy = Copy::new();
+    let request = copy.engine.new_page_for("missing.adoc").unwrap();
+    assert_eq!(
+        request,
+        NewPage {
+            module: copy.root.join("guide/modules/ROOT"),
+            title: "Missing".to_owned(),
+            add_to_nav: false,
+            file: Some(PathBuf::from("missing.adoc")),
+        }
+    );
+    // A target that resolves, or that no link names, has no page to make.
+    assert_eq!(copy.engine.new_page_for("install.adoc"), None);
+    assert_eq!(copy.engine.new_page_for("unheard-of.adoc"), None);
+
+    copy.engine
+        .invoke(ids::PAGE_NEW, CommandArgs::NewPage(request))
+        .unwrap();
+    assert!(copy.until_graph_changed());
+    let after = copy.engine.graph(&GraphScope::Workspace, &everything());
+    assert!(after
+        .node(&GraphKey::Unresolved("missing.adoc".to_owned()))
+        .is_none());
+    assert!(has_edge(
+        &after,
+        &copy.root,
+        "guide/modules/ROOT/pages/install.adoc",
+        "guide/modules/ROOT/pages/missing.adoc",
+        EdgeKind::Xref
+    ));
+    assert_eq!(copy.engine.new_page_for("missing.adoc"), None);
 }
 
 #[test]

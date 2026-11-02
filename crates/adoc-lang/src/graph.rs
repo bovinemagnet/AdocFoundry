@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use adoc_antora::{parse_resource_id, ResolutionError};
+use adoc_antora::{parse_resource_id, ResolutionError, ResourceFamily};
 use adoc_core::{Document, ReferenceKind, SourceRange};
 use adoc_index::{is_asciidoc_path, normalize_path, resolve_include_target};
 
@@ -132,6 +132,45 @@ fn published_elsewhere(ws: &WorkspaceState, path: &Path, target: &str) -> bool {
     )
 }
 
+/// Where a page a link expects, but the workspace lacks, would go.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissingPage {
+    /// The root of the module (`…/modules/<name>`).
+    pub module: PathBuf,
+    /// The page's path in the module's `pages` folder.
+    pub file: PathBuf,
+}
+
+/// The page the xref `target` from `from` names, when it is an AsciiDoc page in a module the
+/// workspace has and no file holds it. `None` for a target that resolves, another family, a
+/// path leaving its folder, and a link outside Antora.
+#[must_use]
+pub fn missing_page(ws: &WorkspaceState, from: &Path, target: &str) -> Option<MissingPage> {
+    let context = ws.antora.context_for_path(from)?;
+    let id = parse_resource_id(target).ok()?;
+    let Err(ResolutionError::UnknownResource {
+        component,
+        version,
+        module,
+        family: ResourceFamily::Page,
+        path,
+    }) = ws.antora.resolve_detailed(&id, &context)
+    else {
+        return None;
+    };
+    let plain = path
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    if !plain || !is_asciidoc_path(&path) {
+        return None;
+    }
+    let module = ws.antora.module(&component, version.as_deref(), &module)?;
+    Some(MissingPage {
+        module: module.root.clone(),
+        file: path,
+    })
+}
+
 /// The path part of a target, after any resource id's coordinates.
 fn resource_path(target: &str) -> &str {
     let after_family = target.rsplit_once('$').map_or(target, |(_, path)| path);
@@ -224,5 +263,41 @@ mod tests {
             "= Page\n\nxref:[] and xref:#top[] and xref:: and include::[]\ninclude::{\n",
         );
         assert!(links_from(&half_typed, page).is_empty());
+    }
+
+    #[test]
+    fn missing_page_names_the_file_an_xref_expects() {
+        let ws = workspace();
+        let install = fixture("guide/modules/ROOT/pages/install.adoc");
+        assert_eq!(
+            missing_page(&ws, &install, "missing.adoc"),
+            Some(MissingPage {
+                module: fixture("guide/modules/ROOT"),
+                file: PathBuf::from("missing.adoc"),
+            })
+        );
+        assert_eq!(
+            missing_page(&ws, &install, "admin:setup/roles.adoc"),
+            Some(MissingPage {
+                module: fixture("guide/modules/admin"),
+                file: PathBuf::from("setup/roles.adoc"),
+            })
+        );
+        // A page that exists, another family, a module or component the workspace lacks, a
+        // file that is not AsciiDoc, a path leaving its folder, and a page outside Antora.
+        for target in [
+            "configure.adoc",
+            "partial$gone.adoc",
+            "nowhere:gone.adoc",
+            "elsewhere::gone.adoc",
+            "gone.pdf",
+            "../gone.adoc",
+        ] {
+            assert_eq!(missing_page(&ws, &install, target), None, "{target}");
+        }
+        assert_eq!(
+            missing_page(&ws, &fixture("loose/chapter.adoc"), "gone.adoc"),
+            None
+        );
     }
 }

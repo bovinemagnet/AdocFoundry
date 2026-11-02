@@ -30,7 +30,7 @@ use adoc_lang::{
 
 use crate::{
     command::FnCommand, commands::ids, workspace::WorkerMessage, CommandCategory, CommandContext,
-    CommandOutcome, CommandRegistry, CommandSpec, Engine, EngineEvent,
+    CommandOutcome, CommandRegistry, CommandSpec, Engine, EngineEvent, NewPage,
 };
 
 /// What a graph query covers.
@@ -566,6 +566,38 @@ impl Engine {
                 .collect(),
         );
         (out, back)
+    }
+
+    /// The page to make for the unresolved target `target`, where the xrefs and navigation
+    /// entries naming it expect it: in their module's `pages` folder, titled from its file
+    /// name and left out of the navigation. `None` when no such link names a page in a module
+    /// the workspace has, or two links expect different files.
+    #[must_use]
+    pub fn new_page_for(&self, target: &str) -> Option<NewPage> {
+        let key = GraphKey::Unresolved(target.to_owned());
+        let mut expected = self
+            .graph
+            .store
+            .links_to(&key)
+            .filter(|link| link.kind != EdgeKind::Include)
+            .map(|link| adoc_lang::graph::missing_page(&self.workspace, &link.from, target));
+        let first = expected.next()??;
+        if expected.any(|other| other.as_ref() != Some(&first)) {
+            return None;
+        }
+        let stem = first
+            .file
+            .file_stem()?
+            .to_string_lossy()
+            .replace(['-', '_'], " ");
+        let mut letters = stem.trim().chars();
+        let title = letters.next()?.to_uppercase().chain(letters).collect();
+        Some(NewPage {
+            module: first.module,
+            title,
+            add_to_nav: false,
+            file: Some(first.file),
+        })
     }
 
     /// Whether `filter` shows the node `key`.

@@ -936,6 +936,8 @@ Undo takes the entry out, deletes the new file and closes its tab, but only whil
 Redo writes the file again, reopens it without changing the active tab, and puts the entry back.
 Like other changes to several files, it is undone only as a whole, so if the new page or the navigation file has been edited since, undo that edit first.
 
+The graph window's Create Page, on an unresolved target, makes the page a broken link expects; see xref:graph-view.adoc[the link graph].
+
 == Rename a page
 
 Rename Page (kbd:[F2]) renames the active page.

@@ -140,6 +140,26 @@ Right-click a node for its menu:
 |Selects the file in the Files panel.
 |===
 
+Right-click an unresolved target, shown when the Unresolved toggle is on, and its menu offers *Create Page* below the greyed-out "Unresolved target" label.
+It makes the page the broken link expects and opens it in a tab.
+The file goes where the link points: in the module the xref resolves to, in that module's `pages` folder, at the path the xref names.
+For example, `+xref:admin:setup/roles.adoc[]+` makes `modules/admin/pages/setup/roles.adoc`.
+Its title is made from the file name: hyphens and underscores become spaces and the first letter is capitalised, so `missing-page.adoc` gets `= Missing page`.
+The page is not added to the navigation.
+
+Create Page is `page.new` underneath, so one Undo takes it back on the same terms as xref:using-the-editor.adoc#new-page[New Page].
+The file is deleted and its tab closed only while it still holds what was written and has no unsaved edits.
+Once the page exists, the unresolved target becomes a page node with its edges, with no rebuild.
+
+Create Page is greyed out when there is no page to make:
+
+* The link is outside an Antora module.
+* The link is an include rather than an xref.
+* The target is in another family, such as `partial$`.
+* The target is in a module or component the workspace does not have.
+* The path leaves the `pages` folder with `../`.
+* Different links that share the target's text expect different files.
+
 The side panel lists the selected node's *Links out* and *Backlinks*, one row for each neighbour.
 A row names every kind of link between the two, such as `xref · nav`.
 Clicking a row selects that node.
