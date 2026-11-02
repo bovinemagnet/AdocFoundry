@@ -4,7 +4,7 @@
 use std::path::{Component, Path};
 
 use adoc_antora::{parse_resource_id, AntoraCatalog, ResourceFamily};
-use adoc_core::{asciidoctor_id, canonical_id, Document, Section, SourceRange};
+use adoc_core::{Document, IdStyle, SourceRange};
 use adoc_index::{is_asciidoc_path, normalize_path};
 
 use crate::WorkspaceState;
@@ -51,7 +51,7 @@ pub fn xref_to(
         target
             .sections
             .iter()
-            .find(|section| section.selection_range == at)
+            .position(|section| section.selection_range == at)
     });
     let page_title = || target.title.as_ref().map(|title| title.text.clone());
     let Some(section) = section else {
@@ -63,7 +63,8 @@ pub fn xref_to(
             text: page_title(),
         });
     };
-    let id = section_id(&ws.antora, &to, section);
+    let id = section_ids(&ws.antora, &to, target).swap_remove(section);
+    let section = &target.sections[section];
     let target = if from == to {
         id
     } else {
@@ -75,16 +76,16 @@ pub fn xref_to(
     })
 }
 
-/// The id a reference to `section` of the page at `path` uses: its anchor, else the id the
-/// page's build generates, Antora's inside a module and plain Asciidoctor's elsewhere.
-pub(crate) fn section_id(antora: &AntoraCatalog, path: &Path, section: &Section) -> String {
-    section.id.clone().unwrap_or_else(|| {
-        if antora.context_for_path(path).is_some() {
-            canonical_id(&section.title)
-        } else {
-            asciidoctor_id(&section.title)
-        }
-    })
+/// The id a reference to each section of `document`, the page at `path`, uses: its anchor,
+/// else the id the page's build generates, Antora's inside a module and plain Asciidoctor's
+/// elsewhere, numbered where an earlier one holds it.
+pub(crate) fn section_ids(antora: &AntoraCatalog, path: &Path, document: &Document) -> Vec<String> {
+    let style = if antora.context_for_path(path).is_some() {
+        IdStyle::Antora
+    } else {
+        IdStyle::Asciidoctor
+    };
+    adoc_core::section_ids(&document.sections, &document.anchors, style)
 }
 
 /// How `from` names the page at `to`.

@@ -854,6 +854,7 @@ The link text is the title of the page.
 A section adds its id after `#` and uses the title of the section as the text.
 The id is the explicit anchor if the section has one.
 Otherwise it is the id the build generates: `first-steps` inside an Antora module, and `_first_steps` outside one.
+A later section with the same title gets a number, as the build gives it: the second `== Parameters` is `parameters-2` inside a module and `_parameters_2` outside one.
 A section of the page you are editing becomes a link to an anchor in the same page.
 
 .Examples of the xref a drop inserts
@@ -977,6 +978,7 @@ One undo restores every page.
 
 A section without an explicit anchor has a generated id.
 Inside an Antora module it takes Antora's form, so `== First Steps` gives `first-steps`; elsewhere it takes Asciidoctor's form, `_first_steps`.
+A later section whose generated id an earlier section or anchor already holds is numbered, as Asciidoctor numbers it (`parameters-2`, `_parameters_2`), and renaming it rewrites only the references that use its numbered id.
 Renaming a generated id adds `+[[new-id]]+` on the line above the heading and rewrites the references that used the generated id.
 
 An id cannot contain spaces or any of `+[ ] < > # , " '+`; a new id that does is refused.
