@@ -1141,3 +1141,91 @@ fn a_case_only_rename_onto_another_file_is_refused() {
         )
         .is_err());
 }
+
+/// A workspace of `count` pages, each titled `= Page <n>`, with the first open and active.
+fn pages(count: usize) -> (tempfile::TempDir, PathBuf, Engine, adoc_engine::DocumentId) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let files: Vec<(String, String)> = (0..count)
+        .map(|n| (format!("page-{n:02}.adoc"), format!("= Page {n}\n")))
+        .collect();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect();
+    write_files(&root, &files);
+    let mut engine = open_workspace(&root);
+    let first = engine.open(&root.join("page-00.adoc")).unwrap();
+    (directory, root, engine, first)
+}
+
+fn replace_every_title(engine: &mut Engine) {
+    let preview = preview(
+        engine
+            .invoke(
+                ids::WORKSPACE_REPLACE,
+                CommandArgs::Custom(serde_json::json!({
+                    "request": { "query": "= Page", "regex": false },
+                    "replacement": "= Chapter",
+                })),
+            )
+            .unwrap(),
+    );
+    engine
+        .invoke(
+            ids::WORKSPACE_APPLY_PREVIEW,
+            CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+        )
+        .unwrap();
+}
+
+#[test]
+fn apply_preview_keeps_active_and_recent() {
+    let (_directory, root, mut engine, first) = pages(12);
+    let events = engine.subscribe();
+    replace_every_title(&mut engine);
+
+    assert_eq!(engine.active(), Some(first));
+    // The pages the change opened are not made active one after another.
+    let switches = events
+        .try_iter()
+        .filter(|event| matches!(event, EngineEvent::NavigationChanged))
+        .count();
+    assert!(switches <= 1, "{switches} switches");
+    // Nor do they become the recent files Quick Open lists first.
+    let listed = engine.quick_open("", 2);
+    assert_eq!(listed[0].path, root.join("page-00.adoc"));
+    // Every page changed is open, and unsaved, in the tab order.
+    assert_eq!(engine.tab_order().len(), 12);
+    assert_eq!(
+        engine.documents().filter(|document| document.dirty).count(),
+        12
+    );
+}
+
+#[test]
+fn apply_preview_diagnoses_once() {
+    use adoc_core::probe::{self, Probe};
+
+    let (_directory, _root, mut engine, _first) = pages(12);
+    let events = engine.subscribe();
+    probe::reset();
+    replace_every_title(&mut engine);
+
+    assert_eq!(probe::count(Probe::DiagnoseOpen), 1);
+    let mut updated: Vec<PathBuf> = events
+        .try_iter()
+        .filter_map(|event| match event {
+            EngineEvent::DiagnosticsUpdated { path } => Some(path),
+            _ => None,
+        })
+        .collect();
+    let all = updated.len();
+    updated.sort();
+    updated.dedup();
+    assert_eq!(
+        all,
+        updated.len(),
+        "each page's diagnostics are updated once"
+    );
+}

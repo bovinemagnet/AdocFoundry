@@ -282,19 +282,27 @@ impl Engine {
     }
 
     /// Applies a preview as one undo group across every document and file move it contains.
+    /// The pages it changes are opened as tabs, unsaved, beside the active one, which stays
+    /// active; they are diagnosed once, when it is done.
     pub fn apply_preview(&mut self, id: PreviewId) -> Result<UndoGroup, EngineError> {
         let preview = self
             .previews
             .remove(&id)
             .ok_or_else(|| EngineError::NotFound(format!("no preview {}", id.get())))?;
         validate_moves(&preview.moves)?;
-        let previously_active = self.active;
+        self.applying = true;
+        let applied = self.apply_previewed(&preview);
+        self.applying = false;
+        self.refresh_open_diagnostics(None);
+        applied
+    }
 
+    fn apply_previewed(&mut self, preview: &EditPreview) -> Result<UndoGroup, EngineError> {
         // Open everything and check every edit before changing anything: each file must still
         // hold the text its edits were computed against.
         let mut targets: Vec<(DocumentId, Vec<TextEdit>)> = Vec::new();
         for file in &preview.edits {
-            let document = self.open(&file.path)?;
+            let document = self.open_unshown(&file.path)?;
             let text = &self.documents[&document].text;
             if *text != file.base.as_str() {
                 return Err(EngineError::PreviewStale {
@@ -311,10 +319,6 @@ impl Engine {
         }
         let documents = self.documents_with_top_group(group, false);
         self.group_documents.insert(group, documents);
-        if let Some(active) = previously_active.filter(|id| self.documents.contains_key(id)) {
-            self.set_active(active);
-        }
-        self.refresh_open_diagnostics(None);
         Ok(group)
     }
 
@@ -328,7 +332,7 @@ impl Engine {
             self.apply_edits(document, edits, UndoMode::Group(group))?;
         }
         for file_move in moves {
-            let document = self.open(&file_move.from)?;
+            let document = self.open_unshown(&file_move.from)?;
             if self
                 .undo_stack(document)
                 .and_then(|stack| stack.top_group())

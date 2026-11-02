@@ -82,6 +82,9 @@ pub struct Engine {
     /// A session is being restored: the open pages' diagnostics are refreshed once at the end,
     /// not as each page opens.
     pub(crate) restoring: bool,
+    /// A change across many pages (Replace, a rename) is being applied: its pages are
+    /// diagnosed once it is done, not as each is opened and edited.
+    pub(crate) applying: bool,
     pub(crate) rendered: crate::rendered::PreviewState,
     pub(crate) visual: crate::visual::VisualState,
     pub(crate) git: crate::git::GitState,
@@ -183,6 +186,7 @@ impl Engine {
             typing: false,
             settings_loaded: None,
             restoring: false,
+            applying: false,
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
             git: crate::git::GitState::default(),
@@ -219,6 +223,17 @@ impl Engine {
         let id = self.insert_document(path, &text, false);
         self.set_active(id);
         Ok(id)
+    }
+
+    /// Opens the file at `path` without making it active, or returns the document already
+    /// open for it: for a change that edits pages beside the one being worked on.
+    pub(crate) fn open_unshown(&mut self, path: &Path) -> Result<DocumentId, EngineError> {
+        let path = normalize_path(path);
+        if let Some(id) = self.document_for_path(&path) {
+            return Ok(id);
+        }
+        let text = self.read_text(&path)?;
+        Ok(self.insert_document(path, &text, false))
     }
 
     /// The text of the file at `path`, refusing a file that is not text: one holding NUL bytes,
@@ -322,7 +337,7 @@ impl Engine {
             },
         );
         self.emit(EngineEvent::DocumentOpened(id));
-        if asciidoc && !untitled && !self.restoring {
+        if asciidoc && !untitled && !self.restoring && !self.applying {
             self.refresh_open_diagnostics(None);
         }
         if !untitled {
@@ -831,7 +846,7 @@ impl Engine {
         }
         if untitled {
             self.emit(EngineEvent::DiagnosticsUpdated { path });
-        } else if let Some(before) = before {
+        } else if let Some(before) = before.filter(|_| !self.applying) {
             self.refresh_diagnosed_with(&path, before);
         }
         Ok(AppliedEdits {
