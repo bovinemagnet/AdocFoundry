@@ -67,6 +67,7 @@ Otherwise they render through the engine's view tree, with diagrams and, in buil
 See xref:settings.adoc[the settings].
 
 `adoc.checkWorkspace` publishes the diagnostics of every file with problems, open or not.
+A later check clears the problems of a file that is not open once they are fixed.
 It returns `{ files, problems }`.
 
 `adoc.exportPdf` exports a page to PDF, or with `component: true` its component version as a book.
