@@ -6948,6 +6948,94 @@ fn creating_a_ghosts_page_from_its_menu_opens_it(cx: &mut TestAppContext) {
     })));
 }
 
+/// Right-clicks `key`'s node in the graph window and chooses the item `keys` reach.
+fn choose_from_node_menu(
+    view: &Entity<crate::graph_view::GraphView>,
+    key: &adoc_engine::GraphKey,
+    keys: &str,
+    graph_cx: &mut VisualTestContext,
+) {
+    let at = graph_cx.update(|_, cx| view.read(cx).node_position_for_test(key).unwrap());
+    graph_cx.simulate_mouse_down(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+    graph_cx.simulate_mouse_up(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    graph_cx.simulate_keystrokes(keys);
+    graph_cx.run_until_parked();
+}
+
+#[gpui::test]
+fn linking_the_active_page_from_the_graph_writes_an_xref_and_an_include(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) =
+        graph_workspace(&["guide/modules/ROOT/pages/orphan.adoc"], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let orphan = graph_key(&root.join(GRAPH_PAGES).join("orphan.adoc"));
+    let configure = graph_key(&root.join(GRAPH_PAGES).join("configure.adoc"));
+    let note = graph_key(&root.join("guide/modules/ROOT/partials/note.adoc"));
+    // Open, Open to the Side, then Insert Xref at Caret on a page and Include at Caret on a
+    // partial.
+    choose_from_node_menu(&view, &configure, "down down down enter", &mut graph_cx);
+    choose_from_node_menu(&view, &note, "down down down enter", &mut graph_cx);
+
+    let text = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .text
+            .to_string()
+    });
+    assert!(text.contains("xref:configure.adoc[]"), "{text}");
+    assert!(text.contains("\ninclude::partial$note.adoc[]"), "{text}");
+    assert!(drain_until(&app, &mut cx, |cx| cx.update(|_, cx| {
+        let snapshot = view.read(cx).snapshot_for_test();
+        let linked = |to: &adoc_engine::GraphKey, kind| {
+            snapshot
+                .edges
+                .iter()
+                .any(|edge| edge.from == orphan && edge.to == *to && edge.kind == kind)
+        };
+        linked(&configure, adoc_engine::EdgeKind::Xref)
+            && linked(&note, adoc_engine::EdgeKind::Include)
+    })));
+}
+
+#[gpui::test]
+fn creating_a_ghost_includes_partial_from_its_menu_opens_it(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) =
+        graph_workspace(&["guide/modules/ROOT/pages/orphan.adoc"], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            let end = app.engine.document(id).unwrap().text.len();
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(end, end),
+                    text: "\ninclude::partial$tips.adoc[]\n".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    click_selector("graph-unresolved", gpui::MouseButton::Left, &mut graph_cx);
+    let ghost = adoc_engine::GraphKey::Unresolved("partial$tips.adoc".to_owned());
+    assert!(drain_until(&app, &mut cx, |cx| cx.update(|_, cx| {
+        view.read(cx).snapshot_for_test().node(&ghost).is_some()
+    })));
+    // Create Page, disabled, then Create Partial, the menu's last item.
+    choose_from_node_menu(&view, &ghost, "up enter", &mut graph_cx);
+
+    let partial = root.join("guide/modules/ROOT/partials/tips.adoc");
+    assert_eq!(std::fs::read_to_string(&partial).unwrap(), "");
+    assert_eq!(
+        active_page(&app, &mut cx).map(|(path, _)| path),
+        Some(adoc_index::normalize_path(&partial))
+    );
+}
+
 #[gpui::test]
 fn hovering_a_node_highlights_it_and_its_neighbours(cx: &mut TestAppContext) {
     let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);

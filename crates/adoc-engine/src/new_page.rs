@@ -1,7 +1,8 @@
 //! New Page: `page.new` writes `pages/<slug>.adoc` in a module with the page's title, opens
 //! it, and, when asked, adds `* xref:<slug>.adoc[]` to the module's `nav.adoc` after the
 //! active page's entry. The file and the entry are one undo group: undoing it takes the entry
-//! out and deletes the file, as long as nobody has changed the file since.
+//! out and deletes the file, as long as nobody has changed the file since. `page.new_partial`
+//! makes the empty file an include names, undone the same way.
 
 use std::{
     fs,
@@ -64,6 +65,27 @@ pub(crate) fn register_new_page(registry: &mut CommandRegistry) {
         ),
         page_new,
     );
+    register(
+        registry,
+        spec(
+            ids::PAGE_NEW_PARTIAL,
+            "New Partial",
+            CommandCategory::Workspace,
+            None,
+            CommandContext::Always,
+        ),
+        page_new_partial,
+    );
+}
+
+fn page_new_partial(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Path(path) = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::PAGE_NEW_PARTIAL,
+            expected: "the path of the file to make",
+        });
+    };
+    engine.new_partial(&path).map(CommandOutcome::Opened)
 }
 
 fn page_new(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
@@ -199,18 +221,7 @@ impl Engine {
         };
 
         let text = format!("= {title}\n");
-        create_file(&path, &text)?;
-        self.catalog_changed_at(&path);
-        let group = self.new_group();
-        let page = match self.open(&path) {
-            Ok(page) => page,
-            Err(error) => {
-                let _ = fs::remove_file(&path);
-                self.catalog_changed_at(&path);
-                return Err(error);
-            }
-        };
-        self.push_marker(page, group);
+        let (page, group) = self.create_and_open(&path, &text)?;
         let mut documents = vec![page];
         if let Some((nav, edit)) = nav_edit {
             if let Err(error) = self.apply_edits(nav, vec![edit], UndoMode::Group(group)) {
@@ -227,6 +238,57 @@ impl Engine {
             .insert(group, vec![CreatedFile { path, text }]);
         self.set_active(page);
         Ok(page)
+    }
+
+    /// Makes an empty file at `path`, the partial an include names, and opens it, as one undo
+    /// group. Refuses a file outside the workspace's roots, one that is not AsciiDoc and one
+    /// that exists already, before changing anything.
+    pub fn new_partial(&mut self, path: &Path) -> Result<crate::DocumentId, EngineError> {
+        let path = normalize_path(path);
+        let inside = self.roots().iter().any(|root| path.starts_with(root));
+        if !inside
+            || !is_asciidoc_path(&path)
+            || path.exists()
+            || self.document_for_path(&path).is_some()
+        {
+            return Err(EngineError::InvalidRequest(format!(
+                "{} is not a new AsciiDoc file in the workspace",
+                path.display()
+            )));
+        }
+        let (partial, group) = self.create_and_open(&path, "")?;
+        self.group_documents.insert(group, vec![partial]);
+        self.group_created.insert(
+            group,
+            vec![CreatedFile {
+                path,
+                text: String::new(),
+            }],
+        );
+        self.set_active(partial);
+        Ok(partial)
+    }
+
+    /// Writes `text` to a new file at `path` and opens it in a new undo group, taking the file
+    /// away again if it cannot be opened.
+    fn create_and_open(
+        &mut self,
+        path: &Path,
+        text: &str,
+    ) -> Result<(crate::DocumentId, UndoGroup), EngineError> {
+        create_file(path, text)?;
+        self.catalog_changed_at(path);
+        let group = self.new_group();
+        let opened = match self.open(path) {
+            Ok(opened) => opened,
+            Err(error) => {
+                let _ = fs::remove_file(path);
+                self.catalog_changed_at(path);
+                return Err(error);
+            }
+        };
+        self.push_marker(opened, group);
+        Ok((opened, group))
     }
 
     /// The edit adding an entry for `target` to the navigation file `nav`: after the entry for

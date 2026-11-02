@@ -171,6 +171,45 @@ pub fn missing_page(ws: &WorkspaceState, from: &Path, target: &str) -> Option<Mi
     })
 }
 
+/// The file the unresolved include `target` in `from` names: for a resource id
+/// (`partial$x.adoc`, `admin:partial$x.adoc`), the file in its family's folder of a module the
+/// workspace has; else the path relative to `from`'s folder. `None` for a target that
+/// resolves, a dynamic or remote one, one that is not AsciiDoc, and a resource id naming a
+/// component, version or module the workspace lacks or a path leaving its folder.
+#[must_use]
+pub fn missing_include(ws: &WorkspaceState, from: &Path, target: &str) -> Option<PathBuf> {
+    let target = target.trim();
+    if target.is_empty()
+        || is_dynamic(target)
+        || target.contains("://")
+        || !is_asciidoc_path(Path::new(resource_path(target)))
+    {
+        return None;
+    }
+    if !target.contains('$') {
+        let path = normalize_path(&from.parent()?.join(target));
+        return (ws.index.file(&path).is_none() && !path.exists()).then_some(path);
+    }
+    let context = ws.antora.context_for_path(from)?;
+    let id = parse_resource_id(target).ok()?;
+    let Err(ResolutionError::UnknownResource {
+        component,
+        version,
+        module,
+        family,
+        path,
+    }) = ws.antora.resolve_detailed(&id, &context)
+    else {
+        return None;
+    };
+    let plain = path
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    let module = ws.antora.module(&component, version.as_deref(), &module)?;
+    let directory = family.directories().first()?;
+    plain.then(|| normalize_path(&module.root.join(directory).join(path)))
+}
+
 /// The path part of a target, after any resource id's coordinates.
 fn resource_path(target: &str) -> &str {
     let after_family = target.rsplit_once('$').map_or(target, |(_, path)| path);
@@ -263,6 +302,45 @@ mod tests {
             "= Page\n\nxref:[] and xref:#top[] and xref:: and include::[]\ninclude::{\n",
         );
         assert!(links_from(&half_typed, page).is_empty());
+    }
+
+    #[test]
+    fn missing_include_names_the_file_an_include_expects() {
+        let ws = workspace();
+        let install = fixture("guide/modules/ROOT/pages/install.adoc");
+        assert_eq!(
+            missing_include(&ws, &install, "partial$tips.adoc"),
+            Some(fixture("guide/modules/ROOT/partials/tips.adoc"))
+        );
+        assert_eq!(
+            missing_include(&ws, &install, "admin:example$setup/run.adoc"),
+            Some(fixture("guide/modules/admin/examples/setup/run.adoc"))
+        );
+        // Without a family, an include is relative to its page, in Antora or not.
+        assert_eq!(
+            missing_include(&ws, &install, "../snippets/run.adoc"),
+            Some(fixture("guide/modules/ROOT/snippets/run.adoc"))
+        );
+        assert_eq!(
+            missing_include(&ws, &fixture("loose/chapter.adoc"), "parts/_gone.adoc"),
+            Some(fixture("loose/parts/_gone.adoc"))
+        );
+        for target in [
+            "partial$note.adoc",
+            "_part.adoc",
+            "nowhere:partial$gone.adoc",
+            "partial$../gone.adoc",
+            "{snippets}/gone.adoc",
+            "partial$gone.json",
+            "https://example.com/gone.adoc",
+        ] {
+            let from = if target == "_part.adoc" {
+                fixture("loose/chapter.adoc")
+            } else {
+                install.clone()
+            };
+            assert_eq!(missing_include(&ws, &from, target), None, "{target}");
+        }
     }
 
     #[test]

@@ -57,6 +57,7 @@ pub mod ids {
     pub const WORKSPACE_APPLY_PREVIEW: CommandId = CommandId::new("workspace.apply_preview");
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
     pub const PAGE_NEW: CommandId = CommandId::new("page.new");
+    pub const PAGE_NEW_PARTIAL: CommandId = CommandId::new("page.new_partial");
     pub const ANCHOR_RENAME: CommandId = CommandId::new("anchor.rename");
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
     pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
