@@ -9,6 +9,17 @@ use std::{
 
 use crate::{EdgeKind, GraphKey};
 
+/// One node of a path, and how the path came to it from the node before.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PathStep {
+    pub key: GraphKey,
+    /// The kinds of link joining it to the node before, sorted; none for the first node.
+    pub kinds: Vec<EdgeKind>,
+    /// Whether those links run from this node to the one before, so the path follows them
+    /// backwards.
+    pub backwards: bool,
+}
+
 /// One link, as the file that owns it made it. A page owns the links from itself; a navigation
 /// file owns the links its tree makes, from itself and from the pages its entries name.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -201,6 +212,77 @@ impl LinkStore {
         seen
     }
 
+    /// The shortest path from `from` to `to` over the links `follow` allows, through the nodes
+    /// `enter` allows: in the links' direction when `directed`, as a reader follows them, else
+    /// either way. Of the shortest, the one through the lowest keys, a link's own direction
+    /// before the reverse, so the answer is stable. `None` when `to` cannot be reached.
+    pub fn shortest_path(
+        &self,
+        from: &GraphKey,
+        to: &GraphKey,
+        directed: bool,
+        follow: impl Fn(&StoredLink) -> bool,
+        enter: impl Fn(&GraphKey) -> bool,
+    ) -> Option<Vec<PathStep>> {
+        if !enter(from) || !enter(to) {
+            return None;
+        }
+        // Each node reached, with the node it was reached from and whether backwards.
+        let mut reached: BTreeMap<GraphKey, Option<(GraphKey, bool)>> =
+            BTreeMap::from([(from.clone(), None)]);
+        let mut frontier = vec![from.clone()];
+        while !frontier.is_empty() && !reached.contains_key(to) {
+            let mut next = BTreeSet::new();
+            for node in &frontier {
+                let mut ends: BTreeMap<GraphKey, bool> = BTreeMap::new();
+                for link in self.links_from(node).filter(|link| follow(link)) {
+                    ends.insert(link.to.clone(), false);
+                }
+                if !directed {
+                    for link in self.links_to(node).filter(|link| follow(link)) {
+                        ends.entry(GraphKey::File(Arc::clone(&link.from)))
+                            .or_insert(true);
+                    }
+                }
+                for (end, backwards) in ends {
+                    if !reached.contains_key(&end) && enter(&end) {
+                        reached.insert(end.clone(), Some((node.clone(), backwards)));
+                        next.insert(end);
+                    }
+                }
+            }
+            frontier = next.into_iter().collect();
+        }
+        reached.get(to)?;
+        let mut steps = Vec::new();
+        let mut at = to.clone();
+        while let Some(Some((before, backwards))) = reached.get(&at) {
+            let (start, end) = if *backwards {
+                (&at, before)
+            } else {
+                (before, &at)
+            };
+            let kinds: BTreeSet<EdgeKind> = self
+                .links_from(start)
+                .filter(|link| link.to == *end && follow(link))
+                .map(|link| link.kind)
+                .collect();
+            steps.push(PathStep {
+                key: at.clone(),
+                kinds: kinds.into_iter().collect(),
+                backwards: *backwards,
+            });
+            at = before.clone();
+        }
+        steps.push(PathStep {
+            key: from.clone(),
+            kinds: Vec::new(),
+            backwards: false,
+        });
+        steps.reverse();
+        Some(steps)
+    }
+
     /// A number bumped by every change.
     #[must_use]
     pub fn revision(&self) -> u64 {
@@ -232,6 +314,101 @@ mod tests {
             .linking_to(key)
             .map(|owner| owner.display().to_string())
             .collect()
+    }
+
+    #[test]
+    fn shortest_path_walks_breadth_first() {
+        // a → b → c → d, and a → e → d: the two-step way through e is shortest; f → a only.
+        let mut store = LinkStore::new();
+        store.set_links(
+            path("a"),
+            vec![(file("b"), EdgeKind::Xref), (file("e"), EdgeKind::Xref)],
+        );
+        store.set_links(path("b"), vec![(file("c"), EdgeKind::Xref)]);
+        store.set_links(path("c"), vec![(file("d"), EdgeKind::Xref)]);
+        store.set_links(
+            path("e"),
+            vec![(file("d"), EdgeKind::Include), (file("d"), EdgeKind::Xref)],
+        );
+        store.set_links(path("f"), vec![(file("a"), EdgeKind::Nav)]);
+        let any = |_: &StoredLink| true;
+        let all = |_: &GraphKey| true;
+        let keys = |steps: Vec<PathStep>| {
+            steps
+                .into_iter()
+                .map(|step| {
+                    (
+                        step.key.path().unwrap().display().to_string(),
+                        step.kinds,
+                        step.backwards,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            keys(
+                store
+                    .shortest_path(&file("a"), &file("d"), true, any, all)
+                    .unwrap()
+            ),
+            [
+                ("a".to_owned(), vec![], false),
+                ("e".to_owned(), vec![EdgeKind::Xref], false),
+                (
+                    "d".to_owned(),
+                    vec![EdgeKind::Xref, EdgeKind::Include],
+                    false
+                ),
+            ]
+        );
+        // Nothing links from d, or to f: only ignoring direction gets there.
+        assert_eq!(
+            store.shortest_path(&file("d"), &file("f"), true, any, all),
+            None
+        );
+        assert_eq!(
+            keys(
+                store
+                    .shortest_path(&file("d"), &file("f"), false, any, all)
+                    .unwrap()
+            ),
+            [
+                ("d".to_owned(), vec![], false),
+                (
+                    "e".to_owned(),
+                    vec![EdgeKind::Xref, EdgeKind::Include],
+                    true
+                ),
+                ("a".to_owned(), vec![EdgeKind::Xref], true),
+                ("f".to_owned(), vec![EdgeKind::Nav], true),
+            ]
+        );
+        // Kept out of e, the path goes the long way; kept from xrefs, it does not go at all.
+        assert_eq!(
+            store
+                .shortest_path(&file("a"), &file("d"), true, any, |key| *key != file("e"))
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(
+            store.shortest_path(
+                &file("a"),
+                &file("d"),
+                true,
+                |link| link.kind != EdgeKind::Xref,
+                all
+            ),
+            None
+        );
+        assert_eq!(
+            keys(
+                store
+                    .shortest_path(&file("a"), &file("a"), true, any, all)
+                    .unwrap()
+            ),
+            [("a".to_owned(), vec![], false)]
+        );
     }
 
     #[test]

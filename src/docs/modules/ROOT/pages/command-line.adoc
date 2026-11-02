@@ -17,7 +17,7 @@ adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
-adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot|svg]
+adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--format json|dot|svg]
     [--no-partials] [--no-nav] [--unresolved] [--dark]
 adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
@@ -248,6 +248,8 @@ adocfoundry-cli graph docs
 adocfoundry-cli graph docs --page docs/modules/ROOT/pages/index.adoc --depth 2
 adocfoundry-cli graph docs --format dot --no-partials | dot -Tsvg -o graph.svg
 adocfoundry-cli graph docs --format svg > graph.svg
+adocfoundry-cli graph docs --path docs/modules/ROOT/pages/index.adoc docs/modules/ROOT/pages/install.adoc
+adocfoundry-cli graph docs --path docs/modules/ROOT/pages/index.adoc docs/modules/ROOT/pages/install.adoc --undirected --format svg > path.svg
 ----
 
 [cols="2,4"]
@@ -260,10 +262,22 @@ adocfoundry-cli graph docs --format svg > graph.svg
 |`--depth <n>`
 |How many links to follow from `--page`, 1 to 3. It needs `--page`; without it the command exits with 2.
 
+|`--path <from> <to>`
+|Print the graph along the shortest path from `<from>` to `<to>`, each a page's path or id as in the JSON.
+It cannot be combined with `--page`.
+The filter options apply, and links are followed only in their direction.
+When there is no path, the command prints "no path from … to …" to standard error and exits with 1.
+See xref:graph-view.adoc#_the_path_between_two_pages[The path between two pages].
+
+|`--undirected`
+|Follow links in both directions when finding the path.
+It needs `--path`.
+
 |`--format json\|dot\|svg`
 |`json` (the default), Graphviz `dot`, or `svg`.
 `svg` lays the graph out and draws it as the xref:graph-view.adoc#_export_the_graph[exported image], with colours following `[graph] colour_by`.
-It works with `--page`, `--depth` and the filter options.
+It works with `--page`, `--depth`, `--path` and the filter options.
+With `--path`, `dot` and `svg` draw just the path.
 
 |`--dark`
 |Draws the SVG for a dark background.
@@ -284,6 +298,9 @@ Ids are paths relative to `<root>`, written with `/`; an unresolved target's id 
 `kind` is `page`, `partial`, `nav` or `unresolved`.
 `coordinate` is `version@component:module:family`, with `~` for an unversioned component, and is left out outside Antora.
 An edge's `kind` is `xref`, `include` or `nav`, and `count` is the number of links it stands for.
+
+With `--path`, the JSON is the usual `nodes` and `edges` plus a `path` array, in order.
+Each step has an `id`, a `title`, `links` (the kinds of link from the step before, empty for the first step) and `backwards` (true when the step was reached against a link's direction).
 
 [source,json]
 ----

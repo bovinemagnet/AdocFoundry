@@ -16,7 +16,7 @@ use std::{collections::BTreeSet, path::Path, sync::Arc};
 
 pub use layout::{Layout, Point, SETTLED};
 pub use snapshot::NodeInput;
-pub use store::{LinkStore, StoredLink};
+pub use store::{LinkStore, PathStep, StoredLink};
 pub use style::{colour_groups, node_colour, node_radius, ColourBy, Hsl};
 pub use svg::{to_svg, to_svg_laid_out, SvgStyle, EXPORT_SEED};
 
@@ -122,6 +122,40 @@ impl GraphSnapshot {
             .binary_search_by(|node| node.key.cmp(key))
             .ok()
             .map(|at| &self.nodes[at])
+    }
+
+    /// The part of the snapshot a path covers: its nodes, and the edges of the kinds it took
+    /// between each and the next.
+    #[must_use]
+    pub fn along(&self, steps: &[PathStep]) -> Self {
+        let mut taken = BTreeSet::new();
+        for pair in steps.windows(2) {
+            let (before, step) = (&pair[0].key, &pair[1]);
+            let (from, to) = if step.backwards {
+                (&step.key, before)
+            } else {
+                (before, &step.key)
+            };
+            for kind in &step.kinds {
+                taken.insert((from.clone(), to.clone(), *kind));
+            }
+        }
+        let on_path: BTreeSet<&GraphKey> = steps.iter().map(|step| &step.key).collect();
+        Self {
+            revision: self.revision,
+            nodes: self
+                .nodes
+                .iter()
+                .filter(|node| on_path.contains(&node.key))
+                .cloned()
+                .collect(),
+            edges: self
+                .edges
+                .iter()
+                .filter(|edge| taken.contains(&(edge.from.clone(), edge.to.clone(), edge.kind)))
+                .cloned()
+                .collect(),
+        }
     }
 }
 

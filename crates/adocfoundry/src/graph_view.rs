@@ -18,7 +18,8 @@ use std::{
 use adoc_engine::{
     commands::ids, CommandArgs, CommandOutcome, DocumentId, EdgeKind, Engine, EngineEvent,
     GraphColour, GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, Layout,
-    LinkStyle, NavPlace, NavigationPosition, Neighbour, Point as LayoutPoint, TabItem, TextEdit,
+    LinkStyle, NavPlace, NavigationPosition, Neighbour, PathStep, Point as LayoutPoint, TabItem,
+    TextEdit,
 };
 use gpui::{
     actions, canvas, div, point, prelude::FluentBuilder as _, px, quad, size, App, AppContext as _,
@@ -41,7 +42,7 @@ use crate::{
     workspace_view::{item_args, WorkspaceView},
 };
 
-actions!(adocfoundry, [NextNode, PreviousNode, OpenNode]);
+actions!(adocfoundry, [NextNode, PreviousNode, OpenNode, ClearPath]);
 
 /// The active page and the edit linking it to the file at `path` at its caret, or at its end
 /// before any caret has been reported.
@@ -60,7 +61,7 @@ fn link_from_active(
 }
 
 /// The key context of the graph's canvas, where Tab, Shift-Tab and Enter move between nodes
-/// and open one rather than moving focus.
+/// and open one rather than moving focus, and Esc clears a path.
 pub const GRAPH_CONTEXT: &str = "Graph";
 
 /// Binds the canvas's keys.
@@ -70,6 +71,7 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("tab", NextNode, context),
         KeyBinding::new("shift-tab", PreviousNode, context),
         KeyBinding::new("enter", OpenNode, context),
+        KeyBinding::new("escape", ClearPath, context),
     ]);
 }
 
@@ -175,6 +177,11 @@ pub struct GraphView {
     viewport: Rc<Cell<Bounds<Pixels>>>,
     hovered: Option<GraphKey>,
     selected: Option<GraphKey>,
+    /// The nodes a path is asked between, and the path found, if any.
+    path_ends: Option<(GraphKey, GraphKey)>,
+    path: Option<Vec<PathStep>>,
+    /// Whether a path follows links only in their direction, as a reader does.
+    directed: bool,
     drag: Option<Drag>,
     /// The node a context menu was opened on.
     menu_target: Rc<RefCell<Option<GraphKey>>>,
@@ -227,6 +234,9 @@ impl GraphView {
             viewport: Rc::default(),
             hovered: None,
             selected: None,
+            path_ends: None,
+            path: None,
+            directed: true,
             drag: None,
             menu_target: Rc::default(),
             _subscriptions: subscriptions,
@@ -268,23 +278,26 @@ impl GraphView {
         true
     }
 
+    /// What the view shows: the workspace, or the neighbourhood of the page a local graph is
+    /// around; `None` for a local graph with no page.
+    fn scope(&self) -> Option<GraphScope> {
+        if !self.local {
+            return Some(GraphScope::Workspace);
+        }
+        self.centre.as_ref().map(|path| GraphScope::Local {
+            path: path.clone(),
+            depth: self.depth,
+        })
+    }
+
     /// Asks the engine for the graph again and fits the layout to it.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let scope = if self.local {
-            match &self.centre {
-                Some(path) => GraphScope::Local {
-                    path: path.clone(),
-                    depth: self.depth,
-                },
-                None => {
-                    self.set_snapshot(GraphSnapshot::default());
-                    self.layout.sync(&self.snapshot);
-                    cx.notify();
-                    return;
-                }
-            }
-        } else {
-            GraphScope::Workspace
+        let Some(scope) = self.scope() else {
+            self.set_snapshot(GraphSnapshot::default());
+            self.layout.sync(&self.snapshot);
+            self.update_path(cx);
+            cx.notify();
+            return;
         };
         let snapshot = self.app.read(cx).engine.graph(&scope, &self.filter);
         let recentre = self.local && snapshot.nodes.len() != self.snapshot.nodes.len();
@@ -301,7 +314,41 @@ impl GraphView {
                 *key = None;
             }
         }
+        self.update_path(cx);
         cx.notify();
+    }
+
+    // --- paths -------------------------------------------------------------------------------
+
+    /// Shows the shortest path from `from` to `to`: its nodes numbered and the rest dimmed, and
+    /// its steps listed in the window's side panel.
+    fn show_path(&mut self, from: GraphKey, to: GraphKey, cx: &mut Context<Self>) {
+        self.path_ends = Some((from, to));
+        self.update_path(cx);
+        cx.notify();
+    }
+
+    /// Finds the path between the ends asked for again, over what the view shows.
+    fn update_path(&mut self, cx: &App) {
+        self.path = match (&self.path_ends, self.scope()) {
+            (Some((from, to)), Some(scope)) => {
+                self.app
+                    .read(cx)
+                    .engine
+                    .graph_path(&scope, &self.filter, from, to, self.directed)
+            }
+            _ => None,
+        };
+    }
+
+    fn clear_path(&mut self, cx: &mut Context<Self>) {
+        self.path_ends = None;
+        self.path = None;
+        cx.notify();
+    }
+
+    fn on_clear_path(&mut self, _: &ClearPath, _: &mut Window, cx: &mut Context<Self>) {
+        self.clear_path(cx);
     }
 
     /// The workspace window whose panels the context menu reaches.
@@ -580,6 +627,12 @@ impl GraphView {
                 clicks,
                 ..
             }) => {
+                // Shift-click: a path from the selection, which stays where it is.
+                let from = self.selected.clone().filter(|selected| *selected != key);
+                if let (true, Some(from)) = (event.modifiers.shift, from) {
+                    self.show_path(from, key, cx);
+                    return;
+                }
                 self.selected = Some(key.clone());
                 self.open(&key, clicks >= 2, cx);
                 cx.notify();
@@ -709,17 +762,50 @@ impl GraphView {
                 .map(|node| self.layout.position(&node.key).unwrap_or_default())
                 .collect()
         };
+        // A path shown takes the place of the hover and the search: its nodes numbered, its
+        // links drawn, and the rest dimmed.
+        let path = self.path.as_ref().map(|steps| {
+            let mut order = std::collections::HashMap::new();
+            let mut links = std::collections::HashSet::new();
+            for (at, step) in steps.iter().enumerate() {
+                let Some(place) = self.place(&step.key) else {
+                    continue;
+                };
+                order.insert(place, at + 1);
+                let before = at
+                    .checked_sub(1)
+                    .and_then(|before| self.place(&steps[before].key));
+                if let Some(before) = before {
+                    let (from, to) = if step.backwards {
+                        (place, before)
+                    } else {
+                        (before, place)
+                    };
+                    links.extend(step.kinds.iter().map(|kind| (from, to, *kind)));
+                }
+            }
+            (order, links)
+        });
         let nodes: Vec<DrawnNode> = nodes_shown
             .iter()
             .enumerate()
             .map(|(place, node)| {
                 let emphasised = focus.is_none() || near[place];
                 let found = matches(node);
-                let dim = !emphasised || !found;
-                let label = all_labels
-                    || (focus.is_some() && emphasised)
-                    || (!self.query.is_empty() && found)
-                    || selected == Some(place);
+                let on_path = path.as_ref().map(|(order, _)| order.get(&place).copied());
+                let dim = match on_path {
+                    Some(order) => order.is_none(),
+                    None => !emphasised || !found,
+                };
+                let label = match on_path {
+                    Some(Some(order)) => Some(format!("{order}. {}", node.title).into()),
+                    Some(None) => all_labels.then(|| node.title.clone().into()),
+                    None => (all_labels
+                        || (focus.is_some() && emphasised)
+                        || (!self.query.is_empty() && found)
+                        || selected == Some(place))
+                    .then(|| node.title.clone().into()),
+                };
                 DrawnNode {
                     at: positions[place],
                     radius: adoc_engine::node_radius(node.links_in + node.links_out),
@@ -731,7 +817,7 @@ impl GraphView {
                         dark,
                         theme.muted_foreground,
                     ),
-                    label: label.then(|| node.title.clone().into()),
+                    label,
                     dim,
                     selected: selected == Some(place),
                 }
@@ -743,7 +829,10 @@ impl GraphView {
             .iter()
             .zip(&self.edge_places)
             .map(|(edge, &(from, to))| {
-                let emphasised = focus.is_none_or(|focus| from == focus || to == focus);
+                let emphasised = match &path {
+                    Some((_, links)) => links.contains(&(from, to, edge.kind)),
+                    None => focus.is_none_or(|focus| from == focus || to == focus),
+                };
                 DrawnEdge {
                     from,
                     to,
@@ -841,6 +930,7 @@ impl GraphView {
             .on_action(cx.listener(Self::on_next_node))
             .on_action(cx.listener(Self::on_previous_node))
             .on_action(cx.listener(Self::on_open_node))
+            .on_action(cx.listener(Self::on_clear_path))
             .child(
                 canvas(
                     move |bounds, window, _| {
@@ -884,6 +974,11 @@ impl GraphView {
                 let Some(this) = view.upgrade() else {
                     return menu;
                 };
+                let from_selection = this
+                    .read(cx)
+                    .selected
+                    .as_ref()
+                    .is_some_and(|selected| *selected != key);
                 let (page, partial, xref, include) = {
                     let graph = this.read(cx);
                     let engine = &graph.app.read(cx).engine;
@@ -951,12 +1046,22 @@ impl GraphView {
                 if xref.is_some() || include.is_some() {
                     menu = menu.separator();
                 }
-                menu.item(item("Find References", |view, key, cx| {
-                    view.find_references(key, cx);
-                }))
-                .item(item("Reveal in Files", |view, key, cx| {
-                    view.reveal_in_files(key, cx);
-                }))
+                let menu = menu
+                    .item(item("Find References", |view, key, cx| {
+                        view.find_references(key, cx);
+                    }))
+                    .item(item("Reveal in Files", |view, key, cx| {
+                        view.reveal_in_files(key, cx);
+                    }));
+                if !from_selection {
+                    return menu;
+                }
+                menu.separator()
+                    .item(item("Show Path from Selection", |view, key, cx| {
+                        if let Some(from) = view.selected.clone() {
+                            view.show_path(from, key.clone(), cx);
+                        }
+                    }))
             })
             .into_any_element()
     }
@@ -1175,6 +1280,95 @@ impl GraphView {
         }
         self.filter.components = (shown.len() != all.len()).then_some(shown);
         self.refresh(cx);
+    }
+
+    /// The path asked for, step by step, each naming the links it took; or that there is none.
+    /// A step's row selects its node.
+    fn render_path(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let title = |key: &GraphKey| {
+            self.snapshot
+                .node(key)
+                .map_or_else(|| key_name(key), |node| node.title.clone())
+        };
+        let header = h_flex()
+            .px_2()
+            .pt_2()
+            .gap_1()
+            .child(
+                div()
+                    .flex_1()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child("Path"),
+            )
+            .child(
+                Button::new("graph-path-directed")
+                    .label(if self.directed {
+                        "Directed"
+                    } else {
+                        "Either way"
+                    })
+                    .xsmall()
+                    .ghost()
+                    .selected(self.directed)
+                    .debug_selector(|| "graph-path-directed".to_owned())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.directed = !this.directed;
+                        this.update_path(cx);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("graph-path-clear")
+                    .label("Clear")
+                    .xsmall()
+                    .ghost()
+                    .debug_selector(|| "graph-path-clear".to_owned())
+                    .on_click(cx.listener(|this, _, _, cx| this.clear_path(cx))),
+            );
+        let body = match (&self.path, &self.path_ends) {
+            (Some(steps), _) => v_flex()
+                .py_1()
+                .children(steps.iter().enumerate().map(|(at, step)| {
+                    let key = step.key.clone();
+                    let selector = format!("graph-path-step-{at}");
+                    let how = (at > 0).then(|| {
+                        let kinds: Vec<&str> = step.kinds.iter().map(|kind| kind.name()).collect();
+                        let back = if step.backwards {
+                            ", followed back"
+                        } else {
+                            ""
+                        };
+                        format!("by {}{back}", kinds.join(" · "))
+                    });
+                    v_flex()
+                        .id(SharedString::from(selector.clone()))
+                        .debug_selector(move || selector.clone())
+                        .px_2()
+                        .py_0p5()
+                        .cursor_pointer()
+                        .hover(|row| row.bg(cx.theme().list_hover))
+                        .on_click(cx.listener(move |this, _, _, cx| this.reveal(&key, cx)))
+                        .child(format!("{}. {}", at + 1, title(&step.key)))
+                        .children(how.map(|how| div().text_xs().text_color(muted).child(how)))
+                }))
+                .into_any_element(),
+            (None, Some((from, to))) => div()
+                .px_2()
+                .py_1()
+                .text_sm()
+                .text_color(muted)
+                .debug_selector(|| "graph-path-none".to_owned())
+                .child(format!("No path from {} to {}.", title(from), title(to)))
+                .into_any_element(),
+            (None, None) => div().into_any_element(),
+        };
+        v_flex()
+            .pb_1()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(header)
+            .child(body)
     }
 
     fn render_panel_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1460,6 +1654,9 @@ impl Render for GraphView {
                     .overflow_y_scroll()
                     .border_l_1()
                     .border_color(cx.theme().border)
+                    .when(self.path_ends.is_some(), |side| {
+                        side.child(self.render_path(cx))
+                    })
                     .map(|side| match selected {
                         Some((path, title)) => side
                             .child(
@@ -1511,6 +1708,17 @@ impl Render for GraphView {
                     .into_any_element()
             }
         }
+    }
+}
+
+/// A node's name when the snapshot does not hold it: its file's name, or an unresolved target
+/// as written.
+fn key_name(key: &GraphKey) -> String {
+    match key {
+        GraphKey::File(path) => path
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+        GraphKey::Unresolved(text) => text.clone(),
     }
 }
 

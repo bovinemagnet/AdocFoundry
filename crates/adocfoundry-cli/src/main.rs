@@ -10,8 +10,8 @@
 //!     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 //! adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 //! adocfoundry-cli git-status <root> [--format text|json]
-//! adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot|svg] [--no-partials]
-//!     [--no-nav] [--unresolved] [--dark]
+//! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]]
+//!     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
 //! adocfoundry-cli doctor [<root>] [--format text|json]
 //! adocfoundry-cli --version
 //! ```
@@ -41,8 +41,8 @@ const USAGE: &str = "usage:
       [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
   adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
   adocfoundry-cli git-status <root> [--format text|json]
-  adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot|svg] [--no-partials]
-      [--no-nav] [--unresolved] [--dark]
+  adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]]
+      [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
   adocfoundry-cli doctor [<root>] [--format text|json]
   adocfoundry-cli --version";
 
@@ -480,17 +480,34 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The link graph of the workspace at `root`, or of a page and its neighbours, as JSON, DOT or
-/// an SVG image.
+/// The link graph of the workspace at `root`, of a page and its neighbours, or along the
+/// shortest path between two pages, as JSON, DOT or an SVG image.
 fn graph(arguments: &[String]) -> Result<ExitCode, String> {
     // Flags take no value: take them out before the options.
-    let flags = ["--no-partials", "--no-nav", "--unresolved", "--dark"];
+    let flags = [
+        "--no-partials",
+        "--no-nav",
+        "--unresolved",
+        "--dark",
+        "--undirected",
+    ];
     let flag = |name: &str| arguments.iter().any(|argument| argument == name);
-    let rest: Vec<String> = arguments
+    let mut rest: Vec<String> = arguments
         .iter()
         .filter(|argument| !flags.contains(&argument.as_str()))
         .cloned()
         .collect();
+    // `--path` takes two values.
+    let ends = match rest.iter().position(|argument| argument == "--path") {
+        Some(at) => {
+            let values: Vec<String> = rest.drain(at..(at + 3).min(rest.len())).skip(1).collect();
+            let [from, to] = values.as_slice() else {
+                return Err("`--path` needs the two pages to join".to_owned());
+            };
+            Some((from.clone(), to.clone()))
+        }
+        None => None,
+    };
     let (positional, options) = parse_options(&rest, &["page", "depth", "format"])?;
     let [root] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -526,6 +543,52 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
         ..GraphFilter::default()
     };
     let engine = open_engine(&root, false)?;
+    if let Some((from, to)) = ends {
+        if option(&options, "page").is_some() {
+            return Err("`--path` and `--page` cannot be used together".to_owned());
+        }
+        // Relative, as the root may be, like `--page`.
+        let (from, to) = (
+            adoc_index::normalize_path(Path::new(&from)),
+            adoc_index::normalize_path(Path::new(&to)),
+        );
+        for page in [&from, &to] {
+            if engine.workspace().index.file(page).is_none() {
+                return Err(format!(
+                    "{} is not a page in {}",
+                    page.display(),
+                    root.display()
+                ));
+            }
+        }
+        let directed = !flag("--undirected");
+        let Some(report) = engine.graph_path_report(&root, &filter, &from, &to, directed) else {
+            eprintln!(
+                "adocfoundry-cli: no path from {} to {}",
+                display_path(&from, &root),
+                display_path(&to, &root)
+            );
+            return Ok(ExitCode::from(1));
+        };
+        match format {
+            "svg" => {
+                let style = SvgStyle {
+                    colour_by: engine.settings().graph.colour_by,
+                    dark: flag("--dark"),
+                };
+                let (snapshot, _) = engine
+                    .graph_path_view(&filter, &from, &to, directed)
+                    .unwrap_or_default();
+                print!("{}", adoc_engine::to_svg_laid_out(&snapshot, &style));
+            }
+            "dot" => print!("{}", report.to_dot()),
+            _ => println!(
+                "{}",
+                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+            ),
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
     if let GraphScope::Local { path, .. } = &scope {
         if engine.workspace().index.file(path).is_none() {
             return Err(format!(

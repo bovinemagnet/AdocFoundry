@@ -7070,6 +7070,76 @@ fn exporting_the_graph_writes_an_svg_and_a_png(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn shift_clicking_two_nodes_shows_the_path_between_them(cx: &mut TestAppContext) {
+    let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let page = |name: &str| graph_key(&root.join(GRAPH_PAGES).join(name));
+    let (home, install, configure, orphan) = (
+        page("index.adoc"),
+        page("install.adoc"),
+        page("configure.adoc"),
+        page("orphan.adoc"),
+    );
+    let users = graph_key(&root.join("guide/modules/admin/pages/users.adoc"));
+    let click = |key: &adoc_engine::GraphKey, modifiers, graph_cx: &mut VisualTestContext| {
+        let at = graph_cx.update(|_, cx| view.read(cx).node_position_for_test(key).unwrap());
+        graph_cx.simulate_click(at, modifiers);
+        graph_cx.run_until_parked();
+    };
+    let shift = gpui::Modifiers {
+        shift: true,
+        ..gpui::Modifiers::none()
+    };
+    let steps = |graph_cx: &mut VisualTestContext| {
+        [
+            "graph-path-step-0",
+            "graph-path-step-1",
+            "graph-path-step-2",
+            "graph-path-step-3",
+        ]
+        .into_iter()
+        .filter(|selector| graph_cx.debug_bounds(selector).is_some())
+        .count()
+    };
+    click(&home, gpui::Modifiers::none(), &mut graph_cx);
+    click(&configure, shift, &mut graph_cx);
+    // Home → Install → Configure, listed in order; everything else dimmed.
+    assert_eq!(steps(&mut graph_cx), 3);
+    let dimmed = graph_cx.update(|_, cx| view.read(cx).dimmed_for_test(cx));
+    assert!(dimmed.contains(&users));
+    assert!(!dimmed.contains(&home) && !dimmed.contains(&install) && !dimmed.contains(&configure));
+    // A Shift-click leaves the selection where it was.
+    assert_eq!(
+        graph_cx.update(|_, cx| view.read(cx).selected_for_test().cloned()),
+        Some(home.clone())
+    );
+
+    // Either way, Configure's xref back to Home is the one step.
+    click_selector(
+        "graph-path-directed",
+        gpui::MouseButton::Left,
+        &mut graph_cx,
+    );
+    assert_eq!(steps(&mut graph_cx), 2);
+
+    // Nothing reaches the orphan.
+    click(&orphan, shift, &mut graph_cx);
+    assert!(graph_cx.debug_bounds("graph-path-none").is_some());
+    assert_eq!(steps(&mut graph_cx), 0);
+
+    // Esc clears the path.
+    click(&configure, shift, &mut graph_cx);
+    assert_eq!(steps(&mut graph_cx), 2);
+    graph_cx.simulate_keystrokes("escape");
+    graph_cx.run_until_parked();
+    assert_eq!(steps(&mut graph_cx), 0);
+    assert!(graph_cx.debug_bounds("graph-path-none").is_none());
+    // The selection's highlight is back: Users, off the path but linked from Home, is lit.
+    let dimmed = graph_cx.update(|_, cx| view.read(cx).dimmed_for_test(cx));
+    assert!(!dimmed.contains(&users) && dimmed.contains(&orphan));
+}
+
+#[gpui::test]
 fn hovering_a_node_highlights_it_and_its_neighbours(cx: &mut TestAppContext) {
     let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);
     let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
