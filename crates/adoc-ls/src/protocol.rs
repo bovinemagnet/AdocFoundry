@@ -140,6 +140,9 @@ pub(crate) struct ProtocolServer {
     sink: Box<dyn PreviewSink>,
     /// Documents with a live preview on screen, re-rendered when they are saved.
     live_previews: BTreeSet<String>,
+    /// Closed files the last `adoc.checkWorkspace` published problems for, cleared by the
+    /// next check once they have none.
+    checked: BTreeSet<PathBuf>,
 }
 
 impl ProtocolServer {
@@ -156,6 +159,7 @@ impl ProtocolServer {
             open: BTreeMap::new(),
             sink,
             live_previews: BTreeSet::new(),
+            checked: BTreeSet::new(),
         }
     }
 
@@ -824,10 +828,12 @@ impl ProtocolServer {
         }
     }
 
-    /// `adoc.checkWorkspace`: every file's diagnostics published, open or not, and a count.
+    /// `adoc.checkWorkspace`: every file's diagnostics published, open or not, and a count. A
+    /// closed file an earlier check published problems for gets an empty list once it has none.
     fn check_workspace(&mut self, id: lsp_server::RequestId) -> (Response, Vec<Notification>) {
         let mut notifications = Vec::new();
         let mut problems = 0;
+        let mut checked = BTreeSet::new();
         let mut found = self.engine.workspace_diagnostics();
         found.retain(|(_, diagnostics)| !diagnostics.is_empty());
         let files = found.len();
@@ -868,6 +874,21 @@ impl ProtocolServer {
                 PublishDiagnostics::METHOD.to_owned(),
                 PublishDiagnosticsParams::new(uri, diagnostics, None),
             ));
+            checked.insert(path);
+        }
+        let earlier = std::mem::replace(&mut self.checked, checked);
+        for path in earlier.difference(&self.checked) {
+            // An open file's diagnostics, spelling hints included, are published as it changes.
+            let open = self
+                .engine
+                .document_for_path(path)
+                .is_some_and(|open| self.open.contains_key(&open));
+            if let Some(uri) = path_to_uri(path).filter(|_| !open) {
+                notifications.push(Notification::new(
+                    PublishDiagnostics::METHOD.to_owned(),
+                    PublishDiagnosticsParams::new(uri, Vec::new(), None),
+                ));
+            }
         }
         (
             Response::new_ok(
@@ -1936,6 +1957,74 @@ mod tests {
             engine,
             Box::new(BrowserSink::new(directory.join("previews"), Unopened)),
         )
+    }
+
+    /// The `(uri, diagnostic codes)` of each publish, in order.
+    fn publishes(notifications: Vec<Notification>) -> Vec<(String, Vec<String>)> {
+        notifications
+            .into_iter()
+            .filter(|notification| notification.method == PublishDiagnostics::METHOD)
+            .map(|notification| {
+                let params: PublishDiagnosticsParams =
+                    serde_json::from_value(notification.params).unwrap();
+                let codes = params
+                    .diagnostics
+                    .into_iter()
+                    .filter_map(|diagnostic| match diagnostic.code {
+                        Some(NumberOrString::String(code)) => Some(code),
+                        _ => None,
+                    })
+                    .collect();
+                (params.uri.as_str().to_owned(), codes)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn checking_the_workspace_again_clears_a_closed_file_that_was_fixed() {
+        let directory = tempfile::tempdir().unwrap();
+        let page = directory.path().join("page.adoc");
+        fs::write(&page, "= Page\n\nSee xref:missing.adoc[].\n").unwrap();
+        let mut server = server();
+        server.open_workspace(vec![directory.path().to_path_buf()]);
+        let uri = file_uri(&page).as_str().to_owned();
+
+        let (_, first) = server.check_workspace(RequestId::from(1));
+        assert_eq!(
+            publishes(first),
+            [(uri.clone(), vec!["adoc.unresolved-xref-file".to_owned()])]
+        );
+
+        fs::write(directory.path().join("missing.adoc"), "= Found\n").unwrap();
+        server.engine.reindex();
+        assert!(server
+            .engine
+            .wait_for_workers(std::time::Duration::from_secs(10)));
+        server.tick();
+
+        let (response, second) = server.check_workspace(RequestId::from(2));
+        assert_eq!(
+            response.response_result.unwrap(),
+            serde_json::json!({ "files": 0, "problems": 0 })
+        );
+        assert_eq!(publishes(second), [(uri, Vec::new())], "cleared");
+    }
+
+    #[test]
+    fn checking_the_workspace_again_leaves_a_file_opened_since_to_its_own_publishes() {
+        let directory = tempfile::tempdir().unwrap();
+        let page = directory.path().join("page.adoc");
+        fs::write(&page, "= Page\n\nSee xref:missing.adoc[].\n").unwrap();
+        let mut server = server();
+        server.open_workspace(vec![directory.path().to_path_buf()]);
+        let uri = file_uri(&page).as_str().to_owned();
+        let (_, first) = server.check_workspace(RequestId::from(1));
+        assert_eq!(publishes(first).len(), 1);
+
+        // Opened and fixed in the client: its own publishes, spelling hints and all, cover it.
+        open(&mut server, &uri, "= Page\n");
+        let (_, second) = server.check_workspace(RequestId::from(2));
+        assert_eq!(publishes(second), []);
     }
 
     #[test]
