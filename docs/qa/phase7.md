@@ -57,3 +57,4 @@ Automated coverage for reference:
 
 | Date | Build | Platform | Result | Notes |
 |---|---|---|---|---|
+| 2026-11-02 | `phase-7` debug | macOS (Metal), off-screen windows captured from their textures | Pass | `tests/fixtures/graph` drawn in the window (light and dark) and the panel: pages coloured by component, partials hollow, `nav.adoc` square, xrefs solid, includes dashed, navigation dotted and bowed, Home → Install heavier; selecting Install rings it, keeps its neighbours lit and dims the rest, and the side panel lists Configure as `xref · nav`; the panel shows both of Install's navigation trails and its links. Icons were not drawn, the capture having no assets. Pinch, the second display and a large workspace remain. |
