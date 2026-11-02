@@ -26,7 +26,7 @@ include::example$crate-layers.mmd[]
 
 |L1
 |`adoc-parser`
-|A line-oriented semantic parser, deliberately not tree-sitter and not a full AST. It extracts titles, sections, attributes, anchors, xrefs, includes and images from half-typed input without panicking, and runs on every keystroke.
+|A line-oriented semantic parser, deliberately not tree-sitter and not a full AST. It extracts titles, sections, attributes, anchors, xrefs, includes and images from half-typed input without panicking, and runs on every keystroke. Inside listing, literal, passthrough and comment blocks it reads only include directives (none in comment blocks), whatever the delimiter's length, because a block closes on a line matching its own delimiter; the same holds for `+```+` fences and for paragraphs styled `[source]`, `[listing]` or `[literal]`.
 
 |L1
 |`adoc-dom`
