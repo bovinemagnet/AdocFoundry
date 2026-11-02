@@ -74,7 +74,7 @@ The server advertises these through `workspace/executeCommand`; the preview comm
 | `adoc.checkWorkspace` | Publishes the diagnostics of every file in the workspace, open or not, and clears those of a closed file an earlier check reported once they are fixed. |
 | `adoc.exportPdf { uri, component?, output, theme?, standards? }` | Writes a PDF of the page, or of a component version as a book. Only in builds with Typst. |
 
-The preview renders through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, otherwise through the engine, with diagrams and typeset STEM. Preview files are written to `adoc-ls-preview` in the system's temporary directory.
+The preview renders through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, otherwise through the engine, with diagrams and typeset STEM. Preview files are written to `adoc-ls-preview` in the system's temporary directory, one per page, named after it and a hash of its path.
 
 ## Settings
 
