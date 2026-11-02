@@ -5,7 +5,7 @@
 | Status | Proposed / draft — not approved for implementation |
 | Date | 2026-11-03 |
 | Scope | Antora-aware quality audits, health report, configurable CI gates and desktop dashboard |
-| Related work | #85 Vale, #86 external links, #104 compatibility inspector, #289 stale graph pages, #291 new Antora project |
+| Related work | Epic #299; #85 Vale, #86 external links, #104 compatibility inspector, #289 stale graph pages, #291 new Antora project |
 | Architecture | `docs/design/DESIGN-AdocFoundry_Architecture.md`; `CLAUDE.md`; crate layering in `xtask/src/layers.rs` |
 
 ## 1. Purpose and problem
@@ -160,14 +160,14 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 
 ## 10. Work packages and existing issues
 
-| WP | Deliverable | Recommended issue |
+| WP | Deliverable | Issue |
 | --- | --- | --- |
-| Q1 | Data model, rules registry, severity and config contract | New issue |
-| Q2 | Antora navigation coverage + title/alt rules | New issue |
-| Q3 | Incremental audit engine and completeness semantics | New issue |
-| Q4 | CLI text/JSON/SARIF output + CI exit gates | New issue |
-| Q5 | Native Quality dashboard and source navigation | New issue |
-| Q6 | Optional integration adapters, docs and end-to-end QA | New issue; coordinate with #85, #86, #104, #289 |
+| Q1 | Data model, rules registry, severity and config contract | #300 \|
+| Q2 | Antora navigation coverage + title/alt rules | #301 \|
+| Q3 | Incremental audit engine and completeness semantics | #302 \|
+| Q4 | CLI text/JSON/SARIF output + CI exit gates | #303 \|
+| Q5 | Native Quality dashboard and source navigation | #304 \|
+| Q6 | Optional integration adapters, docs and end-to-end QA | #305; coordinate with #85, #86, #104, #289 |
 
 Implement in order Q1 → Q2/Q3 → Q4/Q5 → Q6. Prefer one reviewable PR per work package. Update this PRD in the same PR when implementation diverges; add an Implementation Notes section and preserve decisions.
 
