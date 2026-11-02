@@ -1,6 +1,6 @@
-//! Reports for headless front ends: the workspace's diagnostics, and the Git status of a root,
-//! in the shapes `adocfoundry-cli check` and `git-status` print as JSON, so the CLI and the MCP
-//! server give the same answers.
+//! Reports for headless front ends: the workspace's diagnostics, the Git status of a root and
+//! the link graph, in the shapes `adocfoundry-cli check`, `git-status` and `graph` print as
+//! JSON, so the CLI and the MCP server give the same answers.
 
 use std::path::Path;
 
@@ -66,7 +66,141 @@ pub fn severity_name(severity: DiagnosticSeverity) -> &'static str {
     }
 }
 
+/// A node of [`Engine::graph_report`].
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GraphReportNode {
+    /// A file's path relative to the root, with `/` separators, or an unresolved target as
+    /// written.
+    pub id: String,
+    pub title: String,
+    /// `page`, `partial`, `nav` or `unresolved`.
+    pub kind: &'static str,
+    /// `version@component:module:family`, inside an Antora component.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordinate: Option<String>,
+    pub links_out: usize,
+    pub links_in: usize,
+}
+
+/// An edge of [`Engine::graph_report`]: every link of one kind between two nodes.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GraphReportEdge {
+    pub from: String,
+    pub to: String,
+    /// `xref`, `include` or `nav`.
+    pub kind: &'static str,
+    pub count: usize,
+}
+
+/// The link graph, or a page's part of it, with paths relative to a root.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GraphReport {
+    pub revision: u64,
+    pub nodes: Vec<GraphReportNode>,
+    pub edges: Vec<GraphReportEdge>,
+}
+
+impl GraphReport {
+    /// The graph as Graphviz DOT: navigation files are boxes, partials dashed, unresolved
+    /// targets dotted; include edges are dashed and navigation edges dotted.
+    #[must_use]
+    pub fn to_dot(&self) -> String {
+        use std::fmt::Write as _;
+        let quote = |text: &str| format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""));
+        let mut dot = String::from("digraph links {\n  node [shape=ellipse];\n");
+        for node in &self.nodes {
+            let style = match node.kind {
+                "nav" => " shape=box",
+                "partial" => " style=dashed",
+                "unresolved" => " style=dotted",
+                _ => "",
+            };
+            let _ = writeln!(
+                dot,
+                "  {} [label={}{style}];",
+                quote(&node.id),
+                quote(&node.title)
+            );
+        }
+        for edge in &self.edges {
+            let style = match edge.kind {
+                "include" => " style=dashed",
+                "nav" => " style=dotted",
+                _ => "",
+            };
+            let weight = if edge.count > 1 {
+                format!(" label=\"{}\"", edge.count)
+            } else {
+                String::new()
+            };
+            let _ = writeln!(
+                dot,
+                "  {} -> {} [kind={}{style}{weight}];",
+                quote(&edge.from),
+                quote(&edge.to),
+                edge.kind
+            );
+        }
+        dot.push_str("}\n");
+        dot
+    }
+}
+
 impl Engine {
+    /// The link graph `scope` covers, as `filter` allows, with paths relative to `root`.
+    #[must_use]
+    pub fn graph_report(
+        &self,
+        root: &Path,
+        scope: &crate::GraphScope,
+        filter: &crate::GraphFilter,
+    ) -> GraphReport {
+        use crate::{GraphKey, GraphNodeKind};
+        let snapshot = self.graph(scope, filter);
+        let id = |key: &GraphKey| match key {
+            GraphKey::File(path) => display_path(path, root),
+            GraphKey::Unresolved(text) => text.clone(),
+        };
+        GraphReport {
+            revision: snapshot.revision,
+            nodes: snapshot
+                .nodes
+                .iter()
+                .map(|node| GraphReportNode {
+                    id: id(&node.key),
+                    title: node.title.clone(),
+                    kind: match node.kind {
+                        GraphNodeKind::Page => "page",
+                        GraphNodeKind::Partial => "partial",
+                        GraphNodeKind::Nav => "nav",
+                        GraphNodeKind::Unresolved => "unresolved",
+                    },
+                    coordinate: node.coordinate.as_ref().map(|coordinate| {
+                        format!(
+                            "{}@{}:{}:{}",
+                            coordinate.version.as_deref().unwrap_or("~"),
+                            coordinate.component,
+                            coordinate.module,
+                            coordinate.family
+                        )
+                    }),
+                    links_out: node.links_out,
+                    links_in: node.links_in,
+                })
+                .collect(),
+            edges: snapshot
+                .edges
+                .iter()
+                .map(|edge| GraphReportEdge {
+                    from: id(&edge.from),
+                    to: id(&edge.to),
+                    kind: edge.kind.name(),
+                    count: edge.count,
+                })
+                .collect(),
+        }
+    }
+
     /// Every diagnostic in the workspace, of files beneath `scope` when given, with paths
     /// relative to `root`.
     #[must_use]

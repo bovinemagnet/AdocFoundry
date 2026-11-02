@@ -1,0 +1,186 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+expression: stdout(&output)
+---
+{
+  "revision": 1,
+  "nodes": [
+    {
+      "id": "guide/modules/ROOT/nav.adoc",
+      "title": "nav.adoc",
+      "kind": "nav",
+      "coordinate": "1.0@guide:ROOT:nav",
+      "links_out": 3,
+      "links_in": 0
+    },
+    {
+      "id": "guide/modules/ROOT/pages/configure.adoc",
+      "title": "Configure",
+      "kind": "page",
+      "coordinate": "1.0@guide:ROOT:page",
+      "links_out": 1,
+      "links_in": 2
+    },
+    {
+      "id": "guide/modules/ROOT/pages/index.adoc",
+      "title": "Home",
+      "kind": "page",
+      "coordinate": "1.0@guide:ROOT:page",
+      "links_out": 4,
+      "links_in": 3
+    },
+    {
+      "id": "guide/modules/ROOT/pages/install.adoc",
+      "title": "Install",
+      "kind": "page",
+      "coordinate": "1.0@guide:ROOT:page",
+      "links_out": 4,
+      "links_in": 3
+    },
+    {
+      "id": "guide/modules/ROOT/pages/orphan.adoc",
+      "title": "Orphan",
+      "kind": "page",
+      "coordinate": "1.0@guide:ROOT:page",
+      "links_out": 0,
+      "links_in": 0
+    },
+    {
+      "id": "guide/modules/ROOT/partials/note.adoc",
+      "title": "note.adoc",
+      "kind": "partial",
+      "coordinate": "1.0@guide:ROOT:partial",
+      "links_out": 0,
+      "links_in": 2
+    },
+    {
+      "id": "guide/modules/admin/pages/users.adoc",
+      "title": "Users",
+      "kind": "page",
+      "coordinate": "1.0@guide:admin:page",
+      "links_out": 1,
+      "links_in": 2
+    },
+    {
+      "id": "loose/_part.adoc",
+      "title": "_part.adoc",
+      "kind": "partial",
+      "links_out": 0,
+      "links_in": 1
+    },
+    {
+      "id": "loose/chapter.adoc",
+      "title": "Chapter",
+      "kind": "page",
+      "links_out": 1,
+      "links_in": 0
+    },
+    {
+      "id": "reference/modules/ROOT/pages/api.adoc",
+      "title": "API",
+      "kind": "page",
+      "coordinate": "~@reference:ROOT:page",
+      "links_out": 1,
+      "links_in": 1
+    },
+    {
+      "id": "missing.adoc",
+      "title": "missing.adoc",
+      "kind": "unresolved",
+      "links_out": 0,
+      "links_in": 1
+    }
+  ],
+  "edges": [
+    {
+      "from": "guide/modules/ROOT/nav.adoc",
+      "to": "guide/modules/ROOT/pages/index.adoc",
+      "kind": "nav",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/nav.adoc",
+      "to": "guide/modules/ROOT/pages/install.adoc",
+      "kind": "nav",
+      "count": 2
+    },
+    {
+      "from": "guide/modules/ROOT/nav.adoc",
+      "to": "guide/modules/admin/pages/users.adoc",
+      "kind": "nav",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/pages/configure.adoc",
+      "to": "guide/modules/ROOT/pages/index.adoc",
+      "kind": "xref",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/pages/index.adoc",
+      "to": "guide/modules/ROOT/pages/install.adoc",
+      "kind": "xref",
+      "count": 2
+    },
+    {
+      "from": "guide/modules/ROOT/pages/index.adoc",
+      "to": "guide/modules/ROOT/partials/note.adoc",
+      "kind": "include",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/pages/index.adoc",
+      "to": "guide/modules/admin/pages/users.adoc",
+      "kind": "xref",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/pages/index.adoc",
+      "to": "reference/modules/ROOT/pages/api.adoc",
+      "kind": "xref",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/pages/install.adoc",
+      "to": "guide/modules/ROOT/pages/configure.adoc",
+      "kind": "xref",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/pages/install.adoc",
+      "to": "guide/modules/ROOT/pages/configure.adoc",
+      "kind": "nav",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/pages/install.adoc",
+      "to": "guide/modules/ROOT/partials/note.adoc",
+      "kind": "include",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/ROOT/pages/install.adoc",
+      "to": "missing.adoc",
+      "kind": "xref",
+      "count": 1
+    },
+    {
+      "from": "guide/modules/admin/pages/users.adoc",
+      "to": "guide/modules/ROOT/pages/install.adoc",
+      "kind": "xref",
+      "count": 1
+    },
+    {
+      "from": "loose/chapter.adoc",
+      "to": "loose/_part.adoc",
+      "kind": "include",
+      "count": 1
+    },
+    {
+      "from": "reference/modules/ROOT/pages/api.adoc",
+      "to": "guide/modules/ROOT/pages/index.adoc",
+      "kind": "xref",
+      "count": 1
+    }
+  ]
+}

@@ -143,10 +143,11 @@ impl Client {
     }
 }
 
-const READ_TOOLS: [&str; 9] = [
+const READ_TOOLS: [&str; 10] = [
     "check",
     "get_nav",
     "git_status",
+    "link_graph",
     "list_components",
     "read_page",
     "render_page",
@@ -168,6 +169,71 @@ fn lists_read_only_tools_by_default() {
         .collect();
     assert_eq!(uris.len(), 3, "{uris:?}");
     assert!(uris.iter().all(|uri| uri.starts_with("file://")));
+    client.stop();
+}
+
+#[test]
+fn link_graph_tool_returns_a_local_graph() {
+    let root = adoc_engine::normalize_path(&fixture("graph"));
+    let mut client = Client::start(&root, false);
+    let local = client
+        .call(
+            "link_graph",
+            json!({
+                "scope": "page",
+                "path": "guide/modules/ROOT/pages/configure.adoc",
+                "depth": 1,
+            }),
+        )
+        .unwrap();
+    let ids: Vec<&str> = local["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "guide/modules/ROOT/pages/configure.adoc",
+            "guide/modules/ROOT/pages/index.adoc",
+            "guide/modules/ROOT/pages/install.adoc"
+        ]
+    );
+    let kinds: Vec<(&str, &str)> = local["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|edge| edge["to"] == "guide/modules/ROOT/pages/configure.adoc")
+        .map(|edge| {
+            (
+                edge["from"].as_str().unwrap(),
+                edge["kind"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("guide/modules/ROOT/pages/install.adoc", "xref"),
+            ("guide/modules/ROOT/pages/install.adoc", "nav")
+        ]
+    );
+
+    let whole = client
+        .call("link_graph", json!({ "unresolved": true }))
+        .unwrap();
+    assert!(whole["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|node| node["kind"] == "unresolved"));
+    assert!(client
+        .call(
+            "link_graph",
+            json!({ "scope": "page", "path": "../outside.adoc" })
+        )
+        .is_err());
     client.stop();
 }
 

@@ -92,6 +92,72 @@ fn check_broken_references() {
 }
 
 #[test]
+fn graph_prints_json() {
+    let output = cli(&["graph", "tests/fixtures/graph", "--unresolved"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    insta::assert_snapshot!(stdout(&output));
+
+    let local = cli(&[
+        "graph",
+        "tests/fixtures/graph",
+        "--page",
+        "tests/fixtures/graph/guide/modules/ROOT/pages/configure.adoc",
+        "--depth",
+        "1",
+        "--no-nav",
+    ]);
+    assert!(local.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&local.stdout).unwrap();
+    let ids: Vec<&str> = report["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| node["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "guide/modules/ROOT/pages/configure.adoc",
+            "guide/modules/ROOT/pages/index.adoc",
+            "guide/modules/ROOT/pages/install.adoc"
+        ]
+    );
+    assert!(report["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|edge| edge["kind"] != "nav"));
+}
+
+#[test]
+fn graph_prints_dot() {
+    let output = cli(&[
+        "graph",
+        "tests/fixtures/graph",
+        "--format",
+        "dot",
+        "--no-partials",
+    ]);
+    assert!(output.status.success());
+    let dot = stdout(&output);
+    assert!(dot.starts_with("digraph links {"));
+    assert!(dot.contains(
+        "\"guide/modules/ROOT/nav.adoc\" -> \"guide/modules/ROOT/pages/install.adoc\" \
+         [kind=nav style=dotted label=\"2\"];"
+    ));
+    assert!(dot.contains("\"guide/modules/ROOT/nav.adoc\" [label=\"nav.adoc\" shape=box];"));
+    assert!(!dot.contains("partials/note.adoc"));
+    assert!(dot.trim_end().ends_with('}'));
+
+    let refused = cli(&["graph", "tests/fixtures/graph", "--depth", "2"]);
+    assert_eq!(refused.status.code(), Some(2));
+}
+
+#[test]
 fn check_text_format_and_fail_on() {
     let output = cli(&["check", "tests/fixtures/antora-invalid-descriptor"]);
     assert_eq!(
