@@ -1741,16 +1741,16 @@ impl WorkspaceView {
     /// The documents of the tabs, in order: images are left out.
     #[cfg(test)]
     pub fn tab_documents(&self, cx: &App) -> Vec<DocumentId> {
-        self.tabs
-            .iter()
-            .filter_map(|tab| tab.item(cx).document())
+        self.tab_items(cx)
+            .into_iter()
+            .filter_map(TabItem::document)
             .collect()
     }
 
-    /// What the tabs show, in order.
+    /// What the tab strip shows, in order.
     #[cfg(test)]
     pub fn tab_items(&self, cx: &App) -> Vec<TabItem> {
-        self.tabs.iter().map(|tab| tab.item(cx)).collect()
+        self.app.read(cx).engine.tab_order().to_vec()
     }
 
     /// The viewer of the active tab, when it shows an image.
@@ -1762,9 +1762,10 @@ impl WorkspaceView {
         }
     }
 
+    /// How many tabs the strip shows.
     #[cfg(test)]
-    pub fn tab_count(&self) -> usize {
-        self.tabs.len()
+    pub fn tab_count(&self, cx: &App) -> usize {
+        self.app.read(cx).engine.tab_order().len()
     }
 
     #[cfg(test)]
@@ -3899,12 +3900,21 @@ impl WorkspaceView {
         cx.notify();
     }
 
+    /// Where the active tab is in the tab strip, which shows the engine's tabs in order.
+    fn strip_index(&self, cx: &App) -> usize {
+        let engine = &self.app.read(cx).engine;
+        engine
+            .active_item()
+            .and_then(|active| engine.tab_order().iter().position(|item| *item == active))
+            .unwrap_or(0)
+    }
+
     /// Whether the active tab lies within the tab strip's visible width.
     #[cfg(test)]
-    pub(crate) fn active_tab_visible_for_test(&self) -> Option<bool> {
+    pub(crate) fn active_tab_visible_for_test(&self, cx: &App) -> Option<bool> {
         let viewport = self.tab_scroll.bounds();
         // Item bounds are laid out unscrolled; a tab wider than the strip shows its start.
-        let tab = self.tab_scroll.bounds_for_item(self.active_tab)?;
+        let tab = self.tab_scroll.bounds_for_item(self.strip_index(cx))?;
         let left = tab.left() + self.tab_scroll.offset().x;
         let right = (left + tab.size.width).min(left + viewport.size.width);
         Some(left >= viewport.left() - px(1.) && right <= viewport.right() + px(1.))
@@ -3914,19 +3924,20 @@ impl WorkspaceView {
         let reveals = self.tab_reveals.get();
         if reveals > 0 {
             self.tab_reveals.set(reveals - 1);
-            self.tab_scroll.scroll_to_item(self.active_tab);
+            self.tab_scroll.scroll_to_item(self.strip_index(cx));
             if reveals > 1 {
                 window.request_animation_frame();
             }
         }
         let engine = &self.app.read(cx).engine;
         let target = self.tab_menu_target.clone();
-        let tabs: Vec<Tab> = self
-            .tabs
+        // The engine's tabs, every one, though only those shown yet have a view.
+        let tabs: Vec<Tab> = engine
+            .tab_order()
             .iter()
+            .copied()
             .enumerate()
-            .map(|(ix, tab)| {
-                let id = tab.item(cx);
+            .map(|(ix, id)| {
                 let name = self.item_name(id, cx);
                 let dirty = id
                     .document()
@@ -4037,10 +4048,10 @@ impl WorkspaceView {
         let bar = TabBar::new("editor-tabs")
             .prefix(arrows)
             .track_scroll(&self.tab_scroll)
-            .selected_index(self.active_tab)
+            .selected_index(self.strip_index(cx))
             .children(tabs)
             .on_click(cx.listener(|this, index: &usize, window, cx| {
-                let Some(item) = this.tabs.get(*index).map(|tab| tab.item(cx)) else {
+                let Some(item) = this.app.read(cx).engine.tab_order().get(*index).copied() else {
                     return;
                 };
                 this.app.update(cx, |app, cx| {
@@ -4348,7 +4359,7 @@ impl Render for WorkspaceView {
             (engine.can_go_back(), engine.can_go_forward(), title)
         };
         let editor = self.editor_area(cx);
-        let has_tabs = !self.tabs.is_empty();
+        let has_tabs = !self.app.read(cx).engine.tab_order().is_empty();
         let show_search = self.show_search;
         let show_references = self.show_references;
         let layout = self.app.read(cx).engine.preview_layout();

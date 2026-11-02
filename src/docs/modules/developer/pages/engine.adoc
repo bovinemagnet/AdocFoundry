@@ -841,6 +841,8 @@ The application, `adocfoundry-cli` and `adoc-ls` leave it at `Any`.
 
 Multi-file changes are computed first as an `EditPreview`: a list of file moves and per-file edits.
 Nothing is changed until `workspace.apply_preview` is invoked with the preview's id.
+The engine opens a preview's pages with `open_unshown`, which neither makes them active nor adds a recent-file entry, and sets `applying` while it applies the group.
+While `applying` is set, `insert_document` and `edit_document` diagnose nothing, and the one `refresh_open_diagnostics` at the end covers the open pages.
 
 Applying a preview creates one undo group that spans every document it touches, including file moves.
 One undo therefore restores every xref and moves a renamed page back.

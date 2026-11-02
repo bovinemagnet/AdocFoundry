@@ -300,7 +300,8 @@ The new document takes the old one's place in the tab order, the engine emits `E
 Close Left and Close Right follow the tab order.
 Only a front end that shows tabs calls `Engine::enable_preview_tabs`: the app does in `AppState::new`, so the CLI, the language server and the MCP server keep every document they open.
 In the app, `WorkspaceView::open_at` takes an `OpenDisposition` and returns the opened `TabItem`, and `replace_tab` moves the new tab into the old one's slot.
-The workspace's tabs are `TabView::{Editor, Image}`, following the engine's `TabItem`s.
+The tab strip draws the engine's `tab_order()`, so every tab the engine holds has one, including pages a change opened beside the active one.
+A tab's `TabView` (`Editor` or `Image`) is made when the tab is first shown.
 
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.

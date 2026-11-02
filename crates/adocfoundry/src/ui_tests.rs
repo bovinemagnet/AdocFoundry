@@ -200,7 +200,7 @@ fn following_a_link_opens_a_tab_and_records_history(cx: &mut TestAppContext) {
     let workspace = workspace.unwrap();
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.run_until_parked();
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 1);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 1);
 
     let (document, offset) = cx.update(|_, cx| {
         let engine = &app.read(cx).engine;
@@ -213,7 +213,7 @@ fn following_a_link_opens_a_tab_and_records_history(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 2);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 2);
     let active_path = cx.update(|_, cx| {
         let engine = &app.read(cx).engine;
         engine
@@ -848,7 +848,7 @@ fn clicking_partial_content_opens_the_partial(cx: &mut TestAppContext) {
     std::fs::write(&page, page_text).unwrap();
     std::fs::write(&partial, partial_text).unwrap();
     let (app, workspace, mut cx) = previewing(vec![page.clone()], cx);
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 1);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 1);
 
     let (trail, span) = block_for(
         &workspace,
@@ -860,7 +860,7 @@ fn clicking_partial_content_opens_the_partial(cx: &mut TestAppContext) {
     assert_eq!(span.path, partial);
     click_block(&workspace, &trail, &mut cx);
 
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 2);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 2);
     let active = cx.update(|_, cx| {
         let engine = &app.read(cx).engine;
         engine
@@ -2724,7 +2724,7 @@ fn active_tab_stays_visible_with_the_preview_docked(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
     }
-    let visible = cx.update(|_, cx| workspace.read(cx).active_tab_visible_for_test());
+    let visible = cx.update(|_, cx| workspace.read(cx).active_tab_visible_for_test(cx));
     assert_eq!(visible, Some(true));
 }
 
@@ -3306,7 +3306,7 @@ fn tabs_close_from_their_buttons_menu_and_keys(cx: &mut TestAppContext) {
     // Each tab's X closes that tab.
     click_selector("tab-close-1", gpui::MouseButton::Left, &mut cx);
     assert_eq!(tab_documents(&app, &mut cx), vec![a, c, d]);
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 3);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 3);
 
     // The menu acts on the tab right-clicked, not the active one: Close Right on `a`.
     // Close, Close Others, then Close Right: Close Left is disabled on the first tab, and skipped.
@@ -3334,7 +3334,7 @@ fn tabs_close_from_their_buttons_menu_and_keys(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("secondary-k secondary-w");
     cx.run_until_parked();
     assert!(tab_documents(&app, &mut cx).is_empty());
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 0);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 0);
 }
 
 #[gpui::test]
@@ -3871,7 +3871,7 @@ fn the_panel_menu_acts_on_its_panel_only(cx: &mut TestAppContext) {
     use adoc_engine::SidebarPanel::{Modules, Navigation};
     let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
     let modules = rows(&workspace, Modules, &mut cx);
-    let tabs = cx.update(|_, cx| workspace.read(cx).tab_count());
+    let tabs = cx.update(|_, cx| workspace.read(cx).tab_count(cx));
 
     // Right-click a row: All of Navigation, then Expand All.
     click_selector("nav-row-1", gpui::MouseButton::Right, &mut cx);
@@ -3888,7 +3888,7 @@ fn the_panel_menu_acts_on_its_panel_only(cx: &mut TestAppContext) {
         "Modules untouched"
     );
     assert_eq!(
-        cx.update(|_, cx| workspace.read(cx).tab_count()),
+        cx.update(|_, cx| workspace.read(cx).tab_count(cx)),
         tabs,
         "no page opened"
     );
@@ -4182,7 +4182,7 @@ fn files_shows_the_folder_as_it_is_on_disk(cx: &mut TestAppContext) {
 #[gpui::test]
 fn files_open_by_their_kind(cx: &mut TestAppContext) {
     let (_directory, root, app, workspace, files, mut cx) = files_workspace(cx);
-    let tabs = |cx: &mut VisualTestContext| cx.update(|_, cx| workspace.read(cx).tab_count());
+    let tabs = |cx: &mut VisualTestContext| cx.update(|_, cx| workspace.read(cx).tab_count(cx));
 
     // A YAML file opens as text, in a preview tab, outside the index.
     click_files_row(&files, "antora-playbook.yml", 1, &mut cx);
@@ -4299,7 +4299,7 @@ fn files_menu_copies_paths_and_collapses(cx: &mut TestAppContext) {
         )
     );
     assert_eq!(
-        cx.update(|_, cx| workspace.read(cx).tab_count()),
+        cx.update(|_, cx| workspace.read(cx).tab_count(cx)),
         0,
         "nothing opened"
     );
@@ -4490,13 +4490,13 @@ fn images_open_in_the_viewer_from_modules_and_share_the_preview_tab(cx: &mut Tes
     click_modules_row(&workspace, "screenshot.jpg", 1, &mut cx);
     image_settled(&app, &workspace, &mut cx);
     assert_eq!(image_info(&workspace, &mut cx).unwrap().format, "JPEG");
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 1);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 1);
 
     // A double-click keeps it; the next image opens beside it.
     click_modules_row(&workspace, "screenshot.jpg", 2, &mut cx);
     click_modules_row(&workspace, "logo.png", 1, &mut cx);
     image_settled(&app, &workspace, &mut cx);
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 2);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 2);
 
     // A page browsed to replaces the image in the preview tab too.
     click_modules_row(&workspace, "index.adoc", 1, &mut cx);
@@ -4715,7 +4715,7 @@ fn closing_an_image_while_it_loads_leaves_no_tab(cx: &mut TestAppContext) {
         });
     });
     cx.run_until_parked();
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 0);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 0);
     assert!(active_image(&workspace, &mut cx).is_none());
 }
 
@@ -6073,7 +6073,7 @@ fn a_restored_session_s_pages_open_after_the_first_draw(cx: &mut TestAppContext)
     let mut cx = VisualTestContext::from_window(window.into(), cx);
     cx.run_until_parked();
     assert_eq!(opened_while_built, Some(0));
-    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count()), 2);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 2);
 
     // The visual page behind has no model until it is shown; then its caret comes back.
     let two = cx.update(|_, cx| app.read(cx).engine.document_for_path(&two).unwrap());
@@ -6366,4 +6366,84 @@ fn a_bibliography_item_is_drawn_without_a_stray_marker(cx: &mut TestAppContext) 
     });
     assert!(!parsed.contains("[]"), "{parsed:?}");
     assert!(parsed.contains("Reference."), "{parsed:?}");
+}
+
+#[gpui::test]
+fn every_engine_tab_has_a_tab_after_apply(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    let text = "= Page\n\n== First Steps\n\nSee <<_first_steps>>.\n";
+    std::fs::write(&page, text).unwrap();
+    let other = root.join("other.adoc");
+    std::fs::write(
+        &other,
+        "= Other\n\nRead xref:page.adoc#_first_steps[the first steps].\n",
+    )
+    .unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    let heading = text.find("First").unwrap();
+    cx.update(|window, cx| {
+        let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(heading, heading), window, cx)
+        });
+    });
+    cx.run_until_parked();
+    // Renaming the section id rewrites `other.adoc` too, which is not open.
+    cx.simulate_keystrokes("f2");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("begin");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    // The engine opened it, unsaved; the strip shows it, and the page stays active.
+    let (order, active) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        (engine.tab_order().to_vec(), engine.active())
+    });
+    assert_eq!(order.len(), 2);
+    assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_items(cx)), order);
+    assert!(
+        cx.debug_bounds("editor-tab-1").is_some(),
+        "a tab for other.adoc"
+    );
+    assert_eq!(
+        active,
+        cx.update(|_, cx| app.read(cx).engine.document_for_path(&page))
+    );
+    // Its tab shows it.
+    click_selector("editor-tab-1", gpui::MouseButton::Left, &mut cx);
+    let shown = cx.update(|_, cx| {
+        let editor = workspace.read(cx).active_editor_for_test().unwrap().clone();
+        let document = editor.read(cx).document();
+        app.read(cx).engine.document(document).unwrap().path.clone()
+    });
+    assert_eq!(shown, other);
 }
