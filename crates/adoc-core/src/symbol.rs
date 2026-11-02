@@ -137,6 +137,9 @@ fn generated_id(title: &str, prefix: &str, separator: char) -> String {
 pub struct Anchor {
     pub id: String,
     pub range: SourceRange,
+    /// Declared inside an `ifdef`, `ifndef` or `ifeval` block, so it may not be in the
+    /// document the build sees.
+    pub conditional: bool,
 }
 
 #[cfg(test)]
@@ -158,6 +161,7 @@ mod tests {
         Anchor {
             id: id.to_owned(),
             range: SourceRange::new(start, start + 1),
+            conditional: false,
         }
     }
 

@@ -21,6 +21,8 @@ pub struct IncludeDirective {
     pub target: String,
     pub attributes: Option<String>,
     pub range: SourceRange,
+    /// Inside an `ifdef`, `ifndef` or `ifeval` block, so the build may never include it.
+    pub conditional: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

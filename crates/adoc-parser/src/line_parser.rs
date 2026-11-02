@@ -67,6 +67,7 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
             (!id.is_empty()).then(|| Anchor {
                 id: id.to_owned(),
                 range,
+                conditional: false,
             })
         })
         .collect::<Vec<_>>();
@@ -81,6 +82,7 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
                 (!id.is_empty()).then(|| Anchor {
                     id: id.to_owned(),
                     range,
+                    conditional: false,
                 })
             }),
     );
@@ -112,6 +114,7 @@ fn id_attribute(line: &str, offset: usize) -> Option<Anchor> {
     (!id.is_empty()).then(|| Anchor {
         id: id.to_owned(),
         range: SourceRange::new(offset, offset + trimmed.len()),
+        conditional: false,
     })
 }
 
@@ -186,6 +189,7 @@ pub(crate) fn find_includes(line: &str, offset: usize) -> Vec<IncludeDirective> 
             target: mac.target.to_owned(),
             attributes: nonempty(mac.attributes),
             range: mac.range,
+            conditional: false,
         })
         .collect()
 }
@@ -206,6 +210,33 @@ pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
             range: mac.range,
         })
         .collect()
+}
+
+/// How a preprocessor conditional line changes the nesting: `ifdef::attr[]`, `ifndef::attr[]`
+/// and `ifeval::[…]` open a block (`ifdef::attr[text]` is a whole conditional on one line)
+/// and `endif::[]` closes one. Directives start their line.
+pub(crate) fn conditional_directive(line: &str) -> Option<Conditional> {
+    let line = line.trim_end();
+    if !line.ends_with(']') {
+        return None;
+    }
+    if line.starts_with("endif::") {
+        return Some(Conditional::Close);
+    }
+    if line.starts_with("ifeval::[") {
+        return Some(Conditional::Open);
+    }
+    let rest = line
+        .strip_prefix("ifdef::")
+        .or_else(|| line.strip_prefix("ifndef::"))?;
+    let (_, text) = rest.split_once('[')?;
+    (text == "]").then_some(Conditional::Open)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Conditional {
+    Open,
+    Close,
 }
 
 /// Where a line falls among the blocks whose content Asciidoctor does not parse: listing,

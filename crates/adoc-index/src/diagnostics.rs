@@ -52,7 +52,12 @@ pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnos
         }
     }
 
-    for include in &document.includes {
+    // A conditional include is often of a file absent on purpose (`ifdef::env-github[]`).
+    for include in document
+        .includes
+        .iter()
+        .filter(|include| !include.conditional)
+    {
         let Some(target_path) = resolve_include_target(document, path, &include.target) else {
             continue;
         };
@@ -272,6 +277,23 @@ mod tests {
         assert!(codes.contains(&DiagnosticCode::UnresolvedAnchor));
         assert!(codes.contains(&DiagnosticCode::UnresolvedXrefFile));
         assert!(codes.contains(&DiagnosticCode::UnresolvedInclude));
+    }
+
+    #[test]
+    fn conditional_include_is_not_reported() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "= Guide\n\nifdef::env-github[]\ninclude::README-github.adoc[]\nendif::[]\ninclude::missing.adoc[]\n",
+        );
+
+        let unresolved: Vec<_> = workspace_diagnostics(&index, path)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect();
+        assert_eq!(unresolved.len(), 1, "{unresolved:?}");
+        assert!(unresolved[0].contains("missing.adoc"), "{unresolved:?}");
     }
 
     #[test]
