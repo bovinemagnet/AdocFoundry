@@ -66,16 +66,38 @@ A rule identifier is permanent once released; version the schema if its meaning 
 
 ### 5.3 Antora-specific correctness
 
-Scopes: workspace; component; component version. Respect ROOT module defaulting, versionless components, page aliases, explicit version references, multiple nav files and nested nav lists. Read navigation from the catalog's effective configuration, not only `modules/ROOT/nav.adoc`. A page appearing in several nav trees counts once. Links to a target via alias resolve to the canonical page but may separately receive the existing alias-use advisory. A remote component missing from the local catalog yields a **partial coverage** status, not a false error. Dynamic includes/attributes and conditionals cannot be asserted without a known attribute context; skip with transparent completeness notes rather than invent errors.
+Scopes: workspace; component; component version. Respect ROOT module defaulting, versionless components, page aliases, explicit version references, multiple nav files and nested nav lists. Read navigation from the catalog's effective configuration, not only `modules/ROOT/nav.adoc`. A page appearing in several nav trees counts once. Links to a target via alias resolve to the canonical page but may separately receive the existing alias-use advisory. A remote component missing from the local catalog yields a **partial coverage** status, not a false error. Dynamic includes/attributes and conditionals cannot be asserted without a known attribute context; skip them rather than invent errors, and count each skipped construct in the report (see §5.4).
 
 If an Antora playbook is absent, report local catalog coverage and identify the scope as checkout-level, not verified published-site coverage. If a named authoring profile is used in future (#102), attach profile identity to each report.
 
-### 5.4 Configuration (proposed contract)
+### 5.4 Completeness and the CI policy
+
+Completeness describes **coverage**: whether every resource in the requested scope was analysed by every enabled rule and provider. A report is:
+
+- `complete`: every in-scope resource was analysed by every enabled rule and provider.
+- `partial`: some in-scope coverage is missing. Each gap is listed with a stable reason code and the resources or components it affects. The initial reasons are `remote-component-missing` (a playbook source or referenced component is not in the local catalog), `scope-not-indexed` (an in-scope folder could not be read or indexing was cut short) and `provider-unavailable` (an enabled optional provider, §5.2, could not run). New reasons are added with the schema version.
+- `unavailable`: nothing in the requested scope could be analysed, for example a component or version that is not checked out.
+
+A construct a rule cannot assert, such as a dynamic include, an unknown attribute or a conditional, is a **skip**, not a coverage gap. Skips are counted per rule and listed with their locations, but they do not make a report partial. Otherwise almost every real workspace would be partial, and strict mode would be unusable.
+
+The CI policy is explicit, and a partial result is never presented as an unqualified pass:
+
+| Result | Default | Strict (`--require-complete` or `require_complete = true`) |
+| --- | --- | --- |
+| `complete` | Exit 0, or 1 if findings meet `fail_on` | Same |
+| `partial` | Exit 0 or 1 by `fail_on`; reported as passing *with partial coverage*, with its reasons | Exit 2 |
+| `unavailable` | Exit 2 | Exit 2 |
+| Invalid configuration or failed execution | Exit 2 | Exit 2 |
+
+Exit 2 takes precedence over 1, and 1 over 0. The report is always written in full before the process exits, including when it exits 2. The text summary's first line states the completeness. JSON has a top-level `completeness` object with its reasons. In SARIF, each gap is a `toolExecutionNotifications` entry of the run's invocation, and the completeness is recorded in the run's `properties`. The documented CI example uses strict mode. Default mode suits local runs and workspaces with known remote sources.
+
+### 5.5 Configuration (proposed contract)
 
 ```toml
 [quality]
 enabled = true
 fail_on = "error"                       # none | warning | error
+require_complete = false                # true: anything short of complete coverage exits 2 (§5.4)
 
 [quality.rules]
 "quality.navigation.unlisted-page" = "warning"
@@ -130,12 +152,18 @@ The exact API should account for async worker execution and revision staleness, 
 
 ```sh
 adocfoundry-cli audit <root> [--component <name>] [--version <version>] \
-  [--format text|json|sarif] [--output <path>] [--fail-on none|warning|error]
+  [--format text|json|sarif] [--output <path>] [--fail-on none|warning|error] \
+  [--require-complete]
 ```
 
-Exit: `0` if complete and below configured failure threshold; `1` when findings meet the failure threshold; `2` on invalid configuration, execution or incomplete/unavailable analysis when the caller requires completeness. Ensure `--format json` and `sarif` write a single parseable document without mixing progress output; use stderr for progress/errors. Document paths and secrets must not leak from diagnostic output unintentionally; SARIF must use valid URIs and 1-based locations. Do not claim SARIF is validated until fixture-driven validation runs.
+Exit codes follow the CI policy in §5.4. `--require-complete` overrides `[quality] require_complete`. Ensure `--format json` and `sarif` write a single parseable document without mixing progress output; use stderr for progress/errors. Document paths and secrets must not leak from diagnostic output unintentionally; SARIF must use valid URIs and 1-based locations. Do not claim SARIF is validated until fixture-driven validation runs.
 
-GPUI: Quality tab (or panel) with summary counts, completeness marker, filters by component/version/module/severity/rule, grouped findings and source navigation. Reuse existing Problems panel components where useful; avoid two separate implementations of identical error listings. Score is intentionally omitted from v1; present factual counts and coverage ratios with denominators.
+GPUI: an overview, plus the existing Problems panel for individual findings, so there are never two competing lists of problems:
+
+- **Quality overview** (a sidebar tab, `SidebarTab::Quality`). It shows the audit status (complete, partial or unavailable, with the reasons, and a stale marker when the index has moved on since the last result), counts by severity and rule, navigation coverage per component version as listed pages out of pages (with denominators), skip counts, and exclusions with their reasons. It also has the action that runs an audit. It lists no individual findings: every count opens Problems filtered to that rule, severity or component version.
+- **Problems** lists every finding. The engine's `Problem` gains the finding's origin, either an existing `DiagnosticCode` or an audit rule ID, so `quality.*` rule IDs never become `adoc-core` diagnostic codes. Problems gains filters by severity, code or rule, and component, version and module, which the overview's links set. Only `quality.*` findings are added; the existing diagnostics the audit aggregates are already in Problems and are not listed twice. Excluded findings are not listed; the overview counts them.
+
+As with Problems today (`Engine::enable_problems`), only a front end that asks for audit results pays for them. Score is intentionally omitted from v1; present factual counts and coverage ratios with denominators.
 
 MCP can expose `quality_audit` read-only with bounded pagination/size; no network checking implicit in tool calls. LSP can continue using its existing diagnostics and need not duplicate the dashboard protocol.
 
@@ -158,8 +186,13 @@ MCP can expose `quality_audit` read-only with bounded pagination/size; no networ
 6. `audit_changes_are_incremental`: edit one page; verify bounded invalidation and no full index scan in steady state.
 7. `audit_json_and_sarif_are_deterministic`: fixed fixture and snapshot; parseable schema, valid locations.
 8. `audit_cli_exit_codes`: below/at threshold, invalid config, unavailable scope.
-9. `audit_panel_opens_exact_source_location`: headless GPUI test platform; no display dependency.
-10. `audit_is_offline`: no external subprocess/network during core audit.
+9. `audit_cli_strict_mode_fails_incomplete`: a partial report exits 0 or 1 by default, 2 with `--require-complete`, and is written in full either way.
+10. `audit_unavailable_never_passes`: an unavailable scope exits 2 with or without strict mode.
+11. `audit_skips_do_not_make_partial`: a dynamic include is counted as a skip, and the report stays complete.
+12. `audit_panel_opens_exact_source_location`: headless GPUI test platform; no display dependency.
+13. `audit_findings_listed_once_in_problems`: `quality.*` findings appear in Problems; aggregated existing diagnostics are not listed twice.
+14. `audit_overview_counts_filter_problems`: selecting a count in the overview filters Problems to exactly those findings.
+15. `audit_is_offline`: no external subprocess/network during core audit.
 
 Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo xtask layers`; add budget benchmarks if audits affect the editing path.
 
@@ -171,7 +204,7 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 | Q2 | Antora navigation coverage + title/alt rules | #301 |
 | Q3 | Incremental audit engine and completeness semantics | #302 |
 | Q4 | CLI text/JSON/SARIF output + CI exit gates | #303 |
-| Q5 | Native Quality dashboard and source navigation | #304 |
+| Q5 | Quality overview, and audit findings and filters in Problems | #304 |
 | Q6 | Optional integration adapters, docs and end-to-end QA | #305; coordinate with #85, #86, #104, #289 |
 
 Implement in order Q1 → Q2/Q3 → Q4/Q5 → Q6. Prefer one reviewable PR per work package. Update this PRD in the same PR when implementation diverges; add an Implementation Notes section and preserve decisions.
@@ -183,9 +216,8 @@ An Antora multi-component fixture can be audited offline from CLI and GUI with m
 ## 12. Open decisions before approval
 
 - Should unlisted pages be warnings by default, or informational in all new workspaces?
-- How are publication-only nav variations and remote playbook sources represented as incomplete coverage?
+- How are publication-only nav variations represented? (Remote playbook sources are `remote-component-missing`, §5.4.)
 - Does SARIF belong in the initial release or the immediate following work package?
-- Should the first UI be a new Quality tab or an extension of Problems?
 
 ## 13. Implementation notes
 

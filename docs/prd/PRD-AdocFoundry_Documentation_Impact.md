@@ -80,11 +80,31 @@ Proposed modes:
 
 Resolve Git refs with clear typed errors. Report files absent from the available catalog as unanalysed, not unaffected. The working tree might be dirty: CLI ref-to-ref results must ignore it unless explicitly requested.
 
+### 6.1 Dependencies from both revisions
+
+A comparison of two revisions uses dependency information from **both** of them. The workspace's live index describes only the working tree. Checking changed paths against it alone would miss dependencies that exist only in the base revision: the consumers of a removed partial, xrefs to a page's old location after a move, xrefs to an anchor that was removed, and nav entries removed from base.
+
+- **Revision snapshot.** For each side of a comparison, the engine builds a `DependencySnapshot` from that revision's files. It holds the catalog (components, versions, modules, aliases), the effective nav trees, the typed dependency edges of §5.1 with their source spans, and each page's anchors.
+  - **Git refs:** both snapshots come from Git object data at the resolved commits. The engine lists each commit's tree under the workspace roots, honouring `[workspace] ignore`, reads blob text, and feeds it to the same parsing and resolution code the live index uses: `parse_component_descriptor`, `parse_nav`, `WorkspaceIndex::index_file` and `adoc-lang`'s link resolution. No checkout and no second resolver.
+  - **`--against HEAD`:** the base snapshot is `HEAD`'s; the head side is the live workspace (open buffers in the app, files on disk in the CLI).
+  - **Explicit paths:** there is no base revision. The head side is the live workspace, and the report's completeness is `partial`, with reason `no-base-revision`, whenever a removed or renamed path is given, since its former consumers cannot be known.
+- **Never substitute the live index for a ref.** In ref-to-ref mode the live index is not consulted. If a snapshot cannot be built, for example because a ref is missing or a descriptor in that revision is unreadable, the report is `partial` or `unavailable` with the reason. It does not quietly fall back to the working tree.
+- **Rules over two snapshots** (applied by `adoc-impact`):
+  - **Removed resource:** its consumers come from base. A consumer that still names it in head is a confirmed reference-integrity impact. One that no longer does is reported as resolved by the change.
+  - **Renamed or moved resource:** consumers of the old path come from base, and consumers of the new path from head. A consumer that still names the old location in head is a confirmed reference-integrity impact, unless a head-side `page-aliases` entry covers it, in which case it is resolved through the alias.
+  - **Modified resource:** render consumers are the union of both sides' include closures. Anchors present in base and absent from head make their xref consumers, from both sides, reference-review impacts.
+  - **Added resource:** consumers come from head, including references that were unresolved in base and now resolve.
+  - **Navigation and descriptors:** effective nav membership and component versions are compared between the snapshots, per component version.
+- **Evidence side.** Every impact records which snapshot supplied its evidence path (`base`, `head` or `both`), so a reviewer can tell a dependency that was removed from one that was added.
+- **Cost.** Building a snapshot traverses one revision's documentation files once. It is done only for an explicit comparison, on a worker, and cached by the commit's tree ID; it never runs per edit and never touches the live index. A large-fixture budget test covers it.
+
 ## 7. Proposed headless contracts
 
 Rust (illustrative):
 
 ```rust
+pub struct DependencySnapshot { /* catalog, nav trees, typed edges with spans, anchors; one revision */ }
+pub enum EvidenceSide { Base, Head, Both }
 pub enum ChangeSource { WorkingTree, GitRefs { base: String, head: String }, Paths(Vec<PathBuf>) }
 pub enum ImpactKind { Render, ReferenceIntegrity, Navigation, Publication }
 pub enum ImpactConfidence { Confirmed, Potential }
@@ -116,6 +136,7 @@ Exit `0` for completed analysis, `2` for invalid/unavailable sources or incomple
     "resource":"product:ROOT:install.adoc",
     "kind":"render",
     "confidence":"confirmed",
+    "evidence":"head",
     "via":["docs/modules/ROOT/partials/auth.adoc","docs/modules/ROOT/pages/install.adoc"]
   }]
 }
@@ -127,16 +148,16 @@ The exact schema and path normalisation must be agreed in WP I1; this is only re
 
 | Layer | Responsibility |
 | --- | --- |
-| `adoc-git` (L2) | Git ref/working tree file-change metadata; no network transports, no GitHub calls |
-| `adoc-index`, `adoc-lang`, `adoc-antora` (L1) | Existing context-aware dependency resolution and reverse mapping, source spans, resource identities |
+| `adoc-git` (L2) | Resolve a ref to a commit, list a commit's tree, read a blob's text at a commit, and diff two trees with rename detection (it has `file_at` for a branch tip and `head_content` today); read-only, no network transports, no GitHub calls |
+| `adoc-index`, `adoc-lang`, `adoc-antora` (L1) | Existing context-aware dependency resolution and reverse mapping, source spans, resource identities. `adoc-antora` gains discovery from a list of files and their text, beside today's discovery from disk (`discover_antora_workspace`), sharing one set of rules so a revision snapshot resolves exactly as the live workspace does |
 | `adoc-graph` (L1) | Generic keyed graph structures/path walks only; keep independent of AsciiDoc semantics |
-| `adoc-impact` (L2, new) | Typed impact rules, reverse traversal over typed dependency edges, provenance paths, confidence, completeness, version and profile scoping, bounded truncation and the report schema; pure, synchronous functions taking a list of changed paths |
-| `adoc-engine` (L3) | Turn Git refs, the working tree or explicit paths into the changed-path list (Git only behind its `git` feature), run `adoc-impact` on workers, cache by index/catalog revision and ref SHA, publish events |
+| `adoc-impact` (L2, new) | Typed impact rules, reverse traversal over typed dependency edges, provenance paths, confidence, completeness, version and profile scoping, bounded truncation and the report schema; pure, synchronous functions over the changes and the base and head `DependencySnapshot`s (§6.1) |
+| `adoc-engine` (L3) | Turn Git refs, the working tree or explicit paths into the changes and the two snapshots (Git only behind its `git` feature), build snapshots from Git objects or the live workspace, run `adoc-impact` on workers, cache snapshots by tree ID and results by index/catalog revision, publish events |
 | `adocfoundry` (L4) | Impact inspection, graph highlighting, drill-down, diff preview |
 | `adocfoundry-cli` / `adoc-mcp` (L4) | Headless reporting, bounded output; optional read-only MCP tool |
 | CI/GitHub Action | External integration consuming CLI JSON, subject to user approval and explicit permissions |
 
-`cargo xtask layers` enforces dependencies. `adoc-impact` is created in I1, so the boundary between impact rules and orchestration is enforced from the first package rather than extracted later. It sits at L2 and may depend on `adoc-core`, `adoc-antora`, `adoc-index`, `adoc-lang` and `adoc-graph` only. It never touches Git: it takes changed paths (added, modified, removed, renamed with origin and destination), so it needs no same-layer pair with `adoc-git`, and the engine without `git` can still analyse explicit paths. No `adoc-engine`, worker, LSP or UI types, threads, filesystem writes, subprocesses or network. It needs entries in `LAYERS` in `xtask/src/layers.rs`, `[workspace.dependencies]` and, once it holds code, the crate ladder in `CLAUDE.md`. Front ends, `adoc-ls` included, reach it only through `adoc-engine`; I1 decides whether the engine names it behind an optional feature, as with the quality audit's `adoc-audit`.
+`cargo xtask layers` enforces dependencies. `adoc-impact` is created in I1, so the boundary between impact rules and orchestration is enforced from the first package rather than extracted later. It sits at L2 and may depend on `adoc-core`, `adoc-antora`, `adoc-index`, `adoc-lang` and `adoc-graph` only. It never touches Git: it takes the changes (added, modified, removed, renamed with origin and destination) and the two snapshots as data, so it needs no same-layer pair with `adoc-git`, and the engine without `git` can still analyse explicit paths. No `adoc-engine`, worker, LSP or UI types, threads, filesystem writes, subprocesses or network. It needs entries in `LAYERS` in `xtask/src/layers.rs`, `[workspace.dependencies]` and, once it holds code, the crate ladder in `CLAUDE.md`. Front ends, `adoc-ls` included, reach it only through `adoc-engine`; I1 decides whether the engine names it behind an optional feature, as with the quality audit's `adoc-audit`.
 
 Rename and move planning (`rename_preview` in the engine's `search.rs`, `links.rs`, and anchor renames in `adoc-lang`'s `references.rs`) is not moved by this PRD. A separate `adoc-refactor` crate is deferred until a feature needs edits planned without an engine, such as #100's preview before a move or delete, or a move-page or extract-partial command; that feature's PRD then carries the extraction as a work package.
 
@@ -172,6 +193,10 @@ CI: a generated Markdown summary/JSON artifact in a GitHub Actions job can be a 
 9. `impact_report_is_deterministic`: ordered JSON/text snapshots on Linux/macOS/Windows fixture.
 10. `impact_ui_drilldown_and_graph_path`: GPUI headless test; no render-time scans.
 11. `impact_cli_handles_no_git`: explicit-path mode works without Git; ref mode errors appropriately.
+12. `impact_removed_partial_consumers_come_from_base`: a partial removed between base and head reports the pages that included it in base, although none exists in head's index.
+13. `impact_moved_page_finds_base_references`: xrefs to a page's old location, found in base, are confirmed reference-integrity impacts when head still names the old location, and resolved when a head `page-aliases` entry covers them.
+14. `impact_ref_mode_ignores_live_index`: with a dirty working tree and an open edited buffer, a ref-to-ref report is identical to the one from a clean checkout.
+15. `impact_explicit_removed_path_is_partial`: a removed path in explicit-path mode gives `partial` with `no-base-revision`.
 
 Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo xtask layers`; include large-fixture budget tests before UI integration.
 
@@ -180,8 +205,8 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 | WP | Deliverable | Issue |
 | --- | --- | --- |
 | I1 | New `adoc-impact` crate: typed dependency and impact semantics, evidence, completeness and report schema | #307; coordinate with #100 |
-| I2 | Git base/head, worktree/explicit changed-resource input | #308 |
-| I3 | Incremental reverse dependency traversal and publication impacts | #309 |
+| I2 | Git base/head, worktree/explicit changed-resource input, and revision snapshots from Git objects | #308 |
+| I3 | Reverse dependency traversal over base and head snapshots, and publication impacts | #309 |
 | I4 | CLI text/JSON reporting, deterministic snapshots and CI summary | #310 |
 | I5 | GUI inspector/graph provenance and end-to-end QA | #311; extends #100 |
 
@@ -196,7 +221,7 @@ Given a local Antora fixture with a changed shared partial, an altered xref targ
 - Scope of image/attachment dependency edges in the first work package.
 - Whether comparison uses only Git refs or also unsaved buffers in the GUI's initial release.
 - Whether the first CI output is Markdown + JSON or includes a GitHub Actions example workflow.
-- Path and evidence representation for renamed pages and component versions absent from head.
+- Path representation for renamed pages and component versions absent from head (evidence sides are settled in §6.1).
 - How far to extend #100 versus treating its existing inspector as a prerequisite.
 
 ## 15. Implementation notes
