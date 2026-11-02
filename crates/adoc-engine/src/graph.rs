@@ -20,7 +20,7 @@ use std::{
 use adoc_antora::{AntoraCoordinate, NavItem, NavTree, ResourceFamily};
 use adoc_graph::{
     EdgeKind, GraphFilter, GraphKey, GraphSnapshot, LinkStore, NodeCoordinate, NodeInput, NodeKind,
-    StoredLink,
+    PathStep, StoredLink,
 };
 use adoc_index::{is_asciidoc_path, normalize_path};
 use adoc_lang::{
@@ -566,6 +566,28 @@ impl Engine {
                 .collect(),
         );
         (out, back)
+    }
+
+    /// The shortest path from `from` to `to` among the nodes `scope` shows as `filter` allows,
+    /// over the links it shows: in their direction when `directed`, as a reader follows them,
+    /// else either way. `None` when there is none, or either end is not shown.
+    #[must_use]
+    pub fn graph_path(
+        &self,
+        scope: &GraphScope,
+        filter: &GraphFilter,
+        from: &GraphKey,
+        to: &GraphKey,
+        directed: bool,
+    ) -> Option<Vec<PathStep>> {
+        let shown = self.graph(scope, filter);
+        self.graph.store.shortest_path(
+            from,
+            to,
+            directed,
+            |link| filter.allows_edge(link.kind),
+            |key| shown.node(key).is_some(),
+        )
     }
 
     /// The page to make for the unresolved target `target`, where the xrefs and navigation

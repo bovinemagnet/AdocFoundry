@@ -10,9 +10,9 @@ use std::{
 
 use adoc_core::{DiagnosticSeverity, SourceRange};
 use adoc_engine::{
-    commands::ids, report::display_path, CommandArgs, CommandOutcome, DefinitionTarget, Engine,
-    EngineEvent, ExportArgs, ExportTarget, GraphFilter, GraphScope, NavItem, SearchRequest,
-    SvgStyle,
+    commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
+    DefinitionTarget, Engine, EngineEvent, ExportArgs, ExportTarget, GraphFilter, GraphScope,
+    NavItem, SearchRequest, SvgStyle,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -150,10 +150,17 @@ struct SearchArgs {
 
 #[derive(Deserialize, JsonSchema)]
 struct LinkGraphArgs {
-    /// `workspace` (the default), or `page` for a page and its neighbours.
+    /// `workspace` (the default), `page` for a page and its neighbours, or `path` for the
+    /// shortest path from the page `path` to the page `to`.
     scope: Option<String>,
-    /// The page of a `page` scope, absolute or relative to the first root.
+    /// The page of a `page` scope, or where a `path` scope starts; absolute or relative to the
+    /// first root.
     path: Option<String>,
+    /// Where a `path` scope ends.
+    to: Option<String>,
+    /// Whether a `path` scope follows links only in their direction, as a reader does; true by
+    /// default, false to follow them either way.
+    directed: Option<bool>,
     /// How many links from the page a `page` scope reaches, 1 (the default) to 3.
     depth: Option<u8>,
     /// Show partials and include links; true by default.
@@ -650,11 +657,52 @@ impl Server {
     }
 
     #[tool(
-        description = "How pages link: the pages, partials and navigation files of the workspace, or of a page and its neighbours, with the xrefs, includes and navigation entries between them, as `adocfoundry-cli graph` gives them; with `format: svg`, drawn as an SVG image."
+        description = "How pages link: the pages, partials and navigation files of the workspace, or of a page and its neighbours, with the xrefs, includes and navigation entries between them, as `adocfoundry-cli graph` gives them; with `scope: path`, the shortest path between two pages; with `format: svg`, drawn as an SVG image."
     )]
     async fn link_graph(&self, Parameters(args): Parameters<LinkGraphArgs>) -> Answer {
         answer(
             self.blocking(move |state| {
+                let defaults = GraphFilter::default();
+                let filter = GraphFilter {
+                    partials: args.partials.unwrap_or(defaults.partials),
+                    nav: args.nav.unwrap_or(defaults.nav),
+                    orphans: args.orphans.unwrap_or(defaults.orphans),
+                    unresolved: args.unresolved.unwrap_or(defaults.unresolved),
+                    components: None,
+                };
+                let svg = match args.format.as_deref().unwrap_or("json") {
+                    "json" => None,
+                    "svg" => Some(SvgStyle {
+                        colour_by: state.engine.settings().graph.colour_by,
+                        dark: args.dark.unwrap_or(false),
+                    }),
+                    other => return Err(format!("unknown format `{other}`")),
+                };
+                if args.scope.as_deref() == Some("path") {
+                    let (Some(from), Some(to)) = (&args.path, &args.to) else {
+                        return Err("a `path` scope needs a `path` and a `to`".to_owned());
+                    };
+                    let (from, to) = (state.confine(from)?, state.confine(to)?);
+                    for page in [&from, &to] {
+                        if state.engine.workspace().index.file(page).is_none() {
+                            return Err(format!("{} is not an indexed page", state.shown(page)));
+                        }
+                    }
+                    let directed = args.directed.unwrap_or(true);
+                    let engine = &state.engine;
+                    let Some(report) =
+                        engine.graph_path_report(state.root(), &filter, &from, &to, directed)
+                    else {
+                        return Ok(json!({ "path": null }));
+                    };
+                    if let Some(style) = svg {
+                        let (snapshot, _) = engine
+                            .graph_path_view(&filter, &from, &to, directed)
+                            .unwrap_or_default();
+                        return Ok(json!({ "svg": to_svg_laid_out(&snapshot, &style) }));
+                    }
+                    return serde_json::to_value(report).map_err(|error| error.to_string());
+                }
                 let scope = match (args.scope.as_deref().unwrap_or("workspace"), &args.path) {
                     ("workspace", _) => GraphScope::Workspace,
                     ("page", Some(path)) => GraphScope::Local {
@@ -669,32 +717,16 @@ impl Server {
                         return Err(format!("{} is not an indexed page", state.shown(path)));
                     }
                 }
-                let defaults = GraphFilter::default();
-                let filter = GraphFilter {
-                    partials: args.partials.unwrap_or(defaults.partials),
-                    nav: args.nav.unwrap_or(defaults.nav),
-                    orphans: args.orphans.unwrap_or(defaults.orphans),
-                    unresolved: args.unresolved.unwrap_or(defaults.unresolved),
-                    components: None,
-                };
-                match args.format.as_deref().unwrap_or("json") {
-                    "json" => {}
-                    "svg" => {
-                        let style = SvgStyle {
-                            colour_by: state.engine.settings().graph.colour_by,
-                            dark: args.dark.unwrap_or(false),
-                        };
-                        let svg = state.engine.graph_svg(&scope, &filter, &style);
-                        if svg.len() > MAX_TEXT {
-                            return Err(format!(
-                                "the SVG is {} bytes, over the {MAX_TEXT} allowed; draw a page's \
+                if let Some(style) = svg {
+                    let svg = state.engine.graph_svg(&scope, &filter, &style);
+                    if svg.len() > MAX_TEXT {
+                        return Err(format!(
+                            "the SVG is {} bytes, over the {MAX_TEXT} allowed; draw a page's \
                                  neighbourhood with `scope: page`",
-                                svg.len()
-                            ));
-                        }
-                        return Ok(json!({ "svg": svg }));
+                            svg.len()
+                        ));
                     }
-                    other => return Err(format!("unknown format `{other}`")),
+                    return Ok(json!({ "svg": svg }));
                 }
                 let report = state.engine.graph_report(state.root(), &scope, &filter);
                 let nodes = limited("nodes", report.nodes);

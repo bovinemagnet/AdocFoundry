@@ -122,7 +122,7 @@ pub use adoc_core::FileAccess;
 pub use adoc_graph::{
     colour_groups, node_colour, node_radius, to_svg, to_svg_laid_out, EdgeKind, GraphEdge,
     GraphFilter, GraphKey, GraphNode, GraphSnapshot, Hsl, Layout, NodeCoordinate,
-    NodeKind as GraphNodeKind, Point, SvgStyle,
+    NodeKind as GraphNodeKind, PathStep, Point, SvgStyle,
 };
 pub use adoc_index::{is_asciidoc_path, normalize_path};
 #[cfg(feature = "typst")]

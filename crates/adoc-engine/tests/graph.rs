@@ -506,6 +506,135 @@ fn a_link_from_the_active_page_is_written_as_it_resolves() {
     assert_eq!(edit.replacement, "\ninclude::_part.adoc[]");
 }
 
+/// The path between two files of the fixture, as names relative to the root and the kinds
+/// and direction of the links taken.
+fn path_between(
+    engine: &Engine,
+    from: &str,
+    to: &str,
+    filter: &GraphFilter,
+    directed: bool,
+) -> Option<Vec<(String, Vec<EdgeKind>, bool)>> {
+    let root = fixture();
+    let key = |name: &str| file(&root.join(name));
+    engine
+        .graph_path(
+            &GraphScope::Workspace,
+            filter,
+            &key(from),
+            &key(to),
+            directed,
+        )
+        .map(|steps| {
+            steps
+                .into_iter()
+                .map(|step| (name(&step.key, &root), step.kinds, step.backwards))
+                .collect()
+        })
+}
+
+const HOME: &str = "guide/modules/ROOT/pages/index.adoc";
+const INSTALL: &str = "guide/modules/ROOT/pages/install.adoc";
+const CONFIGURE: &str = "guide/modules/ROOT/pages/configure.adoc";
+
+#[test]
+fn shortest_path_follows_links_in_order() {
+    let engine = open(&fixture(), &ManualClock::new());
+    let filter = GraphFilter::default();
+    assert_eq!(
+        path_between(&engine, HOME, CONFIGURE, &filter, true).unwrap(),
+        [
+            (HOME.to_owned(), vec![], false),
+            (INSTALL.to_owned(), vec![EdgeKind::Xref], false),
+            (
+                CONFIGURE.to_owned(),
+                vec![EdgeKind::Xref, EdgeKind::Nav],
+                false
+            ),
+        ]
+    );
+    // Users links to Install, which leads round to Home.
+    let users = "guide/modules/admin/pages/users.adoc";
+    let found = path_between(&engine, users, HOME, &filter, true).unwrap();
+    let names: Vec<&str> = found.iter().map(|(name, _, _)| name.as_str()).collect();
+    assert_eq!(names, [users, INSTALL, CONFIGURE, HOME]);
+}
+
+#[test]
+fn shortest_path_can_ignore_direction() {
+    let engine = open(&fixture(), &ManualClock::new());
+    let filter = GraphFilter::default();
+    // Configure links back to Home: against its direction, one step.
+    assert_eq!(
+        path_between(&engine, HOME, CONFIGURE, &filter, false).unwrap(),
+        [
+            (HOME.to_owned(), vec![], false),
+            (CONFIGURE.to_owned(), vec![EdgeKind::Xref], true),
+        ]
+    );
+    // Nothing links the orphan, either way.
+    let orphan = "guide/modules/ROOT/pages/orphan.adoc";
+    assert_eq!(path_between(&engine, HOME, orphan, &filter, true), None);
+    assert_eq!(path_between(&engine, HOME, orphan, &filter, false), None);
+}
+
+#[test]
+fn shortest_path_respects_filters() {
+    let engine = open(&fixture(), &ManualClock::new());
+    let note = "guide/modules/ROOT/partials/note.adoc";
+    let nav = "guide/modules/ROOT/nav.adoc";
+    let shown = GraphFilter::default();
+    let found = path_between(&engine, CONFIGURE, note, &shown, true).unwrap();
+    assert_eq!(
+        found.last().unwrap(),
+        &(note.to_owned(), vec![EdgeKind::Include], false)
+    );
+    assert!(path_between(&engine, nav, CONFIGURE, &shown, true).is_some());
+
+    let no_partials = GraphFilter {
+        partials: false,
+        ..GraphFilter::default()
+    };
+    assert_eq!(
+        path_between(&engine, CONFIGURE, note, &no_partials, true),
+        None
+    );
+    let no_nav = GraphFilter {
+        nav: false,
+        ..GraphFilter::default()
+    };
+    assert_eq!(path_between(&engine, nav, CONFIGURE, &no_nav, true), None);
+    // Without navigation, Install still reaches Configure, by its xref alone.
+    assert_eq!(
+        path_between(&engine, INSTALL, CONFIGURE, &no_nav, true).unwrap()[1].1,
+        [EdgeKind::Xref]
+    );
+    // A local scope searches only what it shows.
+    let root = fixture();
+    let local = GraphScope::Local {
+        path: root.join(INSTALL),
+        depth: 1,
+    };
+    assert!(engine
+        .graph_path(
+            &local,
+            &shown,
+            &file(&root.join(HOME)),
+            &file(&root.join(note)),
+            true
+        )
+        .is_some());
+    assert!(engine
+        .graph_path(
+            &local,
+            &shown,
+            &file(&root.join(HOME)),
+            &file(&root.join("reference/modules/ROOT/pages/api.adoc")),
+            true
+        )
+        .is_none());
+}
+
 #[test]
 fn renaming_a_page_moves_its_edges() {
     let mut copy = Copy::new();

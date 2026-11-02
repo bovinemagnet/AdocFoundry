@@ -38,6 +38,7 @@ Automated coverage for reference:
 - [ ] The toggles hide and show partials, navigation, orphans (`orphan.adoc`) and unresolved targets; the component menu hides `reference`; Colour cycles component, module and family; Local shows the active page's neighbourhood at depths 1 to 3; Reset Layout lays it out again and unpins.
 - [ ] Tab and Shift-Tab move the selection through the nodes in title order, and Enter opens the selected one.
 - [ ] File › Export Graph… to `graph.svg` and `graph.png`, in the light theme and the dark: each opens in a browser or viewer looking as the window does, labels whole, pinned nodes where they were left.
+- [ ] Click Home, then Shift-click Configure: Home, Install and Configure are numbered and the rest dimmed, and the side panel lists the steps (`by xref · nav` into Configure). Either way shortens it to Configure's xref followed back; Shift-click `orphan.adoc` says there is no path; Esc clears it.
 - [ ] Choose View › Show Graph again: the same window comes to the front.
 - [ ] Type an xref into a page and pause: the edge appears. Delete it: the edge goes. Add a page on disk that a broken xref names: the ghost becomes a page.
 

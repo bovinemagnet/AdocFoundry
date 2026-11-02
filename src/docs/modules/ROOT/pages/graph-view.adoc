@@ -115,6 +115,7 @@ If less than half of the saved place is on a display, because a screen has been 
 * Drag a node to pin it where you drop it. Release with kbd:[Alt] held to unpin it.
 * Hover over a node to highlight it and its neighbours and dim the rest.
 * Click a node to select it and open its page in the preview tab. Double-click keeps the page open.
+* kbd:[Shift]-click a node to show the xref:graph-view.adoc#_the_path_between_two_pages[path] from the selected node to it. The selection stays where it was and nothing opens.
 * kbd:[Tab] and kbd:[Shift+Tab] move the selection between nodes in title order. kbd:[Enter] opens the selected node.
 
 A node is sized by how many links it has.
@@ -147,6 +148,11 @@ Writes `+include::<target>[]+` on the caret's line when that line is blank, othe
 
 |Reveal in Files
 |Selects the file in the Files panel.
+
+|Show Path from Selection
+|The last item, after a separator.
+It is there when a node other than the one you right-clicked is selected.
+Shows the xref:graph-view.adoc#_the_path_between_two_pages[path] from the selected node to this one.
 |===
 
 The target is the shortest resource id that names the file from the active page.
@@ -229,6 +235,47 @@ The same layout always gives the same file.
 
 The same image is available without the app.
 `adocfoundry-cli graph --format svg` prints it, as described in xref:command-line.adoc#graph[the command line reference], and the xref:mcp-server.adoc[MCP server]'s `link_graph` tool returns it with `format: svg`.
+
+== The path between two pages
+
+The graph can show the shortest chain of links from one page to another.
+It works in the graph window and in the Graph panel of the sidebar.
+
+Click a node to select it, then kbd:[Shift]-click another node.
+The graph shows the shortest path from the selected node to the one you kbd:[Shift]-clicked.
+The selection stays where it was, and the kbd:[Shift]-click opens nothing.
+You can also right-click the second node and choose *Show Path from Selection*, which is the last item of the node menu.
+
+The nodes on the path are labelled in order, such as `1. Home` and `2. Install`, and its links are drawn.
+Everything else is dimmed.
+
+The path is found among what the view shows.
+It follows the scope, whole workspace or local neighbourhood, and the filters.
+With Navigation off, navigation links are not followed and navigation files are not entered.
+With Partials off, includes are not followed and partials are not entered.
+
+By default the path follows links only in their direction, as a reader clicks them.
+
+=== The Path panel
+
+The window's side panel lists the path under *Path*.
+Each step shows its number and title.
+Below the title are the kinds of link that reached it, such as `by xref · nav`.
+When the path goes against a link's direction, the step adds "followed back".
+
+* Click a step to select that node and bring it into view.
+* The *Directed* button switches to *Either way*, which follows links in both directions, and back.
+* *Clear* removes the path, and so does kbd:[Esc] in the graph.
+
+When there is no path, the panel says "No path from A to B." with the two titles.
+The path updates as the graph changes.
+
+Among equally short paths, one is chosen consistently, so the same graph always gives the same path.
+
+=== Without the app
+
+`adocfoundry-cli graph <root> --path <from> <to>` prints the graph along the shortest path, as described in xref:command-line.adoc#graph[the command line reference].
+The xref:mcp-server.adoc[MCP server]'s `link_graph` tool does the same with `scope: "path"`.
 
 == The local graph
 

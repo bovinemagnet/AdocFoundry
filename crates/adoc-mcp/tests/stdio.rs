@@ -237,6 +237,54 @@ fn link_graph_tool_returns_a_local_graph() {
         .call("link_graph", json!({ "format": "png" }))
         .is_err());
 
+    let pages = "guide/modules/ROOT/pages";
+    let path = client
+        .call(
+            "link_graph",
+            json!({
+                "scope": "path",
+                "path": format!("{pages}/index.adoc"),
+                "to": format!("{pages}/configure.adoc"),
+            }),
+        )
+        .unwrap();
+    let titles: Vec<&str> = path["path"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|step| step["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["Home", "Install", "Configure"]);
+    let either = client
+        .call(
+            "link_graph",
+            json!({
+                "scope": "path",
+                "path": format!("{pages}/index.adoc"),
+                "to": format!("{pages}/configure.adoc"),
+                "directed": false,
+            }),
+        )
+        .unwrap();
+    assert_eq!(either["path"][1]["backwards"], true);
+    let none = client
+        .call(
+            "link_graph",
+            json!({
+                "scope": "path",
+                "path": format!("{pages}/index.adoc"),
+                "to": format!("{pages}/orphan.adoc"),
+            }),
+        )
+        .unwrap();
+    assert!(none["path"].is_null());
+    assert!(client
+        .call(
+            "link_graph",
+            json!({ "scope": "path", "path": format!("{pages}/index.adoc") })
+        )
+        .is_err());
+
     let whole = client
         .call("link_graph", json!({ "unresolved": true }))
         .unwrap();

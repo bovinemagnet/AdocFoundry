@@ -172,6 +172,59 @@ fn graph_prints_svg() {
 }
 
 #[test]
+fn graph_prints_the_path_between_two_pages() {
+    let pages = "tests/fixtures/graph/guide/modules/ROOT/pages";
+    let (home, configure, orphan) = (
+        format!("{pages}/index.adoc"),
+        format!("{pages}/configure.adoc"),
+        format!("{pages}/orphan.adoc"),
+    );
+    let output = cli(&["graph", "tests/fixtures/graph", "--path", &home, &configure]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let steps: Vec<(&str, &serde_json::Value)> = report["path"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|step| (step["title"].as_str().unwrap(), &step["links"]))
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            ("Home", &serde_json::json!([])),
+            ("Install", &serde_json::json!(["xref"])),
+            ("Configure", &serde_json::json!(["xref", "nav"])),
+        ]
+    );
+    assert_eq!(report["nodes"].as_array().unwrap().len(), 3);
+    assert_eq!(report["edges"].as_array().unwrap().len(), 3);
+
+    // Either way, Configure's xref back to Home is the one step.
+    let either = cli(&[
+        "graph",
+        "tests/fixtures/graph",
+        "--path",
+        &home,
+        &configure,
+        "--undirected",
+        "--format",
+        "dot",
+    ]);
+    let dot = stdout(&either);
+    assert_eq!(dot.matches(" -> ").count(), 1, "{dot}");
+
+    let none = cli(&["graph", "tests/fixtures/graph", "--path", &home, &orphan]);
+    assert_eq!(none.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&none.stderr).contains("no path from"));
+    let half = cli(&["graph", "tests/fixtures/graph", "--path", &home]);
+    assert_eq!(half.status.code(), Some(2));
+}
+
+#[test]
 fn check_text_format_and_fail_on() {
     let output = cli(&["check", "tests/fixtures/antora-invalid-descriptor"]);
     assert_eq!(
