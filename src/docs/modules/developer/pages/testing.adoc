@@ -18,6 +18,7 @@ Shared fixtures are in `tests/fixtures/`, grouped by scenario:
 * `antora-single-component/`, `antora-multi-component/`, `antora-versions/`
 * `antora-nested-pages/`, `antora-nested-includes/`, `antora-invalid-descriptor/`
 * `broken-references/` and `antora-broken-references/`
+* `graph/`, a component with navigation, partials and broken links, a second component and a loose folder, for the link graph
 * `render/`, the preview corpus described below
 
 Reach them with `Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/...")`, never with absolute paths.
@@ -99,6 +100,9 @@ The budgets are for a CI runner, a few times slower than a developer's machine.
 A median far under its budget locally may still be close to it on CI.
 The ignored timing and memory probes in `crates/adoc-engine/tests/perf.rs` and `crates/adoc-index/tests/memory.rs` print figures and assert nothing.
 They are for investigating a path, not for guarding it.
+
+`cargo bench -p adoc-graph` times one layout step for 2,000 nodes and 6,000 edges against a budget of 8 ms.
+`graph_build` in `cargo bench -p adoc-engine` builds the graph of 5,000 pages against a budget of 500 ms, and `graph_snapshot` is recorded only.
 
 === Typing frame times
 
@@ -300,6 +304,13 @@ The preview tests run in process, in `src/protocol.rs`, with a sink that never o
 
 Tests that spawn a real process must take the crate-private `spawn_guard()` mutex in `adoc-render`, which works around `ETXTBSY`.
 Do not remove the guard or add an unguarded spawning test.
+
+[#graph-tests]
+== Graph tests
+
+`crates/adoc-engine/tests/graph.rs` drives the link graph over `tests/fixtures/graph/`.
+The tests include `graph_builds_from_the_fixture` (an `insta` snapshot), `nav_edges_follow_the_nav_tree`, `typing_an_xref_updates_the_graph`, `adding_the_missing_page_resolves_a_ghost`, `renaming_a_page_moves_its_edges`, `catalog_change_rebuilds_the_graph`, `local_graph_visits_only_reachable_files` and `graph_filters_apply`.
+`adoc-lang` tests `links_from`, and `adoc-graph` tests the `LinkStore` and the layout on their own.
 
 [#mcp-server-tests]
 == MCP server tests

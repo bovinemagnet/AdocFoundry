@@ -5,7 +5,7 @@
 | Author | Paul Snow |
 | Version | 0.0.0 |
 | Date | 2026-11-02 |
-| Status | Draft |
+| Status | Implemented |
 | Scope | Phase 7: an interactive graph view of how a workspace's pages link to each other |
 | Depends on | `docs/design/DESIGN-AdocFoundry_Architecture.md`, Phases 1 to 6 as released in 0.5.0, issue #272 |
 
@@ -298,6 +298,21 @@ Implementation notes, as each package lands:
 
 | Area | Specification | Implementation | Why |
 |---|---|---|---|
+| The full build (WP 7.1) | a worker started with `worker::spawn` once the workspace is indexed | The first build runs on the index worker itself, with the parses it has just made, and comes back with the index; so does the build after any whole-workspace reindex (a folder or playbook change, a burst of files), which replaces the index. A catalog change builds on a worker of its own, over a copy of the workspace. Resolving is spread over up to eight threads | No second copy of a large index is made, and the graph is never older than the index it is shown with. 5,000 pages build in about 90 ms locally |
+| What counts as a catalog change (WP 7.1) | an `antora.yml` added, changed or removed | Only a change to the catalog's components, versions, roots, navigation lists or modules builds the whole graph again. New Page, a rename and their undo re-read a descriptor too, but the pages that came or went with it are followed file by file | `adding_the_missing_page_resolves_a_ghost` and `renaming_a_page_moves_its_edges` must not need a full build |
+| Changes during a full build (WP 7.1) | the result is dropped if the index moved meanwhile, and the build runs again | The result is adopted, then the files marked since it began are resolved again on top of it | The same graph, without a second whole pass |
+| The full build reads no file (WP 7.1) | it reads no file | It reads the navigation files the catalog lists (from their open buffers when open), since the index keeps their parse but not their text | A tree needs the nav file's text; there are few of them |
+| `LinkStore` (WP 7.1) | `set_links(file, links)`; `linking_to` the files linking to a target | Every link is owned by the file whose text made it: a page owns its own, a navigation file owns its tree's, which leave the pages its entries name (`set_owned_links`). `linking_to` gives the owners, the files to resolve again when a target comes or goes; `links_from` and `links_to` give the links themselves. The reverse maps are hashed | A page's xrefs and the navigation's edges from that page are replaced independently. A path compares component by component, too slowly in ordered maps for a full build's insertions |
+| Skipping unchanged files (WP 7.1) | a replaced index entry re-resolves that file | A fingerprint of what a file's links come from (its xref and include targets, which includes are conditional, and its attributes when a target names one) is kept, and a file whose fingerprint is unchanged is not resolved again | Typing prose in a long page would otherwise resolve every link of it at each pause (`settle_git` went from 26 µs to 3 ms) |
+| Which links are made (WP 7.1) | xrefs and includes, unresolved targets kept | An xref into a component or version missing from the workspace makes no link, as it is published elsewhere and the diagnostics say nothing of it. An include of a file that is not AsciiDoc (an example's source code) makes no link. An unresolved navigation entry makes no ghost node, as the nav tree keeps no text for it | Ghosts are for broken links, and images and other assets are out of scope |
+| Partials outside Antora (WP 7.1) | partials are files reached by `include::` | In a module, the `partials` family decides; outside Antora, a file another includes is a partial | Plain workspaces have no families |
+| Snapshot benchmark (WP 7.2) | the full build and a layout step are budgeted | A whole-workspace snapshot of 5,000 pages (`graph_snapshot`, about 50 ms locally) is recorded, not budgeted | The window asks for one only when the graph changes, and CI runners are a few times slower |
+| Opening a node (WP 7.3) | a click opens with `Preview`, a double click with `Persistent`, through `navigate.go_to` | A click invokes `navigate.go_to`, which opens as a preview; a double click does the same and then `document.keep_open` | `navigate.go_to` takes a position only |
+| Open to the Side (WP 7.3) | in the context menu | Opens the page in a tab of its own and pins the docked preview to it | The app has no editor split; the pinned preview is what shows a page beside the one being edited |
+| The side panel (WP 7.3) | lists the selected node's links | Always shown in the window, saying "Select a node to see its links." when nothing is selected | Showing it on selection narrowed the canvas under the pointer, so a double click missed its node |
+| Accessible labels (WP 7.3) | each node's accessible label is its title and resource id | Not done: GPUI has no accessibility tree to label | Left for when GPUI has one |
+| Show in Graph (WP 7.3) | in the page tab's and the Files panel's context menus | At the end of the page tab's menu, after the close commands, and for AsciiDoc files in the Files panel's | The tab menu is walked with the arrow keys; new items go last |
+| Visual checks (WP 7.3, 7.4) | — | Drawing, colours in both themes, pinch and the window's placement on a second display are checked by hand, `docs/qa/phase7.md` | GPUI's test platform draws no pixels and has one display |
 
 ## 10. Implementation Sequence
 

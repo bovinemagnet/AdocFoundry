@@ -1,0 +1,191 @@
+= The link graph
+Paul Snow
+:revnumber: 0.0.0
+:description: The graph of how a workspace's pages, partials and navigation files link to each other: the graph window, the local graph in the sidebar, and what counts as a link.
+
+AdocFoundry draws how the pages of a workspace link to each other.
+The graph window shows the whole workspace.
+The Graph tab in the sidebar shows the active page and its neighbours.
+Both are drawn from the links the engine already resolves for link following, so they agree with Find References and with xref:diagnostics.adoc[the diagnostics].
+
+The same graph is available without the app from xref:command-line.adoc#graph[`adocfoundry-cli graph`] and the xref:mcp-server.adoc[MCP server]'s `link_graph` tool.
+
+== What the graph holds
+
+=== Nodes
+
+[cols="1,4"]
+|===
+|Node |What it is
+
+|Page
+|An AsciiDoc page that nothing has to include.
+
+|Partial
+|A file reached by `include::`. Outside Antora, a file that is included counts as a partial.
+
+|Navigation file
+|A file listed under `nav` in an `antora.yml`.
+
+|Unresolved target
+|The text of a link that points at nothing. These "ghost" nodes are hidden unless you turn on Unresolved.
+|===
+
+Images are not nodes.
+An `include::` of a file that is not AsciiDoc, such as source code, makes no link.
+
+=== Edges
+
+[cols="1,2,3"]
+|===
+|Kind |Drawn as |Made by
+
+|Xref
+|Solid line
+|An `xref:` or `+<<…>>+` link from one page to another.
+
+|Include
+|Dashed line
+|An `include::` of an AsciiDoc file.
+
+|Navigation
+|Dotted, bowed line in its own colour
+|An entry in a navigation file. The nav file links to the page of each top-level entry, and each entry's page links to the pages of its child entries. An entry with text but no page hands its children to its nearest ancestor that has a page.
+|===
+
+A link to a target that does not resolve is drawn dash-dot.
+Several links of one kind between the same two files make one heavier edge with a count.
+A navigation file's own xrefs are not drawn again as xref edges.
+
+Some references make no link, so the graph does not report problems that are not there:
+
+* A dynamic target, such as `+include::{attr}/x.adoc[]+`, makes no link.
+* An include inside `ifdef`, `ifndef` or `ifeval` that does not resolve makes no link.
+* An xref into a component or version that is not in the workspace is taken to be published elsewhere and makes no link.
+
+An _orphan_ is a page with no links in or out, navigation included.
+A page listed in a navigation file is therefore never an orphan.
+
+== The graph window
+
+Show Graph (`view.graph`, in the View menu) opens the graph in its own window.
+It is bound to kbd:[Cmd+K] then kbd:[G] on macOS and kbd:[Ctrl+K] then kbd:[G] on Linux and Windows.
+This is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[G] on its own.
+
+There is one graph window for each workspace window.
+Choosing Show Graph again brings it to the front.
+The window shows "Building graph…" until the first build is done.
+
+The window remembers its size and position, and keeps them with the last session, so after a restart it comes back on the screen you put it on.
+The first time it opens at 1100 by 760 pixels, centred.
+If less than half of the saved place is on a display, because a screen has been unplugged, it opens centred on the main display and is made smaller to fit.
+
+=== The toolbar
+
+[cols="1,4"]
+|===
+|Control |What it does
+
+|Search
+|Highlights the nodes whose title or path matches and dims the rest.
+
+|Partials, Navigation, Orphans, Unresolved
+|Toggles that show or hide each kind of node.
+
+|Component menu
+|Limits the graph to the components you choose.
+
+|Colour
+|Colours nodes by Component, Module or Family. Clicking the button moves to the next.
+
+|Workspace or Local
+|Switches between the whole workspace and the active page's neighbourhood. Local has a depth of 1 to 3 links.
+
+|Zoom out, Zoom in, Fit
+|Change the zoom. Fit shows the whole graph.
+
+|Reset Layout
+|Throws away pinned nodes and lays the graph out again.
+|===
+
+=== The canvas
+
+* Drag the background to pan.
+* Scroll the wheel, or pinch, to zoom around the pointer.
+* Drag a node to pin it where you drop it. Release with kbd:[Alt] held to unpin it.
+* Hover over a node to highlight it and its neighbours and dim the rest.
+* Click a node to select it and open its page in the preview tab. Double-click keeps the page open.
+* kbd:[Tab] and kbd:[Shift+Tab] move the selection between nodes in title order. kbd:[Enter] opens the selected node.
+
+A node is sized by how many links it has.
+Partials are hollow, unresolved targets have a dashed outline, and navigation files are squares.
+Labels show when you have zoomed in, and always for the hovered and selected node, their neighbours and the search matches.
+
+Right-click a node for its menu:
+
+[cols="1,4"]
+|===
+|Item |What it does
+
+|Open
+|Opens the page in a tab.
+
+|Open to the Side
+|Opens the page in a tab and pins the docked xref:preview.adoc[preview] to it, so it shows beside the page you are editing. The app has no editor split, so the preview is the side.
+
+|Find References
+|Lists the references to the page.
+
+|Reveal in Files
+|Selects the file in the Files panel.
+|===
+
+The side panel lists the selected node's *Links out* and *Backlinks*, one row for each neighbour.
+A row names every kind of link between the two, such as `xref · nav`.
+Clicking a row selects that node.
+
+== The local graph
+
+The *Graph* tab is the last tab of the sidebar.
+Show Local Graph (`view.local_graph`) opens it, bound to kbd:[Cmd+K] then kbd:[Shift+G] on macOS and kbd:[Ctrl+K] then kbd:[Shift+G] on Linux and Windows.
+
+It shows the active page and the pages linked to it, to the depth you set, from 1 to 3.
+It follows the active tab.
+When an image or a file that is not AsciiDoc is active, it says "No page".
+Partials and Navigation toggles hide those nodes, and a button opens the graph window.
+
+Below the canvas is the page's place in the navigation, drawn as trails:
+
+[source,text]
+----
+nav.adoc › Introduction › Configuration › Settings reference
+----
+
+A trail is the navigation file, the entries above the page, the page in bold, then its child entries.
+There is one trail for each place the page is listed.
+A page in no navigation shows "Not in any navigation".
+Clicking an entry that has a page opens it as a preview.
+The trails are hidden when Navigation is turned off.
+
+After the trails come the *Links out* and *Backlinks* lists.
+Clicking a row opens the page as a preview.
+
+== Show in Graph
+
+Show in Graph is the last item of a page tab's context menu, and is in the Files panel's context menu for AsciiDoc files.
+It opens the graph window with that page selected.
+
+== Reset Graph Layout
+
+Reset Graph Layout (`graph.reset_layout`, in the View menu) resets the layout of both the sidebar panel and the window.
+
+== Settings
+
+The `[graph]` table sets what the graph starts with.
+See xref:settings.adoc[Settings].
+
+== Keeping it current
+
+The graph is built once after the workspace is indexed.
+After that, typing, saving, changes on disk, renames and new pages update it file by file.
+Only a change to the catalog's components, versions, modules or navigation files rebuilds all of it, in the background.

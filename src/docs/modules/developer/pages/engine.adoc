@@ -357,6 +357,9 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 |`DocumentOpened`, `DocumentChanged`, `DocumentSaved`, `DocumentClosed`
 |Document lifecycle. `DocumentChanged` carries the version and the edits.
 
+|`GraphChanged`
+|The link graph changed. It carries the new revision, and is published at most once a `pump`.
+
 |`DocumentMoved`
 |A rename, or its undo, moved the file behind an open document.
 
@@ -946,6 +949,37 @@ The CLI prints these, and `adoc-mcp` returns them, so the two cannot drift.
 * `resource_id_string` writes a resource id as `version@component:module:family$path`.
 
 `adoc-mcp` may depend only on the engine and `adoc-core`, so what it needs from the catalog comes through these methods.
+
+[[the-link-graph]]
+== The link graph
+
+`src/graph.rs` keeps the graph the xref:ROOT:graph-view.adoc[graph window] draws.
+`adoc_lang::graph::links_from` resolves one file's xrefs and includes.
+`GraphState` holds:
+
+* the `adoc-graph` `LinkStore`;
+* each file's title;
+* a fingerprint of each file's link inputs: its targets, their conditional flags, and the attributes when a target names one. A file whose inputs are unchanged is not resolved again;
+* the navigation trees, and the shape of the catalog (components, versions, modules and navigation files).
+
+The first build runs on the index worker, across threads, once the workspace is indexed.
+Until it lands, `Engine::graph` returns an empty snapshot and `is_graph_building` is true.
+
+Every index change calls `graph_file_changed`, which only marks the file.
+`update_due_graph`, in `pump`, resolves the marked files.
+It also resolves the files that name a file that came or went, found with `xrefs_naming`, `includes_naming` and `page-aliases`, and uses `linking_to` for a file that went.
+`graph_catalog_changed` rebuilds everything, on a worker, only when the components, versions, modules or navigation file lists change.
+`EngineEvent::GraphChanged` is published at most once a `pump`.
+
+The queries are:
+
+* `Engine::graph(scope, filter)`, where the scope is the whole workspace or a page with a depth of 1 to 3. A local scope walks outwards through the `LinkStore` and never visits the whole graph.
+* `Engine::graph_revision` and `Engine::is_graph_building`.
+* `Engine::nav_places`, the trails through the navigation that list a page, and `Engine::neighbours`, a page's links out and in with the kinds merged for each neighbour.
+* `graph_report`, in `report.rs`, which writes the snapshot as the JSON and DOT that `adocfoundry-cli graph` prints and `adoc-mcp`'s `link_graph` returns.
+
+The probe `Probe::GraphNode` counts the nodes made for a snapshot, so a test can show that a local graph made only the nodes it reaches.
+The settings are the `[graph]` table (`graph.depth`, `graph.show_partials` and the rest), and the tests and benchmarks (`cargo bench -p adoc-graph` for the layout step, `graph_build` in `cargo bench -p adoc-engine` for 5,000 pages) are in xref:testing.adoc#graph-tests[Testing].
 
 [[the-doctor]]
 == The doctor

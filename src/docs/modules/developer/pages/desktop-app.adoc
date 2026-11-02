@@ -131,6 +131,8 @@ Window creation lives in `app.rs`.
 `open_secondary_window` takes a `WindowKind`.
 `Mirror` is a read-only view of the active document that follows its edits.
 `Preview` is the rendered preview detached from the workspace window, and closing it docks the preview again.
+`Graph` is the link graph's window, one for each workspace window, which opening again focuses.
+It remembers its size and position (`session.json`'s `graph_window`, kept by the engine); `app.rs` checks the saved bounds against the displays and, when less than half lies on one, centres the window on the main display and shrinks it to fit.
 
 == The preview
 
@@ -400,6 +402,16 @@ The Display section gives the graphics backend, the GPU and display server where
 `src/about.rs` completes the engine's `app.about` command, which returns an `About` (see xref:engine.adoc#about[About]).
 It embeds the `notices.json` that `build.rs` writes, names the program with the build string from `ADOCFOUNDRY_BUILD`, and shows the dialog for the `ShowAbout` action.
 The dialog is a `uniform_list` of components beside the chosen component's licence texts, with Repository and Documentation buttons and a Copy Licence button.
+
+[#the-graph]
+== The graph
+
+`src/graph_view.rs` holds `GraphView`, which is both the graph window and the sidebar's Graph panel, as `GraphMode::Window` or `GraphMode::Panel`.
+The panel is `SidebarTab::Graph`, the last tab.
+The view reads `Engine::graph` snapshots, steps an `adoc-graph` `Layout` on animation frames and draws it with `gpui::canvas`, so the layout and the graph itself stay free of the UI framework.
+Pinned nodes, zoom, hover, selection and the toolbar's filters are the view's own state; clicks open pages through `navigate.go_to`, with `OpenDisposition::Preview` for a click and `Persistent` for a double click.
+Show in Graph, Reset Graph Layout, Show Graph and Show Local Graph are engine commands (`view.graph`, `view.local_graph`, `graph.reset_layout`) and are in `MENUS`.
+See xref:ROOT:graph-view.adoc[The link graph].
 
 == Change markers and the Changes panel
 

@@ -22,6 +22,7 @@ flowchart TD
         index["adoc-index"]
         lang["adoc-lang"]
         math["adoc-math<br/>(STEM to Typst maths)"]
+        graph["adoc-graph<br/>(graph types and layout)"]
     end
     subgraph L0["L0: domain types"]
         core["adoc-core"]
@@ -48,6 +49,7 @@ flowchart TD
     engine --> model
     engine --> git
     engine --> pdf
+    engine --> graph
     pdf --> render
     render --> dom
     model --> dom

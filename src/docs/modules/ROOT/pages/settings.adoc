@@ -88,6 +88,14 @@ enabled = true                   # underline misspelt words in prose
 language = "en_GB"               # for pages with no lang attribute
 dictionaries = ""                # folder of extra Hunspell .aff/.dic files (user file only)
 
+[graph]
+depth = 1                        # the local graph's starting depth, 1 to 3
+show_partials = true
+show_nav = true
+show_orphans = true
+show_unresolved = false
+colour_by = "component"          # component | module | family
+
 [updates]
 check = true                     # look for a newer release at start-up
 ----
@@ -278,6 +286,36 @@ check = true                     # look for a newer release at start-up
 |none
 |A folder of extra Hunspell dictionaries, each a `.aff` and `.dic` pair named for its language, such as `de_DE.aff` and `de_DE.dic`. User file only. See xref:using-the-editor.adoc#spelling[Spelling].
 
+|`graph.depth`
+|integer, 1 to 3
+|`1`
+|How many links out the local graph starts with. See xref:graph-view.adoc[The link graph].
+
+|`graph.show_partials`
+|boolean
+|`true`
+|Show partials in the graph.
+
+|`graph.show_nav`
+|boolean
+|`true`
+|Show navigation files and their edges.
+
+|`graph.show_orphans`
+|boolean
+|`true`
+|Show pages with no links in or out.
+
+|`graph.show_unresolved`
+|boolean
+|`false`
+|Show the targets of links that do not resolve as nodes of their own.
+
+|`graph.colour_by`
+|`"component"`, `"module"` or `"family"`
+|`"component"`
+|What the graph window colours nodes by.
+
 |`updates.check`
 |boolean
 |`true`
@@ -288,7 +326,7 @@ See xref:pdf-export.adoc[Exporting to PDF].
 
 == What a workspace file may set
 
-A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `spelling.enabled` and `spelling.language`.
+A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `graph.*`, `spelling.enabled` and `spelling.language`.
 The two depths override separately.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.

@@ -17,6 +17,8 @@ adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
+adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot]
+    [--no-partials] [--no-nav] [--unresolved]
 adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
 ----
@@ -232,6 +234,66 @@ branch main
 
 If `<root>` is not in a Git repository the command fails with an error and exits with 2.
 The other subcommands do not look at Git.
+
+[[graph]]
+== graph
+
+`graph` prints the link graph of the workspace under `<root>`, or of one page's neighbourhood.
+It reads the same graph as the xref:graph-view.adoc[graph window].
+Git stays off.
+
+[source,sh]
+----
+adocfoundry-cli graph docs
+adocfoundry-cli graph docs --page docs/modules/ROOT/pages/index.adoc --depth 2
+adocfoundry-cli graph docs --format dot --no-partials | dot -Tsvg -o graph.svg
+----
+
+[cols="2,4"]
+|===
+|Option |Meaning
+
+|`--page <file>`
+|Print only the pages within reach of this page, in both directions. A page that is not indexed is an error.
+
+|`--depth <n>`
+|How many links to follow from `--page`, 1 to 3. It needs `--page`; without it the command exits with 2.
+
+|`--format json\|dot`
+|`json` (the default) or Graphviz `dot`.
+
+|`--no-partials`
+|Leave out partials.
+
+|`--no-nav`
+|Leave out navigation files and their edges.
+
+|`--unresolved`
+|Include the targets of links that do not resolve as nodes.
+|===
+
+The JSON has the graph's `revision`, its `nodes` and its `edges`.
+Ids are paths relative to `<root>`, written with `/`; an unresolved target's id is its text.
+`kind` is `page`, `partial`, `nav` or `unresolved`.
+`coordinate` is `version@component:module:family`, with `~` for an unversioned component, and is left out outside Antora.
+An edge's `kind` is `xref`, `include` or `nav`, and `count` is the number of links it stands for.
+
+[source,json]
+----
+{
+  "revision": 3,
+  "nodes": [
+    { "id": "modules/ROOT/pages/index.adoc", "title": "Home", "kind": "page",
+      "coordinate": "~@docs:ROOT:page", "links_out": 2, "links_in": 1 }
+  ],
+  "edges": [
+    { "from": "modules/ROOT/nav.adoc", "to": "modules/ROOT/pages/index.adoc", "kind": "nav", "count": 1 }
+  ]
+}
+----
+
+In `dot`, navigation files are boxes, partials are dashed and unresolved targets are dotted.
+Include edges are dashed, navigation edges are dotted, and a count over 1 is the edge's label.
 
 [[doctor]]
 == doctor
