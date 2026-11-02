@@ -1,5 +1,21 @@
-use adoc_core::SourceRange;
+use adoc_core::{LineIndex, SourceRange};
 use lsp_types::{ClientCapabilities, Position, PositionEncodingKind, Range};
+
+/// A text with where its lines start, built once for a request or notification, so that each
+/// offset maps to a position by a search rather than by counting lines from the start.
+pub(crate) struct Lines<'a> {
+    text: &'a str,
+    index: LineIndex,
+}
+
+impl<'a> Lines<'a> {
+    pub(crate) fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            index: LineIndex::new(text),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PositionEncoding {
@@ -42,14 +58,13 @@ impl PositionEncoding {
         }
     }
 
-    pub(crate) fn position(self, text: &str, offset: usize) -> Option<Position> {
+    pub(crate) fn position(self, lines: &Lines<'_>, offset: usize) -> Option<Position> {
+        let text = lines.text;
         if offset > text.len() || !text.is_char_boundary(offset) {
             return None;
         }
-        let prefix = &text[..offset];
-        let line = prefix.bytes().filter(|byte| *byte == b'\n').count();
-        let line_start = prefix.rfind('\n').map_or(0, |newline| newline + 1);
-        let line_prefix = &text[line_start..offset];
+        let (line, column) = lines.index.line_column(offset);
+        let line_prefix = &text[offset - column..offset];
         let character = match self {
             Self::Utf8 => line_prefix.len(),
             Self::Utf16 => line_prefix.encode_utf16().count(),
@@ -60,10 +75,10 @@ impl PositionEncoding {
         ))
     }
 
-    pub(crate) fn range(self, text: &str, range: SourceRange) -> Option<Range> {
+    pub(crate) fn range(self, lines: &Lines<'_>, range: SourceRange) -> Option<Range> {
         Some(Range::new(
-            self.position(text, range.start)?,
-            self.position(text, range.end)?,
+            self.position(lines, range.start)?,
+            self.position(lines, range.end)?,
         ))
     }
 }
@@ -100,7 +115,7 @@ fn utf16_offset(line: &str, target_units: usize) -> Option<usize> {
 mod tests {
     use lsp_types::Position;
 
-    use super::PositionEncoding;
+    use super::{Lines, PositionEncoding};
 
     #[test]
     fn converts_utf16_positions_with_non_bmp_characters() {
@@ -108,7 +123,10 @@ mod tests {
         let encoding = PositionEncoding::Utf16;
 
         assert_eq!(encoding.offset(text, Position::new(0, 3)), Some(5));
-        assert_eq!(encoding.position(text, 5), Some(Position::new(0, 3)));
+        assert_eq!(
+            encoding.position(&Lines::new(text), 5),
+            Some(Position::new(0, 3))
+        );
         assert_eq!(encoding.offset(text, Position::new(0, 2)), None);
     }
 
@@ -118,6 +136,28 @@ mod tests {
         let encoding = PositionEncoding::Utf8;
 
         assert_eq!(encoding.offset(text, Position::new(0, 2)), Some(2));
-        assert_eq!(encoding.position(text, 2), Some(Position::new(0, 2)));
+        assert_eq!(
+            encoding.position(&Lines::new(text), 2),
+            Some(Position::new(0, 2))
+        );
+    }
+
+    #[test]
+    fn maps_offsets_on_later_lines_and_refuses_ones_inside_a_character() {
+        let text = "😀\nab\n\n😀c";
+        let lines = Lines::new(text);
+        let encoding = PositionEncoding::Utf16;
+        let c = text.find('c').unwrap();
+        assert_eq!(encoding.position(&lines, c), Some(Position::new(3, 2)));
+        assert_eq!(
+            encoding.position(&lines, text.len()),
+            Some(Position::new(3, 3))
+        );
+        assert_eq!(encoding.position(&lines, 1), None, "inside the first 😀");
+        assert_eq!(encoding.position(&lines, text.len() + 1), None);
+        assert_eq!(
+            PositionEncoding::Utf8.position(&lines, c),
+            Some(Position::new(3, 4))
+        );
     }
 }

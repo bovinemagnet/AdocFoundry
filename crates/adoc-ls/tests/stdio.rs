@@ -480,3 +480,69 @@ fn binary_routes_every_advertised_command() {
         .expect("send exit");
     assert!(child.wait().expect("wait for adoc-ls").success());
 }
+
+#[test]
+fn binary_publishes_diagnostics_in_utf16_after_non_bmp_characters() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adoc-ls"))
+        .arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start adoc-ls");
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout"));
+
+    Message::Request(Request::new(
+        RequestId::from(1),
+        Initialize::METHOD.to_owned(),
+        InitializeParams::default(),
+    ))
+    .write(&mut stdin)
+    .expect("send initialize");
+    assert_success_response(read_message(&mut stdout), RequestId::from(1));
+    Message::Notification(Notification::new(
+        Initialized::METHOD.to_owned(),
+        InitializedParams {},
+    ))
+    .write(&mut stdin)
+    .expect("send initialized");
+
+    // Each 😀 is two UTF-16 code units and four bytes, on lines before the reference and on
+    // its own line.
+    let uri = "file:///docs/guide.adoc";
+    let text = "= 😀 Guide\n\nA 😀😀 line.\n\n😀 See <<nowhere>> here.\n";
+    Message::Notification(Notification::new(
+        "textDocument/didOpen".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri, "languageId": "asciidoc", "version": 1, "text": text },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send didOpen");
+    let Message::Notification(published) = read_message(&mut stdout) else {
+        panic!("expected the diagnostics");
+    };
+    let params: lsp_types::PublishDiagnosticsParams =
+        serde_json::from_value(published.params).expect("decode diagnostics");
+    let reference = params
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.message.contains("nowhere"))
+        .unwrap_or_else(|| panic!("no diagnostic for the reference: {:?}", params.diagnostics));
+    // `<<nowhere>>` starts after "😀 See " (two code units, then five) on line 4.
+    assert_eq!(reference.range.start, lsp_types::Position::new(4, 7));
+    assert_eq!(reference.range.end, lsp_types::Position::new(4, 18));
+
+    Message::Request(Request::new(
+        RequestId::from(2),
+        Shutdown::METHOD.to_owned(),
+        (),
+    ))
+    .write(&mut stdin)
+    .expect("send shutdown");
+    let _ = read_message(&mut stdout);
+    Message::Notification(Notification::new(Exit::METHOD.to_owned(), ()))
+        .write(&mut stdin)
+        .expect("send exit");
+    assert!(child.wait().expect("adoc-ls exits").success());
+}

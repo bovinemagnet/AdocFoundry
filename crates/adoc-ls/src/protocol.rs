@@ -48,7 +48,7 @@ use crate::{
         },
         execute_command::{refresh_preview, render_preview, render_preview_with_engine},
     },
-    position::PositionEncoding,
+    position::{Lines, PositionEncoding},
     preview::{BrowserSink, PreviewMode, PreviewSink, SystemLauncher},
     server::ServerError,
     state::document_path,
@@ -391,14 +391,13 @@ impl ProtocolServer {
         let (uri, version) = self.open.get(&id)?;
         let uri = Uri::from_str(uri).ok()?;
         let document = self.engine.document(id)?;
+        let lines = Lines::new(&document.parsed().text);
         let mut diagnostics: Vec<Diagnostic> = document
             .diagnostics
             .iter()
             .filter_map(|diagnostic| {
                 Some(Diagnostic {
-                    range: self
-                        .encoding
-                        .range(&document.parsed().text, diagnostic.range)?,
+                    range: self.encoding.range(&lines, diagnostic.range)?,
                     severity: Some(match diagnostic.severity {
                         CoreDiagnosticSeverity::Information => DiagnosticSeverity::INFORMATION,
                         CoreDiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
@@ -411,14 +410,13 @@ impl ProtocolServer {
                 })
             })
             .collect();
-        let text = &document.parsed().text;
         diagnostics.extend(
             self.engine
                 .misspellings(id)
                 .iter()
                 .filter_map(|misspelling| {
                     Some(Diagnostic {
-                        range: self.encoding.range(text, misspelling.range)?,
+                        range: self.encoding.range(&lines, misspelling.range)?,
                         severity: Some(DiagnosticSeverity::HINT),
                         code: Some(NumberOrString::String(
                             adoc_engine::SPELLING_CODE.to_owned(),
@@ -440,12 +438,12 @@ impl ProtocolServer {
         params: &DocumentSymbolParams,
     ) -> Option<DocumentSymbolResponse> {
         let id = self.id_for(params.text_document.uri.as_str())?;
-        let text = self.text_of(id)?;
+        let lines = Lines::new(self.text_of(id)?);
         Some(DocumentSymbolResponse::Nested(
             self.engine
                 .outline(id)
                 .into_iter()
-                .filter_map(|symbol| self.lsp_document_symbol(text, symbol))
+                .filter_map(|symbol| self.lsp_document_symbol(&lines, symbol))
                 .collect(),
         ))
     }
@@ -453,13 +451,13 @@ impl ProtocolServer {
     #[allow(deprecated)]
     fn lsp_document_symbol(
         &self,
-        text: &str,
+        lines: &Lines<'_>,
         symbol: adoc_engine::DocumentSymbol,
     ) -> Option<DocumentSymbol> {
         let children: Vec<_> = symbol
             .children
             .into_iter()
-            .filter_map(|child| self.lsp_document_symbol(text, child))
+            .filter_map(|child| self.lsp_document_symbol(lines, child))
             .collect();
         Some(DocumentSymbol {
             name: symbol.name,
@@ -470,8 +468,8 @@ impl ProtocolServer {
             },
             tags: None,
             deprecated: None,
-            range: self.encoding.range(text, symbol.range)?,
-            selection_range: self.encoding.range(text, symbol.selection_range)?,
+            range: self.encoding.range(lines, symbol.range)?,
+            selection_range: self.encoding.range(lines, symbol.selection_range)?,
             children: (!children.is_empty()).then_some(children),
         })
     }
@@ -543,12 +541,13 @@ impl ProtocolServer {
             return Vec::new();
         };
         let user = self.engine.settings().user_file().is_some();
+        let lines = Lines::new(text);
         let mut actions = Vec::new();
         for misspelling in self.engine.misspellings(id) {
             if misspelling.range.start > end || misspelling.range.end < start {
                 continue;
             }
-            let Some(range) = self.encoding.range(text, misspelling.range) else {
+            let Some(range) = self.encoding.range(&lines, misspelling.range) else {
                 continue;
             };
             for suggestion in &misspelling.suggestions {
@@ -841,12 +840,13 @@ impl ProtocolServer {
                 continue;
             };
             let text = self.file_text(&path);
+            let lines = Lines::new(&text);
             problems += diagnostics.len();
             let diagnostics = diagnostics
                 .into_iter()
                 .filter_map(|diagnostic| {
                     Some(Diagnostic {
-                        range: self.encoding.range(&text, diagnostic.range)?,
+                        range: self.encoding.range(&lines, diagnostic.range)?,
                         severity: Some(match diagnostic.severity {
                             CoreDiagnosticSeverity::Information => DiagnosticSeverity::INFORMATION,
                             CoreDiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
@@ -894,7 +894,7 @@ impl ProtocolServer {
         let text = self.file_text(&location.path);
         Some(Location::new(
             path_to_uri(&location.path)?,
-            self.encoding.range(&text, location.range)?,
+            self.encoding.range(&Lines::new(&text), location.range)?,
         ))
     }
 
@@ -979,12 +979,13 @@ impl ProtocolServer {
                 continue;
             };
             let text = self.file_text(&file.path);
+            let lines = Lines::new(&text);
             changes
                 .entry(uri)
                 .or_default()
                 .extend(file.edits.iter().filter_map(|edit| {
                     Some(TextEdit {
-                        range: self.encoding.range(&text, edit.range)?,
+                        range: self.encoding.range(&lines, edit.range)?,
                         new_text: edit.replacement.clone(),
                     })
                 }));
@@ -1000,19 +1001,24 @@ impl ProtocolServer {
         &self,
         params: &WorkspaceSymbolParams,
     ) -> Option<WorkspaceSymbolResponse> {
-        let symbols = self
-            .engine
-            .workspace_symbols(&params.query)
+        let found = self.engine.workspace_symbols(&params.query);
+        // Each file's text once: the open buffer, else the file as indexed. The index keeps
+        // no text of its own for files read from disk.
+        let texts: HashMap<&Path, String> = found
+            .iter()
+            .map(|symbol| &*symbol.path)
+            .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
+            .map(|path| (path, self.file_text(path)))
+            .collect();
+        let lines: HashMap<&Path, Lines<'_>> = texts
+            .iter()
+            .map(|(path, text)| (*path, Lines::new(text)))
+            .collect();
+        let symbols = found
+            .iter()
             .filter_map(|symbol| {
-                // The indexed text is the open buffer when the file is open.
-                let text = &self
-                    .engine
-                    .workspace()
-                    .index
-                    .file(&symbol.path)?
-                    .document
-                    .text;
+                let lines = lines.get(&*symbol.path)?;
                 Some(SymbolInformation {
                     name: symbol.name.clone(),
                     kind: match symbol.kind {
@@ -1025,7 +1031,7 @@ impl ProtocolServer {
                     deprecated: None,
                     location: Location::new(
                         path_to_uri(&symbol.path)?,
-                        self.encoding.range(text, symbol.range)?,
+                        self.encoding.range(lines, symbol.range)?,
                     ),
                     container_name: symbol.container.as_deref().map(str::to_owned),
                 })
@@ -1045,7 +1051,7 @@ impl ProtocolServer {
                 kind: MarkupKind::Markdown,
                 value: content.markdown,
             }),
-            range: self.encoding.range(text, content.range),
+            range: self.encoding.range(&Lines::new(text), content.range),
         })
     }
 
@@ -1054,11 +1060,12 @@ impl ProtocolServer {
         let id = self.id_for(position.text_document.uri.as_str())?;
         let text = self.text_of(id)?;
         let offset = self.encoding.offset(text, position.position)?;
+        let lines = Lines::new(text);
         let items = self
             .engine
             .completions(id, offset)
             .into_iter()
-            .filter_map(|candidate| self.completion_item(text, candidate))
+            .filter_map(|candidate| self.completion_item(&lines, candidate))
             .collect();
         Some(CompletionResponse::List(CompletionList {
             // The candidate set narrows as the target grows, so the client must ask again.
@@ -1067,8 +1074,8 @@ impl ProtocolServer {
         }))
     }
 
-    fn completion_item(&self, text: &str, candidate: Candidate) -> Option<CompletionItem> {
-        let range = self.encoding.range(text, candidate.range)?;
+    fn completion_item(&self, lines: &Lines<'_>, candidate: Candidate) -> Option<CompletionItem> {
+        let range = self.encoding.range(lines, candidate.range)?;
         Some(CompletionItem {
             label: candidate.label.clone(),
             kind: Some(match candidate.kind {
@@ -1679,6 +1686,31 @@ mod tests {
         assert_eq!(symbol.container_name.as_deref(), Some("Guide"));
         assert_eq!(symbol.location.uri, page);
         assert_eq!(symbol.location.range.start.line, 2);
+    }
+
+    #[test]
+    fn finds_workspace_symbols_in_pages_that_are_not_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let page = directory.path().join("page.adoc");
+        // Lines before the section, with a non-BMP character, so its position is worked out
+        // from the file's text.
+        fs::write(&page, "= 😀 Guide\n\nIntro.\n\n== Authentication Flow\n").unwrap();
+        let mut server = server();
+        server.open_workspace(vec![directory.path().to_path_buf()]);
+
+        let Some(WorkspaceSymbolResponse::Flat(symbols)) =
+            server.workspace_symbol_response(&WorkspaceSymbolParams {
+                query: "auth".to_owned(),
+                ..WorkspaceSymbolParams::default()
+            })
+        else {
+            panic!("expected a flat symbol list");
+        };
+
+        assert_eq!(symbols.len(), 1, "{symbols:?}");
+        assert_eq!(symbols[0].name, "Authentication Flow");
+        // The title, after `== `.
+        assert_eq!(symbols[0].location.range.start, Position::new(4, 3));
     }
 
     #[test]
