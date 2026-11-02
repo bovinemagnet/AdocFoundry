@@ -175,9 +175,9 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 | WP | Deliverable | Issue |
 | --- | --- | --- |
 | I1 | Typed dependency and impact semantics, evidence, completeness and report schema | #307; coordinate with #100 |
-| I2 | Git base/head, worktree/explicit changed-resource input | #308 \|
-| I3 | Incremental reverse dependency traversal and publication impacts | #309 \|
-| I4 | CLI text/JSON reporting, deterministic snapshots and CI summary | #310 \|
+| I2 | Git base/head, worktree/explicit changed-resource input | #308 |
+| I3 | Incremental reverse dependency traversal and publication impacts | #309 |
+| I4 | CLI text/JSON reporting, deterministic snapshots and CI summary | #310 |
 | I5 | GUI inspector/graph provenance and end-to-end QA | #311; extends #100 |
 
 Order I1 → I2/I3 → I4/I5. Semantic diff #101 remains a distinct follow-on feature; do not fold it into the initial impact analysis milestone. Changes to an impacted document should never be auto-written by this feature.

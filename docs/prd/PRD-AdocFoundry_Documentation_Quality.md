@@ -162,11 +162,11 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 
 | WP | Deliverable | Issue |
 | --- | --- | --- |
-| Q1 | Data model, rules registry, severity and config contract | #300 \|
-| Q2 | Antora navigation coverage + title/alt rules | #301 \|
-| Q3 | Incremental audit engine and completeness semantics | #302 \|
-| Q4 | CLI text/JSON/SARIF output + CI exit gates | #303 \|
-| Q5 | Native Quality dashboard and source navigation | #304 \|
+| Q1 | Data model, rules registry, severity and config contract | #300 |
+| Q2 | Antora navigation coverage + title/alt rules | #301 |
+| Q3 | Incremental audit engine and completeness semantics | #302 |
+| Q4 | CLI text/JSON/SARIF output + CI exit gates | #303 |
+| Q5 | Native Quality dashboard and source navigation | #304 |
 | Q6 | Optional integration adapters, docs and end-to-end QA | #305; coordinate with #85, #86, #104, #289 |
 
 Implement in order Q1 → Q2/Q3 → Q4/Q5 → Q6. Prefer one reviewable PR per work package. Update this PRD in the same PR when implementation diverges; add an Implementation Notes section and preserve decisions.
