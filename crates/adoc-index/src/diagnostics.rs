@@ -310,6 +310,38 @@ mod tests {
         assert_eq!(workspace_diagnostics(&index, path), Vec::new());
     }
 
+    /// Asciidoctor numbers a generated id already in use: the second `== Parameters` is
+    /// `_parameters_2`, or `parameters-2` in Antora.
+    #[test]
+    fn duplicate_section_ids_are_numbered() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "= Guide\n\nSee <<_parameters_2>>, <<parameters-2>> and <<_parameters_3>>.\n\n== Parameters\n\n== Parameters\n",
+        );
+
+        let unresolved: Vec<_> = workspace_diagnostics(&index, path)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect();
+        assert_eq!(unresolved.len(), 1, "{unresolved:?}");
+        assert!(unresolved[0].contains("_parameters_3"), "{unresolved:?}");
+    }
+
+    /// An explicit anchor holding the generated id makes the section's id numbered too.
+    #[test]
+    fn an_anchor_holding_a_generated_id_numbers_the_section() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "= Guide\n\nSee <<parameters-2>>.\n\n[[parameters]]\n== Introduction\n\n== Parameters\n",
+        );
+
+        assert_eq!(workspace_diagnostics(&index, path), Vec::new());
+    }
+
     #[test]
     fn matches_section_ids_that_differ_only_in_punctuation() {
         let path = Path::new("docs/index.adoc");

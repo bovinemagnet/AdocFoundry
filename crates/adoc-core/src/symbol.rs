@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::SourceRange;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,6 +64,63 @@ pub fn alphanumeric_id(text: &str) -> String {
         .collect()
 }
 
+/// How a build generates section ids: Antora's `idprefix: ''` and `idseparator: '-'`, or
+/// plain Asciidoctor's `_` and `_`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdStyle {
+    Antora,
+    Asciidoctor,
+}
+
+impl IdStyle {
+    fn id(self, title: &str) -> String {
+        match self {
+            Self::Antora => canonical_id(title),
+            Self::Asciidoctor => asciidoctor_id(title),
+        }
+    }
+
+    fn separator(self) -> char {
+        match self {
+            Self::Antora => '-',
+            Self::Asciidoctor => '_',
+        }
+    }
+}
+
+/// The id of each section, in order: its anchor, else the id `style` generates, numbered as
+/// Asciidoctor numbers a generated id an earlier anchor or section already holds (the second
+/// `== Parameters` is `_parameters_2`, or `parameters-2` in Antora).
+#[must_use]
+pub fn section_ids(sections: &[Section], anchors: &[Anchor], style: IdStyle) -> Vec<String> {
+    let mut taken = HashSet::new();
+    let mut anchors = anchors.iter().peekable();
+    let mut ids = Vec::with_capacity(sections.len());
+    for section in sections {
+        while let Some(anchor) = anchors.next_if(|anchor| anchor.range.start < section.range.start)
+        {
+            taken.insert(anchor.id.clone());
+        }
+        let id = match &section.id {
+            Some(id) => id.clone(),
+            None => {
+                let id = style.id(&section.title);
+                if id.is_empty() || !taken.contains(&id) {
+                    id
+                } else {
+                    (2..)
+                        .map(|n| format!("{id}{}{n}", style.separator()))
+                        .find(|numbered| !taken.contains(numbered))
+                        .unwrap_or(id)
+                }
+            }
+        };
+        taken.insert(id.clone());
+        ids.push(id);
+    }
+    ids
+}
+
 fn generated_id(title: &str, prefix: &str, separator: char) -> String {
     let mut id = String::from(prefix);
     for character in title.chars() {
@@ -78,4 +137,75 @@ fn generated_id(title: &str, prefix: &str, separator: char) -> String {
 pub struct Anchor {
     pub id: String,
     pub range: SourceRange,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn section(title: &str, id: Option<&str>, start: usize) -> Section {
+        let range = SourceRange::new(start, start + 1);
+        Section {
+            level: 1,
+            title: title.to_owned(),
+            id: id.map(str::to_owned),
+            range,
+            selection_range: range,
+        }
+    }
+
+    fn anchor(id: &str, start: usize) -> Anchor {
+        Anchor {
+            id: id.to_owned(),
+            range: SourceRange::new(start, start + 1),
+        }
+    }
+
+    #[test]
+    fn numbers_repeated_generated_ids() {
+        let sections = [
+            section("Parameters", None, 0),
+            section("Parameters", None, 10),
+            section("Parameters", None, 20),
+        ];
+
+        assert_eq!(
+            section_ids(&sections, &[], IdStyle::Asciidoctor),
+            ["_parameters", "_parameters_2", "_parameters_3"]
+        );
+        assert_eq!(
+            section_ids(&sections, &[], IdStyle::Antora),
+            ["parameters", "parameters-2", "parameters-3"]
+        );
+    }
+
+    /// Only ids declared before a section are taken when its id is generated.
+    #[test]
+    fn counts_anchors_declared_before_the_section() {
+        let sections = [
+            section("Intro", Some("parameters"), 5),
+            section("Parameters", None, 20),
+            section("Notes", None, 40),
+        ];
+        let anchors = [anchor("parameters", 0), anchor("notes", 50)];
+
+        assert_eq!(
+            section_ids(&sections, &anchors, IdStyle::Antora),
+            ["parameters", "parameters-2", "notes"]
+        );
+    }
+
+    #[test]
+    fn skips_a_number_already_taken() {
+        let sections = [
+            section("Parameters", None, 0),
+            section("Parameters 2", None, 10),
+            section("Parameters", None, 20),
+        ];
+
+        assert_eq!(
+            section_ids(&sections, &[], IdStyle::Antora),
+            ["parameters", "parameters-2", "parameters-3"]
+        );
+    }
 }

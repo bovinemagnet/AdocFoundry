@@ -11,8 +11,8 @@ use std::{
 };
 
 use adoc_core::{
-    alphanumeric_id, canonical_id, Document, IncludeDirective, Reference, ReferenceKind,
-    SourceRange,
+    alphanumeric_id, canonical_id, section_ids, Document, IdStyle, IncludeDirective, Reference,
+    ReferenceKind, SourceRange,
 };
 use adoc_parser::parse;
 
@@ -207,6 +207,15 @@ impl WorkspaceIndex {
         for section in &document.sections {
             for id in section.implicit_ids() {
                 anchor(id, section.selection_range);
+            }
+        }
+        // A generated id already in use is numbered (`_parameters_2`, `parameters-2`).
+        for style in [IdStyle::Antora, IdStyle::Asciidoctor] {
+            let ids = section_ids(&document.sections, &document.anchors, style);
+            for (section, id) in document.sections.iter().zip(ids) {
+                if section.id.is_none() {
+                    anchor(id, section.selection_range);
+                }
             }
         }
 

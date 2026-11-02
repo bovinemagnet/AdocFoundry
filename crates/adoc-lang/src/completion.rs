@@ -123,7 +123,8 @@ pub fn completion_at_offset(
 /// explicit anchor, and a generated id where they did not — never a suppressed one. The
 /// generated form depends on where `path` sits: Antora's `canonical_id` inside a module, since
 /// that is what an Antora-rendered site resolves, and plain Asciidoctor's `asciidoctor_id`
-/// everywhere else, since that is what `asciidoctor` itself would generate. Anchors that are
+/// everywhere else, since that is what `asciidoctor` itself would generate, each numbered as
+/// Asciidoctor numbers one an earlier section or anchor holds (`_parameters_2`). Anchors that are
 /// not attached to any heading (a `[[bibliography-entry]]` in body text) are offered too, but
 /// only once: an anchor immediately above a heading is *also* that section's `id`, so it is
 /// skipped here to avoid duplicating the section's own candidate.
@@ -137,10 +138,8 @@ fn anchor_candidates(
         return Vec::new();
     };
 
-    let mut candidates: Vec<Candidate> = document
-        .sections
-        .iter()
-        .map(|section| crate::xref::section_id(antora, path, section))
+    let mut candidates: Vec<Candidate> = crate::xref::section_ids(antora, path, document)
+        .into_iter()
         .map(|label| candidate(label, range))
         .collect();
 
@@ -509,6 +508,23 @@ mod tests {
                 .collect();
 
         assert_eq!(labels, vec!["_getting_started".to_owned()]);
+    }
+
+    #[test]
+    fn offers_the_numbered_id_of_a_repeated_section() {
+        let path = Path::new("/docs/guide.adoc");
+        let text = "== Parameters\n\n== Parameters\n\nSee <<";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+        let document = parse("file:///docs/guide.adoc", text).document;
+
+        let labels: Vec<_> =
+            completion_at_offset(&index, &AntoraCatalog::new(), path, &document, text.len())
+                .into_iter()
+                .map(|candidate| candidate.label)
+                .collect();
+
+        assert_eq!(labels, ["_parameters", "_parameters_2"]);
     }
 
     #[test]

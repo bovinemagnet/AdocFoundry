@@ -4,7 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
-use adoc_core::{Document, Location, Reference, ReferenceKind, Section, SourceRange};
+use adoc_core::{
+    asciidoctor_id, canonical_id, section_ids, Document, IdStyle, Location, Reference,
+    ReferenceKind, Section, SourceRange,
+};
 use adoc_index::{normalize_path, FileEntry, IncludeLocation, ReferenceLocation};
 
 use crate::{definition::reference_target_path, with_document, WorkspaceState};
@@ -110,11 +113,11 @@ pub fn anchor_at(
     if let Some(section) = document
         .sections
         .iter()
-        .find(|section| section.range.start <= offset && offset <= section.range.end)
+        .position(|section| section.range.start <= offset && offset <= section.range.end)
     {
         return Some(AnchorTarget {
             path: path.to_path_buf(),
-            id: crate::xref::section_id(&ws.antora, path, section),
+            id: crate::xref::section_ids(&ws.antora, path, document).swap_remove(section),
         });
     }
     let reference = document
@@ -163,7 +166,7 @@ pub fn rename_anchor(
     // A section with no anchor gets one, above its heading, in place of its generated id.
     let generated = |document: &Document| {
         generated_section(ws, &anchor.path, document, &anchor.id)
-            .map(|section| SourceRange::new(section.range.start, section.range.start))
+            .map(|(_, section)| SourceRange::new(section.range.start, section.range.start))
     };
     let (declarations, insert) = if anchor.path == path {
         with_document(ws, &path, text, |document| {
@@ -236,12 +239,21 @@ fn anchor_references<'a>(
 }
 
 /// The ids a reference may name `anchor` by: its own, and for a section without an anchor
-/// every form of its generated id that resolves to it.
+/// every form of its generated id that resolves to it. A section whose generated id an
+/// earlier one holds is named only by its numbered ids, never by the earlier one's.
 fn anchor_ids(ws: &WorkspaceState, anchor: &AnchorTarget) -> Vec<String> {
     let mut ids = vec![anchor.id.clone()];
     if let Some(file) = ws.index.file(&anchor.path) {
-        if let Some(section) = generated_section(ws, &anchor.path, &file.document, &anchor.id) {
-            ids.extend(section.implicit_ids());
+        let document = &file.document;
+        if let Some((at, section)) = generated_section(ws, &anchor.path, document, &anchor.id) {
+            let numbered = [IdStyle::Antora, IdStyle::Asciidoctor].map(|style| {
+                section_ids(&document.sections, &document.anchors, style).swap_remove(at)
+            });
+            if numbered == [canonical_id(&section.title), asciidoctor_id(&section.title)] {
+                ids.extend(section.implicit_ids());
+            } else {
+                ids.extend(numbered);
+            }
         }
     }
     ids.sort();
@@ -249,16 +261,22 @@ fn anchor_ids(ws: &WorkspaceState, anchor: &AnchorTarget) -> Vec<String> {
     ids
 }
 
-/// The section of `document` (the page at `path`) whose id `id` is generated, not declared.
+/// The section of `document` (the page at `path`) whose id `id` is generated, not declared,
+/// and its place among the sections.
 fn generated_section<'a>(
     ws: &WorkspaceState,
     path: &Path,
     document: &'a Document,
     id: &str,
-) -> Option<&'a Section> {
-    document.sections.iter().find(|section| {
-        section.id.is_none() && crate::xref::section_id(&ws.antora, path, section) == id
-    })
+) -> Option<(usize, &'a Section)> {
+    let ids = crate::xref::section_ids(&ws.antora, path, document);
+    document
+        .sections
+        .iter()
+        .zip(ids)
+        .enumerate()
+        .find(|(_, (section, generated))| section.id.is_none() && generated == id)
+        .map(|(at, (section, _))| (at, section))
 }
 
 /// The file and id a reference's fragment points at. A local reference reaches the page it is
@@ -496,6 +514,30 @@ mod tests {
         let heading = text.find("First").unwrap();
         let found = references_at(&ws, &page, &text, heading);
         assert_eq!(found.len(), 2, "{found:?}");
+    }
+
+    /// The second of two sections with one title is `_parameters_2`, so its references are
+    /// those naming that id in either form, and none naming the first.
+    #[test]
+    fn a_repeated_heading_names_its_numbered_id() {
+        let mut ws = WorkspaceState::new();
+        let page = normalize_path(Path::new("/docs/page.adoc"));
+        let text = "= Page\n\n== Parameters\n\n== Parameters\n\nSee <<_parameters>>, <<parameters>>, <<_parameters_2>> and <<parameters-2>>.\n";
+        ws.index.index_source(&page, text);
+
+        let second = text.rfind("== Parameters").unwrap() + 3;
+        let found: Vec<_> = references_at(&ws, &page, text, second)
+            .iter()
+            .map(|location| &text[location.range.start..location.range.end])
+            .collect();
+        assert_eq!(found, ["<<_parameters_2>>", "<<parameters-2>>"]);
+
+        let first = text.find("== Parameters").unwrap() + 3;
+        let found: Vec<_> = references_at(&ws, &page, text, first)
+            .iter()
+            .map(|location| &text[location.range.start..location.range.end])
+            .collect();
+        assert_eq!(found, ["<<_parameters>>", "<<parameters>>"]);
     }
 
     #[test]
