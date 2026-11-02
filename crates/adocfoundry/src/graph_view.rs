@@ -16,12 +16,12 @@ use adoc_engine::{
     Neighbour, Point as LayoutPoint, TabItem,
 };
 use gpui::{
-    canvas, div, point, prelude::FluentBuilder as _, px, quad, size, App, AppContext as _,
+    actions, canvas, div, point, prelude::FluentBuilder as _, px, quad, size, App, AppContext as _,
     BorderStyle, Bounds, Context, Corners, Entity, FocusHandle, Focusable, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Render,
-    ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    TextAlign, TextRun, WeakEntity, Window,
+    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Render, ScrollWheelEvent,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, TextAlign, TextRun,
+    WeakEntity, Window,
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
@@ -35,6 +35,22 @@ use crate::{
     app::AppState,
     workspace_view::{item_args, WorkspaceView},
 };
+
+actions!(adocfoundry, [NextNode, PreviousNode, OpenNode]);
+
+/// The key context of the graph's canvas, where Tab, Shift-Tab and Enter move between nodes
+/// and open one rather than moving focus.
+pub const GRAPH_CONTEXT: &str = "Graph";
+
+/// Binds the canvas's keys.
+pub fn bind(cx: &mut App) {
+    let context = Some(GRAPH_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("tab", NextNode, context),
+        KeyBinding::new("shift-tab", PreviousNode, context),
+        KeyBinding::new("enter", OpenNode, context),
+    ]);
+}
 
 /// The seed every layout starts from, so a graph opens the same way each time.
 const SEED: u64 = 7;
@@ -522,39 +538,38 @@ impl GraphView {
         self.zoom_around((1.0 + event.delta).clamp(0.5, 2.0), event.position, cx);
     }
 
-    /// Tab and Shift-Tab move the selection between nodes in title order; Enter opens it.
-    fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let keystroke = &event.keystroke;
-        match keystroke.key.as_str() {
-            "tab" => {
-                let mut order: Vec<&adoc_engine::GraphNode> = self.snapshot.nodes.iter().collect();
-                order.sort_by(|left, right| {
-                    left.title.cmp(&right.title).then(left.key.cmp(&right.key))
-                });
-                if order.is_empty() {
-                    return;
-                }
-                let at = self
-                    .selected
-                    .as_ref()
-                    .and_then(|selected| order.iter().position(|node| node.key == *selected));
-                let next = match (at, keystroke.modifiers.shift) {
-                    (None, false) => 0,
-                    (None, true) => order.len() - 1,
-                    (Some(at), false) => (at + 1) % order.len(),
-                    (Some(at), true) => (at + order.len() - 1) % order.len(),
-                };
-                let key = order[next].key.clone();
-                self.reveal(&key, cx);
-                cx.stop_propagation();
-            }
-            "enter" => {
-                if let Some(key) = self.selected.clone() {
-                    self.open(&key, false, cx);
-                    cx.stop_propagation();
-                }
-            }
-            _ => {}
+    /// Moves the selection to the next node in title order, or the previous with `back`.
+    fn select_next(&mut self, back: bool, cx: &mut Context<Self>) {
+        let mut order: Vec<&adoc_engine::GraphNode> = self.snapshot.nodes.iter().collect();
+        order.sort_by(|left, right| left.title.cmp(&right.title).then(left.key.cmp(&right.key)));
+        if order.is_empty() {
+            return;
+        }
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|selected| order.iter().position(|node| node.key == *selected));
+        let next = match (at, back) {
+            (None, false) => 0,
+            (None, true) => order.len() - 1,
+            (Some(at), false) => (at + 1) % order.len(),
+            (Some(at), true) => (at + order.len() - 1) % order.len(),
+        };
+        let key = order[next].key.clone();
+        self.reveal(&key, cx);
+    }
+
+    fn on_next_node(&mut self, _: &NextNode, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_next(false, cx);
+    }
+
+    fn on_previous_node(&mut self, _: &PreviousNode, _: &mut Window, cx: &mut Context<Self>) {
+        self.select_next(true, cx);
+    }
+
+    fn on_open_node(&mut self, _: &OpenNode, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(key) = self.selected.clone() {
+            self.open(&key, false, cx);
         }
     }
 
@@ -677,7 +692,7 @@ impl GraphView {
         div()
             .id("graph-canvas")
             .debug_selector(|| "graph-canvas".to_owned())
-            .key_context("Graph")
+            .key_context(GRAPH_CONTEXT)
             .track_focus(&self.focus_handle)
             .relative()
             .flex_1()
@@ -701,7 +716,9 @@ impl GraphView {
             )
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .on_pinch(cx.listener(Self::on_pinch))
-            .on_key_down(cx.listener(Self::on_key_down))
+            .on_action(cx.listener(Self::on_next_node))
+            .on_action(cx.listener(Self::on_previous_node))
+            .on_action(cx.listener(Self::on_open_node))
             .child(
                 canvas(
                     move |bounds, window, _| {
@@ -827,6 +844,7 @@ impl GraphView {
             .children(self.search.as_ref().map(|search| {
                 div()
                     .w(px(180.))
+                    .debug_selector(|| "graph-search".to_owned())
                     .child(Input::new(search).small().cleanable(true))
             }))
             .child(self.toggle(
@@ -1194,6 +1212,34 @@ impl GraphView {
     #[cfg(test)]
     pub fn selected_for_test(&self) -> Option<&GraphKey> {
         self.selected.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn hovered_for_test(&self) -> Option<&GraphKey> {
+        self.hovered.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn is_pinned_for_test(&self, key: &GraphKey) -> bool {
+        self.layout.is_pinned(key)
+    }
+
+    #[cfg(test)]
+    pub fn zoom_for_test(&self) -> f32 {
+        self.zoom
+    }
+
+    /// The nodes drawn dimmed, as the hover, selection and search leave them.
+    #[cfg(test)]
+    pub fn dimmed_for_test(&self, cx: &App) -> Vec<GraphKey> {
+        let drawing = self.drawing(cx);
+        self.snapshot
+            .nodes
+            .iter()
+            .zip(drawing.nodes)
+            .filter(|(_, drawn)| drawn.dim)
+            .map(|(node, _)| node.key.clone())
+            .collect()
     }
 
     /// Stops the layout, so a node stays where a test clicks it.

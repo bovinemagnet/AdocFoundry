@@ -6807,3 +6807,210 @@ fn local_graph_shows_the_place_in_navigation(cx: &mut TestAppContext) {
         cx.debug_bounds("graph-trail-none").is_some()
     }));
 }
+
+fn mouse(
+    cx: &mut VisualTestContext,
+    down: gpui::Point<gpui::Pixels>,
+    to: gpui::Point<gpui::Pixels>,
+    up_modifiers: gpui::Modifiers,
+) {
+    let left = gpui::MouseButton::Left;
+    cx.simulate_mouse_down(down, left, gpui::Modifiers::none());
+    // In steps, as a hand moves, past the distance a click may wander.
+    for step in 1..=4 {
+        let at = gpui::point(
+            down.x + (to.x - down.x) * (step as f32 / 4.),
+            down.y + (to.y - down.y) * (step as f32 / 4.),
+        );
+        cx.simulate_event(gpui::MouseMoveEvent {
+            position: at,
+            pressed_button: Some(left),
+            modifiers: gpui::Modifiers::none(),
+        });
+    }
+    cx.simulate_mouse_up(to, left, up_modifiers);
+    cx.run_until_parked();
+}
+
+fn near(a: gpui::Point<gpui::Pixels>, b: gpui::Point<gpui::Pixels>) -> bool {
+    f32::from((a.x - b.x).abs()) < 1.0 && f32::from((a.y - b.y).abs()) < 1.0
+}
+
+#[gpui::test]
+fn graph_canvas_pans_and_zooms_around_the_pointer(cx: &mut TestAppContext) {
+    let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let install = graph_key(&root.join(GRAPH_PAGES).join("install.adoc"));
+    let position = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| view.read(cx).node_position_for_test(&install).unwrap())
+    };
+    // Dragging the background, from the canvas's corner where no node is, pans.
+    let canvas = graph_cx.debug_bounds("graph-canvas").unwrap();
+    let before = position(&mut graph_cx);
+    let from = canvas.origin + gpui::point(px(6.), px(6.));
+    mouse(
+        &mut graph_cx,
+        from,
+        from + gpui::point(px(50.), px(30.)),
+        gpui::Modifiers::none(),
+    );
+    assert!(near(
+        position(&mut graph_cx),
+        before + gpui::point(px(50.), px(30.))
+    ));
+
+    // The wheel zooms in around the pointer: the node under it stays put, its neighbours
+    // move away.
+    let zoom = graph_cx.update(|_, cx| view.read(cx).zoom_for_test());
+    let at = position(&mut graph_cx);
+    graph_cx.simulate_event(gpui::ScrollWheelEvent {
+        position: at,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(120.))),
+        modifiers: gpui::Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    graph_cx.run_until_parked();
+    assert!(graph_cx.update(|_, cx| view.read(cx).zoom_for_test()) > zoom);
+    assert!(near(position(&mut graph_cx), at));
+    // A pinch zooms out the same way.
+    graph_cx.simulate_event(gpui::PinchEvent {
+        position: at,
+        delta: -0.5,
+        modifiers: gpui::Modifiers::none(),
+        phase: gpui::TouchPhase::Moved,
+    });
+    graph_cx.run_until_parked();
+    assert!(graph_cx.update(|_, cx| view.read(cx).zoom_for_test()) <= zoom);
+    assert!(near(position(&mut graph_cx), at));
+}
+
+#[gpui::test]
+fn dragging_a_node_pins_it_and_alt_lets_it_go(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let orphan = graph_key(&root.join(GRAPH_PAGES).join("orphan.adoc"));
+    let start = graph_cx.update(|_, cx| view.read(cx).node_position_for_test(&orphan).unwrap());
+    // Towards the middle of the canvas, away from the window's edge.
+    let middle = graph_cx.debug_bounds("graph-canvas").unwrap().center();
+    let drop = gpui::point(
+        start.x + (middle.x - start.x) * 0.5,
+        start.y + (middle.y - start.y) * 0.5,
+    );
+    mouse(&mut graph_cx, start, drop, gpui::Modifiers::none());
+    assert!(graph_cx.update(|_, cx| view.read(cx).is_pinned_for_test(&orphan)));
+    // Let the others settle around it: it stays where it was dropped.
+    for _ in 0..50 {
+        graph_cx.update(|window, _| window.refresh());
+        graph_cx.run_until_parked();
+    }
+    let pinned = graph_cx.update(|_, cx| view.read(cx).node_position_for_test(&orphan).unwrap());
+    assert!(near(pinned, drop), "{pinned:?} vs {drop:?}");
+    // A drag is not a click: nothing opened.
+    assert_eq!(active_page(&app, &mut cx), None);
+
+    let alt = gpui::Modifiers {
+        alt: true,
+        ..gpui::Modifiers::none()
+    };
+    mouse(
+        &mut graph_cx,
+        pinned,
+        pinned + gpui::point(px(10.), px(10.)),
+        alt,
+    );
+    assert!(!graph_cx.update(|_, cx| view.read(cx).is_pinned_for_test(&orphan)));
+}
+
+#[gpui::test]
+fn hovering_a_node_highlights_it_and_its_neighbours(cx: &mut TestAppContext) {
+    let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let page = |name: &str| graph_key(&root.join(GRAPH_PAGES).join(name));
+    let at = graph_cx.update(|_, cx| {
+        view.read(cx)
+            .node_position_for_test(&page("configure.adoc"))
+            .unwrap()
+    });
+    assert!(graph_cx
+        .update(|_, cx| view.read(cx).dimmed_for_test(cx))
+        .is_empty());
+    graph_cx.simulate_mouse_move(at, None, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    assert_eq!(
+        graph_cx.update(|_, cx| view.read(cx).hovered_for_test().cloned()),
+        Some(page("configure.adoc"))
+    );
+    let dimmed = graph_cx.update(|_, cx| view.read(cx).dimmed_for_test(cx));
+    for lit in ["configure.adoc", "install.adoc", "index.adoc"] {
+        assert!(!dimmed.contains(&page(lit)), "{lit} is dimmed");
+    }
+    assert!(dimmed.contains(&page("orphan.adoc")));
+}
+
+#[gpui::test]
+fn graph_toolbar_filters_and_searches(cx: &mut TestAppContext) {
+    let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let kinds = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            view.read(cx)
+                .snapshot_for_test()
+                .nodes
+                .iter()
+                .map(|node| node.kind)
+                .collect::<Vec<_>>()
+        })
+    };
+    assert!(kinds(&mut graph_cx).contains(&adoc_engine::GraphNodeKind::Partial));
+    click("graph-partials", &mut graph_cx);
+    assert!(!kinds(&mut graph_cx).contains(&adoc_engine::GraphNodeKind::Partial));
+    click("graph-nav", &mut graph_cx);
+    assert!(!kinds(&mut graph_cx).contains(&adoc_engine::GraphNodeKind::Nav));
+    click("graph-unresolved", &mut graph_cx);
+    assert!(kinds(&mut graph_cx).contains(&adoc_engine::GraphNodeKind::Unresolved));
+    let orphan = graph_key(&root.join(GRAPH_PAGES).join("orphan.adoc"));
+    click("graph-orphans", &mut graph_cx);
+    assert!(graph_cx.update(|_, cx| view.read(cx).snapshot_for_test().node(&orphan).is_none()));
+
+    // Search dims every node it does not match.
+    click("graph-search", &mut graph_cx);
+    graph_cx.simulate_input("inst");
+    graph_cx.run_until_parked();
+    let dimmed = graph_cx.update(|_, cx| view.read(cx).dimmed_for_test(cx));
+    let install = graph_key(&root.join(GRAPH_PAGES).join("install.adoc"));
+    assert!(!dimmed.contains(&install));
+    assert!(dimmed.contains(&graph_key(&root.join(GRAPH_PAGES).join("index.adoc"))));
+}
+
+#[gpui::test]
+fn tab_moves_through_the_nodes_and_enter_opens_one(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    // A press on the background focuses the canvas and opens nothing.
+    let corner =
+        graph_cx.debug_bounds("graph-canvas").unwrap().origin + gpui::point(px(6.), px(6.));
+    graph_cx.simulate_click(corner, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    let selected =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| view.read(cx).selected_for_test().cloned());
+    // In title order: API, Chapter, Configure, …
+    graph_cx.simulate_keystrokes("tab");
+    assert_eq!(
+        selected(&mut graph_cx),
+        Some(graph_key(
+            &root.join("reference/modules/ROOT/pages/api.adoc")
+        ))
+    );
+    graph_cx.simulate_keystrokes("tab tab");
+    let configure = root.join(GRAPH_PAGES).join("configure.adoc");
+    assert_eq!(selected(&mut graph_cx), Some(graph_key(&configure)));
+    graph_cx.simulate_keystrokes("shift-tab");
+    assert_eq!(
+        selected(&mut graph_cx),
+        Some(graph_key(&root.join("loose/chapter.adoc")))
+    );
+    graph_cx.simulate_keystrokes("tab enter");
+    graph_cx.run_until_parked();
+    assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
+        == Some((configure.clone(), true))));
+}

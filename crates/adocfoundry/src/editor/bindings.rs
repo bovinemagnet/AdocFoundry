@@ -417,6 +417,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
     crate::visual::bind(cx);
     crate::files_view::bind(cx);
     crate::image_view::bind(cx);
+    crate::graph_view::bind(cx);
 }
 
 #[cfg(test)]

@@ -312,6 +312,7 @@ Implementation notes, as each package lands:
 | The side panel (WP 7.3) | lists the selected node's links | Always shown in the window, saying "Select a node to see its links." when nothing is selected | Showing it on selection narrowed the canvas under the pointer, so a double click missed its node |
 | Accessible labels (WP 7.3) | each node's accessible label is its title and resource id | Not done: GPUI has no accessibility tree to label | Left for when GPUI has one |
 | Show in Graph (WP 7.3) | in the page tab's and the Files panel's context menus | At the end of the page tab's menu, after the close commands, and for AsciiDoc files in the Files panel's | The tab menu is walked with the arrow keys; new items go last |
+| Keyboard (WP 7.3) | Tab moves between nodes in title order and Enter opens the focused one | Bound as actions (`NextNode`, `PreviousNode`, `OpenNode`) in the canvas's `Graph` key context | gpui-component's `Root` binds Tab to move focus, and a bound key never reaches a key-down handler |
 | Visual checks (WP 7.3, 7.4) | — | Drawing, colours in both themes, pinch and the window's placement on a second display are checked by hand, `docs/qa/phase7.md` | GPUI's test platform draws no pixels and has one display |
 
 ## 10. Implementation Sequence
