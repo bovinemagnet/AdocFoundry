@@ -381,7 +381,14 @@ impl Engine {
         if let Some(parent) = to.parent() {
             fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
         }
-        fs::rename(from, to).map_err(|error| EngineError::io(from, error))?;
+        if is_case_only_rename(from, to) {
+            // Through a name of its own, so no file system takes the move for a no-op.
+            let temporary = from.with_extension("adocfoundry-rename");
+            fs::rename(from, &temporary).map_err(|error| EngineError::io(from, error))?;
+            fs::rename(&temporary, to).map_err(|error| EngineError::io(&temporary, error))?;
+        } else {
+            fs::rename(from, to).map_err(|error| EngineError::io(from, error))?;
+        }
         let from = normalize_path(from);
         let to = normalize_path(to);
         self.move_history(&from, &to);
@@ -494,7 +501,7 @@ impl Engine {
         }
         let from = document.path.clone();
         let to = normalize_path(new_path);
-        if to.exists() {
+        if to.exists() && !is_case_only_rename(&from, &to) {
             return Err(EngineError::InvalidRequest(format!(
                 "{} already exists",
                 to.display()
@@ -834,6 +841,24 @@ fn slash_path(path: &Path) -> String {
         .join("/")
 }
 
+/// Whether moving `from` to `to` only changes the case of the file's name, where `to` is
+/// found only because the file system ignores case (as macOS and Windows do by default): the
+/// folder holds no entry of that exact name, so the file `to` finds is `from` itself. Such a
+/// move renames the page; it does not overwrite another.
+fn is_case_only_rename(from: &Path, to: &Path) -> bool {
+    let (Some(folder), Some(from_name), Some(to_name)) =
+        (from.parent(), from.file_name(), to.file_name())
+    else {
+        return false;
+    };
+    let lower = |name: &std::ffi::OsStr| name.to_string_lossy().to_lowercase();
+    from_name != to_name
+        && to.parent() == Some(folder)
+        && lower(from_name) == lower(to_name)
+        && fs::read_dir(folder)
+            .is_ok_and(|entries| !entries.flatten().any(|entry| entry.file_name() == to_name))
+}
+
 /// Checks that every move can happen before anything changes: its source is a file, nothing is
 /// at its destination, the destination's nearest existing ancestor is a directory, and no two
 /// moves share a destination.
@@ -846,7 +871,7 @@ fn validate_moves(moves: &[FileMove]) -> Result<(), EngineError> {
                 file_move.from.display()
             )));
         }
-        if file_move.to.exists() {
+        if file_move.to.exists() && !is_case_only_rename(&file_move.from, &file_move.to) {
             return Err(EngineError::InvalidRequest(format!(
                 "{} already exists",
                 file_move.to.display()

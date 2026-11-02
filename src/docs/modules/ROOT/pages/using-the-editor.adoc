@@ -940,6 +940,9 @@ In a plain document, xref, include and image targets are relative to the page's 
 In an Antora page, xrefs, images and `family$` includes are resource IDs relative to the module, so a move within the module changes nothing, while a move to another module, component or version qualifies them: `+xref:other.adoc[]+` becomes `+xref:ROOT:other.adoc[]+`, and `include::partial$p.adoc[]` becomes `include::ROOT:partial$p.adoc[]`.
 IDs written with `./` or `../`, and includes written as plain paths, are relative to the page's folder and are rewritten when it changes.
 A reference from the page to itself, such as `+xref:index.adoc#top[]+`, keeps pointing at the page in its new place.
+A rename that changes only the case of the file name, such as `Page.adoc` to `page.adoc`, works on macOS and Windows too, where the file system does not tell the two names apart.
+Antora resource IDs do tell them apart, so the xrefs, nav entries and includes that name the page are rewritten as for any other rename, for example `+xref:Page.adoc[]+` becomes `+xref:page.adoc[]+`.
+A different file that already has the new name is still refused.
 Targets written through an attribute, URLs and pure `#fragment` references are left as written.
 One undo moves the page back and restores every edit.
 A rename, like a workspace Replace, is undone and redone only as a whole.
