@@ -23,7 +23,7 @@ The two things that do not exist anywhere yet are the GPUI shell and `adoc-dom`;
 
 ## Goals and scope
 
-AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out the Antora way, delivered in phases that each ship a usable tool on macOS, Linux and Windows. Phases 1 to 4 build the editor; Phase 5 makes it releasable and opens it to other tools; Phase 6 finishes what Phase 5 left for later.
+AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out the Antora way, delivered in phases that each ship a usable tool on macOS, Linux and Windows. Phases 1 to 4 build the editor; Phase 5 makes it releasable and opens it to other tools; Phase 6 finishes what Phase 5 left for later; Phase 7 maps how the pages link together.
 
 | Phase | Deliverable | Must have | Explicitly later |
 | --- | --- | --- | --- |
@@ -33,6 +33,7 @@ AdocFoundry is a native desktop editor for AsciiDoc documentation sites laid out
 | 4 | PDF export | Paginated PDF from one page or a whole component/book; YAML themes in the spirit of asciidoctor-pdf; TOC, running headers and footers | Index generation, PDF/A |
 | 5 | Release, STEM and integrations | CI on three platforms; packages; fixes from the tracker; typeset STEM in PDF, preview and HTML; `adoc-ls` on the engine; an MCP server | Inline STEM in the preview's text flow, an HTTP transport for MCP, code signing, auto-update |
 | 6 | Signed releases and updates | Inline STEM typeset in the text flow; MCP over Streamable HTTP on loopback with a token; Developer ID signing and notarisation, Authenticode through Azure Trusted Signing; an update check, and updating in place on macOS and Windows | Delta updates, update channels, package-manager publishing |
+| 7 | Graph view | An interactive graph of pages, partials and navigation files joined by xrefs, includes and navigation entries, kept current as pages change; the whole workspace in its own window, and the active page's neighbourhood in the sidebar; a `graph` CLI command and MCP tool | Images as nodes, saved layouts, editing links from the graph |
 
 Non-goals for now: a web or mobile build, collaborative editing, hosting or publishing the site (Antora itself does that), and bit-for-bit output parity with Asciidoctor. The editor targets the Asciidoctor dialect of AsciiDoc that Antora consumes, so Antora-built sites and AdocFoundry agree on what a document means.
 
