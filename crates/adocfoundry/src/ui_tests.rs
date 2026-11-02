@@ -6447,3 +6447,363 @@ fn every_engine_tab_has_a_tab_after_apply(cx: &mut TestAppContext) {
     });
     assert_eq!(shown, other);
 }
+
+// --- the link graph ---------------------------------------------------------------------------
+
+/// A copy of the graph fixture open in a workspace window, its graph built, with `pages` open.
+fn graph_workspace(
+    pages: &[&str],
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    copy_tree(&fixture("graph"), &root);
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let files: Vec<PathBuf> = pages.iter().map(|page| root.join(page)).collect();
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(app.clone(), Some(root.clone()), files.clone(), window, cx)
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| app.read(cx).engine.graph_revision() > 0)
+    }));
+    (directory, root, app, workspace, cx)
+}
+
+const GRAPH_PAGES: &str = "guide/modules/ROOT/pages";
+
+fn graph_key(path: &Path) -> adoc_engine::GraphKey {
+    adoc_engine::GraphKey::File(std::sync::Arc::from(
+        adoc_index::normalize_path(path).as_path(),
+    ))
+}
+
+/// Opens the graph window from the workspace, returning its view and a context over it.
+fn open_graph_window(
+    workspace: &Entity<WorkspaceView>,
+    cx: &mut VisualTestContext,
+) -> (
+    WindowHandle<Root>,
+    Entity<crate::graph_view::GraphView>,
+    VisualTestContext,
+) {
+    cx.dispatch_action(crate::editor::bindings::ShowGraph);
+    cx.run_until_parked();
+    let (handle, view) = cx
+        .update(|_, cx| workspace.read(cx).graph_window_for_test().cloned())
+        .expect("the graph window opened");
+    let mut graph_cx = VisualTestContext::from_window(handle.into(), &cx.cx);
+    graph_cx.update(|window, cx| {
+        window.draw(cx).clear(cx);
+        view.update(cx, |view, _| view.settle_for_test());
+        window.refresh();
+    });
+    graph_cx.run_until_parked();
+    (handle, view, graph_cx)
+}
+
+/// The active page's path, and whether it is in the preview tab.
+fn active_page(app: &Entity<AppState>, cx: &mut VisualTestContext) -> Option<(PathBuf, bool)> {
+    cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.active()?;
+        Some((
+            engine.document(id)?.path.clone(),
+            engine.is_preview(adoc_engine::TabItem::Document(id)),
+        ))
+    })
+}
+
+#[gpui::test]
+fn graph_window_opens_and_shows_the_workspace(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, _graph_cx) = open_graph_window(&workspace, &mut cx);
+    let (shown, expected) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let expected = engine.graph(
+            &adoc_engine::GraphScope::Workspace,
+            &engine.settings().graph.filter(),
+        );
+        (view.read(cx).snapshot_for_test().clone(), expected)
+    });
+    assert_eq!(shown, expected);
+    assert!(shown
+        .node(&graph_key(&root.join(GRAPH_PAGES).join("orphan.adoc")))
+        .is_some());
+}
+
+#[gpui::test]
+fn clicking_a_node_opens_its_page_as_a_preview(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let install = root.join(GRAPH_PAGES).join("install.adoc");
+    let at = graph_cx
+        .update(|_, cx| view.read(cx).node_position_for_test(&graph_key(&install)))
+        .unwrap();
+    graph_cx.simulate_click(at, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
+        == Some((install.clone(), true))));
+    assert_eq!(
+        graph_cx.update(|_, cx| view.read(cx).selected_for_test().cloned()),
+        Some(graph_key(&install))
+    );
+}
+
+#[gpui::test]
+fn double_clicking_a_node_keeps_its_page_open(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let configure = root.join(GRAPH_PAGES).join("configure.adoc");
+    let at = graph_cx
+        .update(|_, cx| view.read(cx).node_position_for_test(&graph_key(&configure)))
+        .unwrap();
+    for clicks in 1..=2 {
+        graph_cx.simulate_event(gpui::MouseDownEvent {
+            button: gpui::MouseButton::Left,
+            position: at,
+            modifiers: gpui::Modifiers::none(),
+            click_count: clicks,
+            first_mouse: false,
+        });
+        graph_cx.simulate_event(gpui::MouseUpEvent {
+            button: gpui::MouseButton::Left,
+            position: at,
+            modifiers: gpui::Modifiers::none(),
+            click_count: clicks,
+        });
+    }
+    graph_cx.run_until_parked();
+    assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
+        == Some((configure.clone(), false))));
+}
+
+#[gpui::test]
+fn graph_window_refreshes_on_graph_changed(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) =
+        graph_workspace(&["guide/modules/ROOT/pages/orphan.adoc"], cx);
+    let (_, view, _graph_cx) = open_graph_window(&workspace, &mut cx);
+    let orphan = graph_key(&root.join(GRAPH_PAGES).join("orphan.adoc"));
+    let index = graph_key(&root.join(GRAPH_PAGES).join("index.adoc"));
+    let linked = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            view.read(cx)
+                .snapshot_for_test()
+                .edges
+                .iter()
+                .any(|edge| edge.from == orphan && edge.to == index)
+        })
+    };
+    assert!(!linked(&mut cx));
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            let end = app.engine.document(id).unwrap().text.len();
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(end, end),
+                    text: "See xref:index.adoc[].\n".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    assert!(drain_until(&app, &mut cx, |cx| linked(cx)));
+}
+
+#[gpui::test]
+fn opening_the_graph_again_focuses_its_window(cx: &mut TestAppContext) {
+    let (_directory, _root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (first, _, _graph_cx) = open_graph_window(&workspace, &mut cx);
+    let windows = cx.update(|_, cx| cx.windows().len());
+    let (second, _, _graph_cx) = open_graph_window(&workspace, &mut cx);
+    assert_eq!(first.window_id(), second.window_id());
+    assert_eq!(cx.update(|_, cx| cx.windows().len()), windows);
+}
+
+#[gpui::test]
+fn graph_window_reopens_where_it_was(cx: &mut TestAppContext) {
+    let (_directory, _root, app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (handle, _, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let opened = graph_cx.update(|window, _| window.bounds());
+    assert_eq!(opened.size, size(px(1100.), px(760.)));
+    graph_cx.simulate_resize(size(px(900.), px(600.)));
+    let placement = cx
+        .update(|_, cx| app.read(cx).engine.graph_window())
+        .unwrap();
+    assert_eq!((placement.width, placement.height), (900., 600.));
+
+    cx.update(|_, cx| {
+        let _ = handle.update(cx, |_, window, _| window.remove_window());
+    });
+    cx.run_until_parked();
+    let (reopened, _, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    assert_ne!(reopened.window_id(), handle.window_id());
+    let bounds = graph_cx.update(|window, _| window.bounds());
+    assert_eq!(bounds.size, size(px(900.), px(600.)));
+    assert_eq!(
+        (f32::from(bounds.origin.x), f32::from(bounds.origin.y)),
+        (placement.x, placement.y)
+    );
+}
+
+#[gpui::test]
+fn graph_window_off_screen_is_recentred(cx: &mut TestAppContext) {
+    let (_directory, _root, app, workspace, mut cx) = graph_workspace(&[], cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            app.engine.set_graph_window(adoc_engine::WindowPlacement {
+                x: 5000.,
+                y: 4000.,
+                width: 2400.,
+                height: 1500.,
+                maximised: false,
+            });
+        });
+    });
+    let (_, _, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let display = graph_cx.update(|_, cx| cx.primary_display().unwrap().bounds());
+    let bounds = graph_cx.update(|window, _| window.bounds());
+    assert!(bounds.size.width <= display.size.width && bounds.size.height <= display.size.height);
+    assert_eq!(bounds.center(), display.center());
+}
+
+/// The Graph panel, shown, with `page` active.
+fn graph_panel(
+    page: &str,
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    Entity<crate::graph_view::GraphView>,
+    VisualTestContext,
+) {
+    let (directory, root, app, workspace, mut cx) = graph_workspace(&[page], cx);
+    let panel = cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| workspace.show_graph_panel_for_test(cx))
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    (directory, root, app, panel, cx)
+}
+
+fn panel_nodes(
+    panel: &Entity<crate::graph_view::GraphView>,
+    root: &Path,
+    cx: &mut VisualTestContext,
+) -> Vec<String> {
+    cx.update(|_, cx| {
+        panel
+            .read(cx)
+            .snapshot_for_test()
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                node.key.path().map(|path| {
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                })
+            })
+            .collect()
+    })
+}
+
+#[gpui::test]
+fn local_graph_follows_the_active_tab(cx: &mut TestAppContext) {
+    let (_directory, root, app, panel, mut cx) =
+        graph_panel("guide/modules/ROOT/pages/configure.adoc", cx);
+    assert_eq!(
+        panel_nodes(&panel, &root, &mut cx),
+        [
+            format!("{GRAPH_PAGES}/configure.adoc"),
+            format!("{GRAPH_PAGES}/index.adoc"),
+            format!("{GRAPH_PAGES}/install.adoc"),
+        ]
+    );
+    let api = root.join("reference/modules/ROOT/pages/api.adoc");
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::DOCUMENT_OPEN, CommandArgs::Path(api.clone()), cx)
+                .unwrap();
+        });
+    });
+    assert!(drain_until(&app, &mut cx, |cx| {
+        panel_nodes(&panel, &root, cx)
+            == [
+                format!("{GRAPH_PAGES}/index.adoc"),
+                "reference/modules/ROOT/pages/api.adoc".to_owned(),
+            ]
+    }));
+}
+
+#[gpui::test]
+fn local_graph_is_empty_for_an_image(cx: &mut TestAppContext) {
+    let (_directory, root, app, panel, mut cx) =
+        graph_panel("guide/modules/ROOT/pages/configure.adoc", cx);
+    let picture = root.join("picture.svg");
+    std::fs::write(
+        &picture,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#,
+    )
+    .unwrap();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::DOCUMENT_OPEN, CommandArgs::Path(picture.clone()), cx)
+                .unwrap();
+        });
+    });
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        panel_nodes(&panel, &root, cx).is_empty()
+            && cx.debug_bounds("graph-message-No page").is_some()
+    }));
+}
+
+#[gpui::test]
+fn local_graph_lists_links_and_backlinks(cx: &mut TestAppContext) {
+    let (_directory, _root, _app, _panel, mut cx) =
+        graph_panel("guide/modules/ROOT/pages/install.adoc", cx);
+    // Configure is linked by an xref and a navigation entry: one row.
+    assert!(cx.debug_bounds("graph-out-Configure").is_some());
+    assert!(cx.debug_bounds("graph-back-Home").is_some());
+    assert!(cx.debug_bounds("graph-back-Users").is_some());
+}
+
+#[gpui::test]
+fn local_graph_shows_the_place_in_navigation(cx: &mut TestAppContext) {
+    let (_directory, root, app, _panel, mut cx) =
+        graph_panel("guide/modules/ROOT/pages/configure.adoc", cx);
+    assert!(cx.debug_bounds("graph-trail-0").is_some());
+    assert!(cx.debug_bounds("graph-trail-none").is_none());
+
+    let orphan = root.join(GRAPH_PAGES).join("orphan.adoc");
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::DOCUMENT_OPEN, CommandArgs::Path(orphan.clone()), cx)
+                .unwrap();
+        });
+    });
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("graph-trail-none").is_some()
+    }));
+}

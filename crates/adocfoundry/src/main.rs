@@ -7,6 +7,7 @@ mod app;
 mod diagnostics;
 mod editor;
 mod files_view;
+mod graph_view;
 mod history_view;
 mod image_decode;
 mod image_view;

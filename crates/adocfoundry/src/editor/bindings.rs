@@ -106,6 +106,9 @@ actions!(
         ExportComponentPdf,
         ExportPdfProfile,
         ExportPagePdfWithTheme,
+        ShowGraph,
+        ShowLocalGraph,
+        ResetGraphLayout,
     ]
 );
 
@@ -224,6 +227,9 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::VIEW_SHOW_SOURCE => KeyBinding::new(keys, ShowSource, workspace),
         ids::VIEW_SHOW_VISUAL => KeyBinding::new(keys, ShowVisual, workspace),
         ids::VIEW_SHOW_SPLIT => KeyBinding::new(keys, ShowSplit, workspace),
+        ids::VIEW_GRAPH => KeyBinding::new(keys, ShowGraph, workspace),
+        ids::VIEW_LOCAL_GRAPH => KeyBinding::new(keys, ShowLocalGraph, workspace),
+        ids::GRAPH_RESET_LAYOUT => KeyBinding::new(keys, ResetGraphLayout, workspace),
         ids::EDIT_TOGGLE_STRONG => KeyBinding::new(keys, ToggleStrong, visual),
         ids::EDIT_TOGGLE_EMPHASIS => KeyBinding::new(keys, ToggleEmphasis, visual),
         ids::EDIT_TOGGLE_CODE => KeyBinding::new(keys, ToggleCode, visual),
@@ -314,6 +320,9 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::VIEW_SHOW_SOURCE => Box::new(ShowSource),
         ids::VIEW_SHOW_VISUAL => Box::new(ShowVisual),
         ids::VIEW_SHOW_SPLIT => Box::new(ShowSplit),
+        ids::VIEW_GRAPH => Box::new(ShowGraph),
+        ids::VIEW_LOCAL_GRAPH => Box::new(ShowLocalGraph),
+        ids::GRAPH_RESET_LAYOUT => Box::new(ResetGraphLayout),
         ids::EDIT_TOGGLE_STRONG => Box::new(ToggleStrong),
         ids::EDIT_TOGGLE_EMPHASIS => Box::new(ToggleEmphasis),
         ids::EDIT_TOGGLE_CODE => Box::new(ToggleCode),

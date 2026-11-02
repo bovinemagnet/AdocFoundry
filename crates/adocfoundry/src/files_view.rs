@@ -406,6 +406,13 @@ impl FilesView {
         self.activate(&id, false, window, cx);
     }
 
+    /// Shows the page at `path` in the graph window.
+    fn show_in_graph(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| workspace.show_in_graph(path, cx));
+        }
+    }
+
     /// Shows `path` in the tree: opens the folders above it, listing them as needed, and
     /// selects it once listed. False when it is outside the workspace's roots.
     pub fn reveal(&mut self, path: &Path, cx: &mut Context<Self>) -> bool {
@@ -523,16 +530,25 @@ fn files_menu(
                     to_directory: false
                 }
         ) {
-            let files = files.clone();
+            let opening = files.clone();
             let id = id.clone();
             menu = menu.item(PopupMenuItem::new("Open").on_click(move |_, window, cx| {
-                let _ = files.update(cx, |files, cx| files.activate(&id, false, window, cx));
+                let _ = opening.update(cx, |files, cx| files.activate(&id, false, window, cx));
             }));
             let external = path.clone();
             menu = menu.item(
                 PopupMenuItem::new("Open Externally")
                     .on_click(move |_, _, cx| open_externally(&external, cx)),
             );
+            if adoc_engine::is_asciidoc_path(&path) {
+                let files = files.clone();
+                let page = path.clone();
+                menu = menu.item(
+                    PopupMenuItem::new("Show in Graph").on_click(move |_, _, cx| {
+                        let _ = files.update(cx, |files, cx| files.show_in_graph(&page, cx));
+                    }),
+                );
+            }
         }
         let full = path.display().to_string();
         let relative = relative.display().to_string();
