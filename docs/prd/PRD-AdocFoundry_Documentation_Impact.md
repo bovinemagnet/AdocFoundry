@@ -130,12 +130,17 @@ The exact schema and path normalisation must be agreed in WP I1; this is only re
 | `adoc-git` (L2) | Git ref/working tree file-change metadata; no network transports, no GitHub calls |
 | `adoc-index`, `adoc-lang`, `adoc-antora` (L1) | Existing context-aware dependency resolution and reverse mapping, source spans, resource identities |
 | `adoc-graph` (L1) | Generic keyed graph structures/path walks only; keep independent of AsciiDoc semantics |
-| `adoc-engine` (L3) | Orchestrate typed impact rules, report scope, version filtering, confidence/completeness, worker caching |
+| `adoc-impact` (L2, new) | Typed impact rules, reverse traversal over typed dependency edges, provenance paths, confidence, completeness, version and profile scoping, bounded truncation and the report schema; pure, synchronous functions taking a list of changed paths |
+| `adoc-engine` (L3) | Turn Git refs, the working tree or explicit paths into the changed-path list (Git only behind its `git` feature), run `adoc-impact` on workers, cache by index/catalog revision and ref SHA, publish events |
 | `adocfoundry` (L4) | Impact inspection, graph highlighting, drill-down, diff preview |
 | `adocfoundry-cli` / `adoc-mcp` (L4) | Headless reporting, bounded output; optional read-only MCP tool |
 | CI/GitHub Action | External integration consuming CLI JSON, subject to user approval and explicit permissions |
 
-`cargo xtask layers` enforces dependencies. Avoid a new crate until boundaries justify it. Because the graph stores merged edges without the complete source provenance, verify whether the existing index and `LinkStore` can supply evidence; extend the data model for source evidence if needed rather than reconstructing links with a second parser.
+`cargo xtask layers` enforces dependencies. `adoc-impact` is created in I1, so the boundary between impact rules and orchestration is enforced from the first package rather than extracted later. It sits at L2 and may depend on `adoc-core`, `adoc-antora`, `adoc-index`, `adoc-lang` and `adoc-graph` only. It never touches Git: it takes changed paths (added, modified, removed, renamed with origin and destination), so it needs no same-layer pair with `adoc-git`, and the engine without `git` can still analyse explicit paths. No `adoc-engine`, worker, LSP or UI types, threads, filesystem writes, subprocesses or network. It needs entries in `LAYERS` in `xtask/src/layers.rs`, `[workspace.dependencies]` and, once it holds code, the crate ladder in `CLAUDE.md`. Front ends, `adoc-ls` included, reach it only through `adoc-engine`; I1 decides whether the engine names it behind an optional feature, as with the quality audit's `adoc-audit`.
+
+Rename and move planning (`rename_preview` in the engine's `search.rs`, `links.rs`, and anchor renames in `adoc-lang`'s `references.rs`) is not moved by this PRD. A separate `adoc-refactor` crate is deferred until a feature needs edits planned without an engine, such as #100's preview before a move or delete, or a move-page or extract-partial command; that feature's PRD then carries the extraction as a work package.
+
+Because the graph stores merged edges without the complete source provenance, verify whether the existing index and `LinkStore` can supply evidence; extend the data model for source evidence if needed rather than reconstructing links with a second parser.
 
 Build impact from changed resource IDs and reverse edges; avoid scanning all files on every request or editor settle. Cache by index/catalog revision and Git ref SHA where sensible. Impact work runs on workers, not GUI `Render`. Establish explicit output caps and budget tests for large repositories.
 
@@ -174,7 +179,7 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 
 | WP | Deliverable | Issue |
 | --- | --- | --- |
-| I1 | Typed dependency and impact semantics, evidence, completeness and report schema | #307; coordinate with #100 |
+| I1 | New `adoc-impact` crate: typed dependency and impact semantics, evidence, completeness and report schema | #307; coordinate with #100 |
 | I2 | Git base/head, worktree/explicit changed-resource input | #308 |
 | I3 | Incremental reverse dependency traversal and publication impacts | #309 |
 | I4 | CLI text/JSON reporting, deterministic snapshots and CI summary | #310 |

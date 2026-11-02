@@ -98,12 +98,17 @@ Respect the crate ladder in `CLAUDE.md` and `cargo xtask layers`. Suggested resp
 | --- | --- |
 | `adoc-core` | Only add stable value types if demonstrably reused; no UI, policy or transport types |
 | `adoc-antora`, `adoc-index`, `adoc-lang` | Expose existing resolved nav and diagnostic facts; no independent second resolver or full scans on every edit |
-| `adoc-engine` | Own `QualityAudit` orchestration, config, revisions, cached per-file/per-component rule results and events; reuse graph/index and existing diagnostics |
+| `adoc-audit` (L2, new) | The report and finding model, rule registry, rules, policy and exclusion validation, deterministic ordering, and the JSON and SARIF documents; pure, synchronous functions over borrowed catalog, nav, index and diagnostic data |
+| `adoc-engine` | Own audit orchestration: workers, settings, revisions, cached per-file/per-component rule results, invalidation and events; calls `adoc-audit`, never re-implements a rule |
 | `adocfoundry-cli` | `audit` subcommand, formatting, exit codes and report writing |
 | `adocfoundry` | Quality panel, filtering, drill-down and status; never compute audit on UI render |
 | `adoc-mcp` | Optional read-only audit tool after the headless API is stable; follow existing root safety bounds |
 
-Do not introduce `adoc-audit` as a crate initially. Measure coupling and extract only if an independently testable layer becomes substantial. Never add a feature that scans every document after each keypress; reuse the index's file contributions, revisions and incremental updates. A complete first audit may traverse the index on a worker, then track deltas.
+`adoc-audit` is created in Q1, so the boundary between rules and orchestration is enforced by `cargo xtask layers` from the first package rather than extracted later. It sits at L2 and may depend on `adoc-core`, `adoc-antora`, `adoc-index` and `adoc-lang` only: no `adoc-engine`, `adoc-git`, worker, settings-file, LSP or UI types, no threads, no filesystem writes, no subprocesses and no network. It needs entries in `LAYERS` in `xtask/src/layers.rs`, `[workspace.dependencies]` and, once it holds code, the crate ladder in `CLAUDE.md`. Front ends (`adocfoundry`, `adocfoundry-cli`, `adoc-ls`, `adoc-mcp`) reach it only through `adoc-engine`.
+
+`adoc-ls` gets the crate through the engine. Q1 decides whether the engine names it unconditionally or behind an optional feature, as `typst` and `git` are; if a feature, `cargo xtask layers` checks the default `adoc-ls` build leaves it out. Either way the engine starts incremental audit upkeep only after the first audit request or when `[quality] enabled` asks for it, so a language server whose client never asks for an audit does no audit work while typing.
+
+Never add a feature that scans every document after each keypress; reuse the index's file contributions, revisions and incremental updates. A complete first audit may traverse the index on a worker, then track deltas.
 
 ### Proposed conceptual Rust API (not an implementation guarantee)
 
@@ -162,7 +167,7 @@ Run `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
 
 | WP | Deliverable | Issue |
 | --- | --- | --- |
-| Q1 | Data model, rules registry, severity and config contract | #300 |
+| Q1 | New `adoc-audit` crate: data model, rules registry, severity and config contract | #300 |
 | Q2 | Antora navigation coverage + title/alt rules | #301 |
 | Q3 | Incremental audit engine and completeness semantics | #302 |
 | Q4 | CLI text/JSON/SARIF output + CI exit gates | #303 |
