@@ -26,6 +26,8 @@ pub(crate) enum Crashed {
     },
     /// The whole workspace's problems, pass `generation`.
     Problems { generation: u64 },
+    /// The whole link graph, build `generation`. The graph built before stays.
+    Graph { generation: u64 },
 }
 
 impl Engine {
@@ -43,6 +45,10 @@ impl Engine {
             } => {
                 self.spelling_crashed(id, version, generation);
                 None
+            }
+            Crashed::Graph { generation } => {
+                self.graph_crashed(generation);
+                Some((ids::VIEW_GRAPH, "building the link graph"))
             }
             Crashed::Problems { generation } => {
                 self.problems_crashed(generation);

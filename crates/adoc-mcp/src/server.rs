@@ -11,7 +11,7 @@ use std::{
 use adoc_core::{DiagnosticSeverity, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, CommandArgs, CommandOutcome, DefinitionTarget, Engine,
-    EngineEvent, ExportArgs, ExportTarget, NavItem, SearchRequest,
+    EngineEvent, ExportArgs, ExportTarget, GraphFilter, GraphScope, NavItem, SearchRequest,
 };
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -145,6 +145,24 @@ struct SearchArgs {
     whole_word: bool,
     /// Only files beneath this directory.
     scope: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct LinkGraphArgs {
+    /// `workspace` (the default), or `page` for a page and its neighbours.
+    scope: Option<String>,
+    /// The page of a `page` scope, absolute or relative to the first root.
+    path: Option<String>,
+    /// How many links from the page a `page` scope reaches, 1 (the default) to 3.
+    depth: Option<u8>,
+    /// Show partials and include links; true by default.
+    partials: Option<bool>,
+    /// Show navigation files and their links; true by default.
+    nav: Option<bool>,
+    /// Show pages with no links at all; true by default.
+    orphans: Option<bool>,
+    /// Show targets that do not resolve; false by default.
+    unresolved: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -619,6 +637,53 @@ impl Server {
                 let mut value = json!({ "path": state.shown(&path), "content": output });
                 if let Some(total) = total {
                     value["truncated"] = json!({ "shown_bytes": MAX_TEXT, "total_bytes": total });
+                }
+                Ok(value)
+            })
+            .await?,
+        )
+    }
+
+    #[tool(
+        description = "How pages link: the pages, partials and navigation files of the workspace, or of a page and its neighbours, with the xrefs, includes and navigation entries between them, as `adocfoundry-cli graph` gives them."
+    )]
+    async fn link_graph(&self, Parameters(args): Parameters<LinkGraphArgs>) -> Answer {
+        answer(
+            self.blocking(move |state| {
+                let scope = match (args.scope.as_deref().unwrap_or("workspace"), &args.path) {
+                    ("workspace", _) => GraphScope::Workspace,
+                    ("page", Some(path)) => GraphScope::Local {
+                        path: state.confine(path)?,
+                        depth: args.depth.unwrap_or(1).clamp(1, 3),
+                    },
+                    ("page", None) => return Err("a `page` scope needs a `path`".to_owned()),
+                    (other, _) => return Err(format!("unknown scope `{other}`")),
+                };
+                if let GraphScope::Local { path, .. } = &scope {
+                    if state.engine.workspace().index.file(path).is_none() {
+                        return Err(format!("{} is not an indexed page", state.shown(path)));
+                    }
+                }
+                let defaults = GraphFilter::default();
+                let filter = GraphFilter {
+                    partials: args.partials.unwrap_or(defaults.partials),
+                    nav: args.nav.unwrap_or(defaults.nav),
+                    orphans: args.orphans.unwrap_or(defaults.orphans),
+                    unresolved: args.unresolved.unwrap_or(defaults.unresolved),
+                    components: None,
+                };
+                let report = state.engine.graph_report(state.root(), &scope, &filter);
+                let nodes = limited("nodes", report.nodes);
+                let edges = limited("edges", report.edges);
+                let mut value = json!({
+                    "revision": report.revision,
+                    "nodes": nodes["nodes"],
+                    "edges": edges["edges"],
+                });
+                for (part, cut) in [("nodes", &nodes), ("edges", &edges)] {
+                    if let Some(truncated) = cut.get("truncated") {
+                        value["truncated"][part] = truncated.clone();
+                    }
                 }
                 Ok(value)
             })

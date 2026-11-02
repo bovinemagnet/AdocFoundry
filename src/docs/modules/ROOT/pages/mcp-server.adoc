@@ -141,6 +141,10 @@ These tools are always offered.
 |`git_status`
 |None.
 |Each root's branch and changed AsciiDoc files, as `adocfoundry-cli git-status --format json` gives them.
+
+|`link_graph`
+|`scope?`, `path?`, `depth?`, `partials?`, `nav?`, `orphans?`, `unresolved?`
+|The link graph, as `adocfoundry-cli graph` prints it in JSON. `scope` is `workspace` (the default) or `page`; a `page` scope needs `path`, absolute or relative to the first root, and follows links both ways to `depth` (1 to 3, default 1). `partials`, `nav` and `orphans` default to true and `unresolved` to false. Nodes and edges are each cut at 500, with `truncated` saying how many were shown. See xref:graph-view.adoc[The link graph].
 |===
 
 == Write tools
@@ -193,6 +197,6 @@ Release archives will come with the Phase 5 release work.
 
 == Consistency with the command line
 
-The `check` tool and `git_status` tool use the same reports as `adocfoundry-cli`.
+The `check`, `git_status` and `link_graph` tools use the same reports as `adocfoundry-cli`.
 A test asserts that `check` matches the command line.
 See xref:developer:testing.adoc#mcp-server-tests[Testing].

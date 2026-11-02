@@ -130,7 +130,7 @@ It keeps saves that were never committed, and it works in a folder that is not a
 
 == The sidebar
 
-The sidebar has four tabs and an outline.
+The sidebar has its tabs (Changes appears only when a workspace folder is in a Git repository) and an outline.
 
 Navigation::
 Each component version's navigation, nested as its `nav.adoc` files list it.
@@ -149,6 +149,10 @@ Workspace diagnostics grouped by file, with a count in the tab title.
 Click one to open the file at that location.
 A row too long for the sidebar ends with an ellipsis, and hovering it shows the full text in a tooltip.
 This applies to every panel in the sidebar.
+
+Graph::
+The active page and the pages linked to it, with its place in the navigation and its links out and backlinks.
+See xref:graph-view.adoc[].
 
 Outline::
 The sections of the active document.

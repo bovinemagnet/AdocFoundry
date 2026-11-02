@@ -11,6 +11,7 @@ adoc-core.workspace = true
 adoc-diagrams.workspace = true
 adoc-dom.workspace = true
 adoc-git = { workspace = true, optional = true }
+adoc-graph.workspace = true
 adoc-index.workspace = true
 adoc-lang.workspace = true
 adoc-model.workspace = true

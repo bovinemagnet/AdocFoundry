@@ -1,0 +1,3 @@
+= Configure
+
+Back to xref:index.adoc[the start].

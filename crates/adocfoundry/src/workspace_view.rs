@@ -44,6 +44,7 @@ use gpui_component::{
 use crate::{
     app::{open_secondary_window, AppState, WindowKind},
     editor::{bindings::*, language, SourceEditorEvent, SourceEditorView},
+    graph_view::{GraphMode, GraphView},
     image_view::{ActualSize, FitToWindow, ImageView, ZoomIn, ZoomOut},
     menus::AppMenu,
     preview::{PreviewEvent, PreviewView},
@@ -88,6 +89,7 @@ enum SidebarTab {
     Files,
     Problems,
     Changes,
+    Graph,
 }
 
 /// What a tab shows: a page's source editor, or an image.
@@ -194,6 +196,10 @@ pub struct WorkspaceView {
         Entity<PreviewView>,
     )>,
     revealed: Option<NavigationPosition>,
+    /// The Graph panel: the active page's local graph.
+    graph: Entity<GraphView>,
+    /// The graph window, while it is open.
+    graph_window: Option<(gpui::WindowHandle<gpui_component::Root>, Entity<GraphView>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -434,6 +440,10 @@ impl WorkspaceView {
         }));
         let focus_handle = cx.focus_handle();
         let app_menu = cx.new(|_| AppMenu::new(app.clone(), focus_handle.clone()));
+        let graph = {
+            let workspace = cx.weak_entity();
+            cx.new(|cx| GraphView::new(app.clone(), workspace, GraphMode::Panel, window, cx))
+        };
         let mut view = Self {
             closing: false,
             focus_handle,
@@ -475,6 +485,8 @@ impl WorkspaceView {
             preview,
             detached: None,
             revealed: None,
+            graph,
+            graph_window: None,
             app,
             _subscriptions: subscriptions,
         };
@@ -3400,6 +3412,121 @@ impl WorkspaceView {
         }
     }
 
+    /// Opens the graph window, or brings it to the front when it is open already.
+    fn on_show_graph(&mut self, _: &ShowGraph, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::VIEW_GRAPH, CommandArgs::None, window, cx);
+        self.open_graph_window(cx);
+    }
+
+    /// The graph window's view, opened or brought to the front.
+    fn open_graph_window(&mut self, cx: &mut Context<Self>) -> Option<Entity<GraphView>> {
+        if let Some((handle, view)) = &self.graph_window {
+            if handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+            {
+                return Some(view.clone());
+            }
+        }
+        let opened = open_secondary_window(self.app.clone(), WindowKind::Graph, cx).and_then(
+            |(handle, view)| view.downcast::<GraphView>().ok().map(|view| (handle, view)),
+        );
+        if let Some((_, view)) = &opened {
+            let workspace = cx.weak_entity();
+            view.update(cx, |view, _| view.set_workspace(workspace));
+        }
+        self.graph_window = opened;
+        self.graph_window.as_ref().map(|(_, view)| view.clone())
+    }
+
+    /// Shows the Graph panel.
+    fn on_show_local_graph(
+        &mut self,
+        _: &ShowLocalGraph,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_LOCAL_GRAPH, CommandArgs::None, window, cx);
+        self.sidebar_tab = SidebarTab::Graph;
+        cx.notify();
+    }
+
+    fn on_reset_graph_layout(
+        &mut self,
+        _: &ResetGraphLayout,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::GRAPH_RESET_LAYOUT, CommandArgs::None, window, cx);
+        let views = std::iter::once(self.graph.clone())
+            .chain(self.graph_window.as_ref().map(|(_, view)| view.clone()));
+        for view in views {
+            view.update(cx, |view, cx| view.reset_layout(cx));
+        }
+    }
+
+    /// Shows `path` in the graph window, selected.
+    pub(crate) fn show_in_graph(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(view) = self.open_graph_window(cx) {
+            let key = adoc_engine::GraphKey::File(std::sync::Arc::from(
+                adoc_engine::normalize_path(path).as_path(),
+            ));
+            view.update(cx, |view, cx| view.reveal(&key, cx));
+        }
+    }
+
+    /// Lists the references to the page at `path` in the Find References panel.
+    pub(crate) fn find_references_to(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let found = self.app.update(cx, |app, cx| {
+            let Ok(CommandOutcome::Opened(id)) = app.invoke(
+                ids::DOCUMENT_OPEN,
+                CommandArgs::Path(path.to_path_buf()),
+                cx,
+            ) else {
+                return None;
+            };
+            match app.invoke(
+                ids::NAVIGATE_FIND_REFERENCES,
+                CommandArgs::Offset { id, offset: 0 },
+                cx,
+            ) {
+                Ok(CommandOutcome::References(found)) => Some(found),
+                _ => None,
+            }
+        });
+        if let Some(found) = found {
+            self.references
+                .update(cx, |references, cx| references.show(found, cx));
+            self.show_references = true;
+            self.show_search = false;
+            cx.notify();
+        }
+    }
+
+    /// Shows `path` in the Files panel.
+    pub(crate) fn reveal_path_in_files(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if self.files.update(cx, |files, cx| files.reveal(path, cx)) {
+            self.sidebar_tab = SidebarTab::Files;
+            cx.notify();
+        }
+    }
+
+    /// The graph window's view, while it is open.
+    #[cfg(test)]
+    pub fn graph_window_for_test(
+        &self,
+    ) -> Option<&(gpui::WindowHandle<gpui_component::Root>, Entity<GraphView>)> {
+        self.graph_window.as_ref()
+    }
+
+    /// The Graph panel's view, shown.
+    #[cfg(test)]
+    pub fn show_graph_panel_for_test(&mut self, cx: &mut Context<Self>) -> Entity<GraphView> {
+        self.sidebar_tab = SidebarTab::Graph;
+        cx.notify();
+        self.graph.clone()
+    }
+
     fn on_show_changes(&mut self, _: &ShowChanges, window: &mut Window, cx: &mut Context<Self>) {
         if !self.has_changes_panel(cx) {
             window.push_notification("No workspace folder is in a Git repository.", cx);
@@ -3842,6 +3969,7 @@ impl WorkspaceView {
         if git {
             panels.push((SidebarTab::Changes, "Changes".to_owned()));
         }
+        panels.push((SidebarTab::Graph, "Graph".to_owned()));
         let selected = panels
             .iter()
             .position(|(tab, _)| *tab == self.sidebar_tab)
@@ -3867,6 +3995,7 @@ impl WorkspaceView {
                 .render_tree(&self.problems.clone(), "problems", cx)
                 .into_any_element(),
             SidebarTab::Changes => self.render_changes(cx),
+            SidebarTab::Graph => self.graph.clone().into_any_element(),
         };
         v_flex()
             .size_full()
@@ -4100,6 +4229,12 @@ impl WorkspaceView {
                 let Some(tab) = tab else {
                     return menu;
                 };
+                // A page can be shown in the graph window, from the end of the menu.
+                let page = target
+                    .and_then(TabItem::document)
+                    .and_then(|id| engine.document(id))
+                    .filter(|document| document.asciidoc && !document.untitled)
+                    .map(|document| document.path.clone());
                 let menu = match target {
                     Some(target) => {
                         let app = app.clone();
@@ -4121,7 +4256,8 @@ impl WorkspaceView {
                     }
                     None => menu,
                 };
-                entries
+                let shown_in = workspace.clone();
+                let menu = entries
                     .iter()
                     .filter(|(_, command, _)| {
                         target.is_some()
@@ -4143,7 +4279,20 @@ impl WorkspaceView {
                                     });
                                 }),
                         )
-                    })
+                    });
+                match page {
+                    Some(page) => {
+                        menu.separator()
+                            .item(
+                                PopupMenuItem::new("Show in Graph").on_click(move |_, _, cx| {
+                                    let _ = shown_in.update(cx, |workspace, cx| {
+                                        workspace.show_in_graph(&page, cx);
+                                    });
+                                }),
+                            )
+                    }
+                    None => menu,
+                }
             })
     }
 
@@ -4478,6 +4627,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_next_change))
             .on_action(cx.listener(Self::on_previous_change))
             .on_action(cx.listener(Self::on_show_changes))
+            .on_action(cx.listener(Self::on_show_graph))
+            .on_action(cx.listener(Self::on_show_local_graph))
+            .on_action(cx.listener(Self::on_reset_graph_layout))
             .on_action(cx.listener(Self::on_open_in_version))
             .on_action(cx.listener(Self::on_toggle_blame))
             .on_action(cx.listener(Self::on_open_on_remote))

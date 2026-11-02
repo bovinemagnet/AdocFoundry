@@ -1,8 +1,8 @@
 //! The last session and the folders opened recently, kept in the app's state folder
 //! ([`crate::Settings::state_dir`]), never in a repository. On quitting the front end writes the
 //! session ([`Engine::write_session`]): the workspace's roots, the open tabs in order with each
-//! page's editor mode and caret, the tab in the preview tab, the active tab and the preview
-//! layout. Launched with nothing to open, it brings that back ([`Engine::restore_session`]),
+//! page's editor mode and caret, the tab in the preview tab, the active tab, the preview
+//! layout and where the graph window was ([`Engine::graph_window`]). Launched with nothing to open, it brings that back ([`Engine::restore_session`]),
 //! skipping files and folders that have gone. Every folder opened as a workspace is recorded in
 //! [`RECENT_FOLDERS_FILE`] for `workspace.open_recent`.
 //!
@@ -36,6 +36,18 @@ pub(crate) struct SessionState {
     enabled: bool,
     /// The folders opened recently, most recent first.
     recent: Vec<PathBuf>,
+    /// Where the graph window was last.
+    graph_window: Option<WindowPlacement>,
+}
+
+/// A window's size and place on screen, in logical pixels.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct WindowPlacement {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub maximised: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -46,6 +58,9 @@ struct SavedSession {
     /// The active tab, by its place in `tabs`.
     active: Option<usize>,
     preview: SavedPreview,
+    /// Absent from sessions written before the graph window, which still load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    graph_window: Option<WindowPlacement>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -217,6 +232,7 @@ impl Engine {
                     .pinned
                     .and_then(|id| places.get(&TabItem::Document(id)).copied()),
             },
+            graph_window: self.session.graph_window,
         };
         self.write_state_file(SESSION_FILE, &saved)
     }
@@ -239,6 +255,7 @@ impl Engine {
         else {
             return carets;
         };
+        self.session.graph_window = saved.graph_window;
         let roots: Vec<PathBuf> = saved
             .roots
             .into_iter()
@@ -295,6 +312,19 @@ impl Engine {
             .and_then(|item| item.document());
         self.set_preview_layout(layout);
         carets
+    }
+
+    /// Where the graph window was when it was last moved, resized or closed, this session or,
+    /// restored, the last.
+    #[must_use]
+    pub fn graph_window(&self) -> Option<WindowPlacement> {
+        self.session.graph_window
+    }
+
+    /// Records where the graph window is, for [`Engine::write_session`] to keep. Writes
+    /// nothing itself.
+    pub fn set_graph_window(&mut self, placement: WindowPlacement) {
+        self.session.graph_window = Some(placement);
     }
 
     fn state_file(&self, name: &str) -> Option<PathBuf> {

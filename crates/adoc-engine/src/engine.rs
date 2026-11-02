@@ -101,6 +101,8 @@ pub struct Engine {
     pub(crate) session: crate::session::SessionState,
     /// The workspace's problems, for a front end that shows them.
     pub(crate) problems: crate::problems::ProblemsState,
+    /// The link graph of the workspace's pages.
+    pub(crate) graph: crate::graph::GraphState,
     pub(crate) local_history: crate::local_history::LocalHistory,
     pub(crate) html_exports: crate::html_export::HtmlExports,
     #[cfg(feature = "typst")]
@@ -201,6 +203,7 @@ impl Engine {
             recovery: crate::recovery::RecoveryState::default(),
             session: crate::session::SessionState::default(),
             problems: crate::problems::ProblemsState::default(),
+            graph: crate::graph::GraphState::default(),
             local_history: crate::local_history::LocalHistory::default(),
             html_exports: crate::html_export::HtmlExports::default(),
             #[cfg(feature = "typst")]
@@ -310,6 +313,7 @@ impl Engine {
         } else {
             self.workspace
                 .replace_document(path.clone(), parsed.clone());
+            self.graph_file_changed(&path);
             adoc_lang::diagnostics(&self.workspace, &path)
         };
         self.documents.insert(
@@ -404,6 +408,7 @@ impl Engine {
                 }
                 Err(_) => self.workspace.remove_document(&document.path),
             }
+            self.graph_file_changed(&document.path);
             self.refresh_open_diagnostics(None);
         }
         if self.active == Some(id) {
@@ -825,6 +830,7 @@ impl Engine {
             let parsed = document.parsed().clone();
             before = Some(adoc_lang::diagnosed_with(&self.workspace, &path));
             self.workspace.replace_document(path.clone(), parsed);
+            self.graph_file_changed(&path);
         }
 
         self.emit(EngineEvent::DocumentChanged {
@@ -900,6 +906,7 @@ impl Engine {
             let (path, parsed) = (document.path.clone(), document.parsed().clone());
             let before = adoc_lang::diagnosed_with(&self.workspace, &path);
             self.workspace.replace_document(path.clone(), parsed);
+            self.graph_file_changed(&path);
             self.refresh_diagnosed_with(&path, before);
         }
         ready.len()

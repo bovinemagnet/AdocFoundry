@@ -10,7 +10,8 @@ use std::{
 
 use adoc_engine::{
     commands::ids, normalize_path, CommandArgs, CommandOutcome, DocumentId, EditorMode, Engine,
-    EngineEvent, OpenDisposition, Settings, TabItem, RECENT_FOLDERS_FILE, SESSION_FILE,
+    EngineEvent, OpenDisposition, Settings, TabItem, WindowPlacement, RECENT_FOLDERS_FILE,
+    SESSION_FILE,
 };
 
 /// A state folder, and a workspace of three pages and an image.
@@ -342,6 +343,41 @@ fn untitled_pages_are_not_saved_in_the_session() {
     let mut engine = setup.engine();
     engine.restore_session();
     assert_eq!(tab_paths(&engine), [setup.path("one.adoc")]);
+}
+
+#[test]
+fn graph_window_placement_survives_a_session() {
+    let setup = Setup::new();
+    let mut engine = setup.engine();
+    open_workspace(&mut engine, &setup.root());
+    assert_eq!(engine.graph_window(), None);
+    let placement = WindowPlacement {
+        x: 1920.0,
+        y: 40.5,
+        width: 1200.0,
+        height: 800.0,
+        maximised: false,
+    };
+    engine.set_graph_window(placement);
+    engine.write_session(&HashMap::new()).unwrap();
+    drop(engine);
+
+    let mut engine = setup.engine();
+    engine.restore_session();
+    assert_eq!(engine.graph_window(), Some(placement));
+    drop(engine);
+
+    // A session written before the graph window still restores, with no placement.
+    let file = setup.state.path().join(SESSION_FILE);
+    let mut saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(saved.get("graph_window").is_some());
+    saved.as_object_mut().unwrap().remove("graph_window");
+    fs::write(&file, saved.to_string()).unwrap();
+    let mut engine = setup.engine();
+    engine.restore_session();
+    assert_eq!(engine.roots(), [setup.root()]);
+    assert_eq!(engine.graph_window(), None);
 }
 
 #[test]

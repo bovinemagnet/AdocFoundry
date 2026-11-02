@@ -36,6 +36,15 @@ The project is built in four phases, each of which ships a usable tool.
 |Implemented
 |===
 
+== Phase 7 status
+
+Phase 7 is implemented.
+It adds the xref:graph-view.adoc[link graph]:
+
+* A graph window of every page, partial and navigation file in the workspace, joined by xrefs, includes and navigation entries, with pan, zoom, search, filters and colouring.
+* A Graph tab in the sidebar showing the active page and its neighbours, and its place in the navigation.
+* `adocfoundry-cli graph` and the `link_graph` tool of the MCP server.
+
 == Phase 4 status
 
 Phase 4 is implemented.
@@ -102,6 +111,7 @@ See xref:developer:testing.adoc#manual-qa[the manual QA record] for the checklis
 * xref:using-the-editor.adoc[Using the editor] -- the workspace, link following, search and rename.
 * xref:preview.adoc[The preview] -- the rendered page beside the editor.
 * xref:visual-editing.adoc[Visual editing] -- editing the rendered page in place.
+* xref:graph-view.adoc[The link graph] -- how pages, partials and navigation link, for the workspace or one page.
 * xref:pdf-export.adoc[Exporting to PDF] -- pages and whole components as PDF.
 * xref:keyboard-shortcuts.adoc[Keyboard shortcuts] -- every default binding.
 * xref:settings.adoc[Settings] -- the TOML user and workspace files.

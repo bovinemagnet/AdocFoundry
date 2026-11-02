@@ -232,6 +232,54 @@ impl Default for SpellingSettings {
     }
 }
 
+/// What colours the link graph's nodes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GraphColour {
+    #[default]
+    Component,
+    Module,
+    Family,
+}
+
+/// The `[graph]` table: what the link graph shows when it is first opened.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GraphSettings {
+    /// The local graph's starting depth, 1 to 3.
+    pub depth: u8,
+    pub show_partials: bool,
+    pub show_nav: bool,
+    pub show_orphans: bool,
+    pub show_unresolved: bool,
+    pub colour_by: GraphColour,
+}
+
+impl Default for GraphSettings {
+    fn default() -> Self {
+        Self {
+            depth: 1,
+            show_partials: true,
+            show_nav: true,
+            show_orphans: true,
+            show_unresolved: false,
+            colour_by: GraphColour::Component,
+        }
+    }
+}
+
+impl GraphSettings {
+    /// The filter these settings start the graph with.
+    #[must_use]
+    pub fn filter(&self) -> adoc_graph::GraphFilter {
+        adoc_graph::GraphFilter {
+            partials: self.show_partials,
+            nav: self.show_nav,
+            orphans: self.show_orphans,
+            unresolved: self.show_unresolved,
+            components: None,
+        }
+    }
+}
+
 /// The `[pdf]` table: how PDF export finds its theme and fonts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdfSettings {
@@ -289,6 +337,7 @@ pub struct Settings {
     pub sidebar: SidebarSettings,
     pub history: HistorySettings,
     pub spelling: SpellingSettings,
+    pub graph: GraphSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -462,6 +511,7 @@ impl Settings {
         let allowed_here = layer == Layer::User
             || section == "editor"
             || section == "pdf"
+            || section == "graph"
             || (section == "spelling" && key != "dictionaries")
             || section.starts_with("sidebar.")
             || (section == "sidebar" && key == "follow_active")
@@ -547,6 +597,25 @@ impl Settings {
             ("spelling", "enabled") => self.spelling.enabled = boolean(value)?,
             ("spelling", "language") => self.spelling.language = language_tag(value)?,
             ("spelling", "dictionaries") => self.spelling.dictionaries = Some(string(value)?),
+            ("graph", "depth") => {
+                self.graph.depth = value
+                    .as_integer()
+                    .and_then(|depth| u8::try_from(depth).ok())
+                    .filter(|depth| (1..=3).contains(depth))
+                    .ok_or("expected 1, 2 or 3")?;
+            }
+            ("graph", "show_partials") => self.graph.show_partials = boolean(value)?,
+            ("graph", "show_nav") => self.graph.show_nav = boolean(value)?,
+            ("graph", "show_orphans") => self.graph.show_orphans = boolean(value)?,
+            ("graph", "show_unresolved") => self.graph.show_unresolved = boolean(value)?,
+            ("graph", "colour_by") => {
+                self.graph.colour_by = match value.as_str() {
+                    Some("component") => GraphColour::Component,
+                    Some("module") => GraphColour::Module,
+                    Some("family") => GraphColour::Family,
+                    _ => return Err("expected \"component\", \"module\" or \"family\""),
+                };
+            }
             ("pdf", "theme") => self.pdf.theme = string(value)?,
             ("pdf", "themes_dir") => self.pdf.themes_dir = Some(string(value)?),
             ("pdf", "fonts_dir") => self.pdf.fonts_dir = Some(string(value)?),
@@ -662,6 +731,15 @@ fn is_known(section: &str, key: &str) -> bool {
             )
             | ("updates", "check")
             | (
+                "graph",
+                "depth"
+                    | "show_partials"
+                    | "show_nav"
+                    | "show_orphans"
+                    | "show_unresolved"
+                    | "colour_by"
+            )
+            | (
                 "history",
                 "enabled" | "keep_days" | "max_versions" | "max_size_mb"
             )
@@ -730,6 +808,32 @@ mod tests {
         fs::write(&user, "[editor]\nfont_size = -3\ntheme = \"purple\"\n").unwrap();
         let settings = Settings::load(Some(&user), None).unwrap();
         assert_eq!(settings.editor.font_size, 13);
+        assert_eq!(settings.warnings.len(), 2);
+    }
+
+    #[test]
+    fn graph_settings_have_defaults_and_load() {
+        let defaults = Settings::default().graph;
+        assert_eq!(defaults.depth, 1);
+        assert_eq!(defaults.filter(), adoc_graph::GraphFilter::default());
+
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join(WORKSPACE_SETTINGS_FILE);
+        fs::write(
+            &workspace,
+            "[graph]\ndepth = 2\nshow_nav = false\nshow_unresolved = true\ncolour_by = \"module\"\n\
+             [graph.extra]\n",
+        )
+        .unwrap();
+        let settings = Settings::load(None, Some(directory.path())).unwrap();
+        assert_eq!(settings.graph.depth, 2);
+        assert!(!settings.graph.show_nav && settings.graph.show_unresolved);
+        assert_eq!(settings.graph.colour_by, GraphColour::Module);
+        assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
+
+        fs::write(&workspace, "[graph]\ndepth = 4\ncolour_by = \"size\"\n").unwrap();
+        let settings = Settings::load(None, Some(directory.path())).unwrap();
+        assert_eq!(settings.graph, GraphSettings::default());
         assert_eq!(settings.warnings.len(), 2);
     }
 

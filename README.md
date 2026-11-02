@@ -4,7 +4,7 @@ Forge your documentation in real time.
 
 AdocFoundry is a native desktop editor for AsciiDoc documentation laid out the Antora way, written in Rust for macOS, Linux and Windows. It is a thin GPUI application over a headless engine, and the same engine powers a command-line checker (`adocfoundry-cli`) and a language server (`adoc-ls`) for other editors.
 
-The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes, (5) release readiness: fixes, typeset STEM, `adoc-ls` on the engine, an MCP server and packages, then (6) inline STEM in the text flow, MCP over HTTP, signed releases and updates. **All six phases are implemented** and released, the current release being 0.5.0. Phase 7, an interactive graph view of how pages link together, is specified but not yet implemented. The manual QA on each platform continues in [`docs/qa/phase5.md`](docs/qa/phase5.md) and [`docs/qa/phase6.md`](docs/qa/phase6.md). The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_7_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_7_Implementation_Specification.md).
+The project is built in phases: (1) a source editor with Antora support and link following, (2) a native rendered preview, (3) WYSIWYG editing, (4) PDF export with themes, (5) release readiness: fixes, typeset STEM, `adoc-ls` on the engine, an MCP server and packages, then (6) inline STEM in the text flow, MCP over HTTP, signed releases and updates, and (7) an interactive graph of how pages link together. **All seven phases are implemented**; the first six are released, the current release being 0.5.0. The manual QA on each platform continues in [`docs/qa/phase5.md`](docs/qa/phase5.md), [`docs/qa/phase6.md`](docs/qa/phase6.md) and [`docs/qa/phase7.md`](docs/qa/phase7.md). The architecture is described in [`docs/design/DESIGN-AdocFoundry_Architecture.md`](docs/design/DESIGN-AdocFoundry_Architecture.md) and each phase's scope in [`docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_1_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_2_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_3_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_4_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_5_Implementation_Specification.md), [`docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md) and [`docs/prd/PRD-AdocFoundry_Phase_7_Implementation_Specification.md`](docs/prd/PRD-AdocFoundry_Phase_7_Implementation_Specification.md).
 
 ## What works
 
@@ -111,6 +111,14 @@ The project is built in phases: (1) a source editor with Antora support and link
 - F2 on an anchor (`[[id]]`, `[#id]`, also with roles and options as in `[#id.role%option]`, or `[id=id]`), a section heading or a reference to one renames the anchor instead (Rename Anchor): its declaration and every `<<id>>` and `xref:page.adoc#id[]` that names it, in every page, shown as a preview first and undone as one step. A section without an anchor gets `[[new-id]]` above its heading, and references written with its generated id (Antora's or Asciidoctor's form) are rewritten. Elsewhere F2 renames the page.
 - A replace or rename is undone and redone only as a whole. If one of its pages was edited afterwards, undo says which; undo that page's later edits first.
 
+**The link graph**
+
+- View › Show Graph (Cmd/Ctrl-K G) opens the workspace's link graph in a window of its own: its pages, partials and navigation files, joined by xrefs (solid), includes (dashed) and navigation entries (dotted, following the navigation's tree), with several links between two files drawn as one heavier edge. Broken links can be shown as ghost nodes, and pages with no links at all (orphans) shown or hidden.
+- Drag to pan, scroll or pinch to zoom, drag a node to pin it (Alt on release lets it go), hover to highlight a node and its neighbours. A click opens the page in the preview tab, a double click keeps it open, and the context menu offers Open, Open to the Side, Find References and Reveal in Files. The toolbar searches, filters partials, navigation, orphans, unresolved targets and components, colours by component, module or family, switches to the active page's neighbourhood (depth 1 to 3) and resets the layout. A side panel lists the selected node's links out and backlinks, one row for each, naming every kind of link (`xref · nav`).
+- The window opens where it was last, at the size it had, across restarts, and comes back to the main display when that place is no longer on one.
+- The Graph sidebar panel (View › Show Local Graph, Cmd/Ctrl-K Shift-G) shows the active page and its neighbours, the page's place in each navigation file that lists it (`nav.adoc › Introduction › Install › Configure`), and its links out and backlinks. Show in Graph, in a page tab's menu and the Files panel's, opens the window on that page.
+- The graph is built once after indexing and then kept current file by file as pages are typed, saved, created, renamed or changed on disk; only a change to the Antora components, versions, modules or navigation files builds it again. `[graph]` in the settings sets what it shows at first. `adocfoundry-cli graph` and the MCP server's `link_graph` tool give it as JSON (or DOT).
+
 **Also**
 
 - A ☰ menu at the left of the title bar that opens into File, Edit, Format, View, Go, Git and Help menus, as in Zed; a command palette listing every command; light and dark themes; a read-only second window that follows the active document; and TOML settings.
@@ -207,6 +215,14 @@ plantuml = ""                    # discovered on PATH if empty
 d2 = ""                          # discovered on PATH if empty
 diagram_timeout = 30             # seconds a diagram may render before it is stopped
 
+[graph]
+depth = 1                        # the local graph's starting depth, 1 to 3
+show_partials = true
+show_nav = true
+show_orphans = true
+show_unresolved = false
+colour_by = "component"          # "component", "module" or "family"
+
 [git]
 enabled = true                   # false: look for no repository
 show_markers = true              # change markers in both editors
@@ -264,6 +280,8 @@ adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
+adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot] [--no-partials]
+    [--no-nav] [--unresolved]
 adocfoundry-cli doctor [<root>] [--format text|json]
 ```
 
@@ -274,6 +292,8 @@ adocfoundry-cli doctor [<root>] [--format text|json]
 `pdf` exports a page to `<page>.pdf` beside it, or a component directory (or `--component`) as a book to `<name>.pdf`, and prints the file and its page count. Warnings print as `path:line: warning: message`; the exit code is 1 when the export fails. `--typst` also writes the generated Typst, for inspection.
 
 `git-status` prints the branch of the repository holding the root and its changed AsciiDoc files as `git status --short` does, with the number of changed line runs against `HEAD` in each (`branch main`, ` M docs/page.adoc (2 changed)`); `--format json` gives the same as an object. The other commands do not look at Git.
+
+`graph` prints the workspace's link graph, or with `--page` that page and its neighbours to `--depth` links (1 to 3), as JSON: each node's path relative to the root, title, kind (`page`, `partial`, `nav` or `unresolved`), Antora coordinate and link counts, and each edge's ends, kind (`xref`, `include` or `nav`) and number of links. `--format dot` gives Graphviz DOT instead. Partials and navigation are shown unless `--no-partials` or `--no-nav`; unresolved targets only with `--unresolved`.
 
 `doctor` prints a report to paste into an issue: the version and build, the OS and architecture, the PDF theme and whether its fonts are found, each optional tool (`asciidoctor`, `dot`, `plantuml`, `d2`, `git`) with its path and version or why it is missing, and the settings files the app reads (and `<root>`'s, when given) with any warnings. In the app, Help › Show Diagnostics shows the same report, adding the graphics backend and the editor and interface fonts, with a Copy button. The bug report template asks for it.
 
@@ -306,7 +326,7 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --featur
 
 ## MCP server
 
-`adoc-mcp <root>… [--allow-write] [--http <addr>]` serves an Antora workspace to MCP clients (assistants and tools) over stdio, or over Streamable HTTP on a loopback address, through the same engine as the app. Its tools read pages (by path or resource id, with unsaved edits), list components and navigation, resolve xref, include and image targets, check the workspace (the same diagnostics as `adocfoundry-cli check --format json`), find symbols, search, render a page as text or HTML and report Git status. With `--allow-write` it also edits pages, renames them (rewriting the xrefs, nav entries and includes that name them) and exports PDF; without it those tools are not offered. Every page is also a `file://` resource, and `antora:{resource_id}` reads one by its Antora id. Paths outside the roots are refused, and so is every file a page would read outside them: includes, images, PDF themes and fonts. External diagram tools are not run, since they read files of their own, so only Mermaid diagrams render. The server makes no network requests, and long results are cut with the total stated.
+`adoc-mcp <root>… [--allow-write] [--http <addr>]` serves an Antora workspace to MCP clients (assistants and tools) over stdio, or over Streamable HTTP on a loopback address, through the same engine as the app. Its tools read pages (by path or resource id, with unsaved edits), list components and navigation, resolve xref, include and image targets, check the workspace (the same diagnostics as `adocfoundry-cli check --format json`), find symbols, search, render a page as text or HTML, report Git status and give the link graph of the workspace or of a page (`link_graph`, as `adocfoundry-cli graph` gives it). With `--allow-write` it also edits pages, renames them (rewriting the xrefs, nav entries and includes that name them) and exports PDF; without it those tools are not offered. Every page is also a `file://` resource, and `antora:{resource_id}` reads one by its Antora id. Paths outside the roots are refused, and so is every file a page would read outside them: includes, images, PDF themes and fonts. External diagram tools are not run, since they read files of their own, so only Mermaid diagrams render. The server makes no network requests, and long results are cut with the total stated.
 
 ```json
 {
@@ -336,7 +356,8 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
-- Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview checked by hand on each platform: see [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
+- Accessible labels for the graph's nodes: GPUI has no accessibility tree yet.
+- Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview and the graph checked by hand on each platform: see [`docs/qa/phase7.md`](docs/qa/phase7.md), [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 
 ## Developing
 

@@ -10,6 +10,8 @@
 //!     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 //! adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 //! adocfoundry-cli git-status <root> [--format text|json]
+//! adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot] [--no-partials]
+//!     [--no-nav] [--unresolved]
 //! adocfoundry-cli doctor [<root>] [--format text|json]
 //! adocfoundry-cli --version
 //! ```
@@ -25,7 +27,8 @@ use adoc_engine::{
     commands::ids,
     pdf_standard,
     report::{display_path, severity_name, ChangedFile},
-    CommandArgs, CommandOutcome, Engine, EngineError, ExportArgs, ExportTarget, Settings,
+    CommandArgs, CommandOutcome, Engine, EngineError, ExportArgs, ExportTarget, GraphFilter,
+    GraphScope, Settings,
 };
 
 const USAGE: &str = "usage:
@@ -38,6 +41,8 @@ const USAGE: &str = "usage:
       [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
   adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
   adocfoundry-cli git-status <root> [--format text|json]
+  adocfoundry-cli graph <root> [--page <file> [--depth <n>]] [--format json|dot] [--no-partials]
+      [--no-nav] [--unresolved]
   adocfoundry-cli doctor [<root>] [--format text|json]
   adocfoundry-cli --version";
 
@@ -73,6 +78,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         "render" => render(rest),
         "pdf" => pdf(rest),
         "git-status" => git_status(rest),
+        "graph" => graph(rest),
         "doctor" => doctor(rest),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
@@ -470,6 +476,71 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
                 .map_or_else(String::new, |count| format!(" ({count} changed)"));
             println!("{} {}{hunks}", short_status(file), file.path);
         }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The link graph of the workspace at `root`, or of a page and its neighbours, as JSON or DOT.
+fn graph(arguments: &[String]) -> Result<ExitCode, String> {
+    // Flags take no value: take them out before the options.
+    let flags = ["--no-partials", "--no-nav", "--unresolved"];
+    let flag = |name: &str| arguments.iter().any(|argument| argument == name);
+    let rest: Vec<String> = arguments
+        .iter()
+        .filter(|argument| !flags.contains(&argument.as_str()))
+        .cloned()
+        .collect();
+    let (positional, options) = parse_options(&rest, &["page", "depth", "format"])?;
+    let [root] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let dot = match option(&options, "format").unwrap_or("json") {
+        "json" => false,
+        "dot" => true,
+        other => return Err(format!("unknown format `{other}`")),
+    };
+    let depth = match option(&options, "depth") {
+        None => 1,
+        Some(_) if option(&options, "page").is_none() => {
+            return Err("`--depth` needs `--page`".to_owned())
+        }
+        Some(depth) => depth
+            .parse::<u8>()
+            .ok()
+            .filter(|depth| (1..=3).contains(depth))
+            .ok_or_else(|| format!("`--depth` is 1, 2 or 3, not `{depth}`"))?,
+    };
+    let root = adoc_index::normalize_path(Path::new(root));
+    let scope = match option(&options, "page") {
+        // Relative, as the root may be: the index holds paths as the root gives them.
+        Some(page) => GraphScope::Local {
+            path: adoc_index::normalize_path(Path::new(page)),
+            depth,
+        },
+        None => GraphScope::Workspace,
+    };
+    let filter = GraphFilter {
+        partials: !flag("--no-partials"),
+        nav: !flag("--no-nav"),
+        unresolved: flag("--unresolved"),
+        ..GraphFilter::default()
+    };
+    let engine = open_engine(&root, false)?;
+    if let GraphScope::Local { path, .. } = &scope {
+        if engine.workspace().index.file(path).is_none() {
+            return Err(format!(
+                "{} is not a page in {}",
+                path.display(),
+                root.display()
+            ));
+        }
+    }
+    let report = engine.graph_report(&root, &scope, &filter);
+    if dot {
+        print!("{}", report.to_dot());
+    } else {
+        let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+        println!("{output}");
     }
     Ok(ExitCode::SUCCESS)
 }

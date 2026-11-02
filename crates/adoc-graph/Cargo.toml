@@ -1,0 +1,15 @@
+[package]
+name = "adoc-graph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[[bench]]
+name = "layout"
+harness = false
+
+[lints]
+workspace = true

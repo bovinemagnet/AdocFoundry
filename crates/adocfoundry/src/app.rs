@@ -2,14 +2,21 @@
 
 use std::{path::PathBuf, sync::mpsc::Receiver, time::Duration};
 
-use adoc_engine::{CommandArgs, CommandId, CommandOutcome, Engine, EngineError, EngineEvent};
+use adoc_engine::{
+    CommandArgs, CommandId, CommandOutcome, Engine, EngineError, EngineEvent, WindowPlacement,
+};
 use gpui::{
-    px, size, AnyView, App, AppContext as _, Bounds, Context, Entity, EventEmitter, Task,
-    WindowBounds, WindowHandle, WindowOptions,
+    point, px, size, AnyView, App, AppContext as _, Bounds, Context, Entity, EventEmitter, Pixels,
+    Task, Window, WindowBounds, WindowHandle, WindowOptions,
 };
 use gpui_component::Root;
 
-use crate::{mirror_view::MirrorView, preview::PreviewView, workspace_view::WorkspaceView};
+use crate::{
+    graph_view::{GraphMode, GraphView},
+    mirror_view::MirrorView,
+    preview::PreviewView,
+    workspace_view::WorkspaceView,
+};
 
 /// How often the engine is pumped while work is pending, and while idle.
 const BUSY_TICK: Duration = Duration::from_millis(16);
@@ -145,7 +152,12 @@ pub enum WindowKind {
     /// The rendered preview, detached from the workspace window. Closing it docks the preview
     /// again.
     Preview,
+    /// The workspace's link graph. It opens where it was last, at the size it had.
+    Graph,
 }
+
+/// The graph window's size the first time it opens.
+const GRAPH_WINDOW_SIZE: (f32, f32) = (1100., 760.);
 
 pub fn open_main_window(
     app: Entity<AppState>,
@@ -181,7 +193,15 @@ pub fn open_secondary_window(
     kind: WindowKind,
     cx: &mut App,
 ) -> Option<(WindowHandle<Root>, AnyView)> {
-    let options = window_options(Bounds::centered(None, size(px(720.), px(640.)), cx));
+    let options = match kind {
+        WindowKind::Graph => {
+            let mut options = window_options(Bounds::default());
+            options.window_bounds =
+                Some(graph_window_bounds(app.read(cx).engine.graph_window(), cx));
+            options
+        }
+        _ => window_options(Bounds::centered(None, size(px(720.), px(640.)), cx)),
+    };
     let mut view: Option<AnyView> = None;
     let opened = cx.open_window(options, |window, cx| match kind {
         WindowKind::Mirror => {
@@ -207,6 +227,26 @@ pub fn open_secondary_window(
             view = Some(preview.clone().into());
             cx.new(|cx| Root::new(preview, window, cx))
         }
+        WindowKind::Graph => {
+            let graph = cx.new(|cx| {
+                GraphView::new(
+                    app.clone(),
+                    gpui::WeakEntity::new_invalid(),
+                    GraphMode::Window,
+                    window,
+                    cx,
+                )
+            });
+            // Where the window is as it closes; the view notes it as it moves and is resized.
+            let closing = app.clone();
+            window.on_window_should_close(cx, move |window, cx| {
+                record_graph_window(&closing, window, cx);
+                true
+            });
+            window.set_window_title("Graph");
+            view = Some(graph.clone().into());
+            cx.new(|cx| Root::new(graph, window, cx))
+        }
     });
     match opened {
         Ok(handle) => view.map(|view| (handle, view)),
@@ -217,13 +257,111 @@ pub fn open_secondary_window(
     }
 }
 
+/// Notes where the graph window is, for the session to keep.
+pub(crate) fn record_graph_window(app: &Entity<AppState>, window: &Window, cx: &mut App) {
+    let (bounds, maximised) = match window.window_bounds() {
+        WindowBounds::Windowed(bounds) => (bounds, false),
+        WindowBounds::Maximized(bounds) | WindowBounds::Fullscreen(bounds) => (bounds, true),
+    };
+    let placement = WindowPlacement {
+        x: bounds.origin.x.into(),
+        y: bounds.origin.y.into(),
+        width: bounds.size.width.into(),
+        height: bounds.size.height.into(),
+        maximised,
+    };
+    app.update(cx, |app, _| app.engine.set_graph_window(placement));
+}
+
+/// Where the graph window opens: where it was, unless less than half of that is on a display
+/// now, when it is centred on the main display at its size, shrunk to fit; centred at its first
+/// size when it has never been open.
+fn graph_window_bounds(placement: Option<WindowPlacement>, cx: &App) -> WindowBounds {
+    let first = size(px(GRAPH_WINDOW_SIZE.0), px(GRAPH_WINDOW_SIZE.1));
+    let Some(placement) = placement else {
+        return WindowBounds::Windowed(Bounds::centered(None, first, cx));
+    };
+    let saved = Bounds::new(
+        point(px(placement.x), px(placement.y)),
+        size(
+            px(placement.width.max(200.)),
+            px(placement.height.max(150.)),
+        ),
+    );
+    let displays: Vec<Bounds<Pixels>> = cx
+        .displays()
+        .iter()
+        .map(|display| display.bounds())
+        .collect();
+    let main = cx.primary_display();
+    let bounds = match placed(
+        saved,
+        &displays,
+        main.as_ref().map(|display| display.bounds()),
+    ) {
+        Some(bounds) => bounds,
+        None => Bounds::centered(main.map(|display| display.id()), saved.size, cx),
+    };
+    if placement.maximised {
+        WindowBounds::Maximized(bounds)
+    } else {
+        WindowBounds::Windowed(bounds)
+    }
+}
+
+/// `saved` when at least half of it lies on `displays`; else its size shrunk to fit `main`,
+/// centred on it. `None` when no display is known, to let the platform centre it.
+fn placed(
+    saved: Bounds<Pixels>,
+    displays: &[Bounds<Pixels>],
+    main: Option<Bounds<Pixels>>,
+) -> Option<Bounds<Pixels>> {
+    let area =
+        |bounds: Bounds<Pixels>| f32::from(bounds.size.width) * f32::from(bounds.size.height);
+    let visible: f32 = displays
+        .iter()
+        .map(|display| area(display.intersect(&saved)))
+        .sum();
+    if visible * 2.0 >= area(saved) {
+        return Some(saved);
+    }
+    let main = main?;
+    let fitted = size(
+        saved.size.width.min(main.size.width),
+        saved.size.height.min(main.size.height),
+    );
+    Some(Bounds::new(
+        point(
+            main.origin.x + (main.size.width - fitted.width) / 2.,
+            main.origin.y + (main.size.height - fitted.height) / 2.,
+        ),
+        fitted,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use gpui::point;
-
     use super::*;
+
+    #[test]
+    fn a_window_mostly_off_every_display_is_brought_back() {
+        let main = Bounds::new(point(px(0.), px(0.)), size(px(1440.), px(900.)));
+        let side = Bounds::new(point(px(1440.), px(0.)), size(px(1920.), px(1080.)));
+        let on_side = Bounds::new(point(px(1600.), px(100.)), size(px(1000.), px(700.)));
+        assert_eq!(placed(on_side, &[main, side], Some(main)), Some(on_side));
+
+        // The second display is gone: the window comes back to the main one, shrunk to fit.
+        let big = Bounds::new(point(px(1600.), px(100.)), size(px(1800.), px(1000.)));
+        let back = placed(big, &[main], Some(main)).unwrap();
+        assert_eq!(back.size, size(px(1440.), px(900.)));
+        assert_eq!(back.origin, point(px(0.), px(0.)));
+
+        // Half on screen is enough.
+        let straddling = Bounds::new(point(px(940.), px(0.)), size(px(1000.), px(500.)));
+        assert_eq!(placed(straddling, &[main], Some(main)), Some(straddling));
+    }
 
     #[test]
     fn every_window_names_the_app() {

@@ -16,8 +16,8 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_engine::{
-    commands::ids, CommandArgs, DocumentId, Engine, ManualClock, Settings, GIT_SETTLE,
-    INDEX_SETTLE, QUICK_OPEN_LIMIT, RECOVERY_SETTLE,
+    commands::ids, CommandArgs, DocumentId, Engine, GraphFilter, GraphScope, ManualClock, Settings,
+    GIT_SETTLE, INDEX_SETTLE, QUICK_OPEN_LIMIT, RECOVERY_SETTLE,
 };
 
 /// What a bench must stay within.
@@ -428,6 +428,75 @@ fn workspace(report: &mut Report) {
     );
 }
 
+/// A full build of the link graph over 5,000 pages, as after a catalog change.
+fn graph_build(report: &mut Report) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut nav_files = Vec::new();
+    for module in 0..50 {
+        let root = dir.path().join(format!("modules/module-{module}"));
+        let pages = root.join("pages");
+        fs::create_dir_all(&pages).unwrap();
+        fs::create_dir_all(root.join("partials")).unwrap();
+        fs::write(root.join("partials/shared.adoc"), "A shared note.\n").unwrap();
+        let mut nav = String::new();
+        for page in 0..100 {
+            let mut text = format!("= Topic {page} of Module {module}\n\n");
+            for step in 1..=5 {
+                let _ = writeln!(text, "See xref:topic-{}.adoc[].", (page + step * 7) % 100);
+            }
+            let _ = writeln!(
+                text,
+                "And xref:module-{}:topic-{page}.adoc[].\n\ninclude::partial$shared.adoc[]",
+                (module + 1) % 50
+            );
+            fs::write(pages.join(format!("topic-{page}.adoc")), text).unwrap();
+            let _ = writeln!(nav, "{} xref:topic-{page}.adoc[]", "*".repeat(1 + page % 3));
+        }
+        fs::write(root.join("nav.adoc"), nav).unwrap();
+        nav_files.push(format!("- modules/module-{module}/nav.adoc"));
+    }
+    fs::write(
+        dir.path().join("antora.yml"),
+        format!(
+            "name: docs\nversion: '1.0'\nnav:\n{}\n",
+            nav_files.join("\n")
+        ),
+    )
+    .unwrap();
+    let mut engine = Engine::new(settings());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(120)));
+    report.time(
+        "graph_build",
+        "5000 pages, 35000 links",
+        10,
+        0,
+        Budget::Median(Duration::from_millis(500)),
+        || {
+            let started = Instant::now();
+            engine.build_graph_blocking();
+            started.elapsed()
+        },
+    );
+    // What the graph window asks for whenever the graph changes: recorded.
+    report.time(
+        "graph_snapshot",
+        "5000 pages, 35000 links",
+        10,
+        0,
+        Budget::None,
+        || {
+            let started = Instant::now();
+            let snapshot = engine.graph(&GraphScope::Workspace, &GraphFilter::default());
+            let elapsed = started.elapsed();
+            assert!(snapshot.nodes.len() > 5000);
+            elapsed
+        },
+    );
+}
+
 /// The process's resident memory, where the system says (Linux).
 fn resident() -> Option<u64> {
     let statm = fs::read_to_string("/proc/self/statm").ok()?;
@@ -482,6 +551,7 @@ fn main() {
     keystrokes(&mut report);
     settles(&mut report);
     workspace(&mut report);
+    graph_build(&mut report);
 
     let table = report.table();
     println!("{table}");

@@ -43,11 +43,15 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L1
 |`adoc-lang`
-|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it. It also finds references (`references_at`, `page_references`, `includes_of`) and renames anchors (`rename_anchor`).
+|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it. It also finds references (`references_at`, `page_references`, `includes_of`) and renames anchors (`rename_anchor`), and `graph::links_from` resolves the xrefs and includes of one file for the link graph.
 
 |L1
 |`adoc-spell`
 |Spell checking with no knowledge of AsciiDoc. It wraps `spellbook`, which no other crate names (`cargo xtask layers` checks this). `Dictionaries` holds the bundled SCOWL `en_GB` and `en_US` dictionaries and any others loaded from a folder. `words` splits text into checkable words, skipping those that are not words (`OBJECT` stands in for an atom), and `WordList` holds the workspace and user word lists. The engine's `src/spelling.rs` reads prose from the visual model and checks open pages on a worker.
+
+|L1
+|`adoc-graph`
+|General graph code with no knowledge of AsciiDoc and no internal dependencies. `GraphKey` (a normalised path or an unresolved target's text), `EdgeKind`, `NodeKind`, `GraphNode`, `GraphEdge`, `GraphSnapshot` and `GraphFilter` are its types. `LinkStore` keeps each file's links keyed by the file that owns them (a navigation file owns its tree's links), with the reverse maps hashed because `Path` compares component by component. `Layout` is a seeded, deterministic force-directed layout: Barnes–Hut above 500 nodes, `f32` only, no trigonometry, and it cools and settles. It has its own `Point`. The engine's `graph.rs` joins it to `adoc-lang`'s `graph::links_from`; see xref:engine.adoc#the-link-graph[the engine].
 
 |L2
 |`adoc-render`
@@ -82,7 +86,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L4
 |`adocfoundry-cli`
-|The headless binary: `check`, `symbols`, `follow`, `render`, `pdf` and `git-status`.
+|The headless binary: `check`, `symbols`, `follow`, `render`, `pdf`, `git-status`, `graph` and `doctor`.
 
 |L4
 |`adoc-ls`
