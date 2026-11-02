@@ -2,7 +2,9 @@
 
 use std::{fs, time::Duration};
 
-use adoc_engine::{Engine, EngineEvent, Settings, ThemePreference, WORKSPACE_SETTINGS_FILE};
+use adoc_engine::{
+    AutoSave, Engine, EngineEvent, Settings, ThemePreference, WORKSPACE_SETTINGS_FILE,
+};
 
 #[test]
 fn settings_workspace_overrides_user() {
@@ -74,5 +76,29 @@ fn opt_in_git_is_off_until_a_settings_file_turns_it_on() {
     assert!(
         Settings::load(None, None).unwrap().git.enabled,
         "on by default elsewhere"
+    );
+}
+
+#[test]
+fn auto_save_stays_off_once_turned_off_whatever_the_files_say() {
+    let directory = tempfile::tempdir().unwrap();
+    let user = directory.path().join("adocfoundry.toml");
+    fs::write(&user, "[editor]\nauto_save = \"after_delay\"\n").unwrap();
+    let mut settings = Settings::load(Some(&user), Some(directory.path()))
+        .unwrap()
+        .without_auto_save();
+    assert_eq!(settings.editor.auto_save, AutoSave::Off);
+
+    fs::write(&user, "[editor]\nauto_save = \"on_focus_change\"\n").unwrap();
+    fs::write(
+        directory.path().join(WORKSPACE_SETTINGS_FILE),
+        "[editor]\nauto_save = \"after_delay\"\n",
+    )
+    .unwrap();
+    settings.reload().unwrap();
+    assert_eq!(
+        settings.editor.auto_save,
+        AutoSave::Off,
+        "still off after a reload"
     );
 }

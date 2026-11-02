@@ -582,6 +582,11 @@ Running titles look up one memoised list of headings with a binary search instea
 |`Settings::with_git_opt_in`, kept across reloads
 |`open_workspace` reloads settings, which would otherwise turn Git back on.
 
+|Auto-save in `adoc-ls`
+|`[editor] auto_save` applies as in the app
+|`Settings::without_auto_save`, kept across reloads
+|The client owns its buffers and decides when to save, so the server never writes them, whatever the settings files say.
+
 |Diagnostics timing (WP 5.6)
 |published after the engine's settle
 |each change is an `edit.replace_range`, which indexes at once, so a notification's diagnostics are published as it is handled; between messages the server pumps the engine every 50 ms and publishes what workers and the watcher changed; `initialize` is answered once the workspace is indexed (at most 120 s)

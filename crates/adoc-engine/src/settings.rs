@@ -297,6 +297,9 @@ pub struct Settings {
     git_enabled_set: bool,
     /// Git is off unless a settings file turns it on, as in the language server.
     git_opt_in: bool,
+    /// Pages are never saved without Save, whatever the files say; see
+    /// [`Settings::without_auto_save`].
+    auto_save_off: bool,
     /// Where the app keeps unsaved text for recovery and the local history; see
     /// [`Settings::with_state_dir`].
     state_dir: Option<PathBuf>,
@@ -359,6 +362,7 @@ impl Settings {
             user_file: self.user_file.clone(),
             workspace_file: self.workspace_file.clone(),
             git_opt_in: self.git_opt_in,
+            auto_save_off: self.auto_save_off,
             state_dir: self.state_dir.clone(),
             ..Self::default()
         };
@@ -374,6 +378,9 @@ impl Settings {
         }
         if fresh.git_opt_in && !fresh.git_enabled_set {
             fresh.git.enabled = false;
+        }
+        if fresh.auto_save_off {
+            fresh.editor.auto_save = AutoSave::Off;
         }
         *self = fresh;
         Ok(())
@@ -397,6 +404,15 @@ impl Settings {
         if !self.git_enabled_set {
             self.git.enabled = false;
         }
+        self
+    }
+
+    /// Turns `[editor] auto_save` off, now and on every reload, whatever the settings files
+    /// say. For front ends whose client owns saving, such as the language server.
+    #[must_use]
+    pub fn without_auto_save(mut self) -> Self {
+        self.auto_save_off = true;
+        self.editor.auto_save = AutoSave::Off;
         self
     }
 

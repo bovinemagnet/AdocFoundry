@@ -87,6 +87,7 @@ See xref:using-the-editor.adoc#spelling[Spelling] for what is checked and for th
 
 The server reads the same files as the application: the user settings file and the workspace's `.adocfoundry.toml`.
 Git is off unless the user settings file sets `[git] enabled = true`.
+`editor.auto_save` has no effect in the server, which never saves a file; the editor saves.
 
 == Builds
 
