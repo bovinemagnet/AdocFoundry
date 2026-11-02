@@ -579,6 +579,7 @@ impl Engine {
             failed: &self.rendered.failed,
             formulas,
             wanted: RefCell::default(),
+            directory: path.parent().map(Path::to_path_buf),
         };
         let view = build_view(path, dom, &resolver);
         let mut waiting = BTreeSet::new();
@@ -753,6 +754,8 @@ struct EngineResolver<'e> {
     formulas: bool,
     /// Diagrams to render, gathered while building because the view is built immutably.
     wanted: RefCell<Vec<(String, DiagramRequest)>>,
+    /// The folder of the page the view is of, where its diagrams' tools run.
+    directory: Option<PathBuf>,
 }
 
 impl ViewResolver for EngineResolver<'_> {
@@ -830,8 +833,9 @@ impl ViewResolver for EngineResolver<'_> {
             kind: kind.to_owned(),
             source: source.to_owned(),
             attributes: attributes.clone(),
+            directory: self.directory.clone(),
         };
-        let checksum = request.checksum();
+        let checksum = self.diagrams.checksum(&request);
         if let Some(path) = self.diagrams.cached_at(&checksum) {
             return DiagramView::Svg(path);
         }

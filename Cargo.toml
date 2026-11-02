@@ -73,9 +73,11 @@ insta = { version = "=1.49.0", features = ["json"] }
 lsp-server = "=0.10.0"
 # The channel lsp-server hands messages over, for waiting with a timeout.
 crossbeam-channel = "=0.5.16"
+# Upgrading it changes what Mermaid draws: bump `RENDER_REVISION` in adoc-diagrams with it, so
+# images cached from the old version are drawn again.
+merman = { version = "=0.9.2", default-features = false, features = ["all-diagrams", "complete-svg"] }
 # `proposed` is enabled by gpui-component through feature unification; enable it everywhere
 # so adoc-ls compiles the same way alone and in the workspace.
-merman = { version = "=0.9.2", default-features = false, features = ["all-diagrams", "complete-svg"] }
 lsp-types = { version = "=0.97.0", features = ["proposed"] }
 notify = "=8.2.0"
 regex = "=1.13.1"

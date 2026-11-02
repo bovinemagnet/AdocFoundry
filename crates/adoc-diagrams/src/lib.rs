@@ -26,6 +26,9 @@ pub struct DiagramRequest {
     pub source: String,
     /// The block's attributes; those that change the image are part of the cache key.
     pub attributes: BTreeMap<String, String>,
+    /// The folder of the page the diagram is on. External tools run in it, so a relative
+    /// `!include` or `image=` resolves against the page, as asciidoctor-diagram resolves it.
+    pub directory: Option<PathBuf>,
 }
 
 /// Attributes that place or label the image but never change what is drawn.
@@ -33,7 +36,8 @@ const PRESENTATION_ATTRIBUTES: &[&str] = &[
     "align", "caption", "float", "height", "id", "link", "role", "target", "title", "width",
 ];
 
-/// Changed whenever rendering changes for the same input, so cached images are rendered again.
+/// Changed whenever rendering changes for the same input, so cached images are rendered again:
+/// among other times, when merman (rendering Mermaid in process) is upgraded.
 const RENDER_REVISION: &str = "2";
 
 impl DiagramRequest {
@@ -43,10 +47,13 @@ impl DiagramRequest {
             kind: kind.into(),
             source: source.into(),
             attributes: BTreeMap::new(),
+            directory: None,
         }
     }
 
-    /// The cache key: a SHA-256 of the kind, the source and the attributes that affect output.
+    /// A SHA-256 of the kind, the source and the attributes that affect output: the cache key
+    /// for a renderer that nothing else changes the output of. [`Diagrams::checksum`] adds
+    /// the renderer's own part.
     #[must_use]
     pub fn checksum(&self) -> String {
         use sha2::{Digest, Sha256};
@@ -65,14 +72,19 @@ impl DiagramRequest {
                 hasher.update(part.as_bytes());
             }
         }
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut checksum = String::with_capacity(64);
-        for byte in hasher.finalize() {
-            checksum.push(char::from(HEX[usize::from(byte >> 4)]));
-            checksum.push(char::from(HEX[usize::from(byte & 0xf)]));
-        }
-        checksum
+        hex(&hasher.finalize())
     }
+}
+
+/// `bytes` in lower-case hexadecimal.
+fn hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        text.push(char::from(HEX[usize::from(byte >> 4)]));
+        text.push(char::from(HEX[usize::from(byte & 0xf)]));
+    }
+    text
 }
 
 #[derive(Debug)]
@@ -134,6 +146,12 @@ pub trait DiagramProvider: Send + Sync {
     ///
     /// When the diagram cannot be rendered; the message is shown in place of the image.
     fn render(&self, request: &DiagramRequest) -> Result<String, DiagramError>;
+    /// What, besides the request itself, decides the image this provider renders for
+    /// `request`, such as which program draws it. Part of the cache key, so an image rendered
+    /// by another program, or for another folder, is not reused. Empty by default.
+    fn identity(&self, _request: &DiagramRequest) -> String {
+        String::new()
+    }
 }
 
 /// The providers and the cache the preview renders diagrams through.
@@ -199,10 +217,31 @@ impl Diagrams {
             .map(AsRef::as_ref)
     }
 
+    /// The cache key of `request`: its [`DiagramRequest::checksum`], with what its provider
+    /// says decides the image ([`DiagramProvider::identity`]).
+    #[must_use]
+    pub fn checksum(&self, request: &DiagramRequest) -> String {
+        let checksum = request.checksum();
+        let identity = self
+            .provider(&request.kind)
+            .map(|provider| provider.identity(request))
+            .unwrap_or_default();
+        if identity.is_empty() {
+            return checksum;
+        }
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        for part in [checksum.as_str(), identity.as_str()] {
+            hasher.update((part.len() as u64).to_le_bytes());
+            hasher.update(part.as_bytes());
+        }
+        hex(&hasher.finalize())
+    }
+
     /// The cached image for `request`, without rendering.
     #[must_use]
     pub fn cached(&self, request: &DiagramRequest) -> Option<PathBuf> {
-        self.cached_at(&request.checksum())
+        self.cached_at(&self.checksum(request))
     }
 
     /// The cached image for the request whose [`DiagramRequest::checksum`] is `checksum`.
@@ -227,7 +266,7 @@ impl Diagrams {
     /// When no provider handles the kind, its tool is missing, rendering fails, or the cache
     /// cannot be written.
     pub fn render(&self, request: &DiagramRequest) -> Result<PathBuf, DiagramError> {
-        self.render_at(&request.checksum(), request)
+        self.render_at(&self.checksum(request), request)
     }
 
     /// [`Diagrams::render`] for a request whose checksum is already known.
@@ -522,6 +561,65 @@ mod tests {
             .render(&DiagramRequest::new("graphviz", "a -> b"))
             .unwrap();
         assert_eq!(std::fs::read_to_string(svg).unwrap(), "<svg>a -> b</svg>");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_key_changes_with_the_tool() {
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let tool = |folder: &str| {
+            let folder = dir.path().join(folder);
+            std::fs::create_dir_all(&folder).unwrap();
+            script(&folder, "#!/bin/sh\nprintf '<svg/>'\n")
+        };
+        let diagrams = |tool: PathBuf| {
+            let tools = ToolPaths {
+                dot: tool,
+                ..ToolPaths::default()
+            };
+            Diagrams::with_tools(DiagramCache::new(dir.path().join("cache")), &tools)
+        };
+        let (old, new) = (diagrams(tool("old")), diagrams(tool("new")));
+        let request = DiagramRequest::new("graphviz", "a -> b");
+        // Another program renders it: an image cached from the old one is not reused.
+        assert_ne!(old.checksum(&request), new.checksum(&request));
+        assert_eq!(old.checksum(&request), old.checksum(&request));
+        // Mermaid, rendered in process, keeps the key its cached images are named by.
+        assert_eq!(old.checksum(&mermaid()), mermaid().checksum());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tools_run_in_the_page_directory() {
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let tool = script(
+            dir.path(),
+            "#!/bin/sh\nprintf '<svg>%s</svg>' \"$(pwd -P)\"\n",
+        );
+        let page_folder = dir.path().join("docs").join("pages");
+        std::fs::create_dir_all(&page_folder).unwrap();
+        let provider = ExternalProvider::new(vec!["graphviz"], &tool, Vec::new());
+        let request = DiagramRequest {
+            directory: Some(page_folder.clone()),
+            ..DiagramRequest::new("graphviz", "a -> b")
+        };
+        let svg = provider.render(&request).unwrap();
+        // So `!include` and `image=` resolve against the page, as asciidoctor-diagram does.
+        let resolved = std::fs::canonicalize(&page_folder).unwrap();
+        assert_eq!(svg, format!("<svg>{}</svg>", resolved.display()));
+        // The folder is part of the key: the same source elsewhere can include other files.
+        let elsewhere = DiagramRequest {
+            directory: Some(dir.path().to_path_buf()),
+            ..request.clone()
+        };
+        let tools = ToolPaths {
+            dot: tool,
+            ..ToolPaths::default()
+        };
+        let diagrams = Diagrams::with_tools(DiagramCache::new(dir.path().join("cache")), &tools);
+        assert_ne!(diagrams.checksum(&request), diagrams.checksum(&elsewhere));
     }
 
     /// Writes `script` as an executable tool in `dir`.
