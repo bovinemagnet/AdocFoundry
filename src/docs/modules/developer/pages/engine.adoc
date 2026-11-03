@@ -1201,11 +1201,12 @@ It is sorted, its paths are relative to a root and use `/`, and none is absolute
 
 `Engine::analyse_impact(&ChangeSource, Limits)` returns an `ImpactReport` or an `ImpactError` (`src/impact_analysis.rs`).
 It runs on the calling thread, as the command line and the MCP server need.
-The app's inspector will run it on a worker.
-A `ChangeSource` is one of three:
+The app's inspector runs the same analysis on a worker: see <<impact-inspection>>.
+A `ChangeSource` is one of four:
 
 * `GitRefs { base, head }` compares two revisions. The working tree and the live index are never read.
 * `WorkingTree` compares `HEAD` with the working tree: the files on disk, as `Repository::status` reports them, and the open pages' unsaved buffers. The report says so with `unsaved_buffers`.
+* `Removal(paths)` takes the live workspace as the base and the same workspace with the files taken out of the index and catalog as the head, as a staged move does. Every file is `Removed`, and the report's source is `ReportSource::Removal` (JSON `"kind": "removal"`).
 * `Paths(paths)` uses no Git. A path that exists is modified. One that does not was removed, and the report is `partial` with `no-base-revision`.
 
 The report's `source` says what was compared: `git-refs` with each revision's spec and commit, `working-tree` or `paths`.
@@ -1227,6 +1228,33 @@ The errors are:
 * `UnknownRevision`: Git cannot resolve a spec.
 * `Git`: any other Git failure.
 * `OutsideRoots`: a path in no root.
+
+[[impact-inspection]]
+=== The inspector
+
+`impact_analysis.rs` works an analysis out in one function, `compute`, over inputs taken from the engine.
+It runs on the caller's thread (`Engine::analyse_impact`, as the command line and the MCP server call it) or on a worker.
+Revision snapshots built on the way go into the engine's cache afterwards.
+`adoc-impact`'s snapshot resolves a reference only to a file that side has (`DependencySnapshot::resolves`), because `adoc-lang`'s resolution falls back to the disk, which is neither a revision's files nor a workspace with a file taken out.
+
+`impact_inspection.rs` keeps the app's inspection.
+`ImpactInspection { source, state }` is what the engine holds, and `Engine::impact_inspection` returns it.
+`InspectionState` is `Running`, `Ready(Box<ImpactReport>)` or `Failed(String)`.
+`Engine::impact_stale` says the workspace revision has moved since the analysis was asked for.
+`Engine::inspect_impact(ChangeSource)` sends a copy of the live workspace, the open documents and the cached revision snapshots to a worker started with `worker::spawn`.
+The result is `WorkerMessage::ImpactInspected`, dropped if a newer request was made.
+`EngineEvent::ImpactChanged` follows the start and the finish.
+
+Three queries serve the front end:
+
+* `Engine::impact_place` gives where to open an impact: its source span, else the file.
+* `Engine::impact_path` makes a report's root-relative path absolute.
+* `Engine::impact_trail` gives an impact's `via` as graph `PathStep`s, each with the graph's links between it and the one before, and `backwards` when they run from it to the one before. It asks the graph store and never searches.
+
+The commands are `impact.analyse_changes`, `impact.compare_revisions` (`CommandArgs::Revisions { base, head }`) and `impact.inspect` (`CommandArgs::Path`, `Document`, or none for the active page).
+
+The app's side is `crates/adocfoundry/src/workspace_view/impact.rs`: the panel (`SidebarTab::Impact`), the Compare Revisions dialog, and opening a row and Graph.
+`GraphView::show_trail(title, steps)` shows a given path in the graph window's path panel under its title, with no Directed toggle, and keeps it as given when the graph refreshes.
 
 In a release build, a comparison of two commits of a 2,000-page component takes about 0.9 s, building both snapshots.
 Again with the snapshots cached, it takes about 50 ms.

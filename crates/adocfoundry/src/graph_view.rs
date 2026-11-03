@@ -180,6 +180,8 @@ pub struct GraphView {
     /// The nodes a path is asked between, and the path found, if any.
     path_ends: Option<(GraphKey, GraphKey)>,
     path: Option<Vec<PathStep>>,
+    /// The title of a path given rather than searched for: an impact's dependency path (#311).
+    trail: Option<SharedString>,
     /// Whether a path follows links only in their direction, as a reader does.
     directed: bool,
     drag: Option<Drag>,
@@ -236,6 +238,7 @@ impl GraphView {
             selected: None,
             path_ends: None,
             path: None,
+            trail: None,
             directed: true,
             drag: None,
             menu_target: Rc::default(),
@@ -323,13 +326,42 @@ impl GraphView {
     /// Shows the shortest path from `from` to `to`: its nodes numbered and the rest dimmed, and
     /// its steps listed in the window's side panel.
     fn show_path(&mut self, from: GraphKey, to: GraphKey, cx: &mut Context<Self>) {
+        self.trail = None;
         self.path_ends = Some((from, to));
         self.update_path(cx);
         cx.notify();
     }
 
-    /// Finds the path between the ends asked for again, over what the view shows.
+    /// Shows `steps`, a path the caller worked out (an impact's dependency path, which is not a
+    /// shortest path), as a path is shown, under `title`, and brings its last node into view.
+    pub fn show_trail(
+        &mut self,
+        title: impl Into<SharedString>,
+        steps: Vec<PathStep>,
+        cx: &mut Context<Self>,
+    ) {
+        self.path_ends = None;
+        self.trail = Some(title.into());
+        let last = steps.last().map(|step| step.key.clone());
+        self.path = Some(steps);
+        if let Some(last) = last {
+            self.reveal(&last, cx);
+        }
+        cx.notify();
+    }
+
+    /// The title and steps of the path given to [`GraphView::show_trail`], for tests.
+    #[cfg(test)]
+    pub(crate) fn trail_for_test(&self) -> Option<(SharedString, Vec<PathStep>)> {
+        Some((self.trail.clone()?, self.path.clone()?))
+    }
+
+    /// Finds the path between the ends asked for again, over what the view shows; a path given
+    /// is kept as it was given.
     fn update_path(&mut self, cx: &App) {
+        if self.trail.is_some() {
+            return;
+        }
         self.path = match (&self.path_ends, self.scope()) {
             (Some((from, to)), Some(scope)) => {
                 self.app
@@ -342,6 +374,7 @@ impl GraphView {
     }
 
     fn clear_path(&mut self, cx: &mut Context<Self>) {
+        self.trail = None;
         self.path_ends = None;
         self.path = None;
         cx.notify();
@@ -1299,25 +1332,28 @@ impl GraphView {
                 div()
                     .flex_1()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("Path"),
+                    .debug_selector(|| "graph-path-title".to_owned())
+                    .child(self.trail.clone().unwrap_or_else(|| "Path".into())),
             )
-            .child(
-                Button::new("graph-path-directed")
-                    .label(if self.directed {
-                        "Directed"
-                    } else {
-                        "Either way"
-                    })
-                    .xsmall()
-                    .ghost()
-                    .selected(self.directed)
-                    .debug_selector(|| "graph-path-directed".to_owned())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.directed = !this.directed;
-                        this.update_path(cx);
-                        cx.notify();
-                    })),
-            )
+            .when(self.trail.is_none(), |header| {
+                header.child(
+                    Button::new("graph-path-directed")
+                        .label(if self.directed {
+                            "Directed"
+                        } else {
+                            "Either way"
+                        })
+                        .xsmall()
+                        .ghost()
+                        .selected(self.directed)
+                        .debug_selector(|| "graph-path-directed".to_owned())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.directed = !this.directed;
+                            this.update_path(cx);
+                            cx.notify();
+                        })),
+                )
+            })
             .child(
                 Button::new("graph-path-clear")
                     .label("Clear")
@@ -1654,7 +1690,7 @@ impl Render for GraphView {
                     .overflow_y_scroll()
                     .border_l_1()
                     .border_color(cx.theme().border)
-                    .when(self.path_ends.is_some(), |side| {
+                    .when(self.path_ends.is_some() || self.trail.is_some(), |side| {
                         side.child(self.render_path(cx))
                     })
                     .map(|side| match selected {

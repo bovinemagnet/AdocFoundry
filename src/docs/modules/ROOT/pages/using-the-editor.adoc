@@ -1337,6 +1337,63 @@ For example, renaming `first-steps` to `begin` changes these lines:
 
 [source,asciidoc]
 ----
+[[impact-inspector]]
+== Inspect impact
+
+The Impact panel shows what a change touches, before you make it or once you have.
+It is a sidebar tab, shown once an analysis has been asked for.
+It uses the same analysis as the xref:command-line.adoc#impact[command line].
+The analysis runs on a worker and never while drawing, and it changes no file.
+A newer request replaces one still running.
+
+=== Asking
+
+* Edit > Inspect Impact (`impact.inspect`) analyses the page as if it were removed, without removing anything.
+It is also in the command palette, in a page tab's menu and in the Files panel's menu for an AsciiDoc file.
+It shows what references the page (each such reference broken, with where it is written), the pages that include it (transitively), the navigation that lists it and the PDF profiles that publish it.
+Look at it before you move, rename or delete a page or partial.
+* Git > Analyse Impact of Changes (`impact.analyse_changes`) compares `HEAD` with the working tree, unsaved edits included.
+* Git > Compare Revisions... (`impact.compare_revisions`) asks for a base and a head, any branch, tag or commit.
+It starts with `main` and `HEAD`, or the last ones compared.
+It compares them from Git objects alone and checks nothing out.
+
+=== The panel
+
+At the top the panel says what was compared:
+
+* "Changes since HEAD", with ", unsaved edits included" when an open page has unsaved edits.
+* "Between <base> and <head>".
+* "If <resource id> were moved or removed".
+
+Below are the buttons *Again*, which asks the same again, *Changes* and *Revisions...*.
+Then comes the state:
+
+* "Analysing...".
+* "Could not analyse: <reason>", for no Git repository, an unknown revision or a path outside the workspace.
+* "Complete.", or "Partial: not everything could be analysed." with each gap's reason listed.
+* "Showing N of M." when the list is cut at 1,000 results.
+* "Out of date: the workspace changed since. Choose Again." once anything in the workspace changed after the analysis was asked for, an edit or a file changed on disk.
+
+=== The results
+
+Results are grouped, each with a count: Rendered content, References to review, Navigation and Publications.
+Each row shows the resource id, or the path, then notes:
+
+* `#anchor`.
+* The status: broken, resolved by the change, resolved by page-aliases, now resolves, now listed or no longer listed.
+* "potential", when the evidence is incomplete.
+* "profile <name>", for a publication.
+
+Each row also gives its path in words.
+For rendered content and publications it is a render dependency, such as "Render dependency: nested.adoc is in intro.adoc, in index.adoc".
+For references and navigation it is a reader path, such as "Reader path: guide.adoc -> install.adoc".
+
+Click a row to open where it is written: the xref or navigation entry at its place, else the affected page.
+*Graph* opens the graph window showing that path, numbered, under the title "Render dependency" or "Reader path".
+It is the path the analysis followed, not a shortest path.
+
+When the results span more than one component version, a row of filter buttons shows one at a time: *All*, then each component version.
+
 [[begin]]
 == First Steps
 

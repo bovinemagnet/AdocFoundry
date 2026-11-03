@@ -110,6 +110,11 @@ pub enum CommandArgs {
         query: String,
         document: Option<DocumentId>,
     },
+    /// Two revisions to compare, by any name Git reads: `impact.compare_revisions`.
+    Revisions {
+        base: String,
+        head: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

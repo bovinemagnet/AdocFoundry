@@ -203,6 +203,9 @@ pub enum ReportSource {
     },
     /// Paths the caller named, against the working tree, with no base revision.
     Paths,
+    /// The working tree against itself with the named paths taken out: what removing, moving or
+    /// renaming them would affect. Nothing is removed.
+    Removal,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

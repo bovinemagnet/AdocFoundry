@@ -243,6 +243,15 @@ Each is settled before work starts on the package it affects, and the outcome is
 - `adocfoundry-cli impact` takes exactly one source; `--against` takes `HEAD` only. Standard output holds only the report. Exit 0 for a finished analysis (never for having many consumers), 2 for an invalid or unavailable source, or a partial report with `--require-complete`. `--max-impacts` sets the cut (1,000 by default); counts are before it.
 - The JSON is the report itself; the text groups the kinds as rendered content, references to review, navigation and publications, each line with its dependency path and source span.
 
+### I5 (#311)
+
+- **Decision (§14, last item): #100 is built here, not extended.** #100's inspector did not exist, so Inspect Impact is the impact analysis of a new source, `ChangeSource::Removal`: the live workspace against a copy with the file taken out of the index and catalog (`remove_document`, `remove_source`, as a staged move does), every named file removed. Its references are reference-integrity reviews with their place, its include consumers render impacts, its navigation entries and profiles as for any removal; nothing is removed. #100's "deleting it from the app shows them first" waits for a delete command, which the app does not have.
+- **Snapshot resolution.** `adoc-lang`'s `reference_target_path` falls back to the disk; the snapshot now accepts only a file its side holds, so a removed file still on disk (in a what-if, or a revision's snapshot) never resolves its referrers.
+- **On a worker.** `Engine::inspect_impact` takes a copy of the live workspace (with the open buffers' parses), the open documents and the cached revision snapshots, and runs the same `compute` as `analyse_impact` on a worker; snapshots built on the way join the cache when it reports back; a newer request's generation drops an older result. The front end draws the kept report only.
+- **Out of date** is the workspace revision moving after the request: any edit, file change or catalog change. The panel says so and offers Again; it never re-runs by itself.
+- **Graph provenance.** `impact_trail` turns an impact's `via` into graph steps with the links the graph holds between each pair (backwards for includes and references, which run from the consumer); base-side evidence the live graph lacks gives a step with no links. The graph window shows it through `GraphView::show_trail`, titled Render dependency or Reader path, with no Directed toggle: not a shortest path (§9).
+- `impact_ui_drilldown_and_graph_path` is §11 test 10.
+
 ### I2 (#308)
 
 - **Revisions from objects.** `adoc-git`'s `revision.rs` resolves a ref (`rev_parse_single`, peeled to a commit), lists its tree, reads blob text and diffs two trees with `gix`'s default rename tracking. Nothing touches the working tree, the index or `HEAD`; nothing is fetched or run.

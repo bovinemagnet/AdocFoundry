@@ -172,6 +172,18 @@ The unit test `scaffold_failure_undoes_itself` in `crates/adoc-engine/src/new_pr
 
 `mcp_create_project_reuses_engine_command` in `crates/adoc-mcp/tests/creation.rs` checks that `create_project` makes what the engine command makes.
 
+== Impact inspector tests
+
+`crates/adoc-engine/tests/impact_inspection.rs` drives the inspector headlessly.
+The tests are:
+
+* `inspect_impact_runs_on_a_worker_and_goes_out_of_date`
+* `inspecting_a_page_lists_what_removing_it_would_break`, which checks the references broken with their place, and the navigation
+* `an_impact_s_path_becomes_graph_steps_in_the_links_direction`
+* `a_newer_request_supersedes_one_running_and_failures_are_kept`
+
+The app test `impact_ui_drilldown_and_graph_path` in `crates/adocfoundry/src/ui_tests.rs` checks the rows, a row opening its page, the graph window's path titled "Render dependency", the out-of-date note, and that redrawing analyses nothing.
+
 == Template tests
 
 `crates/adoc-engine/tests/templates.rs` drives templates through `project.new`.

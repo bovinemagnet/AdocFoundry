@@ -7855,3 +7855,124 @@ fn template_picker_hides_unused_fields(cx: &mut TestAppContext) {
         "nothing made until Create"
     );
 }
+
+// --- the impact inspector ---------------------------------------------------------------------
+
+/// Impact PRD §11 test 10: Inspect Impact on a partial lists the pages that include it, grouped,
+/// with the render dependency path; a row opens the page, and Graph shows that path in the graph
+/// window under its own title. The panel draws the kept report and never analyses while drawing.
+#[gpui::test]
+fn impact_ui_drilldown_and_graph_path(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("impact"));
+    copy_tree(&fixture("impact"), &root);
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view =
+            cx.new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), vec![], window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| app.read(cx).engine.graph_revision() > 0)
+    }));
+
+    let nested = root.join("v1/modules/ROOT/partials/nested.adoc");
+    cx.update(|_, cx| workspace.update(cx, |view, cx| view.inspect_impact_of(&nested, cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("impact-row-0").is_some()
+    }));
+    let source = cx.update(|_, cx| {
+        matches!(
+            app.read(cx).engine.impact_inspection().map(|inspection| &inspection.source),
+            Some(adoc_engine::ChangeSource::Removal(paths)) if *paths == [nested.clone()]
+        )
+    });
+    assert!(source);
+    assert!(cx.debug_bounds("impact-source").is_some());
+    assert!(cx.debug_bounds("impact-stale").is_none());
+
+    // Drawing again analyses nothing: the kept report is the same object, still ready.
+    let before = cx.update(|_, cx| app.read(cx).engine.impact_inspection().cloned());
+    for _ in 0..3 {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+    assert_eq!(
+        cx.update(|_, cx| app.read(cx).engine.impact_inspection().cloned()),
+        before
+    );
+
+    // The render impacts are rows; the one for index.adoc opens that page.
+    let (row, index) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let Some(adoc_engine::InspectionState::Ready(report)) = engine
+            .impact_inspection()
+            .map(|inspection| &inspection.state)
+        else {
+            panic!("ready");
+        };
+        let rendered: Vec<&adoc_engine::impact::Impact> = report
+            .impacts
+            .iter()
+            .filter(|impact| impact.kind == adoc_engine::impact::ImpactKind::Render)
+            .collect();
+        let row = rendered
+            .iter()
+            .position(|impact| impact.path == "v1/modules/ROOT/pages/index.adoc")
+            .expect("index.adoc is rendered from the partial");
+        (row, root.join("v1/modules/ROOT/pages/index.adoc"))
+    });
+    click(
+        Box::leak(format!("impact-row-{row}").into_boxed_str()),
+        &mut cx,
+    );
+    assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
+        .is_some_and(|(path, _)| path == index)));
+
+    // Graph shows the path the analysis followed, titled as a render dependency.
+    click(
+        Box::leak(format!("impact-graph-{row}").into_boxed_str()),
+        &mut cx,
+    );
+    let (_, view) = cx
+        .update(|_, cx| workspace.read(cx).graph_window_for_test().cloned())
+        .expect("the graph window opened");
+    let (title, steps) = cx
+        .update(|_, cx| view.read(cx).trail_for_test())
+        .expect("a path is shown");
+    assert_eq!(title.as_ref(), "Render dependency");
+    let keys: Vec<adoc_engine::GraphKey> = steps.iter().map(|step| step.key.clone()).collect();
+    assert_eq!(
+        keys,
+        [
+            graph_key(&nested),
+            graph_key(&root.join("v1/modules/ROOT/partials/intro.adoc")),
+            graph_key(&index),
+        ]
+    );
+    assert!(steps[1..].iter().all(|step| step.backwards));
+
+    // An edit makes the report out of date, and says so.
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                adoc_engine::commands::ids::EDIT_INSERT_TEXT,
+                adoc_engine::CommandArgs::Text {
+                    id,
+                    range: adoc_core::SourceRange::new(0, 0),
+                    text: "x".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("impact-stale").is_some());
+}

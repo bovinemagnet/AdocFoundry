@@ -81,6 +81,9 @@ pub struct Engine {
     /// The last site build, and which build it is, so a stopped build's late lines are dropped.
     pub(crate) site_build: Option<crate::SiteBuild>,
     pub(crate) site_build_generation: u64,
+    /// The impact inspector's kept analysis, and which request it answers.
+    pub(crate) impact_inspection: Option<crate::ImpactInspection>,
+    pub(crate) impact_generation: u64,
     /// Revision snapshots for impact analysis, by tree id.
     #[cfg_attr(not(feature = "git"), allow(dead_code))]
     pub(crate) impact: crate::impact_analysis::ImpactCache,
@@ -208,6 +211,8 @@ impl Engine {
             group_projects: BTreeMap::new(),
             site_build: None,
             site_build_generation: 0,
+            impact_inspection: None,
+            impact_generation: 0,
             impact: crate::impact_analysis::ImpactCache::default(),
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
