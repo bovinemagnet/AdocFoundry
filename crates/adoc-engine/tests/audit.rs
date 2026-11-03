@@ -17,8 +17,11 @@ use adoc_engine::{
     audit::{AuditReport, AuditScope, FindingCode, RuleId},
     commands::ids,
     normalize_path, CommandArgs, Engine, EngineEvent, ManualClock, NewPage, Problem, ProblemFilter,
-    ProblemPlace, Settings, INDEX_SETTLE,
+    ProblemPlace, Settings, INDEX_SETTLE, WATCH_DEBOUNCE,
 };
+
+/// How long the watcher must report nothing before a test starts counting.
+const QUIET: Duration = Duration::from_millis(300);
 
 fn fixture() -> PathBuf {
     normalize_path(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/audit"))
@@ -57,13 +60,35 @@ impl Copy {
         engine.open_workspace(vec![root.clone()]).unwrap();
         assert!(engine.wait_for_workers(Duration::from_secs(10)));
         engine.pump();
-        Self {
+        let mut copy = Self {
             _directory: directory,
             root,
             clock,
             engine,
             events,
+        };
+        copy.quiet();
+        copy
+    }
+
+    /// Applies what the watcher saw of the copy itself, which FSEvents and Windows can report
+    /// after the watch began, until it reports nothing for [`QUIET`]: a test then counts only
+    /// the work its own changes cause.
+    fn quiet(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut since = Instant::now();
+        while since.elapsed() < QUIET && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+            self.engine.pump();
+            if self.engine.has_pending() {
+                self.clock.advance(WATCH_DEBOUNCE);
+                self.engine.pump();
+                assert!(self.engine.wait_for_workers(Duration::from_secs(10)));
+                self.engine.pump();
+                since = Instant::now();
+            }
         }
+        let _ = self.events.try_iter().count();
     }
 
     fn plain() -> Self {
@@ -312,7 +337,12 @@ fn the_quality_settings_keep_the_audit() {
     )
     .unwrap();
     let mut copy = Copy::new(Settings::load(Some(&user), None).unwrap());
-    assert!(copy.until_audit_changed(), "kept without being asked for");
+    // Built while the copy settled, or soon after.
+    assert!(
+        copy.engine.audit_builds() > 0 || copy.until_audit_changed(),
+        "kept without being asked for"
+    );
+    assert!(copy.settled());
     let report = copy.checked();
     assert!(
         paths_with(&report, UNLISTED).is_empty(),

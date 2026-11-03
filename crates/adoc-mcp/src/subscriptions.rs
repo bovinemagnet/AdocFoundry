@@ -194,8 +194,9 @@ mod tests {
         assert!(check(&mut entry, start, false), "changed on disk");
         assert!(!check(&mut entry, start, true), "once");
 
-        // Changed again within the throttle: held, and announced once it has passed.
-        std::fs::write(&path, "= Three, longer again\n").unwrap();
+        // Changed again within the throttle: held, and announced once it has passed. Its length
+        // differs, as Windows' file times can stay the same across writes this close together.
+        std::fs::write(&path, "= Three, longer again still\n").unwrap();
         assert!(!check(
             &mut entry,
             start + Duration::from_millis(100),

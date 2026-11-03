@@ -433,11 +433,17 @@ fn mcp_cursor_rejects_stale_index_revision() {
     client.stop();
 }
 
-/// Writes a page on disk and waits until the server has indexed it.
+/// Writes a page on disk and waits until the server has indexed it. While it indexes, `check`
+/// answers `index_incomplete`, which is a wait too.
 fn add_page_and_wait(client: &mut Client, root: &Path, before: u64) {
     std::fs::write(root.join("big/modules/ROOT/pages/added.adoc"), "= Added\n").unwrap();
     let deadline = Instant::now() + WAIT;
-    while revision(client) == before {
+    let indexed = |client: &mut Client| match client.call("check", json!({ "limit": 1 })) {
+        Ok(result) => result["workspace_revision"].as_u64() != Some(before),
+        Err(error) if error.contains("still being indexed") => false,
+        Err(error) => panic!("{error}"),
+    };
+    while !indexed(client) {
         assert!(Instant::now() < deadline, "the page was never indexed");
         std::thread::sleep(std::time::Duration::from_millis(100));
     }

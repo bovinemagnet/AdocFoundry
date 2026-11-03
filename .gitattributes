@@ -10,3 +10,7 @@ crates/*/tests/snapshots/*.snap -text
 
 # Generated, and compared byte for byte with what the generator writes (`theme_keys.rs`).
 src/docs/modules/ROOT/partials/theme-keys.adoc -text
+
+# The built-in New Antora Project templates are embedded as they are checked out and written
+# into new projects, so they stay LF on every platform, as the pages they become are compared.
+crates/adoc-engine/templates/** -text
