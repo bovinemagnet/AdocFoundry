@@ -369,6 +369,8 @@ cargo install --git https://github.com/bovinemagnet/AdocFoundry adoc-ls --featur
 }
 ```
 
+A client started from the desktop does not see a terminal's `PATH`, so give it the binary's full path: `/Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp` on macOS, `C:\Program Files\AdocFoundry\bin\adoc-mcp.exe` after the Windows MSI, `/usr/bin/adoc-mcp` from the deb or rpm. The user guide's MCP server page shows how to add the server to Claude Code, Claude Desktop, Codex, VS Code, Cursor, Gemini CLI and Zed, each of which keeps its servers in its own place and format (Codex in TOML, VS Code under `servers`).
+
 With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free one) the server listens for MCP's Streamable HTTP transport at `/mcp` instead. A non-loopback address is refused. Every request must carry `Authorization: Bearer <token>`, where the token is `ADOC_MCP_TOKEN`, or a random one printed once to standard error when that is unset. Clients that connect to a running server take its URL and header:
 
 ```json
