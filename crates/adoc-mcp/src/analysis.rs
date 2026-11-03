@@ -5,7 +5,10 @@
 //! when a passing report covers less than everything.
 
 use adoc_engine::{
-    audit::{AuditScope, Completeness, FailOn, FindingCode, Region, Severity, Verdict},
+    audit::{
+        AuditReport, AuditScope, Completeness, FailOn, FindingCode, Policy, Region, Severity,
+        Verdict,
+    },
     Settings,
 };
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -16,7 +19,7 @@ use serde_json::{json, Value};
 use crate::{
     responses::{page, Failure},
     schemas,
-    server::{Answer, Server},
+    server::{Answer, Server, State},
 };
 
 #[derive(Deserialize, JsonSchema)]
@@ -48,7 +51,11 @@ struct QualityAuditArgs {
 
 /// What a report means for a client deciding what to do: a pass is `pass` only when the audit
 /// covered everything, so a partial report is never taken for an unqualified pass.
-fn outcome(verdict: Verdict, completeness: &Completeness, policy_problems: bool) -> &'static str {
+pub(crate) fn outcome(
+    verdict: Verdict,
+    completeness: &Completeness,
+    policy_problems: bool,
+) -> &'static str {
     if policy_problems {
         return "untrustworthy";
     }
@@ -58,6 +65,89 @@ fn outcome(verdict: Verdict, completeness: &Completeness, policy_problems: bool)
         (Verdict::Fail, _) => "fail",
         (Verdict::Untrustworthy, _) => "untrustworthy",
     }
+}
+
+/// An audit as `adocfoundry-cli audit` makes it, with what chose it.
+pub(crate) struct Audited {
+    pub(crate) report: AuditReport,
+    /// What is wrong with the workspace's `[quality]` settings; a gate does not trust the
+    /// report while there is any.
+    pub(crate) problems: Vec<String>,
+    pub(crate) policy: Policy,
+    pub(crate) scope: AuditScope,
+}
+
+impl Audited {
+    /// What the command line would exit with.
+    pub(crate) fn exit_code(&self) -> u8 {
+        if self.problems.is_empty() {
+            self.report.verdict().exit_code()
+        } else {
+            2
+        }
+    }
+}
+
+/// The audit of the workspace, or of `component` (at `version`, a numbered one, or every
+/// version), under the workspace's own policy as the command line reads it, never the user's
+/// settings file, so every client and CI see the same result; `fail_on` and `require_complete`
+/// override it as `--fail-on` and `--require-complete` do.
+pub(crate) fn audit_for(
+    state: &mut State,
+    component: Option<&str>,
+    version: Option<&str>,
+    fail_on: Option<FailOn>,
+    require_complete: bool,
+) -> Result<Audited, Failure> {
+    let scope =
+        match (component, version) {
+            (None, None) => AuditScope::Workspace,
+            (None, Some(_)) => {
+                return Err(Failure::invalid(
+                    "a `version` needs its `component`, so no other is taken",
+                ))
+            }
+            (Some(_), Some("~")) => return Err(Failure::invalid(
+                "an audit's scope names a numbered version, or every version of the component, \
+                 the versionless one included: leave `version` out",
+            )),
+            (Some(name), version) => {
+                let catalog = &state.engine.workspace().antora;
+                let known = match version {
+                    Some(version) => catalog.component(name, Some(version)).is_some(),
+                    None => !catalog.versions_of(name).is_empty(),
+                };
+                if !known {
+                    return Err(Failure::not_found(format!(
+                        "no component `{name}`{} in the workspace",
+                        version
+                            .map(|version| format!(" at version `{version}`"))
+                            .unwrap_or_default()
+                    )));
+                }
+                AuditScope::Component {
+                    name: name.to_owned(),
+                    version: version.map(str::to_owned),
+                }
+            }
+        };
+    let quality = Settings::load(None, Some(state.root()))
+        .map_err(|error| Failure::invalid(format!("the workspace's settings: {error}")))?
+        .quality;
+    let mut policy = quality.policy.clone();
+    if let Some(fail_on) = fail_on {
+        policy.fail_on = fail_on;
+    }
+    if require_complete {
+        policy.require_complete = true;
+    }
+    let report = state.engine.audit_now_with(scope.clone(), &policy);
+    Ok(Audited {
+        report,
+        problems: quality.problems,
+        policy,
+        scope,
+    })
 }
 
 #[tool_router(router = analysis_router, vis = "pub(crate)")]
@@ -70,40 +160,6 @@ impl Server {
     async fn quality_audit(&self, Parameters(args): Parameters<QualityAuditArgs>) -> Answer {
         self.run(move |state| {
             state.indexed()?;
-            let scope = match (&args.component, &args.version) {
-                (None, None) => AuditScope::Workspace,
-                (None, Some(_)) => {
-                    return Err(Failure::invalid(
-                        "a `version` needs its `component`, so no other is taken",
-                    ))
-                }
-                (Some(_), Some(version)) if version == "~" => {
-                    return Err(Failure::invalid(
-                        "an audit's scope names a numbered version, or every version of the \
-                         component, the versionless one included: leave `version` out",
-                    ))
-                }
-                (Some(name), version) => {
-                    let catalog = &state.engine.workspace().antora;
-                    let known = match version {
-                        Some(version) => catalog.component(name, Some(version)).is_some(),
-                        None => !catalog.versions_of(name).is_empty(),
-                    };
-                    if !known {
-                        return Err(Failure::not_found(format!(
-                            "no component `{name}`{} in the workspace",
-                            version
-                                .as_deref()
-                                .map(|version| format!(" at version `{version}`"))
-                                .unwrap_or_default()
-                        )));
-                    }
-                    AuditScope::Component {
-                        name: name.clone(),
-                        version: version.clone(),
-                    }
-                }
-            };
             let codes = args
                 .rules
                 .iter()
@@ -137,22 +193,21 @@ impl Server {
                 })
                 .transpose()?;
 
-            // The policy is the workspace's own, as the command line reads it: never the user's
-            // settings file, so every client and CI see the same result.
-            let quality = Settings::load(None, Some(state.root()))
-                .map_err(|error| Failure::invalid(format!("the workspace's settings: {error}")))?
-                .quality;
-            let mut policy = quality.policy.clone();
-            if let Some(fail_on) = fail_on {
-                policy.fail_on = fail_on;
-            }
-            if args.require_complete == Some(true) {
-                policy.require_complete = true;
-            }
             let revision = state.engine.workspace_revision();
-            let report = state.engine.audit_now_with(scope.clone(), &policy);
+            let Audited {
+                report,
+                problems,
+                policy,
+                scope,
+            } = audit_for(
+                state,
+                args.component.as_deref(),
+                args.version.as_deref(),
+                fail_on,
+                args.require_complete == Some(true),
+            )?;
             let verdict = report.verdict();
-            let outcome = outcome(verdict, report.completeness(), !quality.problems.is_empty());
+            let outcome = outcome(verdict, report.completeness(), !problems.is_empty());
             let mut value = serde_json::to_value(&report)
                 .map_err(|error| Failure::internal(error.to_string()))?;
 
@@ -206,13 +261,13 @@ impl Server {
                 Verdict::Fail => "fail",
                 Verdict::Untrustworthy => "untrustworthy",
             });
-            value["exit_code"] = json!(if quality.problems.is_empty() {
+            value["exit_code"] = json!(if problems.is_empty() {
                 verdict.exit_code()
             } else {
                 2
             });
             value["outcome"] = json!(outcome);
-            value["policy_problems"] = json!(quality.problems);
+            value["policy_problems"] = json!(problems);
             value["workspace_revision"] = json!(revision);
             Ok(value)
         })

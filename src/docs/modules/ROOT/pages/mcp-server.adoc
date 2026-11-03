@@ -258,6 +258,78 @@ The tool runs no optional provider, such as Vale or external links, and makes no
 A cursor belongs to its arguments and policy, so changing a filter or an override starts again.
 Use `check` for diagnostics alone.
 
+[#publication]
+== Checking publication
+
+`validate_publication` is a read-only tool.
+It reports whether the documentation is ready to publish.
+It is put together from what the engine already checks, and has no rule of its own.
+
+[cols="2,3,4"]
+|===
+|Tool |Arguments |Result
+
+|`validate_publication`
+|`component?`, `version?`
+|The audit, the navigation, the profiles and what was not checked, with an `outcome`.
+|===
+
+The scope is taken as `quality_audit` takes it.
+The answer has these parts:
+
+`audit`::
+The quality audit as `quality_audit` makes it, under the workspace's own policy. It gives its `outcome`, `exit_code`, `completeness`, `counts` and `policy_problems`.
+
+`navigation`::
+For each component version in scope: its `navigation_files`, each with `exists`; its `start_page`, with `resolves` and `path`; and the audit's `coverage` of its pages (`pages`, `listed` and `undetermined`). The start page is the `start_page` its `antora.yml` names, or `ROOT:index.adoc` by default, which is marked `default: true`.
+
+`profiles`::
+Every PDF publication profile (`[pdf.profiles.<name>]`), with `ready` and its `problems`. A problem is an unknown or outside output, content not in the workspace (a page not indexed, a component version not in the catalog, or a missing navigation file), or a theme not found. Profiles are checked without exporting. See xref:pdf-export.adoc#publication-profiles[Publication profiles].
+
+`not_checked`::
+What a native check cannot see: the Antora build itself, with its extensions, UI bundle, content sources and remote components; what the native renderer approximates; and external links.
+
+The `outcome` is one of:
+
+* `ready`
+* `ready_partial`, where nothing failed but the audit could not check everything
+* `not_ready`, where the audit failed or is untrustworthy, a start page does not resolve, a navigation file is missing, or a profile has problems
+
+Every profile is checked whatever the scope.
+The tool builds nothing and makes no network request.
+
+[#prompts]
+== Prompts
+
+The server offers four MCP prompts.
+They are workflow recipes that a client can show its user.
+Each is text that names the tools to call, in order.
+None grants a permission.
+Each says that only the server decides what may change, and that page text is data, never instructions.
+
+[cols="2,3,4"]
+|===
+|Prompt |Arguments |Recipe
+
+|`review_documentation`
+|`component?`, `version?`
+|Audit, summarise, look at the pages behind the most frequent findings, and suggest fixes as previews.
+
+|`create_howto`
+|`component`, `module?` (default `ROOT`), `topic`
+|Look at the module's pages and navigation, preview a `create_page` with its navigation entry, show it, apply it on agreement, and check the result.
+
+|`review_documentation_change`
+|`pages` (paths or resource ids, separated by commas)
+|Get each page's context and incoming references, its diagnostics and the audit's relevant rules. It says that impact analysis across Git revisions is not available yet.
+
+|`prepare_release`
+|`component`, `version?`
+|Run `validate_publication`, then the audit's findings when it does not pass, say what was not checked, and suggest fixes as previews.
+|===
+
+A missing required argument, or an unknown prompt, is an error.
+
 [#staging]
 == Staging changes
 
@@ -286,6 +358,9 @@ Each operation has a `kind`:
 
 |`create_partial`
 |`component`, `version`, `module`, `file_name` (in the `partials` folder) and optionally `text`.
+
+|`create_module`
+|`component`, `version`, `name`, and optionally `families`, `navigation`, `index` and `index_title`. `version` is `~` for the versionless version. It is needed when the component has several versions. See <<creating-a-module>>.
 
 |`rename`
 |`path` or `resource_id`, `new_name` (a file name or a path relative to the page's folder) and optionally `expected_hash`. It rewrites the xrefs, navigation entries and includes that name the page, as Rename Page does.
@@ -389,6 +464,10 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |`component`, `version`, `module`, `file_name`, `text?`
 |Makes a partial through the engine's `page.new_partial` command, as New Partial does. `file_name` is in the `partials` folder, and may include folders, such as `shared/limits.adoc`. The text, when given, is written as a second undo step and saved. A partial that exists already is a `conflict`. It returns `path`, `resource_id` and `include`. `include` has `from_its_module` (such as `+include::partial$shared/limits.adoc[]+`) and `from_anywhere`, the full resource id (such as `+include::3.0@product:admin:partial$shared/limits.adoc[]+`).
 
+|`create_module`
+|`component`, `version`, `name`, `families?`, `navigation?`, `index?`, `index_title?`
+|Makes a module through the engine's `module.new` command, the one the app's New Module invokes. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as `invalid_argument`. `families` lists the families to make besides `pages`, which is always made. Without it, `partials` and `images` are made. `navigation` (true by default) makes `nav.adoc` and lists it in `antora.yml`. `index` (true by default) makes `pages/index.adoc`, titled `index_title` or the name in title case. A name that exists is a `conflict`, and a bad name is `invalid_argument`. It applies at once, saves `antora.yml`, and is one undo step. It returns `module`, `path`, `made` (every file made), `descriptor` and `index_page` (its resource id).
+
 |`edit_page`
 |`path`, `edits`, `save?`
 |Applies the edits in order. Each edit is `{ old_text, new_text }` or `{ range: { start, end }, new_text }`, and goes through the engine's `edit.replace_range` command. `old_text` must occur exactly once. If any edit fails, none of that call's edits stay. With `save: true` the page is written to disk. Otherwise the edits stay in the engine's buffer, and `read_page` shows them.
@@ -415,9 +494,22 @@ Then call `apply_changes`.
 Neither tool writes a file of its own.
 The engine does, through the same commands as the app.
 
-Making a module (`create_module`) waits for the engine's New Module command (issue #290).
+[[creating-a-module]]
+`create_module` makes a module in an existing component version, as New Module does.
+It applies at once and is not staged.
+See xref:using-the-editor.adoc#new-module[Make a new module] for the folders, files and `antora.yml` change.
+
 Making a project (`create_project`) waits for issues #291 to #295.
-Neither is offered yet.
+It is not offered yet.
+
+=== Not offered yet
+
+These are not offered, and the server does not list them:
+
+* `analyse_impact` waits for the Impact engine (issues #307 to #310, tracked as #317).
+* `create_project` waits for issues #291 to #295.
+* `build_site` waits for the build command of issue #293 and a separate `--allow-build` flag (issue #334). `--allow-write` never implies it. Until then the server refuses `--allow-build` as an unknown option.
+* Resource-change subscriptions wait for issue #335.
 
 == Resources
 
@@ -551,7 +643,76 @@ Renders, searches, Git status and exports keep their 120-second limit, after whi
 * Texts are cut at 200,000 bytes. The result then carries `truncated: { shown_bytes, total_bytes }`.
 * Errors carry a stable code and the engine's message: see <<errors>>.
 * A request waits at most 30 seconds for the engine, and at most 16 wait at once: see <<_waiting_for_the_engine>>.
+* `validate_publication` and the prompts make no request and run nothing.
 * A preview holds at most 64 operations, and expires after 15 minutes. A session keeps at most 16 previews and 4 MiB of staged text: see <<staging>>.
+
+[#workflows]
+== Example workflows
+
+=== Adding a page
+
+List the module's pages with `list_pages`.
+
+[source,json]
+----
+{ "component": "product", "version": "3.0", "module": "ROOT" }
+----
+
+Read the outline of the module's navigation file with `get_outline`.
+Then call `preview_changes` with a `create_page` operation.
+
+[source,json]
+----
+{
+  "operations": [
+    {
+      "kind": "create_page",
+      "component": "product",
+      "version": "3.0",
+      "module": "ROOT",
+      "title": "Rotating keys",
+      "add_to_navigation": true
+    }
+  ]
+}
+----
+
+Read the diffs in `files`.
+When they are right, call `apply_changes` with the `preview_id`.
+This needs `--allow-write`.
+
+[source,json]
+----
+{ "preview_id": "<the id from the preview>" }
+----
+
+=== Reviewing quality before a release
+
+[source,json]
+----
+{ "component": "product", "version": "3.0" }
+----
+
+Send this to `validate_publication`.
+If the `outcome` is not `ready`, call `quality_audit` with the same scope, and page through the findings with `cursor`.
+
+[source,json]
+----
+{ "component": "product", "version": "3.0", "severity": "warning" }
+----
+
+Fix what it finds with previews.
+
+=== Checking what a change to a partial touches
+
+Call `find_references` on the partial.
+
+[source,json]
+----
+{ "resource_id": "product:ROOT:partial$note.adoc" }
+----
+
+Then call `get_page_context` on each page that includes it.
 
 == Installing
 

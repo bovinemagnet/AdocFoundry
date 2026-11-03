@@ -400,6 +400,48 @@ branch main
 If `<root>` is not in a Git repository the command fails with an error and exits with 2.
 The other subcommands do not look at Git.
 
+[[new-module]]
+== new-module
+
+`new-module` makes a module in an existing Antora component version, as File › New Module… does in the app.
+`<component-root>` is the folder that holds `antora.yml`.
+
+[source,sh]
+----
+adocfoundry-cli new-module docs admin
+adocfoundry-cli new-module docs admin-guide --families pages,partials,images,examples --index-title "Administration"
+adocfoundry-cli new-module docs reference --no-nav
+----
+
+[cols="2,4"]
+|===
+|Option |Meaning
+
+|`--families <list>`
+|The families to make, separated by commas: `pages`, `partials`, `images`, `examples` and `attachments`. `pages` is always made. The default is `pages,partials,images`.
+
+|`--no-nav`
+|Does not make `nav.adoc` or list it in `antora.yml`.
+
+|`--index-title <title>`
+|The title of the index page. The default is the name in title case.
+|===
+
+The name uses lower-case letters, digits, `.`, `_` and `-`, and starts with a letter or digit, or it is `ROOT` when the component version has no `ROOT` module.
+Each empty family folder holds a `.gitkeep` file.
+The command prints each file it made, then the descriptor line it added.
+
+[source,text]
+----
+made modules/admin/pages/index.adoc
+made modules/admin/nav.adoc
+listed modules/admin/nav.adoc in antora.yml
+----
+
+A name that is refused, such as one the component version has already, prints a message and exits with 2.
+Nothing is written then.
+See xref:using-the-editor.adoc#new-module[Make a new module] for what is made.
+
 [[graph]]
 == graph
 

@@ -7,7 +7,7 @@ use std::{path::PathBuf, time::Duration};
 use common::{fixture, scratch, Client, WAIT};
 use serde_json::json;
 
-const READ_TOOLS: [&str; 16] = [
+const READ_TOOLS: [&str; 17] = [
     "check",
     "find_references",
     "get_nav",
@@ -24,6 +24,7 @@ const READ_TOOLS: [&str; 16] = [
     "resolve",
     "search",
     "symbols",
+    "validate_publication",
 ];
 
 #[test]
@@ -286,6 +287,7 @@ fn write_tools_need_allow_write() {
     let mut expected: Vec<&str> = READ_TOOLS.to_vec();
     expected.extend([
         "apply_changes",
+        "create_module",
         "create_page",
         "create_partial",
         "edit_page",
