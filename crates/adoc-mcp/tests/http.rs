@@ -313,7 +313,14 @@ fn write_tools_need_allow_write_over_http() {
 
     let server = Server::start(&fixture("references"), true);
     let names = server.session().tool_names();
-    for tool in ["apply_changes", "edit_page", "export_pdf", "rename_page"] {
+    for tool in [
+        "apply_changes",
+        "create_page",
+        "create_partial",
+        "edit_page",
+        "export_pdf",
+        "rename_page",
+    ] {
         assert!(names.iter().any(|name| name == tool), "{names:?}");
     }
 }

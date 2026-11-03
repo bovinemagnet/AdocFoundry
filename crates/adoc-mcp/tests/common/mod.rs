@@ -161,3 +161,21 @@ impl Client {
         let _ = self.child.wait();
     }
 }
+
+/// Every file beneath `root` and what it holds, to tell whether anything was made, changed or
+/// removed.
+pub fn snapshot(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut folders = vec![root.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                folders.push(entry.path());
+            } else {
+                files.insert(entry.path(), std::fs::read(entry.path()).unwrap());
+            }
+        }
+    }
+    files
+}

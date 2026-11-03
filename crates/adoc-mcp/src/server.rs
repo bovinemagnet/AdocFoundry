@@ -42,7 +42,14 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 4] = ["edit_page", "rename_page", "export_pdf", "apply_changes"];
+const WRITE_TOOLS: [&str; 6] = [
+    "edit_page",
+    "rename_page",
+    "export_pdf",
+    "apply_changes",
+    "create_page",
+    "create_partial",
+];
 
 /// At most this many items in a list result that is not paged; the total is stated, and
 /// `incomplete` set, when there are more.
@@ -73,7 +80,7 @@ pub(crate) struct State {
 
 #[derive(Clone)]
 pub struct Server {
-    state: Arc<Mutex<State>>,
+    pub(crate) state: Arc<Mutex<State>>,
     tool_router: ToolRouter<Self>,
     /// [`LOCK_WAIT`], shorter in tests.
     lock_wait: Duration,
@@ -414,7 +421,8 @@ impl Server {
         let mut tool_router = Self::tool_router()
             + Self::discovery_router()
             + Self::analysis_router()
-            + Self::changes_router();
+            + Self::changes_router()
+            + Self::creation_router();
         if !allow_write {
             for name in WRITE_TOOLS {
                 tool_router.remove_route(name);
@@ -471,6 +479,9 @@ impl Server {
                     wait.as_secs_f32()
                 ))
             })?;
+            // Changes on disk and the graph's due updates are applied first, so every tool
+            // reads the workspace as it is, not as it was at the last idle pump.
+            state.engine.pump();
             Ok(work(&mut state))
         })
         .await

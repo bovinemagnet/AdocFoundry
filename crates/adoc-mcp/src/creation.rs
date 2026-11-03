@@ -1,0 +1,294 @@
+//! Antora-aware creation (MCP PRD §7.6): `create_page` and `create_partial`, adapters to the
+//! engine commands the app's New Page and New Partial invoke (`page.new`, `page.new_partial`),
+//! so the page's place, name, navigation entry and undo are the app's. Nothing here writes a
+//! file. Both apply at once and need `--allow-write`; the reviewed path for a change of several
+//! files is `preview_changes` and `apply_changes`, whose `create_page` and `create_partial`
+//! operations stage the same plans. `create_module` waits for #290's engine command, and
+//! `create_project` for #291–#295.
+
+use adoc_engine::{commands::ids, text_hash, CommandArgs, CommandOutcome, NewPage};
+use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+use crate::{
+    changes::{module_root, plain},
+    responses::{ErrorCode, Failure},
+    schemas,
+    server::{Answer, Server, State},
+};
+
+const SCHEMA_VERSION: u32 = 1;
+
+#[derive(Deserialize, JsonSchema)]
+struct CreatePageArgs {
+    component: String,
+    /// `~` for the versionless version; needed when the component has several.
+    version: Option<String>,
+    module: String,
+    /// The page's title, `= Title`; its file is named from it unless `file_name` is given.
+    title: String,
+    /// The page's path in the module's `pages` folder.
+    file_name: Option<String>,
+    /// Add an entry for the page at the end of the module's navigation file.
+    #[serde(default)]
+    add_to_navigation: bool,
+    /// The SHA-256 (hex) the navigation file must hold now, as a preview or
+    /// `get_page_context` saw it.
+    expected_nav_hash: Option<String>,
+    /// Write the page and the navigation file to disk; true by default. The page's file is
+    /// made in any case, as New Page makes it.
+    save: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CreatePartialArgs {
+    component: String,
+    /// `~` for the versionless version; needed when the component has several.
+    version: Option<String>,
+    module: String,
+    /// The partial's path in the module's `partials` folder.
+    file_name: String,
+    /// What the partial holds; empty without it.
+    #[serde(default)]
+    text: String,
+}
+
+/// Saves each of `paths` that is open, and the pages that could not be.
+fn save_all(state: &mut State, paths: &[std::path::PathBuf]) -> Vec<Value> {
+    let mut failed = Vec::new();
+    for path in paths {
+        let Some(id) = state.engine.document_for_path(path) else {
+            continue;
+        };
+        if let Err(error) = state
+            .engine
+            .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))
+        {
+            failed.push(json!({ "path": state.shown(path), "message": error.to_string() }));
+        }
+    }
+    failed
+}
+
+#[tool_router(router = creation_router, vis = "pub(crate)")]
+impl Server {
+    #[tool(
+        description = "Make a page in a component version's module, as the app's New Page does (`page.new`): named from its title, with an entry at the end of the module's navigation file when `add_to_navigation`, as one undo step. Applies at once; to review it first, use `preview_changes` with a `create_page` operation.",
+        output_schema = schemas::create_page(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn create_page(&self, Parameters(args): Parameters<CreatePageArgs>) -> Answer {
+        self.run(move |state| {
+            let root = module_root(state, &args.component, args.version.as_deref(), &args.module)?;
+            let file = args.file_name.as_deref().map(plain).transpose()?;
+            let request = NewPage {
+                module: root,
+                title: args.title.clone(),
+                add_to_nav: args.add_to_navigation,
+                file,
+            };
+            // Worked out first, without changing anything: the page's path and the navigation
+            // entry the command will make, checked against the roots and the expected hash.
+            let staged = state.engine.stage_new_page(&request).map_err(|error| {
+                let message = error.to_string();
+                let code = if message.ends_with("already exists") {
+                    ErrorCode::Conflict
+                } else {
+                    ErrorCode::InvalidArgument
+                };
+                Failure::new(code, message)
+            })?;
+            for path in staged.paths() {
+                state.confine(&path.to_string_lossy())?;
+            }
+            let nav = staged.edits.first().map(|file| file.path.clone());
+            if let Some(expected) = &args.expected_nav_hash {
+                let now = nav
+                    .as_deref()
+                    .and_then(|nav| state.engine.current_text(nav))
+                    .map(|text| text_hash(&text));
+                if now.as_ref() != Some(expected) {
+                    return Err(Failure::new(
+                        ErrorCode::Conflict,
+                        "the navigation file does not hold the text `expected_nav_hash` names",
+                    ));
+                }
+            }
+            let CommandOutcome::Opened(page) = state
+                .engine
+                .invoke(ids::PAGE_NEW, CommandArgs::NewPage(request))
+                .map_err(Failure::from)?
+            else {
+                return Err(Failure::internal("New Page opened no page"));
+            };
+            let path = state
+                .engine
+                .document(page)
+                .map(|document| document.path.clone())
+                .ok_or_else(|| Failure::internal("the new page is not open"))?;
+            let mut changed = vec![path.clone()];
+            changed.extend(nav.clone());
+            let save = args.save.unwrap_or(true);
+            let failed = if save { save_all(state, &changed) } else { Vec::new() };
+            if !failed.is_empty() {
+                return Err(Failure::new(
+                    ErrorCode::InternalError,
+                    "the page was made, but a file could not be saved; it stays in the server's buffers",
+                )
+                .with_details(json!({ "applied": true, "failed": failed })));
+            }
+            Ok(json!({
+                "schema_version": SCHEMA_VERSION,
+                "path": state.shown(&path),
+                "resource_id": state.engine.resource_id(&path),
+                "navigation_file": nav.as_deref().map(|nav| state.shown(nav)),
+                "changed": changed.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
+                "saved": save,
+                "workspace_revision": state.engine.workspace_revision(),
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Make a partial in a component version's module, as the app's New Partial does (`page.new_partial`), with its text as a second undo step, and give the include that names it: from its own module, and from anywhere.",
+        output_schema = schemas::create_partial(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn create_partial(&self, Parameters(args): Parameters<CreatePartialArgs>) -> Answer {
+        self.run(move |state| {
+            let root = module_root(state, &args.component, args.version.as_deref(), &args.module)?;
+            let relative = plain(&args.file_name)?;
+            let path = state.confine(&root.join("partials").join(&relative).to_string_lossy())?;
+            let CommandOutcome::Opened(id) = state
+                .engine
+                .invoke(ids::PAGE_NEW_PARTIAL, CommandArgs::Path(path.clone()))
+                .map_err(|error| match error {
+                    adoc_engine::EngineError::InvalidRequest(_) => {
+                        Failure::new(ErrorCode::Conflict, error.to_string())
+                    }
+                    other => Failure::from(other),
+                })?
+            else {
+                return Err(Failure::internal("New Partial opened no file"));
+            };
+            if !args.text.is_empty() {
+                state
+                    .engine
+                    .invoke(
+                        ids::EDIT_INSERT_TEXT,
+                        CommandArgs::Text {
+                            id,
+                            range: adoc_core::SourceRange::new(0, 0),
+                            text: args.text.clone(),
+                        },
+                    )
+                    .map_err(Failure::from)?;
+                let failed = save_all(state, std::slice::from_ref(&path));
+                if !failed.is_empty() {
+                    return Err(Failure::new(
+                        ErrorCode::InternalError,
+                        "the partial was made, but its text could not be saved; it stays in the server's buffers",
+                    )
+                    .with_details(json!({ "applied": true, "failed": failed })));
+                }
+            }
+            let resource_id = state.engine.resource_id(&path);
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            Ok(json!({
+                "schema_version": SCHEMA_VERSION,
+                "path": state.shown(&path),
+                "resource_id": resource_id,
+                "include": {
+                    "from_its_module": format!("include::partial${relative}[]"),
+                    "from_anywhere": resource_id.as_deref().map(|id| format!("include::{id}[]")),
+                },
+                "workspace_revision": state.engine.workspace_revision(),
+            }))
+        })
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::Path, time::Duration};
+
+    use adoc_engine::{Engine, Settings};
+
+    use super::*;
+
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
+    /// MCP PRD §11.3 test 18: the page made through `create_page` is the app's New Page,
+    /// resource id, navigation entry and all, and one undo takes back both.
+    #[test]
+    fn mcp_create_page_updates_nav_and_undo() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_engine::normalize_path(&directory.path().join("discovery"));
+        copy_tree(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/discovery"),
+            &root,
+        );
+        let mut engine = Engine::new(Settings::default().with_git_opt_in());
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(Duration::from_secs(30)));
+        let server = Server::new(engine, vec![root.clone()], true);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let made = runtime
+            .block_on(server.create_page(Parameters(CreatePageArgs {
+                component: "product".into(),
+                version: Some("~".into()),
+                module: "ROOT".into(),
+                title: "Configuring Authentication".into(),
+                file_name: None,
+                add_to_navigation: true,
+                expected_nav_hash: None,
+                save: Some(false),
+            })))
+            .unwrap();
+        let made = made.structured_content.unwrap();
+        assert_eq!(
+            made["resource_id"],
+            "product:ROOT:page$configuring-authentication.adoc"
+        );
+
+        let page = root.join("product/main/modules/ROOT/pages/configuring-authentication.adoc");
+        let nav = root.join("product/main/modules/ROOT/nav.adoc");
+        let mut state = server.state.lock().unwrap();
+        let engine = &mut state.engine;
+        let page_id = engine.document_for_path(&page).unwrap();
+        let nav_id = engine.document_for_path(&nav).unwrap();
+        assert!(engine
+            .document(nav_id)
+            .unwrap()
+            .text_string()
+            .ends_with("* xref:configuring-authentication.adoc[]\n"));
+        assert!(page.exists());
+
+        // As in the app: undoing in the page takes back the page and its entry together.
+        assert!(engine.undo(page_id));
+        assert!(!page.exists());
+        assert!(!engine
+            .document(nav_id)
+            .unwrap()
+            .text_string()
+            .contains("configuring-authentication"));
+    }
+}

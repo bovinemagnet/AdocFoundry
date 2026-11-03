@@ -381,6 +381,14 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |===
 |Tool |Arguments |Result
 
+|`create_page`
+|`component`, `version`, `module`, `title`, `file_name?`, `add_to_navigation?`, `expected_nav_hash?`, `save?`
+|Makes a page through the engine's `page.new` command, the one the app's New Page invokes, so the page's place, name, navigation entry and undo are the app's. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as ambiguous. `file_name` is the page's path in the module's `pages` folder. Without it the name is made from the title. With `add_to_navigation: true` an entry is added at the end of the module's navigation file. `expected_nav_hash` is the SHA-256 the navigation file must hold now, as a preview gave it. Otherwise the answer is `conflict`. With `save` (true by default) the navigation file and the page are written to disk. The page's file is made in any case, as New Page makes it. The page and its entry are one undo step. It applies at once. A page that exists already is a `conflict`. It returns `path`, `resource_id`, `navigation_file`, `changed` and `saved`.
+
+|`create_partial`
+|`component`, `version`, `module`, `file_name`, `text?`
+|Makes a partial through the engine's `page.new_partial` command, as New Partial does. `file_name` is in the `partials` folder, and may include folders, such as `shared/limits.adoc`. The text, when given, is written as a second undo step and saved. A partial that exists already is a `conflict`. It returns `path`, `resource_id` and `include`. `include` has `from_its_module` (such as `+include::partial$shared/limits.adoc[]+`) and `from_anywhere`, the full resource id (such as `+include::3.0@product:admin:partial$shared/limits.adoc[]+`).
+
 |`edit_page`
 |`path`, `edits`, `save?`
 |Applies the edits in order. Each edit is `{ old_text, new_text }` or `{ range: { start, end }, new_text }`, and goes through the engine's `edit.replace_range` command. `old_text` must occur exactly once. If any edit fails, none of that call's edits stay. With `save: true` the page is written to disk. Otherwise the edits stay in the engine's buffer, and `read_page` shows them.
@@ -395,6 +403,21 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |===
 
 See xref:pdf-export.adoc[Exporting to PDF] for themes and standards.
+
+=== Creating pages and partials
+
+`create_page` and `create_partial` apply at once.
+Use them when the client has the user's agreement already.
+For a change of several files, or one the user should review first, use `preview_changes` with `create_page` or `create_partial` operations.
+These stage the same plans.
+Then call `apply_changes`.
+
+Neither tool writes a file of its own.
+The engine does, through the same commands as the app.
+
+Making a module (`create_module`) waits for the engine's New Module command (issue #290).
+Making a project (`create_project`) waits for issues #291 to #295.
+Neither is offered yet.
 
 == Resources
 

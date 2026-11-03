@@ -442,4 +442,13 @@ Other notes:
 - **Validation findings** are each changed file's diagnostics after the change, on a clone of the workspace state with every staged file indexed and every new resource in the catalog.
 - `edit_page` and `rename_page` are unchanged.
 
+### M6 (#319)
+
+Decision 2 settled (§14): **preview first is the normal path, and the convenience tools apply at once.** `preview_changes` takes `create_page` and `create_partial` operations, staging the same plan `page.new` makes, for review and for changes of several files. `create_page` and `create_partial` are write tools (only with `--allow-write`) for a client that has the user's agreement already; they apply immediately through `page.new` and `page.new_partial`, list the files changed, and take `expected_nav_hash` as their revision check (a new file's absence is checked by the command itself, a collision answering `conflict`).
+
+- `create_page` stages the plan first, without changing anything, to confine every path it would touch and check the navigation file's hash, then invokes `page.new`, so the page, its file name from the title, its entry and its one undo step are the app's. With no active page, the entry goes at the end of the module's navigation file. `save` (true by default) writes the page and navigation file.
+- `create_partial` invokes `page.new_partial`, then inserts `text` as a second undo step and saves it. It answers with `include::partial$…[]` (from its own module) and the full resource id form.
+- `create_module` is not offered: #290 has not added the engine command, and no MCP-side layout or `antora.yml` writing stands in for it. `create_project` waits for #291–#295. So `mcp_create_module_reuses_engine_command` waits with them.
+- Every tool now pumps the engine before its work (`Server::blocking`), so changes on disk and the graph's due updates are applied before it reads. A catalog change can rebuild the graph on a worker, so a page just made may take a moment to show `in_navigation: true`.
+
 No implementation is claimed by this PRD beyond the packages noted above. The tool names, request/response examples, flags and Rust interfaces in this document are **proposed**, not implemented public APIs. The primary specifications for the underlying quality and impact analyses are `PRD-AdocFoundry_Documentation_Quality.md` and `PRD-AdocFoundry_Documentation_Impact.md` in `docs/prd/` (merged in #298). Their semantic decisions supersede this document's descriptions in case of discrepancy. When implementation diverges, record the reason here and update this PRD in the same PR, following the existing AdocFoundry convention.
