@@ -397,15 +397,18 @@ fn ring_radius(nodes: usize) -> f32 {
     REST_LENGTH * (nodes.max(1) as f32).sqrt()
 }
 
-/// A number from the seed and the key, the same on every platform.
+/// A number from the seed and the key, the same on every platform: a path's separators are
+/// taken as `/`, so `docs\page.adoc` on Windows starts where `docs/page.adoc` does elsewhere.
 fn mix(seed: u64, key: &GraphKey, salt: u64) -> u64 {
     // FNV-1a over the key's bytes, then SplitMix64.
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ salt;
-    let bytes: &[u8] = match key {
-        GraphKey::File(path) => path.as_os_str().as_encoded_bytes(),
-        GraphKey::Unresolved(text) => text.as_bytes(),
+    let (bytes, path): (&[u8], bool) = match key {
+        GraphKey::File(path) => (path.as_os_str().as_encoded_bytes(), true),
+        GraphKey::Unresolved(text) => (text.as_bytes(), false),
     };
     for &byte in bytes {
+        // `\` is ASCII, never part of a longer character in the encoding.
+        let byte = if path && byte == b'\\' { b'/' } else { byte };
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }

@@ -17,7 +17,8 @@ fn fixture(name: &str) -> PathBuf {
         .parent()
         .and_then(Path::parent)
         .unwrap()
-        .join("tests/fixtures")
+        .join("tests")
+        .join("fixtures")
         .join(name)
 }
 

@@ -372,17 +372,21 @@ mod tests {
             input: &input,
             scope: AuditScope::Workspace,
         };
+        // Messages name the root as the platform shows it: `\work\docs` on Windows.
+        let root = normalize_path(&roots[0]).display().to_string();
         assert_eq!(
-            context.relative_paths("`/work/docs/a/antora.yml` is invalid; see /work/docs/b/c.adoc"),
+            context.relative_paths(&format!(
+                "`{root}/a/antora.yml` is invalid; see {root}/b/c.adoc"
+            )),
             "`a/antora.yml` is invalid; see b/c.adoc"
         );
         assert_eq!(
-            context.relative_paths(r"`/work/docs\a\antora.yml` is invalid"),
+            context.relative_paths(&format!(r"`{root}\a\antora.yml` is invalid")),
             "`a/antora.yml` is invalid",
             "separators after the root become `/`"
         );
         assert_eq!(
-            context.relative_paths("Nothing under /work/docs is indexed"),
+            context.relative_paths(&format!("Nothing under {root} is indexed")),
             "Nothing under docs is indexed"
         );
         assert_eq!(

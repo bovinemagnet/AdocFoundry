@@ -18,7 +18,10 @@ use std::{
 
 use adoc_index::{is_asciidoc_path, normalize_path};
 use adoc_lang::WorkspaceState;
-use notify::{event::CreateKind, event::RemoveKind, EventKind, RecursiveMode, Watcher};
+use notify::{
+    event::{CreateKind, ModifyKind, RemoveKind},
+    EventKind, RecursiveMode, Watcher,
+};
 
 use crate::{quick_open::QuickOpenCache, Engine, EngineError, EngineEvent, TextEdit};
 
@@ -181,6 +184,27 @@ pub(crate) enum WorkerMessage {
 enum Change {
     File,
     Directory,
+}
+
+/// What a watcher event of `kind` says changed at a path, `is_dir` telling whether the path is
+/// a folder now; `None` for an event that changes nothing to apply. A folder whose own entry
+/// was modified is not a change of the tree: Windows reports a folder modified whenever a file
+/// in it is made, written or removed, and those files report themselves, so taking it for one
+/// would index the whole workspace again for every file saved.
+fn classify(kind: &EventKind, is_dir: impl Fn() -> bool) -> Option<Change> {
+    match kind {
+        EventKind::Access(_) => None,
+        EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder) => {
+            Some(Change::Directory)
+        }
+        EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_))
+            if is_dir() =>
+        {
+            None
+        }
+        _ if is_dir() => Some(Change::Directory),
+        _ => Some(Change::File),
+    }
 }
 
 /// How a workspace's roots are watched.
@@ -703,9 +727,6 @@ impl Engine {
         };
         while let Ok(event) = watcher.events.try_recv() {
             let Ok(event) = event else { continue };
-            if matches!(event.kind, EventKind::Access(_)) {
-                continue;
-            }
             for path in event.paths {
                 let path = as_opened(&path, &watcher.aliases);
                 // `.git` is ignored, but its `HEAD`, `index` and `refs` show branch switches,
@@ -715,11 +736,8 @@ impl Engine {
                 {
                     continue;
                 }
-                let change = match event.kind {
-                    EventKind::Create(CreateKind::Folder)
-                    | EventKind::Remove(RemoveKind::Folder) => Change::Directory,
-                    _ if path.is_dir() => Change::Directory,
-                    _ => Change::File,
+                let Some(change) = classify(&event.kind, || path.is_dir()) else {
+                    continue;
                 };
                 // A folder removed and then touched is still a folder that changed.
                 let pending = watcher
@@ -927,6 +945,43 @@ fn is_ignored(path: &Path, ignore: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_modified_is_not_a_change_of_the_tree() {
+        use notify::event::{DataChange, MetadataKind, RenameMode};
+        let folder = || true;
+        let file = || false;
+        // As Windows reports a file saved in `modules/ROOT/pages`: the file, then its folder.
+        assert_eq!(
+            classify(&EventKind::Modify(ModifyKind::Any), file),
+            Some(Change::File)
+        );
+        for kind in [
+            ModifyKind::Any,
+            ModifyKind::Data(DataChange::Content),
+            ModifyKind::Metadata(MetadataKind::WriteTime),
+        ] {
+            assert_eq!(classify(&EventKind::Modify(kind), folder), None, "{kind:?}");
+        }
+        // Folders made, removed or renamed still change the tree.
+        assert_eq!(
+            classify(&EventKind::Create(CreateKind::Any), folder),
+            Some(Change::Directory)
+        );
+        assert_eq!(
+            classify(&EventKind::Remove(RemoveKind::Folder), file),
+            Some(Change::Directory)
+        );
+        assert_eq!(
+            classify(&EventKind::Modify(ModifyKind::Name(RenameMode::To)), folder),
+            Some(Change::Directory)
+        );
+        assert_eq!(classify(&EventKind::Any, folder), Some(Change::Directory));
+        assert_eq!(
+            classify(&EventKind::Access(notify::event::AccessKind::Any), file),
+            None
+        );
+    }
 
     #[test]
     fn watcher_paths_map_back_to_the_root_as_opened() {
