@@ -251,3 +251,161 @@ pub fn export_pdf() -> Arc<JsonObject> {
         &["output", "pages", "warnings"],
     )
 }
+
+fn byte_range() -> Value {
+    json!({
+        "type": "object",
+        "description": "Byte offsets into the file: the first byte and just past the last.",
+        "properties": { "start": { "type": "integer" }, "end": { "type": "integer" } },
+        "required": ["start", "end"],
+    })
+}
+
+pub fn list_pages() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "items": list(json!({
+                "type": "object",
+                "properties": {
+                    "resource_id": { "type": "string" },
+                    "component": { "type": "string" },
+                    "version": {
+                        "type": ["string", "null"],
+                        "description": "Null for the versionless (`~`) version.",
+                    },
+                    "module": { "type": "string" },
+                    "family": { "type": "string" },
+                    "relative_path": { "type": "string" },
+                    "path": { "type": "string" },
+                    "title": optional_string(),
+                    "in_navigation": { "type": ["boolean", "null"] },
+                },
+                "required": ["resource_id", "component", "version", "module", "family", "path"],
+            })),
+            "next_cursor": optional_string(),
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "items",
+            "next_cursor",
+            "workspace_revision",
+        ],
+    )
+}
+
+pub fn get_outline() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "path": { "type": "string" },
+            "resource_id": optional_string(),
+            "kind": { "type": "string", "description": "`page` or `navigation`." },
+            "outline": list(json!({
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string" },
+                    "title": { "type": "string" },
+                    "level": { "type": "integer" },
+                    "id": optional_string(),
+                    "target": optional_string(),
+                    "range": byte_range(),
+                    "title_range": byte_range(),
+                    "children": list(any_object()),
+                },
+                "required": ["kind", "title", "level", "range", "children"],
+            })),
+            "anchors": list(json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "range": byte_range(),
+                    "conditional": { "type": "boolean" },
+                },
+                "required": ["id", "range", "conditional"],
+            })),
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "path",
+            "kind",
+            "outline",
+            "anchors",
+            "workspace_revision",
+        ],
+    )
+}
+
+pub fn get_page_context() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "path": { "type": "string" },
+            "resource_id": optional_string(),
+            "identity": { "type": ["object", "null"] },
+            "title": optional_string(),
+            "workspace_revision": { "type": "integer" },
+            "navigation": {
+                "type": "object",
+                "properties": {
+                    "in_navigation": { "type": ["boolean", "null"] },
+                    "places": list(any_object()),
+                },
+            },
+            "includes": list(any_object()),
+            "incoming": {
+                "type": "object",
+                "properties": {
+                    "xref": { "type": "integer" },
+                    "nav": { "type": "integer" },
+                    "include": { "type": "integer" },
+                },
+            },
+            "attributes": {
+                "type": "object",
+                "properties": {
+                    "effective_values": { "type": "string" },
+                    "note": { "type": "string" },
+                    "declared": list(any_object()),
+                },
+                "required": ["effective_values", "declared"],
+            },
+            "text": { "type": "string" },
+            "truncated": truncated_text(),
+        }),
+        &["schema_version", "path", "identity", "workspace_revision"],
+    )
+}
+
+pub fn find_references() -> Arc<JsonObject> {
+    object(
+        paging(json!({
+            "schema_version": { "type": "integer" },
+            "target": any_object(),
+            "items": list(json!({
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string" },
+                    "path": { "type": "string" },
+                    "resource_id": optional_string(),
+                    "range": byte_range(),
+                    "line": { "type": "integer" },
+                    "column": { "type": "integer", "description": "One-based, in bytes." },
+                    "target": { "type": "string" },
+                    "confidence": { "type": "string" },
+                },
+                "required": ["kind", "path", "range", "line", "column", "target"],
+            })),
+        })),
+        &[
+            "schema_version",
+            "target",
+            "items",
+            "total",
+            "next_cursor",
+            "workspace_revision",
+        ],
+    )
+}

@@ -49,7 +49,7 @@ const WRITE_TOOLS: [&str; 3] = ["edit_page", "rename_page", "export_pdf"];
 const MAX_ITEMS: usize = crate::responses::PAGE;
 
 /// At most this many bytes of a text result; the total is stated when there are more.
-const MAX_TEXT: usize = 200_000;
+pub(crate) const MAX_TEXT: usize = 200_000;
 
 /// How long a render, search, Git status or export may take.
 const TIMEOUT: Duration = Duration::from_secs(120);
@@ -65,10 +65,10 @@ const MAX_WAITING: usize = 16;
 
 const ASCIIDOC: &str = "text/asciidoc";
 
-struct State {
-    engine: Engine,
+pub(crate) struct State {
+    pub(crate) engine: Engine,
     events: Receiver<EngineEvent>,
-    roots: Vec<PathBuf>,
+    pub(crate) roots: Vec<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -83,7 +83,7 @@ pub struct Server {
 }
 
 /// A tool's answer: JSON on success, a tool error with its code otherwise.
-type Answer = Result<CallToolResult, ErrorData>;
+pub(crate) type Answer = Result<CallToolResult, ErrorData>;
 
 /// `items`, cut to [`MAX_ITEMS`], under `key`, with the total and `incomplete` when cut.
 fn limited<T: serde::Serialize>(key: &str, items: Vec<T>) -> Value {
@@ -98,7 +98,7 @@ fn limited<T: serde::Serialize>(key: &str, items: Vec<T>) -> Value {
 }
 
 /// `text`, cut to [`MAX_TEXT`] bytes at a character boundary, and its total length when cut.
-fn limited_text(text: &str) -> (String, Option<usize>) {
+pub(crate) fn limited_text(text: &str) -> (String, Option<usize>) {
     if text.len() <= MAX_TEXT {
         return (text.to_owned(), None);
     }
@@ -257,7 +257,7 @@ struct ExportPdfArgs {
 impl State {
     /// `index_incomplete` while a whole index of the workspace is running, so a list made from
     /// the index is never taken for the whole workspace.
-    fn indexed(&self) -> Result<(), Failure> {
+    pub(crate) fn indexed(&self) -> Result<(), Failure> {
         if self.engine.is_indexing_workspace() {
             return Err(Failure::new(
                 ErrorCode::IndexIncomplete,
@@ -267,21 +267,50 @@ impl State {
         Ok(())
     }
 
-    fn confine(&self, path: &str) -> Result<PathBuf, Failure> {
+    pub(crate) fn confine(&self, path: &str) -> Result<PathBuf, Failure> {
         confine(&self.roots, path)
     }
 
-    fn root(&self) -> &Path {
+    /// The file a tool names by exactly one of `path` or `resource_id` (read from the page
+    /// `from` when given), inside the roots. Naming both, or neither, is refused rather than
+    /// one chosen.
+    pub(crate) fn target(
+        &self,
+        path: Option<&str>,
+        resource_id: Option<&str>,
+        from: Option<&str>,
+    ) -> Result<PathBuf, Failure> {
+        match (path, resource_id) {
+            (Some(path), None) => self.confine(path),
+            (None, Some(id)) => {
+                let from = from.map(|from| self.confine(from)).transpose()?;
+                let path = self
+                    .engine
+                    .resolve_resource_id(id, from.as_deref())
+                    .map_err(|error| match error {
+                        adoc_engine::EngineError::InvalidRequest(_) => Failure::from(error),
+                        _ => Failure::not_found(error.to_string()),
+                    })?;
+                self.confine(&path.to_string_lossy())
+            }
+            (Some(_), Some(_)) => Err(Failure::invalid(
+                "give a `path` or a `resource_id`, not both",
+            )),
+            (None, None) => Err(Failure::invalid("give a `path` or a `resource_id`")),
+        }
+    }
+
+    pub(crate) fn root(&self) -> &Path {
         &self.roots[0]
     }
 
     /// A path as the results show it: relative to the first root.
-    fn shown(&self, path: &Path) -> String {
+    pub(crate) fn shown(&self, path: &Path) -> String {
         display_path(path, self.root())
     }
 
     /// The text of the page at `path`: its buffer when open, else the file.
-    fn text(&self, path: &Path) -> Result<String, Failure> {
+    pub(crate) fn text(&self, path: &Path) -> Result<String, Failure> {
         if let Some(id) = self.engine.document_for_path(path) {
             if let Some(document) = self.engine.document(id) {
                 return Ok(document.text_string());
@@ -370,7 +399,7 @@ impl Drop for Waiting {
 impl Server {
     pub fn new(mut engine: Engine, roots: Vec<PathBuf>, allow_write: bool) -> Self {
         let events = engine.subscribe();
-        let mut tool_router = Self::tool_router();
+        let mut tool_router = Self::tool_router() + Self::discovery_router();
         if !allow_write {
             for name in WRITE_TOOLS {
                 tool_router.remove_route(name);
@@ -420,7 +449,7 @@ impl Server {
     }
 
     /// Runs a tool's `work` as [`Server::blocking`] does and answers with what it gives.
-    async fn run(
+    pub(crate) async fn run(
         &self,
         work: impl FnOnce(&mut State) -> Result<Value, Failure> + Send + 'static,
     ) -> Answer {

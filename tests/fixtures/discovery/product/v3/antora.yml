@@ -1,0 +1,5 @@
+name: product
+version: '3.0'
+title: Product
+nav:
+  - modules/ROOT/nav.adoc

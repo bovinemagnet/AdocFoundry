@@ -79,7 +79,7 @@ pub fn xref_to(
 /// The id a reference to each section of `document`, the page at `path`, uses: its anchor,
 /// else the id the page's build generates, Antora's inside a module and plain Asciidoctor's
 /// elsewhere, numbered where an earlier one holds it.
-pub(crate) fn section_ids(antora: &AntoraCatalog, path: &Path, document: &Document) -> Vec<String> {
+pub fn section_ids(antora: &AntoraCatalog, path: &Path, document: &Document) -> Vec<String> {
     let style = if antora.context_for_path(path).is_some() {
         IdStyle::Antora
     } else {

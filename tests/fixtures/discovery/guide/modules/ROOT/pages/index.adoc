@@ -1,0 +1,5 @@
+= Guide
+
+Read xref:product::install.adoc#prerequisites[the product prerequisites] and xref:product::index.adoc[].
+
+include::product::partial$note.adoc[]

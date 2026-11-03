@@ -10,7 +10,27 @@ use std::{collections::BTreeSet, path::Path, time::Instant};
 use common::{scratch, Client, WAIT};
 use serde_json::{json, Value};
 
-const READ_TOOLS: [&str; 10] = [
+/// The read-only tools: the ten that came before the contracts, kept as they were, and the
+/// discovery tools added since.
+const READ_TOOLS: [&str; 14] = [
+    "check",
+    "find_references",
+    "get_nav",
+    "get_outline",
+    "get_page_context",
+    "git_status",
+    "link_graph",
+    "list_components",
+    "list_pages",
+    "read_page",
+    "render_page",
+    "resolve",
+    "search",
+    "symbols",
+];
+
+/// The tools a client had before the contracts, whose names and answers stay.
+const EXISTING_READ_TOOLS: [&str; 10] = [
     "check",
     "get_nav",
     "git_status",
@@ -50,6 +70,19 @@ fn read_calls() -> Vec<(&'static str, Value)> {
         ),
         ("link_graph", json!({})),
         ("git_status", json!({})),
+        ("list_pages", json!({})),
+        (
+            "get_outline",
+            json!({ "path": "modules/ROOT/pages/index.adoc" }),
+        ),
+        (
+            "get_page_context",
+            json!({ "path": "modules/ROOT/pages/index.adoc" }),
+        ),
+        (
+            "find_references",
+            json!({ "resource_id": "latest@demo:ROOT:partial$welcome.adoc" }),
+        ),
     ]
 }
 
@@ -125,7 +158,11 @@ fn conforms(value: &Value, schema: &Value, at: &str) -> Result<(), String> {
 fn mcp_existing_tools_are_backwards_compatible() {
     let (_directory, root) = scratch("antora-single-component");
     let mut client = Client::start(&root, false);
-    assert_eq!(client.tool_names(), READ_TOOLS);
+    let names = client.tool_names();
+    for name in EXISTING_READ_TOOLS {
+        assert!(names.iter().any(|listed| listed == name), "{name} kept");
+    }
+    assert_eq!(names, READ_TOOLS);
     let listed = tools(&mut client);
     for name in READ_TOOLS {
         let annotations = &tool(&listed, name)["annotations"];

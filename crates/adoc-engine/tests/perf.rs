@@ -511,3 +511,103 @@ fn audit_upkeep_in_a_component_of_2000_pages() {
         edits(&mut engine, EngineEvent::AuditChanged),
     );
 }
+
+/// Discovery in a workspace of 20,000 pages (MCP PRD §9.3): listing pages a page of 500 at a
+/// time, resumed where the last stopped, and finding the references to a page and an anchor.
+/// A listing reads only the resources it returns and those it skips on the way; references
+/// come from the index's reverse maps.
+#[test]
+#[ignore = "timing probe"]
+fn discovery_in_a_workspace_of_20000_pages() {
+    use adoc_core::probe::{self, Probe};
+    use adoc_engine::{ResourceFamily, ResourceQuery};
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    fs::write(
+        root.join("antora.yml"),
+        "name: docs\nversion: '1.0'\nnav:\n- modules/module-0/nav.adoc\n",
+    )
+    .unwrap();
+    let mut nav = String::new();
+    for module in 0..200 {
+        let pages = root.join(format!("modules/module-{module}/pages"));
+        fs::create_dir_all(&pages).unwrap();
+        for page in 0..100 {
+            fs::write(
+                pages.join(format!("topic-{page}.adoc")),
+                format!(
+                    "= Topic {page} of Module {module}\n\n[#a{page}]\n== Part\n\nSee \
+                     xref:module-0:topic-0.adoc#a0[the first].\n"
+                ),
+            )
+            .unwrap();
+            if module == 0 {
+                let _ = writeln!(nav, "* xref:topic-{page}.adoc[]");
+            }
+        }
+    }
+    fs::write(root.join("modules/module-0/nav.adoc"), nav).unwrap();
+    let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(300)));
+    engine.build_graph_blocking();
+
+    let pages = ResourceQuery {
+        family: Some(ResourceFamily::Page),
+        ..ResourceQuery::default()
+    };
+    let mut after = None;
+    let mut listed = 0;
+    let mut samples = Vec::new();
+    loop {
+        probe::reset();
+        let started = Instant::now();
+        let (entries, more) = engine.resources_after(&pages, after.as_ref(), 500);
+        samples.push(started.elapsed());
+        assert!(probe::count(Probe::ListResource) <= 501);
+        listed += entries.len();
+        if !more {
+            break;
+        }
+        after = entries.last().map(|entry| entry.coordinate.clone());
+    }
+    assert_eq!(listed, 20_000);
+    report("a page of 500", samples);
+
+    let one_module = ResourceQuery {
+        component: Some("docs".into()),
+        version: Some(Some("1.0".into())),
+        module: Some("module-150".into()),
+        ..pages.clone()
+    };
+    probe::reset();
+    let started = Instant::now();
+    let (entries, _) = engine.resources_after(&one_module, None, 500);
+    println!(
+        "one module's 100 pages: {:?}, {} resources read",
+        started.elapsed(),
+        probe::count(Probe::ListResource)
+    );
+    assert_eq!(entries.len(), 100);
+
+    let first = root.join("modules/module-0/pages/topic-0.adoc");
+    let started = Instant::now();
+    let to_page = engine.incoming_references(&first, None);
+    println!(
+        "references to a page: {} in {:?}",
+        to_page.len(),
+        started.elapsed()
+    );
+    let started = Instant::now();
+    let to_anchor = engine.incoming_references(&first, Some("a0"));
+    println!(
+        "references to an anchor: {} in {:?}",
+        to_anchor.len(),
+        started.elapsed()
+    );
+    let lonely = root.join("modules/module-9/pages/topic-9.adoc");
+    let started = Instant::now();
+    assert!(engine.incoming_references(&lonely, None).is_empty());
+    println!("references to an unlinked page: {:?}", started.elapsed());
+}

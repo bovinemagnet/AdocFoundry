@@ -138,21 +138,27 @@ pub fn for_session(
 }
 
 /// Where a page of a list resumes: the query it pages, the workspace revision it was made at
-/// and how many items came before it.
+/// and the position after the last item given, an offset or a key.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Cursor {
     query: String,
     revision: u64,
-    offset: usize,
+    position: String,
 }
 
 impl Cursor {
     /// Hex, so it reads as one opaque token; nothing in it is secret.
     fn encode(&self) -> String {
-        format!("1:{}:{}:{}", self.revision, self.offset, self.query)
-            .bytes()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+        format!(
+            "1:{}:{}:{}{}",
+            self.revision,
+            self.position.len(),
+            self.position,
+            self.query
+        )
+        .bytes()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
     }
 
     fn decode(cursor: &str) -> Option<Self> {
@@ -168,12 +174,57 @@ impl Cursor {
         if parts.next()? != "1" {
             return None;
         }
+        let revision = parts.next()?.parse().ok()?;
+        let length: usize = parts.next()?.parse().ok()?;
+        let rest = parts.next()?;
+        if !rest.is_char_boundary(length.min(rest.len())) || length > rest.len() {
+            return None;
+        }
+        let (position, query) = rest.split_at(length);
         Some(Self {
-            revision: parts.next()?.parse().ok()?,
-            offset: parts.next()?.parse().ok()?,
-            query: parts.next()?.to_owned(),
+            query: query.to_owned(),
+            revision,
+            position: position.to_owned(),
         })
     }
+}
+
+/// A cursor resuming `query` at `position` while the workspace stays at `revision`.
+pub fn cursor(query: &str, revision: u64, position: &str) -> String {
+    Cursor {
+        query: query.to_owned(),
+        revision,
+        position: position.to_owned(),
+    }
+    .encode()
+}
+
+/// The position `cursor` resumes at, or `None` for the first page; refused when the cursor is
+/// not one this server made, belongs to another query, or to another workspace revision.
+pub fn resume(cursor: Option<&str>, query: &str, revision: u64) -> Result<Option<String>, Failure> {
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    let cursor = Cursor::decode(cursor)
+        .ok_or_else(|| Failure::invalid("the cursor is not one this server made"))?;
+    if cursor.query != query {
+        return Err(Failure::invalid(
+            "the cursor belongs to another query; pass the arguments it was made with",
+        ));
+    }
+    if cursor.revision != revision {
+        return Err(Failure::invalid(format!(
+            "the cursor is stale: the workspace has changed since it was made (revision {} \
+             then, {revision} now); list again from the start",
+            cursor.revision
+        )));
+    }
+    Ok(Some(cursor.position))
+}
+
+/// The page size a tool's `limit` asks for: [`PAGE`] when absent, never more, never 0.
+pub fn page_size(limit: Option<usize>) -> usize {
+    limit.unwrap_or(PAGE).clamp(1, PAGE)
 }
 
 /// One page of a list.
@@ -197,38 +248,17 @@ pub fn page<T>(
     cursor: Option<&str>,
     limit: Option<usize>,
 ) -> Result<Page<T>, Failure> {
-    let limit = limit.unwrap_or(PAGE).clamp(1, PAGE);
-    let offset = match cursor {
+    let limit = page_size(limit);
+    let offset = match resume(cursor, query, revision)? {
         None => 0,
-        Some(cursor) => {
-            let cursor = Cursor::decode(cursor)
-                .ok_or_else(|| Failure::invalid("the cursor is not one this server made"))?;
-            if cursor.query != query {
-                return Err(Failure::invalid(
-                    "the cursor belongs to another query; pass the arguments it was made with",
-                ));
-            }
-            if cursor.revision != revision {
-                return Err(Failure::invalid(format!(
-                    "the cursor is stale: the workspace has changed since it was made (revision \
-                     {} then, {revision} now); list again from the start",
-                    cursor.revision
-                )));
-            }
-            cursor.offset
-        }
+        Some(position) => position
+            .parse()
+            .map_err(|_| Failure::invalid("the cursor is not one this server made"))?,
     };
     let total = items.len();
     let items: Vec<T> = items.into_iter().skip(offset).take(limit).collect();
     let end = offset + items.len();
-    let next_cursor = (end < total).then(|| {
-        Cursor {
-            query: query.to_owned(),
-            revision,
-            offset: end,
-        }
-        .encode()
-    });
+    let next_cursor = (end < total).then(|| self::cursor(query, revision, &end.to_string()));
     Ok(Page {
         items,
         next_cursor,

@@ -1,0 +1,16 @@
+= Product
+:product-name: Widget
+:full-name: {product-name} Suite
+
+Welcome. See xref:install.adoc#prerequisites[the prerequisites].
+
+include::partial$note.adoc[]
+
+== Overview
+
+Text.
+
+[#details]
+== Details
+
+More.
