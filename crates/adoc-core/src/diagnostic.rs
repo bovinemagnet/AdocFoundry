@@ -19,11 +19,12 @@ pub enum DiagnosticCode {
     AntoraUnknownKey,
     AntoraMissingNavFile,
     AntoraInvalidAttributeValue,
+    AntoraUnresolvedStartPage,
 }
 
 impl DiagnosticCode {
     /// Every code, in declaration order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::UnresolvedXrefFile,
         Self::UnresolvedAnchor,
         Self::UnresolvedInclude,
@@ -41,6 +42,7 @@ impl DiagnosticCode {
         Self::AntoraUnknownKey,
         Self::AntoraMissingNavFile,
         Self::AntoraInvalidAttributeValue,
+        Self::AntoraUnresolvedStartPage,
     ];
 
     /// The code whose stable name ([`DiagnosticCode::as_str`]) is `name`.
@@ -69,6 +71,7 @@ impl DiagnosticCode {
             Self::AntoraUnknownKey => "adoc.antora.unknown-key",
             Self::AntoraMissingNavFile => "adoc.antora.missing-nav-file",
             Self::AntoraInvalidAttributeValue => "adoc.antora.invalid-attribute-value",
+            Self::AntoraUnresolvedStartPage => "adoc.antora.unresolved-start-page",
         }
     }
 }
@@ -113,6 +116,7 @@ mod tests {
             DiagnosticCode::AntoraUnknownKey => 14,
             DiagnosticCode::AntoraMissingNavFile => 15,
             DiagnosticCode::AntoraInvalidAttributeValue => 16,
+            DiagnosticCode::AntoraUnresolvedStartPage => 17,
         }
     }
 

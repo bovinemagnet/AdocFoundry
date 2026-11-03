@@ -615,7 +615,7 @@ With `--subfolder`, the component goes in a new subfolder of a folder that is no
 [source,sh]
 ----
 adocfoundry-cli new-project site --name demo
-adocfoundry-cli new-project site --name demo --title "Demo Guide" --version 1.0 --no-git --no-readme
+adocfoundry-cli new-project site --name demo --title "Demo Guide" --version 1.0 --no-git --no-readme --no-playbook
 adocfoundry-cli new-project my-repo --name handbook --subfolder docs
 ----
 
@@ -640,25 +640,31 @@ adocfoundry-cli new-project my-repo --name handbook --subfolder docs
 
 |`--no-readme`
 |Does not make `README.adoc`.
+
+|`--no-playbook`
+|Does not make `antora-playbook.yml`, `package.json` or `.adocfoundry.toml`. By default they are made.
 |===
 
 The name uses lower-case letters, digits, `.`, `_` and `-`, and starts with a letter or digit.
 It cannot be `ROOT`.
 The version has no spaces and no `/`.
-The command makes `antora.yml`, the `ROOT` module as `new-module` makes one, a `.gitignore` and a `README.adoc`.
+The command makes `antora.yml`, the `ROOT` module as `new-module` makes one, a `.gitignore`, a `README.adoc`, and the local playbook files `antora-playbook.yml`, `package.json` and, when the folder has none, `.adocfoundry.toml`.
 It prints each file it made relative to `<folder>`, sorted, then `initialised a Git repository` when it made one.
 The Git repository is made only when the folder is not already inside one, and nothing is staged or committed.
 
 [source,text]
 ----
 $ adocfoundry-cli new-project site --name demo --no-git
+made .adocfoundry.toml
 made .gitignore
 made README.adoc
+made antora-playbook.yml
 made antora.yml
 made modules/ROOT/images/.gitkeep
 made modules/ROOT/nav.adoc
 made modules/ROOT/pages/index.adoc
 made modules/ROOT/partials/.gitkeep
+made package.json
 ----
 
 `adocfoundry-cli check site` then reports nothing.

@@ -25,6 +25,11 @@ pub struct Playbook {
     /// `site.url`: where the site is published, which references out of an exported PDF lead
     /// to.
     pub site_url: Option<String>,
+    /// `site.title`.
+    pub site_title: Option<String>,
+    /// `site.start_page`, a page's resource id naming its component, and where its value is
+    /// written in the playbook.
+    pub start_page: Option<(String, adoc_core::SourceRange)>,
 }
 
 /// One of the playbook's content sources: a repository and the branches Antora takes from it.
@@ -173,6 +178,36 @@ struct RawPlaybook {
 #[derive(Debug, Deserialize)]
 struct RawSite {
     url: Option<String>,
+    title: Option<String>,
+    start_page: Option<String>,
+}
+
+/// Where the value of `site.start_page` is written in `source`: the rest of its line after the
+/// key, trimmed, inside a top-level `site:` block.
+fn start_page_range(source: &str) -> Option<adoc_core::SourceRange> {
+    let mut offset = 0;
+    let mut in_site = false;
+    for line in source.split_inclusive('\n') {
+        let at = offset;
+        offset += line.len();
+        let text = line.trim_end();
+        if !text.starts_with([' ', '\t']) && !text.is_empty() && !text.starts_with('#') {
+            in_site = text
+                .split('#')
+                .next()
+                .is_some_and(|key| key.trim_end() == "site:");
+            continue;
+        }
+        let trimmed = text.trim_start();
+        if in_site {
+            if let Some(rest) = trimmed.strip_prefix("start_page:") {
+                let value = rest.trim();
+                let start = at + (text.len() - rest.len()) + (rest.len() - rest.trim_start().len());
+                return Some(adoc_core::SourceRange::new(start, start + value.len()));
+            }
+        }
+    }
+    None
 }
 
 #[derive(Debug, Deserialize)]
@@ -259,14 +294,23 @@ pub fn parse_playbook(path: &Path, source: &str) -> Result<Playbook, DescriptorE
                 .collect()
         })
         .unwrap_or_default();
+    let (site_url, site_title, start_page) = match raw.site {
+        Some(site) => (site.url, site.title, site.start_page),
+        None => (None, None, None),
+    };
+    let start_page = start_page
+        .filter(|page| !page.trim().is_empty())
+        .map(|page| {
+            let range = start_page_range(source).unwrap_or_default();
+            (page.trim().to_owned(), range)
+        });
     Ok(Playbook {
         path: path.to_path_buf(),
         asciidoc_attributes,
         sources,
-        site_url: raw
-            .site
-            .and_then(|site| site.url)
-            .filter(|url| !url.trim().is_empty()),
+        site_url: site_url.filter(|url| !url.trim().is_empty()),
+        site_title,
+        start_page,
     })
 }
 
@@ -313,6 +357,18 @@ mod tests {
         );
         let without = parse_playbook(Path::new("p.yml"), "site:\n  title: Docs\n").unwrap();
         assert_eq!(without.site_url, None);
+    }
+
+    #[test]
+    fn reads_the_site_title_and_start_page_with_its_place() {
+        let source = "# A playbook\nsite:\n  title: Demo Docs\n  start_page: 'demo::index.adoc'\ncontent:\n  start_page: not-this\n";
+        let playbook = parse_playbook(Path::new("p.yml"), source).unwrap();
+        assert_eq!(playbook.site_title.as_deref(), Some("Demo Docs"));
+        let (page, range) = playbook.start_page.unwrap();
+        assert_eq!(page, "demo::index.adoc");
+        assert_eq!(&source[range.start..range.end], "'demo::index.adoc'");
+        let none = parse_playbook(Path::new("p.yml"), "site:\n  title: x\n").unwrap();
+        assert_eq!(none.start_page, None);
     }
 
     fn versions_fixture() -> Playbook {

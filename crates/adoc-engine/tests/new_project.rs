@@ -88,14 +88,17 @@ fn files(root: &Path) -> Vec<String> {
     found
 }
 
-const LAYOUT: [&str; 7] = [
+const LAYOUT: [&str; 10] = [
+    ".adocfoundry.toml",
     ".gitignore",
     "README.adoc",
+    "antora-playbook.yml",
     "antora.yml",
     "modules/ROOT/images/.gitkeep",
     "modules/ROOT/nav.adoc",
     "modules/ROOT/pages/index.adoc",
     "modules/ROOT/partials/.gitkeep",
+    "package.json",
 ];
 
 #[test]
@@ -169,6 +172,7 @@ fn new_project_writes_what_it_is_asked() {
         index_title: "Welcome".to_owned(),
         readme: false,
         gitignore: false,
+        playbook: false,
         families: vec![adoc_engine::ResourceFamily::Example],
         ..setup.request()
     };
@@ -216,8 +220,14 @@ fn new_project_in_a_subfolder_of_a_code_repo() {
     let docs = setup.workspace.join("docs");
     assert_eq!(setup.engine.check_new_project(&request), Ok(docs.clone()));
     setup.make(request).unwrap();
-    assert_eq!(files(&docs), LAYOUT);
+    // The settings go in the folder opened, the workspace's root; the rest beside antora.yml.
+    assert_eq!(files(&docs), &LAYOUT[1..]);
+    assert!(setup.workspace.join(".adocfoundry.toml").is_file());
     assert!(adoc_antora::read_component_descriptor(&docs).is_ok());
+    // Antora reads a local source from its repository's root, named from the playbook.
+    let playbook = adoc_antora::read_playbook(&docs.join("antora-playbook.yml")).unwrap();
+    assert_eq!(playbook.sources[0].url, "..");
+    assert_eq!(playbook.sources[0].start_paths, ["docs"]);
     assert!(setup
         .engine
         .workspace()
@@ -518,4 +528,174 @@ fn new_project_outside_the_workspace_becomes_a_root() {
         .component("demo", None)
         .is_some());
     assert_eq!(setup.engine.active(), Some(index));
+}
+
+#[test]
+fn new_project_writes_a_playbook() {
+    let mut setup = Setup::new();
+    let request = NewProject {
+        git_init: true,
+        title: "Demo Docs".to_owned(),
+        ..setup.request()
+    };
+    let root = request.root.clone();
+    setup.make(request).unwrap();
+    let playbook = adoc_antora::read_playbook(&root.join("antora-playbook.yml")).unwrap();
+    assert_eq!(playbook.site_title.as_deref(), Some("Demo Docs"));
+    assert_eq!(playbook.start_page.as_ref().unwrap().0, "demo::index.adoc");
+    assert_eq!(playbook.sources.len(), 1);
+    assert_eq!(playbook.sources[0].url, ".");
+    assert_eq!(playbook.sources[0].branches, ["HEAD"]);
+    assert_eq!(playbook.sources[0].start_paths, [""]);
+    let text = fs::read_to_string(root.join("antora-playbook.yml")).unwrap();
+    assert!(text.contains("dir: build/site"));
+    assert!(!text.contains("git init"), "a repository was made");
+    let package: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("package.json")).unwrap()).unwrap();
+    assert_eq!(package["scripts"]["build"], "antora antora-playbook.yml");
+    assert_eq!(package["devDependencies"]["antora"], "3.2.x");
+    assert!(fs::read_to_string(root.join("README.adoc"))
+        .unwrap()
+        .contains("npm run build"));
+
+    // The settings load, commented and with their examples in use.
+    let settings = fs::read_to_string(root.join(".adocfoundry.toml")).unwrap();
+    assert!(Settings::load(None, Some(&root)).is_ok());
+    let used: String = settings
+        .lines()
+        .map(|line| match line.strip_prefix("# ") {
+            Some(rest) if rest.starts_with('[') || rest.contains(" = ") => rest,
+            _ => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(root.join(".adocfoundry.toml"), &used).unwrap();
+    let loaded = Settings::load(None, Some(&root)).unwrap();
+    assert!(loaded.quality.enabled, "{used}");
+}
+
+#[test]
+fn a_playbook_with_no_repository_says_it_needs_one() {
+    let mut setup = Setup::new();
+    let request = setup.request();
+    let root = request.root.clone();
+    setup.make(request).unwrap();
+    let text = fs::read_to_string(root.join("antora-playbook.yml")).unwrap();
+    assert!(
+        text.contains("run `git init` in this folder first"),
+        "{text}"
+    );
+
+    // A folder with settings of its own keeps them.
+    let mut setup = Setup::with(|workspace| {
+        fs::write(
+            workspace.join(".adocfoundry.toml"),
+            "[quality]\nenabled = true\n",
+        )
+        .unwrap();
+        fs::write(workspace.join("main.rs"), "fn main() {}\n").unwrap();
+    });
+    let request = NewProject {
+        subfolder: Some("docs".to_owned()),
+        git_init: false,
+        ..NewProject::new(setup.workspace.clone(), "demo")
+    };
+    assert!(!planned_tree(&request)
+        .iter()
+        .any(|path| path.ends_with(".adocfoundry.toml")));
+    setup.make(request).unwrap();
+    assert_eq!(
+        fs::read_to_string(setup.workspace.join(".adocfoundry.toml")).unwrap(),
+        "[quality]\nenabled = true\n"
+    );
+}
+
+#[test]
+fn playbook_start_page_resolves() {
+    let page = |start: &str| {
+        let start = start.to_owned();
+        Setup::with(move |workspace| {
+            fs::create_dir_all(workspace.join("modules/ROOT/pages")).unwrap();
+            fs::write(workspace.join("antora.yml"), "name: demo\nversion: ~\n").unwrap();
+            fs::write(workspace.join("modules/ROOT/pages/index.adoc"), "= Home\n").unwrap();
+            fs::write(
+                workspace.join("antora-playbook.yml"),
+                format!("site:\n  title: Demo\n  start_page: {start}\n"),
+            )
+            .unwrap();
+        })
+    };
+    let problems = |setup: &Setup| -> Vec<(String, String)> {
+        let playbook = setup.workspace.join("antora-playbook.yml");
+        let text = fs::read_to_string(&playbook).unwrap();
+        setup
+            .engine
+            .workspace_diagnostics()
+            .into_iter()
+            .filter(|(path, _)| *path == playbook)
+            .flat_map(|(_, found)| found)
+            .map(|diagnostic| {
+                (
+                    diagnostic.code.as_str().to_owned(),
+                    text[diagnostic.range.start..diagnostic.range.end].to_owned(),
+                )
+            })
+            .collect()
+    };
+    assert!(problems(&page("demo::index.adoc")).is_empty());
+    assert!(problems(&page("demo:ROOT:index.adoc")).is_empty());
+    assert_eq!(
+        problems(&page("demo::missing.adoc")),
+        [(
+            "adoc.antora.unresolved-start-page".to_owned(),
+            "demo::missing.adoc".to_owned()
+        )]
+    );
+    assert_eq!(problems(&page("index.adoc")).len(), 1, "no component named");
+}
+
+/// Builds a new project with Antora itself, when `antora` is on `PATH` (it fetches the UI
+/// bundle, so it needs the network too); skipped otherwise, as `fidelity` is without
+/// Asciidoctor.
+#[test]
+fn new_project_writes_a_playbook_that_antora_accepts() {
+    let Some(antora) = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|folder| folder.join("antora"))
+            .find(|candidate| candidate.is_file())
+    }) else {
+        eprintln!("skipped: no `antora` on PATH");
+        return;
+    };
+    for subfolder in [None, Some("docs")] {
+        let mut setup = Setup::new();
+        let root = setup.workspace.join("demo");
+        fs::create_dir_all(&root).unwrap();
+        if subfolder.is_some() {
+            fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+        }
+        let request = NewProject {
+            subfolder: subfolder.map(str::to_owned),
+            ..NewProject::new(root.clone(), "demo")
+        };
+        let component = request.component_root();
+        setup.make(request).unwrap();
+        let output = std::process::Command::new(&antora)
+            .arg("antora-playbook.yml")
+            .current_dir(&component)
+            .output()
+            .unwrap();
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success(), "{log}");
+        assert!(!log.contains("\"level\":\"warn\""), "{log}");
+        assert!(component.join("build/site/index.html").is_file(), "{log}");
+        assert!(
+            component.join("build/site/demo/index.html").is_file(),
+            "{log}"
+        );
+    }
 }

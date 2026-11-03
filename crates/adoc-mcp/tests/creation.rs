@@ -274,13 +274,16 @@ fn mcp_create_project_reuses_engine_command() {
     assert_eq!(
         made["made"],
         json!([
+            "handbook/.adocfoundry.toml",
             "handbook/.gitignore",
             "handbook/README.adoc",
+            "handbook/antora-playbook.yml",
             "handbook/antora.yml",
             "handbook/modules/ROOT/images/.gitkeep",
             "handbook/modules/ROOT/nav.adoc",
             "handbook/modules/ROOT/pages/index.adoc",
             "handbook/modules/ROOT/partials/.gitkeep",
+            "handbook/package.json",
         ])
     );
     assert_eq!(made["index_page"], "handbook:ROOT:page$index.adoc");

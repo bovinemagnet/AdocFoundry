@@ -54,7 +54,7 @@ const USAGE: &str = "usage:
   adocfoundry-cli new-module <component-root> <name> [--families pages,partials,images]
       [--no-nav] [--index-title <title>]
   adocfoundry-cli new-project <folder> --name <name> [--title <title>] [--version <version>]
-      [--subfolder <dir>] [--no-git] [--no-readme]
+      [--subfolder <dir>] [--no-git] [--no-readme] [--no-playbook]
   adocfoundry-cli --version";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -173,9 +173,9 @@ fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
 /// through the engine's `project.new`, as the app's New Antora Project does, and lists the files
 /// it made, relative to the folder.
 fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
-    let flags = ["--no-git", "--no-readme"];
+    let flags = ["--no-git", "--no-readme", "--no-playbook"];
     let has = |flag: &str| arguments.iter().any(|argument| argument == flag);
-    let (git, readme) = (!has("--no-git"), !has("--no-readme"));
+    let (git, readme, playbook) = (!has("--no-git"), !has("--no-readme"), !has("--no-playbook"));
     let arguments: Vec<String> = arguments
         .iter()
         .filter(|argument| !flags.contains(&argument.as_str()))
@@ -194,20 +194,22 @@ fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
         version: option(&options, "version").map(str::to_owned),
         readme,
         git_init: git,
+        playbook,
         ..adoc_engine::NewProject::new(root.clone(), name)
     };
     let mut engine = open_engine(&root, false)?;
     let had_repository = root.join(".git").exists();
+    // Listed before, as what is planned depends on what is there already.
+    let mut made: Vec<String> = adoc_engine::planned_tree(&request)
+        .iter()
+        .map(|path| adoc_engine::report::display_path(path, &root))
+        .collect();
     engine
         .invoke(
             adoc_engine::commands::ids::PROJECT_NEW,
             adoc_engine::CommandArgs::NewProject(request.clone()),
         )
         .map_err(|error| error.to_string())?;
-    let mut made: Vec<String> = adoc_engine::planned_tree(&request)
-        .iter()
-        .map(|path| adoc_engine::report::display_path(path, &root))
-        .collect();
     made.sort();
     for file in made {
         println!("made {file}");

@@ -24,6 +24,7 @@ struct Fields {
     template: Entity<SelectState<Vec<String>>>,
     git: Rc<Cell<bool>>,
     readme: Rc<Cell<bool>>,
+    playbook: Rc<Cell<bool>>,
     /// The last location asked whether it is in a repository, and the answer.
     in_repository: Rc<RefCell<(String, bool)>>,
 }
@@ -47,6 +48,7 @@ impl Fields {
             title: self.title.read(cx).value().trim().to_owned(),
             version: (!version.is_empty()).then_some(version),
             readme: self.readme.get(),
+            playbook: self.playbook.get(),
             git_init: self.git.get() && !in_repository,
             ..NewProject::new(root, self.name.read(cx).value().trim())
         };
@@ -114,6 +116,7 @@ impl WorkspaceView {
             }),
             git: Rc::new(Cell::new(true)),
             readme: Rc::new(Cell::new(start.readme)),
+            playbook: Rc::new(Cell::new(start.playbook)),
             in_repository: Rc::new(RefCell::new((String::new(), false))),
         });
         let first = fields.name.clone();
@@ -224,7 +227,12 @@ impl WorkspaceView {
                     ))
                 })
                 .children(under(NewProjectField::Git, "git", cx))
-                .child(toggle("new-project-readme", "Add a README", &fields.readme));
+                .child(toggle("new-project-readme", "Add a README", &fields.readme))
+                .child(toggle(
+                    "new-project-playbook",
+                    "Add a local playbook and build setup",
+                    &fields.playbook,
+                ));
             let made = match &checked {
                 Ok(component) => div()
                     .debug_selector(|| "new-project-component".to_owned())

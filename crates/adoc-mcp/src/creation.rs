@@ -84,6 +84,10 @@ struct CreateProjectArgs {
     readme: Option<bool>,
     /// Make a `.gitignore`; true by default.
     gitignore: Option<bool>,
+    /// Make a local `antora-playbook.yml` and a `package.json` with the Antora CLI beside
+    /// `antora.yml`, and a commented `.adocfoundry.toml` in `path` when it has none; true by
+    /// default. Nothing is installed or built.
+    playbook: Option<bool>,
     /// Initialise an empty Git repository in `path` when it is in none; false by default.
     #[serde(default)]
     git_init: bool,
@@ -337,6 +341,7 @@ impl Server {
                 index_title: args.index_title.clone().unwrap_or_default(),
                 readme: args.readme.unwrap_or(true),
                 gitignore: args.gitignore.unwrap_or(true),
+                playbook: args.playbook.unwrap_or(true),
                 git_init: args.git_init,
                 ..adoc_engine::NewProject::new(root.clone(), &args.name)
             };
@@ -354,6 +359,11 @@ impl Server {
                     Failure::new(code, problem.message)
                 })?;
             state.confine(&component.to_string_lossy())?;
+            // Listed before, as what is planned depends on what is there already.
+            let mut made: Vec<String> = adoc_engine::planned_tree(&request)
+                .iter()
+                .map(|path| state.shown(path))
+                .collect();
             let had_repository = root.join(".git").exists();
             let CommandOutcome::Opened(index) = state
                 .engine
@@ -367,10 +377,6 @@ impl Server {
             else {
                 return Err(Failure::internal("the project has no index page"));
             };
-            let mut made: Vec<String> = adoc_engine::planned_tree(&request)
-                .iter()
-                .map(|path| state.shown(path))
-                .collect();
             made.sort();
             let index_page = state
                 .engine

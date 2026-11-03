@@ -176,9 +176,9 @@ impl<'de> Deserialize<'de> for FindingCode {
 /// is placed before it compiles.
 fn diagnostic_category(code: DiagnosticCode) -> Category {
     match code {
-        DiagnosticCode::AntoraNavUnresolved | DiagnosticCode::AntoraMissingNavFile => {
-            Category::Navigation
-        }
+        DiagnosticCode::AntoraNavUnresolved
+        | DiagnosticCode::AntoraMissingNavFile
+        | DiagnosticCode::AntoraUnresolvedStartPage => Category::Navigation,
         DiagnosticCode::UnresolvedXrefFile
         | DiagnosticCode::UnresolvedAnchor
         | DiagnosticCode::UnresolvedInclude
