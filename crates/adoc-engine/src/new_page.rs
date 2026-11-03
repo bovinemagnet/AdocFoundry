@@ -53,6 +53,19 @@ pub(crate) struct CreatedFile {
     text: String,
 }
 
+impl CreatedFile {
+    pub(crate) fn new(path: PathBuf, text: String) -> Self {
+        Self { path, text }
+    }
+}
+
+/// What a new page makes: its file and text, and the entry its navigation file gains.
+pub(crate) struct NewPagePlan {
+    pub(crate) path: PathBuf,
+    pub(crate) text: String,
+    pub(crate) nav: Option<(PathBuf, TextEdit)>,
+}
+
 pub(crate) fn register_new_page(registry: &mut CommandRegistry) {
     register(
         registry,
@@ -141,6 +154,45 @@ impl Engine {
     /// file that exists already, and a navigation entry for a module without a navigation
     /// file, before changing anything.
     pub fn new_page(&mut self, request: &NewPage) -> Result<crate::DocumentId, EngineError> {
+        let after = self
+            .active
+            .and_then(|id| self.document(id))
+            .and_then(|document| self.workspace.antora.resource_for_path(&document.path))
+            .map(|resource| resource.coordinate.clone())
+            .filter(|coordinate| coordinate.family == ResourceFamily::Page);
+        let plan = self.plan_new_page(request, after.as_ref())?;
+        let nav_edit = match plan.nav {
+            Some((nav, edit)) => Some((self.open(&nav)?, edit)),
+            None => None,
+        };
+        let NewPagePlan { path, text, .. } = plan;
+        let (page, group) = self.create_and_open(&path, &text)?;
+        let mut documents = vec![page];
+        if let Some((nav, edit)) = nav_edit {
+            if let Err(error) = self.apply_edits(nav, vec![edit], UndoMode::Group(group)) {
+                self.discard_group(group);
+                let _ = self.close(page);
+                let _ = fs::remove_file(&path);
+                self.catalog_changed_at(&path);
+                return Err(error);
+            }
+            documents.push(nav);
+        }
+        self.group_documents.insert(group, documents);
+        self.group_created
+            .insert(group, vec![CreatedFile { path, text }]);
+        self.set_active(page);
+        Ok(page)
+    }
+
+    /// What `page.new` makes for `request`, made nowhere: the page's path and text, refused
+    /// when it exists or the module is not one, and its navigation entry, after the entries of
+    /// the page at `after` or else at the navigation's end.
+    pub(crate) fn plan_new_page(
+        &self,
+        request: &NewPage,
+        after: Option<&AntoraCoordinate>,
+    ) -> Result<NewPagePlan, EngineError> {
         // One line, however the title was typed.
         let title = request
             .title
@@ -199,45 +251,18 @@ impl Engine {
             }
         };
 
-        let after = self
-            .active
-            .and_then(|id| self.document(id))
-            .and_then(|document| self.workspace.antora.resource_for_path(&document.path))
-            .map(|resource| resource.coordinate.clone())
-            .filter(|coordinate| coordinate.family == ResourceFamily::Page);
-        let nav_edit = match &nav {
-            Some(nav) => {
-                let id = self.open(nav)?;
-                Some((
-                    id,
-                    self.nav_entry(
-                        nav,
-                        after.as_ref(),
-                        &file.to_string_lossy().replace('\\', "/"),
-                    )?,
-                ))
-            }
+        let entry = match &nav {
+            Some(nav) => Some((
+                nav.clone(),
+                self.nav_entry(nav, after, &file.to_string_lossy().replace('\\', "/"))?,
+            )),
             None => None,
         };
-
-        let text = format!("= {title}\n");
-        let (page, group) = self.create_and_open(&path, &text)?;
-        let mut documents = vec![page];
-        if let Some((nav, edit)) = nav_edit {
-            if let Err(error) = self.apply_edits(nav, vec![edit], UndoMode::Group(group)) {
-                self.discard_group(group);
-                let _ = self.close(page);
-                let _ = fs::remove_file(&path);
-                self.catalog_changed_at(&path);
-                return Err(error);
-            }
-            documents.push(nav);
-        }
-        self.group_documents.insert(group, documents);
-        self.group_created
-            .insert(group, vec![CreatedFile { path, text }]);
-        self.set_active(page);
-        Ok(page)
+        Ok(NewPagePlan {
+            path,
+            text: format!("= {title}\n"),
+            nav: entry,
+        })
     }
 
     /// Makes an empty file at `path`, the partial an include names, and opens it, as one undo
@@ -299,11 +324,7 @@ impl Engine {
         after: Option<&AntoraCoordinate>,
         target: &str,
     ) -> Result<TextEdit, EngineError> {
-        let text = self
-            .document_for_path(nav)
-            .and_then(|id| self.document(id))
-            .map(|document| document.text.to_string())
-            .unwrap_or_default();
+        let text = self.current_text(nav).unwrap_or_default();
         let trees = self
             .nav_trees_of(&[nav.to_path_buf()])
             .map_err(|error| EngineError::InvalidRequest(error.to_string()))?;
@@ -378,7 +399,7 @@ impl Engine {
     }
 
     /// Re-reads the descriptor of the component holding `path`, a page made or deleted.
-    fn catalog_changed_at(&mut self, path: &Path) {
+    pub(crate) fn catalog_changed_at(&mut self, path: &Path) {
         let descriptors: Vec<PathBuf> = self
             .workspace
             .antora
@@ -393,7 +414,7 @@ impl Engine {
 }
 
 /// Writes `text` to a new file at `path`, refusing one that exists.
-fn create_file(path: &Path, text: &str) -> Result<(), EngineError> {
+pub(crate) fn create_file(path: &Path, text: &str) -> Result<(), EngineError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
     }

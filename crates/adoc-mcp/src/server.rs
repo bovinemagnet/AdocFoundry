@@ -42,7 +42,7 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 3] = ["edit_page", "rename_page", "export_pdf"];
+const WRITE_TOOLS: [&str; 4] = ["edit_page", "rename_page", "export_pdf", "apply_changes"];
 
 /// At most this many items in a list result that is not paged; the total is stated, and
 /// `incomplete` set, when there are more.
@@ -80,6 +80,18 @@ pub struct Server {
     /// The requests waiting for or using the engine.
     waiting: Arc<AtomicUsize>,
     allow_write: bool,
+    /// This session's staged changes: each session (an HTTP session, or the one over stdio)
+    /// has its own, though all share the engine.
+    pub(crate) previews: Arc<Mutex<crate::changes::Previews>>,
+}
+
+/// A session's previews, poisoned or not.
+pub(crate) fn lock_previews(
+    previews: &Mutex<crate::changes::Previews>,
+) -> MutexGuard<'_, crate::changes::Previews> {
+    previews
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// A tool's answer: JSON on success, a tool error with its code otherwise.
@@ -399,8 +411,10 @@ impl Drop for Waiting {
 impl Server {
     pub fn new(mut engine: Engine, roots: Vec<PathBuf>, allow_write: bool) -> Self {
         let events = engine.subscribe();
-        let mut tool_router =
-            Self::tool_router() + Self::discovery_router() + Self::analysis_router();
+        let mut tool_router = Self::tool_router()
+            + Self::discovery_router()
+            + Self::analysis_router()
+            + Self::changes_router();
         if !allow_write {
             for name in WRITE_TOOLS {
                 tool_router.remove_route(name);
@@ -416,7 +430,21 @@ impl Server {
             lock_wait: LOCK_WAIT,
             waiting: Arc::default(),
             allow_write,
+            previews: Arc::default(),
         }
+    }
+
+    /// The server for a new session: the same engine and tools, and previews of its own.
+    #[must_use]
+    pub fn for_session(&self) -> Self {
+        Self {
+            previews: Arc::default(),
+            ..self.clone()
+        }
+    }
+
+    pub(crate) fn allow_write(&self) -> bool {
+        self.allow_write
     }
 
     /// Runs `work` with the engine on the runtime's blocking threads, so a long render, search

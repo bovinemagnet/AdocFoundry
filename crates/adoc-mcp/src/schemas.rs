@@ -462,3 +462,59 @@ pub fn quality_audit() -> Arc<JsonObject> {
         ],
     )
 }
+
+pub fn preview_changes() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "preview_id": { "type": "string" },
+            "expires_at": { "type": "integer", "description": "Seconds since 1970, UTC." },
+            "expires_in_seconds": { "type": "integer" },
+            "workspace_revision": { "type": "integer" },
+            "files": list(json!({
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "description": "`create`, `edit` or `move`." },
+                    "path": { "type": "string" },
+                    "to": optional_string(),
+                    "resource_id": optional_string(),
+                    "before_hash": optional_string(),
+                    "after_hash": { "type": "string" },
+                    "diff": { "type": "string" },
+                    "diagnostics": list(any_object()),
+                },
+                "required": ["kind", "path", "after_hash", "diff", "diagnostics"],
+            })),
+            "can_apply": { "type": "boolean" },
+            "reason": optional_string(),
+        }),
+        &[
+            "schema_version",
+            "preview_id",
+            "expires_at",
+            "files",
+            "can_apply",
+            "workspace_revision",
+        ],
+    )
+}
+
+pub fn apply_changes() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "applied": { "type": "boolean" },
+            "saved": { "type": "boolean" },
+            "changed": list(json!({ "type": "string" })),
+            "resource_ids": list(optional_string()),
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "applied",
+            "saved",
+            "changed",
+            "workspace_revision",
+        ],
+    )
+}

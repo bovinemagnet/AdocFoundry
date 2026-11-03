@@ -8,6 +8,7 @@
 //! ```
 
 mod analysis;
+mod changes;
 mod discovery;
 mod http;
 mod paths;
