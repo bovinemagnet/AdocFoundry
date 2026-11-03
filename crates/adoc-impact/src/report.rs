@@ -180,9 +180,36 @@ pub struct Truncated {
     pub total: usize,
 }
 
+/// A revision a comparison read: what was asked for and the commit it named.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RevisionRef {
+    pub spec: String,
+    pub commit: String,
+}
+
+/// What was compared, as the caller that built the snapshots says.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ReportSource {
+    /// Two commits' trees; the working tree is not read.
+    GitRefs {
+        base: RevisionRef,
+        head: RevisionRef,
+    },
+    /// A commit against the working tree (and, in the app, its unsaved buffers).
+    WorkingTree {
+        base: RevisionRef,
+        unsaved_buffers: bool,
+    },
+    /// Paths the caller named, against the working tree, with no base revision.
+    Paths,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ImpactReport {
     pub schema_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<ReportSource>,
     pub completeness: Completeness,
     pub changes: Vec<ReportedChange>,
     pub impacts: Vec<Impact>,
@@ -196,5 +223,20 @@ impl ImpactReport {
     #[must_use]
     pub fn is_complete(&self) -> bool {
         self.completeness == Completeness::Complete
+    }
+
+    /// Records what the caller could not give the analysis, such as a revision's descriptor it
+    /// could not read: a complete report becomes partial.
+    pub fn add_gap(&mut self, gap: Gap) {
+        match &mut self.completeness {
+            Completeness::Complete => {
+                self.completeness = Completeness::Partial { gaps: vec![gap] };
+            }
+            Completeness::Partial { gaps } | Completeness::Unavailable { gaps } => {
+                gaps.push(gap);
+                gaps.sort();
+                gaps.dedup();
+            }
+        }
     }
 }

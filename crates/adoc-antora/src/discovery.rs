@@ -153,11 +153,8 @@ pub(crate) fn discover_component(
     catalog: &mut AntoraCatalog,
     descriptor: ComponentDescriptor,
 ) -> io::Result<()> {
-    let component = descriptor.name.clone();
-    let version = descriptor.version.clone();
     let modules_root = descriptor.root.join("modules");
-    catalog.insert_component(descriptor);
-
+    let mut modules = Vec::new();
     for entry in sorted_entries(&modules_root)? {
         if !entry.file_type()?.is_dir() {
             continue;
@@ -166,13 +163,49 @@ pub(crate) fn discover_component(
             continue;
         };
         let root = normalize_path(&entry.path());
+        let mut files = Vec::new();
+        for directory in ResourceFamily::ALL
+            .into_iter()
+            .flat_map(|family| family.directories().iter())
+        {
+            let family_root = root.join(directory);
+            if family_root.is_dir() {
+                collect_files(&family_root, &mut files)?;
+            }
+        }
+        if root.join("nav.adoc").is_file() {
+            files.push(root.join("nav.adoc"));
+        }
+        modules.push((name, files));
+    }
+    catalog_component(catalog, descriptor, modules, &|path| read_header(path).ok());
+    Ok(())
+}
+
+/// Puts `descriptor`'s component version in `catalog` with its `modules`, each a name and the
+/// files beneath it, as disk discovery and discovery from a revision's file list both find them;
+/// `header` gives a page's header lines, for its `page-aliases`.
+fn catalog_component(
+    catalog: &mut AntoraCatalog,
+    descriptor: ComponentDescriptor,
+    modules: Vec<(String, Vec<PathBuf>)>,
+    header: &dyn Fn(&Path) -> Option<String>,
+) {
+    let component = descriptor.name.clone();
+    let version = descriptor.version.clone();
+    let modules_root = descriptor.root.join("modules");
+    catalog.insert_component(descriptor);
+
+    for (name, mut files) in modules {
+        let root = normalize_path(&modules_root.join(&name));
+        files.sort();
         let nav_path = root.join("nav.adoc");
         catalog.insert_module(Module {
             component: component.clone(),
             version: version.clone(),
             name: name.clone(),
             root: root.clone(),
-            nav: nav_path.is_file().then_some(nav_path),
+            nav: files.contains(&nav_path).then_some(nav_path),
         });
 
         let family_roots = ResourceFamily::ALL.into_iter().flat_map(|family| {
@@ -183,16 +216,10 @@ pub(crate) fn discover_component(
         });
         for (family, directory) in family_roots {
             let family_root = root.join(directory);
-            if !family_root.is_dir() {
-                continue;
-            }
-            let mut files = Vec::new();
-            collect_files(&family_root, &mut files)?;
-            files.sort();
-            for source_path in files {
+            for source_path in files.iter().filter(|file| file.starts_with(&family_root)) {
                 let relative_path = source_path
                     .strip_prefix(&family_root)
-                    .expect("collected resource remains beneath its family root")
+                    .expect("filtered to the family root")
                     .to_path_buf();
                 let coordinate = AntoraCoordinate {
                     component: component.clone(),
@@ -202,7 +229,7 @@ pub(crate) fn discover_component(
                     relative_path,
                 };
                 let aliases = if family == ResourceFamily::Page {
-                    read_header(&source_path)
+                    header(source_path)
                         .map(|header| page_aliases(&header, &coordinate))
                         .unwrap_or_default()
                 } else {
@@ -210,13 +237,112 @@ pub(crate) fn discover_component(
                 };
                 catalog.insert(AntoraResource {
                     coordinate,
-                    source_path,
+                    source_path: source_path.clone(),
                     aliases,
                 });
             }
         }
     }
-    Ok(())
+}
+
+/// Discovers the components among `files`, a revision's files by absolute path with their text,
+/// by the rules disk discovery follows: a folder holding `antora.yml` and files under
+/// `modules/` is a component version, each folder under `modules/` holding files a module, and
+/// the playbook is the first root's. Nothing is read from disk. Folders named in `ignore` are
+/// skipped, as disk discovery skips them.
+pub fn discover_antora_files(
+    roots: &[PathBuf],
+    files: &std::collections::BTreeMap<PathBuf, String>,
+    ignore: &[impl AsRef<str>],
+) -> DiscoveryResult {
+    let ignored = |path: &Path| {
+        path.components().any(|part| match part {
+            Component::Normal(name) => is_ignored(name, ignore),
+            _ => false,
+        })
+    };
+    let mut result = DiscoveryResult::default();
+    for root in roots {
+        let path = normalize_path(&root.join(crate::PLAYBOOK_FILE));
+        if let Some(source) = files.get(&path) {
+            match crate::parse_playbook(&path, source) {
+                Ok(playbook) => result.catalog.set_playbook(Some(playbook)),
+                Err(error) => result.issues.push(error),
+            }
+            break;
+        }
+    }
+    let mut component_roots: Vec<PathBuf> = files
+        .keys()
+        .filter(|path| path.file_name() == Some(OsStr::new("antora.yml")))
+        .filter_map(|path| path.parent().map(Path::to_path_buf))
+        .filter(|root| {
+            roots
+                .iter()
+                .find(|workspace| root.starts_with(workspace))
+                .and_then(|workspace| root.strip_prefix(workspace).ok())
+                .is_some_and(|relative| !ignored(relative))
+        })
+        .filter(|root| {
+            let modules = root.join("modules");
+            files.keys().any(|file| file.starts_with(&modules))
+        })
+        .collect();
+    component_roots.sort();
+    component_roots.dedup();
+    for root in component_roots {
+        let descriptor_path = root.join("antora.yml");
+        let source = &files[&descriptor_path];
+        let descriptor = match crate::parse_component_descriptor(&root, source) {
+            Ok(descriptor) => descriptor,
+            Err(error) => {
+                result.issues.push(error);
+                continue;
+            }
+        };
+        let modules_root = root.join("modules");
+        let mut modules: std::collections::BTreeMap<String, Vec<PathBuf>> =
+            std::collections::BTreeMap::new();
+        for file in files.keys() {
+            let Ok(relative) = file.strip_prefix(&modules_root) else {
+                continue;
+            };
+            let mut parts = relative.components();
+            let (Some(Component::Normal(name)), Some(_)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            modules
+                .entry(name.to_owned())
+                .or_default()
+                .push(file.clone());
+        }
+        let header = |path: &Path| files.get(path).map(|text| header_lines(text));
+        catalog_component(
+            &mut result.catalog,
+            descriptor,
+            modules.into_iter().collect(),
+            &header,
+        );
+    }
+    result
+}
+
+/// The lines of `text` that [`header_attribute`] reads, as [`read_header`] reads them from a file.
+fn header_lines(text: &str) -> String {
+    let mut header = String::new();
+    let mut started = false;
+    for line in text.split_inclusive('\n') {
+        let blank = line.trim_end().is_empty();
+        if blank && started {
+            break;
+        }
+        started |= !blank;
+        header.push_str(line);
+    }
+    header
 }
 
 fn collect_files(path: &Path, files: &mut Vec<PathBuf>) -> io::Result<()> {

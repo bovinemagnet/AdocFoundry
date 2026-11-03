@@ -708,6 +708,7 @@ fn finish(
     };
     ImpactReport {
         schema_version: SCHEMA_VERSION,
+        source: None,
         completeness,
         changes: reported,
         impacts,

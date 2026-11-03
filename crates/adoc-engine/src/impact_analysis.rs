@@ -1,0 +1,429 @@
+//! Documentation impact analysis (Impact PRD §§6 and 8): the engine turns a change source
+//! (two Git refs, the working tree against `HEAD`, or paths named) into the changes and the two
+//! sides' dependency snapshots, and runs `adoc-impact`'s rules over them.
+//!
+//! A revision's snapshot is built from Git object data alone: the commit's tree listed under
+//! the roots (honouring `[workspace] ignore`), each file's text read from its blob, catalogued
+//! by the rules disk discovery follows (`discover_antora_files`) and parsed by the same parser.
+//! Nothing is checked out, fetched or run, and in ref-to-ref mode the live index is never
+//! consulted. Snapshots are cached by tree id.
+
+#[cfg(feature = "git")]
+use std::{collections::BTreeMap, path::Path};
+use std::{path::PathBuf, sync::Arc};
+
+#[cfg(feature = "git")]
+use adoc_impact::Gap;
+use adoc_impact::{
+    analyse, Change, ChangeKind, DependencySnapshot, ImpactReport, Limits, Publication,
+    PublicationSelection, ReportSource,
+};
+use adoc_index::normalize_path;
+use adoc_lang::WorkspaceState;
+
+use crate::{Engine, ExportTarget};
+
+/// What an impact analysis compares.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ChangeSource {
+    /// `HEAD` against the working tree: files on disk, and the open pages' buffers.
+    WorkingTree,
+    /// Two revisions, by any name Git reads: branches, tags, commit ids. The working tree is not
+    /// read.
+    GitRefs { base: String, head: String },
+    /// Files the caller names, against the working tree, with no base revision: a path that
+    /// exists is modified, one that does not was removed.
+    Paths(Vec<PathBuf>),
+}
+
+/// Why no analysis could be made.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImpactError {
+    /// A Git comparison was asked for, and the roots are in no repository, or this build has no
+    /// Git.
+    NoRepository(String),
+    /// A ref names no commit.
+    UnknownRevision(String),
+    /// Git could not be read.
+    Git(String),
+    /// A named path lies outside every root.
+    OutsideRoots(PathBuf),
+}
+
+impl std::fmt::Display for ImpactError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoRepository(message) | Self::UnknownRevision(message) | Self::Git(message) => {
+                formatter.write_str(message)
+            }
+            Self::OutsideRoots(path) => {
+                write!(
+                    formatter,
+                    "{} is outside the workspace's roots",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ImpactError {}
+
+/// The snapshots built from revisions, by tree id: the most recent few.
+#[derive(Default)]
+pub(crate) struct ImpactCache {
+    #[cfg_attr(not(feature = "git"), allow(dead_code))]
+    snapshots: Vec<(String, Arc<WorkspaceState>)>,
+}
+
+#[cfg(feature = "git")]
+const CACHED_SNAPSHOTS: usize = 4;
+
+impl Engine {
+    /// The impact of `source`'s changes, within `limits`, with the publication profiles of
+    /// `[pdf.profiles]`.
+    pub fn analyse_impact(
+        &mut self,
+        source: &ChangeSource,
+        limits: Limits,
+    ) -> Result<ImpactReport, ImpactError> {
+        let roots = self.roots().to_vec();
+        let publications = self.impact_publications();
+        match source {
+            ChangeSource::Paths(paths) => {
+                let mut changes = Vec::new();
+                for path in paths {
+                    let path = normalize_path(&if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        roots
+                            .first()
+                            .map_or_else(|| path.clone(), |root| root.join(path))
+                    });
+                    if !roots.iter().any(|root| path.starts_with(root)) {
+                        return Err(ImpactError::OutsideRoots(path));
+                    }
+                    let kind = if path.exists() || self.document_for_path(&path).is_some() {
+                        ChangeKind::Modified
+                    } else {
+                        ChangeKind::Removed
+                    };
+                    changes.push(Change { path, kind });
+                }
+                let head = DependencySnapshot::borrowed(&self.workspace, &roots);
+                let mut report = analyse(&changes, None, &head, &publications, limits);
+                report.source = Some(ReportSource::Paths);
+                Ok(report)
+            }
+            ChangeSource::WorkingTree | ChangeSource::GitRefs { .. } => {
+                self.analyse_git_impact(source, &roots, &publications, limits)
+            }
+        }
+    }
+
+    /// The profiles of `[pdf.profiles]` as the rules read them; a profile that cannot be read is
+    /// left out (the audit and `validate_publication` report it).
+    fn impact_publications(&self) -> Vec<Publication> {
+        self.settings
+            .pdf
+            .profiles
+            .iter()
+            .filter_map(|profile| {
+                let args = self.profile_export_args(&profile.name).ok()?;
+                let selection = match args.target {
+                    ExportTarget::File(path) => PublicationSelection::Page(path),
+                    ExportTarget::Page(id) => {
+                        PublicationSelection::Page(self.document(id)?.path.clone())
+                    }
+                    ExportTarget::Component { name, version } => {
+                        PublicationSelection::Component { name, version }
+                    }
+                    ExportTarget::Navigation(files) => PublicationSelection::Navigation(files),
+                };
+                Some(Publication {
+                    name: profile.name.clone(),
+                    selection,
+                })
+            })
+            .collect()
+    }
+
+    #[cfg(not(feature = "git"))]
+    fn analyse_git_impact(
+        &mut self,
+        _: &ChangeSource,
+        _: &[PathBuf],
+        _: &[Publication],
+        _: Limits,
+    ) -> Result<ImpactReport, ImpactError> {
+        Err(ImpactError::NoRepository(
+            "this build has no Git; name the changed paths instead".to_owned(),
+        ))
+    }
+
+    #[cfg(feature = "git")]
+    fn analyse_git_impact(
+        &mut self,
+        source: &ChangeSource,
+        roots: &[PathBuf],
+        publications: &[Publication],
+        limits: Limits,
+    ) -> Result<ImpactReport, ImpactError> {
+        use adoc_impact::RevisionRef;
+
+        let root = roots
+            .first()
+            .ok_or_else(|| ImpactError::NoRepository("no workspace is open".to_owned()))?;
+        let repository = adoc_git::Repository::discover(root)
+            .map_err(|error| ImpactError::Git(error.to_string()))?
+            .ok_or_else(|| {
+                ImpactError::NoRepository(format!(
+                    "{} is in no Git repository; name the changed paths instead",
+                    root.display()
+                ))
+            })?;
+        let revision = |spec: &str| {
+            repository
+                .resolve_revision(spec)
+                .map_err(|error| match error {
+                    adoc_git::GitError::UnknownRevision { .. } => {
+                        ImpactError::UnknownRevision(error.to_string())
+                    }
+                    other => ImpactError::Git(other.to_string()),
+                })
+        };
+        let workdir = repository.workdir().to_path_buf();
+        let under_roots = |relative: &Path| {
+            let path = normalize_path(&workdir.join(relative));
+            roots
+                .iter()
+                .any(|root| path.starts_with(root))
+                .then_some(path)
+        };
+        match source {
+            ChangeSource::GitRefs { base, head } => {
+                let (base, head) = (revision(base)?, revision(head)?);
+                let mut changes = Vec::new();
+                for change in repository
+                    .tree_changes(&base, &head)
+                    .map_err(|error| ImpactError::Git(error.to_string()))?
+                {
+                    changes.extend(tree_change(change, &under_roots));
+                }
+                let (base_state, base_gaps) = self.revision_snapshot(&repository, &base, roots)?;
+                let (head_state, head_gaps) = self.revision_snapshot(&repository, &head, roots)?;
+                let mut report = analyse(
+                    &changes,
+                    Some(&DependencySnapshot::borrowed(&base_state, roots)),
+                    &DependencySnapshot::borrowed(&head_state, roots),
+                    publications,
+                    limits,
+                );
+                for gap in base_gaps.into_iter().chain(head_gaps) {
+                    report.add_gap(gap);
+                }
+                report.source = Some(ReportSource::GitRefs {
+                    base: RevisionRef {
+                        spec: base.spec,
+                        commit: base.commit,
+                    },
+                    head: RevisionRef {
+                        spec: head.spec,
+                        commit: head.commit,
+                    },
+                });
+                Ok(report)
+            }
+            ChangeSource::WorkingTree => {
+                let base = revision("HEAD")?;
+                let mut changes = Vec::new();
+                for status in repository
+                    .status()
+                    .map_err(|error| ImpactError::Git(error.to_string()))?
+                {
+                    let Some(path) = under_roots(&status.path) else {
+                        continue;
+                    };
+                    let kind = match (&status.index, &status.worktree) {
+                        (adoc_git::Change::Renamed(from), _)
+                        | (_, adoc_git::Change::Renamed(from)) => match under_roots(from) {
+                            Some(from) => ChangeKind::Renamed { from },
+                            None => ChangeKind::Added,
+                        },
+                        (_, adoc_git::Change::Deleted) | (adoc_git::Change::Deleted, _) => {
+                            ChangeKind::Removed
+                        }
+                        (adoc_git::Change::Added, _) | (_, adoc_git::Change::Untracked) => {
+                            ChangeKind::Added
+                        }
+                        (adoc_git::Change::Ignored, _) | (_, adoc_git::Change::Ignored) => continue,
+                        _ => ChangeKind::Modified,
+                    };
+                    changes.push(Change { path, kind });
+                }
+                // The open pages' unsaved text is the working tree too.
+                let mut unsaved = false;
+                for document in self.documents.values().filter(|document| document.dirty) {
+                    unsaved = true;
+                    if !changes.iter().any(|change| change.path == document.path)
+                        && roots.iter().any(|root| document.path.starts_with(root))
+                    {
+                        changes.push(Change {
+                            path: document.path.clone(),
+                            kind: ChangeKind::Modified,
+                        });
+                    }
+                }
+                let (base_state, base_gaps) = self.revision_snapshot(&repository, &base, roots)?;
+                let mut report = analyse(
+                    &changes,
+                    Some(&DependencySnapshot::borrowed(&base_state, roots)),
+                    &DependencySnapshot::borrowed(&self.workspace, roots),
+                    publications,
+                    limits,
+                );
+                for gap in base_gaps {
+                    report.add_gap(gap);
+                }
+                report.source = Some(ReportSource::WorkingTree {
+                    base: RevisionRef {
+                        spec: base.spec,
+                        commit: base.commit,
+                    },
+                    unsaved_buffers: unsaved,
+                });
+                Ok(report)
+            }
+            ChangeSource::Paths(_) => unreachable!("paths are analysed without Git"),
+        }
+    }
+
+    /// The index and catalog of `revision`, built from its objects, from the cache when its tree
+    /// was built before; with the gaps its descriptors leave.
+    #[cfg(feature = "git")]
+    fn revision_snapshot(
+        &mut self,
+        repository: &adoc_git::Repository,
+        revision: &adoc_git::Revision,
+        roots: &[PathBuf],
+    ) -> Result<(Arc<WorkspaceState>, Vec<Gap>), ImpactError> {
+        let key = format!("{}\u{1f}{roots:?}", revision.tree);
+        if let Some((_, state)) = self.impact.snapshots.iter().find(|(tree, _)| *tree == key) {
+            return Ok((state.clone(), descriptor_gaps(state, roots, &revision.spec)));
+        }
+        let workdir = repository.workdir().to_path_buf();
+        let ignore = self.settings.workspace.ignore.clone();
+        let mut files: BTreeMap<PathBuf, String> = BTreeMap::new();
+        for relative in repository
+            .tree_files(revision)
+            .map_err(|error| ImpactError::Git(error.to_string()))?
+        {
+            let path = normalize_path(&workdir.join(&relative));
+            let Some(root) = roots.iter().find(|root| path.starts_with(root)) else {
+                continue;
+            };
+            let ignored = path.strip_prefix(root).is_ok_and(|inside| {
+                inside.components().any(|part| {
+                    ignore
+                        .iter()
+                        .any(|name| part.as_os_str() == std::ffi::OsStr::new(name))
+                })
+            });
+            if ignored {
+                continue;
+            }
+            // Only text is read; anything else is listed with no text, as the catalog needs only
+            // its path.
+            let wanted = adoc_index::is_asciidoc_path(&path)
+                || path.extension().is_some_and(|extension| extension == "yml");
+            let text = if wanted {
+                repository
+                    .text_at(revision, &relative)
+                    .map_err(|error| ImpactError::Git(error.to_string()))?
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            files.insert(path, text);
+        }
+        let discovered = adoc_antora::discover_antora_files(roots, &files, &ignore);
+        let mut state = WorkspaceState {
+            antora: discovered.catalog,
+            descriptor_issues: discovered.issues,
+            ..WorkspaceState::default()
+        };
+        for (path, text) in &files {
+            if adoc_index::is_asciidoc_path(path) {
+                let document = adoc_parser::parse(&crate::document::uri_for(path), text).document;
+                state.index.replace(path.clone(), document);
+            }
+        }
+        let state = Arc::new(state);
+        self.impact.snapshots.insert(0, (key, state.clone()));
+        self.impact.snapshots.truncate(CACHED_SNAPSHOTS);
+        Ok((
+            state.clone(),
+            descriptor_gaps(&state, roots, &revision.spec),
+        ))
+    }
+}
+
+/// A Git tree change as the rules read it, for a file under the roots.
+#[cfg(feature = "git")]
+fn tree_change(
+    change: adoc_git::TreeChange,
+    under_roots: &impl Fn(&Path) -> Option<PathBuf>,
+) -> Option<Change> {
+    Some(match change {
+        adoc_git::TreeChange::Added(path) => Change {
+            path: under_roots(&path)?,
+            kind: ChangeKind::Added,
+        },
+        adoc_git::TreeChange::Modified(path) => Change {
+            path: under_roots(&path)?,
+            kind: ChangeKind::Modified,
+        },
+        adoc_git::TreeChange::Removed(path) => Change {
+            path: under_roots(&path)?,
+            kind: ChangeKind::Removed,
+        },
+        adoc_git::TreeChange::Renamed { from, to, .. } => {
+            match (under_roots(&from), under_roots(&to)) {
+                (Some(from), Some(to)) => Change {
+                    path: to,
+                    kind: ChangeKind::Renamed { from },
+                },
+                (None, Some(to)) => Change {
+                    path: to,
+                    kind: ChangeKind::Added,
+                },
+                (Some(from), None) => Change {
+                    path: from,
+                    kind: ChangeKind::Removed,
+                },
+                (None, None) => return None,
+            }
+        }
+    })
+}
+
+/// A revision's descriptors that could not be read, as gaps: what they would have held is not
+/// analysed.
+#[cfg(feature = "git")]
+fn descriptor_gaps(state: &WorkspaceState, roots: &[PathBuf], spec: &str) -> Vec<Gap> {
+    state
+        .descriptor_issues
+        .iter()
+        .map(|issue| Gap {
+            reason: "revision-descriptor-unreadable",
+            detail: format!("at `{spec}`: {issue}"),
+            affected: vec![roots
+                .iter()
+                .find_map(|root| issue.path.strip_prefix(root).ok())
+                .map_or_else(
+                    || issue.path.display().to_string(),
+                    |relative| relative.to_string_lossy().replace('\\', "/"),
+                )],
+        })
+        .collect()
+}

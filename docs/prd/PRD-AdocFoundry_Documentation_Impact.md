@@ -237,4 +237,14 @@ Each is settled before work starts on the package it affects, and the outcome is
 - **Added files** report referrers that now resolve (`now_resolves`); with no base they are `potential`.
 - **Not in a catalog.** A changed file in no component version either side holds gives `not-in-catalog`: what uses it from a component this workspace does not have cannot be known (§5.4, remote components).
 - **Limits.** `Limits { depth: 32, impacts: 1000 }` by default; counts are before the cut.
+### I2 (#308)
+
+- **Revisions from objects.** `adoc-git`'s `revision.rs` resolves a ref (`rev_parse_single`, peeled to a commit), lists its tree, reads blob text and diffs two trees with `gix`'s default rename tracking. Nothing touches the working tree, the index or `HEAD`; nothing is fetched or run.
+- **One discovery.** `adoc-antora`'s disk discovery and `discover_antora_files` share `catalog_component`; the module list comes from the folders (disk) or from the files under `modules/` (a revision, where Git keeps no empty folder). Tested equal on five fixtures.
+- **Snapshot build.** Every file under the roots is listed (honouring `[workspace] ignore`); AsciiDoc and YAML files' text is read from their blobs and the rest only listed, as the catalog needs paths alone. Pages are parsed into `WorkspaceIndex::replace`, which keeps their text, so nothing is read back from disk. Up to four snapshots are cached by tree id (and roots).
+- **Decision (§14, second item): the GUI's comparison includes unsaved buffers.** `ChangeSource::WorkingTree` takes the live workspace as head, open buffers included (the report says `unsaved_buffers`); the CLI has none. Ref-to-ref never reads them.
+- **Explicit paths** need no Git: an existing path is modified, a missing one removed (partial with `no-base-revision`).
+- **`[git] enabled`** governs the live Git state; an explicit comparison reads Git regardless, since asking for one is the opt-in.
+- **Threads.** `analyse_impact` runs on the caller's thread (CLI, MCP); the app's inspector (I5) will run it on a worker.
+- **Budget.** `impact_between_two_revisions_of_2000_pages` (ignored probe): about 0.9 s for a first comparison building both snapshots, about 50 ms with them cached (release build).
 - **Engine.** The engine depends on `adoc-impact` unconditionally and re-exports it (`adoc_engine::impact`); it is in `ENGINE_ONLY`, so no front end names it. Without the engine's `git` feature, explicit paths remain analysable. Existing #100/#101/#287/#289 should not be duplicated or closed by creation of the planning documents.

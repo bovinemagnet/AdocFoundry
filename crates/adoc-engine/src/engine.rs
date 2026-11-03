@@ -75,6 +75,9 @@ pub struct Engine {
     pub(crate) group_moves: BTreeMap<UndoGroup, Vec<crate::FileMove>>,
     /// The files each group made, which undoing it deletes.
     pub(crate) group_created: BTreeMap<UndoGroup, Vec<crate::new_page::CreatedFile>>,
+    /// Revision snapshots for impact analysis, by tree id.
+    #[cfg_attr(not(feature = "git"), allow(dead_code))]
+    pub(crate) impact: crate::impact_analysis::ImpactCache,
     /// The documents taking part in each applied preview's group, which is undone and redone
     /// only as a whole.
     pub(crate) group_documents: BTreeMap<UndoGroup, Vec<DocumentId>>,
@@ -195,6 +198,7 @@ impl Engine {
             latest_search: std::sync::Arc::default(),
             group_moves: BTreeMap::new(),
             group_created: BTreeMap::new(),
+            impact: crate::impact_analysis::ImpactCache::default(),
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
             typing: false,

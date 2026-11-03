@@ -396,6 +396,19 @@ The tests are:
 * `impact_explicit_removed_path_is_partial`
 * `impact_report_is_deterministic`, an `insta` snapshot of the report
 
+`crates/adoc-engine/tests/impact.rs` drives `Engine::analyse_impact` on a temporary repository holding `tests/fixtures/impact`.
+The tests are:
+
+* `impact_git_refs_are_read_only`
+* `impact_ref_mode_ignores_live_index`
+* `impact_explicit_removed_path_is_partial`
+* `an_unknown_ref_or_a_folder_outside_git_is_an_error`
+
+`crates/adoc-git/tests/repository.rs` has `a_revision_is_read_from_objects_alone`, which resolves specs and reads files and changes from a revision without the working tree.
+`crates/adoc-antora/tests/discovery_from_files.rs` checks discovery from a file list.
+`a_file_list_is_catalogued_as_the_disk_is` checks that the catalog found from files equals the one found on disk on five fixtures.
+`page_aliases_and_ignored_folders_follow_the_same_rules` checks aliases and ignored folders.
+
 `crates/adoc-mcp/tests/changes.rs` drives `preview_changes` and `apply_changes` over stdio, on copies of `tests/fixtures/discovery`.
 The tests are:
 
@@ -480,6 +493,10 @@ That leaves most of each 16 ms frame to the widget.
 In a release build, pages of 500 resources take about 2 ms.
 One module's 100 pages read 101 resources.
 The references to a page from 20,000 others take about 120 ms.
+
+`impact_between_two_revisions_of_2000_pages` times a comparison of two commits of a 2,000-page component.
+In a release build, building both snapshots takes about 0.9 s.
+Again with the snapshots cached, it takes about 50 ms.
 
 [[manual-qa]]
 == Manual QA

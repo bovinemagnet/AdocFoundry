@@ -13,7 +13,7 @@ use crate::{
 
 /// A Git repository with a working tree.
 pub struct Repository {
-    repo: gix::Repository,
+    pub(crate) repo: gix::Repository,
     workdir: PathBuf,
     git_dir: PathBuf,
 }
@@ -539,7 +539,7 @@ impl Repository {
     }
 
     /// `path` relative to the working tree: an absolute path inside it, or a relative one as is.
-    fn relative(&self, path: &Path) -> Result<PathBuf, GitError> {
+    pub(crate) fn relative(&self, path: &Path) -> Result<PathBuf, GitError> {
         if path.is_relative() {
             return Ok(path.to_path_buf());
         }
@@ -582,7 +582,7 @@ fn unix_path(path: &Path) -> gix::bstr::BString {
 }
 
 /// A repository-relative path (`/`-separated) as a platform path.
-fn relative_path(path: &BStr) -> PathBuf {
+pub(crate) fn relative_path(path: &BStr) -> PathBuf {
     path.split_str("/")
         .map(|component| component.to_str_lossy().into_owned())
         .collect()

@@ -1,9 +1,11 @@
 //! `adoc-git` against temporary repositories built with `gix`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use adoc_core::SourceRange;
-use adoc_git::{testing::TestRepo, Change, FileStatus, Head, HunkKind, Repository};
+use adoc_git::{
+    testing::TestRepo, Change, FileStatus, GitError, Head, HunkKind, Repository, TreeChange,
+};
 
 fn repo_in(dir: &Path) -> Repository {
     Repository::discover(dir)
@@ -447,5 +449,89 @@ fn unpushed_count_against_remote_tracking() {
     assert_eq!(
         repo_in(dir.path()).unpushed("origin", "main").unwrap(),
         Some(2)
+    );
+}
+
+#[test]
+fn a_revision_is_read_from_objects_alone() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = TestRepo::init(directory.path());
+    repo.write("docs/pages/a.adoc", "= A\n\nFirst.\n");
+    repo.write(
+        "docs/pages/b.adoc",
+        "= B\n\nA page with enough text to be recognised when it moves.\n",
+    );
+    repo.write("docs/pages/c.adoc", "= C\n");
+    let first = repo.commit_all("first");
+    repo.write("docs/pages/a.adoc", "= A\n\nChanged.\n");
+    repo.remove("docs/pages/b.adoc");
+    repo.write(
+        "docs/pages/moved/b.adoc",
+        "= B\n\nA page with enough text to be recognised when it moves.\n",
+    );
+    repo.remove("docs/pages/c.adoc");
+    repo.write("docs/pages/d.adoc", "= D\n");
+    repo.commit_all("second");
+    // The working tree moves on, uncommitted: no revision reads it.
+    repo.write("docs/pages/a.adoc", "= A\n\nUnsaved work.\n");
+
+    let repository = Repository::discover(repo.path()).unwrap().unwrap();
+    let base = repository.resolve_revision(&first).unwrap();
+    let head = repository.resolve_revision("HEAD").unwrap();
+    assert_eq!(base.commit, first);
+    assert_ne!(base.tree, head.tree);
+    assert!(matches!(
+        repository.resolve_revision("no-such-branch"),
+        Err(GitError::UnknownRevision { .. })
+    ));
+
+    assert_eq!(
+        repository.tree_files(&base).unwrap(),
+        [
+            PathBuf::from("docs/pages/a.adoc"),
+            PathBuf::from("docs/pages/b.adoc"),
+            PathBuf::from("docs/pages/c.adoc"),
+        ]
+    );
+    assert_eq!(
+        repository
+            .text_at(&head, Path::new("docs/pages/a.adoc"))
+            .unwrap()
+            .as_deref(),
+        Some("= A\n\nChanged.\n"),
+        "the commit's text, not the working tree's"
+    );
+    assert_eq!(
+        repository
+            .text_at(&base, &repo.path().join("docs/pages/c.adoc"))
+            .unwrap()
+            .as_deref(),
+        Some("= C\n")
+    );
+    assert_eq!(
+        repository
+            .text_at(&head, Path::new("docs/pages/c.adoc"))
+            .unwrap(),
+        None
+    );
+
+    let changes = repository.tree_changes(&base, &head).unwrap();
+    assert_eq!(
+        changes,
+        [
+            TreeChange::Added(PathBuf::from("docs/pages/d.adoc")),
+            TreeChange::Modified(PathBuf::from("docs/pages/a.adoc")),
+            TreeChange::Removed(PathBuf::from("docs/pages/c.adoc")),
+            TreeChange::Renamed {
+                from: PathBuf::from("docs/pages/b.adoc"),
+                to: PathBuf::from("docs/pages/moved/b.adoc"),
+                similarity: Some(100),
+            },
+        ]
+    );
+    // Nothing was checked out: the working tree keeps its uncommitted change.
+    assert_eq!(
+        std::fs::read_to_string(repo.path().join("docs/pages/a.adoc")).unwrap(),
+        "= A\n\nUnsaved work.\n"
     );
 }
