@@ -6,7 +6,7 @@
 
 use std::{
     cell::Cell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -152,6 +152,8 @@ pub struct WorkspaceView {
     tab_reveals: std::cell::Cell<u8>,
     /// The Build panel's log, kept scrolled to its end as lines arrive.
     build_scroll: gpui::UniformListScrollHandle,
+    /// The playbook folders whose build the user agreed to run in this window.
+    trusted_builds: HashSet<PathBuf>,
     /// The tab last right-clicked, which the tab strip's menu acts on; `None` over empty strip.
     tab_menu_target: Rc<Cell<Option<TabItem>>>,
     sidebar_tab: SidebarTab,
@@ -471,6 +473,7 @@ impl WorkspaceView {
             tab_scroll: gpui::ScrollHandle::new(),
             tab_reveals: std::cell::Cell::new(0),
             build_scroll: gpui::UniformListScrollHandle::new(),
+            trusted_builds: HashSet::new(),
             tab_menu_target: Rc::default(),
             sidebar_tab: SidebarTab::Navigation,
             navigation,

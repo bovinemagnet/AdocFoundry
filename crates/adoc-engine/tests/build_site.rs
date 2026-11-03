@@ -55,6 +55,7 @@ fn build_site_disabled_without_node() {
     let (_project, _root, mut engine) = project(&missing, 60);
 
     assert!(!engine.command_available(ids::PROJECT_BUILD_SITE));
+    assert_eq!(engine.site_build_plan(), None);
     let blocker = engine.site_build_blocker().unwrap();
     assert!(
         matches!(&blocker, SiteBuildBlocker::NoNode { configured: Some(node) } if node.ends_with("node")),
@@ -120,6 +121,13 @@ fn build_site_streams_output_and_times_out() {
     let (_project, root, mut engine) = project(&node, 1);
     assert!(engine.command_available(ids::PROJECT_BUILD_SITE));
     assert_eq!(engine.site_build_blocker(), None);
+    assert_eq!(
+        engine.site_build_plan(),
+        Some((
+            root.clone(),
+            vec!["npm install".to_owned(), "npm run build".to_owned()]
+        ))
+    );
 
     // The first build installs, then builds, and says where the site is.
     engine

@@ -1060,6 +1060,17 @@ The hint says "Needs Node.js: install it, or set [tools] node".
 When `[tools] node` names a place without npm, it says "No npm beside [tools] node" instead.
 In a workspace with no playbook there is no hint.
 
+=== The first build asks
+
+The first time Build Site is chosen for a playbook's folder in a window, a dialog titled "Run this project's build?" appears.
+It says "Build Site runs these in <folder>:" and lists the exact commands, for example `npm install` and `npm run build`.
+It warns: "They run the project's own scripts and its packages' code, which can do anything you can. Build only projects you trust."
+*Build* runs them.
+*Cancel* runs nothing.
+
+Once you agree, builds of that folder do not ask again in that window until it is closed.
+The answer is not stored on disk.
+
 === What it runs
 
 The build runs in the playbook's folder.
@@ -1094,6 +1105,7 @@ When the build ends, a notification says "The site is built." with *Open Site*, 
 
 * Antora builds a local content source only from a Git repository.
 In a folder that is in none, the build fails, and the log shows Antora's own message that a local content source must be a Git repository.
+* The first build of a folder in a window asks first, because the project's scripts and its packages' code run with your rights.
 * `npm install` and Antora's fetch of the UI bundle need network access.
 * Build Site is the only place the app runs Node.js.
 It runs only when asked, and nothing else in the app needs Node.js.

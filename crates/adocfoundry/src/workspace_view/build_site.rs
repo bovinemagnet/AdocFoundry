@@ -9,12 +9,62 @@ use super::*;
 use crate::editor::bindings::BuildSite;
 
 impl WorkspaceView {
+    /// Builds the site, asking first the first time in this window for a playbook's folder:
+    /// `npm install` and the project's `build` script run the project's own code.
     pub(super) fn on_build_site(
         &mut self,
         _: &BuildSite,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some((folder, commands)) = self.app.read(cx).engine.site_build_plan() else {
+            // Not runnable: the engine says why.
+            self.start_site_build(window, cx);
+            return;
+        };
+        if self.trusted_builds.contains(&folder) {
+            self.start_site_build(window, cx);
+            return;
+        }
+        let workspace = cx.weak_entity();
+        window.open_alert_dialog(cx, move |dialog, _, cx| {
+            let (workspace, folder) = (workspace.clone(), folder.clone());
+            let commands = commands.iter().map(|command| div().child(command.clone()));
+            dialog
+                .title("Run this project's build?")
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .debug_selector(|| "build-confirm".to_owned())
+                        .child(format!("Build Site runs these in {}:", folder.display()))
+                        .child(
+                            v_flex()
+                                .p_2()
+                                .bg(cx.theme().muted)
+                                .rounded(cx.theme().radius)
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_xs()
+                                .children(commands),
+                        )
+                        .child(
+                            "They run the project's own scripts and its packages' code, which can \
+                             do anything you can. Build only projects you trust.",
+                        ),
+                )
+                .confirm()
+                .ok_text("Build")
+                .on_ok(move |_, window, cx| {
+                    let folder = folder.clone();
+                    let _ = workspace.update(cx, |this, cx| {
+                        this.trusted_builds.insert(folder);
+                        this.start_site_build(window, cx);
+                    });
+                    true
+                })
+        });
+    }
+
+    fn start_site_build(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .invoke(ids::PROJECT_BUILD_SITE, CommandArgs::None, window, cx)
             .is_some()

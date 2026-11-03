@@ -973,6 +973,11 @@ The engine emits `EngineEvent::SiteBuildOutput` for each line and `EngineEvent::
 On Unix the step runs in a process group of its own (`process_group(0)`), and is stopped with `rustix::process::kill_process_group`.
 On Windows it is stopped with `taskkill /T /F`.
 
+`Engine::site_build_plan()` returns the playbook's folder and the commands a build would run, as `Option<(PathBuf, Vec<String>)>`.
+It is `None` while Build Site cannot run.
+Front ends ask before a first build, showing that plan, because `npm install` and the `build` script run the project's code.
+The app keeps the folders agreed to in `WorkspaceView::trusted_builds`, for the life of the window, and stores nothing on disk.
+
 The app's side is `crates/adocfoundry/src/workspace_view/build_site.rs`: the Build panel (`SidebarTab::Build`, drawn with a `uniform_list`) and the notification.
 The hint under the menu item is in `crates/adocfoundry/src/menus.rs`.
 The MCP `build_site` tool is still issue #334.

@@ -6,6 +6,8 @@
 //! past either of which it is stopped with every process it started; its output arrives line
 //! by line. This is the one place the engine runs Node.js, only when asked, and nothing needs
 //! it: without npm the command is unavailable and [`Engine::site_build_blocker`] says why.
+//! `npm install` and a `build` script run the project's own code, so a front end shows
+//! [`Engine::site_build_plan`] and asks before a project's first build.
 
 use std::{
     env,
@@ -170,6 +172,22 @@ impl Engine {
             });
         }
         None
+    }
+
+    /// What Build Site would run now, and where: the playbook's folder and each command, so a
+    /// front end can ask before it runs a project's scripts. `None` while it cannot run.
+    #[must_use]
+    pub fn site_build_plan(&self) -> Option<(PathBuf, Vec<String>)> {
+        if self.site_build_blocker().is_some() {
+            return None;
+        }
+        let playbook = &self.workspace.antora.playbook()?.path;
+        let folder = playbook.parent()?;
+        let commands = steps(&self.npm_executable()?, playbook, folder)
+            .iter()
+            .map(|step| step.shown().trim_start_matches("$ ").to_owned())
+            .collect();
+        Some((folder.to_path_buf(), commands))
     }
 
     fn site_build_running(&self) -> bool {

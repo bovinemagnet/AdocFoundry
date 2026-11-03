@@ -7745,7 +7745,7 @@ fn build_site_panel_shows_the_log_and_opens_the_site(cx: &mut TestAppContext) {
     )
     .unwrap();
     let settings = Settings::load(Some(&user), None).unwrap();
-    let (_directory, root, app, _workspace, mut cx) = welcome_window_with(settings, |_| {}, cx);
+    let (_directory, root, app, workspace, mut cx) = welcome_window_with(settings, |_| {}, cx);
     cx.dispatch_action(crate::editor::bindings::NewProject);
     redraw(&app, &mut cx);
     cx.simulate_keystrokes("enter");
@@ -7756,7 +7756,12 @@ fn build_site_panel_shows_the_log_and_opens_the_site(cx: &mut TestAppContext) {
         .engine
         .command_available(adoc_engine::commands::ids::PROJECT_BUILD_SITE)));
 
+    // The first build asks, naming what it will run.
     cx.dispatch_action(crate::editor::bindings::BuildSite);
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("build-confirm").is_some());
+    assert!(cx.update(|_, cx| app.read(cx).engine.site_build().is_none()));
+    cx.simulate_keystrokes("enter");
     assert!(drain_until(&app, &mut cx, |cx| {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.debug_bounds("build-open-site").is_some()
@@ -7781,4 +7786,27 @@ fn build_site_panel_shows_the_log_and_opens_the_site(cx: &mut TestAppContext) {
     click("build-open-site", &mut cx);
     let opened = crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
     assert_eq!(opened, [root.join("build/site/index.html")]);
+
+    // The next build of the same folder does not ask again. The menu dispatches from the
+    // window's focus, which the dialog left nowhere.
+    cx.update(|window, cx| {
+        let focus = gpui::Focusable::focus_handle(workspace.read(cx), cx);
+        window.focus(&focus, cx);
+    });
+    cx.dispatch_action(crate::editor::bindings::BuildSite);
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("build-confirm").is_none());
+    let finished = drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.site_build().is_some_and(|build| {
+                build.log == ["$ npm run build", "npm run build"]
+                    && build.state != adoc_engine::SiteBuildState::Running
+            })
+        })
+    });
+    assert!(
+        finished,
+        "{:?}",
+        cx.update(|_, cx| app.read(cx).engine.site_build().cloned())
+    );
 }
