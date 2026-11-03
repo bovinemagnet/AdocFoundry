@@ -342,6 +342,18 @@ impl AntoraCatalog {
         self.resources.values()
     }
 
+    /// The resources from `start` on, in coordinate order (component, version, module, family,
+    /// then path), so a caller can resume a listing where it stopped at the cost of what it
+    /// reads next.
+    pub fn resources_from(
+        &self,
+        start: std::ops::Bound<&AntoraCoordinate>,
+    ) -> impl Iterator<Item = &AntoraResource> {
+        self.resources
+            .range((start, std::ops::Bound::Unbounded))
+            .map(|(_, resource)| resource)
+    }
+
     /// Every resource in one module's family, in path order.
     ///
     /// This is a range over the ordered map rather than a filter over every resource:

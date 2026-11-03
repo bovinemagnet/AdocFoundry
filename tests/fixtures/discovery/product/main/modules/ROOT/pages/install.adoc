@@ -1,0 +1,12 @@
+= Installing
+
+[#prerequisites]
+== Prerequisites
+
+You need things.
+
+== Steps
+
+See <<prerequisites>>.
+
+include::partial$note.adoc[]

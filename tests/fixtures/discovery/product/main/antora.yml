@@ -1,0 +1,9 @@
+name: product
+version: ~
+title: Product
+nav:
+  - modules/ROOT/nav.adoc
+asciidoc:
+  attributes:
+    company: Acme
+    edition: '{company} Cloud'

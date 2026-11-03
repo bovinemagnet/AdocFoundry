@@ -7,6 +7,7 @@
 //! adoc-mcp --version
 //! ```
 
+mod discovery;
 mod http;
 mod paths;
 mod responses;

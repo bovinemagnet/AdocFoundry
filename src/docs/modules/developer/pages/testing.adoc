@@ -32,7 +32,11 @@ No window is involved.
 The notices generator's tests are in `xtask/src/notices.rs`: `every_dependency_of_the_release_build_has_a_notice` and `every_bundled_file_has_its_notice`.
 Add a test here rather than in the application crate whenever the behaviour can be reached through the engine.
 
-`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula, ChildRefs, InlineLayout, QuickOpenItem}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
+`crates/adoc-engine/tests/discovery.rs` drives the discovery queries of the MCP server's read tools over `tests/fixtures/discovery/`.
+It checks that resources are listed in coordinate order and resumed, that navigation membership is judged through a page's own version only, and that a listing reads only the resources it returns (counted by the `ListResource` probe).
+It also checks that incoming references are exact, and that outlines carry section ids.
+
+`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula, ChildRefs, InlineLayout, QuickOpenItem, DiagnoseOpen, GraphNode, AuditFile, AuditVersion, ListResource}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
 They count only with adoc-core's `probe` feature, which the dev-dependencies of the engine, `adoc-model` and the application turn on; in a normal build `hit` does nothing.
 `tests/keystroke.rs` asserts them: `one_keystroke_parses_at_most_once`, `typing_never_hashes_the_document`, `completion_during_typing_does_not_reparse` and `only_typing_inside_something_that_completes_asks_for_completions`.
 In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` types 20 characters and expects 20 diffs and no reconcile, then expects an edit from the engine to reconcile once.
@@ -352,6 +356,20 @@ The tests are:
 * `mcp_cursor_rejects_stale_index_revision`, where a page added on disk makes an old cursor stale
 * `check_pages_its_diagnostics_with_a_cursor`
 
+The contract tests cover the discovery tools too.
+Every read tool's structured content conforms to its output schema.
+`EXISTING_READ_TOOLS` holds the ten tools that came before `list_pages`, `get_outline`, `get_page_context` and `find_references`, which must stay.
+
+`crates/adoc-mcp/tests/discovery.rs` drives the four discovery tools over stdio, on a copy of `tests/fixtures/discovery`.
+The fixture has a component `product` with a versionless version (`product/main`) and a `3.0` version (`product/v3`, with an `admin` module).
+A second component, `guide` (`1.0`), links to and includes from `product`.
+The tests are:
+
+* `mcp_list_pages_honours_component_version_and_family`, which keeps the versionless and numbered versions apart, applies the module, family and root filters, pages the list, checks navigation membership per version, and refuses ambiguous and unknown selections
+* `mcp_find_references_returns_exact_spans`, which checks that the bytes each range covers are the reference's text, with its line and column, and also covers anchors, kinds and paging
+* `mcp_page_context_distinguishes_known_and_unknown_attributes`, which checks that declared values are given as written, that `dynamic` ones are marked, and that no effective value is invented
+* `get_outline_gives_sections_with_ids_and_ranges`
+
 A unit test in `crates/adoc-mcp/src/server.rs`, `mcp_timeout_does_not_block_other_clients_forever`, holds the engine's lock from another thread.
 It checks that a tool answers `timeout` within the shortened wait, that a full queue answers `unavailable`, and that the tool works once the lock is free.
 
@@ -402,6 +420,11 @@ cargo test --release -p adoc-engine --test perf -- --ignored --nocapture
 The budget is 5 ms.
 The recorded result is a median of 0.33 µs and a worst case of 50 µs for a keystroke (`keystroke_on_a_5000_line_document`), independent of the page's size, 0.29 µs for `backspace_loop` and 0.87 ms for `visual_typing_loop`, which is the visual model's rebuild; workspace diagnostics for 501 files take 2.3 ms.
 That leaves most of each 16 ms frame to the widget.
+
+`discovery_in_a_workspace_of_20000_pages` times the discovery queries.
+In a release build, pages of 500 resources take about 2 ms.
+One module's 100 pages read 101 resources.
+The references to a page from 20,000 others take about 120 ms.
 
 [[manual-qa]]
 == Manual QA

@@ -10,6 +10,7 @@ mod command;
 pub mod commands;
 #[cfg(feature = "git")]
 mod commit;
+mod discovery;
 mod doctor;
 mod document;
 mod edit;
@@ -75,6 +76,7 @@ pub use command::{
     Command, CommandArgs, CommandCategory, CommandContext, CommandId, CommandOutcome,
     CommandRegistry, CommandSpec, RegistryError,
 };
+pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};
 pub use doctor::{Doctor, DoctorLine, DoctorReport, DoctorSection, PROBE_TIMEOUT};
 pub use document::{DocumentId, OpenDocument};
 pub use edit::TextEdit;

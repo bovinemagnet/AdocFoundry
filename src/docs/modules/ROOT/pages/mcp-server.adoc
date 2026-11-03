@@ -147,6 +147,55 @@ These tools are always offered.
 |The link graph, as `adocfoundry-cli graph` prints it in JSON. `scope` is `workspace` (the default), `page` or `path`; a `page` scope needs `path`, absolute or relative to the first root, and follows links both ways to `depth` (1 to 3, default 1). A `path` scope needs `path`, where the path starts, and `to`, where it ends, and follows links only in their direction unless `directed` (a boolean, default true) is false; it answers with the same JSON as `adocfoundry-cli graph --path`, including its `path` array, or `{ "path": null }` when there is none, and `format: svg` draws just the path. See xref:graph-view.adoc#_the_path_between_two_pages[The path between two pages]. `partials`, `nav` and `orphans` default to true and `unresolved` to false. Nodes and edges are each cut at 500. When one is cut, the answer carries `truncated` saying how many were shown, and `incomplete: true`. `format` is `json` (the default) or `svg`, and `dark` (a boolean, default false) draws the SVG for a dark background. With `svg` the answer is `{ "svg": "<svg …>" }`, the image described in xref:graph-view.adoc#_export_the_graph[Export the graph]; an SVG over 200,000 bytes is refused with a message suggesting `scope: page`. See xref:graph-view.adoc[The link graph].
 |===
 
+[#discovery]
+== Finding your way around
+
+These read-only tools help a client discover a workspace before it reads or edits.
+All four answer with `schema_version: 1` and `workspace_revision`.
+Ranges are byte offsets, `{ "start", "end" }`: the first byte, and just past the last.
+
+[cols="2,3,4"]
+|===
+|Tool |Arguments |Result
+
+|`list_pages`
+|`root?`, `component?`, `version?`, `module?`, `family?`, `cursor?`, `limit?`
+|Antora resources, in resource-id order: component, version, module, family, path. The list is paged, with at most 500 items: see <<paging>>. `next_cursor` resumes it while the workspace revision stands. `version` is `~` for the versionless version, or a version name such as `3.0`. Without it every version is listed, and the versionless and numbered versions are never mixed up. `version` and `module` need a `component`, otherwise the call is refused with `invalid_argument` rather than guessing. `family` is `page` (the default), `partial`, `example`, `image`, `attachment` or `any`. `root` limits the list to files beneath a folder. An unknown component or version is `not_found`. Each item gives `resource_id`, `component`, `version` (null for the versionless one), `module`, `family`, `relative_path`, `path` (relative to the first root), `title` and `in_navigation`. `in_navigation` is true when a navigation file listed in the page's own component version's `antora.yml` lists the page. It is null for anything but a page.
+
+|`get_outline`
+|`path` or `resource_id`, `from?`, `headings?`, `anchors?`
+|A page's title with its sections nested by level. `headings` and `anchors` default to true. `from` names the page that a partial id is read from. Each node has `kind` (`document` or `section`), `title`, `level`, `id`, `range`, `title_range` and `children`. The `id` is the one a reference reaches the section by: its anchor, else the id Antora generates from its title. For a navigation file (`kind: navigation`) the outline is its entries instead. An entry has `kind` `page` when it links and `category` otherwise, and a `target`, the xref target. `anchors` lists the anchors the page declares, each with `id`, `range` and `conditional`. `conditional` is true when the anchor is declared inside `ifdef`, `ifndef` or `ifeval`, so it may not be in the build.
+
+|`get_page_context`
+|`path` or `resource_id`, `from?`, `navigation?`, `includes?`, `incoming?`, `attributes?`, `text?`
+|What surrounds a page. The first four booleans default to true. `text` defaults to false, and without it the page's text is not sent. The answer has `identity`, `title`, `navigation`, `includes`, `incoming` and `attributes`. `identity` gives the component, version, module, family, relative path and `page-aliases`, and is null for a file outside every component. `navigation` gives `in_navigation` and `places`: each navigation file that lists the page, with the entry's title, the titles above it and those beneath. Each of `includes` gives the `target` as written, its `range`, `resolved`, `resolves_to` and `resource_id`. `incoming` counts the `xref`, `nav` and `include` references that reach the page; `find_references` lists them. See <<attributes>> for `attributes`.
+
+|`find_references`
+|`path` or `resource_id`, `from?`, `anchor?`, `kinds?`, `cursor?`, `limit?`
+|The exact references that reach a page, paged like `check`, with `total`: see <<paging>>. These are xrefs in pages and partials (`xref`), entries of navigation files (`nav`) and include directives (`include`). With `anchor`, the references to that anchor of the page are listed instead (`anchor`): `+<<id>>+`, `+xref:#id[]+` and `+xref:page.adoc#id[]+` from anywhere. `kinds` is a list of `xref`, `include`, `nav` and `anchor`. Each item gives `kind`, `path` (the file it is written in), `resource_id`, `range`, `line`, `column`, `target` as written and `confidence`. `line` and `column` are one-based, and the column counts bytes. `confidence` is `resolved`, because every reference listed was resolved to the page. The references come from the index, resolved one by one, and never from the link graph's merged edges. A dynamic target that cannot be resolved is not listed. A path and a resource id together are refused as ambiguous.
+|===
+
+A listing reads only the resources it returns.
+A page of results from a workspace of 20,000 pages takes a couple of milliseconds.
+
+[#attributes]
+=== Attributes in a page's context
+
+`attributes.declared` lists the attributes declared for the page, both in the page and in its component version's `antora.yml` (`asciidoc.attributes`).
+Each has:
+
+* `name`.
+* `value`, as written.
+* `unset`, true for `:name!:`.
+* `dynamic`, true when the value refers to another attribute, such as `+{product}+ Suite`.
+* `source`, which is `page` or `component`.
+* `defined_in`, where it is declared.
+* `range`, for an attribute declared in the page.
+
+`effective_values` is `unknown`.
+The value a build sees also depends on the playbook, the command line, soft and hard sets, and the order of declarations.
+These are not yet traced (issue #99), so no effective value is given or invented.
+
 == Write tools
 
 These tools are offered only with `--allow-write`.
@@ -210,11 +259,11 @@ The server alone decides what runs.
 [#paging]
 == Pages of results
 
-`check` and `symbols` take `cursor?` and `limit?`.
+`check`, `symbols`, `list_pages` and `find_references` take `cursor?` and `limit?`.
 `limit` is at most 500, which is also the default.
 Their answer adds:
 
-* `total`, the number of items in the whole list.
+* `total`, the number of items in the whole list. `list_pages` gives none, since counting would read every resource.
 * `next_cursor`, which you pass as `cursor` to get the next page. It is null on the last page.
 * `workspace_revision`, the workspace revision that the list was made at.
 

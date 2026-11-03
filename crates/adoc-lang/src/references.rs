@@ -90,6 +90,25 @@ pub fn includes_of<'a>(ws: &'a WorkspaceState, target: &Path) -> Vec<&'a Include
         .collect()
 }
 
+/// The references to the anchor `id` of the page at `path`, in file order: `<<id>>`,
+/// `xref:#id[]` and `xref:page.adoc#id[]` from anywhere, by its own id and, for a section, by
+/// the ids generated from its title. Only the index's references with such a fragment are
+/// resolved.
+#[must_use]
+pub fn references_to_anchor<'a>(
+    ws: &'a WorkspaceState,
+    path: &Path,
+    id: &str,
+) -> Vec<ReferenceLocation<'a>> {
+    anchor_references(
+        ws,
+        &AnchorTarget {
+            path: normalize_path(path),
+            id: id.to_owned(),
+        },
+    )
+}
+
 /// The anchor at `offset`: an `[[id]]` or `[#id]` there, or the anchor a reference there points
 /// at.
 #[must_use]

@@ -7,12 +7,16 @@ use std::{path::PathBuf, time::Duration};
 use common::{fixture, scratch, Client, WAIT};
 use serde_json::json;
 
-const READ_TOOLS: [&str; 10] = [
+const READ_TOOLS: [&str; 14] = [
     "check",
+    "find_references",
     "get_nav",
+    "get_outline",
+    "get_page_context",
     "git_status",
     "link_graph",
     "list_components",
+    "list_pages",
     "read_page",
     "render_page",
     "resolve",

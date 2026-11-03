@@ -366,6 +366,11 @@ fn family_name(family: ResourceFamily) -> &'static str {
 }
 
 impl GraphState {
+    /// The links held, for queries that need a link's kind and owner.
+    pub(crate) fn store(&self) -> &LinkStore {
+        &self.store
+    }
+
     fn adopt(&mut self, built: Built) {
         self.store = built.store;
         self.titles = built.titles;

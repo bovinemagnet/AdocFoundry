@@ -36,9 +36,11 @@ pub enum Probe {
     AuditFile,
     /// One component version's part of the quality audit, `adoc_audit::audit_version`.
     AuditVersion,
+    /// A catalog resource read while listing resources, `Engine::resources_after`.
+    ListResource,
 }
 
-const PROBES: usize = 14;
+const PROBES: usize = 15;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -80,4 +82,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::AuditVersion as usize == PROBES - 1);
+const _: () = assert!(Probe::ListResource as usize == PROBES - 1);
