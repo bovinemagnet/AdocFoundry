@@ -57,7 +57,7 @@ A rule identifier is permanent once released; version the schema if its meaning 
 ### 5.2 Initially supported rules
 
 - `quality.navigation.unlisted-page`: an indexed Antora **page** absent from *all effective navigation trees* of the relevant component/version; exclude partials, examples, images, attachments, nav files, and pages explicitly designated unlisted by policy. Do not confuse an unreferenced page with an unlisted page.
-- Unresolved navigation entries: a statically specified nav target that fails Antora resolution is already reported as `adoc.antora.nav-unresolved` (and a missing nav file as `adoc.antora.missing-nav-file`). The audit aggregates those codes under the navigation category; it does not define a second `quality.*` rule for the same fault.
+- Unresolved navigation entries: a statically specified nav target that fails Antora resolution is already reported as the navigation file's own `adoc.unresolved-xref-file` (and a missing nav file as `adoc.antora.missing-nav-file`). The audit aggregates those codes; it does not define a second `quality.*` rule for the same fault. (Corrected in Q4: this first named `adoc.antora.nav-unresolved`, which the navigation trees produce and which restates the file diagnostic.)
 - `quality.page.missing-title`: a statically inspectable page lacks a usable document title; configurable as warning. Only report when current parser provides sufficient evidence.
 - `quality.image.missing-alt`: a statically inspectable image macro lacks meaningful alternative text when the macro form requires an author-provided description; handle attributes and dynamic macros conservatively, with a documented heuristic. Decorative images and generated diagrams need an explicit policy/exception.
 - Existing unresolved xref/include/image/anchor and descriptor diagnostics: aggregate existing codes into the audit without changing their resolver semantics.
@@ -218,7 +218,6 @@ An Antora multi-component fixture can be audited offline from CLI and GUI with m
 Each is settled before work starts on the package it affects, and the outcome is recorded in that package's PR and in the Implementation Notes.
 
 - How are publication-only nav variations represented? (Remote playbook sources are `remote-component-missing`, §5.4.)
-- Does SARIF belong in the initial release or the immediate following work package?
 
 ## 13. Implementation notes
 
@@ -248,7 +247,7 @@ Existing repository issues mentioned above remain independent and must not be si
 - **Entry point.** `adoc_audit::audit(&AuditInput, AuditScope) -> AuditBuilder`. The input is the `WorkspaceState`, the normalised roots, and a reader for navigation files, so unsaved buffers can stand in for files on disk. It reads every in-scope file once: a whole audit, meant for a worker. Q3 makes it incremental. `adoc-audit` now depends on `adoc-index` and `adoc-lang` as well.
 - **Existing diagnostics** are every in-scope file's `adoc_lang::diagnostics` (what the Problems panel shows), and each `antora.yml`'s, with their codes, severities, messages and ranges unchanged. A broken descriptor is reported on each file of its component, as in Problems.
 - **No absolute paths.** A message's paths beneath a workspace root are written relative to it with `/` separators, so no absolute path leaves the machine in a report; `adoc.antora.invalid-descriptor`'s message names the descriptor by its full path. Likewise a navigation file that cannot be read is named relative to its root, and the reader's error message is left out, since a front end's reader may put a path in it.
-- **Navigation diagnostics.** `adoc.antora.nav-unresolved` comes only from the navigation trees, so no file diagnostic or Problems entry reports it, and the audit adds it once per entry. An entry whose target names an attribute is a skip rather than a finding, since it cannot be resolved without the build's attributes.
+- **Navigation diagnostics (corrected in Q4).** Q2 added the navigation trees' `adoc.antora.nav-unresolved` diagnostics on the grounds that no file diagnostic reported them. That was wrong: a navigation file is indexed and diagnosed like any file, so each unresolved entry is already its `adoc.unresolved-xref-file`, and Q2's report listed the fault twice. Q4 leaves the trees' diagnostics out. An entry naming an attribute gets no diagnostic, since `adoc-lang` stays silent on dynamic targets.
 - **Unlisted pages.**
   - A published page is listed when an entry of one of its own component version's navigation files reaches it, including through a page alias. An entry in another component's navigation does not list it (§5.2: "the relevant component/version").
   - The start page (`start_page`, else `ROOT:index.adoc`) counts as listed.
@@ -278,3 +277,23 @@ Existing repository issues mentioned above remain independent and must not be si
   - A new catalog revision audits every version's navigation again, which reads only the navigation files.
   - A workspace-wide change builds it all again on a worker: indexing, files changed on disk, a rename or replace, closing a page, a restored session, a version change. That is every caller of `refresh_open_diagnostics` but one: opening a page, which re-diagnoses the open documents but changes no parse, leaves the audit alone.
 - **Measured, not timed.** The probes `AuditFile` and `AuditVersion` count the parts audited. `audit_changes_are_incremental` checks that one page edit audits between one and four files, no version, and no whole build. `a_navigation_edit_audits_its_own_version_again` checks that a nav edit audits exactly one version. These hold however fast the machine is, which a wall-clock budget would not.
+
+### Q4 (#303): the command-line audit and CI gates
+
+- **SARIF is in Q4,** settling the open decision in §12, since the report already carries everything it needs. `adoc_audit::to_sarif` writes SARIF 2.1.0:
+  - A finding is a result; an excluded finding is a result with an `external` suppression giving its reason.
+  - Gaps are tool execution notifications, and completeness, counts and coverage are run properties.
+  - Locations are relative to the root (`uriBaseId` `ROOT<n>`), with no absolute `originalUriBaseIds`.
+  - Regions are 1-based lines and character columns (`columnKind` `unicodeCodePoints`) from `Region::of`, given by the caller, which reads the files. A finding without a range (an unlisted page, a missing title) names only its file.
+  - It is checked structurally (relative URIs, 1-based regions, rule IDs known, levels valid) and by snapshot, not yet against the SARIF schema.
+- **Scope** is `--component [<version>@]<name>`, as `pdf --component` takes it, rather than the separate `--version` that §7 proposed.
+- **Policy.** It comes from the workspace's own `.adocfoundry.toml` and never from the user file, so CI gets the same result on every machine. `--fail-on` and `--require-complete` override it at audit time (`Engine::audit_now_with`), because opening a workspace reads its settings file again.
+- **Invalid configuration.** Any problem with the `[quality]` settings (`QualitySettings::problems`) makes the command exit 2 after writing the report.
+- **Coverage gaps.**
+  - Folders the index could not read are now kept (`Engine::unreadable`) and become `scope-not-indexed` gaps in every audit whose scope holds them, which is what makes an audit partial in practice.
+  - `remote-component-missing` from the playbook's content sources is not detected yet. Telling a source that is not checked out from one that is needs the playbook's URLs matched against local repositories, and that is left to a later package. Until then a workspace whose playbook names other repositories audits as complete over what it has.
+- **Output.**
+  - The text format states completeness on its first line and the result on its last.
+  - A finding's message is joined onto one line in the text format and kept whole in JSON and SARIF.
+  - JSON is the report itself. `--output` writes to a file, and standard output then holds nothing.
+- **Snapshots.** The JSON and SARIF snapshots hold placeholders for the index and catalog revisions and the tool version, which change without the audit changing.

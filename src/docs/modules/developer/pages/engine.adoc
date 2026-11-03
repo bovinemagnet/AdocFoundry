@@ -952,6 +952,8 @@ Changes made while a build runs wait for its result, and a newer build's generat
 
 `Engine::audit_report(&scope)` puts the kept parts in a scope together (`adoc_audit::assemble`) under the current `[quality]` policy, and is `None` until the first build arrives.
 `Engine::audit_now(scope)` audits a scope there and then from the engine's state, open buffers included, through the same `assemble`, blocking for as long as the scope takes; it is for front ends with no event loop, such as the command line.
+`Engine::audit_now_with(scope, &policy)` does the same under a policy the front end gives, as the command line does to apply `--fail-on` and `--require-complete` over the workspace's settings.
+Both, and `audit_report`, add a `scope-not-indexed` gap for each folder in scope that the last whole index could not read, which the engine keeps from the index worker's report.
 So the kept report and a fresh one always agree.
 
 Each change publishes `EngineEvent::AuditChanged`, `Engine::audit_builds()` counts whole builds, and `has_pending()` counts audit work still due.

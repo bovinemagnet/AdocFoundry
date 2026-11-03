@@ -1,0 +1,228 @@
+---
+source: crates/adocfoundry-cli/tests/audit.rs
+expression: "serde_json::to_string_pretty(&report).unwrap()"
+---
+{
+  "schema_version": 1,
+  "scope": {
+    "kind": "workspace"
+  },
+  "revision": "[revision]",
+  "roots": [
+    "audit"
+  ],
+  "fail_on": "error",
+  "require_complete": false,
+  "rules": [
+    {
+      "rule": "quality.image.missing-alt",
+      "severity": "warning"
+    },
+    {
+      "rule": "quality.navigation.unlisted-page",
+      "severity": "warning"
+    },
+    {
+      "rule": "quality.page.missing-title",
+      "severity": "warning"
+    }
+  ],
+  "completeness": {
+    "status": "complete"
+  },
+  "counts": {
+    "info": 1,
+    "warning": 6,
+    "error": 0,
+    "excluded": 0,
+    "skipped": 2
+  },
+  "coverage": [
+    {
+      "component": "guide",
+      "navigation_files": 1,
+      "pages": 3,
+      "listed": 2,
+      "undetermined": 1
+    },
+    {
+      "component": "product",
+      "version": "2.0",
+      "navigation_files": 1,
+      "pages": 2,
+      "listed": 2,
+      "undetermined": 0
+    },
+    {
+      "component": "product",
+      "version": "3.0",
+      "navigation_files": 2,
+      "pages": 8,
+      "listed": 7,
+      "undetermined": 0
+    }
+  ],
+  "findings": [
+    {
+      "code": "adoc.antora.resolved-via-alias",
+      "severity": "info",
+      "message": "Resolved through a page alias; link to 3.0@product:ROOT:configure.adoc instead",
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/nav.adoc",
+        "range": {
+          "start": 50,
+          "end": 70
+        }
+      }
+    },
+    {
+      "code": "adoc.unresolved-xref-file",
+      "severity": "warning",
+      "message": "Unresolved AsciiDoc xref target: missing.adoc",
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/nav.adoc",
+        "range": {
+          "start": 146,
+          "end": 165
+        }
+      }
+    },
+    {
+      "code": "quality.image.missing-alt",
+      "severity": "warning",
+      "message": "The image `a.png` has no alternative text",
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/pages/images.adoc",
+        "range": {
+          "start": 10,
+          "end": 24
+        }
+      },
+      "coordinate": {
+        "component": "product",
+        "version": "3.0",
+        "module": "ROOT",
+        "family": "page",
+        "path": "images.adoc"
+      },
+      "remediation": "Describe the image in the macro's first attribute: `image::a.png[What it shows]`"
+    },
+    {
+      "code": "quality.navigation.unlisted-page",
+      "severity": "warning",
+      "message": "`ROOT:orphan.adoc` is in no navigation file of product 3.0",
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/pages/orphan.adoc"
+      },
+      "coordinate": {
+        "component": "product",
+        "version": "3.0",
+        "module": "ROOT",
+        "family": "page",
+        "path": "orphan.adoc"
+      },
+      "evidence": [
+        {
+          "message": "Not listed in product/modules/ROOT/nav.adoc",
+          "location": {
+            "root": 0,
+            "path": "product/modules/ROOT/nav.adoc"
+          }
+        },
+        {
+          "message": "Not listed in product/modules/admin/nav.adoc",
+          "location": {
+            "root": 0,
+            "path": "product/modules/admin/nav.adoc"
+          }
+        }
+      ],
+      "remediation": "Add an entry for it to a navigation file, or exclude it under [quality] if it is meant to be unlisted"
+    },
+    {
+      "code": "adoc.unresolved-xref-file",
+      "severity": "warning",
+      "message": "Unresolved AsciiDoc xref target: nowhere.adoc",
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/pages/orphan.adoc",
+        "range": {
+          "start": 39,
+          "end": 58
+        }
+      },
+      "coordinate": {
+        "component": "product",
+        "version": "3.0",
+        "module": "ROOT",
+        "family": "page",
+        "path": "orphan.adoc"
+      }
+    },
+    {
+      "code": "quality.page.missing-title",
+      "severity": "warning",
+      "message": "The page has no document title",
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/pages/untitled.adoc"
+      },
+      "coordinate": {
+        "component": "product",
+        "version": "3.0",
+        "module": "ROOT",
+        "family": "page",
+        "path": "untitled.adoc"
+      },
+      "remediation": "Give the page a title on its first line: `= What the page is about`"
+    },
+    {
+      "code": "quality.image.missing-alt",
+      "severity": "warning",
+      "message": "The image `p.png` has no alternative text",
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/partials/snippet.adoc",
+        "range": {
+          "start": 12,
+          "end": 26
+        }
+      },
+      "coordinate": {
+        "component": "product",
+        "version": "3.0",
+        "module": "ROOT",
+        "family": "partial",
+        "path": "snippet.adoc"
+      },
+      "remediation": "Describe the image in the macro's first attribute: `image::p.png[What it shows]`"
+    }
+  ],
+  "excluded": [],
+  "skips": [
+    {
+      "location": {
+        "root": 0,
+        "path": "guide/modules/ROOT/pages/extra.adoc"
+      },
+      "code": "quality.navigation.unlisted-page",
+      "reason": "guide/modules/ROOT/nav.adoc includes another file, so what it lists is not known"
+    },
+    {
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/pages/header-include.adoc",
+        "range": {
+          "start": 0,
+          "end": 30
+        }
+      },
+      "code": "quality.page.missing-title",
+      "reason": "The title may come from `partial$header.adoc`"
+    }
+  ]
+}

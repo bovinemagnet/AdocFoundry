@@ -96,6 +96,18 @@ show_orphans = true
 show_unresolved = false
 colour_by = "component"          # component | module | family
 
+[quality]
+fail_on = "warning"
+require_complete = true
+
+[quality.rules]
+"quality.navigation.unlisted-page" = "info"
+
+[[quality.exclusions]]
+rule = "quality.navigation.unlisted-page"
+resource = "product:ROOT:internal-notes.adoc"
+reason = "Deliberately unlisted staff-only page"
+
 [updates]
 check = true                     # look for a newer release at start-up
 ----
@@ -316,6 +328,31 @@ check = true                     # look for a newer release at start-up
 |`"component"`
 |What the graph window colours nodes by.
 
+|`quality.enabled`
+|boolean
+|`false`
+|Keeps the documentation quality audit current while a workspace is open. `adocfoundry-cli audit` audits whether it is set or not.
+
+|`quality.fail_on`
+|string
+|`"error"`
+|The lowest severity that fails `adocfoundry-cli audit`: `none`, `warning` or `error`.
+
+|`quality.require_complete`
+|boolean
+|`false`
+|Makes an audit that could not cover everything in scope fail with exit code 2 instead of passing.
+
+|`quality.rules.<rule>`
+|string
+|the rule's own, `"warning"`
+|The severity of one of the audit's rules, `off`, `info`, `warning` or `error`, keyed by its name, such as `"quality.navigation.unlisted-page"`. Existing diagnostics keep their own severities.
+
+|`quality.exclusions`
+|array of tables
+|none
+|Findings accepted for one resource each: `rule` (a rule or diagnostic code), `resource` (a resource ID naming at least its component and module, such as `product:ROOT:internal.adoc`; with no version it covers every version, and `~@` only the versionless component) and `reason`, which is required. Excluded findings stay in the report with their reason and never fail it.
+
 |`updates.check`
 |boolean
 |`true`
@@ -326,8 +363,9 @@ See xref:pdf-export.adoc[Exporting to PDF].
 
 == What a workspace file may set
 
-A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `graph.*`, `spelling.enabled` and `spelling.language`.
+A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `graph.*`, `quality.*`, `spelling.enabled` and `spelling.language`.
 The two depths override separately.
+Both files may set `[quality]`: a rule's severity from the workspace file wins, and the exclusions of both files apply.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.
 `sidebar.remember_expansion` is also accepted only in the user file, because it decides what is saved outside the repository.
@@ -344,6 +382,7 @@ Problems with settings produce warnings and never stop the application:
 * An invalid `default_expansion` (a negative number, a fraction, `true`, an array, or a string other than `"all"`) warns and keeps the value from the layer beneath.
 * A key set in the workspace file that is only allowed in the user file warns and is ignored.
 * A section that is not a table warns.
+* An invalid `[quality]` value, an unknown rule, or an exclusion with an unqualified resource ID, no reason or a duplicate warns and is left out, and makes `adocfoundry-cli audit` exit with 2.
 
 Each warning names the file and the key and is shown once.
 

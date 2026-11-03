@@ -182,7 +182,7 @@ Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the pr
 
 ## Settings
 
-Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*`, `workspace.ignore` and `pdf.*` in `.adocfoundry.toml` at its root. Saving either file applies it, in the app or in another editor while a workspace is open. Unknown keys produce a warning, never an error.
+Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*`, `workspace.ignore`, `pdf.*` and `quality.*` in `.adocfoundry.toml` at its root. Saving either file applies it, in the app or in another editor while a workspace is open. Unknown keys produce a warning, never an error.
 
 ```toml
 [editor]
@@ -253,6 +253,19 @@ dictionaries = ""                # folder of extra Hunspell .aff/.dic files (use
 [updates]
 check = true                     # look for a newer release at start-up, at most once a day
 
+[quality]                        # the documentation quality audit, `adocfoundry-cli audit`
+enabled = false                  # keep the audit current while a workspace is open
+fail_on = "error"                # none | warning | error
+require_complete = false         # true: an audit that could not cover everything exits 2
+
+# [quality.rules]                # off | info | warning | error; existing diagnostics keep theirs
+# "quality.navigation.unlisted-page" = "info"
+
+# [[quality.exclusions]]         # one resource each, with a reason; kept in the report
+# rule = "quality.navigation.unlisted-page"
+# resource = "product:ROOT:internal-notes.adoc"
+# reason = "Deliberately unlisted staff-only page"
+
 [history]                        # user file only
 enabled = true                   # keep each page's saved versions, for File › Local History…
 keep_days = 30                   # versions older than this are removed
@@ -272,6 +285,8 @@ Unsaved text for recovery and the local history are kept in the `recovery` and `
 
 ```text
 adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
+adocfoundry-cli audit <root> [--component [<version>@]<name>] [--format text|json|sarif]
+    [--output <file>] [--fail-on none|warning|error] [--require-complete]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
@@ -286,6 +301,8 @@ adocfoundry-cli doctor [<root>] [--format text|json]
 ```
 
 `check` prints the workspace's diagnostics (text: `path:line:col: severity code message`) and exits with 1 when any meets `--fail-on` (default `error`), which suits CI. It reports exactly what the editor and `adoc-ls` report.
+
+`audit` audits the documentation's quality: what `check` reports, plus pages in no navigation file of their component version (`quality.navigation.unlisted-page`), pages with no title (`quality.page.missing-title`) and block images with no alternative text (`quality.image.missing-alt`). It writes the report as text, JSON or SARIF 2.1.0 (for code scanning), with paths relative to the root and never absolute, and takes its policy from the workspace's `.adocfoundry.toml` `[quality]` table (rule severities, exclusions with a reason, `fail_on`, `require_complete`), never from the user file, so CI gets the same result everywhere. It exits with 0 below `--fail-on` (default `error`), 1 at it, and 2 when the audit is unavailable, partial (a folder could not be read) under `--require-complete`, or the `[quality]` settings are invalid; the report is written in full whatever the code. A construct a rule cannot judge, such as a navigation file that includes another, is counted as skipped and does not make the audit partial.
 
 `render` writes a page as a standalone HTML file, as the preview renders it, waiting for its diagrams; without `--output` it writes to standard output. Without `--root`, the workspace is the folder above the page's Antora component, or the page's own folder outside Antora. `--parser asciidoc-parser` renders with the second document parser, for comparison; the app always uses `acdc`.
 

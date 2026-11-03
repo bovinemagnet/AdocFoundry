@@ -155,14 +155,11 @@ fn audit_dynamic_content_is_conservative() {
     assert!(!found(&report, UNLISTED)
         .iter()
         .any(|path| path.starts_with("guide/")));
-    // The entry naming an attribute is skipped, not reported as unresolved.
-    assert_eq!(
-        skipped(&report, NAV_UNRESOLVED),
-        ["guide/modules/ROOT/nav.adoc"]
-    );
-    assert!(!found(&report, NAV_UNRESOLVED)
+    // The entry naming an attribute is not reported as unresolved, under any code.
+    assert!(!report
+        .findings()
         .iter()
-        .any(|path| path.starts_with("guide/")));
+        .any(|finding| finding.location.path == "guide/modules/ROOT/nav.adoc"));
     // A title that may come from an include is skipped.
     assert_eq!(
         skipped(&report, TITLE),
@@ -194,11 +191,22 @@ fn audit_reuses_existing_diagnostics() {
     assert_eq!(aggregated[0].location.range, Some(existing[0].range));
     assert_eq!(aggregated[0].severity, Severity::from(existing[0].severity));
 
-    // The navigation's own unresolved entry, which no file diagnostic reports, appears once.
-    assert_eq!(
-        found(&report, NAV_UNRESOLVED),
-        ["product/modules/ROOT/nav.adoc"]
-    );
+    // The navigation's unresolved entry is the nav file's own diagnostic, reported once: the
+    // tree's `nav-unresolved`, which restates it, is not added.
+    assert!(found(&report, NAV_UNRESOLVED).is_empty());
+    let nav = root().join("product/modules/ROOT/nav.adoc");
+    let unresolved: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.location.path == "product/modules/ROOT/nav.adoc")
+        .filter(|finding| {
+            finding.code == FindingCode::Diagnostic(DiagnosticCode::UnresolvedXrefFile)
+        })
+        .collect();
+    assert_eq!(unresolved.len(), 1, "{unresolved:#?}");
+    assert!(adoc_lang::diagnostics(&workspace, &nav)
+        .iter()
+        .any(|diagnostic| diagnostic.range == unresolved[0].location.range.unwrap()));
 }
 
 #[test]

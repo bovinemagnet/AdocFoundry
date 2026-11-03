@@ -317,6 +317,9 @@ pub struct QualitySettings {
     /// Keep the audit current while editing. Off, the audit runs only when asked for.
     pub enabled: bool,
     pub policy: adoc_audit::Policy,
+    /// Each problem with the `[quality]` settings, as in [`Settings::warnings`]: invalid
+    /// configuration for a front end that gates on the policy, such as the command line.
+    pub problems: Vec<String>,
 }
 
 /// A PDF standard by its settings and command-line name.
@@ -536,7 +539,11 @@ impl Settings {
             return;
         }
         if let Err(problem) = self.set(section, key, value) {
-            self.warn(source, &name, problem);
+            if section == "quality" {
+                self.warn_quality(source, &name, problem);
+            } else {
+                self.warn(source, &name, problem);
+            }
         }
     }
 
@@ -685,7 +692,7 @@ impl Settings {
     /// `[quality.rules]`: each rule's severity, or a warning.
     fn apply_quality_rules(&mut self, source: &str, value: &toml::Value) {
         let Some(rules) = value.as_table() else {
-            self.warn(
+            self.warn_quality(
                 source,
                 "quality.rules",
                 "expected a table of rules and severities",
@@ -695,11 +702,11 @@ impl Settings {
         for (rule, level) in rules {
             let name = format!("quality.rules.{rule}");
             let Some(level) = level.as_str() else {
-                self.warn(source, &name, "expected a string");
+                self.warn_quality(source, &name, "expected a string");
                 continue;
             };
             if let Err(problem) = self.quality.policy.set_severity(rule, level) {
-                self.warn(source, &name, &problem.to_string());
+                self.warn_quality(source, &name, &problem.to_string());
             }
         }
     }
@@ -707,41 +714,49 @@ impl Settings {
     /// `[[quality.exclusions]]`: each exclusion added whole, or left out with a warning.
     fn apply_quality_exclusions(&mut self, source: &str, value: &toml::Value) {
         let Some(exclusions) = value.as_array() else {
-            self.warn(source, "quality.exclusions", "expected an array of tables");
+            self.warn_quality(source, "quality.exclusions", "expected an array of tables");
             return;
         };
         for (index, exclusion) in exclusions.iter().enumerate() {
             let name = format!("quality.exclusions[{}]", index + 1);
             let Some(table) = exclusion.as_table() else {
-                self.warn(source, &name, "expected a table");
+                self.warn_quality(source, &name, "expected a table");
                 continue;
             };
             for key in table.keys() {
                 if !matches!(key.as_str(), "rule" | "resource" | "reason") {
-                    self.warn(source, &format!("{name}.{key}"), "unknown setting");
+                    self.warn_quality(source, &format!("{name}.{key}"), "unknown setting");
                 }
             }
             let text = |key: &str| table.get(key).map(|value| value.as_str());
             let (Some(Some(rule)), Some(Some(resource))) = (text("rule"), text("resource")) else {
-                self.warn(source, &name, "expected `rule` and `resource` strings");
+                self.warn_quality(source, &name, "expected `rule` and `resource` strings");
                 continue;
             };
             let reason = match text("reason") {
                 Some(Some(reason)) => reason,
                 Some(None) => {
-                    self.warn(source, &format!("{name}.reason"), "expected a string");
+                    self.warn_quality(source, &format!("{name}.reason"), "expected a string");
                     continue;
                 }
                 None => "",
             };
             if let Err(problem) = self.quality.policy.add_exclusion(rule, resource, reason) {
-                self.warn(source, &name, &problem.to_string());
+                self.warn_quality(source, &name, &problem.to_string());
             }
         }
     }
 
     fn warn(&mut self, source: &str, name: &str, problem: &str) {
         self.warnings.push(format!("{source}: `{name}`: {problem}"));
+    }
+
+    /// A warning about the `[quality]` settings, kept in [`QualitySettings::problems`] too.
+    fn warn_quality(&mut self, source: &str, name: &str, problem: &str) {
+        self.warn(source, name, problem);
+        self.quality
+            .problems
+            .push(format!("{source}: `{name}`: {problem}"));
     }
 }
 
@@ -1350,6 +1365,10 @@ note = "unknown"
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.warnings.len(), 10, "{:#?}", settings.warnings);
+        assert_eq!(
+            settings.quality.problems, settings.warnings,
+            "every one is a problem with the quality settings"
+        );
         for expected in [
             "`quality.fail_on`",
             "`quality.require_complete`",

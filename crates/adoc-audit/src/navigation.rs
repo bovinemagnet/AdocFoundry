@@ -1,6 +1,7 @@
-//! Navigation coverage: `quality.navigation.unlisted-page`, each component version's
-//! [`NavCoverage`], and the navigation's own `adoc.antora.nav-unresolved` diagnostics, which no
-//! file's diagnostics report.
+//! Navigation coverage: `quality.navigation.unlisted-page` and each component version's
+//! [`NavCoverage`]. A navigation file's unresolved entries are its own file diagnostics
+//! (`adoc.unresolved-xref-file`), aggregated with every file's, so the trees' `nav-unresolved`
+//! diagnostics, which restate them, are not added again.
 //!
 //! A page is listed when an entry in one of its own component version's navigation files
 //! reaches it, through a page alias or not. The start page is listed, being linked from the
@@ -16,7 +17,7 @@ use adoc_antora::{
     nav_tree, parse_nav, parse_resource_id, ComponentDescriptor, NavError, NavItem, NavTree,
     ResourceFamily,
 };
-use adoc_core::{DiagnosticCode, SourceRange};
+use adoc_core::SourceRange;
 
 use crate::{
     portable_path, workspace::published_page, workspace::Context, Evidence, Finding, FindingCode,
@@ -56,17 +57,9 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
                 ),
             });
         }
-        for diagnostic in &tree.diagnostics {
-            if dynamic.iter().any(|(range, _)| *range == diagnostic.range) {
-                skips.push(Skip {
-                    location: context.location(&tree.path, Some(diagnostic.range)),
-                    code: FindingCode::Diagnostic(DiagnosticCode::AntoraNavUnresolved),
-                    reason: "The entry's target names an attribute".to_owned(),
-                });
-            } else {
-                findings.push(context.finding_for(&tree.path, diagnostic));
-            }
-        }
+        // The tree's own `nav-unresolved` diagnostics are left out: a navigation file is
+        // diagnosed as any file is, so its unresolved entries are already its
+        // `adoc.unresolved-xref-file` findings, and an entry naming an attribute none.
     }
 
     let mut listed = BTreeSet::new();
