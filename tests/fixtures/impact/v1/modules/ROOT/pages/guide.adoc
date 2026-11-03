@@ -1,0 +1,3 @@
+= Guide
+
+Read xref:install.adoc[] first.

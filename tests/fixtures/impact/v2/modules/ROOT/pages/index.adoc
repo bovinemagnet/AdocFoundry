@@ -1,0 +1,3 @@
+= Product 2
+
+See xref:install.adoc[].

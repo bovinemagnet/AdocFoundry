@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 adoc-antora.workspace = true
 adoc-audit.workspace = true
+adoc-impact.workspace = true
 adoc-core.workspace = true
 adoc-diagrams.workspace = true
 adoc-dom.workspace = true

@@ -228,4 +228,13 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 ## 15. Implementation notes
 
-No implementation exists yet under this specification. Existing #100/#101/#287/#289 should not be duplicated or closed by creation of the planning documents.
+### I1 and I3 (#307, #309)
+
+- **One PR for both.** The rules over two snapshots are the model: a `DependencySnapshot` and the base/head evidence sides (I1) are only meaningful with the rules that read them (I3), so `adoc-impact` lands with both. The Git-built snapshots (I2) and the engine's orchestration follow.
+- **Snapshot = a `WorkspaceState`.** A `DependencySnapshot` is one revision's index and catalog, borrowed for the live workspace or owned for a revision; the typed edges of §5.1 are not copied out into a second store but asked of the index's reverse maps and `adoc-lang`'s resolution, so evidence (source spans, written targets) is the index's own and nothing is resolved a second way or scanned whole.
+- **Decision (§14, first item): image and attachment edges are not in this package.** The index has no reverse map of images, and adding one is index work beyond these packages; a changed asset gives the gap `asset-consumers-not-analysed`, never a claim that nothing is affected.
+- **Navigation referrers.** An xref in a navigation file `antora.yml` lists is a navigation impact, not a reference-integrity one, so a moved page's broken entry is reported under navigation, with its status.
+- **Added files** report referrers that now resolve (`now_resolves`); with no base they are `potential`.
+- **Not in a catalog.** A changed file in no component version either side holds gives `not-in-catalog`: what uses it from a component this workspace does not have cannot be known (§5.4, remote components).
+- **Limits.** `Limits { depth: 32, impacts: 1000 }` by default; counts are before the cut.
+- **Engine.** The engine depends on `adoc-impact` unconditionally and re-exports it (`adoc_engine::impact`); it is in `ENGINE_ONLY`, so no front end names it. Without the engine's `git` feature, explicit paths remain analysable. Existing #100/#101/#287/#289 should not be duplicated or closed by creation of the planning documents.

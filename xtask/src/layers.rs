@@ -30,6 +30,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-git", 2),
     ("adoc-pdf", 2),
     ("adoc-audit", 2),
+    ("adoc-impact", 2),
     ("adoc-engine", 3),
     ("adocfoundry", 4),
     ("adocfoundry-cli", 4),
@@ -48,7 +49,7 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
 
 /// Crates whose logic the engine orchestrates: front ends reach them only through
 /// `adoc-engine`, never by naming them, so every front end gets the same results.
-pub const ENGINE_ONLY: &[&str] = &["adoc-audit"];
+pub const ENGINE_ONLY: &[&str] = &["adoc-audit", "adoc-impact"];
 
 /// The front ends, the crates of the top layer.
 fn is_front_end(name: &str) -> bool {
@@ -256,7 +257,8 @@ pub fn check_manifest(manifest: &Manifest) -> Vec<String> {
 pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<String> {
     let forbidden_paths = match name {
         "adoc-lang" => ADOC_LANG_FORBIDDEN_PATHS,
-        "adoc-audit" => ADOC_AUDIT_FORBIDDEN_PATHS,
+        // The impact rules are pure as the audit is: no files, processes, network or threads.
+        "adoc-audit" | "adoc-impact" => ADOC_AUDIT_FORBIDDEN_PATHS,
         _ => return Vec::new(),
     };
     let mut violations = Vec::new();

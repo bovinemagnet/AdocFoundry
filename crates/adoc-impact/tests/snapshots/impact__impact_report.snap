@@ -1,0 +1,103 @@
+---
+source: crates/adoc-impact/tests/impact.rs
+expression: first
+---
+{
+  "schema_version": 1,
+  "completeness": {
+    "status": "complete"
+  },
+  "changes": [
+    {
+      "kind": "modified",
+      "path": "v1/modules/ROOT/nav.adoc"
+    },
+    {
+      "kind": "modified",
+      "path": "v1/modules/ROOT/partials/nested.adoc",
+      "resource_id": "1.0@product:ROOT:partial$nested.adoc"
+    }
+  ],
+  "impacts": [
+    {
+      "kind": "render",
+      "confidence": "confirmed",
+      "path": "v1/modules/ROOT/pages/index.adoc",
+      "resource_id": "1.0@product:ROOT:page$index.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/partials/nested.adoc",
+      "evidence": "both",
+      "via": [
+        "v1/modules/ROOT/partials/nested.adoc",
+        "v1/modules/ROOT/partials/intro.adoc",
+        "v1/modules/ROOT/pages/index.adoc"
+      ],
+      "source": {
+        "path": "v1/modules/ROOT/pages/index.adoc",
+        "range": {
+          "start": 11,
+          "end": 40
+        }
+      }
+    },
+    {
+      "kind": "render",
+      "confidence": "confirmed",
+      "path": "v1/modules/ROOT/pages/install.adoc",
+      "resource_id": "1.0@product:ROOT:page$install.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/partials/nested.adoc",
+      "evidence": "both",
+      "via": [
+        "v1/modules/ROOT/partials/nested.adoc",
+        "v1/modules/ROOT/partials/intro.adoc",
+        "v1/modules/ROOT/pages/install.adoc"
+      ],
+      "source": {
+        "path": "v1/modules/ROOT/pages/install.adoc",
+        "range": {
+          "start": 14,
+          "end": 43
+        }
+      }
+    },
+    {
+      "kind": "navigation",
+      "confidence": "confirmed",
+      "status": "listed",
+      "path": "v1/modules/ROOT/pages/guide.adoc",
+      "resource_id": "1.0@product:ROOT:page$guide.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/nav.adoc",
+      "evidence": "head",
+      "via": [
+        "v1/modules/ROOT/nav.adoc",
+        "v1/modules/ROOT/pages/guide.adoc"
+      ]
+    },
+    {
+      "kind": "navigation",
+      "confidence": "confirmed",
+      "status": "unlisted",
+      "path": "v1/modules/ROOT/pages/install.adoc",
+      "resource_id": "1.0@product:ROOT:page$install.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/nav.adoc",
+      "evidence": "base",
+      "via": [
+        "v1/modules/ROOT/nav.adoc",
+        "v1/modules/ROOT/pages/install.adoc"
+      ]
+    }
+  ],
+  "counts": {
+    "render": 2,
+    "reference_integrity": 0,
+    "navigation": 2,
+    "publication": 0
+  }
+}
