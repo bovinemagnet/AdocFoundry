@@ -567,6 +567,60 @@ pub fn create_partial() -> Arc<JsonObject> {
     )
 }
 
+pub fn validate_publication() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "outcome": {
+                "type": "string",
+                "description": "`ready`, `ready_partial` (nothing failed, but not everything could be checked) or `not_ready`.",
+            },
+            "audit": {
+                "type": "object",
+                "properties": {
+                    "outcome": { "type": "string" },
+                    "exit_code": { "type": "integer" },
+                    "completeness": any_object(),
+                    "counts": any_object(),
+                    "policy_problems": list(json!({ "type": "string" })),
+                },
+                "required": ["outcome", "exit_code", "completeness", "counts"],
+            },
+            "navigation": list(json!({
+                "type": "object",
+                "properties": {
+                    "component": { "type": "string" },
+                    "version": optional_string(),
+                    "navigation_files": list(any_object()),
+                    "start_page": any_object(),
+                    "coverage": { "type": ["object", "null"] },
+                },
+                "required": ["component", "version", "navigation_files", "start_page"],
+            })),
+            "profiles": list(json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "ready": { "type": "boolean" },
+                    "problems": list(json!({ "type": "string" })),
+                },
+                "required": ["name", "ready", "problems"],
+            })),
+            "not_checked": list(json!({ "type": "string" })),
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "outcome",
+            "audit",
+            "navigation",
+            "profiles",
+            "not_checked",
+            "workspace_revision",
+        ],
+    )
+}
+
 pub fn create_module() -> Arc<JsonObject> {
     object(
         json!({

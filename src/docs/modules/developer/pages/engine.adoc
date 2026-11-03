@@ -503,6 +503,9 @@ It exports the open buffer, and needs no Typst.
 
 `Engine::export_blocking(args, timeout)` runs the same job and waits, for the command-line `pdf`, and `Engine::is_exporting()` is true while a job is in flight.
 The settings' `[pdf]` table supplies the default theme, the themes and fonts directories, the site address and the standards.
+`Engine::profile_export_args(name)` turns a publication profile into export arguments.
+`Engine::profile_problems(name)` says what would stop a profile from exporting, without exporting: an unknown profile, an output outside the workspace, content not in it, or a theme not found.
+The MCP server's `validate_publication` reports it.
 See xref:pdf.adoc[PDF export] for the flow and the crate.
 
 == Word counts

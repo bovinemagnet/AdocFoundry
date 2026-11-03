@@ -433,6 +433,18 @@ It checks that a tool answers `timeout` within the shortened wait, that a full q
 
 `crates/adoc-mcp/src/responses.rs` has unit tests for the error code names, the cursors and the protocol-version rule.
 
+`crates/adoc-mcp/tests/publication.rs` drives `validate_publication` and the prompts.
+The tests are:
+
+* `validate_publication_reports_what_the_engine_checks`, which checks the start pages by default, the navigation files, the coverage, a ready profile and a broken one, the `not_ready` and `ready` outcomes, and a scope error
+* `the_prompts_are_recipes_that_grant_nothing`, which checks the four prompts, each naming its tools and saying that the server decides, that the tools are unchanged, and that a missing argument and an unknown prompt are refused
+* `mcp_build_not_enabled_by_allow_write`, which checks that `--allow-write` offers no build tool, that `build_site` is unknown, and that `--allow-build` is refused as an unknown option until issue #334
+
+The engine's `a_profile_is_checked_without_exporting`, in `crates/adoc-engine/tests/profiles.rs`, covers `Engine::profile_problems`.
+
+The manual checks of the whole MCP epic are in `docs/qa/mcp.md` in the repository.
+They cover real clients, HTTP, and the negative and security cases by hand.
+
 == Application tests
 
 Application tests are in `crates/adocfoundry/src/ui_tests.rs`.
