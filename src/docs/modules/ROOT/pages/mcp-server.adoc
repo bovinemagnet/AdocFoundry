@@ -287,6 +287,9 @@ Each operation has a `kind`:
 |`create_partial`
 |`component`, `version`, `module`, `file_name` (in the `partials` folder) and optionally `text`.
 
+|`create_module`
+|`component`, `version`, `name`, and optionally `families`, `navigation`, `index` and `index_title`. `version` is `~` for the versionless version. It is needed when the component has several versions. See <<creating-a-module>>.
+
 |`rename`
 |`path` or `resource_id`, `new_name` (a file name or a path relative to the page's folder) and optionally `expected_hash`. It rewrites the xrefs, navigation entries and includes that name the page, as Rename Page does.
 |===
@@ -389,6 +392,10 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |`component`, `version`, `module`, `file_name`, `text?`
 |Makes a partial through the engine's `page.new_partial` command, as New Partial does. `file_name` is in the `partials` folder, and may include folders, such as `shared/limits.adoc`. The text, when given, is written as a second undo step and saved. A partial that exists already is a `conflict`. It returns `path`, `resource_id` and `include`. `include` has `from_its_module` (such as `+include::partial$shared/limits.adoc[]+`) and `from_anywhere`, the full resource id (such as `+include::3.0@product:admin:partial$shared/limits.adoc[]+`).
 
+|`create_module`
+|`component`, `version`, `name`, `families?`, `navigation?`, `index?`, `index_title?`
+|Makes a module through the engine's `module.new` command, the one the app's New Module invokes. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as `invalid_argument`. `families` lists the families to make besides `pages`, which is always made. Without it, `partials` and `images` are made. `navigation` (true by default) makes `nav.adoc` and lists it in `antora.yml`. `index` (true by default) makes `pages/index.adoc`, titled `index_title` or the name in title case. A name that exists is a `conflict`, and a bad name is `invalid_argument`. It applies at once, saves `antora.yml`, and is one undo step. It returns `module`, `path`, `made` (every file made), `descriptor` and `index_page` (its resource id).
+
 |`edit_page`
 |`path`, `edits`, `save?`
 |Applies the edits in order. Each edit is `{ old_text, new_text }` or `{ range: { start, end }, new_text }`, and goes through the engine's `edit.replace_range` command. `old_text` must occur exactly once. If any edit fails, none of that call's edits stay. With `save: true` the page is written to disk. Otherwise the edits stay in the engine's buffer, and `read_page` shows them.
@@ -415,9 +422,13 @@ Then call `apply_changes`.
 Neither tool writes a file of its own.
 The engine does, through the same commands as the app.
 
-Making a module (`create_module`) waits for the engine's New Module command (issue #290).
+[[creating-a-module]]
+`create_module` makes a module in an existing component version, as New Module does.
+It applies at once and is not staged.
+See xref:using-the-editor.adoc#new-module[Make a new module] for the folders, files and `antora.yml` change.
+
 Making a project (`create_project`) waits for issues #291 to #295.
-Neither is offered yet.
+It is not offered yet.
 
 == Resources
 

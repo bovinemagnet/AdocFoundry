@@ -959,6 +959,59 @@ Like other changes to several files, it is undone only as a whole, so if the new
 
 The graph window's Create Page, on an unresolved target, makes the page a broken link expects; see xref:graph-view.adoc[the link graph].
 
+[[new-module]]
+== Make a new module
+
+New Module… (`module.new`) makes a module in an existing Antora component version.
+It is in the File menu (☰) and in the command palette.
+It is available only when the workspace has an Antora component.
+
+The New Module dialog asks for:
+
+* A component version, chosen from the list.
+It starts on the active page's component version.
+* A name, which is checked as you type.
+The dialog shows the folder it will make, or why the name is refused.
+* The families to make: partials, examples, images and attachments.
+Partials and images are ticked by default.
+The `pages` family is always made.
+* "Add a navigation file and list it in antora.yml", ticked by default.
+* "Create an index page", ticked by default, with a title field.
+
+The name uses lower-case letters, digits, `.`, `_` and `-`, and starts with a letter or digit.
+It may be `ROOT` when the component version has no `ROOT` module.
+A name that the component version has as a module already is refused, as is a folder under `modules/` that exists.
+Nothing is written until everything is checked.
+
+Create writes `modules/<name>/` with the families chosen, and opens the index page.
+Each empty family folder holds a `.gitkeep` file.
+Git keeps no empty folder, and Antora ignores a missing family folder, so without it the module would vanish on a fresh clone.
+
+The index page is `pages/index.adoc`.
+It holds `= <title>` and one paragraph, `An introduction to <title>.`
+The title is the name in title case unless you give one, so `admin-guide` becomes `Admin Guide`.
+
+The navigation file is `nav.adoc`.
+It holds `+* xref:index.adoc[]+`, or nothing when there is no index page.
+Its path is added to the `nav:` list in `antora.yml`.
+This is the only change to an existing file.
+One line goes after the list's last item, with the same indentation and quoting.
+When there is no `nav:` key, a new one is added with one item.
+The file is not rewritten.
+A `nav:` that is not a plain block list, such as `nav: [a.adoc]`, is refused with a message.
+Add the navigation file by hand in that case.
+
+`antora.yml` is saved at once, so the module resolves immediately.
+An xref such as `+xref:admin-guide:index.adoc[]+` has no diagnostic straight away.
+
+Making the module is one undo step.
+Undo removes the files made, unless one has been changed since, as with New Page.
+It removes the folders made while they are empty, and restores `antora.yml` byte for byte, saving it again.
+Redo makes it all again.
+
+The command line and the MCP server make modules too.
+See xref:command-line.adoc#new-module[new-module] and xref:mcp-server.adoc[the MCP server].
+
 == Rename a page
 
 Rename Page (kbd:[F2]) renames the active page.

@@ -8,8 +8,9 @@ mod common;
 use common::{scratch, Client};
 use serde_json::{json, Value};
 
-const MUTATING: [&str; 6] = [
+const MUTATING: [&str; 7] = [
     "apply_changes",
+    "create_module",
     "create_page",
     "create_partial",
     "edit_page",
@@ -187,5 +188,70 @@ fn create_partial_gives_the_include_that_names_it() {
         json!({ "component": "product", "version": "3.0", "module": "admin", "file_name": "shared/limits.adoc" }),
     );
     assert_eq!(error_code(&again), "conflict");
+    client.stop();
+}
+
+/// MCP PRD §11.3 test 19: `create_module` is New Module's engine command, with no layout or
+/// `antora.yml` writing of its own: the module, its navigation and its one line in the
+/// descriptor are what `module.new` makes.
+#[test]
+fn mcp_create_module_reuses_engine_command() {
+    let (_directory, root) = scratch("discovery");
+    let descriptor = root.join("product/v3/antora.yml");
+    let before = std::fs::read_to_string(&descriptor).unwrap();
+    let mut client = Client::start(&root, true);
+    let made = client
+        .call(
+            "create_module",
+            json!({ "component": "product", "version": "3.0", "name": "billing" }),
+        )
+        .unwrap();
+    assert_eq!(made["path"], "product/v3/modules/billing");
+    assert_eq!(
+        made["made"],
+        json!([
+            "product/v3/modules/billing/images/.gitkeep",
+            "product/v3/modules/billing/nav.adoc",
+            "product/v3/modules/billing/pages/index.adoc",
+            "product/v3/modules/billing/partials/.gitkeep",
+        ])
+    );
+    assert_eq!(made["index_page"], "3.0@product:billing:page$index.adoc");
+    let after = std::fs::read_to_string(&descriptor).unwrap();
+    assert_eq!(after, format!("{before}  - modules/billing/nav.adoc\n"));
+    // The module resolves at once: its page is listed, in its own navigation.
+    let pages = client
+        .call(
+            "list_pages",
+            json!({ "component": "product", "version": "3.0", "module": "billing" }),
+        )
+        .unwrap();
+    assert_eq!(
+        pages["items"][0]["resource_id"],
+        "3.0@product:billing:page$index.adoc"
+    );
+
+    for (arguments, code) in [
+        (
+            json!({ "component": "product", "version": "3.0", "name": "billing" }),
+            "conflict",
+        ),
+        (
+            json!({ "component": "product", "version": "3.0", "name": "admin" }),
+            "conflict",
+        ),
+        (
+            json!({ "component": "product", "name": "other" }),
+            "invalid_argument",
+        ),
+        (
+            json!({ "component": "product", "version": "3.0", "name": "Bad Name" }),
+            "invalid_argument",
+        ),
+        (json!({ "component": "nope", "name": "x" }), "not_found"),
+    ] {
+        let refused = client.call_result("create_module", arguments.clone());
+        assert_eq!(error_code(&refused), code, "{arguments}");
+    }
     client.stop();
 }

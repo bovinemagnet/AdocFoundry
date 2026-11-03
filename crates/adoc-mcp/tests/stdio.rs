@@ -286,6 +286,7 @@ fn write_tools_need_allow_write() {
     let mut expected: Vec<&str> = READ_TOOLS.to_vec();
     expected.extend([
         "apply_changes",
+        "create_module",
         "create_page",
         "create_partial",
         "edit_page",

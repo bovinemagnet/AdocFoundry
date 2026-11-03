@@ -3,8 +3,8 @@
 //! so the page's place, name, navigation entry and undo are the app's. Nothing here writes a
 //! file. Both apply at once and need `--allow-write`; the reviewed path for a change of several
 //! files is `preview_changes` and `apply_changes`, whose `create_page` and `create_partial`
-//! operations stage the same plans. `create_module` waits for #290's engine command, and
-//! `create_project` for #291–#295.
+//! operations stage the same plans. `create_module` invokes New Module's `module.new`;
+//! `create_project` waits for #291–#295.
 
 use adoc_engine::{commands::ids, text_hash, CommandArgs, CommandOutcome, NewPage};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -40,6 +40,25 @@ struct CreatePageArgs {
     /// Write the page and the navigation file to disk; true by default. The page's file is
     /// made in any case, as New Page makes it.
     save: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CreateModuleArgs {
+    component: String,
+    /// `~` for the versionless version; needed when the component has several.
+    version: Option<String>,
+    /// Lower-case letters, digits, `.`, `_` and `-`; `ROOT` only when there is none.
+    name: String,
+    /// The families besides `pages`: `partials`, `examples`, `images`, `attachments`;
+    /// partials and images without it.
+    families: Option<Vec<String>>,
+    /// Make `nav.adoc` and list it in `antora.yml`'s `nav:`; true by default.
+    navigation: Option<bool>,
+    /// Make `pages/index.adoc` with this title; named from the module without it. Pass
+    /// `index: false` for no page.
+    index_title: Option<String>,
+    /// Make an index page; true by default.
+    index: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -146,6 +165,113 @@ impl Server {
                 "navigation_file": nav.as_deref().map(|nav| state.shown(nav)),
                 "changed": changed.iter().map(|path| state.shown(path)).collect::<Vec<_>>(),
                 "saved": save,
+                "workspace_revision": state.engine.workspace_revision(),
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Make a module in a component version, as the app's New Module does (`module.new`): its families (each empty one kept by a `.gitkeep`), an index page and a navigation file listed in `antora.yml`, as one undo step. `antora.yml` gains one line, written as its other entries are; a `nav:` that is not a plain list is refused.",
+        output_schema = schemas::create_module(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn create_module(&self, Parameters(args): Parameters<CreateModuleArgs>) -> Answer {
+        self.run(move |state| {
+            let catalog = &state.engine.workspace().antora;
+            let version = match args.version.as_deref() {
+                Some("~") => None,
+                Some(version) => Some(version.to_owned()),
+                None => match catalog.versions_of(&args.component).as_slice() {
+                    [] => {
+                        return Err(Failure::not_found(format!(
+                            "no component `{}` in the workspace",
+                            args.component
+                        )))
+                    }
+                    [only] => only.version.clone(),
+                    _ => {
+                        return Err(Failure::invalid(format!(
+                            "`{}` has several versions; give the `version`",
+                            args.component
+                        )))
+                    }
+                },
+            };
+            let descriptor = catalog
+                .component(&args.component, version.as_deref())
+                .ok_or_else(|| {
+                    Failure::not_found(format!(
+                        "no component `{}` at version `{}`",
+                        args.component,
+                        version.as_deref().unwrap_or("~")
+                    ))
+                })?;
+            let root = state.confine(&descriptor.root.to_string_lossy())?;
+            let mut families = vec![adoc_engine::ResourceFamily::Page];
+            match &args.families {
+                None => families.extend(adoc_engine::NewModule::DEFAULT_FAMILIES),
+                Some(names) => {
+                    for name in names {
+                        let family = adoc_engine::ResourceFamily::ALL
+                            .into_iter()
+                            .find(|family| family.directory() == name || family.to_string() == *name)
+                            .ok_or_else(|| Failure::invalid(format!("unknown family `{name}`")))?;
+                        families.push(family);
+                    }
+                }
+            }
+            let folder = state
+                .engine
+                .check_new_module(&root, &args.name)
+                .map_err(|problem| {
+                    let code = if problem.contains("exists already") {
+                        ErrorCode::Conflict
+                    } else {
+                        ErrorCode::InvalidArgument
+                    };
+                    Failure::new(code, problem)
+                })?;
+            state.confine(&folder.to_string_lossy())?;
+            let request = adoc_engine::NewModule {
+                component: root.clone(),
+                name: args.name.clone(),
+                families,
+                nav: args.navigation.unwrap_or(true),
+                index_title: args
+                    .index
+                    .unwrap_or(true)
+                    .then(|| args.index_title.clone().unwrap_or_default()),
+            };
+            state
+                .engine
+                .invoke(ids::MODULE_NEW, CommandArgs::NewModule(request))
+                .map_err(|error| match error {
+                    adoc_engine::EngineError::InvalidRequest(_) => {
+                        Failure::new(ErrorCode::InvalidArgument, error.to_string())
+                    }
+                    other => Failure::from(other),
+                })?;
+            let mut made = Vec::new();
+            let mut folders = vec![folder.clone()];
+            while let Some(folder) = folders.pop() {
+                for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+                    if entry.path().is_dir() {
+                        folders.push(entry.path());
+                    } else {
+                        made.push(state.shown(&entry.path()));
+                    }
+                }
+            }
+            made.sort();
+            let index = folder.join("pages/index.adoc");
+            Ok(json!({
+                "schema_version": SCHEMA_VERSION,
+                "module": args.name,
+                "path": state.shown(&folder),
+                "made": made,
+                "descriptor": args.navigation.unwrap_or(true).then(|| state.shown(&root.join("antora.yml"))),
+                "index_page": index.is_file().then(|| state.engine.resource_id(&index)).flatten(),
                 "workspace_revision": state.engine.workspace_revision(),
             }))
         })

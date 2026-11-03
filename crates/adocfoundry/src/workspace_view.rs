@@ -15,7 +15,7 @@ use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, count_words, CommandArgs, CommandOutcome, DocumentId, EditPreview, EditorMode,
     EngineEvent, ExportArgs, ExportSummary, ExportTarget, NavigationPosition, OpenDisposition,
-    SidebarPanel, TabItem, ThemePreference,
+    ResourceFamily, SidebarPanel, TabItem, ThemePreference,
 };
 use gpui::{
     div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity, FocusHandle,
@@ -2498,6 +2498,187 @@ impl WorkspaceView {
         first.update(cx, |input, cx| input.focus(window, cx));
     }
 
+    /// New Module: a component version, the module's name (checked as it is typed, the folder
+    /// it makes shown), its families, and whether to make a navigation file listed in
+    /// `antora.yml` and an index page; Create runs `module.new` and opens the index page.
+    fn on_new_module(&mut self, _: &NewModule, window: &mut Window, cx: &mut Context<Self>) {
+        let components = Rc::new(self.app.read(cx).engine.new_module_components());
+        if components.is_empty() {
+            window.push_notification("Open a folder holding an Antora component first.", cx);
+            return;
+        }
+        let selected = components
+            .iter()
+            .position(|component| component.active)
+            .unwrap_or(0);
+        let labels: Vec<String> = components
+            .iter()
+            .map(|component| component.label.clone())
+            .collect();
+        let component = cx.new(|cx| {
+            SelectState::new(
+                labels,
+                Some(gpui_component::IndexPath::new(selected)),
+                window,
+                cx,
+            )
+        });
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Module name"));
+        let title = cx.new(|cx| InputState::new(window, cx).placeholder("Index page title"));
+        let families: Rc<Vec<(ResourceFamily, Cell<bool>)>> = Rc::new(
+            [
+                ResourceFamily::Partial,
+                ResourceFamily::Example,
+                ResourceFamily::Image,
+                ResourceFamily::Attachment,
+            ]
+            .into_iter()
+            .map(|family| {
+                let on = adoc_engine::NewModule::DEFAULT_FAMILIES.contains(&family);
+                (family, Cell::new(on))
+            })
+            .collect(),
+        );
+        let (nav, index) = (Rc::new(Cell::new(true)), Rc::new(Cell::new(true)));
+        let first = name.clone();
+        let workspace = cx.weak_entity();
+        window.open_alert_dialog(cx, move |dialog, _, cx| {
+            let (selection, components) = (component.clone(), components.clone());
+            let chosen = move |cx: &App| {
+                selection
+                    .read(cx)
+                    .selected_index(cx)
+                    .and_then(|index| components.get(index.row))
+                    .cloned()
+            };
+            let typed = name.read(cx).value().trim().to_owned();
+            // Checked as it is typed, by the same rule the command applies.
+            let checked = chosen(cx).map(|chosen| {
+                workspace
+                    .upgrade()
+                    .map(|workspace| {
+                        workspace
+                            .read(cx)
+                            .app
+                            .read(cx)
+                            .engine
+                            .check_new_module(&chosen.root, &typed)
+                    })
+                    .unwrap_or_else(|| Err(String::new()))
+            });
+            let status = match (&checked, typed.is_empty()) {
+                (_, true) => div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Lower-case letters, digits, `.`, `_` and `-`."),
+                (Some(Ok(folder)), false) => div()
+                    .debug_selector(|| "new-module-folder".to_owned())
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!("Makes {}", folder.display())),
+                (Some(Err(problem)), false) => div()
+                    .debug_selector(|| "new-module-problem".to_owned())
+                    .text_xs()
+                    .text_color(cx.theme().danger)
+                    .child(problem.clone()),
+                (None, false) => div(),
+            };
+            let mut boxes = v_flex().gap_1();
+            for (number, (family, on)) in families.iter().enumerate() {
+                let toggle = families.clone();
+                boxes = boxes.child(
+                    Checkbox::new(("new-module-family", number))
+                        .label(family.directory())
+                        .checked(on.get())
+                        .on_click(move |checked, window, _| {
+                            toggle[number].1.set(*checked);
+                            window.refresh();
+                        }),
+                );
+            }
+            let (nav_toggle, index_toggle) = (nav.clone(), index.clone());
+            let (name, title, families, nav, index, workspace) = (
+                name.clone(),
+                title.clone(),
+                families.clone(),
+                nav.clone(),
+                index.clone(),
+                workspace.clone(),
+            );
+            dialog
+                .title("New Module")
+                .width(px(640.))
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(Select::new(&component))
+                        .child(Input::new(&name))
+                        .child(status)
+                        .child(div().text_xs().child("pages, and:"))
+                        .child(boxes)
+                        .child(
+                            Checkbox::new("new-module-nav")
+                                .label("Add a navigation file and list it in antora.yml")
+                                .checked(nav_toggle.get())
+                                .on_click(move |checked, window, _| {
+                                    nav_toggle.set(*checked);
+                                    window.refresh();
+                                }),
+                        )
+                        .child(
+                            Checkbox::new("new-module-index")
+                                .label("Create an index page")
+                                .checked(index_toggle.get())
+                                .on_click({
+                                    let index_toggle = index_toggle.clone();
+                                    move |checked, window, _| {
+                                        index_toggle.set(*checked);
+                                        window.refresh();
+                                    }
+                                }),
+                        )
+                        .when(index_toggle.get(), |list| list.child(Input::new(&title))),
+                )
+                .confirm()
+                .ok_text("Create")
+                .on_ok(move |_, window, cx| {
+                    let Some(component) = chosen(cx) else {
+                        return true;
+                    };
+                    let mut chosen_families = vec![ResourceFamily::Page];
+                    chosen_families.extend(
+                        families
+                            .iter()
+                            .filter(|(_, on)| on.get())
+                            .map(|(family, _)| *family),
+                    );
+                    let request = adoc_engine::NewModule {
+                        component: component.root,
+                        name: name.read(cx).value().trim().to_owned(),
+                        families: chosen_families,
+                        nav: nav.get(),
+                        index_title: index
+                            .get()
+                            .then(|| title.read(cx).value().trim().to_owned()),
+                    };
+                    // A refusal keeps the dialog open, to choose another name.
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .invoke(
+                                    ids::MODULE_NEW,
+                                    CommandArgs::NewModule(request),
+                                    window,
+                                    cx,
+                                )
+                                .is_some()
+                        })
+                        .unwrap_or(true)
+                })
+        });
+        first.update(cx, |input, cx| input.focus(window, cx));
+    }
+
     /// Lists the workspace's files in the palette, ranked by the engine as the query changes,
     /// and opens the one chosen as an ordinary tab.
     fn on_quick_open(&mut self, _: &QuickOpen, window: &mut Window, cx: &mut Context<Self>) {
@@ -4887,6 +5068,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_quick_open))
             .on_action(cx.listener(Self::on_open_recent))
             .on_action(cx.listener(Self::on_new_page))
+            .on_action(cx.listener(Self::on_new_module))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_reload))

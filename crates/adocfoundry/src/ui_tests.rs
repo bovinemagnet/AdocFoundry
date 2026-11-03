@@ -3149,6 +3149,53 @@ fn new_page_makes_the_page_opens_it_and_lists_it_in_the_navigation(cx: &mut Test
 }
 
 #[gpui::test]
+fn new_module_dialog_validates_live(cx: &mut TestAppContext) {
+    let (directory, app, _workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let root = adoc_index::normalize_path(directory.path());
+    cx.dispatch_action(crate::editor::bindings::NewModule);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+
+    // A name the component version has already is refused as it is typed.
+    cx.simulate_input("ROOT");
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("new-module-problem").is_some());
+    assert!(cx.debug_bounds("new-module-folder").is_none());
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(
+        cx.update(gpui_component::WindowExt::has_active_dialog),
+        "refused, the dialog stays open"
+    );
+
+    // A new name shows the folder it makes, and Create makes it and opens its index page.
+    for _ in 0.."ROOT".len() {
+        cx.simulate_keystrokes("backspace");
+    }
+    cx.simulate_input("security");
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("new-module-folder").is_some());
+    assert!(cx.debug_bounds("new-module-problem").is_none());
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    let index = root.join("alpha/modules/security/pages/index.adoc");
+    assert!(index.is_file());
+    let active = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .path
+            .clone()
+    });
+    assert_eq!(active, index);
+    assert!(std::fs::read_to_string(root.join("alpha/antora.yml"))
+        .unwrap()
+        .ends_with("- modules/ROOT/nav.adoc\n- modules/security/nav.adoc\n"));
+}
+
+#[gpui::test]
 fn palette_commands_reach_the_visual_editor(cx: &mut TestAppContext) {
     let text = "= Page\n\nSome plain words.\n";
     let (app, _, visual, id, mut cx) = visual_workspace(text, cx);

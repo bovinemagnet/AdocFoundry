@@ -49,6 +49,8 @@ const USAGE: &str = "usage:
   adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
   adocfoundry-cli doctor [<root>] [--format text|json]
+  adocfoundry-cli new-module <component-root> <name> [--families pages,partials,images]
+      [--no-nav] [--index-title <title>]
   adocfoundry-cli --version";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -86,8 +88,79 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         "git-status" => git_status(rest),
         "graph" => graph(rest),
         "doctor" => doctor(rest),
+        "new-module" => new_module(rest),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
+}
+
+/// Makes a module in the component version at `<component-root>` (the folder holding
+/// `antora.yml`) through the engine's `module.new`, as the app's New Module does, and lists the
+/// files it made, relative to the component root.
+fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
+    let nav = !arguments.iter().any(|argument| argument == "--no-nav");
+    let arguments: Vec<String> = arguments
+        .iter()
+        .filter(|argument| *argument != "--no-nav")
+        .cloned()
+        .collect();
+    let (positional, options) = parse_options(&arguments, &["families", "index-title"])?;
+    let [component, name] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let families = match option(&options, "families") {
+        None => adoc_engine::NewModule::DEFAULT_FAMILIES.to_vec(),
+        Some(list) => list
+            .split(',')
+            .map(|name| {
+                let name = name.trim();
+                adoc_engine::ResourceFamily::ALL
+                    .into_iter()
+                    .find(|family| family.directory() == name || family.to_string() == name)
+                    .ok_or_else(|| format!("unknown family `{name}`"))
+            })
+            .collect::<Result<_, _>>()?,
+    };
+    let root = adoc_index::normalize_path(Path::new(component));
+    let mut engine = open_engine(&root, false)?;
+    let request = adoc_engine::NewModule {
+        component: root.clone(),
+        name: (*name).to_owned(),
+        families,
+        nav,
+        index_title: Some(
+            option(&options, "index-title")
+                .unwrap_or_default()
+                .to_owned(),
+        ),
+    };
+    engine
+        .invoke(
+            adoc_engine::commands::ids::MODULE_NEW,
+            adoc_engine::CommandArgs::NewModule(request),
+        )
+        .map_err(|error| error.to_string())?;
+    // Every write is done: the files made, listed in order.
+    let folder = root.join("modules").join(name);
+    let mut made = Vec::new();
+    let mut folders = vec![folder];
+    while let Some(folder) = folders.pop() {
+        for entry in std::fs::read_dir(&folder).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if entry.path().is_dir() {
+                folders.push(entry.path());
+            } else {
+                made.push(adoc_engine::report::display_path(&entry.path(), &root));
+            }
+        }
+    }
+    made.sort();
+    for file in made {
+        println!("made {file}");
+    }
+    if nav {
+        println!("listed modules/{name}/nav.adoc in antora.yml");
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Positional arguments and `(name, value)` options.

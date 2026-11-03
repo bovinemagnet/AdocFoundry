@@ -566,3 +566,24 @@ pub fn create_partial() -> Arc<JsonObject> {
         ],
     )
 }
+
+pub fn create_module() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "module": { "type": "string" },
+            "path": { "type": "string" },
+            "made": list(json!({ "type": "string" })),
+            "descriptor": optional_string(),
+            "index_page": optional_string(),
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "module",
+            "path",
+            "made",
+            "workspace_revision",
+        ],
+    )
+}
