@@ -979,6 +979,52 @@ Reloading the settings puts the kept audit together again under the new policy, 
 Each change publishes `EngineEvent::AuditChanged`, `Engine::audit_builds()` counts whole builds, and `has_pending()` counts audit work still due.
 The probes `AuditFile` and `AuditVersion` count the parts audited, so `tests/audit.rs` checks that an edit audits only the files it can change, and a page edit no version.
 
+=== Adding an optional provider
+
+`adoc-audit`'s `providers.rs` holds the registry `PROVIDERS` of `ProviderSpec { id: ProviderId, summary, needs: Needs, issue }`.
+`Needs` is `Tool(name)`, `Network`, `GitHistory` or `Workspace`.
+The `ProviderId` names are stable: `compatibility`, `external-links`, `page-age` and `vale`.
+`Policy::enable_provider(name)` and `provider_enabled(id)` hold which are enabled, read from `[quality] providers`.
+An unknown name is a `[quality]` problem.
+
+`AuditBuilder::provider_ran(id)` and `provider_unavailable(id, reason)` record what happened.
+`finish` gives every registered provider a `ProviderStatus { provider, state }`.
+The state is `Disabled` when the policy does not enable the provider, whatever was reported.
+Otherwise it is as reported.
+Otherwise it is `Unavailable`, with the reason that this build has no such provider yet.
+Each unavailable provider is a `GapReason::ProviderUnavailable` gap.
+`AuditReport::providers()` lists the statuses in name order.
+
+A provider's work never runs in `adoc-audit`.
+`cargo xtask layers` checks that its sources name no file, process, network or thread API (`ADOC_AUDIT_FORBIDDEN_PATHS`, test `audit_is_offline`).
+The work runs where its needs are allowed:
+
+* A tool from `[tools]` or `PATH` runs on an engine worker, as the diagram tools do.
+* Git history comes through `adoc-git`.
+* The network is used only in the `adocfoundry` crate, which hands its results to the engine.
+`cargo xtask layers` confines HTTP clients to that crate.
+
+The engine keeps a provider's results as parts, as it keeps each file's and version's, so an edit does not run it over the whole workspace.
+When it assembles a report, it adds the findings and reports `provider_ran` or `provider_unavailable`.
+
+The findings use the provider's own rule IDs.
+They are registered in `RULES` with a default severity, so the policy can set or exclude them like any rule.
+They never restate an existing diagnostic.
+
+A provider is added with the work package of its own issue.
+The registry entry already exists for the four planned.
+
+The command line and the app go through the same `assemble` and `finish`, so a provider that runs in the engine reports the same in both.
+One that needs the network runs only in the app.
+In the command line it is unavailable, unless the command line gains its own way to run it.
+
+The tests are:
+
+* `providers_are_disabled_until_enabled_and_unavailable_until_run` in `adoc-audit`.
+* `audit_unavailable_providers_leave_the_core_audit` in `adocfoundry-cli/tests/audit.rs`.
+* `cli_and_app_report_the_same_audit`, in the same file.
+It checks that the command line's report and the engine's kept audit agree under a workspace policy, and that every `quality.*` finding printed is the problem the app lists at the same place.
+
 == Reports and inspection
 
 Headless front ends need answers that are not editor features.

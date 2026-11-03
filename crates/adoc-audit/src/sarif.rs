@@ -6,7 +6,8 @@
 //! workspace root (`uriBaseId` `ROOT<n>`), with `/` separators, and never absolute; a region is
 //! 1-based lines and columns counted in characters (`columnKind` `unicodeCodePoints`), given by
 //! the caller, who can read the files. Completeness is a property of the run, and each gap a
-//! tool execution notification, so a partial audit is never mistaken for a clean one.
+//! tool execution notification, so a partial audit is never mistaken for a clean one. Each
+//! optional provider's state is a property of the run too.
 
 use std::collections::BTreeMap;
 
@@ -137,6 +138,7 @@ pub fn to_sarif(
             "properties": {
                 "schemaVersion": report.schema_version(),
                 "completeness": status,
+                "providers": report.providers(),
                 "counts": report.counts(),
                 "coverage": report.coverage(),
             },

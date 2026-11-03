@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use adoc_core::DiagnosticSeverity;
 use adoc_engine::{
-    audit::{AuditReport, Completeness, FindingCode, RuleId},
+    audit::{AuditReport, Completeness, FindingCode, ProviderState, RuleId},
     Engine, ProblemFilter,
 };
 use gpui::{
@@ -184,12 +184,31 @@ impl Overview {
             })
             .collect();
 
+        // Only the providers the settings enable; the reason one could not run is a gap above.
+        let providers = report
+            .providers()
+            .iter()
+            .filter_map(|status| {
+                let state = match status.state {
+                    ProviderState::Disabled => return None,
+                    ProviderState::Ran => "ran",
+                    ProviderState::Unavailable { .. } => "unavailable",
+                };
+                Some(Row::text(format!(
+                    "{}: {state} ({})",
+                    status.provider,
+                    status.provider.spec().summary
+                )))
+            })
+            .collect();
+
         let sections = [
             ("Findings by severity", severities),
             ("Findings by rule", rules),
             ("Navigation coverage", coverage),
             ("Skipped, not known without a build", skips),
             ("Excluded by the settings", excluded),
+            ("Optional providers", providers),
         ]
         .into_iter()
         .filter(|(_, rows): &(_, Vec<Row>)| !rows.is_empty())
@@ -355,5 +374,22 @@ mod tests {
             None,
             "the undetermined page is a skip, not a problem"
         );
+        assert!(
+            overview
+                .sections
+                .iter()
+                .all(|section| section.title != "Optional providers"),
+            "none is enabled"
+        );
+
+        let mut policy = adoc_engine::audit::Policy::default();
+        policy.enable_provider("vale").unwrap();
+        let report = engine.audit_now_with(adoc_engine::audit::AuditScope::Workspace, &policy);
+        let overview = Overview::of_report(&report, false);
+        assert!(overview.status.starts_with("Partial"));
+        assert!(overview.reasons[0].contains("`vale` provider could not run"));
+        assert!(overview
+            .labels()
+            .contains(&"vale: unavailable (Prose style alerts from Vale)".to_owned()));
     }
 }

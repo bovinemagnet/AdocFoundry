@@ -1,5 +1,5 @@
 //! The documentation quality audit's model: stable rule identifiers and the rule registry
-//! ([`RULES`]), the report ([`AuditReport`], built with [`AuditBuilder`]), the workspace policy
+//! ([`RULES`]), the optional providers ([`PROVIDERS`]), the report ([`AuditReport`], built with [`AuditBuilder`]), the workspace policy
 //! ([`Policy`]: rule severities, exclusions, `fail_on`, `require_complete`) and what a report
 //! means for a gate ([`Verdict`]).
 //!
@@ -21,18 +21,27 @@
 //! # Completeness and skips
 //!
 //! A report's [`Completeness`] is about coverage: whether every resource in scope was analysed
-//! by every enabled rule. A construct a rule cannot assert, such as a dynamic include, is a
-//! [`Skip`], counted and listed, and does not make a report partial.
+//! by every enabled rule and provider. A construct a rule cannot assert, such as a dynamic
+//! include, is a [`Skip`], counted and listed, and does not make a report partial.
+//!
+//! # Optional providers
+//!
+//! Checks that need a tool, the network or history ([`PROVIDERS`]) are optional providers, off
+//! until the policy enables them. They never run in this crate: whoever runs one reports its
+//! state to the builder, and an enabled provider that did not run is a `provider-unavailable`
+//! gap. See the `providers` module.
 
 mod content;
 mod navigation;
 mod policy;
+mod providers;
 mod report;
 mod rules;
 mod sarif;
 mod workspace;
 
 pub use policy::{Applied, Exclusion, FailOn, Policy, PolicyError, TargetVersion, Verdict};
+pub use providers::{Needs, ProviderId, ProviderSpec, ProviderState, ProviderStatus, PROVIDERS};
 pub use report::{
     portable_path, AuditBuilder, AuditReport, AuditScope, Completeness, Coordinate, Counts,
     Evidence, Excluded, Finding, Gap, GapReason, Location, NavCoverage, Revision, RuleState,

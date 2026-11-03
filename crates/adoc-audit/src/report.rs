@@ -4,13 +4,19 @@
 //! [`AuditReport::roots`], with `/` separators on every platform, so the same workspace gives
 //! the same report wherever it is checked out and no absolute path leaves the machine.
 
-use std::path::{Component, Path};
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path},
+};
 
 use adoc_antora::{AntoraCoordinate, ResourceFamily};
 use adoc_core::{DiagnosticSeverity, SourceRange};
 use serde::{Deserialize, Serialize};
 
-use crate::{Applied, FailOn, FindingCode, Policy, RuleId, Verdict, RULES};
+use crate::{
+    Applied, FailOn, FindingCode, Policy, ProviderId, ProviderState, ProviderStatus, RuleId,
+    Verdict, PROVIDERS, RULES,
+};
 
 /// The version of the report's schema. It changes whenever a field or a rule's meaning does.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -301,6 +307,8 @@ pub struct AuditReport {
     fail_on: FailOn,
     require_complete: bool,
     rules: Vec<RuleState>,
+    /// Every optional provider's state, in name order.
+    providers: Vec<ProviderStatus>,
     completeness: Completeness,
     counts: Counts,
     coverage: Vec<NavCoverage>,
@@ -345,6 +353,12 @@ impl AuditReport {
     #[must_use]
     pub fn rules(&self) -> &[RuleState] {
         &self.rules
+    }
+
+    /// Every optional provider's state, in name order: disabled, ran, or unavailable.
+    #[must_use]
+    pub fn providers(&self) -> &[ProviderStatus] {
+        &self.providers
     }
 
     #[must_use]
@@ -412,6 +426,8 @@ pub struct AuditBuilder {
     coverage: Vec<NavCoverage>,
     partial: Vec<Gap>,
     unavailable: Vec<Gap>,
+    /// What the providers that were run reported.
+    providers: BTreeMap<ProviderId, ProviderState>,
 }
 
 impl AuditBuilder {
@@ -426,7 +442,23 @@ impl AuditBuilder {
             coverage: Vec::new(),
             partial: Vec::new(),
             unavailable: Vec::new(),
+            providers: BTreeMap::new(),
         }
+    }
+
+    /// `provider` ran over the whole scope; its findings are added as any others.
+    pub fn provider_ran(&mut self, provider: ProviderId) {
+        self.providers.insert(provider, ProviderState::Ran);
+    }
+
+    /// `provider` could not run, for `reason`: if enabled, the report is partial.
+    pub fn provider_unavailable(&mut self, provider: ProviderId, reason: impl Into<String>) {
+        self.providers.insert(
+            provider,
+            ProviderState::Unavailable {
+                reason: reason.into(),
+            },
+        );
     }
 
     pub fn finding(&mut self, finding: Finding) {
@@ -454,9 +486,41 @@ impl AuditBuilder {
     /// The report under `policy`. A rule's findings take the rule's severity from the policy,
     /// and a rule turned off contributes no findings or skips; an existing diagnostic keeps its
     /// own severity. Findings an exclusion matches move to [`AuditReport::excluded`]. Identical
-    /// findings are kept once.
+    /// findings are kept once. A provider the policy does not enable is disabled, whatever was
+    /// reported of it; an enabled one is as reported, and unavailable when nothing ran it, each
+    /// unavailable provider a `provider-unavailable` gap.
     #[must_use]
-    pub fn finish(self, policy: &Policy) -> AuditReport {
+    pub fn finish(mut self, policy: &Policy) -> AuditReport {
+        let providers: Vec<ProviderStatus> = PROVIDERS
+            .iter()
+            .map(|spec| {
+                let state = if policy.provider_enabled(spec.id) {
+                    self.providers
+                        .remove(&spec.id)
+                        .unwrap_or_else(|| ProviderState::Unavailable {
+                            reason: format!(
+                                "this build has no `{}` provider yet; it is tracked in #{}",
+                                spec.id, spec.issue
+                            ),
+                        })
+                } else {
+                    ProviderState::Disabled
+                };
+                ProviderStatus {
+                    provider: spec.id,
+                    state,
+                }
+            })
+            .collect();
+        for status in &providers {
+            if let ProviderState::Unavailable { reason } = &status.state {
+                self.partial.push(Gap {
+                    reason: GapReason::ProviderUnavailable,
+                    detail: format!("The `{}` provider could not run: {reason}", status.provider),
+                    affected: vec![status.provider.as_str().to_owned()],
+                });
+            }
+        }
         let enabled = |code: FindingCode| match code {
             FindingCode::Rule(rule) => policy.severity(rule).is_some(),
             FindingCode::Diagnostic(_) => true,
@@ -530,6 +594,7 @@ impl AuditBuilder {
                     severity: policy.severity(rule.id),
                 })
                 .collect(),
+            providers,
             completeness,
             counts,
             coverage,
@@ -734,6 +799,55 @@ mod tests {
             affected: vec!["platform".to_owned()],
         });
         builder.finish(&policy)
+    }
+
+    #[test]
+    fn providers_are_disabled_until_enabled_and_unavailable_until_run() {
+        let plain = report(vec![unlisted("a.adoc")], &Policy::default());
+        assert!(plain
+            .providers()
+            .iter()
+            .all(|status| status.state == ProviderState::Disabled));
+        assert_eq!(plain.providers().len(), PROVIDERS.len());
+        assert_eq!(*plain.completeness(), Completeness::Complete);
+
+        let mut policy = Policy::default();
+        policy.enable_provider("vale").unwrap();
+        policy.enable_provider("external-links").unwrap();
+        let mut builder = builder();
+        builder.finding(unlisted("a.adoc"));
+        builder.provider_ran(ProviderId::EXTERNAL_LINKS);
+        // Reported, but not enabled: still disabled.
+        builder.provider_unavailable(ProviderId::PAGE_AGE, "no repository");
+        let partial = builder.finish(&policy);
+        let state = |provider: ProviderId| {
+            partial
+                .providers()
+                .iter()
+                .find(|status| status.provider == provider)
+                .unwrap()
+                .state
+                .clone()
+        };
+        assert_eq!(state(ProviderId::EXTERNAL_LINKS), ProviderState::Ran);
+        assert_eq!(state(ProviderId::PAGE_AGE), ProviderState::Disabled);
+        assert_eq!(
+            state(ProviderId::VALE),
+            ProviderState::Unavailable {
+                reason: "this build has no `vale` provider yet; it is tracked in #85".to_owned()
+            }
+        );
+        let Completeness::Partial(gaps) = partial.completeness() else {
+            panic!("an unavailable provider leaves the report partial");
+        };
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].reason, GapReason::ProviderUnavailable);
+        assert_eq!(gaps[0].affected, ["vale"]);
+        assert_eq!(
+            partial.findings(),
+            plain.findings(),
+            "the core audit's findings stand"
+        );
     }
 
     #[test]

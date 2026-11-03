@@ -11,6 +11,7 @@
 ** xref:settings.adoc[Settings]
 * xref:antora-support.adoc[Antora support]
 ** xref:diagnostics.adoc[Diagnostics]
+** xref:quality-audit.adoc[The quality audit]
 * xref:command-line.adoc[Command line]
 * xref:language-server.adoc[Language server]
 * xref:mcp-server.adoc[MCP server]

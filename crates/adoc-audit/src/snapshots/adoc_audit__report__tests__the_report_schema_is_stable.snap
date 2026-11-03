@@ -32,6 +32,24 @@ expression: sample()
       "severity": "warning"
     }
   ],
+  "providers": [
+    {
+      "provider": "compatibility",
+      "state": "disabled"
+    },
+    {
+      "provider": "external-links",
+      "state": "disabled"
+    },
+    {
+      "provider": "page-age",
+      "state": "disabled"
+    },
+    {
+      "provider": "vale",
+      "state": "disabled"
+    }
+  ],
   "completeness": {
     "status": "partial",
     "gaps": [
