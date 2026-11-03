@@ -409,3 +409,56 @@ pub fn find_references() -> Arc<JsonObject> {
         ],
     )
 }
+
+pub fn quality_audit() -> Arc<JsonObject> {
+    // The report of `adoc-audit` (its own `schema_version`), with the findings paged and the
+    // fields below added; nested parts are the report's.
+    object(
+        json!({
+            "schema_version": { "type": "integer", "description": "The audit report's schema." },
+            "scope": any_object(),
+            "revision": any_object(),
+            "roots": list(json!({ "type": "string" })),
+            "fail_on": { "type": "string" },
+            "require_complete": { "type": "boolean" },
+            "rules": list(any_object()),
+            "providers": list(any_object()),
+            "completeness": {
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "description": "`complete`, `partial` or `unavailable`." },
+                    "gaps": list(any_object()),
+                },
+                "required": ["status"],
+            },
+            "counts": any_object(),
+            "coverage": list(any_object()),
+            "findings": list(any_object()),
+            "skips": list(any_object()),
+            "excluded": list(any_object()),
+            "findings_total": { "type": "integer", "description": "Findings the filters take, on every page." },
+            "next_cursor": optional_string(),
+            "truncated": truncated(),
+            "verdict": { "type": "string", "description": "`pass`, `fail` or `untrustworthy`, as the policy judges the report." },
+            "exit_code": { "type": "integer", "description": "What `adocfoundry-cli audit` would exit with." },
+            "outcome": {
+                "type": "string",
+                "description": "`pass` only for a complete audit; `pass_partial` when nothing failed in what was audited but not everything was; `fail`; `untrustworthy`.",
+            },
+            "policy_problems": list(json!({ "type": "string" })),
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "completeness",
+            "counts",
+            "findings",
+            "findings_total",
+            "next_cursor",
+            "verdict",
+            "exit_code",
+            "outcome",
+            "workspace_revision",
+        ],
+    )
+}

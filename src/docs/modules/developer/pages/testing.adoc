@@ -370,6 +370,15 @@ The tests are:
 * `mcp_page_context_distinguishes_known_and_unknown_attributes`, which checks that declared values are given as written, that `dynamic` ones are marked, and that no effective value is invented
 * `get_outline_gives_sections_with_ids_and_ranges`
 
+`crates/adoc-mcp/tests/quality.rs` drives `quality_audit` on copies of `tests/fixtures/audit`.
+The tests are:
+
+* `mcp_quality_matches_cli`, which pages through every finding and checks that the reassembled report equals the command line's JSON report as its own tests' snapshot (`crates/adocfoundry-cli/tests/snapshots/audit__audit_json.snap`) holds it, and that a component version's audit equals the engine's under the same workspace-only policy
+* `mcp_quality_reports_skips_separately_from_coverage`, which checks that skips are counted and listed while the audit is complete, that filters leave the counts alone and that findings carry regions
+* `mcp_analysis_pagination_does_not_hide_incomplete`, which enables the `vale` provider, which this build cannot run, and checks that every page of one finding still says the audit is partial, with `outcome: pass_partial`, that `require_complete` makes it untrustworthy with exit code 2, that a cursor holds to its filters, and the errors for bad arguments
+
+A unit test in `crates/adoc-mcp/src/analysis.rs` checks that a passing partial audit is never a plain pass.
+
 A unit test in `crates/adoc-mcp/src/server.rs`, `mcp_timeout_does_not_block_other_clients_forever`, holds the engine's lock from another thread.
 It checks that a tool answers `timeout` within the shortened wait, that a full queue answers `unavailable`, and that the tool works once the lock is free.
 

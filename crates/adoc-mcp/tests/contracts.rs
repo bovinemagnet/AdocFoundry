@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 /// The read-only tools: the ten that came before the contracts, kept as they were, and the
 /// discovery tools added since.
-const READ_TOOLS: [&str; 14] = [
+const READ_TOOLS: [&str; 15] = [
     "check",
     "find_references",
     "get_nav",
@@ -22,6 +22,7 @@ const READ_TOOLS: [&str; 14] = [
     "link_graph",
     "list_components",
     "list_pages",
+    "quality_audit",
     "read_page",
     "render_page",
     "resolve",
@@ -83,6 +84,7 @@ fn read_calls() -> Vec<(&'static str, Value)> {
             "find_references",
             json!({ "resource_id": "latest@demo:ROOT:partial$welcome.adoc" }),
         ),
+        ("quality_audit", json!({})),
     ]
 }
 
