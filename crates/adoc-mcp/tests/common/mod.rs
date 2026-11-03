@@ -60,11 +60,14 @@ impl Client {
     /// A client of a server on `root` in a session that asked for protocol `version`, and the
     /// server's answer to `initialize`.
     pub fn start_with(root: &Path, allow_write: bool, version: &str) -> (Self, Value) {
+        let options: &[&str] = if allow_write { &["--allow-write"] } else { &[] };
+        Self::start_with_options(root, options, version)
+    }
+
+    /// A client of a server on `root` started with `options`, such as `--allow-build`.
+    pub fn start_with_options(root: &Path, options: &[&str], version: &str) -> (Self, Value) {
         let mut command = Command::new(env!("CARGO_BIN_EXE_adoc-mcp"));
-        command.arg(root);
-        if allow_write {
-            command.arg("--allow-write");
-        }
+        command.arg(root).args(options);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

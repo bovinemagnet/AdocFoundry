@@ -489,7 +489,14 @@ mod tests {
         let mut engine = Engine::new(Settings::default().with_git_opt_in());
         engine.open_workspace(vec![root.clone()]).unwrap();
         assert!(engine.wait_for_workers(Duration::from_secs(30)));
-        let server = Server::new(engine, vec![root.clone()], true);
+        let server = Server::new(
+            engine,
+            vec![root.clone()],
+            crate::server::Permissions {
+                write: true,
+                build: false,
+            },
+        );
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()

@@ -9,7 +9,7 @@ It runs on the AdocFoundry engine, so an MCP client such as an assistant gets th
 
 [source,sh]
 ----
-adoc-mcp <root>… [--allow-write] [--http <addr>]
+adoc-mcp <root>… [--allow-write] [--allow-build] [--http <addr>]
 adoc-mcp --version
 ----
 
@@ -25,6 +25,7 @@ See xref:settings.adoc[Settings].
 
 By default the server only reads.
 The write tools are offered only with `--allow-write`.
+`build_site` is offered only with `--allow-build`, which grants no write tools.
 
 The server also keeps every file it reads on a tool's behalf inside the roots, not only the paths a tool is given.
 This covers the files a page includes (nested includes, and includes through a symbolic link that leads outside the roots), the images, theme and fonts of a PDF export, and any other file the export asks for.
@@ -499,7 +500,7 @@ Previews expire after 15 minutes, and idempotency keys are kept as long.
 
 Document text is data, never permission.
 A page saying that the assistant may write grants nothing.
-Only `--allow-write` does.
+Only `--allow-write` and `--allow-build` do.
 
 == Write tools
 
@@ -564,11 +565,55 @@ See xref:using-the-editor.adoc#new-module[Make a new module] for the folders, fi
 It applies at once and is not staged.
 Both the folder and the component's folder must lie inside the server's roots.
 
-=== Not offered yet
+[[build-site]]
+== Building the site
 
-These are not offered, and the server does not list them:
+`build_site` is the application's Build Site, the engine's `project.build_site`.
+It is offered only with `--allow-build`.
+`--allow-write` never implies it, and `--allow-build` grants no write tools.
+Without the flag the tool is not listed, and a client that calls it anyway gets `permission_denied`, with a message ending "this server was started without --allow-build".
 
-* `build_site` waits for issue #334, which adds the tool and a separate `--allow-build` flag. The app's Build Site command already exists. `--allow-write` never implies it. Until then the server refuses `--allow-build` as an unknown option.
+In the playbook's folder it runs:
+
+. `npm install`, while `node_modules` is missing.
+. The `build` script of `package.json`, else `npm exec --no -- antora --fetch <playbook>`, which installs nothing.
+
+The engine bounds the build by `[tools] build_timeout` (600 seconds by default, from the user settings file) and 8 MiB of output, and stops every process it started.
+See xref:using-the-editor.adoc#build-site[Build the site].
+
+The argument is `wait_seconds`, optional, 300 by default and at most 3600.
+It is how long the call waits for the build to finish.
+The call waits without holding the engine, so other requests and sessions are answered meanwhile.
+When the wait ends first, the answer has `outcome: "running"`.
+Calling again while a build runs waits for that same build (`started: false`) and starts no other.
+Only one build runs at a time.
+
+The answer has:
+
+* `schema_version`.
+* `started`, false when the call waited for a build already running.
+* `outcome`: `built`, `failed` or `running`.
+* `playbook`, its path relative to the first root.
+* `output_dir`, `build/site` beside the playbook.
+* `site`, `build/site/index.html` when written, else null.
+* `error`, why it failed, else null.
+* `log`, the end of the build's log, at most 64 KiB, with each command first as `$ npm ...`.
+* `log_lines`, the number of lines in all.
+* `log_truncated`.
+
+A workspace with no playbook is `not_found`.
+Without Node.js or npm the call is `unavailable`, with the reason, such as installing Node.js or setting `[tools] node`.
+Nothing is ever installed.
+A failed or timed-out build is not a tool error: it is `outcome: "failed"` with `error` and the log.
+
+=== Trust
+
+There is no sandbox.
+npm, the project's scripts, its packages and Antora with its extensions run with your rights and network access.
+They run outside the server's root confinement, which covers only the server's own reads and writes.
+Use `--allow-build` for trusted projects only.
+The server does not ask for approval while it runs: the operator's `--allow-build` is the consent.
+The application, by contrast, asks before a folder's first build in a window.
 
 == Resources
 
@@ -686,7 +731,7 @@ The codes are stable.
 |A path lies outside every root, or reaches outside through a link.
 
 |`permission_denied`
-|A write tool was called without `--allow-write`.
+|A write tool was called without `--allow-write`, or `build_site` without `--allow-build`.
 
 |`conflict`
 |Text or a file changed from what the request expected. For example, the `old_text` of `edit_page` is no longer in the page, an `expected_hash` does not match, a file to make now exists, or a save conflicts.
@@ -726,8 +771,8 @@ Renders, searches, Git status and exports keep their 120-second limit, after whi
 == Limits and safety
 
 * Every path, absolute or relative to the first root, must lie inside a root. The check is lexical and also follows symbolic links. Otherwise the call is refused with `outside_workspace`.
-* The server makes no network requests. With `--http` it listens on a loopback address only, for requests that carry its token.
-* Project scripts are never run.
+* The server makes no network requests of its own, though a build that `build_site` runs may (see <<build-site>>). With `--http` it listens on a loopback address only, for requests that carry its token.
+* Project scripts are never run, unless the server was started with `--allow-build` and a client calls `build_site`: see <<build-site>>.
 * Lists are paged or cut at 500 items, as described in <<paging>>.
 * Texts are cut at 200,000 bytes. The result then carries `truncated: { shown_bytes, total_bytes }`.
 * Errors carry a stable code and the engine's message: see <<errors>>.

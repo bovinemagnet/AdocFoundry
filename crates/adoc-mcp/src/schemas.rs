@@ -664,6 +664,33 @@ pub fn create_project() -> Arc<JsonObject> {
     )
 }
 
+pub fn build_site() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "started": { "type": "boolean", "description": "False when the call waited for a build already running." },
+            "outcome": { "type": "string", "description": "`built`, `failed`, or `running` when the wait ended first." },
+            "playbook": { "type": "string" },
+            "output_dir": { "type": "string", "description": "`build/site` beside the playbook." },
+            "site": optional_string(),
+            "error": optional_string(),
+            "log": list(json!({ "type": "string" })),
+            "log_lines": { "type": "integer", "description": "Lines the build wrote in all." },
+            "log_truncated": { "type": "boolean", "description": "Whether `log` leaves out earlier lines." },
+        }),
+        &[
+            "schema_version",
+            "started",
+            "outcome",
+            "playbook",
+            "output_dir",
+            "log",
+            "log_lines",
+            "log_truncated",
+        ],
+    )
+}
+
 pub fn analyse_impact() -> Arc<JsonObject> {
     // The impact report of `adoc-impact` (its own `schema_version`), with the impacts paged
     // and the fields below added; nested parts are the report's.
