@@ -37,4 +37,6 @@ pub use report::{
     Severity, Skip, SCHEMA_VERSION,
 };
 pub use rules::{Category, FindingCode, RuleId, RuleSpec, RULES};
-pub use workspace::{audit, AuditInput};
+pub use workspace::{
+    assemble, audit, audit_file, audit_version, audited_files, AuditInput, FileAudit, VersionAudit,
+};

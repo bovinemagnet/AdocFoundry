@@ -41,6 +41,7 @@ mod pdf_preview;
 mod preview;
 mod problems;
 mod profiles;
+mod quality;
 mod quick_open;
 mod recovery;
 mod rendered;

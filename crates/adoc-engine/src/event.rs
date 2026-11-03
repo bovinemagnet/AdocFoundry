@@ -11,6 +11,8 @@ pub enum EngineEvent {
     },
     /// The workspace's problems (`Engine::problems`) changed.
     ProblemsChanged,
+    /// The kept quality audit (`Engine::audit_report`) changed.
+    AuditChanged,
     /// The link graph (`Engine::graph`) changed, and now has this revision.
     GraphChanged {
         revision: u64,

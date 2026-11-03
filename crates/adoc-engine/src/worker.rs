@@ -26,6 +26,8 @@ pub(crate) enum Crashed {
     },
     /// The whole workspace's problems, pass `generation`.
     Problems { generation: u64 },
+    /// The whole quality audit, build `generation`. The parts found before stay.
+    Audit { generation: u64 },
     /// The whole link graph, build `generation`. The graph built before stays.
     Graph { generation: u64 },
 }
@@ -53,6 +55,10 @@ impl Engine {
             Crashed::Problems { generation } => {
                 self.problems_crashed(generation);
                 Some((ids::WORKSPACE_REINDEX, "finding the workspace's problems"))
+            }
+            Crashed::Audit { generation } => {
+                self.audit_crashed(generation);
+                Some((ids::WORKSPACE_REINDEX, "auditing the workspace"))
             }
         };
         if let Some((command, what)) = failed {

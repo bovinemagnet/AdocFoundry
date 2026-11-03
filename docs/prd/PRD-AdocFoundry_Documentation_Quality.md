@@ -262,3 +262,19 @@ Existing repository issues mentioned above remain independent and must not be si
   - Checked on the block image macros of published pages and of partials. The parser records block images only, so inline images are not checked; recording them would change `adoc-parser`, which runs on every keystroke and feeds the editor's own image diagnostics.
   - Text counts as written in any form: a first positional attribute, a named `alt`, an attribute reference, or text quoted empty (`[""]`), the author's sign of a decorative image. Only a macro with no text at all is reported. Other decorative or generated images are left to exclusions.
 - **Unavailable scope.** A component or version not in the catalog makes the audit unavailable (`remote-component-missing`).
+
+### Q3 (#302): the incremental audit in the engine
+
+- **Parts.** `adoc-audit` now builds an audit from parts that never depend on the scope:
+  - `audit_file` gives a file's existing diagnostics and content findings (`FileAudit`).
+  - `audit_version` gives a component version's navigation diagnostics, unlisted pages and coverage (`VersionAudit`).
+  - `assemble` puts the parts for a scope together.
+  - `audit` computes the parts in scope and assembles them. The engine keeps the parts and assembles them on request. Both go through `assemble`, so `Engine::audit_report` (kept) and `Engine::audit_now` (computed there and then, for the CLI in Q4) give the same report, which `tests/audit.rs` checks after every kind of change.
+- **Unlisted-page locations.** An unlisted-page finding no longer points at the page's title range. A version's part then depends only on its navigation files' text and the catalog, so a page edit, which changes neither, can never leave it stale.
+- **Upkeep** starts with `Engine::enable_audit` or `[quality] enabled`. Until then the engine does no audit work, so `adoc-ls` pays nothing by default. The first build runs on a worker over a copy of the workspace, reading open documents from a copy of their buffers.
+- **Invalidation** follows the problems, to keep the audit's existing diagnostics agreeing with the Problems panel:
+  - An edit audits again, at the next `pump`, the files `adoc_lang::diagnosed_with` gives.
+  - A version is audited again only when the text of one of its own navigation files changed. A nav file that merely names the edited page is not enough, since its part does not depend on the page.
+  - A new catalog revision audits every version's navigation again, which reads only the navigation files.
+  - A workspace-wide change builds it all again on a worker: indexing, files changed on disk, a rename or replace, closing a page, a restored session, a version change. That is every caller of `refresh_open_diagnostics` but one: opening a page, which re-diagnoses the open documents but changes no parse, leaves the audit alone.
+- **Measured, not timed.** The probes `AuditFile` and `AuditVersion` count the parts audited. `audit_changes_are_incremental` checks that one page edit audits between one and four files, no version, and no whole build. `a_navigation_edit_audits_its_own_version_again` checks that a nav edit audits exactly one version. These hold however fast the machine is, which a wall-clock budget would not.

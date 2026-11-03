@@ -10,7 +10,7 @@
 //! reported. A version with no navigation files has nothing to be listed in, and its pages are
 //! not reported.
 
-use std::{collections::BTreeSet, path::Path};
+use std::collections::BTreeSet;
 
 use adoc_antora::{
     nav_tree, parse_nav, parse_resource_id, ComponentDescriptor, NavError, NavItem, NavTree,
@@ -19,28 +19,19 @@ use adoc_antora::{
 use adoc_core::{DiagnosticCode, SourceRange};
 
 use crate::{
-    portable_path, workspace::published_page, workspace::Context, AuditBuilder, Evidence, Finding,
-    FindingCode, NavCoverage, RuleId, Skip,
+    portable_path, workspace::published_page, workspace::Context, Evidence, Finding, FindingCode,
+    NavCoverage, RuleId, Skip, VersionAudit,
 };
-
-pub(crate) fn check(context: &Context<'_>, builder: &mut AuditBuilder) {
-    for descriptor in context.workspace().antora.components() {
-        if context.includes(&descriptor.name, descriptor.version.as_deref()) {
-            component_version(context, descriptor, builder);
-        }
-    }
-}
 
 /// Why a version's navigation cannot be relied on to list a page, if it cannot.
 struct Unknown {
     reason: String,
 }
 
-fn component_version(
-    context: &Context<'_>,
-    descriptor: &ComponentDescriptor,
-    builder: &mut AuditBuilder,
-) {
+/// The part of the component version `descriptor` declares.
+pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -> VersionAudit {
+    let mut findings = Vec::new();
+    let mut skips = Vec::new();
     let catalog = &context.workspace().antora;
     let version = descriptor.version.as_deref();
     let (trees, mut unknown) =
@@ -67,13 +58,13 @@ fn component_version(
         }
         for diagnostic in &tree.diagnostics {
             if dynamic.iter().any(|(range, _)| *range == diagnostic.range) {
-                builder.skip(Skip {
+                skips.push(Skip {
                     location: context.location(&tree.path, Some(diagnostic.range)),
                     code: FindingCode::Diagnostic(DiagnosticCode::AntoraNavUnresolved),
                     reason: "The entry's target names an attribute".to_owned(),
                 });
             } else {
-                builder.finding(context.finding_for(&tree.path, diagnostic));
+                findings.push(context.finding_for(&tree.path, diagnostic));
             }
         }
     }
@@ -112,11 +103,10 @@ fn component_version(
             if descriptor.nav.is_empty() {
                 continue;
             }
-            let location =
-                context.location(&page.source_path, title_range(context, &page.source_path));
+            let location = context.location(&page.source_path, None);
             if let Some(unknown) = &unknown {
                 coverage.undetermined += 1;
-                builder.skip(Skip {
+                skips.push(Skip {
                     location,
                     code: FindingCode::Rule(RuleId::UNLISTED_PAGE),
                     reason: unknown.reason.clone(),
@@ -150,10 +140,14 @@ fn component_version(
                  meant to be unlisted"
                     .to_owned(),
             );
-            builder.finding(finding);
+            findings.push(finding);
         }
     }
-    builder.coverage(coverage);
+    VersionAudit {
+        findings,
+        skips,
+        coverage,
+    }
 }
 
 /// Why the navigation could not be read, naming files as the report does: relative to their
@@ -239,18 +233,6 @@ fn start_page(descriptor: &ComponentDescriptor) -> Option<(String, String)> {
     )
     .ok()?;
     Some((id.module.unwrap_or_else(|| "ROOT".to_owned()), id.path))
-}
-
-/// The range of the page's title, to point a finding at, if the index has one.
-fn title_range(context: &Context<'_>, path: &Path) -> Option<SourceRange> {
-    context
-        .workspace()
-        .index
-        .file(path)?
-        .document
-        .title
-        .as_ref()
-        .map(|title| title.range)
 }
 
 /// `product 3.0`, or `guide` for a versionless component.

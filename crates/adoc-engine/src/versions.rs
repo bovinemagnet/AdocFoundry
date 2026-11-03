@@ -127,6 +127,7 @@ impl Engine {
         self.git.branch_versions.clone_from(&versions);
         self.workspace.antora.set_branch_versions(versions);
         self.refresh_open_diagnostics(None);
+        self.audit_changed_everywhere();
     }
 
     /// Puts the known branch versions back on a catalog that indexing has just replaced.
