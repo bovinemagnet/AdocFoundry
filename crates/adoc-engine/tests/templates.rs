@@ -278,3 +278,39 @@ fn a_template_cannot_write_outside_the_project() {
     assert!(problem.message.contains("inside the project"), "{problem}");
     assert!(engine.planned_tree(&request).is_empty());
 }
+
+/// A template from a folder (a team's, perhaps from a cloned repository) can never plant a Git
+/// hook or configuration: `.git` is refused however a file system spells it, and after
+/// substitution too.
+#[test]
+fn a_template_cannot_write_into_a_git_repository_s_own_folder() {
+    let (directory, work, engine) = engine_on_empty_folder();
+    fs::create_dir(work.join(".git")).unwrap();
+    let hook = directory.path().join("templates/hook");
+    fs::create_dir_all(hook.join(".GIT/hooks")).unwrap();
+    fs::write(hook.join("template.toml"), "name = \"Hook\"\n").unwrap();
+    fs::write(
+        hook.join(".GIT/hooks/post-checkout"),
+        "#!/bin/sh\necho owned\n",
+    )
+    .unwrap();
+    let titled = directory.path().join("templates/titled");
+    fs::create_dir_all(titled.join("{{title}}")).unwrap();
+    fs::write(titled.join("template.toml"), "name = \"Titled\"\n").unwrap();
+    fs::write(titled.join("{{title}}/config"), "[core]\n").unwrap();
+    for (template, title) in [("user/hook", ""), ("user/titled", ".git")] {
+        let request = NewProject {
+            template: template.to_owned(),
+            title: title.to_owned(),
+            git_init: false,
+            ..NewProject::new(work.clone(), "billing")
+        };
+        let problem = engine.check_new_project(&request).unwrap_err();
+        assert!(
+            problem.message.contains("Git repository"),
+            "{template}: {problem}"
+        );
+        assert!(engine.planned_tree(&request).is_empty(), "{template}");
+    }
+    assert_eq!(fs::read_dir(work.join(".git")).unwrap().count(), 0);
+}

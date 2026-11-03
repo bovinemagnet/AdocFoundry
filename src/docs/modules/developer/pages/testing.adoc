@@ -181,6 +181,7 @@ The tests are:
 * `single_page_needs_no_component_name`
 * `user_template_dir_is_listed_after_builtins`, which also checks that an unreadable template is left out and reported by `template_problems`
 * `a_template_cannot_write_outside_the_project`
+* `a_template_cannot_write_into_a_git_repository_s_own_folder`, where a `.GIT/hooks` file and a `+{{title}}+` folder substituted to `.git` are both refused
 
 The unit tests in `crates/adoc-engine/src/templates.rs` are:
 

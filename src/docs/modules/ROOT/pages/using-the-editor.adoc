@@ -1151,6 +1151,8 @@ So their quoting and the playbook's paths are always right.
 * A link in a template folder is left out: it is never followed and never copied.
 * Files must be text (UTF-8), at most 500 files and 1 MiB each.
 * A path that would leave the project, with `..` or as an absolute path, is refused.
+* No path may reach a Git repository's own `.git` folder, however a file system spells it: in any case, with trailing dots or spaces, as the short name `git~1`, or with invisible characters.
+This holds for the path in the template and after `+{{...}}+` is replaced, so a template can never plant a Git hook or configuration.
 
 A template that breaks a rule is not offered, and the dialog gives its reason, as above.
 

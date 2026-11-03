@@ -195,8 +195,9 @@ pub(crate) fn substitute(text: &str, variables: &Variables) -> String {
     out
 }
 
-/// `folder` joined with the `/`-separated `relative`, refused when it would leave `folder` or
-/// name a part no file system takes; `.` is `folder` itself.
+/// `folder` joined with the `/`-separated `relative`, refused when it would leave `folder`,
+/// reach a Git repository's own folder, or name a part no file system takes; `.` is `folder`
+/// itself.
 pub(crate) fn join_relative(folder: &Path, relative: &str) -> Result<PathBuf, String> {
     if relative == "." {
         return Ok(folder.to_path_buf());
@@ -207,13 +208,40 @@ pub(crate) fn join_relative(folder: &Path, relative: &str) -> Result<PathBuf, St
             || part == "."
             || part == ".."
             || part.contains(['\\', ':', '\0'])
-            || part.chars().any(char::is_control);
+            || part
+                .chars()
+                .any(|character| character.is_control() || ignorable(character));
         if bad {
             return Err(format!("`{relative}` is not a path inside the project"));
+        }
+        if is_git_folder(part) {
+            return Err(format!(
+                "`{relative}` reaches a Git repository's own folder, which a template never writes"
+            ));
         }
         path.push(part);
     }
     Ok(path)
+}
+
+/// Whether `part` names `.git` on some file system: in any case (macOS, Windows), with trailing
+/// dots or spaces (Windows drops them), or as its short name `git~1` (NTFS). Git refuses the
+/// same names when it checks a tree out.
+fn is_git_folder(part: &str) -> bool {
+    let trimmed = part.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+    trimmed == ".git"
+        || trimmed.strip_prefix("git~").is_some_and(|number| {
+            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
+
+/// The code points HFS+ ignores in names, as Git lists them (`is_hfs_dotgit`), so `.g\u{200c}it`
+/// is `.git` there: never part of a template's path.
+fn ignorable(character: char) -> bool {
+    matches!(
+        character,
+        '\u{200c}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}'
+    )
 }
 
 /// Whether `name` can be an AsciiDoc attribute's name.
@@ -603,6 +631,28 @@ mod tests {
             "",
         ] {
             assert!(join_relative(project, bad).is_err(), "{bad}");
+        }
+        // Nothing may reach a Git repository's own folder, however a file system spells it.
+        for bad in [
+            ".git/config",
+            ".GIT/hooks/post-checkout",
+            "docs/.Git/config",
+            ".git./config",
+            ".git /config",
+            "GIT~1/config",
+            "git~2",
+            ".g\u{200c}it/config",
+            ".git\u{feff}/config",
+        ] {
+            assert!(join_relative(project, bad).is_err(), "{bad:?}");
+        }
+        for fine in [
+            ".gitignore",
+            ".github/workflows/docs.yml",
+            "git/notes.adoc",
+            "Über.adoc",
+        ] {
+            assert!(join_relative(project, fine).is_ok(), "{fine}");
         }
     }
 
