@@ -62,6 +62,9 @@ pub mod ids {
     pub const MODULE_NEW: CommandId = CommandId::new("module.new");
     pub const PROJECT_NEW: CommandId = CommandId::new("project.new");
     pub const PROJECT_BUILD_SITE: CommandId = CommandId::new("project.build_site");
+    pub const IMPACT_ANALYSE_CHANGES: CommandId = CommandId::new("impact.analyse_changes");
+    pub const IMPACT_COMPARE_REVISIONS: CommandId = CommandId::new("impact.compare_revisions");
+    pub const IMPACT_INSPECT: CommandId = CommandId::new("impact.inspect");
     pub const ANCHOR_RENAME: CommandId = CommandId::new("anchor.rename");
     pub const SETTINGS_OPEN: CommandId = CommandId::new("settings.open");
     pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
@@ -559,6 +562,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::new_module::register_new_module(registry);
     crate::new_project::register_new_project(registry);
     crate::site_build::register_site_build(registry);
+    crate::impact_inspection::register_impact_inspection(registry);
     crate::graph::register_graph(registry);
     #[cfg(feature = "git")]
     {

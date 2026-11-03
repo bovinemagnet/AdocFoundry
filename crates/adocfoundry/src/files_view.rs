@@ -406,6 +406,13 @@ impl FilesView {
         self.activate(&id, false, window, cx);
     }
 
+    /// Inspect Impact for the file at `path`: what moving or removing it would affect.
+    fn inspect_impact(&mut self, path: &Path, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| workspace.inspect_impact_of(path, cx));
+        }
+    }
+
     /// Shows the page at `path` in the graph window.
     fn show_in_graph(&mut self, path: &Path, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -543,11 +550,20 @@ fn files_menu(
             if adoc_engine::is_asciidoc_path(&path) {
                 let files = files.clone();
                 let page = path.clone();
-                menu = menu.item(
-                    PopupMenuItem::new("Show in Graph").on_click(move |_, _, cx| {
-                        let _ = files.update(cx, |files, cx| files.show_in_graph(&page, cx));
-                    }),
-                );
+                let (inspecting, inspected) = (files.clone(), page.clone());
+                menu = menu
+                    .item(
+                        PopupMenuItem::new("Show in Graph").on_click(move |_, _, cx| {
+                            let _ = files.update(cx, |files, cx| files.show_in_graph(&page, cx));
+                        }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Inspect Impact").on_click(move |_, _, cx| {
+                            let _ = inspecting.update(cx, |files, cx| {
+                                files.inspect_impact(&inspected, cx);
+                            });
+                        }),
+                    );
             }
         }
         let full = path.display().to_string();

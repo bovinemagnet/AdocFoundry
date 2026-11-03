@@ -353,6 +353,7 @@ fn impact_text(report: &adoc_engine::impact::ImpactReport) -> String {
             &base.commit[..base.commit.len().min(12)]
         ),
         Some(ReportSource::Paths) | None => "the paths named, with no base revision".to_owned(),
+        Some(ReportSource::Removal) => "the paths named, as if removed".to_owned(),
     };
     let status = match &report.completeness {
         Completeness::Complete => "complete",

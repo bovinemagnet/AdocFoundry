@@ -124,6 +124,8 @@ pub enum EngineEvent {
         output: PathBuf,
         result: Result<crate::ExportSummary, String>,
     },
+    /// The impact inspector's analysis started or finished: `Engine::impact_inspection`.
+    ImpactChanged,
     /// A site build started or wrote more: `Engine::site_build` has its log.
     SiteBuildOutput,
     /// A site build finished: the site's index page when it wrote one, or why it failed.

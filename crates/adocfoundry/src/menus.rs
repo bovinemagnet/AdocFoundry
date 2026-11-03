@@ -85,6 +85,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::WORKSPACE_REPLACE),
             Separator,
             Command(ids::PAGE_RENAME),
+            Command(ids::IMPACT_INSPECT),
             Command(ids::ANCHOR_RENAME),
             Command(ids::GIT_REVERT_HUNK),
         ],
@@ -193,6 +194,9 @@ const MENUS: &[(&str, &[Entry])] = &[
             Separator,
             Command(ids::NAVIGATE_OPEN_ON_REMOTE),
             Command(ids::NAVIGATE_COPY_REMOTE_LINK),
+            Separator,
+            Command(ids::IMPACT_ANALYSE_CHANGES),
+            Command(ids::IMPACT_COMPARE_REVISIONS),
         ],
     ),
     (

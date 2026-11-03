@@ -276,6 +276,9 @@ impl<'a> DependencySnapshot<'a> {
             file_part,
         )
         .map(|path| normalize_path(&path))
+        // Only to a file this side has: resolution falls back to the disk, which is not the
+        // revision's, nor a workspace with the file taken out.
+        .filter(|path| self.has(path))
     }
 
     /// The pages the navigation file at `nav` lists, as its entries resolve.

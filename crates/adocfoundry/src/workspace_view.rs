@@ -55,6 +55,7 @@ use crate::{
 };
 
 mod build_site;
+mod impact;
 mod new_project;
 
 /// Follows the link at `offset` in `document`: the engine opens and activates the target, and the
@@ -96,6 +97,8 @@ enum SidebarTab {
     Graph,
     /// Shown once a site build has started.
     Build,
+    /// Shown once an impact analysis has been asked for.
+    Impact,
 }
 
 /// What a tab shows: a page's source editor, or an image.
@@ -154,6 +157,8 @@ pub struct WorkspaceView {
     build_scroll: gpui::UniformListScrollHandle,
     /// The playbook folders whose build the user agreed to run in this window.
     trusted_builds: HashSet<PathBuf>,
+    /// The component version the Impact panel shows, or all.
+    impact_filter: Option<impact::ImpactFacet>,
     /// The tab last right-clicked, which the tab strip's menu acts on; `None` over empty strip.
     tab_menu_target: Rc<Cell<Option<TabItem>>>,
     sidebar_tab: SidebarTab,
@@ -474,6 +479,7 @@ impl WorkspaceView {
             tab_reveals: std::cell::Cell::new(0),
             build_scroll: gpui::UniformListScrollHandle::new(),
             trusted_builds: HashSet::new(),
+            impact_filter: None,
             tab_menu_target: Rc::default(),
             sidebar_tab: SidebarTab::Navigation,
             navigation,
@@ -4483,6 +4489,9 @@ impl WorkspaceView {
             panels.push((SidebarTab::Changes, "Changes".to_owned()));
         }
         panels.push((SidebarTab::Graph, "Graph".to_owned()));
+        if self.app.read(cx).engine.impact_inspection().is_some() {
+            panels.push((SidebarTab::Impact, "Impact".to_owned()));
+        }
         if self.app.read(cx).engine.site_build().is_some() {
             panels.push((SidebarTab::Build, "Build".to_owned()));
         }
@@ -4518,6 +4527,7 @@ impl WorkspaceView {
             SidebarTab::Changes => self.render_changes(cx),
             SidebarTab::Graph => self.graph.clone().into_any_element(),
             SidebarTab::Build => self.render_build(cx),
+            SidebarTab::Impact => self.render_impact(cx),
         };
         v_flex()
             .size_full()
@@ -4804,11 +4814,19 @@ impl WorkspaceView {
                     });
                 match page {
                     Some(page) => {
+                        let (inspected_in, inspected) = (shown_in.clone(), page.clone());
                         menu.separator()
                             .item(
                                 PopupMenuItem::new("Show in Graph").on_click(move |_, _, cx| {
                                     let _ = shown_in.update(cx, |workspace, cx| {
                                         workspace.show_in_graph(&page, cx);
+                                    });
+                                }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Inspect Impact").on_click(move |_, _, cx| {
+                                    let _ = inspected_in.update(cx, |workspace, cx| {
+                                        workspace.inspect_impact_of(&inspected, cx);
                                     });
                                 }),
                             )
@@ -5075,6 +5093,9 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_new_module))
             .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_build_site))
+            .on_action(cx.listener(Self::on_analyse_impact))
+            .on_action(cx.listener(Self::on_inspect_impact))
+            .on_action(cx.listener(Self::on_compare_revisions))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_reload))

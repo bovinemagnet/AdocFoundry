@@ -134,6 +134,11 @@ pub(crate) enum WorkerMessage {
         workdir: PathBuf,
         result: Result<String, String>,
     },
+    ImpactInspected {
+        generation: u64,
+        result: Result<Box<adoc_impact::ImpactReport>, String>,
+        built: Vec<(String, std::sync::Arc<WorkspaceState>)>,
+    },
     /// A line a site build wrote; the worker is still running.
     SiteBuildLine {
         generation: u64,
@@ -643,6 +648,11 @@ impl Engine {
                 self.site_build_line(generation, line);
             }
             WorkerMessage::SiteBuilt { generation, result } => self.site_built(generation, result),
+            WorkerMessage::ImpactInspected {
+                generation,
+                result,
+                built,
+            } => self.impact_inspected(generation, result, built),
             WorkerMessage::HtmlExported { output, result } => self.html_exported(output, result),
             #[cfg(feature = "typst")]
             WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),

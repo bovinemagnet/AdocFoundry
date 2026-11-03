@@ -27,6 +27,7 @@ mod graph;
 mod html_export;
 mod images;
 mod impact_analysis;
+mod impact_inspection;
 // Without Git, the engine behaves as with `[git] enabled = false`.
 #[cfg(not(feature = "git"))]
 #[path = "git_off.rs"]
@@ -99,6 +100,7 @@ pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use graph::{GraphScope, NavCrumb, NavPlace, Neighbour};
 pub use images::{is_image_path, ImageId, OpenImage, IMAGE_EXTENSIONS};
 pub use impact_analysis::{ChangeSource, ImpactError};
+pub use impact_inspection::{ImpactInspection, InspectionState};
 pub use inspect::resource_id_string;
 pub use language::{SymbolMatch, SYMBOL_RESULTS};
 pub use line_diff::{line_diff, DiffLine, DIFF_CONTEXT};
