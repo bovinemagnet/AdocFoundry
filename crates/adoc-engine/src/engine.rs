@@ -41,6 +41,8 @@ pub struct Engine {
     pub(crate) active: Option<DocumentId>,
     pub(crate) subscribers: Vec<Sender<EngineEvent>>,
     pub(crate) roots: Vec<PathBuf>,
+    /// Folders the last whole index could not read, left out of it.
+    pub(crate) unreadable: Vec<PathBuf>,
     /// Which files the engine reads on the front end's behalf; see [`Engine::set_file_access`].
     pub(crate) file_access: FileAccess,
     pub(crate) workspace: WorkspaceState,
@@ -167,6 +169,7 @@ impl Engine {
             active: None,
             subscribers: Vec::new(),
             roots: Vec::new(),
+            unreadable: Vec::new(),
             file_access: FileAccess::Any,
             workspace: WorkspaceState::new(),
             worker_sender,

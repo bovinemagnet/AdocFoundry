@@ -2,6 +2,8 @@
 //!
 //! ```text
 //! adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
+//! adocfoundry-cli audit <root> [--component [<version>@]<name>] [--format text|json|sarif]
+//!     [--output <file>] [--fail-on none|warning|error] [--require-complete]
 //! adocfoundry-cli symbols <root> <query>
 //! adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 //! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
@@ -24,6 +26,7 @@ use std::{
 
 use adoc_core::{DiagnosticSeverity, LineIndex};
 use adoc_engine::{
+    audit,
     commands::ids,
     pdf_standard,
     report::{display_path, severity_name, ChangedFile},
@@ -33,6 +36,8 @@ use adoc_engine::{
 
 const USAGE: &str = "usage:
   adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
+  adocfoundry-cli audit <root> [--component [<version>@]<name>] [--format text|json|sarif]
+      [--output <file>] [--fail-on none|warning|error] [--require-complete]
   adocfoundry-cli symbols <root> <query>
   adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
   adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
@@ -73,6 +78,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "check" => check(rest),
+        "audit" => audit(rest),
         "symbols" => symbols(rest),
         "follow" => follow(rest),
         "render" => render(rest),
@@ -120,6 +126,11 @@ fn option<'a>(options: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
 fn open_engine(root: &Path, git: bool) -> Result<Engine, String> {
     let mut settings = Settings::load(None, None).map_err(|error| error.to_string())?;
     settings.git.enabled = git;
+    open_engine_with(root, settings)
+}
+
+/// An engine with `settings` over the workspace at `root`, indexed.
+fn open_engine_with(root: &Path, settings: Settings) -> Result<Engine, String> {
     let mut engine = Engine::new(settings);
     engine
         .open_workspace(vec![root.to_path_buf()])
@@ -166,6 +177,202 @@ fn check(arguments: &[String]) -> Result<ExitCode, String> {
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// Audits the documentation's quality and writes the report as text, JSON or SARIF. The policy
+/// is the workspace's own `.adocfoundry.toml` `[quality]` table, never a user file, so CI gets
+/// the same result on every machine; `--fail-on` and `--require-complete` override it. The exit
+/// code is the report's verdict (Quality PRD §5.4): 0 below the threshold, 1 at it, and 2 when
+/// the audit is unavailable, partial while completeness is required, or the `[quality]`
+/// settings are invalid. The report is written in full before exiting, whatever the code.
+fn audit(arguments: &[String]) -> Result<ExitCode, String> {
+    let require_complete = arguments
+        .iter()
+        .any(|argument| argument == "--require-complete");
+    let arguments: Vec<String> = arguments
+        .iter()
+        .filter(|argument| *argument != "--require-complete")
+        .cloned()
+        .collect();
+    let (positional, options) =
+        parse_options(&arguments, &["format", "fail-on", "component", "output"])?;
+    let [root] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let format = option(&options, "format").unwrap_or("text");
+    if !matches!(format, "text" | "json" | "sarif") {
+        return Err(format!("unknown format `{format}`"));
+    }
+    let fail_on = option(&options, "fail-on")
+        .map(|name| {
+            audit::FailOn::from_name(name)
+                .ok_or_else(|| format!("unknown --fail-on level `{name}`"))
+        })
+        .transpose()?;
+    let scope = match option(&options, "component") {
+        None => audit::AuditScope::Workspace,
+        Some(spec) => match spec.split_once('@') {
+            Some((version, name)) => audit::AuditScope::Component {
+                name: name.to_owned(),
+                version: Some(version.to_owned()),
+            },
+            None => audit::AuditScope::Component {
+                name: spec.to_owned(),
+                version: None,
+            },
+        },
+    };
+
+    let root = adoc_index::normalize_path(Path::new(root));
+    let mut settings = Settings::load(None, Some(&root)).map_err(|error| error.to_string())?;
+    settings.git.enabled = false;
+    let engine = open_engine_with(&root, settings)?;
+    // Opening the workspace reads its settings file again, so the options apply afterwards.
+    let quality = &engine.settings().quality;
+    let problems = quality.problems.clone();
+    let mut policy = quality.policy.clone();
+    if let Some(fail_on) = fail_on {
+        policy.fail_on = fail_on;
+    }
+    if require_complete {
+        policy.require_complete = true;
+    }
+    let report = engine.audit_now_with(scope, &policy);
+
+    let roots = [root];
+    let texts = std::cell::RefCell::new(std::collections::HashMap::new());
+    let regions = |location: &audit::Location| {
+        let range = location.range?;
+        let mut texts = texts.borrow_mut();
+        let text = texts
+            .entry((location.root, location.path.clone()))
+            .or_insert_with(|| {
+                roots
+                    .get(location.root)
+                    .and_then(|root| std::fs::read_to_string(root.join(&location.path)).ok())
+            });
+        text.as_deref().map(|text| audit::Region::of(text, range))
+    };
+    let written = match format {
+        "json" => serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?,
+        "sarif" => serde_json::to_string_pretty(&audit::to_sarif(
+            &report,
+            env!("CARGO_PKG_VERSION"),
+            &regions,
+        ))
+        .map_err(|error| error.to_string())?,
+        _ => audit_text(&report, &regions),
+    };
+    match option(&options, "output") {
+        Some(file) => std::fs::write(file, format!("{written}\n"))
+            .map_err(|error| format!("{file}: {error}"))?,
+        None => println!("{written}"),
+    }
+    for problem in &problems {
+        eprintln!("adocfoundry-cli: invalid [quality] settings: {problem}");
+    }
+    let code = if problems.is_empty() {
+        report.verdict().exit_code()
+    } else {
+        2
+    };
+    Ok(ExitCode::from(code))
+}
+
+/// A report for reading: its scope and completeness first, the counts, each finding at its
+/// place, the gaps and navigation coverage, and the result last.
+fn audit_text(
+    report: &audit::AuditReport,
+    regions: &dyn Fn(&audit::Location) -> Option<audit::Region>,
+) -> String {
+    let scope = match report.scope() {
+        audit::AuditScope::Workspace => "the workspace".to_owned(),
+        audit::AuditScope::Component {
+            name,
+            version: Some(version),
+        } => format!("{name} {version}"),
+        audit::AuditScope::Component {
+            name,
+            version: None,
+        } => format!("component {name}"),
+    };
+    let (status, gaps) = match report.completeness() {
+        audit::Completeness::Complete => ("complete".to_owned(), &[][..]),
+        audit::Completeness::Partial(gaps) => (
+            format!(
+                "partial coverage ({} gap{})",
+                gaps.len(),
+                if gaps.len() == 1 { "" } else { "s" }
+            ),
+            gaps.as_slice(),
+        ),
+        audit::Completeness::Unavailable(gaps) => ("unavailable".to_owned(), gaps.as_slice()),
+    };
+    let counts = report.counts();
+    let mut lines = vec![
+        format!("Audit of {scope}: {status}"),
+        format!(
+            "{} errors, {} warnings, {} info; {} excluded, {} skipped",
+            counts.error, counts.warning, counts.info, counts.excluded, counts.skipped
+        ),
+    ];
+    for finding in report.findings() {
+        let place = match regions(&finding.location) {
+            Some(region) => format!(
+                "{}:{}:{}",
+                finding.location.path, region.start_line, region.start_column
+            ),
+            None => finding.location.path.clone(),
+        };
+        let message: Vec<&str> = finding
+            .message
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        lines.push(format!(
+            "{place}: {} {} {}",
+            finding.severity.as_str(),
+            finding.code,
+            message.join(" ")
+        ));
+    }
+    for gap in gaps {
+        let reason = serde_json::to_value(gap.reason)
+            .ok()
+            .and_then(|reason| reason.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        lines.push(format!("Gap ({reason}): {}", gap.detail));
+    }
+    for coverage in report.coverage() {
+        let version = coverage
+            .version
+            .as_ref()
+            .map_or_else(String::new, |version| format!(" {version}"));
+        let undetermined = if coverage.undetermined > 0 {
+            format!(", {} undetermined", coverage.undetermined)
+        } else {
+            String::new()
+        };
+        lines.push(format!(
+            "Navigation of {}{version}: {} of {} pages listed{undetermined}",
+            coverage.component, coverage.listed, coverage.pages
+        ));
+    }
+    let partial = matches!(report.completeness(), audit::Completeness::Partial(_));
+    lines.push(
+        match report.verdict() {
+            audit::Verdict::Pass if partial => "Result: pass, with partial coverage",
+            audit::Verdict::Pass => "Result: pass",
+            audit::Verdict::Fail => "Result: fail",
+            audit::Verdict::Untrustworthy if partial => {
+                "Result: not trustworthy, as coverage is partial and completeness is required"
+            }
+            audit::Verdict::Untrustworthy => "Result: not trustworthy, as nothing could be audited",
+        }
+        .to_owned(),
+    );
+    lines.join("\n")
 }
 
 fn symbols(arguments: &[String]) -> Result<ExitCode, String> {

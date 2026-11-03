@@ -9,6 +9,8 @@ It needs no display, which makes it suitable for continuous integration.
 [source,text]
 ----
 adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
+adocfoundry-cli audit <root> [--component [<version>@]<name>] [--format text|json|sarif]
+    [--output <file>] [--fail-on none|warning|error] [--require-complete]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
@@ -83,6 +85,161 @@ Lines and columns are one-based, and the column counts bytes.
 
 The thresholds are `warning` (fails on warnings and errors) and `error`.
 Information diagnostics never fail the check.
+
+[[audit]]
+== audit
+
+`audit` opens the workspace at `<root>`, waits for indexing to finish and audits the documentation's quality.
+It reports every diagnostic `check` reports, with the same codes, severities and messages, and the audit's own rules.
+
+`quality.navigation.unlisted-page`::
+A published page that no navigation file of its own component version lists. The start page counts as listed.
+
+`quality.page.missing-title`::
+A page with no document title.
+
+`quality.image.missing-alt`::
+A block image macro with no alternative text written at all.
+
+See xref:settings.adoc[Settings] for the rules' severities.
+
+[source,sh]
+----
+adocfoundry-cli audit docs
+adocfoundry-cli audit docs --format sarif --output audit.sarif
+adocfoundry-cli audit docs --component 2.0@product --require-complete
+----
+
+=== Scope and policy
+
+The audit covers the whole workspace by default.
+`--component <name>` audits every version of one component, and `--component <version>@<name>` audits one version.
+A component or version that is not in the workspace makes the audit unavailable.
+
+The policy is the `[quality]` table of the workspace's own `.adocfoundry.toml`: `fail_on`, `require_complete`, the rule severities and the exclusions.
+The user settings file is not read, so CI gets the same result on every machine.
+`--fail-on` and `--require-complete` override the file.
+
+=== Formats
+
+`--output <file>` writes the report to the file instead of standard output.
+Standard output holds only the report; problems go to standard error.
+
+The default `text` format starts with a line that names the scope and its completeness.
+
+[source,text]
+----
+Audit of the workspace: complete
+Audit of the workspace: partial coverage (1 gap)
+----
+
+The counts follow.
+
+[source,text]
+----
+0 errors, 6 warnings, 1 info; 0 excluded, 2 skipped
+----
+
+Then there is one line per finding, with paths relative to the root and `/` separators.
+
+[source,text]
+----
+path:line:col: severity code message
+path: severity code message
+----
+
+The second form is for a finding about a whole file, such as an unlisted page.
+Lines and columns are one-based, and the column counts characters.
+
+Any gaps come next, then each version's navigation coverage, such as `Navigation of product 3.0: 7 of 8 pages listed`.
+The last line is the result: `Result: pass`, `Result: pass, with partial coverage`, `Result: fail` or `Result: not trustworthy, …`.
+
+`--format json` writes the whole report as one JSON document with these fields.
+
+[cols="1,4"]
+|===
+|Field |Meaning
+
+|`schema_version`
+|The version of the report's layout.
+
+|`scope`
+|What was audited.
+
+|`revision`
+|The revision of the workspace that was audited.
+
+|`roots`
+|The folder names of the roots, never full paths.
+
+|`fail_on`
+|The threshold in force.
+
+|`require_complete`
+|Whether completeness was required.
+
+|`rules`
+|The rules and their severities.
+
+|`completeness`
+|The `status`, which is `complete`, `partial` or `unavailable`, with its `gaps`.
+
+|`counts`
+|The number of findings of each severity, and of those excluded and skipped.
+
+|`coverage`
+|Each version's navigation coverage.
+
+|`findings`
+|The findings.
+
+|`excluded`
+|The findings accepted by an exclusion.
+
+|`skips`
+|The constructs a rule could not judge.
+|===
+
+A finding has `code`, `severity`, `message` and `location`, and, for an Antora resource, `coordinate`.
+`location` holds `root`, the root's place in `roots`; `path`; and `range`, in byte offsets.
+Paths are relative to the root, and no absolute path appears in a report.
+
+`--format sarif` writes SARIF 2.1.0 for code-scanning tools.
+Each finding is a result with its rule.
+An excluded finding is a result with an external suppression that gives the exclusion's reason.
+Locations are relative to the root (`uriBaseId` `ROOT0`), with one-based lines and character columns.
+Completeness is a property of the run, and each gap is a tool execution notification.
+
+=== Completeness
+
+Completeness is about coverage: whether everything in scope was audited.
+A folder that could not be read makes the audit partial (`scope-not-indexed`).
+
+A construct a rule cannot judge is a skip, such as a navigation file that includes another file, or a title that may come from an include.
+A skip is counted and listed, but it does not make the audit partial.
+
+=== Exit codes
+
+[cols="1,4"]
+|===
+|Code |Meaning
+
+|0
+|Success: no finding met the failure threshold (`fail_on`, `error` by default).
+
+|1
+|At least one finding met the failure threshold.
+
+|2
+|The audit is unavailable, or it is partial while completeness is required (`--require-complete` or `require_complete = true`), or the `[quality]` settings are invalid, or a usage or runtime error.
+|===
+
+The report is always written in full before the command exits, whatever the code.
+Excluded findings never fail the audit.
+A partial audit passes by default, but says so in its first and last lines.
+
+The thresholds are `none` (fails on nothing), `warning` (fails on warnings and errors) and `error` (fails on errors).
+Information findings never fail the audit.
 
 == symbols
 
@@ -421,6 +578,20 @@ See xref:using-the-editor.adoc#reporting-a-problem[Reporting a problem].
 - name: Check the documentation
   run: adocfoundry-cli check docs --fail-on warning
 ----
+
+[source,yaml]
+----
+- name: Audit the documentation
+  run: adocfoundry-cli audit docs --require-complete --format sarif --output audit.sarif
+- name: Upload the audit
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: audit.sarif
+----
+
+Strict mode (`--require-complete`) is recommended in CI, so that a partial audit fails instead of passing.
+SARIF locations are relative to the audited root, so for code scanning audit from the repository root, to match the repository's paths.
 
 The archives attached to each release contain the binary for Linux, macOS and Windows, so no toolchain is needed.
 Because the checker shares its code with the editor, it reports exactly what an author sees.

@@ -1,0 +1,306 @@
+---
+source: crates/adocfoundry-cli/tests/audit.rs
+expression: "stdout(&cli(&[\"audit\", FIXTURE, \"--format\",\n\"sarif\"])).replace(&format!(\"\\\"version\\\": \\\"{}\\\"\", env!(\"CARGO_PKG_VERSION\")),\n\"\\\"version\\\": \\\"[version]\\\"\")"
+---
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "AdocFoundry",
+          "version": "[version]",
+          "informationUri": "https://github.com/bovinemagnet/AdocFoundry",
+          "rules": [
+            {
+              "id": "adoc.antora.resolved-via-alias",
+              "shortDescription": {
+                "text": "An AdocFoundry diagnostic, reported as the editor reports it"
+              }
+            },
+            {
+              "id": "adoc.unresolved-xref-file",
+              "shortDescription": {
+                "text": "An AdocFoundry diagnostic, reported as the editor reports it"
+              }
+            },
+            {
+              "id": "quality.image.missing-alt",
+              "shortDescription": {
+                "text": "An image macro has no meaningful alternative text"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "quality.navigation.unlisted-page",
+              "shortDescription": {
+                "text": "A page is absent from every navigation tree of its component version"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "quality.page.missing-title",
+              "shortDescription": {
+                "text": "A page has no usable document title"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            }
+          ]
+        }
+      },
+      "originalUriBaseIds": {
+        "ROOT0": {
+          "description": {
+            "text": "The workspace root `audit`"
+          }
+        }
+      },
+      "columnKind": "unicodeCodePoints",
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolExecutionNotifications": []
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "adoc.antora.resolved-via-alias",
+          "level": "note",
+          "message": {
+            "text": "Resolved through a page alias; link to 3.0@product:ROOT:configure.adoc instead"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "product/modules/ROOT/nav.adoc",
+                  "uriBaseId": "ROOT0"
+                },
+                "region": {
+                  "startLine": 3,
+                  "startColumn": 3,
+                  "endLine": 3,
+                  "endColumn": 23
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "adoc.unresolved-xref-file",
+          "level": "warning",
+          "message": {
+            "text": "Unresolved AsciiDoc xref target: missing.adoc"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "product/modules/ROOT/nav.adoc",
+                  "uriBaseId": "ROOT0"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 3,
+                  "endLine": 7,
+                  "endColumn": 22
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "quality.image.missing-alt",
+          "level": "warning",
+          "message": {
+            "text": "The image `a.png` has no alternative text"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "product/modules/ROOT/pages/images.adoc",
+                  "uriBaseId": "ROOT0"
+                },
+                "region": {
+                  "startLine": 3,
+                  "startColumn": 1,
+                  "endLine": 3,
+                  "endColumn": 15
+                }
+              }
+            }
+          ],
+          "properties": {
+            "coordinate": {
+              "component": "product",
+              "version": "3.0",
+              "module": "ROOT",
+              "family": "page",
+              "path": "images.adoc"
+            }
+          }
+        },
+        {
+          "ruleId": "quality.navigation.unlisted-page",
+          "level": "warning",
+          "message": {
+            "text": "`ROOT:orphan.adoc` is in no navigation file of product 3.0"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "product/modules/ROOT/pages/orphan.adoc",
+                  "uriBaseId": "ROOT0"
+                }
+              }
+            }
+          ],
+          "properties": {
+            "coordinate": {
+              "component": "product",
+              "version": "3.0",
+              "module": "ROOT",
+              "family": "page",
+              "path": "orphan.adoc"
+            }
+          }
+        },
+        {
+          "ruleId": "adoc.unresolved-xref-file",
+          "level": "warning",
+          "message": {
+            "text": "Unresolved AsciiDoc xref target: nowhere.adoc"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "product/modules/ROOT/pages/orphan.adoc",
+                  "uriBaseId": "ROOT0"
+                },
+                "region": {
+                  "startLine": 3,
+                  "startColumn": 30,
+                  "endLine": 3,
+                  "endColumn": 49
+                }
+              }
+            }
+          ],
+          "properties": {
+            "coordinate": {
+              "component": "product",
+              "version": "3.0",
+              "module": "ROOT",
+              "family": "page",
+              "path": "orphan.adoc"
+            }
+          }
+        },
+        {
+          "ruleId": "quality.page.missing-title",
+          "level": "warning",
+          "message": {
+            "text": "The page has no document title"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "product/modules/ROOT/pages/untitled.adoc",
+                  "uriBaseId": "ROOT0"
+                }
+              }
+            }
+          ],
+          "properties": {
+            "coordinate": {
+              "component": "product",
+              "version": "3.0",
+              "module": "ROOT",
+              "family": "page",
+              "path": "untitled.adoc"
+            }
+          }
+        },
+        {
+          "ruleId": "quality.image.missing-alt",
+          "level": "warning",
+          "message": {
+            "text": "The image `p.png` has no alternative text"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "product/modules/ROOT/partials/snippet.adoc",
+                  "uriBaseId": "ROOT0"
+                },
+                "region": {
+                  "startLine": 3,
+                  "startColumn": 1,
+                  "endLine": 3,
+                  "endColumn": 15
+                }
+              }
+            }
+          ],
+          "properties": {
+            "coordinate": {
+              "component": "product",
+              "version": "3.0",
+              "module": "ROOT",
+              "family": "partial",
+              "path": "snippet.adoc"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "schemaVersion": 1,
+        "completeness": "complete",
+        "counts": {
+          "info": 1,
+          "warning": 6,
+          "error": 0,
+          "excluded": 0,
+          "skipped": 2
+        },
+        "coverage": [
+          {
+            "component": "guide",
+            "navigation_files": 1,
+            "pages": 3,
+            "listed": 2,
+            "undetermined": 1
+          },
+          {
+            "component": "product",
+            "version": "2.0",
+            "navigation_files": 1,
+            "pages": 2,
+            "listed": 2,
+            "undetermined": 0
+          },
+          {
+            "component": "product",
+            "version": "3.0",
+            "navigation_files": 2,
+            "pages": 8,
+            "listed": 7,
+            "undetermined": 0
+          }
+        ]
+      }
+    }
+  ]
+}

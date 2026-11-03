@@ -513,6 +513,7 @@ impl Engine {
                     return; // A newer index, of these roots or others, replaced this one.
                 }
                 self.watched(entered.as_ref());
+                self.unreadable = unreadable.iter().map(|path| normalize_path(path)).collect();
                 if let Some(first) = unreadable.first() {
                     let more = match unreadable.len() - 1 {
                         0 => String::new(),

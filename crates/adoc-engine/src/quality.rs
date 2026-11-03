@@ -86,10 +86,10 @@ impl Engine {
             .files
             .iter()
             .map(|(path, part)| (path.as_path(), part));
-        Some(
-            adoc_audit::assemble(&input, scope.clone(), files, self.quality.versions.values())
-                .finish(&self.settings.quality.policy),
-        )
+        let mut builder =
+            adoc_audit::assemble(&input, scope.clone(), files, self.quality.versions.values());
+        self.add_audit_gaps(scope, &mut builder);
+        Some(builder.finish(&self.settings.quality.policy))
     }
 
     /// An audit of `scope` made here and now from the engine's state, open buffers included,
@@ -97,13 +97,57 @@ impl Engine {
     /// for front ends with no event loop, such as the command line.
     #[must_use]
     pub fn audit_now(&self, scope: AuditScope) -> AuditReport {
+        self.audit_now_with(scope, &self.settings.quality.policy)
+    }
+
+    /// [`Engine::audit_now`] under `policy` rather than the settings', for a front end that
+    /// overrides part of it, as the command line's `--fail-on` does.
+    #[must_use]
+    pub fn audit_now_with(&self, scope: AuditScope, policy: &adoc_audit::Policy) -> AuditReport {
         let read = self.audit_reader();
         let input = AuditInput {
             workspace: &self.workspace,
             roots: &self.roots,
             read: &read,
         };
-        adoc_audit::audit(&input, scope).finish(&self.settings.quality.policy)
+        let mut builder = adoc_audit::audit(&input, scope.clone());
+        self.add_audit_gaps(&scope, &mut builder);
+        builder.finish(policy)
+    }
+
+    /// The coverage the index is missing in `scope`: each folder it could not read
+    /// (`scope-not-indexed`), named relative to its root. A component's scope misses only the
+    /// folders inside its versions.
+    fn add_audit_gaps(&self, scope: &AuditScope, builder: &mut adoc_audit::AuditBuilder) {
+        for folder in &self.unreadable {
+            let in_scope = match scope {
+                AuditScope::Workspace => true,
+                AuditScope::Component { name, version } => {
+                    self.workspace.antora.components().any(|descriptor| {
+                        descriptor.name == *name
+                            && version.as_ref().is_none_or(|version| {
+                                descriptor.version.as_deref() == Some(version.as_str())
+                            })
+                            && folder.starts_with(normalize_path(&descriptor.root))
+                    })
+                }
+            };
+            let Some(relative) = self.roots.iter().find_map(|root| {
+                folder
+                    .strip_prefix(root)
+                    .ok()
+                    .map(adoc_audit::portable_path)
+            }) else {
+                continue;
+            };
+            if in_scope {
+                builder.gap(adoc_audit::Gap {
+                    reason: adoc_audit::GapReason::ScopeNotIndexed,
+                    detail: format!("`{relative}` could not be read, so it is not audited"),
+                    affected: vec![relative],
+                });
+            }
+        }
     }
 
     /// How many whole builds of the audit have arrived.
