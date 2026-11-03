@@ -1,0 +1,121 @@
+---
+source: crates/adocfoundry-cli/tests/impact.rs
+expression: report
+---
+{
+  "schema_version": 1,
+  "source": {
+    "kind": "git-refs",
+    "base": {
+      "spec": "[base]",
+      "commit": "[base]"
+    },
+    "head": {
+      "spec": "[head]",
+      "commit": "[head]"
+    }
+  },
+  "completeness": {
+    "status": "complete"
+  },
+  "changes": [
+    {
+      "kind": "modified",
+      "path": "v1/modules/ROOT/pages/install.adoc",
+      "resource_id": "1.0@product:ROOT:page$install.adoc"
+    },
+    {
+      "kind": "modified",
+      "path": "v1/modules/ROOT/partials/nested.adoc",
+      "resource_id": "1.0@product:ROOT:partial$nested.adoc"
+    }
+  ],
+  "impacts": [
+    {
+      "kind": "render",
+      "confidence": "confirmed",
+      "path": "v1/modules/ROOT/pages/index.adoc",
+      "resource_id": "1.0@product:ROOT:page$index.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/partials/nested.adoc",
+      "evidence": "both",
+      "via": [
+        "v1/modules/ROOT/partials/nested.adoc",
+        "v1/modules/ROOT/partials/intro.adoc",
+        "v1/modules/ROOT/pages/index.adoc"
+      ],
+      "source": {
+        "path": "v1/modules/ROOT/pages/index.adoc",
+        "range": {
+          "start": 11,
+          "end": 40
+        }
+      }
+    },
+    {
+      "kind": "render",
+      "confidence": "confirmed",
+      "path": "v1/modules/ROOT/pages/install.adoc",
+      "resource_id": "1.0@product:ROOT:page$install.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/pages/install.adoc",
+      "evidence": "both",
+      "via": [
+        "v1/modules/ROOT/pages/install.adoc"
+      ]
+    },
+    {
+      "kind": "render",
+      "confidence": "confirmed",
+      "path": "v1/modules/ROOT/pages/install.adoc",
+      "resource_id": "1.0@product:ROOT:page$install.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/partials/nested.adoc",
+      "evidence": "both",
+      "via": [
+        "v1/modules/ROOT/partials/nested.adoc",
+        "v1/modules/ROOT/partials/intro.adoc",
+        "v1/modules/ROOT/pages/install.adoc"
+      ],
+      "source": {
+        "path": "v1/modules/ROOT/pages/install.adoc",
+        "range": {
+          "start": 14,
+          "end": 43
+        }
+      }
+    },
+    {
+      "kind": "reference_integrity",
+      "confidence": "confirmed",
+      "status": "broken",
+      "path": "v1/modules/ROOT/pages/index.adoc",
+      "resource_id": "1.0@product:ROOT:page$index.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/pages/install.adoc",
+      "evidence": "both",
+      "via": [
+        "v1/modules/ROOT/pages/install.adoc",
+        "v1/modules/ROOT/pages/index.adoc"
+      ],
+      "source": {
+        "path": "v1/modules/ROOT/pages/index.adoc",
+        "range": {
+          "start": 46,
+          "end": 81
+        }
+      },
+      "anchor": "setup"
+    }
+  ],
+  "counts": {
+    "render": 3,
+    "reference_integrity": 1,
+    "navigation": 0,
+    "publication": 0
+  }
+}

@@ -237,6 +237,12 @@ Each is settled before work starts on the package it affects, and the outcome is
 - **Added files** report referrers that now resolve (`now_resolves`); with no base they are `potential`.
 - **Not in a catalog.** A changed file in no component version either side holds gives `not-in-catalog`: what uses it from a component this workspace does not have cannot be known (§5.4, remote components).
 - **Limits.** `Limits { depth: 32, impacts: 1000 }` by default; counts are before the cut.
+### I4 (#310)
+
+- **Decision (§14, third item): the first CI output is JSON and text, with a GitHub Actions example** in the user guide that uploads both as an artifact on pull requests, with `contents: read` only. Posting a comment stays a later, opt-in adapter.
+- `adocfoundry-cli impact` takes exactly one source; `--against` takes `HEAD` only. Standard output holds only the report. Exit 0 for a finished analysis (never for having many consumers), 2 for an invalid or unavailable source, or a partial report with `--require-complete`. `--max-impacts` sets the cut (1,000 by default); counts are before it.
+- The JSON is the report itself; the text groups the kinds as rendered content, references to review, navigation and publications, each line with its dependency path and source span.
+
 ### I2 (#308)
 
 - **Revisions from objects.** `adoc-git`'s `revision.rs` resolves a ref (`rev_parse_single`, peeled to a commit), lists its tree, reads blob text and diffs two trees with `gix`'s default rename tracking. Nothing touches the working tree, the index or `HEAD`; nothing is fetched or run.
