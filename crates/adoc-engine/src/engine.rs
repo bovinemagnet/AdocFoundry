@@ -101,6 +101,8 @@ pub struct Engine {
     pub(crate) session: crate::session::SessionState,
     /// The workspace's problems, for a front end that shows them.
     pub(crate) problems: crate::problems::ProblemsState,
+    /// The quality audit, for a front end that asks for it.
+    pub(crate) quality: crate::quality::QualityState,
     /// The link graph of the workspace's pages.
     pub(crate) graph: crate::graph::GraphState,
     pub(crate) local_history: crate::local_history::LocalHistory,
@@ -203,6 +205,7 @@ impl Engine {
             recovery: crate::recovery::RecoveryState::default(),
             session: crate::session::SessionState::default(),
             problems: crate::problems::ProblemsState::default(),
+            quality: crate::quality::QualityState::default(),
             graph: crate::graph::GraphState::default(),
             local_history: crate::local_history::LocalHistory::default(),
             html_exports: crate::html_export::HtmlExports::default(),
@@ -342,6 +345,7 @@ impl Engine {
         );
         self.emit(EngineEvent::DocumentOpened(id));
         if asciidoc && !untitled && !self.restoring && !self.applying {
+            // Opening a page changes no parse, so the audit's parts stay as they are.
             self.refresh_open_diagnostics(None);
         }
         if !untitled {
@@ -410,6 +414,7 @@ impl Engine {
             }
             self.graph_file_changed(&document.path);
             self.refresh_open_diagnostics(None);
+            self.audit_changed_everywhere();
         }
         if self.active == Some(id) {
             self.active = None;
@@ -929,6 +934,7 @@ impl Engine {
     ) {
         before.extend(adoc_lang::diagnosed_with(&self.workspace, changed));
         self.problems_changed_in(&before);
+        self.audit_changed_in(changed, &before);
         let mut updated = Vec::new();
         for document in self
             .documents

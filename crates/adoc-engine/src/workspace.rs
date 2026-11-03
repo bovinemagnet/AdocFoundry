@@ -30,6 +30,10 @@ pub const WATCH_DEBOUNCE: Duration = Duration::from_millis(250);
 pub const FILE_BURST: usize = 50;
 
 pub(crate) enum WorkerMessage {
+    AuditComputed {
+        generation: u64,
+        parts: Box<crate::quality::AuditParts>,
+    },
     ProblemsComputed {
         generation: u64,
         problems: std::collections::BTreeMap<PathBuf, Vec<crate::Problem>>,
@@ -417,6 +421,7 @@ impl Engine {
             || self.has_due_recovery()
             || self.has_due_html_export()
             || self.has_due_problems()
+            || self.has_due_audit()
             || self.has_due_graph()
             || self
                 .watcher
@@ -458,6 +463,7 @@ impl Engine {
             + self.write_due_recovery()
             + self.write_due_html_exports()
             + self.update_due_problems()
+            + self.update_due_audit()
             + self.update_due_graph()
     }
 
@@ -484,6 +490,9 @@ impl Engine {
                 generation,
                 problems,
             } => self.problems_computed(generation, problems),
+            WorkerMessage::AuditComputed { generation, parts } => {
+                self.audit_computed(generation, *parts);
+            }
             WorkerMessage::DirectoryListed {
                 request,
                 dir,
@@ -535,6 +544,7 @@ impl Engine {
                 }
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
+                self.audit_changed_everywhere();
                 // The playbook may have changed with the files.
                 #[cfg(feature = "git")]
                 if !self.git.repositories().is_empty() {
@@ -747,6 +757,7 @@ impl Engine {
         // Indexing everything again diagnoses the open pages when it finishes.
         if indexed && !reindex {
             self.refresh_open_diagnostics(None);
+            self.audit_changed_everywhere();
         }
         if reindex {
             self.reindex();
@@ -791,6 +802,7 @@ impl Engine {
             descriptor: descriptor.to_path_buf(),
         });
         self.refresh_open_diagnostics(None);
+        self.audit_changed_everywhere();
         self.preview_workspace_changed();
         self.visual_workspace_changed();
     }

@@ -294,6 +294,7 @@ impl Engine {
         let applied = self.apply_previewed(&preview);
         self.applying = false;
         self.refresh_open_diagnostics(None);
+        self.audit_changed_everywhere();
         applied
     }
 
@@ -359,6 +360,7 @@ impl Engine {
             }
         }
         self.refresh_open_diagnostics(None);
+        self.audit_changed_everywhere();
     }
 
     /// Records an undo entry with no edits, so a document whose only change is a move takes
@@ -452,6 +454,7 @@ impl Engine {
             }
         }
         self.refresh_open_diagnostics(None);
+        self.audit_changed_everywhere();
     }
 
     /// Computes renaming the anchor at `offset` in document `id` to `new_id`, and every

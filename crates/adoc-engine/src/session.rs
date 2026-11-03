@@ -296,6 +296,7 @@ impl Engine {
         self.restoring = false;
         if !opened.is_empty() {
             self.refresh_open_diagnostics(None);
+            self.audit_changed_everywhere();
         }
         if let Some(&item) = saved.active.and_then(|place| opened.get(&place)) {
             self.activate(item);

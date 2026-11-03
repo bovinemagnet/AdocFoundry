@@ -360,6 +360,9 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 |`GraphChanged`
 |The link graph changed. It carries the new revision, and is published at most once a `pump`.
 
+|`AuditChanged`
+|The kept quality audit (`Engine::audit_report`) changed.
+
 |`DocumentMoved`
 |A rename, or its undo, moved the file behind an open document.
 
@@ -928,6 +931,31 @@ It is started from `pump`, so a burst of changes runs one pass, and the generati
 After an edit, only the files `diagnosed_with` gives, open or not, are re-diagnosed at the next `pump`.
 Edits made while a full pass runs wait for its result.
 Each update publishes `EngineEvent::ProblemsChanged`, and `has_pending()` counts problems still to compute.
+
+[[quality-audit]]
+== The quality audit
+
+`src/quality.rs` keeps the documentation quality audit (the `adoc-audit` crate, re-exported as `adoc_engine::audit`) for a front end that asks for it.
+Nothing is kept until a front end calls `Engine::enable_audit()` or the settings turn `[quality] enabled` on, so a front end that never asks, such as `adoc-ls` by default, does no audit work.
+
+The first build runs on a worker over a copy of `WorkspaceState`.
+It keeps each file's part (`adoc_audit::audit_file`: its existing diagnostics and the content rules) and each component version's part (`adoc_audit::audit_version`: its navigation's diagnostics, its unlisted pages and its coverage).
+The worker reads open documents from a copy of their buffers.
+
+After that the audit follows the problems.
+The files `diagnosed_with` gives for an edit are audited again at the next `pump`.
+A version is audited again only when the text of one of its own navigation files changed.
+A new catalog revision audits every version's navigation again, which reads only the navigation files.
+A change to the whole workspace (indexing, files changed on disk, a rename or replace, closing a page, a restored session, a version change) builds it all again on a worker.
+Opening a page changes no parse and leaves the audit alone.
+Changes made while a build runs wait for its result, and a newer build's generation drops an older result.
+
+`Engine::audit_report(&scope)` puts the kept parts in a scope together (`adoc_audit::assemble`) under the current `[quality]` policy, and is `None` until the first build arrives.
+`Engine::audit_now(scope)` audits a scope there and then from the engine's state, open buffers included, through the same `assemble`, blocking for as long as the scope takes; it is for front ends with no event loop, such as the command line.
+So the kept report and a fresh one always agree.
+
+Each change publishes `EngineEvent::AuditChanged`, `Engine::audit_builds()` counts whole builds, and `has_pending()` counts audit work still due.
+The probes `AuditFile` and `AuditVersion` count the parts audited, so `tests/audit.rs` checks that an edit audits only the files it can change, and a page edit no version.
 
 == Reports and inspection
 

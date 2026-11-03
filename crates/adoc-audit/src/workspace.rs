@@ -13,7 +13,7 @@ use adoc_lang::WorkspaceState;
 
 use crate::{
     content, navigation, portable_path, AuditBuilder, AuditScope, Coordinate, Finding, FindingCode,
-    Gap, GapReason, Location, Revision, Severity,
+    Gap, GapReason, Location, NavCoverage, Revision, Severity, Skip,
 };
 
 /// What an audit reads. The audit itself never touches the filesystem: navigation files are read
@@ -26,10 +26,127 @@ pub struct AuditInput<'a> {
     pub read: &'a dyn Fn(&Path) -> io::Result<String>,
 }
 
-/// The findings, skips and coverage of `scope`, to be finished under a policy. Reads every file
-/// in scope once: a whole audit, for a worker, not for each keystroke.
+/// One file's part of an audit: its existing diagnostics, and the content rules' findings and
+/// skips. It depends on the file's own parse, the catalog, and the files its diagnostics depend
+/// on (`adoc_lang::diagnosed_with`), never on the scope, so it can be kept per file.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FileAudit {
+    pub findings: Vec<Finding>,
+    pub skips: Vec<Skip>,
+}
+
+impl FileAudit {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.findings.is_empty() && self.skips.is_empty()
+    }
+}
+
+/// One component version's part of an audit: its navigation's diagnostics, its unlisted pages
+/// and its coverage. It depends on the version's navigation files and the catalog only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VersionAudit {
+    pub findings: Vec<Finding>,
+    pub skips: Vec<Skip>,
+    /// Names the version, too.
+    pub coverage: NavCoverage,
+}
+
+/// The findings, skips and coverage of `scope`, to be finished under a policy: the parts in
+/// scope ([`audit_file`], [`audit_version`]) put together ([`assemble`]). Reads every file in
+/// scope once: a whole audit, for a worker or a command line, not for each keystroke.
 #[must_use]
 pub fn audit(input: &AuditInput<'_>, scope: AuditScope) -> AuditBuilder {
+    let context = Context {
+        input,
+        scope: scope.clone(),
+    };
+    let files: Vec<(PathBuf, FileAudit)> = audited_files(input.workspace)
+        .into_iter()
+        .filter(|path| context.includes_path(path))
+        .map(|path| {
+            let part = audit_file(input, &path);
+            (path, part)
+        })
+        .collect();
+    let versions: Vec<VersionAudit> = input
+        .workspace
+        .antora
+        .components()
+        .filter(|descriptor| context.includes(&descriptor.name, descriptor.version.as_deref()))
+        .filter_map(|descriptor| {
+            audit_version(input, &descriptor.name, descriptor.version.as_deref())
+        })
+        .collect();
+    assemble(
+        input,
+        scope,
+        files.iter().map(|(path, part)| (path.as_path(), part)),
+        &versions,
+    )
+}
+
+/// Every file an audit has a part for: each indexed file and each `antora.yml`, in path order.
+#[must_use]
+pub fn audited_files(workspace: &WorkspaceState) -> Vec<PathBuf> {
+    let mut files: BTreeSet<PathBuf> = workspace
+        .index
+        .files()
+        .map(|file| file.path.clone())
+        .collect();
+    files.extend(workspace.descriptor_problems.keys().cloned());
+    files.extend(
+        workspace
+            .descriptor_issues
+            .iter()
+            .map(|issue| normalize_path(&issue.path)),
+    );
+    files.into_iter().collect()
+}
+
+/// The part of the file at `path`: empty for a file neither indexed nor a descriptor.
+#[must_use]
+pub fn audit_file(input: &AuditInput<'_>, path: &Path) -> FileAudit {
+    adoc_core::probe::hit(adoc_core::probe::Probe::AuditFile);
+    let context = Context {
+        input,
+        scope: AuditScope::Workspace,
+    };
+    let mut part = FileAudit::default();
+    for diagnostic in adoc_lang::diagnostics(input.workspace, path) {
+        part.findings.push(context.finding_for(path, &diagnostic));
+    }
+    if let Some(file) = input.workspace.index.file(path) {
+        content::file(&context, &file.path, &file.document, &mut part);
+    }
+    part
+}
+
+/// The part of `component` at `version`, or `None` when the catalog has no such version.
+#[must_use]
+pub fn audit_version(
+    input: &AuditInput<'_>,
+    component: &str,
+    version: Option<&str>,
+) -> Option<VersionAudit> {
+    adoc_core::probe::hit(adoc_core::probe::Probe::AuditVersion);
+    let descriptor = input.workspace.antora.component(component, version)?;
+    let context = Context {
+        input,
+        scope: AuditScope::Workspace,
+    };
+    Some(navigation::version(&context, descriptor))
+}
+
+/// Puts the parts in `scope` together: what [`audit`] does with the parts it computes, and what
+/// a front end keeping parts current does with the ones it keeps. A scope whose component is not
+/// in the catalog is unavailable.
+pub fn assemble<'p>(
+    input: &AuditInput<'_>,
+    scope: AuditScope,
+    files: impl IntoIterator<Item = (&'p Path, &'p FileAudit)>,
+    versions: impl IntoIterator<Item = &'p VersionAudit>,
+) -> AuditBuilder {
     let workspace = input.workspace;
     let mut builder = AuditBuilder::new(
         scope.clone(),
@@ -44,16 +161,28 @@ pub fn audit(input: &AuditInput<'_>, scope: AuditScope) -> AuditBuilder {
         builder.unavailable(gap);
         return builder;
     }
-    for file in workspace.index.files() {
-        if context.includes_file(&file.path) {
-            context.diagnostics(&file.path, &mut builder);
+    for (path, part) in files {
+        if context.includes_path(path) {
+            for finding in &part.findings {
+                builder.finding(finding.clone());
+            }
+            for skip in &part.skips {
+                builder.skip(skip.clone());
+            }
         }
     }
-    for descriptor in context.descriptor_files() {
-        context.diagnostics(&descriptor, &mut builder);
+    for part in versions {
+        let coverage = &part.coverage;
+        if context.includes(&coverage.component, coverage.version.as_deref()) {
+            for finding in &part.findings {
+                builder.finding(finding.clone());
+            }
+            for skip in &part.skips {
+                builder.skip(skip.clone());
+            }
+            builder.coverage(coverage.clone());
+        }
     }
-    navigation::check(&context, &mut builder);
-    content::check(&context, &mut builder);
     builder
 }
 
@@ -84,19 +213,20 @@ impl Context<'_> {
         }
     }
 
-    /// Whether the scope covers the file at `path`: every file for the workspace, the files of
-    /// a component version's modules for a component.
-    pub(crate) fn includes_file(&self, path: &Path) -> bool {
-        match &self.scope {
-            AuditScope::Workspace => true,
-            AuditScope::Component { .. } => self
-                .workspace()
-                .antora
-                .context_for_path(path)
-                .is_some_and(|context| {
-                    self.includes(&context.component, context.version.as_deref())
-                }),
+    /// Whether the scope covers the file at `path`: every file for the workspace; for a
+    /// component, the files of its versions' modules and their `antora.yml` files.
+    fn includes_path(&self, path: &Path) -> bool {
+        if matches!(self.scope, AuditScope::Workspace) {
+            return true;
         }
+        let catalog = &self.workspace().antora;
+        if let Some(context) = catalog.context_for_path(path) {
+            return self.includes(&context.component, context.version.as_deref());
+        }
+        catalog.components().any(|descriptor| {
+            normalize_path(&descriptor.root.join("antora.yml")) == path
+                && self.includes(&descriptor.name, descriptor.version.as_deref())
+        })
     }
 
     /// The gap that makes the audit unavailable: a component, or version, not in the catalog.
@@ -119,37 +249,6 @@ impl Context<'_> {
                 affected: vec![named],
             }
         })
-    }
-
-    /// The `antora.yml` files in scope, each once.
-    fn descriptor_files(&self) -> BTreeSet<PathBuf> {
-        let workspace = self.workspace();
-        let mut files: BTreeSet<PathBuf> = workspace
-            .descriptor_problems
-            .keys()
-            .cloned()
-            .chain(
-                workspace
-                    .descriptor_issues
-                    .iter()
-                    .map(|issue| normalize_path(&issue.path)),
-            )
-            .collect();
-        files.retain(|path| match &self.scope {
-            AuditScope::Workspace => true,
-            AuditScope::Component { .. } => workspace.antora.components().any(|descriptor| {
-                normalize_path(&descriptor.root.join("antora.yml")) == *path
-                    && self.includes(&descriptor.name, descriptor.version.as_deref())
-            }),
-        });
-        files
-    }
-
-    /// The existing diagnostics of the file at `path`, unchanged.
-    fn diagnostics(&self, path: &Path, builder: &mut AuditBuilder) {
-        for diagnostic in adoc_lang::diagnostics(self.workspace(), path) {
-            builder.finding(self.finding_for(path, &diagnostic));
-        }
     }
 
     /// A finding for an existing diagnostic: its code, severity, message and range. The message

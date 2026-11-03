@@ -16,40 +16,32 @@
 use adoc_antora::ResourceFamily;
 use adoc_core::{Document, ImageDirective};
 
+use std::path::Path;
+
 use crate::{
-    workspace::published_page, workspace::Context, AuditBuilder, Finding, FindingCode, RuleId, Skip,
+    workspace::published_page, workspace::Context, FileAudit, Finding, FindingCode, RuleId, Skip,
 };
 
-pub(crate) fn check(context: &Context<'_>, builder: &mut AuditBuilder) {
-    let workspace = context.workspace();
-    for file in workspace.index.files() {
-        if !context.includes_file(&file.path) {
-            continue;
+/// The content rules' findings and skips for the indexed file at `path`.
+pub(crate) fn file(context: &Context<'_>, path: &Path, document: &Document, part: &mut FileAudit) {
+    let Some(resource) = context.workspace().antora.resource_for_path(path) else {
+        return;
+    };
+    let coordinate = &resource.coordinate;
+    match coordinate.family {
+        ResourceFamily::Page if published_page(&coordinate.relative_path) => {
+            title(context, path, document, part);
+            images(context, path, document, part);
         }
-        let Some(resource) = workspace.antora.resource_for_path(&file.path) else {
-            continue;
-        };
-        let coordinate = &resource.coordinate;
-        match coordinate.family {
-            ResourceFamily::Page if published_page(&coordinate.relative_path) => {
-                title(context, &file.path, &file.document, builder);
-                images(context, &file.path, &file.document, builder);
-            }
-            ResourceFamily::Partial => images(context, &file.path, &file.document, builder),
-            ResourceFamily::Page
-            | ResourceFamily::Example
-            | ResourceFamily::Image
-            | ResourceFamily::Attachment => {}
-        }
+        ResourceFamily::Partial => images(context, path, document, part),
+        ResourceFamily::Page
+        | ResourceFamily::Example
+        | ResourceFamily::Image
+        | ResourceFamily::Attachment => {}
     }
 }
 
-fn title(
-    context: &Context<'_>,
-    path: &std::path::Path,
-    document: &Document,
-    builder: &mut AuditBuilder,
-) {
+fn title(context: &Context<'_>, path: &Path, document: &Document, part: &mut FileAudit) {
     let finding = |message: &str, range| {
         let mut finding = Finding::new(
             FindingCode::Rule(RuleId::MISSING_TITLE),
@@ -64,7 +56,7 @@ fn title(
     };
     if let Some(title) = &document.title {
         if title.text.trim().is_empty() {
-            builder.finding(finding(
+            part.findings.push(finding(
                 "The page's document title is empty",
                 Some(title.range),
             ));
@@ -87,21 +79,18 @@ fn title(
         .iter()
         .find(|include| first_section.is_none_or(|start| include.range.start < start));
     match header_include {
-        Some(include) => builder.skip(Skip {
+        Some(include) => part.skips.push(Skip {
             location: context.location(path, Some(include.range)),
             code: FindingCode::Rule(RuleId::MISSING_TITLE),
             reason: format!("The title may come from `{}`", include.target),
         }),
-        None => builder.finding(finding("The page has no document title", None)),
+        None => part
+            .findings
+            .push(finding("The page has no document title", None)),
     }
 }
 
-fn images(
-    context: &Context<'_>,
-    path: &std::path::Path,
-    document: &Document,
-    builder: &mut AuditBuilder,
-) {
+fn images(context: &Context<'_>, path: &Path, document: &Document, part: &mut FileAudit) {
     for image in &document.images {
         if has_alt(image) {
             continue;
@@ -117,7 +106,7 @@ fn images(
             "Describe the image in the macro's first attribute: `image::{}[What it shows]`",
             image.target
         ));
-        builder.finding(finding);
+        part.findings.push(finding);
     }
 }
 

@@ -32,9 +32,13 @@ pub enum Probe {
     DiagnoseOpen,
     /// A node of the link graph made for a snapshot.
     GraphNode,
+    /// One file's part of the quality audit, `adoc_audit::audit_file`.
+    AuditFile,
+    /// One component version's part of the quality audit, `adoc_audit::audit_version`.
+    AuditVersion,
 }
 
-const PROBES: usize = 12;
+const PROBES: usize = 14;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -76,4 +80,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::GraphNode as usize == PROBES - 1);
+const _: () = assert!(Probe::AuditVersion as usize == PROBES - 1);
