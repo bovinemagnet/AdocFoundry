@@ -388,6 +388,16 @@ The tests are:
 * `mcp_symlink_escape_is_rejected_at_apply` (Unix), where a folder is replaced by a link out of the workspace between preview and apply
 * `mcp_document_instructions_cannot_grant_permissions`
 
+`crates/adoc-mcp/tests/creation.rs` drives `create_page` and `create_partial` over stdio.
+The tests are:
+
+* `mcp_write_denied_by_default`, where every mutating tool (`apply_changes`, `create_page`, `create_partial`, `edit_page`, `export_pdf` and `rename_page`) is unlisted and refused with `permission_denied` without `--allow-write`, and no file beneath the root is made, changed or removed. All are offered with it.
+* `create_page_resolves_and_is_listed_in_its_navigation`, which checks the resource id, the entry in the navigation file, and that `get_page_context` finds the page in navigation once the engine has applied it. Collisions, ambiguous versions, bad names and a mismatched `expected_nav_hash` are refused.
+* `create_partial_gives_the_include_that_names_it`
+
+A unit test in `crates/adoc-mcp/src/creation.rs`, `mcp_create_page_updates_nav_and_undo`, calls the tool inside the server and checks that one undo in the new page takes back the page and its navigation entry, as in the app.
+The test helper `common::snapshot` records every file beneath a root and what it holds.
+
 In `crates/adoc-mcp/tests/http.rs`, `mcp_preview_ids_are_session_bound` checks that a second HTTP session cannot apply the first's preview.
 
 In the engine, `crates/adoc-engine/tests/staging.rs` checks that:

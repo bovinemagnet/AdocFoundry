@@ -284,7 +284,14 @@ fn write_tools_need_allow_write() {
 
     let mut client = Client::start(&root, true);
     let mut expected: Vec<&str> = READ_TOOLS.to_vec();
-    expected.extend(["apply_changes", "edit_page", "export_pdf", "rename_page"]);
+    expected.extend([
+        "apply_changes",
+        "create_page",
+        "create_partial",
+        "edit_page",
+        "export_pdf",
+        "rename_page",
+    ]);
     expected.sort_unstable();
     assert_eq!(client.tool_names(), expected);
     client.stop();

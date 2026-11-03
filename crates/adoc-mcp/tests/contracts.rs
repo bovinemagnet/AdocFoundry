@@ -45,7 +45,14 @@ const EXISTING_READ_TOOLS: [&str; 10] = [
     "symbols",
 ];
 
-const WRITE_TOOLS: [&str; 4] = ["apply_changes", "edit_page", "export_pdf", "rename_page"];
+const WRITE_TOOLS: [&str; 6] = [
+    "apply_changes",
+    "create_page",
+    "create_partial",
+    "edit_page",
+    "export_pdf",
+    "rename_page",
+];
 
 /// A call of each read tool on `antora-single-component`.
 fn read_calls() -> Vec<(&'static str, Value)> {

@@ -518,3 +518,51 @@ pub fn apply_changes() -> Arc<JsonObject> {
         ],
     )
 }
+
+pub fn create_page() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "path": { "type": "string" },
+            "resource_id": optional_string(),
+            "navigation_file": optional_string(),
+            "changed": list(json!({ "type": "string" })),
+            "saved": { "type": "boolean" },
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "path",
+            "resource_id",
+            "changed",
+            "saved",
+            "workspace_revision",
+        ],
+    )
+}
+
+pub fn create_partial() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "path": { "type": "string" },
+            "resource_id": optional_string(),
+            "include": {
+                "type": "object",
+                "properties": {
+                    "from_its_module": { "type": "string" },
+                    "from_anywhere": optional_string(),
+                },
+                "required": ["from_its_module"],
+            },
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "path",
+            "resource_id",
+            "include",
+            "workspace_revision",
+        ],
+    )
+}

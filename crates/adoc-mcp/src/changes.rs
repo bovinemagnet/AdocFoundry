@@ -189,7 +189,7 @@ struct ApplyArgs {
 }
 
 /// The module root of `component`'s `version` (or its only version) and `module`.
-fn module_root(
+pub(crate) fn module_root(
     state: &State,
     component: &str,
     version: Option<&str>,
@@ -233,7 +233,7 @@ fn module_root(
 }
 
 /// A plain relative file name, with no `..`, root or drive.
-fn plain(name: &str) -> Result<PathBuf, Failure> {
+pub(crate) fn plain(name: &str) -> Result<PathBuf, Failure> {
     let path = PathBuf::from(name);
     if name.is_empty()
         || !path

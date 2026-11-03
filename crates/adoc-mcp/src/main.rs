@@ -9,6 +9,7 @@
 
 mod analysis;
 mod changes;
+mod creation;
 mod discovery;
 mod http;
 mod paths;
