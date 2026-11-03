@@ -1,0 +1,3 @@
+= {{title}} Reference
+
+The facts about {{title}} to look up. To learn how to use it, start with the xref:{{name}}-guide::index.adoc[guide].

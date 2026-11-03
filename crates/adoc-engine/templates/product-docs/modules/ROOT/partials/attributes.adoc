@@ -1,0 +1,3 @@
+// The attributes every page of {{title}} includes in its header. Those that are the same for
+// the whole component can go in antora.yml's asciidoc.attributes instead.
+:copyright-year: {{year}}

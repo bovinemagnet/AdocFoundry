@@ -69,13 +69,19 @@ struct CreateProjectArgs {
     path: String,
     /// Make the component in this new folder inside `path` (`docs` in a code repository).
     subfolder: Option<String>,
-    /// The component's `name`: lower-case letters, digits, `.`, `_` and `-`.
+    /// The component's `name`: lower-case letters, digits, `.`, `_` and `-`; a template's
+    /// components are named from it. Not needed for a template that uses no name.
+    #[serde(default)]
     name: String,
+    /// The template: `minimal` (the default), `product-docs`, `multi-component`,
+    /// `single-page`, or a `user/…` or `workspace/…` template from the settings' template
+    /// folders.
+    template: Option<String>,
     /// The component's `title`; the name, title-cased, without it.
     title: Option<String>,
     /// The component's `version`; unversioned (`~`) without it.
     version: Option<String>,
-    /// The `ROOT` module's families besides `pages`: `partials`, `examples`, `images`,
+    /// Each module's families besides `pages`: `partials`, `examples`, `images`,
     /// `attachments`; partials and images without it.
     families: Option<Vec<String>>,
     /// The index page's title; the component's title without it.
@@ -311,13 +317,29 @@ impl Server {
     }
 
     #[tool(
-        description = "Make an Antora project in a folder inside the workspace, as the app's New Antora Project does (`project.new`): `antora.yml`, a `ROOT` module with an index page and a navigation file, a `.gitignore` and a README, as one undo step; the folder must be empty, or the project goes in a new `subfolder`. A Git repository is made only with `git_init`, and never inside another.",
+        description = "Make an Antora project in a folder inside the workspace, as the app's New Antora Project does (`project.new`), from a `template` (`minimal` by default: `antora.yml`, a `ROOT` module with an index page and a navigation file, a `.gitignore`, a README and a local playbook; `product-docs` has five modules, `multi-component` two components, `single-page` one page and no Antora), as one undo step; the folder must be empty, or the project goes in a new `subfolder`. A Git repository is made only with `git_init`, and never inside another.",
         output_schema = schemas::create_project(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
     async fn create_project(&self, Parameters(args): Parameters<CreateProjectArgs>) -> Answer {
         self.run(move |state| {
             let root = state.confine(&args.path)?;
+            // Only a template the engine lists: never a folder the agent names.
+            let template = args
+                .template
+                .clone()
+                .unwrap_or_else(|| adoc_engine::DEFAULT_TEMPLATE.to_owned());
+            if !state
+                .engine
+                .templates()
+                .iter()
+                .any(|listed| listed.id == template)
+            {
+                return Err(Failure::new(
+                    ErrorCode::NotFound,
+                    format!("there is no template `{template}`"),
+                ));
+            }
             let mut families = Vec::new();
             match &args.families {
                 None => families.extend(adoc_engine::NewModule::DEFAULT_FAMILIES),
@@ -343,6 +365,7 @@ impl Server {
                 gitignore: args.gitignore.unwrap_or(true),
                 playbook: args.playbook.unwrap_or(true),
                 git_init: args.git_init,
+                template,
                 ..adoc_engine::NewProject::new(root.clone(), &args.name)
             };
             let component = state
@@ -360,7 +383,9 @@ impl Server {
                 })?;
             state.confine(&component.to_string_lossy())?;
             // Listed before, as what is planned depends on what is there already.
-            let mut made: Vec<String> = adoc_engine::planned_tree(&request)
+            let mut made: Vec<String> = state
+                .engine
+                .planned_tree(&request)
                 .iter()
                 .map(|path| state.shown(path))
                 .collect();
@@ -385,6 +410,7 @@ impl Server {
             Ok(json!({
                 "schema_version": SCHEMA_VERSION,
                 "component": args.name,
+                "template": request.template,
                 "path": state.shown(&component),
                 "made": made,
                 "index_page": index_page,

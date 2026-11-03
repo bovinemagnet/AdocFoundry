@@ -4,11 +4,13 @@
 //!
 //! Every field is read into one `NewProject` on each render and checked by
 //! `Engine::check_new_project`, whose first problem shows under the field it names; the files
-//! listed beside the fields are `adoc_engine::planned_tree` of the same request.
+//! listed beside the fields are `Engine::planned_tree` of the same request. The templates are
+//! read when the dialog opens (`Engine::templates`), and the fields the chosen one does not use
+//! are hidden.
 
 use std::cell::RefCell;
 
-use adoc_engine::{planned_tree, NewProject, NewProjectField, Welcome};
+use adoc_engine::{NewProject, NewProjectField, Template, TemplateField, Welcome};
 
 use super::*;
 use crate::editor::bindings::NewProject as NewProject_;
@@ -22,6 +24,10 @@ struct Fields {
     title: Entity<InputState>,
     version: Entity<InputState>,
     template: Entity<SelectState<Vec<String>>>,
+    /// The templates offered, in the picker's order.
+    templates: Vec<Template>,
+    /// Why each folder template that does not read is not offered.
+    template_problems: Vec<String>,
     git: Rc<Cell<bool>>,
     readme: Rc<Cell<bool>>,
     playbook: Rc<Cell<bool>>,
@@ -30,6 +36,18 @@ struct Fields {
 }
 
 impl Fields {
+    /// The template chosen.
+    fn template(&self, cx: &App) -> Option<&Template> {
+        let chosen = self
+            .template
+            .read(cx)
+            .selected_index(cx)
+            .map_or(0, |index| index.row);
+        self.templates
+            .get(chosen)
+            .or_else(|| self.templates.first())
+    }
+
     /// The request the fields make, and whether its folder is in a repository already.
     fn request(&self, engine: &adoc_engine::Engine, cx: &App) -> (NewProject, bool) {
         let location = self.location.read(cx).value().trim().to_owned();
@@ -50,6 +68,10 @@ impl Fields {
             readme: self.readme.get(),
             playbook: self.playbook.get(),
             git_init: self.git.get() && !in_repository,
+            template: self
+                .template(cx)
+                .map(|template| template.id.clone())
+                .unwrap_or_default(),
             ..NewProject::new(root, self.name.read(cx).value().trim())
         };
         (request, in_repository)
@@ -82,6 +104,12 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         let start = self.app.read(cx).engine.new_project_request();
+        let templates = self.app.read(cx).engine.templates();
+        let template_problems = self.app.read(cx).engine.template_problems();
+        let names: Vec<String> = templates
+            .iter()
+            .map(|template| template.name.clone())
+            .collect();
         let text = |value: String, placeholder: &'static str, window: &mut Window, cx: &mut App| {
             cx.new(|cx| {
                 let mut state = InputState::new(window, cx).placeholder(placeholder);
@@ -107,13 +135,10 @@ impl WorkspaceView {
             title: text(String::new(), "Title (the name, title-cased)", window, cx),
             version: text(String::new(), "latest (unversioned)", window, cx),
             template: cx.new(|cx| {
-                SelectState::new(
-                    vec!["Minimal".to_owned()],
-                    Some(gpui_component::IndexPath::new(0)),
-                    window,
-                    cx,
-                )
+                SelectState::new(names, Some(gpui_component::IndexPath::new(0)), window, cx)
             }),
+            templates,
+            template_problems,
             git: Rc::new(Cell::new(true)),
             readme: Rc::new(Cell::new(start.readme)),
             playbook: Rc::new(Cell::new(start.playbook)),
@@ -139,7 +164,7 @@ impl WorkspaceView {
                 .text_xs()
                 .font_family("monospace");
             if !root.as_os_str().is_empty() {
-                for (number, path) in planned_tree(&request).iter().enumerate() {
+                for (number, path) in engine.planned_tree(&request).iter().enumerate() {
                     let shown = path
                         .strip_prefix(&root)
                         .unwrap_or(path)
@@ -187,6 +212,16 @@ impl WorkspaceView {
                     ),
                 )
             };
+            let template = fields.template(cx).cloned();
+            let uses = |field| {
+                template
+                    .as_ref()
+                    .is_none_or(|template| template.uses(field))
+            };
+            let description = template
+                .as_ref()
+                .map(|template| template.description.clone())
+                .unwrap_or_default();
             let form = v_flex()
                 .gap_2()
                 .w(px(420.))
@@ -211,15 +246,47 @@ impl WorkspaceView {
                     form.child(Input::new(&fields.subfolder))
                 })
                 .children(under(NewProjectField::Subfolder, "subfolder", cx))
-                .child(label("Component"))
-                .child(Input::new(&fields.name))
-                .children(under(NewProjectField::Name, "name", cx))
-                .child(Input::new(&fields.title))
-                .child(Input::new(&fields.version))
-                .children(under(NewProjectField::Version, "version", cx))
                 .child(label("Template"))
-                .child(Select::new(&fields.template))
-                .when(!in_repository, |form| {
+                .child(
+                    div()
+                        .debug_selector(|| "new-project-template".to_owned())
+                        .child(Select::new(&fields.template)),
+                )
+                .child(
+                    div()
+                        .debug_selector(|| "new-project-template-description".to_owned())
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(description),
+                )
+                .children(under(NewProjectField::Template, "template", cx))
+                .children(fields.template_problems.iter().map(|problem| {
+                    div()
+                        .debug_selector(|| "new-project-template-problem".to_owned())
+                        .text_xs()
+                        .text_color(cx.theme().warning)
+                        .child(format!("Not offered: {problem}"))
+                }))
+                .when(uses(TemplateField::Name), |form| {
+                    form.child(label("Component")).child(
+                        div()
+                            .debug_selector(|| "new-project-name".to_owned())
+                            .child(Input::new(&fields.name)),
+                    )
+                })
+                .children(under(NewProjectField::Name, "name", cx))
+                .when(uses(TemplateField::Title), |form| {
+                    form.child(Input::new(&fields.title))
+                })
+                .when(uses(TemplateField::Version), |form| {
+                    form.child(
+                        div()
+                            .debug_selector(|| "new-project-version".to_owned())
+                            .child(Input::new(&fields.version)),
+                    )
+                })
+                .children(under(NewProjectField::Version, "version", cx))
+                .when(!in_repository && uses(TemplateField::Git), |form| {
                     form.child(toggle(
                         "new-project-git",
                         "Initialise a Git repository",
@@ -227,18 +294,27 @@ impl WorkspaceView {
                     ))
                 })
                 .children(under(NewProjectField::Git, "git", cx))
-                .child(toggle("new-project-readme", "Add a README", &fields.readme))
-                .child(toggle(
-                    "new-project-playbook",
-                    "Add a local playbook and build setup",
-                    &fields.playbook,
-                ));
+                .when(uses(TemplateField::Readme), |form| {
+                    form.child(toggle("new-project-readme", "Add a README", &fields.readme))
+                })
+                .when(uses(TemplateField::Playbook), |form| {
+                    form.child(toggle(
+                        "new-project-playbook",
+                        "Add a local playbook and build setup",
+                        &fields.playbook,
+                    ))
+                });
+            let antora = template.as_ref().is_none_or(|template| template.antora);
             let made = match &checked {
-                Ok(component) => div()
+                Ok(place) => div()
                     .debug_selector(|| "new-project-component".to_owned())
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!("antora.yml in {}", component.display())),
+                    .child(if antora {
+                        format!("antora.yml in {}", place.display())
+                    } else {
+                        format!("Opens {}", place.display())
+                    }),
                 Err(_) => div(),
             };
             let (fields, workspace) = (fields.clone(), workspace.clone());
@@ -289,7 +365,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let files = planned_tree(&request).len();
+        let files = self.app.read(cx).engine.planned_tree(&request).len();
         let Some(CommandOutcome::Opened(index)) = self.invoke(
             ids::PROJECT_NEW,
             CommandArgs::NewProject(request.clone()),
@@ -314,7 +390,10 @@ impl WorkspaceView {
         let app = self.app.clone();
         window.push_notification(
             Notification::new()
-                .message(format!("Created {} with {files} files.", request.name))
+                .message(match request.name.trim() {
+                    "" => format!("Created {files} files."),
+                    name => format!("Created {name} with {files} files."),
+                })
                 .action(move |_, _, _| {
                     let app = app.clone();
                     Button::new("new-project-undo")

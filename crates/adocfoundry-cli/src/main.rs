@@ -53,8 +53,8 @@ const USAGE: &str = "usage:
       [--format text|json] [--output <file>] [--max-impacts <n>] [--require-complete]
   adocfoundry-cli new-module <component-root> <name> [--families pages,partials,images]
       [--no-nav] [--index-title <title>]
-  adocfoundry-cli new-project <folder> --name <name> [--title <title>] [--version <version>]
-      [--subfolder <dir>] [--no-git] [--no-readme] [--no-playbook]
+  adocfoundry-cli new-project <folder> --name <name> [--template <id|folder>] [--title <title>]
+      [--version <version>] [--subfolder <dir>] [--no-git] [--no-readme] [--no-playbook]
   adocfoundry-cli --version";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -181,14 +181,34 @@ fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
         .filter(|argument| !flags.contains(&argument.as_str()))
         .cloned()
         .collect();
-    let (positional, options) =
-        parse_options(&arguments, &["name", "title", "version", "subfolder"])?;
+    let (positional, options) = parse_options(
+        &arguments,
+        &["name", "title", "version", "subfolder", "template"],
+    )?;
     let [folder] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let name = option(&options, "name").ok_or("`--name` is needed")?;
     let root = adoc_index::normalize_path(Path::new(folder));
+    let mut engine = open_engine(&root, false)?;
+    // A built-in or listed template, or a template's folder.
+    let template = match option(&options, "template") {
+        Some(given) if Path::new(given).is_dir() => std::path::absolute(given)
+            .map_err(|error| format!("{given}: {error}"))?
+            .display()
+            .to_string(),
+        Some(given) => given.to_owned(),
+        None => adoc_engine::DEFAULT_TEMPLATE.to_owned(),
+    };
+    let chosen = engine.template(&template)?;
+    let name = match option(&options, "name") {
+        Some(name) => name,
+        None if chosen.uses(adoc_engine::TemplateField::Name) => {
+            return Err("`--name` is needed".to_owned())
+        }
+        None => "",
+    };
     let request = adoc_engine::NewProject {
+        template,
         subfolder: option(&options, "subfolder").map(str::to_owned),
         title: option(&options, "title").unwrap_or_default().to_owned(),
         version: option(&options, "version").map(str::to_owned),
@@ -197,10 +217,10 @@ fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
         playbook,
         ..adoc_engine::NewProject::new(root.clone(), name)
     };
-    let mut engine = open_engine(&root, false)?;
     let had_repository = root.join(".git").exists();
     // Listed before, as what is planned depends on what is there already.
-    let mut made: Vec<String> = adoc_engine::planned_tree(&request)
+    let mut made: Vec<String> = engine
+        .planned_tree(&request)
         .iter()
         .map(|path| adoc_engine::report::display_path(path, &root))
         .collect();

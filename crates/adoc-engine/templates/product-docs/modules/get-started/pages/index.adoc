@@ -1,0 +1,4 @@
+= Get Started
+include::ROOT:partial$attributes.adoc[]
+
+Install {product-name} and use it for the first time.

@@ -1,0 +1,10 @@
+name = "Product documentation"
+description = "One component in five modules, the Diátaxis way: ROOT, get-started, how-to, reference and concepts, each with an index page and a navigation file, and an attributes partial every page includes."
+
+[[component]]
+modules = ["ROOT", "get-started", "how-to", "reference", "concepts"]
+
+[component.attributes]
+product-name = "{{title}}"
+product-version = "{{version}}"
+page-pagination = ""

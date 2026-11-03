@@ -1,0 +1,12 @@
+name = "Two components"
+description = "A guide and a reference, each a component in components/, built together by one playbook whose start page is the guide's."
+
+[[component]]
+name = "{{name}}-guide"
+path = "components/guide"
+title = "{{title}} Guide"
+
+[[component]]
+name = "{{name}}-reference"
+path = "components/reference"
+title = "{{title}} Reference"

@@ -10,8 +10,8 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_engine::{
-    commands::ids, normalize_path, planned_tree, CommandArgs, CommandOutcome, Engine, EngineError,
-    NewPage, NewProject, NewProjectField, Settings, Welcome,
+    commands::ids, normalize_path, CommandArgs, CommandOutcome, Engine, EngineError, NewPage,
+    NewProject, NewProjectField, Settings, Welcome,
 };
 use adoc_git::{testing::TestRepo, Repository};
 
@@ -106,7 +106,7 @@ fn new_project_writes_a_valid_descriptor() {
     let mut setup = Setup::new();
     let request = setup.request();
     let root = request.root.clone();
-    let planned = planned_tree(&request);
+    let planned = setup.engine.planned_tree(&request);
     let CommandOutcome::Opened(index) = setup.make(request).unwrap() else {
         panic!("the index page is opened");
     };
@@ -600,7 +600,9 @@ fn a_playbook_with_no_repository_says_it_needs_one() {
         git_init: false,
         ..NewProject::new(setup.workspace.clone(), "demo")
     };
-    assert!(!planned_tree(&request)
+    assert!(!setup
+        .engine
+        .planned_tree(&request)
         .iter()
         .any(|path| path.ends_with(".adocfoundry.toml")));
     setup.make(request).unwrap();
@@ -667,7 +669,10 @@ fn new_project_writes_a_playbook_that_antora_accepts() {
         eprintln!("skipped: no `antora` on PATH");
         return;
     };
-    for subfolder in [None, Some("docs")] {
+    let layouts = ["minimal", "product-docs", "multi-component"]
+        .into_iter()
+        .flat_map(|template| [(template, None), (template, Some("docs"))]);
+    for (template, subfolder) in layouts {
         let mut setup = Setup::new();
         let root = setup.workspace.join("demo");
         fs::create_dir_all(&root).unwrap();
@@ -676,6 +681,7 @@ fn new_project_writes_a_playbook_that_antora_accepts() {
         }
         let request = NewProject {
             subfolder: subfolder.map(str::to_owned),
+            template: template.to_owned(),
             ..NewProject::new(root.clone(), "demo")
         };
         let component = request.component_root();
@@ -690,12 +696,30 @@ fn new_project_writes_a_playbook_that_antora_accepts() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        assert!(output.status.success(), "{log}");
-        assert!(!log.contains("\"level\":\"warn\""), "{log}");
+        assert!(output.status.success(), "{template}: {log}");
+        assert!(!log.contains("\"level\":\"warn\""), "{template}: {log}");
         assert!(component.join("build/site/index.html").is_file(), "{log}");
-        assert!(
-            component.join("build/site/demo/index.html").is_file(),
-            "{log}"
-        );
+        let components: &[&str] = match template {
+            "multi-component" => &["demo-guide", "demo-reference"],
+            _ => &["demo"],
+        };
+        for name in components {
+            assert!(
+                component
+                    .join("build/site")
+                    .join(name)
+                    .join("index.html")
+                    .is_file(),
+                "{template}: {name}: {log}"
+            );
+        }
+        if template == "product-docs" {
+            assert!(
+                component
+                    .join("build/site/demo/how-to/index.html")
+                    .is_file(),
+                "{log}"
+            );
+        }
     }
 }

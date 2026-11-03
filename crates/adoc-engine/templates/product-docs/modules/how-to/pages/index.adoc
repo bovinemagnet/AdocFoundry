@@ -1,0 +1,4 @@
+= How-to Guides
+include::ROOT:partial$attributes.adoc[]
+
+Each guide takes you through one task, step by step.

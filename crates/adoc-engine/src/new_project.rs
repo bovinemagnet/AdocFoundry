@@ -20,17 +20,13 @@ use crate::{
     commands::{ids, register, spec},
     new_module::{module_files, title_case, valid_module_name, NewModule},
     new_page::{create_file, CreatedFile},
+    templates::{
+        current_year, join_relative, substitute, Template, TemplateField, Variables,
+        DEFAULT_TEMPLATE,
+    },
     CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
     Engine, EngineError, UndoGroup,
 };
-
-/// The project layouts `project.new` can make.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum TemplateId {
-    /// `antora.yml` and a `ROOT` module with an index page and a navigation file.
-    #[default]
-    Minimal,
-}
 
 /// What `project.new` makes.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,35 +34,37 @@ pub struct NewProject {
     /// The folder to create in. Must exist and be empty, or be a non-Antora folder with
     /// `subfolder` set.
     pub root: PathBuf,
-    /// Create the component in `root/<subfolder>` (e.g. `docs`) instead of `root` itself.
+    /// Create the project in `root/<subfolder>` (e.g. `docs`) instead of `root` itself.
     pub subfolder: Option<String>,
-    /// `name:` in antora.yml: `[a-z0-9][a-z0-9._-]*`.
+    /// `name:` in antora.yml: `[a-z0-9][a-z0-9._-]*`; a template's components are named from
+    /// it (`{{name}}`).
     pub name: String,
     /// `title:`; empty for the name, title-cased.
     pub title: String,
     /// `version:`; `None` (or `~`) writes `version: ~`.
     pub version: Option<String>,
-    /// Families for ROOT (same rules as `NewModule.families`).
+    /// Families for each module (same rules as `NewModule.families`).
     pub families: Vec<ResourceFamily>,
-    /// Title of `modules/ROOT/pages/index.adoc`; empty for the component's title.
+    /// Title of the first component's `modules/ROOT/pages/index.adoc`; empty for its title.
     pub index_title: String,
-    /// A `README.adoc` beside `antora.yml` saying what the folder is.
+    /// A `README.adoc` in the project's folder saying what it is.
     pub readme: bool,
     /// A `.gitignore` for `build/`, `node_modules/` and `.cache/`.
     pub gitignore: bool,
     /// Initialise a Git repository in `root`; nothing is done when `root` is in one already.
     pub git_init: bool,
-    /// A local `antora-playbook.yml` and a `package.json` with the Antora CLI beside
-    /// `antora.yml`, and a commented `.adocfoundry.toml` in `root` when it has none, so the
-    /// project builds with `npm install` and `npm run build`.
+    /// A local `antora-playbook.yml` and a `package.json` with the Antora CLI in the project's
+    /// folder, and a commented `.adocfoundry.toml` in `root` when it has none, so the project
+    /// builds with `npm install` and `npm run build`.
     pub playbook: bool,
-    pub template: TemplateId,
+    /// The template's id ([`Engine::templates`]): `minimal` when empty.
+    pub template: String,
 }
 
 impl NewProject {
     /// A request for the component `name` in `root` with the defaults the dialog offers: the
-    /// title from the name, versionless, pages, partials and images, a README, a
-    /// `.gitignore`, a local playbook and a Git repository.
+    /// minimal template, the title from the name, versionless, pages, partials and images, a
+    /// README, a `.gitignore`, a local playbook and a Git repository.
     #[must_use]
     pub fn new(root: PathBuf, name: &str) -> Self {
         Self {
@@ -81,11 +79,12 @@ impl NewProject {
             gitignore: true,
             git_init: true,
             playbook: true,
-            template: TemplateId::Minimal,
+            template: DEFAULT_TEMPLATE.to_owned(),
         }
     }
 
-    /// The folder that holds `antora.yml`.
+    /// The folder the project is made in, `root` or `root/<subfolder>`: the one holding
+    /// `antora.yml` for a template of one component in its folder, as `minimal` is.
     #[must_use]
     pub fn component_root(&self) -> PathBuf {
         let root = normalize_path(&self.root);
@@ -97,7 +96,10 @@ impl NewProject {
 
     fn title(&self) -> String {
         match self.title.trim() {
-            "" => title_case(&self.name),
+            "" => match title_case(self.name.trim()) {
+                title if title.is_empty() => "Document".to_owned(),
+                title => title,
+            },
             title => title.to_owned(),
         }
     }
@@ -108,6 +110,21 @@ impl NewProject {
             .map(str::trim)
             .filter(|version| *version != "~")
     }
+
+    /// What `template`'s `{{…}}` stand for in this request.
+    fn variables(&self) -> Variables {
+        let title = self.title();
+        Variables {
+            name: self.name.trim().to_owned(),
+            index_title: match self.index_title.trim() {
+                "" => title.clone(),
+                index_title => index_title.to_owned(),
+            },
+            title,
+            version: self.version().unwrap_or_default().to_owned(),
+            year: current_year().to_string(),
+        }
+    }
 }
 
 /// The field of the New Project dialog a problem belongs under.
@@ -115,6 +132,7 @@ impl NewProject {
 pub enum NewProjectField {
     Location,
     Subfolder,
+    Template,
     Name,
     Version,
     Git,
@@ -144,20 +162,25 @@ pub enum Welcome {
     NotAntora(PathBuf),
 }
 
-/// What a group's project needs on undo and redo: its descriptor, read again, and the folders
-/// it made, removed again while empty.
+/// What a group's project needs on undo and redo: its descriptors, read again, its playbook,
+/// and the folders it made, removed again while empty.
 #[derive(Clone, Debug)]
 pub(crate) struct MadeProject {
-    descriptor: PathBuf,
+    descriptors: Vec<PathBuf>,
+    playbook: Option<PathBuf>,
     folders: Vec<PathBuf>,
 }
 
 /// The files and folders a project is made of.
 struct Plan {
-    component: PathBuf,
+    /// Each component's folder, the one holding its `antora.yml`.
+    components: Vec<PathBuf>,
     files: Vec<(PathBuf, String)>,
     /// Outermost first.
     folders: Vec<PathBuf>,
+    /// The page opened once it is made.
+    index: PathBuf,
+    playbook: Option<PathBuf>,
 }
 
 pub(crate) fn register_new_project(registry: &mut CommandRegistry) {
@@ -185,62 +208,142 @@ fn project_new(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
     Ok(CommandOutcome::Opened(index))
 }
 
-/// The files `request` makes, in the order they are written: what the New Project dialog
-/// previews.
-#[must_use]
-pub fn planned_tree(request: &NewProject) -> Vec<PathBuf> {
-    plan(request, &descriptor_text(request), None)
-        .files
-        .into_iter()
-        .map(|(path, _)| path)
-        .collect()
+/// A component of the plan: its folder and name.
+struct PlannedComponent {
+    folder: PathBuf,
+    name: String,
 }
 
-/// The project's files and folders, the playbook building from the repository at
-/// `repository` (the folder in none when `None`).
-fn plan(request: &NewProject, descriptor: &str, repository: Option<&Path>) -> Plan {
-    let component = request.component_root();
-    let title = request.title();
-    let index_title = match request.index_title.trim() {
-        "" => title.clone(),
-        index_title => index_title.to_owned(),
-    };
-    let module = component.join("modules/ROOT");
-    let (module_files, module_folders) =
-        module_files(&module, &request.families, true, Some(&index_title));
-    let mut files = vec![(component.join("antora.yml"), descriptor.to_owned())];
-    files.extend(module_files);
-    if request.gitignore {
-        files.push((
-            component.join(".gitignore"),
-            "build/\nnode_modules/\n.cache/\n".to_owned(),
-        ));
+/// The project's files and folders, made from `template`, the first component's descriptor
+/// `descriptor` when given, and the playbook building from the repository at `repository`
+/// (the folder in none when `None`).
+fn plan(
+    request: &NewProject,
+    template: &Template,
+    descriptor: Option<&str>,
+    repository: Option<&Path>,
+) -> Result<Plan, String> {
+    let project = request.component_root();
+    let root = normalize_path(&request.root);
+    let variables = request.variables();
+    let uses = |field| template.uses(field);
+    let mut files: Vec<(PathBuf, String)> = Vec::new();
+    let mut components = Vec::new();
+    for (number, spec) in template.components.iter().enumerate() {
+        let name = substitute(&spec.name, &variables);
+        let title = substitute(&spec.title, &variables);
+        let folder = join_relative(&project, &substitute(&spec.path, &variables))?;
+        let attributes: Vec<(String, String)> = spec
+            .attributes
+            .iter()
+            .map(|(key, value)| (key.clone(), substitute(value, &variables)))
+            .collect();
+        let version = request.version().filter(|_| uses(TemplateField::Version));
+        let text = match descriptor.filter(|_| number == 0) {
+            Some(text) => text.to_owned(),
+            None => descriptor_text(&name, &title, version, &spec.modules, &attributes),
+        };
+        files.push((folder.join("antora.yml"), text));
+        for module in &spec.modules {
+            let index_title = match (module.as_str(), number) {
+                ("ROOT", 0) => variables.index_title.clone(),
+                ("ROOT", _) => title.clone(),
+                _ => title_case(module),
+            };
+            let (module_files, _) = module_files(
+                &folder.join("modules").join(module),
+                &request.families,
+                true,
+                Some(&index_title),
+            );
+            files.extend(module_files);
+        }
+        components.push(PlannedComponent { folder, name });
     }
-    if request.readme {
-        files.push((component.join("README.adoc"), readme_text(request, &title)));
-    }
-    if request.playbook {
-        files.push((
-            component.join(adoc_antora::PLAYBOOK_FILE),
-            playbook_text(request, &title, &component, repository),
-        ));
-        files.push((component.join("package.json"), package_text(request)));
-        let settings = normalize_path(&request.root).join(".adocfoundry.toml");
-        if !settings.exists() {
-            files.push((settings, SETTINGS_TEXT.to_owned()));
+    // The template's own files, each in place of one made at the same path.
+    for (path, text) in &template.files {
+        let path = join_relative(&project, &substitute(path, &variables))?;
+        let text = substitute(text, &variables);
+        match files.iter_mut().find(|(made, _)| *made == path) {
+            Some(made) => made.1 = text,
+            None => files.push((path, text)),
         }
     }
-    let mut folders = Vec::new();
-    if component != normalize_path(&request.root) {
-        folders.push(component.clone());
+    // A folder with a file of its own needs no `.gitkeep`.
+    let kept: Vec<PathBuf> = files
+        .iter()
+        .filter(|(path, _)| !path.ends_with(".gitkeep"))
+        .filter_map(|(path, _)| path.parent().map(Path::to_path_buf))
+        .collect();
+    files.retain(|(path, _)| {
+        !path.ends_with(".gitkeep")
+            || !path
+                .parent()
+                .is_some_and(|folder| kept.contains(&folder.to_path_buf()))
+    });
+    let mut playbook = None;
+    if template.antora {
+        let title = variables.title.clone();
+        if request.gitignore && uses(TemplateField::Gitignore) {
+            files.push((
+                project.join(".gitignore"),
+                "build/\nnode_modules/\n.cache/\n".to_owned(),
+            ));
+        }
+        let builds = request.playbook && uses(TemplateField::Playbook);
+        if request.readme && uses(TemplateField::Readme) {
+            files.push((
+                project.join("README.adoc"),
+                readme_text(&title, &project, &components, builds),
+            ));
+        }
+        if builds {
+            let path = project.join(adoc_antora::PLAYBOOK_FILE);
+            files.push((
+                path.clone(),
+                playbook_text(&root, &title, &project, &components, repository),
+            ));
+            files.push((project.join("package.json"), package_text(&components)));
+            let settings = root.join(".adocfoundry.toml");
+            if !settings.exists() {
+                files.push((settings, SETTINGS_TEXT.to_owned()));
+            }
+            playbook = Some(path);
+        }
     }
-    folders.push(component.join("modules"));
-    folders.extend(module_folders);
-    Plan {
-        component,
+    let index = match &template.open {
+        Some(open) => join_relative(&project, &substitute(open, &variables))?,
+        None => components
+            .first()
+            .map(|component| component.folder.join("modules/ROOT/pages/index.adoc"))
+            .ok_or("the template makes no component and names no page to open")?,
+    };
+    if !files.iter().any(|(path, _)| *path == index) {
+        return Err(format!(
+            "the template makes no {} to open",
+            index.strip_prefix(&project).unwrap_or(&index).display()
+        ));
+    }
+    // Every folder a file is made in, from the project's folder down: outermost first.
+    let mut folders: Vec<PathBuf> = files
+        .iter()
+        .filter_map(|(path, _)| path.parent())
+        .flat_map(Path::ancestors)
+        .filter(|folder| folder.starts_with(&project) && *folder != root)
+        .map(Path::to_path_buf)
+        .collect();
+    folders.sort();
+    folders.dedup();
+    Ok(Plan {
+        components: components
+            .into_iter()
+            .map(|component| component.folder)
+            .collect(),
         files,
         folders,
-    }
+        index,
+        playbook,
+    })
 }
 
 /// `text` as a double-quoted YAML scalar.
@@ -260,37 +363,81 @@ fn yaml_quoted(text: &str) -> String {
     quoted
 }
 
-fn descriptor_text(request: &NewProject) -> String {
-    let version = request
-        .version()
-        .map_or_else(|| "~".to_owned(), yaml_quoted);
-    let title = request.title();
-    [
-        format!("name: {}", request.name),
-        format!("title: {}", yaml_quoted(&title)),
+/// `antora.yml` for a component of `modules`, its values quoted for YAML, with `attributes`
+/// in `asciidoc.attributes`, or a commented example when there are none.
+fn descriptor_text(
+    name: &str,
+    title: &str,
+    version: Option<&str>,
+    modules: &[String],
+    attributes: &[(String, String)],
+) -> String {
+    let version = version.map_or_else(|| "~".to_owned(), yaml_quoted);
+    let mut lines = vec![
+        format!("name: {name}"),
+        format!("title: {}", yaml_quoted(title)),
         format!("version: {version}"),
         "nav:".to_owned(),
-        "- modules/ROOT/nav.adoc".to_owned(),
-        "asciidoc:".to_owned(),
-        "  # Attributes every page of the component can use, for example:".to_owned(),
-        "  #   attributes:".to_owned(),
-        format!("  #     product-name: {}", title.replace(['\n', '\r'], " ")),
-        "  attributes: {}".to_owned(),
-        String::new(),
-    ]
-    .join("\n")
+    ];
+    lines.extend(
+        modules
+            .iter()
+            .map(|module| format!("- modules/{module}/nav.adoc")),
+    );
+    lines.push("asciidoc:".to_owned());
+    if attributes.is_empty() {
+        lines.extend([
+            "  # Attributes every page of the component can use, for example:".to_owned(),
+            "  #   attributes:".to_owned(),
+            format!("  #     product-name: {}", title.replace(['\n', '\r'], " ")),
+            "  attributes: {}".to_owned(),
+        ]);
+    } else {
+        lines.push("  attributes:".to_owned());
+        lines.extend(
+            attributes
+                .iter()
+                .map(|(key, value)| format!("    {key}: {}", yaml_quoted(value))),
+        );
+    }
+    lines.push(String::new());
+    lines.join("\n")
 }
 
-fn readme_text(request: &NewProject, title: &str) -> String {
+/// The README of a project of `components` in `project`, with how to build it when `builds`.
+fn readme_text(
+    title: &str,
+    project: &Path,
+    components: &[PlannedComponent],
+    builds: bool,
+) -> String {
+    let place = |component: &PlannedComponent| {
+        let relative = component
+            .folder
+            .strip_prefix(project)
+            .ok()
+            .filter(|relative| !relative.as_os_str().is_empty())
+            .map(|relative| format!(" in `{}`", relative.display()));
+        format!("`{}`{}", component.name, relative.unwrap_or_default())
+    };
+    let what = match components {
+        [one] => format!(
+            "an Antora component named {}: its pages are in each module's `pages` folder under \
+             `modules`, and `antora.yml` lists its navigation",
+            place(one)
+        ),
+        several => format!(
+            "the Antora components {}, each with its own `antora.yml`",
+            several.iter().map(place).collect::<Vec<_>>().join(" and ")
+        ),
+    };
     let mut text = format!(
         "= {title}\n\n\
-         The documentation of {title}, an Antora component named `{name}`: its pages are in \
-         `modules/ROOT/pages`, and `antora.yml` lists its navigation.\n\n\
+         The documentation of {title}, {what}.\n\n\
          Check it for broken references with:\n\n\
          [source,sh]\n----\nadocfoundry-cli check .\n----\n",
-        name = request.name,
     );
-    if request.playbook {
+    if builds {
         text.push_str(
             "\nBuild the site with Antora, which needs Node.js and a Git repository; the pages \
              are written to `build/site`:\n\n\
@@ -314,34 +461,43 @@ const SETTINGS_TEXT: &str = "\
 # enabled = true
 ";
 
-/// A playbook that builds the component at `component` from the working tree of the repository
-/// at `repository`: Antora reads a local source from its repository's root, named relative to
-/// the playbook, with `start_path` the component's folder within it.
+/// A playbook in `project` that builds `components` from the working tree of the repository
+/// at `repository` (`root` when it is in none): Antora reads a local source from its
+/// repository's root, named relative to the playbook, with each component's folder within it
+/// a start path. The site starts at the first component's index page.
 fn playbook_text(
-    request: &NewProject,
+    root: &Path,
     title: &str,
-    component: &Path,
+    project: &Path,
+    components: &[PlannedComponent],
     repository: Option<&Path>,
 ) -> String {
-    let base = repository.map_or_else(|| normalize_path(&request.root), Path::to_path_buf);
-    let inside: Vec<String> = component
-        .strip_prefix(&base)
-        .map(|relative| {
-            relative
-                .components()
-                .map(|part| part.as_os_str().to_string_lossy().into_owned())
-                .collect()
-        })
-        .unwrap_or_default();
-    let url = if inside.is_empty() {
+    let base = repository.unwrap_or(root);
+    let inside = |folder: &Path| -> Vec<String> {
+        folder
+            .strip_prefix(base)
+            .map(|relative| {
+                relative
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let depth = inside(project).len();
+    let url = if depth == 0 {
         ".".to_owned()
     } else {
-        vec![".."; inside.len()].join("/")
+        vec![".."; depth].join("/")
     };
+    let start = components
+        .first()
+        .map(|component| component.name.as_str())
+        .unwrap_or_default();
     let mut lines = vec![
         "site:".to_owned(),
         format!("  title: {}", yaml_quoted(title)),
-        format!("  start_page: {}::index.adoc", request.name),
+        format!("  start_page: {start}::index.adoc"),
         "content:".to_owned(),
         "  sources:".to_owned(),
     ];
@@ -353,8 +509,17 @@ fn playbook_text(
     }
     lines.push(format!("  - url: {url}"));
     lines.push("    branches: HEAD".to_owned());
-    if !inside.is_empty() {
-        lines.push(format!("    start_path: {}", inside.join("/")));
+    let starts: Vec<String> = components
+        .iter()
+        .map(|component| inside(&component.folder).join("/"))
+        .collect();
+    match &starts[..] {
+        [one] if one.is_empty() => {}
+        [one] => lines.push(format!("    start_path: {one}")),
+        several => {
+            lines.push("    start_paths:".to_owned());
+            lines.extend(several.iter().map(|start| format!("    - {start}")));
+        }
     }
     lines.extend([
         "ui:".to_owned(),
@@ -368,11 +533,12 @@ fn playbook_text(
     lines.join("\n")
 }
 
-fn package_text(request: &NewProject) -> String {
+/// `package.json`, named after the first component.
+fn package_text(components: &[PlannedComponent]) -> String {
     format!(
         "{{\n  \"name\": \"{name}\",\n  \"private\": true,\n  \"scripts\": {{\n    \"build\": \"antora \
          antora-playbook.yml\"\n  }},\n  \"devDependencies\": {{\n    \"antora\": \"3.2.x\"\n  }}\n}}\n",
-        name = request.name,
+        name = components.first().map(|component| component.name.as_str()).unwrap_or("docs"),
     )
 }
 
@@ -413,9 +579,24 @@ fn component_name(name: &str) -> String {
 
 impl Engine {
     /// Why `request` cannot be made, the first problem in the order the New Project dialog
-    /// shows its fields, or the folder its `antora.yml` will be in when it can; checked before
-    /// anything is written, and as a dialog types.
+    /// shows its fields, or the folder its (first) `antora.yml` will be in when it can (the
+    /// page it opens for a template with no component); checked before anything is written,
+    /// and as a dialog types.
     pub fn check_new_project(&self, request: &NewProject) -> Result<PathBuf, NewProjectProblem> {
+        let template = self
+            .template(&request.template)
+            .map_err(|message| NewProjectProblem {
+                field: NewProjectField::Template,
+                message,
+            })?;
+        self.check_new_project_with(request, &template)
+    }
+
+    fn check_new_project_with(
+        &self,
+        request: &NewProject,
+        template: &Template,
+    ) -> Result<PathBuf, NewProjectProblem> {
         use NewProjectField::{Git, Location, Name, Subfolder, Version};
         let problem = |field, message: String| Err(NewProjectProblem { field, message });
         let root = normalize_path(&request.root);
@@ -469,7 +650,8 @@ impl Engine {
                 Ok(true) => {}
             },
         }
-        if request.name == "ROOT" || !valid_module_name(&request.name) {
+        let named = template.uses(TemplateField::Name);
+        if named && (request.name == "ROOT" || !valid_module_name(&request.name)) {
             return problem(
                 Name,
                 format!(
@@ -479,7 +661,22 @@ impl Engine {
                 ),
             );
         }
-        if let Some(version) = request.version() {
+        let variables = request.variables();
+        for spec in &template.components {
+            let name = substitute(&spec.name, &variables);
+            if name == "ROOT" || !valid_module_name(&name) {
+                return problem(
+                    Name,
+                    format!(
+                        "the template names a component `{name}`, which is not a component name"
+                    ),
+                );
+            }
+        }
+        if let Some(version) = request
+            .version()
+            .filter(|_| template.uses(TemplateField::Version))
+        {
             if version.is_empty() || version.contains('/') || version.contains(char::is_whitespace)
             {
                 return problem(
@@ -491,13 +688,27 @@ impl Engine {
                 );
             }
         }
-        if request.git_init && !cfg!(feature = "git") {
+        if request.git_init && template.uses(TemplateField::Git) && !cfg!(feature = "git") {
             return problem(
                 Git,
                 "this build has no Git support: leave the repository out".to_owned(),
             );
         }
-        Ok(component)
+        let plan = plan(request, template, None, None).map_err(|message| NewProjectProblem {
+            field: NewProjectField::Template,
+            message,
+        })?;
+        Ok(plan.components.first().cloned().unwrap_or(plan.index))
+    }
+
+    /// The files `request` makes, in the order they are written: what the New Project dialog
+    /// previews. Empty when its template cannot be read.
+    #[must_use]
+    pub fn planned_tree(&self, request: &NewProject) -> Vec<PathBuf> {
+        self.template(&request.template)
+            .and_then(|template| plan(request, &template, None, None))
+            .map(|plan| plan.files.into_iter().map(|(path, _)| path).collect())
+            .unwrap_or_default()
     }
 
     /// What the New Project dialog starts from: the first root (or no folder), named from it,
@@ -545,27 +756,30 @@ impl Engine {
     }
 
     /// Makes the project `request` asks for as one undo group and opens its index page
-    /// (returned). Everything is checked before anything is written, and the descriptor read
+    /// (returned). Everything is checked before anything is written, and each descriptor read
     /// back after.
     pub fn new_project(&mut self, request: &NewProject) -> Result<DocumentId, EngineError> {
-        self.new_project_with(request, &descriptor_text(request))
+        self.new_project_with(request, None)
     }
 
-    /// [`Engine::new_project`] with the descriptor's text given.
+    /// [`Engine::new_project`] with the first descriptor's text given.
     fn new_project_with(
         &mut self,
         request: &NewProject,
-        descriptor: &str,
+        descriptor: Option<&str>,
     ) -> Result<DocumentId, EngineError> {
-        self.check_new_project(request)
+        let template = self
+            .template(&request.template)
+            .map_err(EngineError::InvalidRequest)?;
+        self.check_new_project_with(request, &template)
             .map_err(|problem| EngineError::InvalidRequest(problem.message))?;
         let root = normalize_path(&request.root);
         // The repository the project is in, or the one it makes, which its playbook builds from.
         let existing = crate::git::repository_root(&root);
-        let init = request.git_init && existing.is_none();
+        let init = request.git_init && template.uses(TemplateField::Git) && existing.is_none();
         let built_from = existing.or_else(|| init.then(|| root.clone()));
-        let plan = plan(request, descriptor, built_from.as_deref());
-        let descriptor = plan.component.join("antora.yml");
+        let plan = plan(request, &template, descriptor, built_from.as_deref())
+            .map_err(EngineError::InvalidRequest)?;
         let repository = init.then_some(root.as_path());
         let new_root = !self.roots.iter().any(|known| root.starts_with(known));
 
@@ -592,7 +806,12 @@ impl Engine {
         self.group_projects.insert(
             group,
             MadeProject {
-                descriptor,
+                descriptors: plan
+                    .components
+                    .iter()
+                    .map(|component| component.join("antora.yml"))
+                    .collect(),
+                playbook: plan.playbook,
                 folders: plan.folders,
             },
         );
@@ -608,34 +827,35 @@ impl Engine {
         Ok(index)
     }
 
-    /// Writes the project's files, reads its descriptor back, makes the repository in
-    /// `repository` when given, and adds the component to the catalog with its pages open in
-    /// one new group; on failure the files written are removed and the
-    /// group discarded.
+    /// Writes the project's files, reads each descriptor back, makes the repository in
+    /// `repository` when given, and adds the components to the catalog with their pages open
+    /// in one new group; on failure the files written are removed and the group discarded.
     fn make_project(
         &mut self,
         plan: &Plan,
         repository: Option<&Path>,
     ) -> Result<(UndoGroup, Vec<DocumentId>, DocumentId), EngineError> {
-        let descriptor = plan.component.join("antora.yml");
         let mut written: Vec<PathBuf> = Vec::new();
         let result = (|| {
             for (path, text) in &plan.files {
                 create_file(path, text)?;
                 written.push(path.clone());
             }
-            let source = fs::read_to_string(&descriptor)
-                .map_err(|error| EngineError::io(&descriptor, error))?;
-            adoc_antora::read_component_descriptor(&plan.component)
-                .map_err(|error| EngineError::InvalidRequest(error.to_string()))?;
-            if let Some(problem) =
-                adoc_antora::check_component_descriptor(&plan.component, &source).first()
-            {
-                return Err(EngineError::InvalidRequest(format!(
-                    "{}: {}",
-                    descriptor.display(),
-                    problem.message
-                )));
+            for component in &plan.components {
+                let descriptor = component.join("antora.yml");
+                let source = fs::read_to_string(&descriptor)
+                    .map_err(|error| EngineError::io(&descriptor, error))?;
+                adoc_antora::read_component_descriptor(component)
+                    .map_err(|error| EngineError::InvalidRequest(error.to_string()))?;
+                if let Some(problem) =
+                    adoc_antora::check_component_descriptor(component, &source).first()
+                {
+                    return Err(EngineError::InvalidRequest(format!(
+                        "{}: {}",
+                        descriptor.display(),
+                        problem.message
+                    )));
+                }
             }
             if let Some(repository) = repository {
                 crate::git::init_repository(repository).map_err(EngineError::InvalidRequest)?;
@@ -648,8 +868,12 @@ impl Engine {
             }
             return Err(error);
         }
-        self.reload_descriptor(&descriptor);
-        self.adopt_playbook(&descriptor);
+        for component in &plan.components {
+            self.reload_descriptor(&component.join("antora.yml"));
+        }
+        if let Some(playbook) = &plan.playbook {
+            self.adopt_playbook(playbook);
+        }
         let group = self.new_group();
         let mut documents = Vec::new();
         let mut index = None;
@@ -660,19 +884,19 @@ impl Engine {
             let id = self.open_unshown(path)?;
             self.push_marker(id, group);
             documents.push(id);
-            if path.ends_with("modules/ROOT/pages/index.adoc") {
+            if *path == plan.index {
                 index = Some(id);
             }
         }
         let index = index.ok_or_else(|| {
-            EngineError::InvalidRequest("the project has no index page".to_owned())
+            EngineError::InvalidRequest("the project has no page to open".to_owned())
         })?;
         Ok((group, documents, index))
     }
 
     /// After `group`'s files are undone (`undone`) or made again: on undo its folders removed
-    /// while empty; its descriptor read again either way, so the component leaves or rejoins
-    /// the catalog.
+    /// while empty; its descriptors read again either way, so the components leave or rejoin
+    /// the catalog, and its playbook adopted or forgotten.
     pub(crate) fn replay_project(&mut self, group: UndoGroup, undone: bool) {
         let Some(made) = self.group_projects.get(&group).cloned() else {
             return;
@@ -682,22 +906,20 @@ impl Engine {
                 let _ = fs::remove_dir(folder);
             }
         }
-        self.reload_descriptor(&made.descriptor);
-        self.adopt_playbook(&made.descriptor);
+        for descriptor in &made.descriptors {
+            self.reload_descriptor(descriptor);
+        }
+        if let Some(playbook) = &made.playbook {
+            self.adopt_playbook(playbook);
+        }
     }
 
-    /// Makes the playbook beside `descriptor` the site's when the workspace had none, or
-    /// forgets it once it is gone, so Build Site follows a project made or undone at once.
-    fn adopt_playbook(&mut self, descriptor: &Path) {
-        let Some(path) = descriptor
-            .parent()
-            .map(|folder| folder.join(adoc_antora::PLAYBOOK_FILE))
-        else {
-            return;
-        };
+    /// Makes the playbook at `path` the site's when the workspace had none, or forgets it once
+    /// it is gone, so Build Site follows a project made or undone at once.
+    fn adopt_playbook(&mut self, path: &Path) {
         match self.workspace.antora.playbook() {
             None if path.is_file() => {
-                if let Ok(playbook) = adoc_antora::read_playbook(&path) {
+                if let Ok(playbook) = adoc_antora::read_playbook(path) {
                     self.workspace.antora.set_playbook(Some(playbook));
                 }
             }
@@ -728,9 +950,14 @@ mod tests {
             version: Some("1.0".to_owned()),
             ..NewProject::new(PathBuf::from("/x"), "demo")
         };
-        let descriptor =
-            adoc_antora::parse_component_descriptor(Path::new("/x"), &descriptor_text(&request))
-                .unwrap();
+        let text = descriptor_text(
+            &request.name,
+            &request.title(),
+            request.version(),
+            &["ROOT".to_owned()],
+            &[("page-pagination".to_owned(), String::new())],
+        );
+        let descriptor = adoc_antora::parse_component_descriptor(Path::new("/x"), &text).unwrap();
         assert_eq!(descriptor.title.as_deref(), Some("Lines\nand: colons"));
         assert_eq!(descriptor.version.as_deref(), Some("1.0"));
     }
@@ -751,7 +978,7 @@ mod tests {
             "title: no name\n",
             "name: demo\nflavour: x\n",
         ] {
-            let error = engine.new_project_with(&request, broken).unwrap_err();
+            let error = engine.new_project_with(&request, Some(broken)).unwrap_err();
             assert!(matches!(error, EngineError::InvalidRequest(_)), "{error}");
             assert_eq!(
                 fs::read_dir(&root).unwrap().count(),

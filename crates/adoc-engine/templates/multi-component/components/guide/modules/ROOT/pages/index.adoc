@@ -1,0 +1,3 @@
+= {{index_title}}
+
+The guide to {{title}}. The facts to look up are in the xref:{{name}}-reference::index.adoc[reference].

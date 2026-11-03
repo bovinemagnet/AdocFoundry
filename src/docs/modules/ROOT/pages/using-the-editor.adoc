@@ -981,7 +981,8 @@ Once the workspace has a component, the area says "Open a folder or a page from 
 
 === The dialog
 
-The New Antora Project dialog asks for:
+The New Antora Project dialog asks for the fields below.
+Which of them show depends on the template.
 
 * A location: the folder, typed or chosen with *Choose…*.
 It starts as the open folder.
@@ -991,8 +992,16 @@ It is ticked from the start when the folder holds files already.
 The name starts as the folder's name made into a component name, so `My Docs!` becomes `my-docs`.
 An empty title means the name in title case.
 An empty version means the latest, unversioned component.
-* A template.
-Only Minimal is offered for now.
+* A template, after the location and the subfolder.
+The picker lists the built-in templates first, then templates from folders.
+Under it is the template's description.
+Fields the chosen template does not use are hidden: Single page hides the component name, version, README and playbook, and shows the title and Git.
+The list of files follows the template.
+A folder template that does not read is not offered.
+That is a `template.toml` that does not parse or names an unknown field, a file that is not text, more than 500 files, or a file over 1 MiB.
+The dialog says so under the picker as "Not offered: <id>: <reason>".
+A template that reads but cannot make its project, such as a component with `path = ".."`, shows its problem under the picker when it is chosen, and Create does nothing.
+See <<project-templates>>.
 * "Initialise a Git repository", ticked by default.
 It is not shown when the folder is in a repository already.
 * "Add a README", ticked by default.
@@ -1039,7 +1048,116 @@ There is no lockfile, and nothing is installed.
 The README, when made, says how to build the site: `npm install`, then `npm run build`.
 That needs Node.js and a Git repository, and the site goes to `build/site`.
 File > Build Site runs those steps for you; see <<build-site>>.
-Other templates are not part of this dialog yet.
+
+[[project-templates]]
+== Project templates
+
+A template decides what New Antora Project makes.
+The built-in templates are:
+
+[cols="2,2,5"]
+|===
+|Template |Id |What it makes
+
+|Minimal
+|`minimal`
+|One component: a `ROOT` module with an index page and a navigation file, a README, a `.gitignore` and the local playbook.
+
+|Product documentation
+|`product-docs`
+|One component in five modules, the Diátaxis split: `ROOT`, `get-started`, `how-to`, `reference` and `concepts`.
+Each has an index page and a navigation file, and all five are listed in `antora.yml`'s `nav`.
+`ROOT`'s index links to the other four.
+`asciidoc.attributes` sets `product-name` (the title), `product-version` (the version, empty when unversioned) and `page-pagination: ""`.
+`modules/ROOT/partials/attributes.adoc` is included in the header of every page with `include::ROOT:partial$attributes.adoc[]`.
+
+|Two components
+|`multi-component`
+|A guide and a reference: the components `<name>-guide` in `components/guide` and `<name>-reference` in `components/reference`.
+Each is like Minimal, and they link to each other.
+One playbook in the project folder lists both as `start_paths` and starts at the guide's index page.
+
+|Single page
+|`single-page`
+|No Antora: one `index.adoc` and a commented `.adocfoundry.toml`.
+|===
+
+=== Templates from folders
+
+A template is data: a folder that holds `template.toml` and the files to copy.
+Each subfolder that holds a `template.toml` is a template.
+Its id is `user/<folder>` or `workspace/<folder>`, and it is listed after the built-ins, the user's first.
+The folders are read each time the dialog opens, and are never cached.
+
+The folders are set by `[templates] dir`:
+
+* In the user settings file, it is a path relative to the settings file's folder, or `~/` for the home folder.
+By default it is the `templates` folder beside the user settings file.
+* In a workspace's `.adocfoundry.toml`, it is relative to the workspace, and only a folder inside it is used.
+Any other is ignored, with a warning.
+
+See xref:settings.adoc[Settings].
+
+=== template.toml
+
+[cols="1,4"]
+|===
+|Key |Meaning
+
+|`name`
+|The template's name. It is required.
+
+|`description`
+|The text shown under the picker.
+
+|`fields`
+|Which of `name`, `title`, `version`, `index_title`, `readme`, `gitignore`, `playbook` and `git` the template uses.
+All of them when left out.
+
+|`antora`
+|`false` for a template with no component.
+Then `open` is required.
+
+|`open`
+|The page opened afterwards, relative to the project folder.
+By default the first component's `ROOT` index.
+
+|`[[component]]`
+|A component to make, as a table.
+With none, an Antora template has one default component.
+Its keys are `name` (default `+{{name}}+`), `path` (relative to the project folder, default `.`), `title` (default `+{{title}}+`), `modules` (default `["ROOT"]`, which must include `ROOT`) and `[component.attributes]`, whose values are strings.
+|===
+
+The product documentation template is written like this:
+
+[source,toml]
+----
+include::example$product-docs-template.toml[]
+----
+
+=== What is copied
+
+Every other file in the template's folder is copied into the project folder.
+`+{{name}}+`, `+{{title}}+`, `+{{version}}+`, `+{{index_title}}+` and `+{{year}}+` are replaced in its contents and in its path.
+Any other `+{{...}}+` is left as it is.
+
+A file at the same path as one the engine makes, a module's index page for instance, replaces it.
+A folder with a file of its own gets no `.gitkeep`.
+The engine still writes each component's `antora.yml` (with values quoted), each module (index page, navigation and the family folders New Module makes), the README, `.gitignore`, the playbook and `package.json`.
+So their quoting and the playbook's paths are always right.
+
+=== Rules
+
+* A link in a template folder is left out: it is never followed and never copied.
+* Files must be text (UTF-8), at most 500 files and 1 MiB each.
+* A path that would leave the project, with `..` or as an absolute path, is refused.
+* No path may reach a Git repository's own `.git` folder, however a file system spells it: in any case, with trailing dots or spaces, as the short name `git~1`, or with invisible characters.
+This holds for the path in the template and after `+{{...}}+` is replaced, so a template can never plant a Git hook or configuration.
+
+A template that breaks a rule is not offered, and the dialog gives its reason, as above.
+
+A playbook is also found in a folder between a component's `antora.yml` and its workspace root, never above the root.
+So a two-component project in `docs/` keeps its playbook, and Build Site, after it is reopened.
 
 [[build-site]]
 == Build the site
