@@ -248,10 +248,28 @@ fn serves_over_http_with_a_token() {
     let text = response["result"]["content"][0]["text"].as_str().unwrap();
     let page: Value = serde_json::from_str(text).unwrap();
     assert_eq!(page["title"], "Authentication");
+    assert_eq!(response["result"]["structuredContent"], page);
 }
 
+/// MCP PRD §11.4 test 22: the HTTP transport serves loopback addresses only, and only
+/// requests with the token, which once in reach real JSON-RPC bodies with structured results.
 #[test]
-fn requests_without_the_token_are_refused() {
+fn mcp_http_requires_token_and_loopback() {
+    for address in ["0.0.0.0:0", "192.168.1.2:8765", "example.com:80"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_adoc-mcp"))
+            .arg(fixture("references"))
+            .args(["--http", address])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{address}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("loopback")
+                || String::from_utf8_lossy(&output.stderr).contains("not an address"),
+            "{address}"
+        );
+    }
+
     let server = Server::start(&fixture("references"), false);
     let initialize = json!({
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -270,18 +288,18 @@ fn requests_without_the_token_are_refused() {
         post(server.port, Some(TOKEN), None, &initialize).status,
         200
     );
-}
 
-#[test]
-fn http_binds_loopback_only() {
-    let output = Command::new(env!("CARGO_BIN_EXE_adoc-mcp"))
-        .arg(fixture("references"))
-        .args(["--http", "0.0.0.0:0"])
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("loopback"));
+    let mut client = server.session();
+    let response = client.request(
+        "tools/call",
+        json!({ "name": "read_page", "arguments": { "path": "../outside.adoc" } }),
+    );
+    let result = &response["result"];
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["error"]["code"],
+        "outside_workspace"
+    );
 }
 
 #[test]

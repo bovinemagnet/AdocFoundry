@@ -315,6 +315,12 @@ The tests include `graph_builds_from_the_fixture` (an `insta` snapshot), `nav_ed
 [#mcp-server-tests]
 == MCP server tests
 
+The stdio client harness is in `crates/adoc-mcp/tests/common/mod.rs`, shared by `tests/stdio.rs` and `tests/contracts.rs`.
+`Client::start` starts the server.
+`Client::start_with(root, allow_write, protocol_version)` also sets the protocol version, and returns the `initialize` result.
+`Client::call` parses the text of a tool's answer.
+`Client::call_result` returns the whole result, with its `structuredContent`.
+
 `crates/adoc-mcp/tests/stdio.rs` starts the real `adoc-mcp` binary and speaks newline-delimited JSON-RPC to it over stdio.
 The tests are:
 
@@ -333,9 +339,23 @@ It reads the address the server prints, then posts JSON-RPC and reads the respon
 The tests are:
 
 * `serves_over_http_with_a_token`
-* `requests_without_the_token_are_refused`
-* `http_binds_loopback_only`
+* `mcp_http_requires_token_and_loopback`, which checks that non-loopback addresses are refused at start-up, that a request without the token or with the wrong one gets 401, and the code of a tool error over HTTP
 * `write_tools_need_allow_write_over_http`
+
+`crates/adoc-mcp/tests/contracts.rs` checks the tool contracts over real JSON-RPC bodies.
+The tests are:
+
+* `mcp_existing_tools_are_backwards_compatible`, which checks the tool names, the annotations, the text answers, and `permission_denied` for write tools without `--allow-write`
+* `mcp_structured_result_matches_text_fallback`, which checks that the structured content equals the text's JSON and conforms to the tool's `outputSchema`, using a small validator in the test, and that failures carry their codes
+* `mcp_negotiated_protocol_versions_are_pinned`, where 2025-11-25 and 2025-06-18 get structured content and output schemas, and 2025-03-26 and 2024-11-05 get text only
+* `mcp_resources_cursor_stable_and_bounded`, which lists 1,208 files in pages of at most 500, each once, in a stable order
+* `mcp_cursor_rejects_stale_index_revision`, where a page added on disk makes an old cursor stale
+* `check_pages_its_diagnostics_with_a_cursor`
+
+A unit test in `crates/adoc-mcp/src/server.rs`, `mcp_timeout_does_not_block_other_clients_forever`, holds the engine's lock from another thread.
+It checks that a tool answers `timeout` within the shortened wait, that a full queue answers `unavailable`, and that the tool works once the lock is free.
+
+`crates/adoc-mcp/src/responses.rs` has unit tests for the error code names, the cursors and the protocol-version rule.
 
 == Application tests
 
