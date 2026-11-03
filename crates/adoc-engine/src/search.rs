@@ -323,7 +323,7 @@ impl Engine {
         Ok(group)
     }
 
-    fn apply_group(
+    pub(crate) fn apply_group(
         &mut self,
         group: UndoGroup,
         targets: Vec<(DocumentId, Vec<TextEdit>)>,
@@ -352,7 +352,7 @@ impl Engine {
 
     /// Undoes what a failed `apply_group` made of `group`, leaving nothing of it in the undo
     /// or redo history.
-    fn roll_back(&mut self, group: UndoGroup) {
+    pub(crate) fn roll_back(&mut self, group: UndoGroup) {
         self.discard_group(group);
         if let Some(moves) = self.group_moves.remove(&group) {
             for file_move in moves.iter().rev() {
@@ -720,7 +720,11 @@ impl Engine {
 
     /// The coordinate a file at `path` would have in `family`, if it lies in that family's
     /// directory of a module.
-    fn coordinate_in(&self, path: &Path, family: ResourceFamily) -> Option<AntoraCoordinate> {
+    pub(crate) fn coordinate_in(
+        &self,
+        path: &Path,
+        family: ResourceFamily,
+    ) -> Option<AntoraCoordinate> {
         self.workspace.antora.modules().find_map(|module| {
             let relative = family
                 .directories()
@@ -876,7 +880,7 @@ fn is_case_only_rename(from: &Path, to: &Path) -> bool {
 /// Checks that every move can happen before anything changes: its source is a file, nothing is
 /// at its destination, the destination's nearest existing ancestor is a directory, and no two
 /// moves share a destination.
-fn validate_moves(moves: &[FileMove]) -> Result<(), EngineError> {
+pub(crate) fn validate_moves(moves: &[FileMove]) -> Result<(), EngineError> {
     let mut destinations = std::collections::HashSet::new();
     for file_move in moves {
         if !file_move.from.is_file() {

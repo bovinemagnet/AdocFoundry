@@ -379,6 +379,25 @@ The tests are:
 
 A unit test in `crates/adoc-mcp/src/analysis.rs` checks that a passing partial audit is never a plain pass.
 
+`crates/adoc-mcp/tests/changes.rs` drives `preview_changes` and `apply_changes` over stdio, on copies of `tests/fixtures/discovery`.
+The tests are:
+
+* `mcp_preview_does_not_mutate`, which checks that diffs, hashes and diagnostics are given, that nothing on disk, in the buffers or in the index changes, and the refusals
+* `mcp_apply_rejects_stale_revision`, which checks that a file changed on disk or in the server's buffer since the preview makes the apply change nothing, that an unchanged preview applies and saves, and that an idempotent retry answers the same
+* `mcp_multi_file_failure_is_reported_and_recoverable` (Unix), where a read-only folder makes one save fail, the answer lists what was and was not saved, and saving later keeps the change
+* `mcp_symlink_escape_is_rejected_at_apply` (Unix), where a folder is replaced by a link out of the workspace between preview and apply
+* `mcp_document_instructions_cannot_grant_permissions`
+
+In `crates/adoc-mcp/tests/http.rs`, `mcp_preview_ids_are_session_bound` checks that a second HTTP session cannot apply the first's preview.
+
+In the engine, `crates/adoc-engine/tests/staging.rs` checks that:
+
+* a staged page is what New Page makes, and writes nothing
+* a staged change is one undo step
+* a change against text that has since changed is refused whole
+* a staged rename moves the page and rewrites what names it
+* the text hash is the SHA-256
+
 A unit test in `crates/adoc-mcp/src/server.rs`, `mcp_timeout_does_not_block_other_clients_forever`, holds the engine's lock from another thread.
 It checks that a tool answers `timeout` within the shortened wait, that a full queue answers `unavailable`, and that the tool works once the lock is free.
 

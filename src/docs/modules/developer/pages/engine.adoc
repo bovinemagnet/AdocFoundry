@@ -896,6 +896,29 @@ Each entry's resolved target is matched against the active page's Antora coordin
 Undo deletes the file only while it holds exactly what New Page wrote and the page has no unsaved edits.
 Redo writes the file again and reopens it without changing the active tab.
 
+[#staged-changes]
+== Staged changes
+
+A staged change is worked out without touching the workspace.
+`ChangeSet` holds the files to make, a `FileEdits` against each file's current text, and the `FileMove`s.
+
+* `Engine::stage_edits` stages edits to existing files.
+* `Engine::stage_new_page` stages the plan that `page.new` makes. It uses `plan_new_page`, which `new_page` itself now uses.
+* `Engine::stage_new_partial` stages a new partial.
+* `Engine::stage_rename` stages a page rename. It opens and closes the page if needed, and keeps no preview.
+
+`Engine::check_staged` gives each file's text before and after, and its diagnostics after.
+It works them out on a copy of the workspace state.
+
+`Engine::apply_staged` makes the change as one undo group: made files, then edits, then moves.
+It does so only while every edited file still holds its base text and every file to make is still absent.
+On failure it rolls everything back.
+
+The engine keeps nothing between staging and applying.
+A front end keeps the `ChangeSet`, as the MCP server does for `preview_changes` and `apply_changes`.
+`text_hash` is the SHA-256 that a front end compares texts by.
+`Engine::current_text` is a file's buffer when it is open, else its text on disk.
+
 == Language features
 
 The engine delegates definition, hover, completion and diagnostics to `adoc-lang`.

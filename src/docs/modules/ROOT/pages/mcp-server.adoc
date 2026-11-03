@@ -258,9 +258,121 @@ The tool runs no optional provider, such as Vale or external links, and makes no
 A cursor belongs to its arguments and policy, so changing a filter or an override starts again.
 Use `check` for diagnostics alone.
 
+[#staging]
+== Staging changes
+
+`preview_changes` shows a change before it is made.
+`apply_changes` makes it.
+A client previews, reads the diffs and diagnostics, and then applies.
+
+`preview_changes` is always offered, even without `--allow-write`, because it writes nothing.
+`apply_changes` is offered only with `--allow-write`, like the other write tools.
+
+=== Previewing
+
+`preview_changes` takes `operations`, at most 64.
+They are applied in order, as one change.
+Each operation has a `kind`:
+
+[cols="2,5"]
+|===
+|Kind |Arguments
+
+|`replace`
+|`path` or `resource_id`, then `old_text` (which must occur exactly once) or `range` (`{ start, end }` byte offsets), and `new_text`. Optionally `expected_hash`, the SHA-256 (hex) that the file must hold now.
+
+|`create_page`
+|`component`, `version`, `module`, `title`, and optionally `file_name` and `add_to_navigation`. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as ambiguous. `file_name` is the page's path in the `pages` folder, and is named from the title without it. `add_to_navigation` adds an entry at the end of the module's navigation file. It is what New Page does in the app.
+
+|`create_partial`
+|`component`, `version`, `module`, `file_name` (in the `partials` folder) and optionally `text`.
+
+|`rename`
+|`path` or `resource_id`, `new_name` (a file name or a path relative to the page's folder) and optionally `expected_hash`. It rewrites the xrefs, navigation entries and includes that name the page, as Rename Page does.
+|===
+
+A navigation change is a `replace` on the navigation file, or `add_to_navigation`.
+
+The answer has:
+
+* `preview_id`, 32 hex characters and unguessable.
+* `expires_at`, in seconds since 1970 (UTC), and `expires_in_seconds`, which is 15 minutes.
+* `workspace_revision`.
+* `files`, each changed file.
+* `can_apply`, which is false on a server started without `--allow-write`, with a `reason`.
+
+Each of `files` has:
+
+* `kind`, which is `create`, `edit` or `move`.
+* `path`, and `to` for a move.
+* `resource_id`.
+* `before_hash` and `after_hash`, both SHA-256.
+* `diff`, whose lines start with `-`, `+` or a space. Lines left out are shown as `@@ n unchanged lines @@`.
+* `diagnostics` that the file would have after the change. Each has `severity`, `code`, `message`, `line` and `column`.
+
+The diagnostics are worked out on a copy of the workspace with the whole change made.
+The preview writes nothing to disk, changes no buffer and indexes nothing.
+
+A mistaken operation fails the whole preview.
+Its message starts `operation n:`, and it carries the usual codes:
+
+* `conflict`, when `old_text` is not in the page or `expected_hash` does not match.
+* `invalid_argument`, for an ambiguous version or a file name with `..`.
+* `not_found`, for an unknown module.
+
+=== Applying
+
+`apply_changes` takes `preview_id`, an optional `idempotency_key` and `save`, which is true by default.
+
+Immediately before making the change, it checks again that:
+
+* every path is inside the roots. A folder that has become a symbolic link out of them is refused with `outside_workspace`.
+* every file still holds the text the preview saw. Otherwise the answer is `stale_preview`. This includes edits made since through the server's own buffers.
+* every file to make is still absent. Otherwise the answer is `conflict`.
+
+On any mismatch, nothing of the change is made.
+Otherwise the change is made through the engine as one undo step, as the app makes it.
+
+A preview can be applied once.
+Afterwards, or once it has expired, or from another session, its id is unknown and answers `stale_preview`.
+Applying again with the same `idempotency_key` returns the first answer instead of applying twice.
+
+The answer has `applied`, `saved`, `changed` (the files changed, relative to the first root), `resource_ids` and `workspace_revision`.
+
+=== What is and is not atomic
+
+The checks, and the making of the change in the engine, are all or nothing.
+Saving is not atomic across files: each changed page is saved in turn.
+New files are written as they are made, as New Page writes them.
+
+If a save fails, `apply_changes` answers `internal_error`.
+Its `details` give:
+
+* `applied: true`.
+* `saved`, the pages written.
+* `failed`, each page and its error.
+* `recovery`, a note on what to do.
+
+The unsaved pages keep the change in the server's buffers, where `read_page` shows it.
+Once the cause is fixed, `edit_page` with no edits and `save: true` writes one.
+
+=== Sessions and limits
+
+Previews belong to the session that made them.
+Over HTTP each session has its own, though all sessions share one engine and so the same buffers.
+A change saved or left unsaved by one session is what the others read.
+
+A session keeps at most 16 previews and 4 MiB of staged text.
+Older previews are dropped to make room.
+Previews expire after 15 minutes, and idempotency keys are kept as long.
+
+Document text is data, never permission.
+A page saying that the assistant may write grants nothing.
+Only `--allow-write` does.
+
 == Write tools
 
-These tools are offered only with `--allow-write`.
+These tools, and `apply_changes` (see <<staging>>), are offered only with `--allow-write`.
 Without it they are not listed.
 A client that calls one anyway gets a tool error with the code `permission_denied`, and a message that names `--allow-write`.
 Nothing in a page's text, and nothing in a client's request, can change this.
@@ -352,6 +464,8 @@ Its structured content is:
 { "error": { "code": "invalid_argument", "message": "…" } }
 ----
 
+An error's structured content may also carry `details`, as `apply_changes` gives for a failed save.
+
 The codes are stable.
 
 [cols="2,5"]
@@ -371,10 +485,10 @@ The codes are stable.
 |A write tool was called without `--allow-write`.
 
 |`conflict`
-|Text or a file changed from what the request expected. For example, the `old_text` of `edit_page` is no longer in the page, or a save conflicts.
+|Text or a file changed from what the request expected. For example, the `old_text` of `edit_page` is no longer in the page, an `expected_hash` does not match, a file to make now exists, or a save conflicts.
 
 |`stale_preview`
-|Reserved for staged changes, which a later release adds.
+|A preview's files changed since it was made, or its id is unknown, already applied, expired or from another session: see <<staging>>.
 
 |`index_incomplete`
 |A whole index of the workspace is still running.
@@ -414,6 +528,7 @@ Renders, searches, Git status and exports keep their 120-second limit, after whi
 * Texts are cut at 200,000 bytes. The result then carries `truncated: { shown_bytes, total_bytes }`.
 * Errors carry a stable code and the engine's message: see <<errors>>.
 * A request waits at most 30 seconds for the engine, and at most 16 wait at once: see <<_waiting_for_the_engine>>.
+* A preview holds at most 64 operations, and expires after 15 minutes. A session keeps at most 16 previews and 4 MiB of staged text: see <<staging>>.
 
 == Installing
 

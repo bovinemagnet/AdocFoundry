@@ -2,6 +2,8 @@
 //! drives it. The client is a few lines of HTTP/1.1 over a socket, so the tests bring no HTTP
 //! client into the tree.
 
+mod common;
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
@@ -311,7 +313,52 @@ fn write_tools_need_allow_write_over_http() {
 
     let server = Server::start(&fixture("references"), true);
     let names = server.session().tool_names();
-    for tool in ["edit_page", "export_pdf", "rename_page"] {
+    for tool in ["apply_changes", "edit_page", "export_pdf", "rename_page"] {
         assert!(names.iter().any(|name| name == tool), "{names:?}");
     }
+}
+
+/// MCP PRD §11.3 test 16: a preview belongs to the session that made it. Another session,
+/// sharing the one engine, cannot apply it, even knowing its id.
+#[test]
+fn mcp_preview_ids_are_session_bound() {
+    let (_directory, root) = common::scratch("discovery");
+    let server = Server::start(&root, true);
+    let mut first = server.session();
+    let mut second = server.session();
+    let preview = first.request(
+        "tools/call",
+        json!({ "name": "preview_changes", "arguments": { "operations": [{
+            "kind": "replace",
+            "path": "guide/modules/ROOT/pages/index.adoc",
+            "old_text": "= Guide",
+            "new_text": "= The Guide",
+        }] } }),
+    );
+    let id = preview["result"]["structuredContent"]["preview_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let taken = second.request(
+        "tools/call",
+        json!({ "name": "apply_changes", "arguments": { "preview_id": id } }),
+    );
+    assert_eq!(taken["result"]["isError"], true);
+    assert_eq!(
+        taken["result"]["structuredContent"]["error"]["code"],
+        "stale_preview"
+    );
+    let page = std::fs::read_to_string(root.join("guide/modules/ROOT/pages/index.adoc")).unwrap();
+    assert!(
+        page.starts_with("= Guide"),
+        "the other session changed nothing"
+    );
+
+    let applied = first.request(
+        "tools/call",
+        json!({ "name": "apply_changes", "arguments": { "preview_id": id } }),
+    );
+    assert_eq!(applied["result"]["isError"], false, "{applied}");
+    let page = std::fs::read_to_string(root.join("guide/modules/ROOT/pages/index.adoc")).unwrap();
+    assert!(page.starts_with("= The Guide"));
 }

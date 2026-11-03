@@ -426,4 +426,20 @@ Each is settled before work starts on the package it affects, and the outcome is
 - **Cost.** Each call audits afresh (as the CLI does), so paging recomputes the audit per page; the kept, incremental audit follows the user's layered settings, not the workspace-only policy, so it is not used here.
 - **Test against the CLI.** `mcp_quality_matches_cli` compares the reassembled pages with the CLI's JSON snapshot of the same fixture, which its own tests keep current.
 
+### M5 (#318)
+
+Decisions settled (§14):
+
+1. **Preview without `--allow-write`: yes.** `preview_changes` writes nothing to disk, changes no buffer and indexes nothing (it stages on a clone of the workspace state), and its diffs show only what `read_page` already shows. It answers `can_apply: false` with a reason on a read-only server; `apply_changes` is a write tool, unlisted and refused with `permission_denied` without the flag.
+4. **Limits.** A preview takes at most 64 operations; a session keeps at most 16 previews and 4 MiB of staged text, the oldest dropped first; previews expire after 15 minutes; idempotency keys are kept 15 minutes, a retry with one returning the first answer (success or failure). A preview is consumed by its first apply, successful or not.
+5. **Sessions.** Previews belong to the session that made them (`Server::for_session` per HTTP session; stdio is one session); an id from another session is unknown (`stale_preview`, the same answer as an expired or applied one, so nothing about other sessions is revealed). All sessions share one engine and therefore its buffers: unsaved text from `edit_page` or a `save: false` apply is what every session reads. That is the existing behaviour of a server-wide engine, kept rather than given a shared-buffer policy; per-session buffers would need an engine per principal.
+
+Other notes:
+
+- **Operations** are `replace`, `create_page`, `create_partial` and `rename`; a navigation update is a `replace` on the navigation file or `create_page`'s `add_to_navigation`. A page's navigation entry goes at the end of the module's navigation file, as there is no active page to follow.
+- **Revision checks** use the SHA-256 of each file's current text (its buffer when open), recorded at preview time and compared again at apply; an optional `expected_hash` per operation is checked at preview time. `apply_staged` checks the base texts again inside the engine.
+- **Atomicity.** The checks and the engine's change are all or nothing (`apply_staged` rolls back made files, edits and moves on failure). Disk writes are not: made files are written as they are made (as New Page writes them), and edited pages are saved one by one. A failed save is reported as `internal_error` with `details` (`applied`, `saved`, `failed`, `recovery`), the change staying in the buffers; no success is claimed. A transactional multi-file save is left for later.
+- **Validation findings** are each changed file's diagnostics after the change, on a clone of the workspace state with every staged file indexed and every new resource in the catalog.
+- `edit_page` and `rename_page` are unchanged.
+
 No implementation is claimed by this PRD beyond the packages noted above. The tool names, request/response examples, flags and Rust interfaces in this document are **proposed**, not implemented public APIs. The primary specifications for the underlying quality and impact analyses are `PRD-AdocFoundry_Documentation_Quality.md` and `PRD-AdocFoundry_Documentation_Impact.md` in `docs/prd/` (merged in #298). Their semantic decisions supersede this document's descriptions in case of discrepancy. When implementation diverges, record the reason here and update this PRD in the same PR, following the existing AdocFoundry convention.

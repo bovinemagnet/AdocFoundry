@@ -52,6 +52,7 @@ pub use search::SEARCH_MATCH_LIMIT;
 mod session;
 mod settings;
 mod spelling;
+mod staging;
 #[cfg(feature = "typst")]
 mod stem;
 mod tabs;
@@ -118,6 +119,7 @@ pub use spelling::{
     Misspelling, MAX_SUGGESTED_WORDS, SPELLING_CODE, SPELLING_SETTLE, USER_WORDS_FILE,
     WORKSPACE_WORDS_FILE,
 };
+pub use staging::{text_hash, ChangeSet, FileCreate, StagedFile};
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
 pub use tabs::{OpenDisposition, TabItem};

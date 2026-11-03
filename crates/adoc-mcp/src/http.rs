@@ -101,7 +101,8 @@ pub async fn serve(server: Server, address: SocketAddr, token: String) -> Result
     let config =
         StreamableHttpServerConfig::default().with_cancellation_token(cancel.child_token());
     let service = StreamableHttpService::new(
-        move || Ok(server.clone()),
+        // Each session its own previews, over the one engine.
+        move || Ok(server.for_session()),
         Arc::new(LocalSessionManager::default()),
         config,
     );

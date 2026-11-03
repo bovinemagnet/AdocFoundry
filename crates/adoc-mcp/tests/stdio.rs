@@ -7,7 +7,7 @@ use std::{path::PathBuf, time::Duration};
 use common::{fixture, scratch, Client, WAIT};
 use serde_json::json;
 
-const READ_TOOLS: [&str; 15] = [
+const READ_TOOLS: [&str; 16] = [
     "check",
     "find_references",
     "get_nav",
@@ -17,6 +17,7 @@ const READ_TOOLS: [&str; 15] = [
     "link_graph",
     "list_components",
     "list_pages",
+    "preview_changes",
     "quality_audit",
     "read_page",
     "render_page",
@@ -283,7 +284,7 @@ fn write_tools_need_allow_write() {
 
     let mut client = Client::start(&root, true);
     let mut expected: Vec<&str> = READ_TOOLS.to_vec();
-    expected.extend(["edit_page", "export_pdf", "rename_page"]);
+    expected.extend(["apply_changes", "edit_page", "export_pdf", "rename_page"]);
     expected.sort_unstable();
     assert_eq!(client.tool_names(), expected);
     client.stop();

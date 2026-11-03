@@ -46,6 +46,8 @@ pub enum ErrorCode {
 pub struct Failure {
     pub code: ErrorCode,
     pub message: String,
+    /// More a client can act on, such as what a partly failed change did and did not do.
+    pub details: Option<Value>,
 }
 
 impl Failure {
@@ -53,7 +55,14 @@ impl Failure {
         Self {
             code,
             message: message.into(),
+            details: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_details(mut self, details: Value) -> Self {
+        self.details = Some(details);
+        self
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -74,7 +83,11 @@ impl Failure {
 
     /// The failure as structured content.
     pub fn to_value(&self) -> Value {
-        json!({ "error": { "code": self.code, "message": self.message } })
+        let mut error = json!({ "code": self.code, "message": self.message });
+        if let Some(details) = &self.details {
+            error["details"] = details.clone();
+        }
+        json!({ "error": error })
     }
 }
 

@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 /// The read-only tools: the ten that came before the contracts, kept as they were, and the
 /// discovery tools added since.
-const READ_TOOLS: [&str; 15] = [
+const READ_TOOLS: [&str; 16] = [
     "check",
     "find_references",
     "get_nav",
@@ -22,6 +22,7 @@ const READ_TOOLS: [&str; 15] = [
     "link_graph",
     "list_components",
     "list_pages",
+    "preview_changes",
     "quality_audit",
     "read_page",
     "render_page",
@@ -44,7 +45,7 @@ const EXISTING_READ_TOOLS: [&str; 10] = [
     "symbols",
 ];
 
-const WRITE_TOOLS: [&str; 3] = ["edit_page", "export_pdf", "rename_page"];
+const WRITE_TOOLS: [&str; 4] = ["apply_changes", "edit_page", "export_pdf", "rename_page"];
 
 /// A call of each read tool on `antora-single-component`.
 fn read_calls() -> Vec<(&'static str, Value)> {
@@ -85,6 +86,15 @@ fn read_calls() -> Vec<(&'static str, Value)> {
             json!({ "resource_id": "latest@demo:ROOT:partial$welcome.adoc" }),
         ),
         ("quality_audit", json!({})),
+        (
+            "preview_changes",
+            json!({ "operations": [{
+                "kind": "create_partial",
+                "component": "demo",
+                "module": "ROOT",
+                "file_name": "fresh.adoc",
+            }] }),
+        ),
     ]
 }
 
