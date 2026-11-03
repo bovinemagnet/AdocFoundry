@@ -389,7 +389,8 @@ impl Engine {
             } else if !file.path.exists() && create_file(&file.path, &file.text).is_ok() {
                 self.catalog_changed_at(&file.path);
                 let active = self.active_item();
-                if self.open(&file.path).is_ok() {
+                // A module's `.gitkeep` is made again, not opened.
+                if is_asciidoc_path(&file.path) && self.open(&file.path).is_ok() {
                     if let Some(active) = active {
                         self.activate(active);
                     }

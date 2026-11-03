@@ -1,0 +1,24 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+expression: "format!(\"{}\\n--- antora.yml\\n{descriptor}\", stdout(&output))"
+---
+made modules/admin/nav.adoc
+made modules/admin/pages/index.adoc
+made modules/admin/partials/.gitkeep
+listed modules/admin/nav.adoc in antora.yml
+
+--- antora.yml
+name: demo
+title: Demo Documentation
+version: latest
+display_version: Latest
+start_page: ROOT:index.adoc
+
+nav:
+  - modules/ROOT/nav.adoc
+  - modules/admin/nav.adoc
+
+asciidoc:
+  attributes:
+    sectanchors: ''
+    source-highlighter: highlight.js

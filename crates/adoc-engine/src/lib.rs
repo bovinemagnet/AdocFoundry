@@ -36,6 +36,7 @@ mod line_diff;
 mod links;
 mod local_history;
 mod navigation;
+mod new_module;
 mod new_page;
 #[cfg(feature = "typst")]
 mod pdf_preview;
@@ -97,6 +98,7 @@ pub use line_diff::{line_diff, DiffLine, DIFF_CONTEXT};
 pub use links::LinkStyle;
 pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE, HISTORY_SWEEP_INTERVAL};
 pub use navigation::NavigationPosition;
+pub use new_module::{valid_module_name, ModuleComponent, NewModule};
 pub use new_page::{NewPage, PageModule};
 #[cfg(feature = "typst")]
 pub use pdf_preview::PdfPreview;

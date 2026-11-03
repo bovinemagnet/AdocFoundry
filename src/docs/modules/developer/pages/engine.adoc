@@ -899,6 +899,20 @@ Each entry's resolved target is matched against the active page's Antora coordin
 Undo deletes the file only while it holds exactly what New Page wrote and the page has no unsaved edits.
 Redo writes the file again and reopens it without changing the active tab.
 
+[[new-module]]
+== New Module
+
+`new_module.rs` makes a module in an existing component version.
+`module.new` takes `CommandArgs::NewModule(NewModule { component, name, families, nav, index_title })`.
+`Engine::new_module_components()` returns the component versions a front end offers, each with its label, its existing modules, whether `antora.yml` has a `nav:` list, and whether the active page is in it.
+`Engine::check_new_module` is the validation that the dialog and the command share, so a name is refused in the same way in both.
+Nothing is written until it passes.
+
+The descriptor edit is one inserted line (`nav_list_edit`), made through the descriptor document's undo history.
+It is saved at once, because the catalog reads descriptors from disk.
+Undo and redo save and reload it again (`replay_module`).
+Undo removes the files made unless one was changed, then removes only the folders that are empty.
+
 [#staged-changes]
 == Staged changes
 

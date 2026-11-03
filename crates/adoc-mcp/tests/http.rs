@@ -315,6 +315,7 @@ fn write_tools_need_allow_write_over_http() {
     let names = server.session().tool_names();
     for tool in [
         "apply_changes",
+        "create_module",
         "create_page",
         "create_partial",
         "edit_page",

@@ -43,13 +43,14 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 6] = [
+const WRITE_TOOLS: [&str; 7] = [
     "edit_page",
     "rename_page",
     "export_pdf",
     "apply_changes",
     "create_page",
     "create_partial",
+    "create_module",
 ];
 
 /// At most this many items in a list result that is not paged; the total is stated, and
