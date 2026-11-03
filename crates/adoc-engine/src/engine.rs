@@ -78,6 +78,8 @@ pub struct Engine {
     /// The modules groups made, for their descriptors and folders on undo and redo.
     pub(crate) group_modules: BTreeMap<UndoGroup, crate::new_module::MadeModule>,
     pub(crate) group_projects: BTreeMap<UndoGroup, crate::new_project::MadeProject>,
+    /// The files deleted since the engine started, to put back.
+    pub(crate) deletions: crate::deletion::Deletions,
     /// The last site build, and which build it is, so a stopped build's late lines are dropped.
     pub(crate) site_build: Option<crate::SiteBuild>,
     pub(crate) site_build_generation: u64,
@@ -209,6 +211,7 @@ impl Engine {
             group_created: BTreeMap::new(),
             group_modules: BTreeMap::new(),
             group_projects: BTreeMap::new(),
+            deletions: crate::deletion::Deletions::default(),
             site_build: None,
             site_build_generation: 0,
             impact_inspection: None,
@@ -627,6 +630,8 @@ impl Engine {
                 .is_some_and(|document| self.editor_mode(document) != EditorMode::Source),
             CommandContext::Antora => self.workspace.antora.components().next().is_some(),
             CommandContext::SiteBuild => self.site_build_blocker().is_none(),
+            CommandContext::Deletion => self.active_item().is_some() && self.can_delete_files(),
+            CommandContext::DeletedFile => self.last_deleted().is_some(),
         }
     }
 

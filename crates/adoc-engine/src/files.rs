@@ -236,7 +236,7 @@ impl Engine {
     }
 
     /// `dir`, normalised, if it is a root or a folder beneath one, reached without a link.
-    fn listable(&self, dir: &Path) -> Result<PathBuf, EngineError> {
+    pub(crate) fn listable(&self, dir: &Path) -> Result<PathBuf, EngineError> {
         let dir = normalize_path(dir);
         let Some(root) = self.roots.iter().find(|root| dir.starts_with(root)) else {
             return Err(EngineError::Refused(format!(

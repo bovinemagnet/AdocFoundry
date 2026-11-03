@@ -1337,6 +1337,14 @@ For example, renaming `first-steps` to `begin` changes these lines:
 
 [source,asciidoc]
 ----
+[[begin]]
+== First Steps
+
+See <<begin>> or xref:alpha::guide.adoc#begin[].
+----
+
+Before the rename the heading had no anchor, the first reference was `+<<first-steps>>+` and the second was `+xref:alpha::guide.adoc#first-steps[]+`.
+
 [[impact-inspector]]
 == Inspect impact
 
@@ -1352,6 +1360,7 @@ A newer request replaces one still running.
 It is also in the command palette, in a page tab's menu and in the Files panel's menu for an AsciiDoc file.
 It shows what references the page (each such reference broken, with where it is written), the pages that include it (transitively), the navigation that lists it and the PDF profiles that publish it.
 Look at it before you move, rename or delete a page or partial.
+xref:#delete-file[Delete File] shows the same analysis first.
 * Git > Analyse Impact of Changes (`impact.analyse_changes`) compares `HEAD` with the working tree, unsaved edits included.
 * Git > Compare Revisions... (`impact.compare_revisions`) asks for a base and a head, any branch, tag or commit.
 It starts with `main` and `HEAD`, or the last ones compared.
@@ -1394,13 +1403,52 @@ It is the path the analysis followed, not a shortest path.
 
 When the results span more than one component version, a row of filter buttons shows one at a time: *All*, then each component version.
 
-[[begin]]
-== First Steps
+[[delete-file]]
+== Delete a file
 
-See <<begin>> or xref:alpha::guide.adoc#begin[].
-----
+Delete File (`file.delete`) deletes a file from the workspace.
+It is in the File menu after Close All, in a tab's menu and in the command palette, and in the Files panel's menu, where it is called *Delete...*, for a file row.
+With no file named it deletes the active tab's file.
+It works on any file inside the workspace's roots: a page, a partial, an image, a navigation file, an `antora.yml` or anything else.
+It refuses a folder, a link, a file reached through a linked folder and a path outside the roots.
 
-Before the rename the heading had no anchor, the first reference was `+<<first-steps>>+` and the second was `+xref:alpha::guide.adoc#first-steps[]+`.
+=== The confirmation
+
+AdocFoundry asks before it deletes, with a confirmation titled "Delete <name>?".
+For an AsciiDoc file the confirmation runs <<impact-inspector,Inspect impact>> and lists what removing the file would affect, worked out while it asks:
+
+* "Included in <path>".
+* "Linked from <path>", or "Linked to #<anchor> from <path>".
+* "Listed in <navigation file>".
+* "Published by <PDF profile>".
+
+It lists up to 8 lines, then "...and N more, listed in the Impact panel."
+The Impact panel holds the same analysis once you have asked.
+When nothing depends on the file it says "Nothing in the workspace depends on it."
+For a file that is not AsciiDoc, such as an image, it says that what uses the file is not traced.
+When the page has unsaved edits, it says they are discarded.
+
+The *Delete* button is red.
+Press kbd:[Enter] to confirm and kbd:[Escape] to cancel.
+
+=== What deleting does
+
+The file is moved aside into the application's state folder, in a `deleted` folder beside local history, and its tab is closed, discarding any unsaved edits.
+The index, the catalogue, the graph, the problems, the quality audit and the Files panel all change as though the file had been removed on disk, so a reference to it is reported as unresolved at once.
+A notification, "Deleted <name>.", offers *Undo*.
+Without a state folder nothing is deleted.
+Only the application deletes files: the xref:command-line.adoc[command line], the language server and the xref:mcp-server.adoc[MCP server] do not.
+
+=== Undo Delete
+
+Edit > Undo Delete (`file.undo_delete`), after Redo, puts back the latest deletion made since the application started.
+Repeat it to put back earlier deletions, latest first.
+It reopens the file when it had a tab.
+It refuses, and keeps the deletion, while a file exists at that path again.
+
+Undo Delete is separate from Edit > Undo because undo history belongs to each page, and a deleted page has no tab left.
+Deletions from earlier sessions are not offered for undo.
+Their copies are removed once they are older than `[history] keep_days`, the local history setting.
 
 [[application-menu]]
 == The application menu
@@ -1421,10 +1469,10 @@ An item whose command cannot run just now is greyed out instead of hidden, for e
 A command the build lacks, such as PDF export in a build without Typst, is left out.
 
 File::
-Open, New Page, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, settings and re-indexing.
+Open, New Page, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, delete a file, settings and re-indexing.
 
 Edit::
-Undo, Redo, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.
+Undo, Redo, Undo Delete, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.
 
 Format::
 Marks, links, lists, blocks, images and tables.

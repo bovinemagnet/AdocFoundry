@@ -7976,3 +7976,81 @@ fn impact_ui_drilldown_and_graph_path(cx: &mut TestAppContext) {
     redraw(&app, &mut cx);
     assert!(cx.debug_bounds("impact-stale").is_some());
 }
+
+/// #100: Delete File asks first, listing what removing the page would break (worked out by
+/// Inspect Impact while it asks); deleting closes the tab, and the notification's Undo puts the
+/// page back and opens it again.
+#[gpui::test]
+fn delete_file_lists_what_breaks_and_undo_puts_it_back(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("impact"));
+    copy_tree(&fixture("impact"), &root);
+    let settings = Settings::default()
+        .with_git_opt_in()
+        .with_state_dir(Some(directory.path().join("state")));
+    let app = app_with(Engine::new(settings), cx);
+    let install = root.join("v1/modules/ROOT/pages/install.adoc");
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![install.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
+        .is_some_and(|(path, _)| path == install)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| app.read(cx).engine.graph_revision() > 0)
+    }));
+
+    cx.update(|window, cx| {
+        let focus = gpui::Focusable::focus_handle(workspace.read(cx), cx);
+        window.focus(&focus, cx);
+    });
+    cx.dispatch_action(crate::editor::bindings::DeleteFile);
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("delete-confirm").is_some());
+    assert!(install.is_file(), "nothing is deleted while it asks");
+    let listed = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .delete_consequences_for_test(&install, cx)
+        })
+    };
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        !listed(cx)[0].starts_with("Working out")
+    }));
+    let lines = listed(&mut cx);
+    for expected in [
+        "Linked from v1/modules/ROOT/pages/guide.adoc",
+        "Linked from v1/modules/ROOT/pages/index.adoc",
+        "Listed in v1/modules/ROOT/nav.adoc",
+    ] {
+        assert!(lines.iter().any(|line| line == expected), "{lines:?}");
+    }
+    assert!(cx.debug_bounds("delete-consequences").is_some());
+
+    cx.simulate_keystrokes("enter");
+    redraw(&app, &mut cx);
+    assert!(!install.exists());
+    assert!(cx.update(|_, cx| app.read(cx).engine.document_for_path(&install).is_none()));
+    assert!(cx.debug_bounds("delete-confirm").is_none());
+
+    click("undo-delete", &mut cx);
+    redraw(&app, &mut cx);
+    assert!(install.is_file());
+    assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
+        .is_some_and(|(path, _)| path == install)));
+}

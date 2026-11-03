@@ -52,6 +52,10 @@ pub enum CommandContext {
     Antora,
     /// The workspace has a playbook, npm is found, and no site build is running.
     SiteBuild,
+    /// A tab is active and files can be deleted (there is a state folder to keep them in).
+    Deletion,
+    /// A file deleted since the engine started can be put back.
+    DeletedFile,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

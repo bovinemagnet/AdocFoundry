@@ -1259,6 +1259,31 @@ The app's side is `crates/adocfoundry/src/workspace_view/impact.rs`: the panel (
 In a release build, a comparison of two commits of a 2,000-page component takes about 0.9 s, building both snapshots.
 Again with the snapshots cached, it takes about 50 ms.
 
+[[file-deletion]]
+=== File deletion
+
+`deletion.rs` deletes a file for the app.
+`Engine::delete_file(&Path)` moves any file inside a root aside and updates the engine as though the file had been removed on disk.
+It refuses a folder, a link, a file reached through a linked folder and a path outside the roots.
+A save of the page in flight is waited for before the file moves.
+The move falls back to copy-and-remove across file systems.
+
+Each deletion is a folder named `<milliseconds>-<process id>-<count>` in `DELETED_DIR` (`deleted`) under `Settings::state_dir`, beside local history.
+It holds `file`, the contents, and `path`, the original path, which is for information only.
+Without a state folder `Engine::can_delete_files()` is false and nothing is deleted.
+Copies from earlier sessions are removed once older than `[history] keep_days`, and are not offered for undo.
+
+`Engine::undo_delete() -> Result<PathBuf, EngineError>` puts back the latest deletion made since the engine started, reopening the file if it had a tab.
+It refuses, keeping the deletion, while a file exists at that path again.
+`Engine::last_deleted() -> Option<&Path>` names the file it would put back.
+The events are `EngineEvent::FileDeleted(PathBuf)` and `EngineEvent::FileRestored(PathBuf)`.
+
+The commands are `file.delete` (`CommandArgs::Path`, or none for the active tab's file) and `file.undo_delete`.
+`CommandContext::Deletion` holds while a tab is active and there is a state folder, and `CommandContext::DeletedFile` while a deletion can be put back.
+Only the app deletes: the command line, `adoc-ls` and `adoc-mcp` have no state folder and never invoke the command.
+
+The app's side is `crates/adocfoundry/src/workspace_view/delete_file.rs`: the confirmation, which reads `Engine::impact_inspection` for the `ChangeSource::Removal` of the path (see <<impact-inspection>>), and the notification with its Undo.
+
 ==== Reading a revision
 
 `adoc-git` reads a revision from object data alone (`src/revision.rs`).

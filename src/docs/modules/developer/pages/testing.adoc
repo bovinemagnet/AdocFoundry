@@ -184,6 +184,13 @@ The tests are:
 
 The app test `impact_ui_drilldown_and_graph_path` in `crates/adocfoundry/src/ui_tests.rs` checks the rows, a row opening its page, the graph window's path titled "Render dependency", the out-of-date note, and that redrawing analyses nothing.
 
+== File deletion tests
+
+`crates/adoc-engine/tests/deletion.rs` drives `file.delete` and `file.undo_delete` headlessly.
+It includes `deleting_a_partial_included_by_three_pages_shows_them_first`, the acceptance test of issue #100.
+
+The app test `delete_file_lists_what_breaks_and_undo_puts_it_back` in `crates/adocfoundry/src/ui_tests.rs` checks the confirmation's list and that Undo puts the file back.
+
 == Template tests
 
 `crates/adoc-engine/tests/templates.rs` drives templates through `project.new`.

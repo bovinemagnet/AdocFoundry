@@ -800,7 +800,7 @@ impl Engine {
         ready.len()
     }
 
-    fn is_settings_file(&self, path: &Path) -> bool {
+    pub(crate) fn is_settings_file(&self, path: &Path) -> bool {
         Some(path) == self.settings.user_file() || Some(path) == self.settings.workspace_file()
     }
 
@@ -816,7 +816,7 @@ impl Engine {
 
     /// A settings file changed on disk: the settings are read again unless they are as last
     /// loaded.
-    fn settings_files_changed(&mut self) {
+    pub(crate) fn settings_files_changed(&mut self) {
         if self.settings_loaded == Some(self.settings_files()) {
             return;
         }

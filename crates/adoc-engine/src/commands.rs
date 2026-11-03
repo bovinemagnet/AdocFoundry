@@ -57,6 +57,8 @@ pub mod ids {
     pub const WORKSPACE_REPLACE: CommandId = CommandId::new("workspace.replace");
     pub const WORKSPACE_APPLY_PREVIEW: CommandId = CommandId::new("workspace.apply_preview");
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
+    pub const FILE_DELETE: CommandId = CommandId::new("file.delete");
+    pub const FILE_UNDO_DELETE: CommandId = CommandId::new("file.undo_delete");
     pub const PAGE_NEW: CommandId = CommandId::new("page.new");
     pub const PAGE_NEW_PARTIAL: CommandId = CommandId::new("page.new_partial");
     pub const MODULE_NEW: CommandId = CommandId::new("module.new");
@@ -563,6 +565,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::new_project::register_new_project(registry);
     crate::site_build::register_site_build(registry);
     crate::impact_inspection::register_impact_inspection(registry);
+    crate::deletion::register_deletion(registry);
     crate::graph::register_graph(registry);
     #[cfg(feature = "git")]
     {
