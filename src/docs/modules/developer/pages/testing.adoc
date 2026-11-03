@@ -172,6 +172,23 @@ The unit test `scaffold_failure_undoes_itself` in `crates/adoc-engine/src/new_pr
 
 `mcp_create_project_reuses_engine_command` in `crates/adoc-mcp/tests/creation.rs` checks that `create_project` makes what the engine command makes.
 
+== Build Site tests
+
+`crates/adoc-engine/tests/build_site.rs` drives `project.build_site` headlessly.
+The tests are:
+
+* `build_site_disabled_without_node`
+* `build_site_needs_a_playbook`
+* `build_site_streams_output_and_times_out`
+
+The last runs on Unix only.
+It uses stand-in `node` and `npm` shell scripts named through `[tools] node` in a user settings file, and a 1 s `build_timeout`.
+It checks the log, the site path, that `node_modules` skips `npm install`, and the timeout.
+
+The unit test `steps_install_once_and_prefer_the_build_script` in `crates/adoc-engine/src/site_build.rs` checks which steps are run.
+
+The app tests are `build_site_panel_shows_the_log_and_opens_the_site` in `crates/adocfoundry/src/ui_tests.rs` (Unix only) and `build_site_says_it_needs_node_only_beside_a_playbook` in `crates/adocfoundry/src/menus.rs`.
+
 == Preview and render tests
 
 [[render-tests]]

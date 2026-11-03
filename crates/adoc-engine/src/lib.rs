@@ -54,6 +54,7 @@ mod search;
 pub use search::SEARCH_MATCH_LIMIT;
 mod session;
 mod settings;
+mod site_build;
 mod spelling;
 mod staging;
 #[cfg(feature = "typst")]
@@ -124,6 +125,9 @@ pub use settings::{
     GraphSettings, HistorySettings, PdfSettings, QualitySettings, Settings, SidebarSettings,
     SpellingSettings, ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings,
     USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+};
+pub use site_build::{
+    SiteBuild, SiteBuildBlocker, SiteBuildState, DEFAULT_BUILD_TIMEOUT, MAX_BUILD_OUTPUT,
 };
 pub use spelling::{
     Misspelling, MAX_SUGGESTED_WORDS, SPELLING_CODE, SPELLING_SETTLE, USER_WORDS_FILE,

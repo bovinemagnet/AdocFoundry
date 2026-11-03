@@ -134,6 +134,15 @@ pub(crate) enum WorkerMessage {
         workdir: PathBuf,
         result: Result<String, String>,
     },
+    /// A line a site build wrote; the worker is still running.
+    SiteBuildLine {
+        generation: u64,
+        line: String,
+    },
+    SiteBuilt {
+        generation: u64,
+        result: Result<Option<PathBuf>, String>,
+    },
     HtmlExported {
         output: PathBuf,
         result: Result<(), String>,
@@ -489,7 +498,10 @@ impl Engine {
     }
 
     pub(crate) fn apply_worker_message(&mut self, message: WorkerMessage) {
-        if !matches!(message, WorkerMessage::Search { done: false, .. }) {
+        if !matches!(
+            message,
+            WorkerMessage::Search { done: false, .. } | WorkerMessage::SiteBuildLine { .. }
+        ) {
             self.workers_running = self.workers_running.saturating_sub(1);
         }
         match message {
@@ -627,6 +639,10 @@ impl Engine {
             } => self.git_blamed(id, generation, blame),
             #[cfg(feature = "git")]
             WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
+            WorkerMessage::SiteBuildLine { generation, line } => {
+                self.site_build_line(generation, line);
+            }
+            WorkerMessage::SiteBuilt { generation, result } => self.site_built(generation, result),
             WorkerMessage::HtmlExported { output, result } => self.html_exported(output, result),
             #[cfg(feature = "typst")]
             WorkerMessage::ExportParsed { job, doms } => self.export_parsed(job, doms),
