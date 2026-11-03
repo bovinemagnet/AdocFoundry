@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | **Proposed / draft — not approved for implementation** |
+| Status | Approved for implementation, 2026-11-03; the open decisions in §14 are settled in the work package they affect |
 | Date | 2026-11-03 |
 | Scope | Expand `adoc-mcp` from a document-access interface into a safe, Antora-aware documentation engineering interface for MCP clients |
 | Related work | Epic #313; Quality and Impact PRDs (`docs/prd/PRD-AdocFoundry_Documentation_Quality.md`, `docs/prd/PRD-AdocFoundry_Documentation_Impact.md`, merged in #298); [Quality epic #299](https://github.com/bovinemagnet/AdocFoundry/issues/299); [Impact epic #306](https://github.com/bovinemagnet/AdocFoundry/issues/306); [New Module #290](https://github.com/bovinemagnet/AdocFoundry/issues/290); [New Project #291](https://github.com/bovinemagnet/AdocFoundry/issues/291); [Dependency Inspector #100](https://github.com/bovinemagnet/AdocFoundry/issues/100) |
@@ -384,7 +384,9 @@ The initial MCP Agent Workflows milestone is complete when an MCP client can, on
 
 `create_project`, external site builds and resource subscriptions are **follow-on capabilities** unless separately accepted into the first milestone. The absence of those optional features does not block completion of the core MCP milestone.
 
-## 14. Open decisions before approval
+## 14. Open decisions
+
+Each is settled before work starts on the package it affects, and the outcome is recorded in that package's PR and in the Implementation Notes.
 
 1. Should `preview_changes` be available in read-only mode, or should building previews for a mutation require `--allow-write` even without applying?
 2. Should a client-facing `create_page` apply immediately by default or always return a preview first? Preferred: preview first for structural/multi-file changes.
