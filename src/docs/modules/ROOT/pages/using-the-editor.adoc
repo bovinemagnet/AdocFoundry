@@ -959,6 +959,73 @@ Like other changes to several files, it is undone only as a whole, so if the new
 
 The graph window's Create Page, on an unresolved target, makes the page a broken link expects; see xref:graph-view.adoc[the link graph].
 
+[[new-project]]
+== Make a new Antora project
+
+New Antora Project… (`project.new`) makes an Antora component in a folder.
+It is in the File menu (☰) and in the command palette, and is always available, with or without an open folder.
+
+=== The welcome panel
+
+While no tab is open and the workspace holds no Antora component, the editor area shows a welcome instead of a blank area.
+What it says depends on the folder:
+
+* With no folder open: "Open a folder to begin", with *New Antora Project…* and *Open Folder…*.
+* With a folder that has no AsciiDoc page: "This folder has no documentation yet", with *New Antora Project…* and *Open a Different Folder…*.
+* With a folder whose `.adoc` pages are in no Antora component: "These pages are not in an Antora component", with the same buttons.
+The project dialog then starts with the project in a `docs` subfolder, so the pages stay where they are.
+
+Below the buttons are up to five recent folders, other than the open one.
+Click one to open it.
+Once the workspace has a component, the area says "Open a folder or a page from the sidebar" as before.
+
+=== The dialog
+
+The New Antora Project dialog asks for:
+
+* A location: the folder, typed or chosen with *Choose…*.
+It starts as the open folder.
+"Create inside a subfolder" takes a folder name, `docs` by default.
+It is ticked from the start when the folder holds files already.
+* A component name, title and version.
+The name starts as the folder's name made into a component name, so `My Docs!` becomes `my-docs`.
+An empty title means the name in title case.
+An empty version means the latest, unversioned component.
+* A template.
+Only Minimal is offered for now.
+* "Initialise a Git repository", ticked by default.
+It is not shown when the folder is in a repository already.
+* "Add a README", ticked by default.
+
+Beside the fields, the dialog lists the files that will be made, updated as you type, and the folder that will hold `antora.yml`.
+
+Every field is checked as you type, and the first problem shows under its field.
+A problem is:
+
+* a folder that is not empty, when no subfolder is given,
+* a folder inside an existing component, which points you to New Module,
+* a subfolder that exists already,
+* a name with capitals or spaces, or
+* a version with a space or a `/`.
+
+Create, or kbd:[Enter], does nothing while a problem shows, and the dialog stays open.
+
+=== After Create
+
+The project is made in one step: `antora.yml`, a `ROOT` module with an index page and a navigation file, `.gitignore`, a README, and a repository, as chosen.
+Then:
+
+* the folder becomes part of the workspace, if it was not already,
+* `index.adoc` opens with the preview docked beside it,
+* the Files panel shows the new files, and the sidebar shows Navigation, and
+* a notification says "Created <name> with N files." with an *Undo* button.
+
+Undo removes every file still as it was made, and the folders left empty.
+A repository it made is kept.
+The welcome panel comes back if the workspace has no component again.
+
+The local playbook and Build Site, and other templates, are not part of this dialog yet.
+
 [[new-module]]
 == Make a new module
 

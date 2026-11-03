@@ -105,7 +105,9 @@ pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE, HISTORY_SWE
 pub use navigation::NavigationPosition;
 pub use new_module::{valid_module_name, ModuleComponent, NewModule};
 pub use new_page::{NewPage, PageModule};
-pub use new_project::{planned_tree, NewProject, TemplateId};
+pub use new_project::{
+    planned_tree, NewProject, NewProjectField, NewProjectProblem, TemplateId, Welcome,
+};
 #[cfg(feature = "typst")]
 pub use pdf_preview::PdfPreview;
 pub use preview::{

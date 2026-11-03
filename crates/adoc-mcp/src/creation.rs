@@ -344,13 +344,14 @@ impl Server {
                 .engine
                 .check_new_project(&request)
                 .map_err(|problem| {
-                    let code =
-                        if problem.contains("exists already") || problem.contains("not empty") {
-                            ErrorCode::Conflict
-                        } else {
-                            ErrorCode::InvalidArgument
-                        };
-                    Failure::new(code, problem)
+                    let conflict = problem.message.contains("exists already")
+                        || problem.message.contains("not empty");
+                    let code = if conflict {
+                        ErrorCode::Conflict
+                    } else {
+                        ErrorCode::InvalidArgument
+                    };
+                    Failure::new(code, problem.message)
                 })?;
             state.confine(&component.to_string_lossy())?;
             let had_repository = root.join(".git").exists();

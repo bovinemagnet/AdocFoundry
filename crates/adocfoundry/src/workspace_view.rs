@@ -54,6 +54,8 @@ use crate::{
     visual::{VisualEvent, VisualView},
 };
 
+mod new_project;
+
 /// Follows the link at `offset` in `document`: the engine opens and activates the target, and the
 /// workspace view reacts to that. Images and attachments open in the system's default app.
 pub fn follow_link(
@@ -5029,24 +5031,7 @@ impl Render for WorkspaceView {
                     .flex_1()
                     .min_h_0()
                     .children(editor)
-                    .when(!has_tabs, |empty| {
-                        empty.child(
-                            v_flex()
-                                .size_full()
-                                .items_center()
-                                .justify_center()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Open a folder or a page from the sidebar")
-                                .child(
-                                    Button::new("open-folder")
-                                        .primary()
-                                        .label("Open Folder…")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.on_open_folder(&OpenFolder, window, cx);
-                                        })),
-                                ),
-                        )
-                    }),
+                    .when(!has_tabs, |empty| empty.child(self.render_no_tabs(cx))),
             )
             .when(show_search, |center| {
                 center.child(div().h(px(280.)).child(self.search.clone()))
@@ -5069,6 +5054,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_open_recent))
             .on_action(cx.listener(Self::on_new_page))
             .on_action(cx.listener(Self::on_new_module))
+            .on_action(cx.listener(Self::on_new_project))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_reload))

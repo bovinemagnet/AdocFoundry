@@ -922,7 +922,13 @@ Undo removes the files made unless one was changed, then removes only the folder
 `Engine::check_new_project` is the validation that the command and the front ends share.
 It refuses a folder inside an existing component (any folder from it upwards that holds `antora.yml`), a folder that is not empty when no subfolder is given, and a subfolder that exists.
 `Engine::new_project` runs the command.
-`planned_tree(&NewProject)` returns the files it will write, so the dialog of issue #294 can preview them.
+`planned_tree(&NewProject)` returns the files it will write, so the dialog can preview them.
+
+The New Antora Project dialog and the welcome panel read the engine and keep no rules of their own.
+`Engine::new_project_request` gives the dialog's starting request: the first root, a component name made from its folder name, a `docs` subfolder when the folder holds any files, and a repository when it is in none.
+`Engine::in_repository` says whether a folder is in a repository already, so the dialog can hide the Git option.
+`Engine::welcome` says which welcome the editor area shows while no tab is open: no folder, a folder with no AsciiDoc page, or pages in no component; it gives none once the workspace has a component, or while a whole index runs.
+`Engine::check_new_project` reports a `NewProjectProblem`, and each problem names the `NewProjectField` it belongs under.
 
 The `ROOT` module comes from the same file list as New Module, so the two make the same files.
 `antora.yml` is read back and checked before the command succeeds.
