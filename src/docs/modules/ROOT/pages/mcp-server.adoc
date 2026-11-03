@@ -564,7 +564,6 @@ These are not offered, and the server does not list them:
 
 * `create_project` waits for issues #291 to #295.
 * `build_site` waits for the build command of issue #293 and a separate `--allow-build` flag (issue #334). `--allow-write` never implies it. Until then the server refuses `--allow-build` as an unknown option.
-* Resource-change subscriptions wait for issue #335.
 
 == Resources
 
@@ -577,6 +576,36 @@ Resources are ordered by Antora resource id and then path, with files outside an
 A cursor is opaque and follows the rules in <<paging>>.
 
 A resource template, `+antora:{resource_id}+`, reads a page or a partial by its Antora id.
+
+[#subscriptions]
+=== Subscribing to changes
+
+The server advertises resource subscriptions (`capabilities.resources.subscribe` is `true`).
+Send `resources/subscribe` with a resource's URI to be told when it changes.
+The URI is a `file://` URI, as `resources/list` gives it, or `+antora:{resource_id}+`.
+Send `resources/unsubscribe` to stop.
+A URI outside the workspace roots is refused as not found.
+
+The server sends `notifications/resources/updated` with that URI when the file changes on disk.
+This covers a save through the server (`edit_page` with `save`, or `apply_changes`), a save by the app, and a write by anything else.
+The notification carries the URI only, never the text.
+Read the resource for its new text.
+
+The server never announces a change that is only in its buffers.
+Every session shares one engine and its unsaved buffers.
+An unsaved edit by one session is therefore told to no session, the editing one included.
+It is announced once it is saved.
+
+Subscriptions belong to the session that made them.
+Over HTTP each session has its own.
+This is the `resources/subscribe` of protocol versions up to 2025-11-25, which sessions that negotiate through `initialize` use.
+
+The server checks on its idle pump, every quarter of a second.
+When the workspace revision has advanced, it reads every subscribed file again.
+Otherwise it reads only a file whose modification time or length changed.
+A file is announced only when its text on disk differs from what the subscriber last knew.
+A resource is announced at most once a second.
+A change within that second is announced at a later check and is never dropped.
 
 [#structured]
 == Structured results

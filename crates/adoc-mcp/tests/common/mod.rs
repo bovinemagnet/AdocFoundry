@@ -48,6 +48,8 @@ pub struct Client {
     stdin: ChildStdin,
     lines: Receiver<String>,
     next_id: u64,
+    /// Notifications the server sent while a request waited for its answer.
+    notifications: Vec<Value>,
 }
 
 impl Client {
@@ -83,6 +85,7 @@ impl Client {
             stdin,
             lines,
             next_id: 1,
+            notifications: Vec::new(),
         };
         let initialized = client.request(
             "initialize",
@@ -112,6 +115,9 @@ impl Client {
             let message: Value = serde_json::from_str(&line).unwrap();
             if message["id"] == json!(id) {
                 return message;
+            }
+            if message.get("id").is_none() && message.get("method").is_some() {
+                self.notifications.push(message);
             }
         }
     }
@@ -154,6 +160,28 @@ impl Client {
         );
         assert!(response.get("error").is_none(), "{response}");
         response["result"].clone()
+    }
+
+    /// The notifications with `method` the server sends within `wait`, and any it sent while
+    /// earlier requests waited.
+    pub fn notifications(&mut self, method: &str, wait: Duration) -> Vec<Value> {
+        let deadline = std::time::Instant::now() + wait;
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+            match self.lines.recv_timeout(left) {
+                Ok(line) => {
+                    let message: Value = serde_json::from_str(&line).unwrap();
+                    if message.get("id").is_none() {
+                        self.notifications.push(message);
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let (wanted, rest): (Vec<Value>, Vec<Value>) = std::mem::take(&mut self.notifications)
+            .into_iter()
+            .partition(|message| message["method"] == method);
+        self.notifications = rest;
+        wanted
     }
 
     pub fn stop(mut self) {

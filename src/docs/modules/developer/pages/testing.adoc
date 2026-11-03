@@ -350,6 +350,7 @@ The stdio client harness is in `crates/adoc-mcp/tests/common/mod.rs`, shared by 
 `Client::start_with(root, allow_write, protocol_version)` also sets the protocol version, and returns the `initialize` result.
 `Client::call` parses the text of a tool's answer.
 `Client::call_result` returns the whole result, with its `structuredContent`.
+The client keeps notifications that arrive while a request waits, and `Client::notifications(method, wait)` gives them.
 
 `crates/adoc-mcp/tests/stdio.rs` starts the real `adoc-mcp` binary and speaks newline-delimited JSON-RPC to it over stdio.
 The tests are:
@@ -381,6 +382,17 @@ The tests are:
 * `mcp_resources_cursor_stable_and_bounded`, which lists 1,208 files in pages of at most 500, each once, in a stable order
 * `mcp_cursor_rejects_stale_index_revision`, where a page added on disk makes an old cursor stale
 * `check_pages_its_diagnostics_with_a_cursor`
+
+`crates/adoc-mcp/tests/subscriptions.rs` checks resource subscriptions over stdio.
+The test is `mcp_resource_change_notifications_are_revision_scoped`.
+It checks that:
+
+* another resource changing on disk, or an unsaved edit, sends no notification
+* a save sends one, and so does a write on disk
+* nothing is sent after unsubscribing
+* a URI outside the roots is refused
+
+The unit test `a_change_is_announced_once_and_a_held_one_later`, in `crates/adoc-mcp/src/subscriptions.rs`, checks that a change is announced once and that a change held back by the one-second limit is announced later.
 
 `crates/adoc-mcp/tests/impact.rs` runs the `analyse_impact` tool against temporary Git repositories, made with `adoc_git::testing::TestRepo` (a test-only dependency) and holding `tests/fixtures/impact`.
 The tests are:
