@@ -18,6 +18,7 @@ mod publication;
 mod responses;
 mod schemas;
 mod server;
+mod subscriptions;
 
 use std::{path::PathBuf, process::ExitCode, time::Duration};
 

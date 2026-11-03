@@ -467,8 +467,15 @@ Decision 6 is deferred with `build_site`: the build waits for #293's command and
 - Two-ref mode uses both revisions' own snapshots from Git objects (Impact PRD §6.1); the live index and working tree are never read, which `mcp_impact_ref_comparison_uses_two_snapshots` checks with uncommitted work present.
 - The tests build repositories with `adoc_git::testing::TestRepo`, a dev-dependency of `adoc-mcp` only; the server itself still depends on `adoc-engine` and `adoc-core` alone.
 
+### Subscriptions (#335)
+
+- The legacy `resources/subscribe` and `resources/unsubscribe` (rmcp marks them deprecated for 2026-07-28's `subscriptions/listen`; sessions negotiating through `initialize`, at most 2025-11-25, use them). Subscriptions are per session; a URI outside the roots is not found.
+- **Buffer policy (decision 8, for subscriptions):** only changes on disk are announced. Every session shares one engine's buffers, so an unsaved edit is announced to no session; once saved it is. Notifications carry the URI only.
+- **Revision-scoped and throttled:** the idle pump reads every subscribed file again when `Engine::workspace_revision` has moved, otherwise only one whose modification time or length moved (a save leaves the index, and so the revision, alone); a file is announced when its text hash differs from what its subscriber knew, at most once a second per resource, a change within the second held for a later check.
+- `mcp_resource_change_notifications_are_revision_scoped` drives it over stdio.
+
 ### Open at the end of the epic
 
-- `create_project` waits for #291–#295, `build_site` for #293 and #334, and subscriptions for #335: the follow-on capabilities §13 says do not block the milestone.
+- `create_project` waits for #291–#295 and `build_site` for #293 and #334: the follow-on capabilities §13 says do not block the milestone.
 
 No implementation is claimed by this PRD beyond the packages noted above. The tool names, request/response examples, flags and Rust interfaces in this document are **proposed**, not implemented public APIs. The primary specifications for the underlying quality and impact analyses are `PRD-AdocFoundry_Documentation_Quality.md` and `PRD-AdocFoundry_Documentation_Impact.md` in `docs/prd/` (merged in #298). Their semantic decisions supersede this document's descriptions in case of discrepancy. When implementation diverges, record the reason here and update this PRD in the same PR, following the existing AdocFoundry convention.

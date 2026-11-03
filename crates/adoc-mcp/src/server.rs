@@ -92,6 +92,10 @@ pub struct Server {
     /// This session's staged changes: each session (an HTTP session, or the one over stdio)
     /// has its own, though all share the engine.
     pub(crate) previews: Arc<Mutex<crate::changes::Previews>>,
+    /// This session's resource subscriptions.
+    subscriptions: Arc<Mutex<crate::subscriptions::Subscriptions>>,
+    /// Every session's, for the idle pump to check.
+    registry: Arc<Mutex<crate::subscriptions::Registry>>,
 }
 
 /// A session's previews, poisoned or not.
@@ -379,18 +383,25 @@ impl Server {
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
-            let state = self.state.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let mut state = match state.try_lock() {
-                    Ok(state) => state,
-                    Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-                    // A tool has the engine, and pumps it as it needs.
-                    Err(std::sync::TryLockError::WouldBlock) => return,
+            let (state, registry) = (self.state.clone(), self.registry.clone());
+            let due = tokio::task::spawn_blocking(move || {
+                let revision = {
+                    let mut state = match state.try_lock() {
+                        Ok(state) => state,
+                        Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+                        // A tool has the engine, and pumps it as it needs.
+                        Err(std::sync::TryLockError::WouldBlock) => return Vec::new(),
+                    };
+                    state.engine.pump();
+                    state.events.try_iter().for_each(drop);
+                    state.engine.workspace_revision()
                 };
-                state.engine.pump();
-                state.events.try_iter().for_each(drop);
+                // Read with the engine free: subscribed files on disk, if the workspace moved.
+                crate::subscriptions::due(&registry, revision, Instant::now())
             })
-            .await;
+            .await
+            .unwrap_or_default();
+            crate::subscriptions::announce(due).await;
         }
     }
 }
@@ -443,6 +454,8 @@ impl Server {
             waiting: Arc::default(),
             allow_write,
             previews: Arc::default(),
+            subscriptions: Arc::default(),
+            registry: Arc::default(),
         }
     }
 
@@ -451,6 +464,7 @@ impl Server {
     pub fn for_session(&self) -> Self {
         Self {
             previews: Arc::default(),
+            subscriptions: Arc::default(),
             ..self.clone()
         }
     }
@@ -1211,6 +1225,24 @@ fn file_uri(path: &Path) -> String {
     }
 }
 
+/// The file a resource URI names, `file://` or `antora:`, inside the roots; a path outside them
+/// is not found, so its existence is not told.
+fn resource_path(state: &State, uri: &str) -> Result<PathBuf, Failure> {
+    let path = if let Some(id) = uri.strip_prefix("antora:") {
+        state
+            .engine
+            .resolve_resource_id(id, None)
+            .map_err(|error| Failure::not_found(error.to_string()))?
+    } else if let Some(path) = uri.strip_prefix("file://") {
+        PathBuf::from(path)
+    } else {
+        return Err(Failure::not_found(format!("unknown resource {uri}")));
+    };
+    state
+        .confine(&path.to_string_lossy())
+        .map_err(|failure| Failure::not_found(failure.message))
+}
+
 /// A failure answered as a JSON-RPC error, for the methods that are not tools: invalid params
 /// for a bad argument, its stable code in the error's data.
 fn protocol_error(failure: Failure) -> ErrorData {
@@ -1236,6 +1268,7 @@ impl ServerHandler for Server {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_resources_subscribe()
                 .enable_prompts()
                 .build(),
         )
@@ -1362,6 +1395,40 @@ impl ServerHandler for Server {
         Ok(result)
     }
 
+    /// Subscribes this session to a resource: it is told when the file changes on disk (never
+    /// of a change only in a buffer, which every session shares).
+    #[allow(deprecated)]
+    async fn subscribe(
+        &self,
+        request: rmcp::model::SubscribeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), ErrorData> {
+        let uri = request.uri.clone();
+        let path = self
+            .blocking(move |state| resource_path(state, &request.uri))
+            .await
+            .and_then(|path| path)
+            .map_err(protocol_error)?;
+        crate::subscriptions::subscribe(
+            &self.registry,
+            &self.subscriptions,
+            context.peer.clone(),
+            uri,
+            path,
+        );
+        Ok(())
+    }
+
+    #[allow(deprecated)]
+    async fn unsubscribe(
+        &self,
+        request: rmcp::model::UnsubscribeRequestParams,
+        _: RequestContext<RoleServer>,
+    ) -> Result<(), ErrorData> {
+        crate::subscriptions::unsubscribe(&self.subscriptions, &request.uri);
+        Ok(())
+    }
+
     async fn list_resource_templates(
         &self,
         _: Option<PaginatedRequestParams>,
@@ -1382,23 +1449,7 @@ impl ServerHandler for Server {
         _: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
         self.blocking(move |state| {
-            let path = if let Some(id) = request.uri.strip_prefix("antora:") {
-                state
-                    .engine
-                    .resolve_resource_id(id, None)
-                    .map_err(|error| Failure::not_found(error.to_string()))?
-            } else if let Some(path) = request.uri.strip_prefix("file://") {
-                PathBuf::from(path)
-            } else {
-                return Err(Failure::not_found(format!(
-                    "unknown resource {}",
-                    request.uri
-                )));
-            };
-            // As before, a path outside the roots is not found, so its existence is not told.
-            let path = state
-                .confine(&path.to_string_lossy())
-                .map_err(|failure| Failure::not_found(failure.message))?;
+            let path = resource_path(state, &request.uri)?;
             let text = state.text(&path)?;
             Ok(ReadResourceResult::new(vec![
                 ResourceContents::text(text, request.uri.clone()).with_mime_type(ASCIIDOC)
