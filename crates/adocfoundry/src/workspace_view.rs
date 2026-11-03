@@ -6,7 +6,7 @@
 
 use std::{
     cell::Cell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -54,6 +54,7 @@ use crate::{
     visual::{VisualEvent, VisualView},
 };
 
+mod build_site;
 mod new_project;
 
 /// Follows the link at `offset` in `document`: the engine opens and activates the target, and the
@@ -93,6 +94,8 @@ enum SidebarTab {
     Quality,
     Changes,
     Graph,
+    /// Shown once a site build has started.
+    Build,
 }
 
 /// What a tab shows: a page's source editor, or an image.
@@ -147,6 +150,10 @@ pub struct WorkspaceView {
     tab_scroll: gpui::ScrollHandle,
     /// Frames still to request the active tab's reveal on; see [`Self::reveal_active_tab`].
     tab_reveals: std::cell::Cell<u8>,
+    /// The Build panel's log, kept scrolled to its end as lines arrive.
+    build_scroll: gpui::UniformListScrollHandle,
+    /// The playbook folders whose build the user agreed to run in this window.
+    trusted_builds: HashSet<PathBuf>,
     /// The tab last right-clicked, which the tab strip's menu acts on; `None` over empty strip.
     tab_menu_target: Rc<Cell<Option<TabItem>>>,
     sidebar_tab: SidebarTab,
@@ -465,6 +472,8 @@ impl WorkspaceView {
             active_tab: 0,
             tab_scroll: gpui::ScrollHandle::new(),
             tab_reveals: std::cell::Cell::new(0),
+            build_scroll: gpui::UniformListScrollHandle::new(),
+            trusted_builds: HashSet::new(),
             tab_menu_target: Rc::default(),
             sidebar_tab: SidebarTab::Navigation,
             navigation,
@@ -694,6 +703,10 @@ impl WorkspaceView {
             EngineEvent::ExportFinished { output, result } => {
                 Self::export_finished(output, result, window, cx);
             }
+            EngineEvent::SiteBuildOutput => self.site_build_output(cx),
+            EngineEvent::SiteBuildFinished { result } => {
+                Self::site_build_finished(result, window, cx);
+            }
             _ => {}
         }
         if self.shows(event, cx) {
@@ -715,6 +728,8 @@ impl WorkspaceView {
             | EngineEvent::GitBlameChanged(_)
             | EngineEvent::ImageChanged(_)
             | EngineEvent::DiagnosticsUpdated { .. } => false,
+            // The log redraws only while the Build panel shows it.
+            EngineEvent::SiteBuildOutput => self.sidebar_tab == SidebarTab::Build,
             // A tab marks a page with unsaved edits: an edit redraws it only when that flips.
             EngineEvent::DocumentChanged { id, .. } => {
                 let dirty = self
@@ -4468,6 +4483,9 @@ impl WorkspaceView {
             panels.push((SidebarTab::Changes, "Changes".to_owned()));
         }
         panels.push((SidebarTab::Graph, "Graph".to_owned()));
+        if self.app.read(cx).engine.site_build().is_some() {
+            panels.push((SidebarTab::Build, "Build".to_owned()));
+        }
         let selected = panels
             .iter()
             .position(|(tab, _)| *tab == self.sidebar_tab)
@@ -4499,6 +4517,7 @@ impl WorkspaceView {
             }
             SidebarTab::Changes => self.render_changes(cx),
             SidebarTab::Graph => self.graph.clone().into_any_element(),
+            SidebarTab::Build => self.render_build(cx),
         };
         v_flex()
             .size_full()
@@ -5055,6 +5074,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_new_page))
             .on_action(cx.listener(Self::on_new_module))
             .on_action(cx.listener(Self::on_new_project))
+            .on_action(cx.listener(Self::on_build_site))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
             .on_action(cx.listener(Self::on_reload))

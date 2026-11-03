@@ -7535,12 +7535,27 @@ fn welcome_window(
     Entity<WorkspaceView>,
     VisualTestContext,
 ) {
+    welcome_window_with(Settings::default(), prepare, cx)
+}
+
+/// [`welcome_window`] with the engine's settings given.
+fn welcome_window_with(
+    settings: Settings,
+    prepare: impl FnOnce(&Path),
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
     init(cx);
     let directory = tempfile::tempdir().unwrap();
     let root = adoc_index::normalize_path(&directory.path().join("site"));
     std::fs::create_dir(&root).unwrap();
     prepare(&root);
-    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let app = app_with(Engine::new(settings.with_git_opt_in()), cx);
     let mut workspace = None;
     let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
         let view =
@@ -7701,4 +7716,97 @@ fn new_project_toast_undo_removes_the_files(cx: &mut TestAppContext) {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.debug_bounds("welcome-no-documentation").is_some()
     }));
+}
+
+/// Build Site (#293) from the menu's action: the Build panel shows the log as it arrives, and
+/// Open Site hands the built site to the system.
+#[cfg(unix)]
+#[gpui::test]
+fn build_site_panel_shows_the_log_and_opens_the_site(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tools = tempfile::tempdir().unwrap();
+    let node = tools.path().join("node");
+    let npm = tools.path().join("npm");
+    std::fs::write(&node, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::write(
+        &npm,
+        "#!/bin/sh\necho \"npm $*\"\nmkdir -p node_modules build/site\n\
+         echo '<html></html>' > build/site/index.html\n",
+    )
+    .unwrap();
+    for tool in [&node, &npm] {
+        std::fs::set_permissions(tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let user = tools.path().join("settings.toml");
+    std::fs::write(
+        &user,
+        format!("[tools]\nnode = {:?}\n", node.display().to_string()),
+    )
+    .unwrap();
+    let settings = Settings::load(Some(&user), None).unwrap();
+    let (_directory, root, app, workspace, mut cx) = welcome_window_with(settings, |_| {}, cx);
+    cx.dispatch_action(crate::editor::bindings::NewProject);
+    redraw(&app, &mut cx);
+    cx.simulate_keystrokes("enter");
+    redraw(&app, &mut cx);
+    assert!(root.join("antora-playbook.yml").is_file());
+    assert!(cx.update(|_, cx| app
+        .read(cx)
+        .engine
+        .command_available(adoc_engine::commands::ids::PROJECT_BUILD_SITE)));
+
+    // The first build asks, naming what it will run.
+    cx.dispatch_action(crate::editor::bindings::BuildSite);
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("build-confirm").is_some());
+    assert!(cx.update(|_, cx| app.read(cx).engine.site_build().is_none()));
+    cx.simulate_keystrokes("enter");
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("build-open-site").is_some()
+    }));
+    assert!(cx.debug_bounds("build-status").is_some());
+    assert!(
+        cx.debug_bounds("build-line-0").is_some(),
+        "the log is drawn"
+    );
+    let log = cx.update(|_, cx| app.read(cx).engine.site_build().unwrap().log.clone());
+    assert_eq!(
+        log,
+        [
+            "$ npm install",
+            "npm install",
+            "$ npm run build",
+            "npm run build"
+        ]
+    );
+
+    crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow_mut().clear());
+    click("build-open-site", &mut cx);
+    let opened = crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
+    assert_eq!(opened, [root.join("build/site/index.html")]);
+
+    // The next build of the same folder does not ask again. The menu dispatches from the
+    // window's focus, which the dialog left nowhere.
+    cx.update(|window, cx| {
+        let focus = gpui::Focusable::focus_handle(workspace.read(cx), cx);
+        window.focus(&focus, cx);
+    });
+    cx.dispatch_action(crate::editor::bindings::BuildSite);
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("build-confirm").is_none());
+    let finished = drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.site_build().is_some_and(|build| {
+                build.log == ["$ npm run build", "npm run build"]
+                    && build.state != adoc_engine::SiteBuildState::Running
+            })
+        })
+    });
+    assert!(
+        finished,
+        "{:?}",
+        cx.update(|_, cx| app.read(cx).engine.site_build().cloned())
+    );
 }

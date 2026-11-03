@@ -124,4 +124,10 @@ pub enum EngineEvent {
         output: PathBuf,
         result: Result<crate::ExportSummary, String>,
     },
+    /// A site build started or wrote more: `Engine::site_build` has its log.
+    SiteBuildOutput,
+    /// A site build finished: the site's index page when it wrote one, or why it failed.
+    SiteBuildFinished {
+        result: Result<Option<PathBuf>, String>,
+    },
 }

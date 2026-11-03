@@ -568,7 +568,7 @@ Both the folder and the component's folder must lie inside the server's roots.
 
 These are not offered, and the server does not list them:
 
-* `build_site` waits for the build command of issue #293 and a separate `--allow-build` flag (issue #334). `--allow-write` never implies it. Until then the server refuses `--allow-build` as an unknown option.
+* `build_site` waits for issue #334, which adds the tool and a separate `--allow-build` flag. The app's Build Site command already exists. `--allow-write` never implies it. Until then the server refuses `--allow-build` as an unknown option.
 
 == Resources
 

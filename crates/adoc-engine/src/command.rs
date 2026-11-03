@@ -50,6 +50,8 @@ pub enum CommandContext {
     /// A selection in the visual editor: the active document is shown visually or split.
     Selection,
     Antora,
+    /// The workspace has a playbook, npm is found, and no site build is running.
+    SiteBuild,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -947,6 +947,40 @@ A Git repository is made with `adoc_git::Repository::init`, through `gix` and ne
 It is made only when the folder is not already inside a repository, so one is never nested, and nothing is staged or committed.
 Undo removes the files still as they were written, then the folders left empty.
 It keeps the `.git` repository.
+`project.new` adopts the playbook it writes into the catalog when the workspace had none, and undo forgets it, so Build Site is offered without a reindex.
+
+[[site-build]]
+== Site build
+
+`site_build.rs` runs the Antora site build for `project.build_site`.
+`SiteBuild { playbook, log, state }` is the build the engine keeps, and `Engine::site_build` returns it.
+`SiteBuildState` is `Running`, `Built { site }` or `Failed(String)`.
+`site` is `build/site/index.html` beside the playbook, when the build wrote it.
+
+`SiteBuildBlocker` says why a build cannot start: `Running`, `NoPlaybook` or `NoNode { configured }`.
+It has a `Display` text, which the menu hint uses.
+`Engine::site_build_blocker` returns it, and `CommandContext::SiteBuild` is available exactly when it is `None`.
+`Engine::npm_executable` finds npm beside `[tools] node`, else on `PATH`.
+
+Running starts a worker through `worker::spawn`.
+It runs each step with a deadline from `[tools] build_timeout` (`DEFAULT_BUILD_TIMEOUT`, 600 s) and an output cap (`MAX_BUILD_OUTPUT`, 8 MiB).
+Both pipes are read line by line on threads.
+Each line is a `WorkerMessage::SiteBuildLine`, which, like a partial search result, does not count as the worker finishing.
+The end is `WorkerMessage::SiteBuilt`.
+A generation number drops the late lines of a stopped build.
+The engine emits `EngineEvent::SiteBuildOutput` for each line and `EngineEvent::SiteBuildFinished { result }` at the end.
+
+On Unix the step runs in a process group of its own (`process_group(0)`), and is stopped with `rustix::process::kill_process_group`.
+On Windows it is stopped with `taskkill /T /F`.
+
+`Engine::site_build_plan()` returns the playbook's folder and the commands a build would run, as `Option<(PathBuf, Vec<String>)>`.
+It is `None` while Build Site cannot run.
+Front ends ask before a first build, showing that plan, because `npm install` and the `build` script run the project's code.
+The app keeps the folders agreed to in `WorkspaceView::trusted_builds`, for the life of the window, and stores nothing on disk.
+
+The app's side is `crates/adocfoundry/src/workspace_view/build_site.rs`: the Build panel (`SidebarTab::Build`, drawn with a `uniform_list`) and the notification.
+The hint under the menu item is in `crates/adocfoundry/src/menus.rs`.
+The MCP `build_site` tool is still issue #334.
 
 [#staged-changes]
 == Staged changes

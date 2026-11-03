@@ -1038,8 +1038,78 @@ There is no lockfile, and nothing is installed.
 
 The README, when made, says how to build the site: `npm install`, then `npm run build`.
 That needs Node.js and a Git repository, and the site goes to `build/site`.
-AdocFoundry runs neither Node nor Antora, so the app stays usable without Node.
+File > Build Site runs those steps for you; see <<build-site>>.
 Other templates are not part of this dialog yet.
+
+[[build-site]]
+== Build the site
+
+Build Site (`project.build_site`) builds the Antora site from the workspace's playbook.
+It is in the File menu (☰) and in the command palette.
+
+It is available when:
+
+* the workspace has an `antora-playbook.yml`, in a workspace folder or beside a component's `antora.yml`,
+* npm is found, and
+* no build is running.
+
+A project made with New Antora Project and its local playbook can be built at once, with no reindex.
+
+Without Node.js the menu item is greyed out, with a hint line under it.
+The hint says "Needs Node.js: install it, or set [tools] node".
+When `[tools] node` names a place without npm, it says "No npm beside [tools] node" instead.
+In a workspace with no playbook there is no hint.
+
+=== The first build asks
+
+The first time Build Site is chosen for a playbook's folder in a window, a dialog titled "Run this project's build?" appears.
+It says "Build Site runs these in <folder>:" and lists the exact commands, for example `npm install` and `npm run build`.
+It warns: "They run the project's own scripts and its packages' code, which can do anything you can. Build only projects you trust."
+*Build* runs them.
+*Cancel* runs nothing.
+
+Once you agree, builds of that folder do not ask again in that window until it is closed.
+The answer is not stored on disk.
+
+=== What it runs
+
+The build runs in the playbook's folder.
+When there is a `package.json`:
+
+. `npm install` runs first, while `node_modules` is missing.
+. `npm run build` runs when `package.json` has a `build` script.
+New Antora Project's has one: `antora antora-playbook.yml`.
+
+Otherwise it runs `npm exec --no -- antora --fetch antora-playbook.yml`.
+That uses Antora from `node_modules` or the `PATH`, and installs nothing.
+
+npm is the one beside `[tools] node` when that is set (`npm.cmd` on Windows), else the first `npm` on `PATH`.
+The folder of `[tools] node` is put first on the build's `PATH`, so npm's scripts find `node`.
+
+=== Limits
+
+`[tools] build_timeout` (seconds, 600 by default) covers the whole build, `npm install` included.
+A build that writes more than 8 MiB of output is stopped.
+Stopping a build stops every process it started: its process group on macOS and Linux, and its process tree on Windows.
+
+=== The Build tab
+
+The Build tab appears in the sidebar once a build starts.
+It shows "Building…", "Built." or "Failed: <reason>", and the log line by line.
+Each command it runs is shown first as `$ npm ...`, and the log stays scrolled to the end.
+When the build wrote `build/site/index.html` beside the playbook, *Open Site* opens it in the system's browser.
+
+When the build ends, a notification says "The site is built." with *Open Site*, or "The site build failed: <reason>".
+
+=== Things to know
+
+* Antora builds a local content source only from a Git repository.
+In a folder that is in none, the build fails, and the log shows Antora's own message that a local content source must be a Git repository.
+* The first build of a folder in a window asks first, because the project's scripts and its packages' code run with your rights.
+* `npm install` and Antora's fetch of the UI bundle need network access.
+* Build Site is the only place the app runs Node.js.
+It runs only when asked, and nothing else in the app needs Node.js.
+* `[tools] node` and `[tools] build_timeout` are read from the user settings file only, as the other `[tools]` keys are; see xref:settings.adoc[Settings].
 
 [[new-module]]
 == Make a new module

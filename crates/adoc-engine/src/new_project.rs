@@ -649,6 +649,7 @@ impl Engine {
             return Err(error);
         }
         self.reload_descriptor(&descriptor);
+        self.adopt_playbook(&descriptor);
         let group = self.new_group();
         let mut documents = Vec::new();
         let mut index = None;
@@ -682,6 +683,29 @@ impl Engine {
             }
         }
         self.reload_descriptor(&made.descriptor);
+        self.adopt_playbook(&made.descriptor);
+    }
+
+    /// Makes the playbook beside `descriptor` the site's when the workspace had none, or
+    /// forgets it once it is gone, so Build Site follows a project made or undone at once.
+    fn adopt_playbook(&mut self, descriptor: &Path) {
+        let Some(path) = descriptor
+            .parent()
+            .map(|folder| folder.join(adoc_antora::PLAYBOOK_FILE))
+        else {
+            return;
+        };
+        match self.workspace.antora.playbook() {
+            None if path.is_file() => {
+                if let Ok(playbook) = adoc_antora::read_playbook(&path) {
+                    self.workspace.antora.set_playbook(Some(playbook));
+                }
+            }
+            Some(playbook) if playbook.path == path && !path.is_file() => {
+                self.workspace.antora.set_playbook(None);
+            }
+            _ => {}
+        }
     }
 }
 

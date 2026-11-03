@@ -133,6 +133,11 @@ pub struct ToolSettings {
     pub d2: String,
     /// Seconds a diagram tool may run before it is stopped.
     pub diagram_timeout: u64,
+    /// An absolute path to Node.js's `node`, beside which Build Site finds `npm`; `npm` is
+    /// discovered on `PATH` when empty.
+    pub node: String,
+    /// Seconds a site build may run, `npm install` included, before it is stopped.
+    pub build_timeout: u64,
 }
 
 impl Default for ToolSettings {
@@ -144,6 +149,8 @@ impl Default for ToolSettings {
             plantuml: String::new(),
             d2: String::new(),
             diagram_timeout: adoc_diagrams::DEFAULT_TIMEOUT.as_secs(),
+            node: String::new(),
+            build_timeout: crate::site_build::DEFAULT_BUILD_TIMEOUT.as_secs(),
         }
     }
 }
@@ -586,6 +593,8 @@ impl Settings {
             ("tools", "plantuml") => self.tools.plantuml = string(value)?,
             ("tools", "d2") => self.tools.d2 = string(value)?,
             ("tools", "diagram_timeout") => self.tools.diagram_timeout = positive(value)?.into(),
+            ("tools", "node") => self.tools.node = string(value)?,
+            ("tools", "build_timeout") => self.tools.build_timeout = positive(value)?.into(),
             ("git", "enabled") => {
                 self.git.enabled = boolean(value)?;
                 self.git_enabled_set = true;
@@ -840,7 +849,14 @@ fn is_known(section: &str, key: &str) -> bool {
             | ("workspace", "ignore")
             | (
                 "tools",
-                "asciidoctor" | "git" | "dot" | "plantuml" | "d2" | "diagram_timeout"
+                "asciidoctor"
+                    | "git"
+                    | "dot"
+                    | "plantuml"
+                    | "d2"
+                    | "diagram_timeout"
+                    | "node"
+                    | "build_timeout"
             )
             | (
                 "git",
@@ -1206,12 +1222,12 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         fs::write(
             directory.path().join(WORKSPACE_SETTINGS_FILE),
-            "[tools]\nasciidoctor = \"/bin/evil\"\ndot = \"/bin/evil\"\nplantuml = \"/bin/evil\"\nd2 = \"/bin/evil\"\n",
+            "[tools]\nasciidoctor = \"/bin/evil\"\ndot = \"/bin/evil\"\nplantuml = \"/bin/evil\"\nd2 = \"/bin/evil\"\nnode = \"/bin/evil\"\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.tools, ToolSettings::default());
-        assert_eq!(settings.warnings.len(), 4);
+        assert_eq!(settings.warnings.len(), 5);
     }
 
     #[test]
@@ -1233,10 +1249,17 @@ mod tests {
     #[test]
     fn the_diagram_timeout_is_read_in_seconds() {
         assert_eq!(Settings::default().tools.diagram_timeout, 30);
+        assert_eq!(Settings::default().tools.build_timeout, 600);
         let directory = tempfile::tempdir().unwrap();
         let user = directory.path().join("adocfoundry.toml");
-        fs::write(&user, "[tools]\ndiagram_timeout = 5\n").unwrap();
+        fs::write(
+            &user,
+            "[tools]\ndiagram_timeout = 5\nbuild_timeout = 90\nnode = \"/opt/node/bin/node\"\n",
+        )
+        .unwrap();
         let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.tools.build_timeout, 90);
+        assert_eq!(settings.tools.node, "/opt/node/bin/node");
         assert_eq!(settings.tools.diagram_timeout, 5);
         fs::write(&user, "[tools]\ndiagram_timeout = 0\n").unwrap();
         let settings = Settings::load(Some(&user), None).unwrap();

@@ -5,7 +5,7 @@
 //! The menus name commands, titled from the engine's command specs and dispatched as the actions
 //! the keymap and the palette use, from the element that had focus when the menu opened.
 
-use adoc_engine::{commands::ids, CommandId, Engine};
+use adoc_engine::{commands::ids, CommandId, Engine, SiteBuildBlocker};
 use gpui::{
     anchored, deferred, div, prelude::FluentBuilder as _, px, Action, Context, DismissEvent,
     Entity, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement, MouseButton,
@@ -48,6 +48,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::PAGE_NEW),
             Command(ids::MODULE_NEW),
             Command(ids::PROJECT_NEW),
+            Command(ids::PROJECT_BUILD_SITE),
             Separator,
             Command(ids::DOCUMENT_SAVE),
             Command(ids::DOCUMENT_SAVE_ALL),
@@ -223,6 +224,8 @@ pub(crate) enum Item {
         disabled: bool,
     },
     Separator,
+    /// Why the command above is disabled, shown under it.
+    Hint(SharedString),
 }
 
 impl Item {
@@ -238,6 +241,7 @@ impl Item {
                 disabled: *disabled,
             },
             Self::Separator => Self::Separator,
+            Self::Hint(text) => Self::Hint(text.clone()),
         }
     }
 }
@@ -284,6 +288,9 @@ pub(crate) fn menus(engine: &Engine) -> Vec<Menu> {
                     }
                 };
                 items.push(item);
+                if let Command(id) = *entry {
+                    items.extend(hint(engine, id).map(|text| Item::Hint(text.into())));
+                }
             }
             if matches!(items.last(), Some(Item::Separator)) {
                 items.pop();
@@ -291,6 +298,23 @@ pub(crate) fn menus(engine: &Engine) -> Vec<Menu> {
             (!items.is_empty()).then_some(Menu { name, items })
         })
         .collect()
+}
+
+/// Why command `id` is disabled, when the reason is one the user can act on: Build Site in a
+/// workspace with a playbook but no Node.js.
+fn hint(engine: &Engine, id: CommandId) -> Option<&'static str> {
+    match (id, engine.site_build_blocker()?) {
+        (ids::PROJECT_BUILD_SITE, SiteBuildBlocker::NoNode { configured: None }) => {
+            Some("Needs Node.js: install it, or set [tools] node")
+        }
+        (
+            ids::PROJECT_BUILD_SITE,
+            SiteBuildBlocker::NoNode {
+                configured: Some(_),
+            },
+        ) => Some("No npm beside [tools] node"),
+        _ => None,
+    }
 }
 
 /// The ☰ button, and the menus it opens into.
@@ -340,6 +364,7 @@ impl AppMenu {
                         disabled,
                     } => popup.menu_with_disabled(label, action, disabled),
                     Item::Separator => popup.separator(),
+                    Item::Hint(text) => popup.label(text),
                 })
         });
         self._dismiss = Some(cx.subscribe_in(&popup, window, Self::on_dismiss));
@@ -448,6 +473,7 @@ mod tests {
             .map(|item| match item {
                 Item::Action { label, .. } => label.to_string(),
                 Item::Separator => "-".to_owned(),
+                Item::Hint(text) => format!("({text})"),
             })
             .collect()
     }
@@ -496,6 +522,33 @@ mod tests {
             ["Undo".to_owned(), "Redo".to_owned(), "-".to_owned()]
         );
         assert_eq!(labels(&menus[3])[0], "Command Palette");
+    }
+
+    #[test]
+    fn build_site_says_it_needs_node_only_beside_a_playbook() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("settings.toml");
+        std::fs::write(&user, "[tools]\nnode = \"/nowhere/node\"\n").unwrap();
+        let root = directory.path().join("docs");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("antora.yml"), "name: docs\nversion: ~\n").unwrap();
+        let file_menu = |engine: &Engine| labels(&menus(engine)[0]);
+        let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap().with_git_opt_in());
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+        let file = file_menu(&engine);
+        let build = file.iter().position(|label| label == "Build Site").unwrap();
+        assert_ne!(
+            file[build + 1],
+            "(No npm beside [tools] node)",
+            "no playbook: no hint"
+        );
+
+        std::fs::write(root.join("antora-playbook.yml"), "site:\n  title: Docs\n").unwrap();
+        engine.open_workspace(vec![root]).unwrap();
+        assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+        let file = file_menu(&engine);
+        assert_eq!(file[build + 1], "(No npm beside [tools] node)");
     }
 
     #[test]

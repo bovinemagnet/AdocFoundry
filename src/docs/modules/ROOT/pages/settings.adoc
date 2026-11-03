@@ -62,6 +62,8 @@ dot = ""                         # optional absolute path; discovered on PATH if
 plantuml = ""                    # optional absolute path; discovered on PATH if empty
 d2 = ""                          # optional absolute path; discovered on PATH if empty
 diagram_timeout = 30             # seconds a diagram may render (Mermaid included) before it is stopped
+node = ""                        # optional absolute path to node; npm is found beside it, else on PATH (Build Site)
+build_timeout = 600              # seconds Build Site may run, npm install included, before it is stopped
 
 [git]
 enabled = true                   # false: no repository is discovered
@@ -208,6 +210,16 @@ check = true                     # look for a newer release at start-up
 |integer
 |`30`
 |The number of seconds a diagram may render before it is stopped: a Graphviz, PlantUML or D2 process is killed, and Mermaid, which renders in process, is stopped at the same deadline. It must be a positive whole number; `0` or any other value is a warning and keeps the default. Like the other `[tools]` keys, it is read from the user settings file only.
+
+|`tools.node`
+|string
+|`""`
+|An absolute path to `node`, for Build Site. npm is the one beside it (`npm.cmd` on Windows), else the first `npm` on `PATH`, and the folder of `node` is put first on the build's `PATH`. Discovered on `PATH` when empty. Without npm, Build Site is greyed out with a hint. User file only.
+
+|`tools.build_timeout`
+|integer
+|`600`
+|The number of seconds a site build may run, `npm install` included, before it and every process it started are stopped. A build that writes more than 8 MiB of output is also stopped. User file only.
 
 |`git.enabled`
 |boolean
