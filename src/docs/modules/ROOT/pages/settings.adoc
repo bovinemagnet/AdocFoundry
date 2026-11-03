@@ -331,7 +331,7 @@ check = true                     # look for a newer release at start-up
 |`quality.enabled`
 |boolean
 |`false`
-|Keeps the documentation quality audit current while a workspace is open. `adocfoundry-cli audit` audits whether it is set or not.
+|Keeps the documentation quality audit current from the moment a workspace opens, so the Quality overview and the Problems panel show it from the start. Without it, the app keeps the audit once Run Audit is used. `adocfoundry-cli audit` audits whether it is set or not.
 
 |`quality.fail_on`
 |string

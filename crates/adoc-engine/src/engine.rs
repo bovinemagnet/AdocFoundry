@@ -978,9 +978,11 @@ impl Engine {
     pub fn reload_settings(&mut self) -> Result<(), EngineError> {
         let git_was_enabled = self.settings.git.enabled;
         let tools_before = self.settings.tools.clone();
+        let audit_was_kept = self.audit_enabled();
         self.settings.reload()?;
         self.settings_loaded = Some(self.settings_files());
         self.emit(EngineEvent::SettingsChanged);
+        self.audit_settings_changed(audit_was_kept);
         self.spelling_settings_changed();
         self.diagram_tools_changed(&tools_before);
         self.settle_preview_tab();

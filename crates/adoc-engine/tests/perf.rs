@@ -401,3 +401,113 @@ fn quick_open_in_a_workspace_of_20000_pages() {
     worst = worst.max(took);
     println!("worst after the first: {worst:?}");
 }
+
+/// The engine-thread cost of keeping the audit and its problems current in an Antora component
+/// of 2,000 pages, half of them unlisted and each with an image without text: assembling the
+/// kept audit (what the Quality overview shows), and one edit's update of the problems, without
+/// the audit and with it.
+#[test]
+#[ignore = "timing probe"]
+fn audit_upkeep_in_a_component_of_2000_pages() {
+    use std::{sync::Arc, time::Duration};
+
+    use adoc_engine::{audit::AuditScope, EngineEvent, ManualClock, INDEX_SETTLE};
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    let pages = root.join("modules/ROOT/pages");
+    fs::create_dir_all(&pages).unwrap();
+    fs::write(
+        root.join("antora.yml"),
+        "name: big\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    let mut nav = String::new();
+    for page in 0..2_000 {
+        fs::write(
+            pages.join(format!("page-{page}.adoc")),
+            format!(
+                "= Page {page}\n\nText.\n\nimage::p-{page}.png[]\n\nSee xref:missing-{page}.adoc[].\n"
+            ),
+        )
+        .unwrap();
+        if page % 2 == 0 {
+            let _ = writeln!(nav, "* xref:page-{page}.adoc[]");
+        }
+    }
+    fs::write(root.join("modules/ROOT/nav.adoc"), nav).unwrap();
+
+    let clock = ManualClock::new();
+    let mut engine = Engine::with_clock(
+        Settings::default().with_git_opt_in(),
+        Arc::new(clock.clone()),
+    );
+    let events = engine.subscribe();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(60)));
+    let settle = |engine: &mut Engine| {
+        while engine.has_pending() {
+            engine.pump();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    engine.enable_problems();
+    settle(&mut engine);
+
+    let id = engine.open(&pages.join("page-1.adoc")).unwrap();
+    // Pumps after each of 20 edits until `until` arrives, timing the pumps.
+    let edits = |engine: &mut Engine, until: EngineEvent| -> Vec<Duration> {
+        (0..20)
+            .map(|round| {
+                engine
+                    .invoke(
+                        ids::EDIT_INSERT_TEXT,
+                        CommandArgs::Text {
+                            id,
+                            range: SourceRange::new(0, 0),
+                            text: if round % 2 == 0 { "\n" } else { "x" }.to_owned(),
+                        },
+                    )
+                    .unwrap();
+                clock.advance(INDEX_SETTLE);
+                let _ = events.try_iter().count();
+                let mut spent = Duration::ZERO;
+                loop {
+                    let start = Instant::now();
+                    engine.pump();
+                    spent += start.elapsed();
+                    if events.try_iter().any(|event| event == until) {
+                        break;
+                    }
+                }
+                spent
+            })
+            .collect()
+    };
+    report(
+        "one edit's problems, without the audit",
+        edits(&mut engine, EngineEvent::ProblemsChanged),
+    );
+
+    engine.enable_audit();
+    let built = Instant::now();
+    while engine.audit_builds() == 0 || engine.has_pending() {
+        engine.pump();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    println!("first audit, on a worker: {:?}", built.elapsed());
+    println!("problems: {}", engine.problem_count());
+    let samples = (0..20)
+        .map(|_| {
+            let start = Instant::now();
+            let report = engine.audit_report(&AuditScope::Workspace).unwrap();
+            assert!(report.findings().len() >= 4_000);
+            start.elapsed()
+        })
+        .collect();
+    report("assembling the kept audit", samples);
+    report(
+        "one edit's problems and audit",
+        edits(&mut engine, EngineEvent::AuditChanged),
+    );
+}

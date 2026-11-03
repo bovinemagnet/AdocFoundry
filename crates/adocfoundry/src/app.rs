@@ -137,6 +137,7 @@ fn is_idempotent(event: &EngineEvent) -> bool {
             | EngineEvent::GitBlameChanged(_)
             | EngineEvent::GitStatusChanged { .. }
             | EngineEvent::ProblemsChanged
+            | EngineEvent::AuditChanged
             | EngineEvent::NavigationChanged
             | EngineEvent::PreviewLayoutChanged
             | EngineEvent::DirectoryListed(_)

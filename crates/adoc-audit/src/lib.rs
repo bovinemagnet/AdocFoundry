@@ -32,7 +32,7 @@ mod rules;
 mod sarif;
 mod workspace;
 
-pub use policy::{Exclusion, FailOn, Policy, PolicyError, TargetVersion, Verdict};
+pub use policy::{Applied, Exclusion, FailOn, Policy, PolicyError, TargetVersion, Verdict};
 pub use report::{
     portable_path, AuditBuilder, AuditReport, AuditScope, Completeness, Coordinate, Counts,
     Evidence, Excluded, Finding, Gap, GapReason, Location, NavCoverage, Revision, RuleState,

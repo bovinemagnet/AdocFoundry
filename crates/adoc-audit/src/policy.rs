@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, fmt};
 use adoc_antora::{parse_resource_id, ResourceFamily};
 use serde::{Deserialize, Serialize};
 
-use crate::{Finding, FindingCode, RuleId, Severity};
+use crate::{Excluded, Finding, FindingCode, RuleId, Severity};
 
 /// The lowest severity that fails a gate.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -295,6 +295,37 @@ impl Policy {
             .iter()
             .find(|exclusion| exclusion.matches(finding))
     }
+
+    /// What the policy makes of `finding`, as a report under it has it: dropped when its rule is
+    /// off, else at its rule's severity (an existing diagnostic keeping its own), excluded when
+    /// an exclusion matches it.
+    #[must_use]
+    pub fn apply(&self, mut finding: Finding) -> Applied {
+        if let FindingCode::Rule(rule) = finding.code {
+            match self.severity(rule) {
+                Some(severity) => finding.severity = severity,
+                None => return Applied::Off,
+            }
+        }
+        match self.exclusion_for(&finding) {
+            Some(exclusion) => Applied::Excluded(Excluded {
+                reason: exclusion.reason.clone(),
+                finding,
+            }),
+            None => Applied::Kept(finding),
+        }
+    }
+}
+
+/// A finding under a [`Policy`] ([`Policy::apply`]).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Applied {
+    /// Reported.
+    Kept(Finding),
+    /// Counted as excluded, not reported.
+    Excluded(Excluded),
+    /// Its rule is off: neither reported nor counted.
+    Off,
 }
 
 #[cfg(test)]
@@ -432,5 +463,32 @@ mod tests {
             PolicyError::UnqualifiedResource("a.adoc".to_owned()).to_string(),
             "`a.adoc` must name its component and module, as `component:module:page.adoc`"
         );
+    }
+
+    #[test]
+    fn applying_the_policy_sets_severity_drops_and_excludes() {
+        let mut policy = Policy::default();
+        policy.set_severity(UNLISTED, "error").unwrap();
+        policy
+            .add_exclusion(UNLISTED, "3.0@product:ROOT:a.adoc", "Reached otherwise")
+            .unwrap();
+        let Applied::Kept(kept) = policy.apply(page(Some("3.0"), "b.adoc")) else {
+            panic!("b.adoc is kept");
+        };
+        assert_eq!(kept.severity, Severity::Error);
+        assert!(matches!(
+            policy.apply(page(Some("3.0"), "a.adoc")),
+            Applied::Excluded(Excluded { reason, .. }) if reason == "Reached otherwise"
+        ));
+        let mut diagnostic = page(Some("3.0"), "b.adoc");
+        diagnostic.code = FindingCode::Diagnostic(DiagnosticCode::UnresolvedXrefFile);
+        diagnostic.severity = Severity::Info;
+        assert_eq!(
+            policy.apply(diagnostic.clone()),
+            Applied::Kept(diagnostic),
+            "a diagnostic keeps its own severity"
+        );
+        policy.set_severity(UNLISTED, "off").unwrap();
+        assert_eq!(policy.apply(page(Some("3.0"), "b.adoc")), Applied::Off);
     }
 }

@@ -146,9 +146,30 @@ See <<the-files-view>>.
 
 Problems::
 Workspace diagnostics grouped by file, with a count in the tab title.
-Click one to open the file at that location.
+Once the quality audit has run, the audit's own findings are listed too: pages in no navigation file, pages with no title and block images with no alternative text.
+Each finding appears once, because the existing diagnostics the audit includes are not listed twice.
+A finding about a whole page (an unlisted page, a missing title) shows no line and column and opens the page at its start.
+Any other finding opens the file with its range selected.
+A filter bar heads the panel.
+*Filter ▾* offers severity, code or rule, component version and module, each a checked item that toggles.
+Each choice made is shown as a button ending in `×` that clears it, and while filtered the bar says how many problems of the total are shown (`2 of 9`).
+Click a problem to open the file at that location.
 A row too long for the sidebar ends with an ellipsis, and hovering it shows the full text in a tooltip.
 This applies to every panel in the sidebar.
+
+Quality::
+The Quality overview of the documentation quality audit.
+It shows the status (complete, partial or unavailable, with the reasons for missing coverage) and an out-of-date note while a newer audit runs.
+It shows findings by severity and findings by rule or code.
+It shows navigation coverage for each component version as listed pages out of pages, with any pages whose listing cannot be known without a build counted as undetermined.
+It shows skipped constructs by rule (for example a navigation file that includes another) and the findings excluded by the `[quality]` settings, each with its reason.
+The overview lists no individual findings.
+Clicking a count opens Problems filtered to exactly the findings counted, and clicking a component version's coverage opens Problems filtered to that version's unlisted pages.
+Skips and exclusions are counted only here, because Problems lists neither.
+*Run Audit* (in the overview, File › Run Quality Audit, or the command palette) runs the audit.
+Once run, the audit is kept up to date as you edit, and running it again audits the whole workspace afresh.
+With `[quality] enabled = true` the audit is kept from the moment a workspace opens.
+See xref:command-line.adoc#audit[] for the rules, the policy and CI use, and xref:settings.adoc[] for the settings.
 
 Graph::
 The active page and the pages linked to it, with its place in the navigation and its links out and backlinks.

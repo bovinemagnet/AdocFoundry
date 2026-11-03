@@ -12,6 +12,7 @@ pub mod ids {
 
     pub const WORKSPACE_OPEN_FOLDER: CommandId = CommandId::new("workspace.open_folder");
     pub const WORKSPACE_REINDEX: CommandId = CommandId::new("workspace.reindex");
+    pub const QUALITY_RUN_AUDIT: CommandId = CommandId::new("quality.run_audit");
     pub const WORKSPACE_QUICK_OPEN: CommandId = CommandId::new("workspace.quick_open");
     pub const WORKSPACE_OPEN_RECENT: CommandId = CommandId::new("workspace.open_recent");
     pub const DOCUMENT_OPEN: CommandId = CommandId::new("document.open");
@@ -149,7 +150,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, ActiveTab, Always};
 
-    let builtin: [(CommandSpec, Run); 39] = [
+    let builtin: [(CommandSpec, Run); 40] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -299,6 +300,16 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 Always,
             ),
             workspace_reindex,
+        ),
+        (
+            spec(
+                ids::QUALITY_RUN_AUDIT,
+                "Run Quality Audit",
+                Workspace,
+                None,
+                Always,
+            ),
+            quality_run_audit,
         ),
         (
             spec(
@@ -794,6 +805,11 @@ fn preview_pin(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
 
 fn workspace_reindex(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
     engine.reindex();
+    Ok(CommandOutcome::Done)
+}
+
+fn quality_run_audit(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    engine.run_audit();
     Ok(CommandOutcome::Done)
 }
 

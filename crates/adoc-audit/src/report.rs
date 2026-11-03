@@ -10,7 +10,7 @@ use adoc_antora::{AntoraCoordinate, ResourceFamily};
 use adoc_core::{DiagnosticSeverity, SourceRange};
 use serde::{Deserialize, Serialize};
 
-use crate::{FailOn, FindingCode, Policy, RuleId, Verdict, RULES};
+use crate::{Applied, FailOn, FindingCode, Policy, RuleId, Verdict, RULES};
 
 /// The version of the report's schema. It changes whenever a field or a rule's meaning does.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -463,19 +463,11 @@ impl AuditBuilder {
         };
         let mut findings = Vec::new();
         let mut excluded = Vec::new();
-        for mut finding in self.findings {
-            if let FindingCode::Rule(rule) = finding.code {
-                match policy.severity(rule) {
-                    Some(severity) => finding.severity = severity,
-                    None => continue,
-                }
-            }
-            match policy.exclusion_for(&finding) {
-                Some(exclusion) => excluded.push(Excluded {
-                    reason: exclusion.reason.clone(),
-                    finding,
-                }),
-                None => findings.push(finding),
+        for finding in self.findings {
+            match policy.apply(finding) {
+                Applied::Kept(finding) => findings.push(finding),
+                Applied::Excluded(finding) => excluded.push(finding),
+                Applied::Off => {}
             }
         }
         findings.sort_by(|left, right| left.order_key().cmp(&right.order_key()));

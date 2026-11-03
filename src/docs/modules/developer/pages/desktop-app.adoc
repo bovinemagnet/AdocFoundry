@@ -308,7 +308,7 @@ A tab's `TabView` (`Editor` or `Image`) is made when the tab is first shown.
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 
-The Problems panel (`sidebar::problems`) builds its rows from `Engine::problems()` when `EngineEvent::ProblemsChanged` arrives and when a window opens, each labelled `line:column message`.
+The Problems panel (`sidebar::problems`) builds its rows from `Engine::filtered_problems` under the panel's filter when `EngineEvent::ProblemsChanged` arrives, when the filter changes and when a window opens, each labelled `line:column message`, or `message` alone for a problem about the whole file.
 It does not diagnose the workspace or read files, and nothing is computed while the sidebar renders.
 Peek Include shows the text in the `CommandOutcome::Peek` that `navigate.peek_include` returns, and reads nothing itself.
 
@@ -402,6 +402,17 @@ The Display section gives the graphics backend, the GPU and display server where
 `src/about.rs` completes the engine's `app.about` command, which returns an `About` (see xref:engine.adoc#about[About]).
 It embeds the `notices.json` that `build.rs` writes, names the program with the build string from `ADOCFOUNDRY_BUILD`, and shows the dialog for the `ShowAbout` action.
 The dialog is a `uniform_list` of components beside the chosen component's licence texts, with Repository and Documentation buttons and a Copy Licence button.
+
+[#the-quality-panel]
+== The Quality panel
+
+`src/quality_view.rs` holds `Overview`, built by `Overview::of` from `Engine::audit_report(&AuditScope::Workspace)` and `audit_stale`, as titled sections of rows, each row with an optional `ProblemFilter`.
+`render` draws it with a Run Audit button.
+The workspace view keeps the overview and builds it again on `EngineEvent::AuditChanged` only while the Quality tab is shown.
+Otherwise it marks the overview outdated and builds it when the tab is next shown, so a change to the audit assembles the report only for a reader.
+A row with a filter calls `WorkspaceView::filter_problems`, which sets the Problems filter and shows Problems.
+The Problems panel's filter bar (`render_problem_filter`) offers what `sidebar::problem_facets` finds in the engine's problems, and `sidebar::problems` lists what `Engine::filtered_problems` lets through.
+The GPUI tests `audit_panel_opens_exact_source_location`, `audit_overview_counts_filter_problems` and `problem_filter_choices_clear_one_by_one` in `src/ui_tests.rs` cover them.
 
 [#the-graph]
 == The graph

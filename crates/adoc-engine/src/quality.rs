@@ -11,6 +11,10 @@
 //! navigation files. [`Engine::audit_report`] puts the parts in a scope together under the
 //! current `[quality]` policy, the same way [`Engine::audit_now`] does for parts it computes
 //! there and then, so the kept report and a fresh one always agree.
+//!
+//! While the problems are kept too, the kept audit's `quality.*` findings are problems, each
+//! placed by the line and column its part was audited at, which are worked out from the same
+//! text when the part is (on the worker for a whole build), so listing them reads no file.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -18,19 +22,23 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use adoc_audit::{AuditInput, AuditReport, AuditScope, FileAudit, VersionAudit};
-use adoc_core::FileAccess;
+use adoc_audit::{AuditInput, AuditReport, AuditScope, FileAudit, FindingCode, VersionAudit};
+use adoc_core::{DiagnosticSeverity, FileAccess, LineIndex, SourceRange};
 use adoc_index::normalize_path;
 use adoc_lang::WorkspaceState;
 
-use crate::{workspace::WorkerMessage, Engine, EngineEvent};
+use crate::{problems::line_and_column, workspace::WorkerMessage, Engine, EngineEvent, Problem};
 
 /// A component version, as the audit keys its part.
 type VersionKey = (String, Option<String>);
 
+/// The 1-based line and column of each range a file's `quality.*` findings name.
+type Positions = BTreeMap<SourceRange, (usize, usize)>;
+
 /// The parts a whole build found.
 pub(crate) struct AuditParts {
     files: BTreeMap<PathBuf, FileAudit>,
+    positions: BTreeMap<PathBuf, Positions>,
     versions: BTreeMap<VersionKey, VersionAudit>,
     /// The catalog revision the versions were audited at.
     catalog: u64,
@@ -42,6 +50,8 @@ pub(crate) struct QualityState {
     enabled: bool,
     /// Each file's part, for the files with something to report.
     files: BTreeMap<PathBuf, FileAudit>,
+    /// Where in each file its part's `quality.*` findings are, for the problems.
+    positions: BTreeMap<PathBuf, Positions>,
     versions: BTreeMap<VersionKey, VersionAudit>,
     /// The catalog revision `versions` belong to; another means every version is audited again.
     catalog: u64,
@@ -66,6 +76,28 @@ impl Engine {
     /// Keeps the quality audit ([`Engine::audit_report`]) for a front end that shows it.
     pub fn enable_audit(&mut self) {
         self.quality.enabled = true;
+    }
+
+    /// Run Audit: keeps the audit, as [`Engine::enable_audit`] does, and audits the whole
+    /// workspace again if it was kept already.
+    pub fn run_audit(&mut self) {
+        self.quality.enabled = true;
+        if self.quality.started {
+            self.quality.full_due = true;
+        }
+    }
+
+    /// Whether the audit is kept: asked for, or turned on by `[quality] enabled`.
+    #[must_use]
+    pub fn audit_enabled(&self) -> bool {
+        self.audit_kept()
+    }
+
+    /// Whether the kept audit is older than the workspace: a build or a change waits to be
+    /// audited. `false` before the first build, which has nothing to be older than.
+    #[must_use]
+    pub fn audit_stale(&self) -> bool {
+        self.quality.built && self.has_due_audit()
     }
 
     /// The kept audit of `scope`, under the current `[quality]` policy; `None` until the first
@@ -225,7 +257,9 @@ impl Engine {
         };
         let mut files = Vec::new();
         for path in &dirty {
-            files.push((path.clone(), adoc_audit::audit_file(&input, path)));
+            let part = adoc_audit::audit_file(&input, path);
+            let positions = positions_of(&part, || self.audit_text(path));
+            files.push((path.clone(), part, positions));
         }
         let mut audited = Vec::new();
         for key in versions {
@@ -234,12 +268,33 @@ impl Engine {
         }
         drop(read);
         let mut changed = false;
-        for (path, part) in files {
+        // The files whose quality problems these parts can change: the files audited, and those
+        // the old and new findings of the versions audited are about.
+        let mut touched: BTreeSet<PathBuf> = dirty;
+        for (key, part) in &audited {
+            let findings = self
+                .quality
+                .versions
+                .get(key)
+                .into_iter()
+                .chain(part)
+                .flat_map(|part| &part.findings);
+            touched.extend(findings.filter_map(|finding| self.audit_path(&finding.location)));
+        }
+        for (path, part, positions) in files {
+            let moved = if positions.is_empty() {
+                self.quality.positions.remove(&path).is_some()
+            } else {
+                self.quality
+                    .positions
+                    .insert(path.clone(), positions.clone())
+                    != Some(positions)
+            };
             changed |= if part.is_empty() {
                 self.quality.files.remove(&path).is_some()
             } else {
                 self.quality.files.insert(path, part.clone()) != Some(part)
-            };
+            } || moved;
         }
         for (key, part) in audited {
             changed |= match part {
@@ -249,9 +304,198 @@ impl Engine {
         }
         self.quality.catalog = catalog;
         if changed {
-            self.emit(EngineEvent::AuditChanged);
+            self.audit_changed(Some(&touched));
         }
         1
+    }
+
+    /// The kept audit changed, in the parts of the files `touched` names or, for `None`,
+    /// anywhere: their findings among the problems follow, then [`EngineEvent::AuditChanged`].
+    fn audit_changed(&mut self, touched: Option<&BTreeSet<PathBuf>>) {
+        self.refresh_quality_problems(touched);
+        self.emit(EngineEvent::AuditChanged);
+    }
+
+    /// The settings were read again, and the audit was kept before if `was_kept`. The policy may
+    /// have changed, so the kept audit is put together again; an audit kept again after being
+    /// let go is built again, its parts being older than the changes made meanwhile.
+    pub(crate) fn audit_settings_changed(&mut self, was_kept: bool) {
+        if self.audit_kept() && !was_kept && self.quality.started {
+            self.quality.full_due = true;
+        }
+        if self.quality.built {
+            self.audit_changed(None);
+        }
+    }
+
+    /// Lists the kept audit's `quality.*` findings among the problems, those of the files
+    /// `touched` names or, for `None`, every file's; none while the audit is not kept. Only for
+    /// a front end that keeps the problems. Each finding is as the kept report has it, under the
+    /// same policy ([`adoc_audit::Policy::apply`]), without putting the report together.
+    pub(crate) fn refresh_quality_problems(&mut self, touched: Option<&BTreeSet<PathBuf>>) {
+        if !self.problems_kept() {
+            return;
+        }
+        let kept = self.audit_kept() && self.quality.built;
+        let changed = match touched {
+            Some(paths) if kept => {
+                let mut found = self.quality_problems(Some(paths));
+                let mut changed = false;
+                for path in paths {
+                    let problems = found.remove(path).unwrap_or_default();
+                    changed |= self.set_quality_problems_of(path, problems);
+                }
+                changed
+            }
+            Some(_) => false,
+            None => {
+                let found = if kept {
+                    self.quality_problems(None)
+                } else {
+                    BTreeMap::new()
+                };
+                self.set_quality_problems(found)
+            }
+        };
+        if changed {
+            self.emit(EngineEvent::ProblemsChanged);
+        }
+    }
+
+    /// The kept `quality.*` findings as problems, by file: of the files `only` names, or of
+    /// every file. A finding about a place is placed where its part found it; one about the
+    /// whole file is at its start. An excluded finding, or one of a rule turned off, is none.
+    fn quality_problems(
+        &self,
+        only: Option<&BTreeSet<PathBuf>>,
+    ) -> BTreeMap<PathBuf, Vec<Problem>> {
+        let rule = |finding: &&adoc_audit::Finding| matches!(finding.code, FindingCode::Rule(_));
+        let versions = self
+            .quality
+            .versions
+            .values()
+            .flat_map(|part| &part.findings)
+            .filter(rule);
+        let mut found: BTreeMap<PathBuf, Vec<&adoc_audit::Finding>> = BTreeMap::new();
+        match only {
+            None => {
+                for (path, part) in &self.quality.files {
+                    found
+                        .entry(path.clone())
+                        .or_default()
+                        .extend(part.findings.iter().filter(rule));
+                }
+                for finding in versions {
+                    if let Some(path) = self.audit_path(&finding.location) {
+                        found.entry(path).or_default().push(finding);
+                    }
+                }
+            }
+            Some(paths) => {
+                // Each file by its root and its path from there, as the audit names it.
+                let mut wanted: BTreeMap<usize, BTreeMap<String, &PathBuf>> = BTreeMap::new();
+                for path in paths {
+                    if let Some((root, relative)) = self.audit_location(path) {
+                        wanted.entry(root).or_default().insert(relative, path);
+                    }
+                    let part = self.quality.files.get(path);
+                    found.entry(path.clone()).or_default().extend(
+                        part.into_iter()
+                            .flat_map(|part| &part.findings)
+                            .filter(rule),
+                    );
+                }
+                for finding in versions {
+                    let path = wanted
+                        .get(&finding.location.root)
+                        .and_then(|paths| paths.get(finding.location.path.as_str()));
+                    if let Some(path) = path {
+                        found.entry((*path).clone()).or_default().push(finding);
+                    }
+                }
+            }
+        }
+        let policy = &self.settings.quality.policy;
+        found
+            .into_iter()
+            .map(|(path, findings)| {
+                let positions = self.quality.positions.get(&path);
+                let mut problems: Vec<Problem> = findings
+                    .into_iter()
+                    .filter_map(|finding| match policy.apply(finding.clone()) {
+                        adoc_audit::Applied::Kept(finding) => Some(finding),
+                        _ => None,
+                    })
+                    .map(|finding| {
+                        let (range, (line, column)) = match finding.location.range {
+                            Some(range) => (
+                                range,
+                                positions
+                                    .and_then(|positions| positions.get(&range))
+                                    .copied()
+                                    .unwrap_or((1, 1)),
+                            ),
+                            None => (SourceRange::new(0, 0), (1, 1)),
+                        };
+                        Problem {
+                            range,
+                            line,
+                            column,
+                            severity: match finding.severity {
+                                adoc_audit::Severity::Info => DiagnosticSeverity::Information,
+                                adoc_audit::Severity::Warning => DiagnosticSeverity::Warning,
+                                adoc_audit::Severity::Error => DiagnosticSeverity::Error,
+                            },
+                            code: finding.code,
+                            whole_file: finding.location.range.is_none(),
+                            message: finding.message,
+                        }
+                    })
+                    .collect();
+                problems.sort_by(|left, right| {
+                    (left.range, left.code.as_str(), &left.message).cmp(&(
+                        right.range,
+                        right.code.as_str(),
+                        &right.message,
+                    ))
+                });
+                problems.dedup();
+                (path, problems)
+            })
+            .collect()
+    }
+
+    /// The file a finding's location names: its path from its root, joined to the root.
+    fn audit_path(&self, location: &adoc_audit::Location) -> Option<PathBuf> {
+        let root = self.roots.get(location.root)?;
+        Some(
+            location
+                .path
+                .split('/')
+                .fold(root.clone(), |path, step| path.join(step)),
+        )
+    }
+
+    /// The root and the path from it with `/` separators that the audit names the file at
+    /// `path` by: the first root holding it, as `adoc_audit` places a finding.
+    fn audit_location(&self, path: &Path) -> Option<(usize, String)> {
+        self.roots.iter().enumerate().find_map(|(index, root)| {
+            path.strip_prefix(root)
+                .ok()
+                .map(|relative| (index, adoc_audit::portable_path(relative)))
+        })
+    }
+
+    /// The text of the file at `path` as the audit read it: an open document's buffer, the
+    /// index's text, or the file.
+    fn audit_text(&self, path: &Path) -> Option<String> {
+        if let Some(document) = self
+            .document_for_path(path)
+            .and_then(|id| self.document(id))
+        {
+            return Some(document.text.to_string());
+        }
+        file_text(&self.workspace, &self.file_access, path)
     }
 
     /// The component versions whose `antora.yml` lists one of `paths` as a navigation file.
@@ -318,11 +562,12 @@ impl Engine {
         let quality = &mut self.quality;
         quality.running = None;
         quality.files = parts.files;
+        quality.positions = parts.positions;
         quality.versions = parts.versions;
         quality.catalog = parts.catalog;
         quality.built = true;
         quality.builds += 1;
-        self.emit(EngineEvent::AuditChanged);
+        self.audit_changed(None);
     }
 
     /// Reads a navigation file for the audit: an open document from its buffer, any other file
@@ -354,10 +599,18 @@ fn whole_audit(
         roots,
         read: &read,
     };
+    let mut positions = BTreeMap::new();
     let files = adoc_audit::audited_files(state)
         .into_iter()
         .filter_map(|path| {
             let part = adoc_audit::audit_file(&input, &path);
+            let found = positions_of(&part, || match open.get(&path) {
+                Some(text) => Some(text.clone()),
+                None => file_text(state, access, &path),
+            });
+            if !found.is_empty() {
+                positions.insert(path.clone(), found);
+            }
             (!part.is_empty()).then_some((path, part))
         })
         .collect();
@@ -372,7 +625,38 @@ fn whole_audit(
         .collect();
     AuditParts {
         files,
+        positions,
         versions,
         catalog: state.antora.revision(),
     }
+}
+
+/// The line and column of each range `part`'s `quality.*` findings name, in the text `text`
+/// gives, which is read only when there is such a range.
+fn positions_of(part: &FileAudit, text: impl FnOnce() -> Option<String>) -> Positions {
+    let ranges: BTreeSet<SourceRange> = part
+        .findings
+        .iter()
+        .filter(|finding| matches!(finding.code, FindingCode::Rule(_)))
+        .filter_map(|finding| finding.location.range)
+        .collect();
+    if ranges.is_empty() {
+        return Positions::new();
+    }
+    let text = text().unwrap_or_default();
+    let lines = LineIndex::new(&text);
+    ranges
+        .into_iter()
+        .map(|range| (range, line_and_column(&lines, &text, range.start)))
+        .collect()
+}
+
+/// The index's text of the file at `path`, or else the file's.
+fn file_text(state: &WorkspaceState, access: &FileAccess, path: &Path) -> Option<String> {
+    state
+        .index
+        .file(path)
+        .and_then(adoc_index::FileEntry::text)
+        .map(std::borrow::Cow::into_owned)
+        .or_else(|| access.read_to_string(path).ok())
 }

@@ -14,6 +14,7 @@ mod image_view;
 mod menus;
 mod mirror_view;
 mod preview;
+mod quality_view;
 mod references_view;
 mod renders;
 mod search_view;
