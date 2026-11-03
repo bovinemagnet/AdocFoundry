@@ -531,9 +531,17 @@ The tests are:
 
 * `validate_publication_reports_what_the_engine_checks`, which checks the start pages by default, the navigation files, the coverage, a ready profile and a broken one, the `not_ready` and `ready` outcomes, and a scope error
 * `the_prompts_are_recipes_that_grant_nothing`, which checks the four prompts, each naming its tools and saying that the server decides, that the tools are unchanged, and that a missing argument and an unknown prompt are refused
-* `mcp_build_not_enabled_by_allow_write`, which checks that `--allow-write` offers no build tool, that `build_site` is unknown, and that `--allow-build` is refused as an unknown option until issue #334
+* `mcp_build_not_enabled_by_allow_write`, which checks that `build_site` is absent with `--allow-write` alone, refused with `permission_denied` when called, and listed, without any write tool, with `--allow-build`
 
 The engine's `a_profile_is_checked_without_exporting`, in `crates/adoc-engine/tests/profiles.rs`, covers `Engine::profile_problems`.
+
+The Unix-only tests in `crates/adoc-mcp/src/build.rs` use a project made with `project.new`, stand-in `node` and `npm` scripts named through `[tools] node` in a user settings file, and `build_timeout = 2`.
+They are:
+
+* `mcp_build_site_returns_logs_and_output_paths`
+* `mcp_stalled_build_times_out_without_blocking_other_clients`, where a `wait_seconds: 0` call answers `running`, another request gets the engine within a second while a second call waits, and that call reports the same build as `failed` after 2 s
+* `mcp_build_site_without_node_is_unavailable`
+* `the_log_s_end_is_kept`
 
 The manual checks of the whole MCP epic are in `docs/qa/mcp.md` in the repository.
 They cover real clients, HTTP, and the negative and security cases by hand.

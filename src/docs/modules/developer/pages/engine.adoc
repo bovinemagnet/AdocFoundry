@@ -980,7 +980,7 @@ The app keeps the folders agreed to in `WorkspaceView::trusted_builds`, for the 
 
 The app's side is `crates/adocfoundry/src/workspace_view/build_site.rs`: the Build panel (`SidebarTab::Build`, drawn with a `uniform_list`) and the notification.
 The hint under the menu item is in `crates/adocfoundry/src/menus.rs`.
-The MCP `build_site` tool is still issue #334.
+The MCP `build_site` tool is `crates/adoc-mcp/src/build.rs`; it needs `--allow-build`.
 
 [#staged-changes]
 == Staged changes

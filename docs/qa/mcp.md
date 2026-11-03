@@ -16,6 +16,7 @@ Run each item on macOS 13+, Windows 10+ and Ubuntu 22.04+, from a build of `main
 - **Staged changes:** `tests/changes.rs` and `crates/adoc-engine/tests/staging.rs`.
 - **Creation:** `tests/creation.rs`; grouped undo in `src/creation.rs`.
 - **Publication and prompts:** `tests/publication.rs`.
+- **Site builds:** `src/build.rs` (stand-in npm, Unix): logs and output paths, a stalled build stopped at `[tools] build_timeout` while other requests are answered, no Node.js `unavailable`; `mcp_build_not_enabled_by_allow_write` in `tests/publication.rs`.
 
 ## Setup
 
@@ -50,6 +51,13 @@ Run each item on macOS 13+, Windows 10+ and Ubuntu 22.04+, from a build of `main
 
 - [ ] `validate_publication` on the real workspace reports the audit, each component version's start page and navigation files, and each `[pdf.profiles]` profile, and says what it did not check. Break a profile's content path and call again: that profile is not ready, and `outcome` is `not_ready`.
 - [ ] In the assistant, list the prompts. `review_documentation`, `create_howto`, `review_documentation_change` and `prepare_release` are offered and each, run, calls the tools it names.
+
+## Site builds
+
+- [ ] Start with `--allow-write` only: `build_site` is not listed, and calling it is refused with `permission_denied` naming `--allow-build`. Start with `--allow-build` only: it is listed, and no write tool is.
+- [ ] On a project made with `create_project` inside a Git repository, on a machine with Node.js, call `build_site`: it answers `built` with `site` `build/site/index.html`, and the log's end shows `$ npm install` and Antora's output. Call again: no `npm install`.
+- [ ] Call `build_site` with `wait_seconds: 0` on a fresh project: `running`. Read a page from another client meanwhile; it answers. Call `build_site` again: `started` is false and it answers with that build's outcome.
+- [ ] With Node.js off the server's `PATH` (or `[tools] node` set to a missing file), `build_site` is `unavailable` with the reason, and nothing is installed.
 
 ## HTTP and runtime
 

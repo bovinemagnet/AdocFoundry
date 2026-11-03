@@ -54,6 +54,19 @@ const WRITE_TOOLS: [&str; 8] = [
     "create_project",
 ];
 
+/// The tools that run the project's own build tools, listed and callable only with
+/// `--allow-build`, which `--allow-write` never implies.
+const BUILD_TOOLS: [&str; 1] = ["build_site"];
+
+/// What the server was started allowing beyond reading.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Permissions {
+    /// `--allow-write`: the tools in [`WRITE_TOOLS`].
+    pub write: bool,
+    /// `--allow-build`: the tools in [`BUILD_TOOLS`].
+    pub build: bool,
+}
+
 /// At most this many items in a list result that is not paged; the total is stated, and
 /// `incomplete` set, when there are more.
 const MAX_ITEMS: usize = crate::responses::PAGE;
@@ -89,7 +102,7 @@ pub struct Server {
     lock_wait: Duration,
     /// The requests waiting for or using the engine.
     waiting: Arc<AtomicUsize>,
-    allow_write: bool,
+    permissions: Permissions,
     /// This session's staged changes: each session (an HTTP session, or the one over stdio)
     /// has its own, though all share the engine.
     pub(crate) previews: Arc<Mutex<crate::changes::Previews>>,
@@ -430,7 +443,7 @@ impl Drop for Waiting {
 }
 
 impl Server {
-    pub fn new(mut engine: Engine, roots: Vec<PathBuf>, allow_write: bool) -> Self {
+    pub fn new(mut engine: Engine, roots: Vec<PathBuf>, permissions: Permissions) -> Self {
         let events = engine.subscribe();
         let mut tool_router = Self::tool_router()
             + Self::discovery_router()
@@ -438,9 +451,15 @@ impl Server {
             + Self::changes_router()
             + Self::creation_router()
             + Self::publication_router()
-            + Self::impact_router();
-        if !allow_write {
+            + Self::impact_router()
+            + Self::build_router();
+        if !permissions.write {
             for name in WRITE_TOOLS {
+                tool_router.remove_route(name);
+            }
+        }
+        if !permissions.build {
+            for name in BUILD_TOOLS {
                 tool_router.remove_route(name);
             }
         }
@@ -453,7 +472,7 @@ impl Server {
             tool_router,
             lock_wait: LOCK_WAIT,
             waiting: Arc::default(),
-            allow_write,
+            permissions,
             previews: Arc::default(),
             subscriptions: Arc::default(),
             registry: Arc::default(),
@@ -471,13 +490,13 @@ impl Server {
     }
 
     pub(crate) fn allow_write(&self) -> bool {
-        self.allow_write
+        self.permissions.write
     }
 
     /// Runs `work` with the engine on the runtime's blocking threads, so a long render, search
     /// or export never holds up the runtime: other requests and sessions are answered meanwhile,
     /// and wait only for the engine itself, and that for at most [`LOCK_WAIT`].
-    async fn blocking<T: Send + 'static>(
+    pub(crate) async fn blocking<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut State) -> T + Send + 'static,
     ) -> Result<T, Failure> {
@@ -1291,14 +1310,22 @@ impl ServerHandler for Server {
         let version = context.protocol_version();
         // The write tools are not listed without `--allow-write`; a client that calls one
         // anyway is told why, whatever a page or the client asked.
-        if !self.allow_write && WRITE_TOOLS.contains(&request.name.as_ref()) {
-            let refused = answer(Err(Failure::new(
-                ErrorCode::PermissionDenied,
-                format!(
-                    "`{}` changes files, and this server was started without --allow-write",
-                    request.name
-                ),
-            )));
+        let refusal = if !self.permissions.write && WRITE_TOOLS.contains(&request.name.as_ref()) {
+            Some(format!(
+                "`{}` changes files, and this server was started without --allow-write",
+                request.name
+            ))
+        } else if !self.permissions.build && BUILD_TOOLS.contains(&request.name.as_ref()) {
+            Some(format!(
+                "`{}` runs the project's own build tools, and this server was started without \
+                 --allow-build",
+                request.name
+            ))
+        } else {
+            None
+        };
+        if let Some(message) = refusal {
+            let refused = answer(Err(Failure::new(ErrorCode::PermissionDenied, message)));
             return Ok(CallToolResponse::Complete(for_session(
                 refused,
                 version.as_ref(),
@@ -1474,7 +1501,7 @@ mod tests {
         let mut engine = Engine::new(adoc_engine::Settings::default().with_git_opt_in());
         engine.open_workspace(vec![root.clone()]).unwrap();
         assert!(engine.wait_for_workers(Duration::from_secs(30)));
-        Server::new(engine, vec![root], false)
+        Server::new(engine, vec![root], Permissions::default())
     }
 
     fn code(result: &CallToolResult) -> Value {

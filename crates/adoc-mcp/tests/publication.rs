@@ -4,8 +4,6 @@
 
 mod common;
 
-use std::process::{Command, Stdio};
-
 use common::{fixture, scratch, Client};
 use serde_json::{json, Value};
 
@@ -184,19 +182,28 @@ fn mcp_build_not_enabled_by_allow_write() {
         !names.iter().any(|name| name.contains("build")),
         "but building is not: {names:?}"
     );
-    let refused = client.request(
-        "tools/call",
-        json!({ "name": "build_site", "arguments": {} }),
+    // Called anyway, it is refused for want of --allow-build, as a write tool is without
+    // --allow-write.
+    let refused = client.call_result("build_site", json!({}));
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(
+        refused["structuredContent"]["error"]["code"],
+        "permission_denied"
     );
-    assert!(refused.get("error").is_some(), "no such tool: {refused}");
+    assert!(refused["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("--allow-build"));
     client.stop();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_adoc-mcp"))
-        .arg(fixture("discovery"))
-        .args(["--allow-write", "--allow-build"])
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("--allow-build"));
+    // `--allow-build` offers it, and nothing that writes.
+    let (mut client, _) =
+        Client::start_with_options(&fixture("discovery"), &["--allow-build"], "2025-06-18");
+    let names = client.tool_names();
+    assert!(names.iter().any(|name| name == "build_site"), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name == "apply_changes"),
+        "{names:?}"
+    );
+    client.stop();
 }

@@ -3,11 +3,12 @@
 //! through the engine, and edit it when allowed.
 //!
 //! ```text
-//! adoc-mcp <root>... [--allow-write] [--http <addr>]
+//! adoc-mcp <root>... [--allow-write] [--allow-build] [--http <addr>]
 //! adoc-mcp --version
 //! ```
 
 mod analysis;
+mod build;
 mod changes;
 mod creation;
 mod discovery;
@@ -26,7 +27,7 @@ use adoc_engine::{Engine, FileAccess, Settings};
 use rmcp::ServiceExt as _;
 
 const USAGE: &str =
-    "usage: adoc-mcp <root>... [--allow-write] [--http <addr>]\n       adoc-mcp --version";
+    "usage: adoc-mcp <root>... [--allow-write] [--allow-build] [--http <addr>]\n       adoc-mcp --version";
 
 /// How long indexing the workspace may take before the server starts anyway.
 const INDEX_TIMEOUT: Duration = Duration::from_secs(120);
@@ -44,7 +45,7 @@ fn main() -> ExitCode {
 
 fn run(arguments: &[String]) -> Result<(), String> {
     let mut roots = Vec::new();
-    let mut allow_write = false;
+    let mut permissions = server::Permissions::default();
     let mut listen = None;
     let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {
@@ -57,7 +58,9 @@ fn run(arguments: &[String]) -> Result<(), String> {
                 println!("{USAGE}");
                 return Ok(());
             }
-            "--allow-write" => allow_write = true,
+            "--allow-write" => permissions.write = true,
+            // Runs the project's npm and Antora, which root confinement cannot reach.
+            "--allow-build" => permissions.build = true,
             "--http" => {
                 let address = arguments
                     .next()
@@ -98,7 +101,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     engine.wait_for_workers(INDEX_TIMEOUT);
 
-    let server = server::Server::new(engine, roots, allow_write);
+    let server = server::Server::new(engine, roots, permissions);
     tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
