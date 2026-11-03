@@ -77,6 +77,7 @@ pub struct Engine {
     pub(crate) group_created: BTreeMap<UndoGroup, Vec<crate::new_page::CreatedFile>>,
     /// The modules groups made, for their descriptors and folders on undo and redo.
     pub(crate) group_modules: BTreeMap<UndoGroup, crate::new_module::MadeModule>,
+    pub(crate) group_projects: BTreeMap<UndoGroup, crate::new_project::MadeProject>,
     /// Revision snapshots for impact analysis, by tree id.
     #[cfg_attr(not(feature = "git"), allow(dead_code))]
     pub(crate) impact: crate::impact_analysis::ImpactCache,
@@ -201,6 +202,7 @@ impl Engine {
             group_moves: BTreeMap::new(),
             group_created: BTreeMap::new(),
             group_modules: BTreeMap::new(),
+            group_projects: BTreeMap::new(),
             impact: crate::impact_analysis::ImpactCache::default(),
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
@@ -664,6 +666,7 @@ impl Engine {
         self.replay_moves(group, true);
         self.replay_creations(group, true);
         self.replay_module(group, true);
+        self.replay_project(group, true);
         true
     }
 
@@ -700,6 +703,7 @@ impl Engine {
         self.replay_moves(group, false);
         self.replay_creations(group, false);
         self.replay_module(group, false);
+        self.replay_project(group, false);
         true
     }
 

@@ -524,6 +524,10 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |`component`, `version`, `name`, `families?`, `navigation?`, `index?`, `index_title?`
 |Makes a module through the engine's `module.new` command, the one the app's New Module invokes. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as `invalid_argument`. `families` lists the families to make besides `pages`, which is always made. Without it, `partials` and `images` are made. `navigation` (true by default) makes `nav.adoc` and lists it in `antora.yml`. `index` (true by default) makes `pages/index.adoc`, titled `index_title` or the name in title case. A name that exists is a `conflict`, and a bad name is `invalid_argument`. It applies at once, saves `antora.yml`, and is one undo step. It returns `module`, `path`, `made` (every file made), `descriptor` and `index_page` (its resource id).
 
+|`create_project`
+|`path`, `subfolder?`, `name`, `title?`, `version?`, `families?`, `index_title?`, `readme?`, `gitignore?`, `git_init?`
+|Makes an Antora component through the engine's `project.new` command. `path` is the folder, and must lie inside one of the server's roots. The tool never adds a root, and a folder or component folder outside them is `outside_workspace`. The folder must be empty, though one that holds only `.git` or `.DS_Store` counts as empty. With `subfolder`, the component goes in a new subfolder of a folder that is not empty, such as a code repository. A folder that is not empty, or a subfolder that exists, is a `conflict`. A bad name or version, a missing folder, or a folder inside a component is `invalid_argument`. `version` is empty or `~` for an unversioned component. `families` is as for `create_module`; `index_title` is the index page's title, the component's title without it. `readme` and `gitignore` (both true by default) make `README.adoc` and `.gitignore`. `git_init` (false by default, unlike the command line) initialises an empty Git repository, only when the folder is not already inside one. Nothing is staged or committed. The component joins the catalog at once, and the whole call is one undo step. It returns `schema_version`, `component`, `path` (the folder that holds `antora.yml`), `made` (every file made, sorted), `index_page` (its resource id, such as `handbook:ROOT:page$index.adoc`), `repository` (whether a repository was initialised) and `workspace_revision`.
+
 |`edit_page`
 |`path`, `edits`, `save?`
 |Applies the edits in order. Each edit is `{ old_text, new_text }` or `{ range: { start, end }, new_text }`, and goes through the engine's `edit.replace_range` command. `old_text` must occur exactly once. If any edit fails, none of that call's edits stay. With `save: true` the page is written to disk. Otherwise the edits stay in the engine's buffer, and `read_page` shows them.
@@ -555,14 +559,15 @@ The engine does, through the same commands as the app.
 It applies at once and is not staged.
 See xref:using-the-editor.adoc#new-module[Make a new module] for the folders, files and `antora.yml` change.
 
-Making a project (`create_project`) waits for issues #291 to #295.
-It is not offered yet.
+[[creating-a-project]]
+`create_project` makes a component in an empty folder, or in a new subfolder of a folder that is not empty.
+It applies at once and is not staged.
+Both the folder and the component's folder must lie inside the server's roots.
 
 === Not offered yet
 
 These are not offered, and the server does not list them:
 
-* `create_project` waits for issues #291 to #295.
 * `build_site` waits for the build command of issue #293 and a separate `--allow-build` flag (issue #334). `--allow-write` never implies it. Until then the server refuses `--allow-build` as an unknown option.
 
 == Resources

@@ -1,0 +1,23 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+expression: "format!(\"{}\\n--- antora.yml\\n{descriptor}\", stdout(&output))"
+---
+made .gitignore
+made README.adoc
+made antora.yml
+made modules/ROOT/images/.gitkeep
+made modules/ROOT/nav.adoc
+made modules/ROOT/pages/index.adoc
+made modules/ROOT/partials/.gitkeep
+
+--- antora.yml
+name: demo
+title: "Demo"
+version: ~
+nav:
+- modules/ROOT/nav.adoc
+asciidoc:
+  # Attributes every page of the component can use, for example:
+  #   attributes:
+  #     product-name: Demo
+  attributes: {}

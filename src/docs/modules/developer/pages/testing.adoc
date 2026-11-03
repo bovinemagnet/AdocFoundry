@@ -127,6 +127,7 @@ ADOCFOUNDRY_TYPING_BENCH=10 adocfoundry <folder> <file>
 It checks each Antora fixture and compares the output with `insta` snapshots.
 It also follows a link in `tests/fixtures/xrefs/`.
 `new_module_makes_a_module_through_the_engine_command` runs `new-module` and compares what it prints with a snapshot.
+`new_project_scaffolds_a_component_that_checks_clean` runs `new-project` and compares what it prints with a snapshot (`cli__new_project.snap`), then checks that `check` reports nothing.
 
 `crates/adocfoundry-cli/tests/impact.rs` runs `impact` against temporary Git repositories.
 The tests are:
@@ -152,6 +153,24 @@ The tests are:
 * `the_components_a_module_can_go_in`
 
 The application test `ui_tests::new_module_dialog_validates_live` checks that the dialog shows the folder or the reason as the name is typed.
+
+== New Project tests
+
+`crates/adoc-engine/tests/new_project.rs` drives `project.new` headlessly.
+It checks:
+
+* the layout that is made;
+* that `antora.yml` reads back;
+* a subfolder of a code repository;
+* the refusals;
+* Git initialisation, and that a repository is never nested;
+* undo;
+* that the pages resolve without a reindex;
+* that a folder outside the workspace becomes a root.
+
+The unit test `scaffold_failure_undoes_itself` in `crates/adoc-engine/src/new_project.rs` checks that a failed scaffold removes what it wrote.
+
+`mcp_create_project_reuses_engine_command` in `crates/adoc-mcp/tests/creation.rs` checks that `create_project` makes what the engine command makes.
 
 == Preview and render tests
 

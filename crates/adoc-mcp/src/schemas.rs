@@ -642,6 +642,28 @@ pub fn create_module() -> Arc<JsonObject> {
     )
 }
 
+pub fn create_project() -> Arc<JsonObject> {
+    object(
+        json!({
+            "schema_version": { "type": "integer" },
+            "component": { "type": "string" },
+            "path": { "type": "string", "description": "The folder holding `antora.yml`." },
+            "made": list(json!({ "type": "string" })),
+            "index_page": optional_string(),
+            "repository": { "type": "boolean", "description": "Whether a Git repository was initialised." },
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "component",
+            "path",
+            "made",
+            "repository",
+            "workspace_revision",
+        ],
+    )
+}
+
 pub fn analyse_impact() -> Arc<JsonObject> {
     // The impact report of `adoc-impact` (its own `schema_version`), with the impacts paged
     // and the fields below added; nested parts are the report's.

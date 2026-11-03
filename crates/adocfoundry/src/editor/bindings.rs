@@ -465,6 +465,8 @@ mod tests {
             ids::SPELLING_ADD_TO_WORKSPACE,
             ids::SPELLING_ADD_TO_USER,
             ids::PAGE_NEW_PARTIAL,
+            // Its dialog, and with it its action, comes with #294.
+            ids::PROJECT_NEW,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

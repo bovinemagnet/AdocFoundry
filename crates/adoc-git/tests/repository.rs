@@ -535,3 +535,23 @@ fn a_revision_is_read_from_objects_alone() {
         "= A\n\nUnsaved work.\n"
     );
 }
+
+#[test]
+fn init_makes_an_empty_repository_that_discover_finds() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("docs");
+    std::fs::create_dir(&root).unwrap();
+    let repository = Repository::init(&root).unwrap();
+    assert_eq!(repository.workdir(), root);
+    assert_eq!(repository.head().unwrap(), Head::Unborn);
+    std::fs::create_dir(root.join("modules")).unwrap();
+    let found = repo_in(&root.join("modules"));
+    assert_eq!(found.workdir(), root);
+    // Nothing committed: every file the folder holds is untracked.
+    std::fs::write(root.join("antora.yml"), "name: demo\n").unwrap();
+    let statuses = found.status().unwrap();
+    assert_eq!(
+        status_of(&statuses, "antora.yml"),
+        (Change::Unmodified, Change::Untracked)
+    );
+}

@@ -53,6 +53,8 @@ const USAGE: &str = "usage:
       [--format text|json] [--output <file>] [--max-impacts <n>] [--require-complete]
   adocfoundry-cli new-module <component-root> <name> [--families pages,partials,images]
       [--no-nav] [--index-title <title>]
+  adocfoundry-cli new-project <folder> --name <name> [--title <title>] [--version <version>]
+      [--subfolder <dir>] [--no-git] [--no-readme]
   adocfoundry-cli --version";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
@@ -91,6 +93,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         "graph" => graph(rest),
         "doctor" => doctor(rest),
         "new-module" => new_module(rest),
+        "new-project" => new_project(rest),
         "impact" => impact(rest),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
@@ -162,6 +165,55 @@ fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
     }
     if nav {
         println!("listed modules/{name}/nav.adoc in antora.yml");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Makes an Antora project in `<folder>` (empty, or with `--subfolder` for a code repository)
+/// through the engine's `project.new`, as the app's New Antora Project does, and lists the files
+/// it made, relative to the folder.
+fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
+    let flags = ["--no-git", "--no-readme"];
+    let has = |flag: &str| arguments.iter().any(|argument| argument == flag);
+    let (git, readme) = (!has("--no-git"), !has("--no-readme"));
+    let arguments: Vec<String> = arguments
+        .iter()
+        .filter(|argument| !flags.contains(&argument.as_str()))
+        .cloned()
+        .collect();
+    let (positional, options) =
+        parse_options(&arguments, &["name", "title", "version", "subfolder"])?;
+    let [folder] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let name = option(&options, "name").ok_or("`--name` is needed")?;
+    let root = adoc_index::normalize_path(Path::new(folder));
+    let request = adoc_engine::NewProject {
+        subfolder: option(&options, "subfolder").map(str::to_owned),
+        title: option(&options, "title").unwrap_or_default().to_owned(),
+        version: option(&options, "version").map(str::to_owned),
+        readme,
+        git_init: git,
+        ..adoc_engine::NewProject::new(root.clone(), name)
+    };
+    let mut engine = open_engine(&root, false)?;
+    let had_repository = root.join(".git").exists();
+    engine
+        .invoke(
+            adoc_engine::commands::ids::PROJECT_NEW,
+            adoc_engine::CommandArgs::NewProject(request.clone()),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut made: Vec<String> = adoc_engine::planned_tree(&request)
+        .iter()
+        .map(|path| adoc_engine::report::display_path(path, &root))
+        .collect();
+    made.sort();
+    for file in made {
+        println!("made {file}");
+    }
+    if !had_repository && root.join(".git").exists() {
+        println!("initialised a Git repository");
     }
     Ok(ExitCode::SUCCESS)
 }

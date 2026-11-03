@@ -116,8 +116,54 @@ pub fn valid_module_name(name: &str) -> bool {
         })
 }
 
+/// The files a module in `folder` holds when made, with their text, and the folders made for
+/// them, the module's own first: the families (`pages` always) with a `.gitkeep` while empty,
+/// an index page titled `title`, and with `nav` a navigation file listing it.
+pub(crate) fn module_files(
+    folder: &Path,
+    families: &[ResourceFamily],
+    nav: bool,
+    title: Option<&str>,
+) -> (Vec<(PathBuf, String)>, Vec<PathBuf>) {
+    let mut chosen: Vec<ResourceFamily> = vec![ResourceFamily::Page];
+    for family in families {
+        if !chosen.contains(family) {
+            chosen.push(*family);
+        }
+    }
+    let mut files: Vec<(PathBuf, String)> = Vec::new();
+    if let Some(title) = title {
+        files.push((
+            folder.join("pages/index.adoc"),
+            format!("= {title}\n\nAn introduction to {title}.\n"),
+        ));
+    }
+    if nav {
+        let text = if title.is_some() {
+            "* xref:index.adoc[]\n"
+        } else {
+            ""
+        };
+        files.push((folder.join("nav.adoc"), text.to_owned()));
+    }
+    // Git keeps no empty folder, and Antora ignores a missing family's, so an empty family
+    // holds a `.gitkeep`.
+    for family in &chosen {
+        if *family == ResourceFamily::Page && title.is_some() {
+            continue;
+        }
+        files.push((
+            folder.join(family.directory()).join(".gitkeep"),
+            String::new(),
+        ));
+    }
+    let mut folders = vec![folder.to_path_buf()];
+    folders.extend(chosen.iter().map(|family| folder.join(family.directory())));
+    (files, folders)
+}
+
 /// `name` as a title: words split at `-`, `_` and `.`, each capitalised.
-fn title_case(name: &str) -> String {
+pub(crate) fn title_case(name: &str) -> String {
     name.split(['-', '_', '.'])
         .filter(|word| !word.is_empty())
         .map(|word| {
@@ -306,12 +352,6 @@ impl Engine {
             None
         };
 
-        let mut families: Vec<ResourceFamily> = vec![ResourceFamily::Page];
-        for family in &request.families {
-            if !families.contains(family) {
-                families.push(*family);
-            }
-        }
         let title = request.index_title.as_deref().map(str::trim).map(|title| {
             if title.is_empty() {
                 title_case(&request.name)
@@ -319,38 +359,8 @@ impl Engine {
                 title.to_owned()
             }
         });
-        let mut files: Vec<(PathBuf, String)> = Vec::new();
-        if let Some(title) = &title {
-            files.push((
-                folder.join("pages/index.adoc"),
-                format!("= {title}\n\nAn introduction to {title}.\n"),
-            ));
-        }
-        if request.nav {
-            let text = if title.is_some() {
-                "* xref:index.adoc[]\n"
-            } else {
-                ""
-            };
-            files.push((folder.join("nav.adoc"), text.to_owned()));
-        }
-        // Git keeps no empty folder, and Antora ignores a missing family's, so an empty family
-        // holds a `.gitkeep`.
-        for family in &families {
-            if *family == ResourceFamily::Page && title.is_some() {
-                continue;
-            }
-            files.push((
-                folder.join(family.directory()).join(".gitkeep"),
-                String::new(),
-            ));
-        }
-        let mut folders = vec![folder.clone()];
-        folders.extend(
-            families
-                .iter()
-                .map(|family| folder.join(family.directory())),
-        );
+        let (files, folders) =
+            module_files(&folder, &request.families, request.nav, title.as_deref());
 
         self.applying = true;
         let made = self.make_module(&root, &descriptor, descriptor_edit, &files);

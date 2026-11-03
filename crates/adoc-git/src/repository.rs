@@ -65,6 +65,14 @@ impl Repository {
         }))
     }
 
+    /// Initialises an empty repository with a working tree in `path`, an existing folder, as
+    /// `git init` does, through `gix`: no commit, nothing staged.
+    pub fn init(path: &Path) -> Result<Self, GitError> {
+        gix::init(path).map_err(GitError::git)?;
+        Self::discover(path)?
+            .ok_or_else(|| GitError::Git(format!("no repository in {}", path.display())))
+    }
+
     /// As [`Repository::discover`], but reading only the repository's own configuration, not
     /// the user's or the system's.
     pub fn discover_isolated(path: &Path) -> Result<Option<Self>, GitError> {

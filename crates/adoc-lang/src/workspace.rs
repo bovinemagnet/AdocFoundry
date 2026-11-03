@@ -83,7 +83,8 @@ impl WorkspaceState {
 
     /// Re-reads one `antora.yml`, replacing that component version in the catalog. On success
     /// any issue previously recorded for it is cleared; on failure the issue is recorded, the
-    /// component is removed and the error returned.
+    /// component is removed and the error returned. A descriptor that no longer exists records
+    /// no issue: its component is simply gone.
     pub fn reload_descriptor(
         &mut self,
         descriptor_path: &Path,
@@ -92,9 +93,15 @@ impl WorkspaceState {
         self.descriptor_issues
             .retain(|issue| normalize_path(&issue.path) != descriptor_path);
         self.check_descriptor(&descriptor_path);
+        // A descriptor that is gone takes its component with it: an error, but not an issue.
+        let gone = !descriptor_path.exists();
         self.antora
             .reload_component(&descriptor_path)
-            .inspect_err(|error| self.descriptor_issues.push(error.clone()))
+            .inspect_err(|error| {
+                if !gone {
+                    self.descriptor_issues.push(error.clone());
+                }
+            })
     }
 
     /// Re-reads one `antora.yml` for the problems inside it, forgetting them when it is gone.
@@ -128,5 +135,25 @@ mod tests {
         assert!(state.descriptor_issues.is_empty());
         assert!(state.antora.component("demo", Some("latest")).is_some());
         assert!(state.descriptor_problems.is_empty());
+    }
+
+    #[test]
+    fn a_removed_descriptor_takes_its_component_with_it_and_is_no_issue() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = normalize_path(directory.path());
+        std::fs::create_dir_all(root.join("modules/ROOT/pages")).unwrap();
+        std::fs::write(root.join("antora.yml"), "name: demo\nversion: ~\n").unwrap();
+        let mut state = WorkspaceState::new();
+        state.index_roots(std::slice::from_ref(&root)).unwrap();
+        assert!(state.antora.component("demo", None).is_some());
+
+        std::fs::remove_file(root.join("antora.yml")).unwrap();
+        assert!(state.reload_descriptor(&root.join("antora.yml")).is_err());
+        assert!(state.antora.component("demo", None).is_none());
+        assert!(
+            state.descriptor_issues.is_empty(),
+            "{:?}",
+            state.descriptor_issues
+        );
     }
 }
