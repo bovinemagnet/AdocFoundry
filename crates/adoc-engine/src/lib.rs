@@ -64,6 +64,8 @@ mod workspace;
 mod writer;
 
 pub use about::{About, Notice, Notices, DOCUMENTATION};
+/// The documentation quality audit's model: rules, reports and the `[quality]` policy.
+pub use adoc_audit as audit;
 #[cfg(feature = "typst")]
 pub use adoc_pdf::{PageAnchor, PreviewPage};
 pub use auto_save::AUTO_SAVE_DELAY;
@@ -105,9 +107,9 @@ pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETT
 pub use session::{WindowPlacement, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE};
 pub use settings::{
     pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, GraphColour,
-    GraphSettings, HistorySettings, PdfSettings, Settings, SidebarSettings, SpellingSettings,
-    ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE,
-    WORKSPACE_SETTINGS_FILE,
+    GraphSettings, HistorySettings, PdfSettings, QualitySettings, Settings, SidebarSettings,
+    SpellingSettings, ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings,
+    USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 pub use spelling::{
     Misspelling, MAX_SUGGESTED_WORDS, SPELLING_CODE, SPELLING_SETTLE, USER_WORDS_FILE,

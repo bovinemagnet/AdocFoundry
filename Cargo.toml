@@ -17,6 +17,7 @@ unsafe_code = "forbid"
 [workspace.dependencies]
 # Internal crates
 adoc-antora = { path = "crates/adoc-antora" }
+adoc-audit = { path = "crates/adoc-audit" }
 adoc-core = { path = "crates/adoc-core" }
 adoc-diagrams = { path = "crates/adoc-diagrams" }
 adoc-dom = { path = "crates/adoc-dom" }

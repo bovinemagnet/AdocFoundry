@@ -76,6 +76,10 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 |`adoc-pdf`
 |PDF export. A theme loader for asciidoctor-pdf's YAML themes, an emitter from the view tree to Typst, a Typst `World` with bundled fonts, in-process compilation with errors mapped back to AsciiDoc lines, book assembly, the index, and the PDF/A-1b, PDF/A-1a, PDF/A-2a and PDF/UA-1 profiles. It depends on `adoc-core`, `adoc-render` and Typst. See xref:pdf.adoc[PDF export].
 
+|L2
+|`adoc-audit`
+|The documentation quality audit's model, pure and synchronous: no threads, settings files, file writes, subprocesses or network. `RuleId` and `RULES` give the stable rule IDs and the registry. A `FindingCode` is either one of the audit's `quality.*` rules or an existing `DiagnosticCode`, aggregated with its own severity and message and never restated as a rule. `AuditBuilder` collects findings, skips and coverage gaps in any order, and `finish` applies the `Policy` and sorts them, giving an immutable, serialisable `AuditReport` versioned by `SCHEMA_VERSION`. Its paths are relative to a workspace root, use `/` separators and are never absolute. `Completeness` describes coverage with stable gap reasons, and a skipped dynamic construct never makes a report partial. The `Policy` holds rule severities, exclusions (one resource each, by resource ID, with a reason), `fail_on` and `require_complete`, and `AuditReport::verdict` gives the pass, fail or untrustworthy result a gate uses. It depends on `adoc-core` and `adoc-antora`. The engine reads the `[quality]` settings and re-exports the crate as `adoc_engine::audit`; front ends never name it.
+
 |L3
 |`adoc-engine`
 |Documents, commands, undo, workspace, file watcher, settings, Git state, search and rename, the preview, visual model and export services, and the `EngineEvent` stream. The only entry point front ends use. `report.rs` holds the diagnostics and Git status reports, and `inspect.rs` the target and resource-id queries; see xref:engine.adoc#reports-and-inspection[the engine].
@@ -112,6 +116,7 @@ The application sees `adoc-model` types only through the engine's re-exports.
 * `hyper` or `hyper-util` is reachable from any crate except `adocfoundry` and `adoc-mcp`, or `adoc-mcp`'s own build turns on a `client` feature of either;
 * a parser crate (`acdc-parser`, `asciidoc-parser`) appears outside `adoc-dom`;
 * `spellbook` appears outside `adoc-spell`;
+* a front end (`adocfoundry`, `adocfoundry-cli`, `adoc-ls` or `adoc-mcp`) names `adoc-audit` directly instead of reaching it through `adoc-engine` (the `ENGINE_ONLY` list in `xtask/src/layers.rs`);
 * `adoc-lang` depends on `url`, or its sources mention `lsp_types`, `lsp_server` or `url::`.
 
 Adding a crate means adding a line to the layer table in `xtask/src/layers.rs` and to the ladder in the repository's contributor guidance.

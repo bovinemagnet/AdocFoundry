@@ -223,4 +223,23 @@ Each is settled before work starts on the package it affects, and the outcome is
 
 ## 13. Implementation notes
 
-No implementation exists yet under this specification. Existing repository issues mentioned above remain independent and must not be silently marked completed by creating this PRD.
+Existing repository issues mentioned above remain independent and must not be silently marked completed by this PRD.
+
+### Q1 (#300): the audit model, rules and workspace policy
+
+- **The crate.** `adoc-audit` (L2) depends on `adoc-core`, `adoc-antora` and `serde` only. `adoc-index` and `adoc-lang` are added in Q2, when its rules first use them. `adoc-engine` names the crate unconditionally, with no optional feature, since it brings in no new external dependency and does no work until asked. The engine re-exports it as `adoc_engine::audit`, and `ENGINE_ONLY` in `xtask/src/layers.rs` refuses a front end that names it directly.
+- **`adoc-core`** gained `DiagnosticCode::ALL` and `DiagnosticCode::from_name`, so a report can read existing codes back.
+- **Existing diagnostics.** A finding for an existing diagnostic carries its `DiagnosticCode`, severity and message unchanged. `[quality.rules]` cannot change such a severity (a setting that tries is warned about), but an exclusion can name the code for one resource.
+- **Severities.** `[quality.rules]` accepts `off` as well as `info`, `warning` and `error`; a rule turned off contributes no findings or skips. All three registered rules default to `warning`. Whether unlisted pages should default to `info` (§12) is still open and is settled in Q2.
+- **Exclusions.**
+  - The resource ID must name its component and module. With no version it covers every version, `~@` covers only the versionless component, and the family defaults to `page`.
+  - A finding with no coordinate is never excluded.
+  - A second exclusion for the same code and resource is refused, and an exclusion with no reason is refused.
+  - Excluded findings stay in the report with their reason and are counted, but never fail a gate.
+- **Layers.** `[quality]` may be set in the user file and the workspace file. A rule's severity from the workspace file wins, and the exclusions of both files apply.
+- **`[quality] enabled`** defaults to `false`: the audit runs only when asked for until a workspace turns upkeep on (§6).
+- **Report.**
+  - Paths are relative to a workspace root with `/` separators, and roots appear by their display names, never as absolute paths.
+  - `AuditReport` is built by `AuditBuilder::finish`, which applies the policy, sorts deterministically and keeps identical findings once.
+  - The CI table of §5.4 is `AuditReport::verdict` (`Verdict::exit_code` gives 0, 1 or 2), so the CLI and MCP share one decision.
+- **Docs.** The user documentation of `[quality]` waits until an audit can be run (Q4 and Q6).

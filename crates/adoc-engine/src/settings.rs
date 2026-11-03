@@ -308,6 +308,17 @@ impl Default for PdfSettings {
     }
 }
 
+/// The `[quality]` table: whether the documentation quality audit is kept current, and the
+/// policy it is judged by (`fail_on`, `require_complete`, `[quality.rules]` and
+/// `[[quality.exclusions]]`). Both layers may set it: a rule's severity from the workspace file
+/// wins, and the exclusions of both files apply.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct QualitySettings {
+    /// Keep the audit current while editing. Off, the audit runs only when asked for.
+    pub enabled: bool,
+    pub policy: adoc_audit::Policy,
+}
+
 /// A PDF standard by its settings and command-line name.
 #[must_use]
 pub fn pdf_standard(name: &str) -> Option<crate::PdfStandard> {
@@ -332,6 +343,7 @@ pub struct Settings {
     pub history: HistorySettings,
     pub spelling: SpellingSettings,
     pub graph: GraphSettings,
+    pub quality: QualitySettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -476,6 +488,14 @@ impl Settings {
                     self.apply_profiles(&source, value);
                     continue;
                 }
+                if section == "quality" && key == "rules" {
+                    self.apply_quality_rules(&source, value);
+                    continue;
+                }
+                if section == "quality" && key == "exclusions" {
+                    self.apply_quality_exclusions(&source, value);
+                    continue;
+                }
                 // `[sidebar.navigation]` and `[sidebar.modules]` are tables of their own.
                 let panel = value.as_table().filter(|_| {
                     section == "sidebar" && matches!(key.as_str(), "navigation" | "modules")
@@ -506,6 +526,7 @@ impl Settings {
             || section == "editor"
             || section == "pdf"
             || section == "graph"
+            || section == "quality"
             || (section == "spelling" && key != "dictionaries")
             || section.starts_with("sidebar.")
             || (section == "sidebar" && key == "follow_active")
@@ -610,6 +631,16 @@ impl Settings {
                     _ => return Err("expected \"component\", \"module\" or \"family\""),
                 };
             }
+            ("quality", "enabled") => self.quality.enabled = boolean(value)?,
+            ("quality", "fail_on") => {
+                self.quality.policy.fail_on = value
+                    .as_str()
+                    .and_then(adoc_audit::FailOn::from_name)
+                    .ok_or("expected \"none\", \"warning\" or \"error\"")?;
+            }
+            ("quality", "require_complete") => {
+                self.quality.policy.require_complete = boolean(value)?;
+            }
             ("pdf", "theme") => self.pdf.theme = string(value)?,
             ("pdf", "themes_dir") => self.pdf.themes_dir = Some(string(value)?),
             ("pdf", "fonts_dir") => self.pdf.fonts_dir = Some(string(value)?),
@@ -647,6 +678,64 @@ impl Settings {
                         .sort_by(|left, right| left.name.cmp(&right.name));
                 }
                 Err(problem) => self.warn(source, &format!("pdf.profiles.{name}"), &problem),
+            }
+        }
+    }
+
+    /// `[quality.rules]`: each rule's severity, or a warning.
+    fn apply_quality_rules(&mut self, source: &str, value: &toml::Value) {
+        let Some(rules) = value.as_table() else {
+            self.warn(
+                source,
+                "quality.rules",
+                "expected a table of rules and severities",
+            );
+            return;
+        };
+        for (rule, level) in rules {
+            let name = format!("quality.rules.{rule}");
+            let Some(level) = level.as_str() else {
+                self.warn(source, &name, "expected a string");
+                continue;
+            };
+            if let Err(problem) = self.quality.policy.set_severity(rule, level) {
+                self.warn(source, &name, &problem.to_string());
+            }
+        }
+    }
+
+    /// `[[quality.exclusions]]`: each exclusion added whole, or left out with a warning.
+    fn apply_quality_exclusions(&mut self, source: &str, value: &toml::Value) {
+        let Some(exclusions) = value.as_array() else {
+            self.warn(source, "quality.exclusions", "expected an array of tables");
+            return;
+        };
+        for (index, exclusion) in exclusions.iter().enumerate() {
+            let name = format!("quality.exclusions[{}]", index + 1);
+            let Some(table) = exclusion.as_table() else {
+                self.warn(source, &name, "expected a table");
+                continue;
+            };
+            for key in table.keys() {
+                if !matches!(key.as_str(), "rule" | "resource" | "reason") {
+                    self.warn(source, &format!("{name}.{key}"), "unknown setting");
+                }
+            }
+            let text = |key: &str| table.get(key).map(|value| value.as_str());
+            let (Some(Some(rule)), Some(Some(resource))) = (text("rule"), text("resource")) else {
+                self.warn(source, &name, "expected `rule` and `resource` strings");
+                continue;
+            };
+            let reason = match text("reason") {
+                Some(Some(reason)) => reason,
+                Some(None) => {
+                    self.warn(source, &format!("{name}.reason"), "expected a string");
+                    continue;
+                }
+                None => "",
+            };
+            if let Err(problem) = self.quality.policy.add_exclusion(rule, resource, reason) {
+                self.warn(source, &name, &problem.to_string());
             }
         }
     }
@@ -724,6 +813,10 @@ fn is_known(section: &str, key: &str) -> bool {
                 "theme" | "themes_dir" | "fonts_dir" | "site_url" | "standards"
             )
             | ("updates", "check")
+            | (
+                "quality",
+                "enabled" | "fail_on" | "require_complete" | "rules" | "exclusions"
+            )
             | (
                 "graph",
                 "depth"
@@ -1158,5 +1251,162 @@ mod tests {
         assert_eq!(settings.history.max_size_mb, 64);
         assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
         assert!(settings.warnings[0].contains("can only be set in the user settings file"));
+    }
+
+    #[test]
+    fn quality_settings_default_to_off_and_the_default_policy() {
+        let quality = Settings::default().quality;
+        assert!(!quality.enabled);
+        assert_eq!(quality.policy, crate::audit::Policy::default());
+    }
+
+    #[test]
+    fn quality_settings_load_from_the_workspace_file() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            r#"
+[quality]
+enabled = true
+fail_on = "warning"
+require_complete = true
+
+[quality.rules]
+"quality.navigation.unlisted-page" = "info"
+"quality.page.missing-title" = "off"
+
+[[quality.exclusions]]
+rule = "quality.navigation.unlisted-page"
+resource = "product:ROOT:internal-notes.adoc"
+reason = "Deliberately unlisted staff-only page"
+"#,
+        )
+        .unwrap();
+        let settings = Settings::load(None, Some(directory.path())).unwrap();
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+        let quality = &settings.quality;
+        assert!(quality.enabled);
+        assert_eq!(quality.policy.fail_on, crate::audit::FailOn::Warning);
+        assert!(quality.policy.require_complete);
+        assert_eq!(
+            quality.policy.severity(crate::audit::RuleId::UNLISTED_PAGE),
+            Some(crate::audit::Severity::Info)
+        );
+        assert_eq!(
+            quality.policy.severity(crate::audit::RuleId::MISSING_TITLE),
+            None
+        );
+        let exclusions = quality.policy.exclusions();
+        assert_eq!(exclusions.len(), 1);
+        assert_eq!(exclusions[0].path, "internal-notes.adoc");
+        assert_eq!(
+            exclusions[0].reason,
+            "Deliberately unlisted staff-only page"
+        );
+    }
+
+    #[test]
+    fn invalid_quality_settings_warn_and_are_left_out() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            r#"
+[quality]
+fail_on = "info"
+require_complete = "yes"
+colour = 1
+
+[quality.rules]
+"quality.no-such-rule" = "error"
+"adoc.unresolved-xref-file" = "info"
+"quality.image.missing-alt" = 3
+
+[[quality.exclusions]]
+rule = "quality.navigation.unlisted-page"
+resource = "a.adoc"
+reason = "Not qualified"
+
+[[quality.exclusions]]
+rule = "quality.navigation.unlisted-page"
+resource = "product:ROOT:a.adoc"
+
+[[quality.exclusions]]
+rule = "quality.navigation.unlisted-page"
+resource = "product:ROOT:b.adoc"
+reason = "Kept"
+
+[[quality.exclusions]]
+rule = "quality.navigation.unlisted-page"
+resource = "product:ROOT:b.adoc"
+reason = "Again"
+
+[[quality.exclusions]]
+rule = "quality.navigation.unlisted-page"
+resource = "product:ROOT:c.adoc"
+reason = "Kept, with a note warned about"
+note = "unknown"
+"#,
+        )
+        .unwrap();
+        let settings = Settings::load(None, Some(directory.path())).unwrap();
+        assert_eq!(settings.warnings.len(), 10, "{:#?}", settings.warnings);
+        for expected in [
+            "`quality.fail_on`",
+            "`quality.require_complete`",
+            "`quality.colour`: unknown setting",
+            "`quality.rules.quality.no-such-rule`: unknown rule",
+            "keeps its own severity",
+            "`quality.rules.quality.image.missing-alt`: expected a string",
+            "must name its component and module",
+            "needs a reason",
+            "is already excluded",
+            "`quality.exclusions[5].note`: unknown setting",
+        ] {
+            assert!(
+                settings
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains(expected)),
+                "no warning containing {expected:?} in {:#?}",
+                settings.warnings
+            );
+        }
+        let policy = &settings.quality.policy;
+        assert_eq!(policy.fail_on, crate::audit::FailOn::Error);
+        assert!(!policy.require_complete);
+        let kept: Vec<&str> = policy
+            .exclusions()
+            .iter()
+            .map(|exclusion| exclusion.path.as_str())
+            .collect();
+        assert_eq!(kept, ["b.adoc", "c.adoc"]);
+    }
+
+    #[test]
+    fn quality_exclusions_from_both_layers_apply_and_the_workspace_sets_rules_last() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(
+            &user,
+            "[quality.rules]\n\"quality.navigation.unlisted-page\" = \"error\"\n\
+             [[quality.exclusions]]\nrule = \"quality.navigation.unlisted-page\"\n\
+             resource = \"product:ROOT:b.adoc\"\nreason = \"From the user file\"\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[quality.rules]\n\"quality.navigation.unlisted-page\" = \"info\"\n\
+             [[quality.exclusions]]\nrule = \"quality.navigation.unlisted-page\"\n\
+             resource = \"product:ROOT:c.adoc\"\nreason = \"From the workspace\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+        let policy = &settings.quality.policy;
+        assert_eq!(
+            policy.severity(crate::audit::RuleId::UNLISTED_PAGE),
+            Some(crate::audit::Severity::Info)
+        );
+        assert_eq!(policy.exclusions().len(), 2);
     }
 }

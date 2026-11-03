@@ -22,6 +22,33 @@ pub enum DiagnosticCode {
 }
 
 impl DiagnosticCode {
+    /// Every code, in declaration order.
+    pub const ALL: [Self; 17] = [
+        Self::UnresolvedXrefFile,
+        Self::UnresolvedAnchor,
+        Self::UnresolvedInclude,
+        Self::UnresolvedImage,
+        Self::DuplicateAnchor,
+        Self::AntoraUnknownModule,
+        Self::AntoraUnknownResource,
+        Self::AntoraInvalidFamily,
+        Self::AntoraInvalidCoordinate,
+        Self::AntoraInvalidDescriptor,
+        Self::AntoraResolvedViaAlias,
+        Self::AntoraNavUnresolved,
+        Self::AntoraVersionNotOnBranch,
+        Self::AntoraMissingKey,
+        Self::AntoraUnknownKey,
+        Self::AntoraMissingNavFile,
+        Self::AntoraInvalidAttributeValue,
+    ];
+
+    /// The code whose stable name ([`DiagnosticCode::as_str`]) is `name`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|code| code.as_str() == name)
+    }
+
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -59,4 +86,58 @@ pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
     pub message: String,
     pub range: SourceRange,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Its place in [`DiagnosticCode::ALL`]. The match is exhaustive, so a new code does not
+    /// compile until it is given a place, and the test below then fails until `ALL` lists it.
+    fn place(code: DiagnosticCode) -> usize {
+        match code {
+            DiagnosticCode::UnresolvedXrefFile => 0,
+            DiagnosticCode::UnresolvedAnchor => 1,
+            DiagnosticCode::UnresolvedInclude => 2,
+            DiagnosticCode::UnresolvedImage => 3,
+            DiagnosticCode::DuplicateAnchor => 4,
+            DiagnosticCode::AntoraUnknownModule => 5,
+            DiagnosticCode::AntoraUnknownResource => 6,
+            DiagnosticCode::AntoraInvalidFamily => 7,
+            DiagnosticCode::AntoraInvalidCoordinate => 8,
+            DiagnosticCode::AntoraInvalidDescriptor => 9,
+            DiagnosticCode::AntoraResolvedViaAlias => 10,
+            DiagnosticCode::AntoraNavUnresolved => 11,
+            DiagnosticCode::AntoraVersionNotOnBranch => 12,
+            DiagnosticCode::AntoraMissingKey => 13,
+            DiagnosticCode::AntoraUnknownKey => 14,
+            DiagnosticCode::AntoraMissingNavFile => 15,
+            DiagnosticCode::AntoraInvalidAttributeValue => 16,
+        }
+    }
+
+    #[test]
+    fn all_lists_every_code_once_in_order() {
+        for (index, code) in DiagnosticCode::ALL.iter().enumerate() {
+            assert_eq!(place(*code), index, "{code:?}");
+        }
+        assert_eq!(
+            DiagnosticCode::ALL.len(),
+            DiagnosticCode::ALL
+                .iter()
+                .map(|code| place(*code))
+                .max()
+                .unwrap()
+                + 1
+        );
+    }
+
+    #[test]
+    fn from_name_reads_back_every_code() {
+        for code in DiagnosticCode::ALL {
+            assert_eq!(DiagnosticCode::from_name(code.as_str()), Some(code));
+        }
+        assert_eq!(DiagnosticCode::from_name("adoc.no-such-code"), None);
+        assert_eq!(DiagnosticCode::from_name(""), None);
+    }
 }
