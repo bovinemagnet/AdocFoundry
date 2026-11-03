@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed / draft — not approved for implementation |
+| Status | Approved for implementation, 2026-11-03; the open decisions in §12 are settled in the work package they affect |
 | Date | 2026-11-03 |
 | Scope | Antora-aware quality audits, health report, configurable CI gates and desktop dashboard |
 | Related work | Epic #299; #85 Vale, #86 external links, #104 compatibility inspector, #289 stale graph pages, #291 new Antora project |
@@ -213,7 +213,9 @@ Implement in order Q1 → Q2/Q3 → Q4/Q5 → Q6. Prefer one reviewable PR per w
 
 An Antora multi-component fixture can be audited offline from CLI and GUI with matching findings; rules and exclusions are deterministic; navigation coverage is correct; CLI/SARIF support gating; existing diagnostics are reused; no new GUI or indexing latency regressions; documentation and tests are updated.
 
-## 12. Open decisions before approval
+## 12. Open decisions
+
+Each is settled before work starts on the package it affects, and the outcome is recorded in that package's PR and in the Implementation Notes.
 
 - Should unlisted pages be warnings by default, or informational in all new workspaces?
 - How are publication-only nav variations represented? (Remote playbook sources are `remote-component-missing`, §5.4.)

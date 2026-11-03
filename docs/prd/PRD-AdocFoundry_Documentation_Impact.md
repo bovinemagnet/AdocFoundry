@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed / draft — not approved for implementation |
+| Status | Approved for implementation, 2026-11-03; the open decisions in §14 are settled in the work package they affect |
 | Date | 2026-11-03 |
 | Scope | Antora-aware dependency and change impact analysis across local checkouts, CLI and pull-request workflows |
 | Related work | Epic #306; #100 dependency and impact inspector; #101 semantic component comparison; #287 graph path; #289 page age; #90 relative references after move |
@@ -216,7 +216,9 @@ Order I1 → I2/I3 → I4/I5. Semantic diff #101 remains a distinct follow-on fe
 
 Given a local Antora fixture with a changed shared partial, an altered xref target and a modified nav file, the engine and CLI report distinct and accurate render/reference/navigation impacts, each with provenance and version identity; partial coverage is explicit; the app can navigate to those sources; the analysis requires no network or checkout mutation and passes CI and performance tests.
 
-## 14. Open decisions before approval
+## 14. Open decisions
+
+Each is settled before work starts on the package it affects, and the outcome is recorded in that package's PR and in the Implementation Notes.
 
 - Scope of image/attachment dependency edges in the first work package.
 - Whether comparison uses only Git refs or also unsaved buffers in the GUI's initial release.
