@@ -93,3 +93,18 @@ fn notices_naming_a_text_they_lack_are_refused() {
     assert!(Notices::from_json(&broken).is_err());
     assert!(Notices::from_json("not json").is_err());
 }
+
+/// File › Quit is a command like any other, which only the front end can carry out: the engine
+/// answers with what to do and quits nothing itself.
+#[test]
+fn quit_is_a_command_the_front_end_carries_out() {
+    let mut engine = Engine::new(Settings::default());
+    let spec = engine.commands().get(ids::APP_QUIT).unwrap().spec().clone();
+    assert_eq!(spec.title, "Quit");
+    assert_eq!(spec.default_binding, Some("cmd-q"));
+    assert!(engine.command_available(ids::APP_QUIT));
+    assert_eq!(
+        engine.invoke(ids::APP_QUIT, CommandArgs::None).unwrap(),
+        CommandOutcome::Quit
+    );
+}

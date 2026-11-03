@@ -8054,3 +8054,143 @@ fn delete_file_lists_what_breaks_and_undo_puts_it_back(cx: &mut TestAppContext) 
     assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
         .is_some_and(|(path, _)| path == install)));
 }
+
+/// `window_with_an_unsaved_page` (or one with nothing unsaved) as the app opens it: the window
+/// known as the main one, and the app's own actions bound, so Quit goes the way it does there.
+fn as_main_window(
+    app: &Entity<AppState>,
+    workspace: &Entity<WorkspaceView>,
+    cx: &mut VisualTestContext,
+) {
+    let handle = cx.update(|window, _| window.window_handle());
+    let workspace = workspace.downgrade();
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| app.main = Some((handle, workspace)));
+        crate::app::bind_app_actions(app, cx);
+    });
+    crate::app::QUIT_ASKED.with(|asked| asked.set(false));
+}
+
+fn quit_asked() -> bool {
+    crate::app::QUIT_ASKED.with(std::cell::Cell::get)
+}
+
+/// File › Quit asks about unsaved pages as closing the window does, titled for quitting: Cancel
+/// keeps everything, Don't Save quits without saving, Save saves and quits.
+#[gpui::test]
+fn quit_asks_about_unsaved_pages_as_closing_does(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+
+    cx.dispatch_action(crate::editor::bindings::Quit);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(!quit_asked(), "nothing quits while it asks");
+    click_selector("close-window-cancel", gpui::MouseButton::Left, &mut cx);
+    assert!(!quit_asked());
+    assert!(window_is_open(&mut cx));
+    assert_eq!(unsaved(&app, &mut cx), 1);
+
+    cx.dispatch_action(crate::editor::bindings::Quit);
+    cx.run_until_parked();
+    click_selector("close-window-save", gpui::MouseButton::Left, &mut cx);
+    assert!(quit_asked());
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "x= Page\n");
+    assert_eq!(unsaved(&app, &mut cx), 0);
+}
+
+#[gpui::test]
+fn quit_can_discard_unsaved_pages(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::Quit);
+    cx.run_until_parked();
+    click_selector("close-window-discard", gpui::MouseButton::Left, &mut cx);
+    assert!(quit_asked());
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
+    // Closed without saving, so recovery has nothing to offer back.
+    assert_eq!(unsaved(&app, &mut cx), 0);
+}
+
+/// With nothing unsaved Quit quits at once, from the workspace window or any other; with the
+/// workspace window gone, as macOS allows, it quits too.
+#[gpui::test]
+fn quit_with_nothing_unsaved_quits_at_once(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::Quit);
+    cx.run_until_parked();
+    assert!(quit_asked());
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+
+    crate::app::QUIT_ASKED.with(|asked| asked.set(false));
+    assert!(cx.simulate_close());
+    cx.run_until_parked();
+    cx.cx.update(|cx| crate::app::quit(&app, cx));
+    cx.cx.run_until_parked();
+    assert!(quit_asked(), "no window left to ask in");
+}
+
+/// In a window shorter than the File menu, the menu scrolls below the title bar rather than
+/// being moved up over the menu names, so another menu can still be chosen from them.
+#[gpui::test]
+fn a_long_menu_leaves_the_menu_names_in_a_short_window(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let window = cx.open_window(size(px(1200.), px(420.)), |window, cx| {
+        let view =
+            cx.new(|cx| WorkspaceView::new(app.clone(), None, vec![page.clone()], window, cx));
+        Root::new(view, window, cx)
+    });
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    click("app-menu", &mut cx);
+    let names = cx.debug_bounds("app-menu-View").expect("View is shown");
+    // Nothing is drawn over View: clicking it opens the View menu, whose Toggle Preview runs.
+    click("app-menu-View", &mut cx);
+    let steps = cx.update(|_, cx| {
+        let menus = crate::menus::menus(&app.read(cx).engine);
+        let view = menus.iter().find(|menu| menu.name == "View").unwrap();
+        view.items
+            .iter()
+            .filter(|item| matches!(item, crate::menus::Item::Action { .. }))
+            .position(|item| {
+                matches!(item, crate::menus::Item::Action { label, .. } if label == "Toggle Preview")
+            })
+            .unwrap()
+    });
+    for _ in 0..=steps {
+        cx.simulate_keystrokes("down");
+    }
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(
+        cx.update(|_, cx| app.read(cx).engine.preview_layout().visible),
+        "the View menu opened from its name at {names:?}"
+    );
+}

@@ -60,6 +60,10 @@ actions!(
         CheckForUpdates,
         ShowDiagnostics,
         ShowAbout,
+        Quit,
+        HideApp,
+        HideOtherApps,
+        ShowAllApps,
         CommandPalette,
         ToggleTheme,
         OpenMirrorWindow,
@@ -144,6 +148,12 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
 /// The first of the [`UI_ACTIONS`] that act on the image viewer, offered only while an image is
 /// the active tab.
 pub const IMAGE_UI_ACTIONS: usize = 5;
+
+/// Whether command `id`'s default binding is left out on this platform: Windows quits with
+/// Alt-F4, which closes the window, and gives File › Exit no key of its own.
+fn unbound_here(id: CommandId) -> bool {
+    cfg!(target_os = "windows") && id == ids::APP_QUIT
+}
 
 /// Translates a `cmd-s` style binding to GPUI's platform-neutral form: `cmd` is the platform's
 /// primary modifier (Command on macOS, Control elsewhere).
@@ -237,6 +247,8 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::APP_CHECK_FOR_UPDATES => KeyBinding::new(keys, CheckForUpdates, workspace),
         ids::APP_DIAGNOSTICS => KeyBinding::new(keys, ShowDiagnostics, workspace),
         ids::APP_ABOUT => KeyBinding::new(keys, ShowAbout, workspace),
+        // From any window, the graph and the detached preview too: the app handles it.
+        ids::APP_QUIT => KeyBinding::new(keys, Quit, None),
         ids::SETTINGS_RELOAD => KeyBinding::new(keys, ReloadSettings, workspace),
         ids::VIEW_TOGGLE_PREVIEW => KeyBinding::new(keys, TogglePreview, workspace),
         ids::VIEW_DETACH_PREVIEW => KeyBinding::new(keys, DetachPreview, workspace),
@@ -340,6 +352,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),
         ids::APP_DIAGNOSTICS => Box::new(ShowDiagnostics),
         ids::APP_ABOUT => Box::new(ShowAbout),
+        ids::APP_QUIT => Box::new(Quit),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
         ids::VIEW_TOGGLE_PREVIEW => Box::new(TogglePreview),
         ids::VIEW_DETACH_PREVIEW => Box::new(DetachPreview),
@@ -400,6 +413,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
     let mut bindings: Vec<KeyBinding> = engine
         .commands()
         .all()
+        .filter(|spec| !unbound_here(spec.id))
         .filter_map(|spec| {
             let keys = platform_binding(spec.default_binding?);
             binding_for(spec.id, &keys)
@@ -443,6 +457,11 @@ pub fn bind(engine: &Engine, cx: &mut App) {
         OpenMirrorWindow,
         workspace,
     ));
+    // The app menu's keys on macOS, as every Mac app has them.
+    if cfg!(target_os = "macos") {
+        bindings.push(KeyBinding::new("cmd-h", HideApp, None));
+        bindings.push(KeyBinding::new("cmd-alt-h", HideOtherApps, None));
+    }
     cx.bind_keys(bindings);
     crate::visual::bind(cx);
     crate::files_view::bind(cx);

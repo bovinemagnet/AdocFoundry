@@ -72,6 +72,7 @@ pub mod ids {
     pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
     pub const APP_DIAGNOSTICS: CommandId = CommandId::new("app.diagnostics");
     pub const APP_ABOUT: CommandId = CommandId::new("app.about");
+    pub const APP_QUIT: CommandId = CommandId::new("app.quit");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");
     pub const VIEW_DETACH_PREVIEW: CommandId = CommandId::new("view.detach_preview");
@@ -158,7 +159,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, ActiveTab, Always};
 
-    let builtin: [(CommandSpec, Run); 40] = [
+    let builtin: [(CommandSpec, Run); 41] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -328,6 +329,10 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 Always,
             ),
             settings_open,
+        ),
+        (
+            spec(ids::APP_QUIT, "Quit", Workspace, Some("cmd-q"), Always),
+            |_, _| Ok(CommandOutcome::Quit),
         ),
         (
             spec(

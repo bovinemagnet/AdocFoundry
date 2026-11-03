@@ -133,12 +133,19 @@ pub(crate) fn item_args(item: TabItem) -> CommandArgs {
     }
 }
 
-/// What the user chose when asked about unsaved pages on closing the window.
+/// What the user chose when asked about unsaved pages on closing the window or quitting.
 #[derive(Clone, Copy)]
 enum CloseAnswer {
     Save,
     Discard,
     Cancel,
+}
+
+/// What asks about unsaved pages: closing the window, or quitting the app.
+#[derive(Clone, Copy, PartialEq)]
+enum Leaving {
+    Window,
+    App,
 }
 
 pub struct WorkspaceView {
@@ -2823,6 +2830,20 @@ impl WorkspaceView {
     /// answered: Save saves them, Don't Save closes them without saving (so recovery offers
     /// nothing back), Cancel keeps the window.
     fn window_should_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.may_leave(Leaving::Window, window, cx)
+    }
+
+    /// File › Quit: quits now with nothing unsaved; otherwise asks as closing the window does,
+    /// and quits once answered. A quit the system asks for (logging out, the Dock) does not
+    /// come here: it keeps unsaved text for Recover Unsaved Changes.
+    pub(crate) fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.may_leave(Leaving::App, window, cx) {
+            crate::app::quit_now(cx);
+        }
+    }
+
+    /// Whether the window may close, or the app quit, now; with pages unsaved, asks first.
+    fn may_leave(&mut self, leaving: Leaving, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.closing {
             return true;
         }
@@ -2867,12 +2888,16 @@ impl WorkspaceView {
                         window.close_dialog(cx);
                         if let Some(workspace) = workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
-                                workspace.close_window(answer, window, cx);
+                                workspace.close_window(answer, leaving, window, cx);
                             });
                         }
                     })
             };
-            dialog.title("Save changes before closing?").child(
+            let title = match leaving {
+                Leaving::Window => "Save changes before closing?",
+                Leaving::App => "Save changes before quitting?",
+            };
+            dialog.title(title).child(
                 v_flex().gap_3().child(message.clone()).child(
                     h_flex()
                         .gap_2()
@@ -2889,8 +2914,14 @@ impl WorkspaceView {
         false
     }
 
-    /// Closes the window as `answer` says, once asked about unsaved pages.
-    fn close_window(&mut self, answer: CloseAnswer, window: &mut Window, cx: &mut Context<Self>) {
+    /// Closes the window, or quits, as `answer` says, once asked about unsaved pages.
+    fn close_window(
+        &mut self,
+        answer: CloseAnswer,
+        leaving: Leaving,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match answer {
             CloseAnswer::Cancel => return,
             // A page that changed on disk shows its own dialog, and the window stays.
@@ -2913,7 +2944,10 @@ impl WorkspaceView {
             }
         }
         self.closing = true;
-        window.remove_window();
+        match leaving {
+            Leaving::Window => window.remove_window(),
+            Leaving::App => crate::app::quit_now(cx),
+        }
     }
 
     /// Runs `command` (Close, or Close Others, Left, Right, Clean or All) on the tab of `item`,
