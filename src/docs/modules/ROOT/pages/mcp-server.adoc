@@ -39,6 +39,29 @@ The application, `adocfoundry-cli` and `adoc-ls` are not restricted in this way.
 
 == Configuring a client
 
+=== Finding the binary
+
+A client started from a desktop does not see a terminal's `PATH`, so give the full path to `adoc-mcp` in its configuration.
+
+macOS (DMG)::
+`/Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp`.
+It is not on `PATH` unless you linked it there, as xref:getting-started.adoc[Getting started] describes.
+
+Windows (MSI)::
+`C:\Program Files\AdocFoundry\bin\adoc-mcp.exe`.
+The MSI can add `bin` to `PATH`.
+In JSON the backslashes are doubled.
+
+Linux (deb, rpm)::
+`/usr/bin/adoc-mcp`.
+For an AppImage, use the standalone `adoc-mcp` archive from the release instead.
+
+The examples below use `/Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp` and `/path/to/docs`.
+Substitute your platform's path and your own roots.
+Roots should be absolute paths.
+
+=== The configuration
+
 Most MCP clients take a list of servers as JSON.
 Add AdocFoundry like this:
 
@@ -51,12 +74,198 @@ Add AdocFoundry like this:
 }
 ----
 
+This form assumes `adoc-mcp` is on `PATH`; otherwise use the full path.
+
 To allow writing, add the flag:
 
 [source,json]
 ----
 "args": ["/path/to/docs", "--allow-write"]
 ----
+
+The server only reads unless you add flags to `args`.
+`--allow-write` offers the write tools, and `--allow-build` offers `build_site`; neither implies the other.
+An assistant with `--allow-write` can change files in the roots, and `--allow-build` runs the project's npm scripts.
+
+[#clients]
+=== Connecting a client
+
+Clients change where and how they keep MCP servers.
+If a form here no longer works, the client's own documentation is the reference.
+
+==== Claude Code
+
+Add the server with the command line.
+Everything after `--` is passed to the server untouched:
+
+[source,sh]
+----
+claude mcp add --transport stdio adocfoundry -- /Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp /path/to/docs
+----
+
+To allow writing, put the flag after the root:
+
+[source,sh]
+----
+claude mcp add --transport stdio adocfoundry -- /Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp /path/to/docs --allow-write
+----
+
+The scope says who sees the server:
+
+* `--scope local`, the default, is you alone in this project.
+* `--scope project` writes `.mcp.json` at the project root, to share through version control. Claude Code asks before using a project's servers.
+* `--scope user` is all your projects.
+
+The `.mcp.json` form is:
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "adocfoundry": {
+      "command": "/Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp",
+      "args": ["/path/to/docs"]
+    }
+  }
+}
+----
+
+`claude mcp list` shows whether the server is Connected or Failed to connect, and `/mcp` does the same inside a session.
+
+==== Claude Desktop
+
+Open *Settings*, then *Developer*, then *Edit Config*.
+This opens `claude_desktop_config.json`:
+
+* macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+* Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+* Linux: `~/.config/Claude/claude_desktop_config.json`
+
+Use the `mcpServers` JSON above with absolute paths.
+On Windows it looks like this:
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "adocfoundry": {
+      "command": "C:\\Program Files\\AdocFoundry\\bin\\adoc-mcp.exe",
+      "args": ["C:\\Users\\you\\docs"]
+    }
+  }
+}
+----
+
+Quit Claude Desktop completely and start it again to load the change.
+The server's tools are then listed under the connectors in the message box's menu.
+
+If it does not connect, look at the logs:
+
+* macOS: `~/Library/Logs/Claude`
+* Windows: `%APPDATA%\Claude\logs`
+* Linux: `~/.config/Claude/logs`
+
+`mcp-server-adocfoundry.log` holds the server's standard error.
+
+Only the standard input and output form is described for Claude Desktop.
+
+==== Codex
+
+The Codex command line, its IDE extension and the ChatGPT desktop app share one configuration.
+Add the server from the command line:
+
+[source,sh]
+----
+codex mcp add adocfoundry -- /Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp /path/to/docs
+----
+
+Or edit `~/.codex/config.toml`.
+A trusted project can use `.codex/config.toml` instead.
+This file is TOML, not JSON:
+
+[source,toml]
+----
+[mcp_servers.adocfoundry]
+command = "/Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp"
+args = ["/path/to/docs"]
+----
+
+`codex mcp list` shows the configured servers, and `/mcp` shows them inside a session.
+
+==== VS Code
+
+GitHub Copilot's agent mode reads `.vscode/mcp.json` in the workspace.
+For every workspace, run the command *MCP: Open User Configuration*.
+The top-level key is `servers`, not `mcpServers`, and each server has a `type`:
+
+[source,json]
+----
+{
+  "servers": {
+    "adocfoundry": {
+      "type": "stdio",
+      "command": "/Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp",
+      "args": ["/path/to/docs"]
+    }
+  }
+}
+----
+
+==== Cursor
+
+Put the server in `.cursor/mcp.json` in the project, or in `~/.cursor/mcp.json` for every project.
+It takes the same `mcpServers` JSON as Claude Code's `.mcp.json` above.
+
+==== Gemini CLI
+
+Add the server from the command line:
+
+[source,sh]
+----
+gemini mcp add adocfoundry /Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp /path/to/docs
+----
+
+This writes to the project's `.gemini/settings.json`.
+Add `--scope user` to write `~/.gemini/settings.json` instead.
+In `settings.json` the entry is the same `mcpServers` form with `command` and `args`.
+
+Leave `trust` unset, so Gemini CLI asks before each tool call.
+Do not use an underscore in the server's name.
+In a folder Gemini CLI does not trust, the server shows as Disconnected in `gemini mcp list` until you run `gemini trust`.
+
+==== Zed
+
+Add the server to Zed's `settings.json` under `context_servers`.
+The zed-asciidoc extension already runs `adoc-ls` for editing; this adds the MCP server for Zed's agent:
+
+[source,json]
+----
+{
+  "context_servers": {
+    "adocfoundry": {
+      "command": "/Applications/AdocFoundry.app/Contents/MacOS/adoc-mcp",
+      "args": ["/path/to/docs"],
+      "env": {}
+    }
+  }
+}
+----
+
+==== Other clients
+
+Most clients take the `mcpServers` JSON shown at the top of this section.
+Check the client's own documentation for where it keeps it.
+
+=== Checking the connection
+
+After adding the server, ask the assistant to list the documentation's components.
+It should call `list_components` and name them.
+
+To check the binary itself, run `adoc-mcp --version` from a terminal with the same path.
+The MCP Inspector (`npx @modelcontextprotocol/inspector`, which needs Node.js) lists the tools and calls them by hand.
+
+If the server does not start, the client's log usually holds its standard error.
+A missing root or an unreadable settings file is reported there.
 
 [#http]
 == Serving over HTTP
@@ -98,6 +307,63 @@ Clients take the server's URL and the token's header:
   }
 }
 ----
+
+Claude Code, Codex, VS Code, Cursor, Gemini CLI and Zed can connect over HTTP as well.
+Each takes the URL and the token in its own form, shown here.
+The other forms are in <<clients,Connecting a client>>.
+
+Claude Code:
+
+[source,sh]
+----
+claude mcp add --transport http adocfoundry http://127.0.0.1:8765/mcp --header "Authorization: Bearer choose-a-secret"
+----
+
+Codex reads the token from the environment variable that `bearer_token_env_var` names, and sends it as `Authorization: Bearer`:
+
+[source,toml]
+----
+[mcp_servers.adocfoundry]
+url = "http://127.0.0.1:8765/mcp"
+bearer_token_env_var = "ADOC_MCP_TOKEN"
+----
+
+VS Code asks for the token once and stores it through an input variable:
+
+[source,json]
+----
+{
+  "inputs": [
+    { "type": "promptString", "id": "adoc-mcp-token", "description": "adoc-mcp token", "password": true }
+  ],
+  "servers": {
+    "adocfoundry": {
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer ${input:adoc-mcp-token}" }
+    }
+  }
+}
+----
+
+Cursor uses `url` and `headers` in the entry, as in the example above.
+It may read the token from the environment as `"Bearer ${env:ADOC_MCP_TOKEN}"`.
+
+Gemini CLI uses `httpUrl` and `headers` in `settings.json`:
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "adocfoundry": {
+      "httpUrl": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer choose-a-secret" }
+    }
+  }
+}
+----
+
+Zed takes an entry under `context_servers` with `"url": "http://127.0.0.1:8765/mcp"` and `"headers": { "Authorization": "Bearer choose-a-secret" }`.
 
 == Read-only tools
 
