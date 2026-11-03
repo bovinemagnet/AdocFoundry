@@ -78,6 +78,11 @@ Two bindings, Go Back and Go Forward, use Control on every platform.
 |Ctrl-K Ctrl-W
 |`document.close_all`
 
+|Quit
+|Cmd-Q
+|Ctrl-Q on Linux; none on Windows
+|`app.quit`
+
 |Undo
 |Cmd-Z
 |Ctrl-Z
@@ -365,6 +370,9 @@ See xref:visual-editing.adoc[Visual editing].
 Some visual commands have no default binding and are available from the palette or the toolbar: Highlight (`edit.toggle_highlight`), Set Block Type (`edit.set_block_type`), Remove Link (`edit.remove_link`), Check or Uncheck (`edit.toggle_checked`), Insert Image (`edit.insert_image`, also in the source editor), Edit Image (`edit.edit_image`), Insert Table (`edit.insert_table`), Insert Table Row, Delete Table Row, Insert Table Column and Delete Table Column (`edit.insert_table_row`, `edit.delete_table_row`, `edit.insert_table_column`, `edit.delete_table_column`), Insert Code Block (`edit.insert_code_block`) and Insert Admonition (`edit.insert_admonition`).
 Type (`visual.insert_text`) and Insert Block (`visual.insert_block`) are driven by typing and by Enter rather than bound to keys.
 Highlight has no binding because Cmd-Shift-H and Ctrl-Shift-H are Replace in Workspace.
+
+On macOS only, the app menu also has Hide AdocFoundry (Cmd-H) and Hide Others (Cmd-Alt-H).
+Windows closes the window with Alt-F4 as usual, which is not Quit.
 
 The Source, Visual and Split commands are chords like Toggle Preview: hold the modifier for kbd:[K] only, release it, then press the letter on its own.
 

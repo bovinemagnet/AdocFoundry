@@ -35,6 +35,8 @@ pub struct AppState {
     events: Receiver<EngineEvent>,
     _pump: Task<()>,
     _quit: gpui::Subscription,
+    /// The workspace window and its view, which Quit asks about unsaved pages.
+    pub(crate) main: Option<(gpui::AnyWindowHandle, gpui::WeakEntity<WorkspaceView>)>,
 }
 
 impl EventEmitter<EngineEvent> for AppState {}
@@ -79,6 +81,7 @@ impl AppState {
             events,
             _pump: pump,
             _quit: quit,
+            main: None,
         }
     }
 
@@ -167,13 +170,90 @@ pub fn open_main_window(
     cx: &mut App,
 ) {
     let options = window_options(Bounds::centered(None, size(px(1280.), px(800.)), cx));
+    let mut workspace = None;
     let opened = cx.open_window(options, |window, cx| {
         let view = cx.new(|cx| WorkspaceView::new(app.clone(), folder, files.clone(), window, cx));
+        workspace = Some(view.downgrade());
         cx.new(|cx| Root::new(view, window, cx))
     });
-    if let Err(error) = opened {
-        eprintln!("adocfoundry: could not open the main window: {error}");
+    match (opened, workspace) {
+        (Ok(handle), Some(workspace)) => {
+            app.update(cx, |app, _| app.main = Some((handle.into(), workspace)));
+        }
+        (Err(error), _) => eprintln!("adocfoundry: could not open the main window: {error}"),
+        (Ok(_), None) => {}
     }
+}
+
+/// The actions that belong to the app rather than a window: Quit, from any window, the
+/// keymap, the palette or a menu; on macOS, hiding, and the app menu in the menu bar.
+pub fn bind_app_actions(app: &Entity<AppState>, cx: &mut App) {
+    use crate::editor::bindings::{
+        HideApp, HideOtherApps, OpenSettings, Quit, ShowAbout, ShowAllApps,
+    };
+    let quitting = app.clone();
+    cx.on_action(move |_: &Quit, cx| quit(&quitting, cx));
+    cx.on_action(|_: &HideApp, cx| cx.hide());
+    cx.on_action(|_: &HideOtherApps, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAllApps, cx| cx.unhide_other_apps());
+    if cfg!(target_os = "macos") {
+        use gpui::{Menu, MenuItem, SystemMenuType};
+        // The app menu macOS users look for first; the rest is the ☰ menu in the title bar.
+        // About and Settings act in the workspace window, as their ☰ entries do.
+        cx.set_menus([Menu::new("AdocFoundry").items([
+            MenuItem::action("About AdocFoundry", ShowAbout),
+            MenuItem::separator(),
+            MenuItem::action("Settings…", OpenSettings),
+            MenuItem::separator(),
+            MenuItem::os_submenu("Services", SystemMenuType::Services),
+            MenuItem::separator(),
+            MenuItem::action("Hide AdocFoundry", HideApp),
+            MenuItem::action("Hide Others", HideOtherApps),
+            MenuItem::action("Show All", ShowAllApps),
+            MenuItem::separator(),
+            MenuItem::action(crate::menus::quit_title(), Quit),
+        ])]);
+    }
+}
+
+/// File › Quit, from any window or the macOS app menu: the workspace window asks about unsaved
+/// pages first, as closing it does, and quits once answered; with that window gone (macOS keeps
+/// the app running without it) the app quits at once.
+///
+/// The action arrives while its window is being updated, so the asking waits until that update
+/// is over; only a workspace window that is gone quits without it.
+pub fn quit(app: &Entity<AppState>, cx: &mut App) {
+    let main = app.read(cx).main.clone();
+    cx.defer(move |cx| {
+        if let Some((handle, workspace)) =
+            main.filter(|(_, workspace)| workspace.upgrade().is_some())
+        {
+            let asked = handle.update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| workspace.quit(window, cx))
+            });
+            if asked.is_ok() {
+                return;
+            }
+        }
+        quit_now(cx);
+    });
+}
+
+/// Quits the app. Tests see that it was asked for instead.
+pub(crate) fn quit_now(cx: &mut App) {
+    #[cfg(test)]
+    {
+        let _ = cx;
+        QUIT_ASKED.with(|asked| asked.set(true));
+    }
+    #[cfg(not(test))]
+    cx.quit();
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Whether the app was asked to quit, in a test, where quitting would end it.
+    pub(crate) static QUIT_ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The options every window opens with, so that each is grouped under the app and shows its

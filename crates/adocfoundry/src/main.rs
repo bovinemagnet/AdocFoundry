@@ -58,6 +58,7 @@ fn main() {
             editor::language::register();
             editor::bindings::bind(&engine, cx);
             let app = cx.new(|cx| app::AppState::new(engine, cx));
+            app::bind_app_actions(&app, cx);
             app::open_main_window(app, folder, files, cx);
             cx.activate(true);
         });

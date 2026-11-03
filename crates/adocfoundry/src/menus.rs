@@ -35,6 +35,31 @@ enum Entry {
 
 use Entry::{Command, Separator, Ui};
 
+/// Where a menu's popup starts, below the title bar's menu names.
+const MENU_TOP: gpui::Pixels = px(40.);
+/// The room a menu leaves below it.
+const MENU_MARGIN: gpui::Pixels = px(8.);
+
+/// Quit as each platform names it: macOS names the app, Windows says Exit.
+pub(crate) fn quit_title() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Quit AdocFoundry"
+    } else if cfg!(target_os = "windows") {
+        "Exit"
+    } else {
+        "Quit"
+    }
+}
+
+/// A command's title in a menu: its spec's, but for Quit, as the platform names it.
+fn menu_title(id: CommandId, title: &'static str) -> &'static str {
+    if id == ids::APP_QUIT {
+        quit_title()
+    } else {
+        title
+    }
+}
+
 /// The menus, in title bar order. Commands this build does not register are left out, and those
 /// unavailable just now (no page open, no Antora component) are shown disabled.
 const MENUS: &[(&str, &[Entry])] = &[
@@ -74,6 +99,8 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::SETTINGS_RELOAD),
             Command(ids::WORKSPACE_REINDEX),
             Command(ids::QUALITY_RUN_AUDIT),
+            Separator,
+            Command(ids::APP_QUIT),
         ],
     ),
     (
@@ -287,7 +314,7 @@ pub(crate) fn menus(engine: &Engine) -> Vec<Menu> {
                             continue;
                         };
                         Item::Action {
-                            label: command.spec().title.into(),
+                            label: menu_title(id, command.spec().title).into(),
                             action,
                             disabled: !engine.command_available(id),
                         }
@@ -360,7 +387,11 @@ impl AppMenu {
         };
         let items: Vec<Item> = menu.items.iter().map(Item::boxed_clone).collect();
         let context = self.action_context.clone().unwrap_or(self.fallback.clone());
+        // At most the height below the title bar, scrolling past it: a taller menu would be
+        // moved up to fit the window, over the menu names, and hide them.
+        let height = window.viewport_size().height - MENU_TOP - MENU_MARGIN;
         let popup = PopupMenu::build(window, cx, move |popup, _, _| {
+            let popup = popup.scrollable(true).max_h(height);
             items
                 .into_iter()
                 .fold(popup.action_context(context), |popup, item| match item {
@@ -528,6 +559,12 @@ mod tests {
             ["Undo", "Redo", "Undo Delete", "-"].map(str::to_owned)
         );
         assert_eq!(labels(&menus[3])[0], "Command Palette");
+        // File ends with Quit, named as the platform names it.
+        let file = labels(&menus[0]);
+        assert_eq!(
+            file[file.len() - 2..],
+            ["-".to_owned(), quit_title().to_owned()]
+        );
     }
 
     #[test]

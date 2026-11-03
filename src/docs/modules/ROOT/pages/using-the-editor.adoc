@@ -76,7 +76,7 @@ Untitled pages are kept too.
 The copy is removed as soon as the page is saved, closed without saving, or its edits are undone back to the saved text.
 
 If the app ends without saving, the next launch opens the Recover Unsaved Changes dialog.
-This happens when the app crashes, is killed, the machine loses power, you quit with pages unsaved, or you close the window with pages unsaved and choose Save with untitled pages open (see xref:#closing-the-window[closing the window]).
+This happens when the app crashes, is killed, the machine loses power, the system quits the app with pages unsaved, you choose Don't Save when quitting, or you close the window with pages unsaved and choose Save with untitled pages open (see xref:#closing-the-window[closing the window]).
 The dialog lists each page, with untitled pages marked "(untitled)", and when it was edited.
 Beside the list it shows the lines the unsaved text changes compared with the file on disk now.
 Removed lines are red and start with `-`, added lines are green and start with `+`, and three unchanged lines are shown around each change.
@@ -433,7 +433,11 @@ The session still reopens the tabs, with each file's saved text.
 Cancel::
 Keeps the window open.
 
-Quitting the app, rather than closing its window, does not ask: unsaved text is kept for Recover Unsaved Changes.
+*File > Quit* asks in the same way, in a dialog titled "Save changes before quitting?", from any window.
+Save saves the pages and quits, and if one changed on disk the usual dialog appears and nothing quits.
+Don't Save quits without saving, so nothing is offered back by recovery, and Cancel keeps working.
+With nothing unsaved, Quit quits at once.
+Only a quit the system asks for, such as logging out, shutting down or Quit in the Dock, does not ask: unsaved text is kept for Recover Unsaved Changes.
 
 The ← and → buttons at the start of the tab bar are Go Back and Go Forward through the places you have followed links to.
 Each is greyed out when there is nowhere to go.
@@ -1470,6 +1474,7 @@ A command the build lacks, such as PDF export in a build without Typst, is left 
 
 File::
 Open, New Page, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, delete a file, settings and re-indexing.
+It ends with Quit, after a separator, named as the platform names it: "Quit AdocFoundry" on macOS, "Exit" on Windows and "Quit" on Linux.
 
 Edit::
 Undo, Redo, Undo Delete, Find in Workspace, Replace in Workspace, Rename Page and Revert Change.
@@ -1490,6 +1495,13 @@ Refreshing status, staging, committing, pushing and the remote links.
 
 Help::
 Check for Updates, Show Diagnostics and About AdocFoundry.
+
+=== The macOS app menu
+
+On macOS the menu bar also has the AdocFoundry app menu, as other Mac apps do.
+It holds About AdocFoundry, Settings…, Services, Hide AdocFoundry (kbd:[Cmd-H]), Hide Others (kbd:[Cmd-Alt-H]), Show All and Quit AdocFoundry (kbd:[Cmd-Q]).
+About and Settings… act in the main window, as their entries in the ☰ menu do.
+Every other menu stays in the ☰ menu in the title bar.
 
 [[about]]
 == About
