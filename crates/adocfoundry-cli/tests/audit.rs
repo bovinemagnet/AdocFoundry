@@ -317,3 +317,151 @@ fn a_component_scope_and_an_output_file() {
     assert_eq!(report["scope"]["version"], "2.0");
     assert_eq!(report["coverage"].as_array().unwrap().len(), 1);
 }
+
+/// An enabled provider this build cannot run is reported as unavailable, leaving the audit
+/// partial, while the core audit's findings stand: passing by default, untrustworthy in strict
+/// mode.
+#[test]
+fn audit_unavailable_providers_leave_the_core_audit() {
+    let (_directory, root) = copy();
+    let root_text = root.to_str().unwrap().to_owned();
+    let plain = json(&cli(&["audit", &root_text, "--format", "json"]));
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        "[quality]\nproviders = [\"vale\"]\n",
+    )
+    .unwrap();
+
+    let output = cli(&["audit", &root_text, "--format", "json"]);
+    assert_eq!(code(&output), 0, "passing, with partial coverage");
+    let report = json(&output);
+    assert_eq!(
+        report["findings"], plain["findings"],
+        "the core audit stands"
+    );
+    assert_eq!(report["completeness"]["status"], "partial");
+    assert_eq!(
+        report["completeness"]["gaps"][0]["reason"],
+        "provider-unavailable"
+    );
+    let vale = report["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|status| status["provider"] == "vale")
+        .unwrap();
+    assert_eq!(vale["state"], "unavailable");
+    assert!(vale["reason"].as_str().unwrap().contains("#85"));
+    assert!(report["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|status| status["provider"] != "vale")
+        .all(|status| status["state"] == "disabled"));
+
+    assert_eq!(
+        code(&cli(&["audit", &root_text, "--require-complete"])),
+        2,
+        "strict mode does not trust it"
+    );
+    let text = stdout(&cli(&["audit", &root_text]));
+    assert!(text.contains("Provider vale: unavailable"), "{text}");
+    assert!(text.contains("Gap (provider-unavailable)"), "{text}");
+    let sarif = json(&cli(&["audit", &root_text, "--format", "sarif"]));
+    let run = &sarif["runs"][0];
+    assert_eq!(
+        run["invocations"][0]["toolExecutionNotifications"][0]["descriptor"]["id"],
+        "provider-unavailable"
+    );
+    assert_eq!(run["properties"]["providers"], report["providers"]);
+}
+
+/// End to end: the command line's audit and the audit the app keeps (the engine with the
+/// problems and the audit kept, as the app has them) agree under a workspace's policy, in the
+/// report the Quality overview shows and, finding by finding, in what Problems lists.
+#[test]
+fn cli_and_app_report_the_same_audit() {
+    use adoc_engine::{audit, Engine, Settings};
+    use std::time::{Duration, Instant};
+
+    let (_directory, root) = copy();
+    fs::write(
+        root.join(".adocfoundry.toml"),
+        "[quality]\nproviders = [\"page-age\"]\n\n[quality.rules]\n\"quality.page.missing-title\" = \"error\"\n\n[[quality.exclusions]]\nrule = \"quality.navigation.unlisted-page\"\nresource = \"3.0@product:ROOT:orphan.adoc\"\nreason = \"Reached from the release notes\"\n",
+    )
+    .unwrap();
+    let root = adoc_index::normalize_path(&root);
+    let root_text = root.to_str().unwrap().to_owned();
+    let mut from_cli = json(&cli(&["audit", &root_text, "--format", "json"]));
+
+    let mut engine = Engine::new(Settings::load(None, Some(&root)).unwrap().with_git_opt_in());
+    engine.enable_problems();
+    engine.enable_audit();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while engine.audit_builds() == 0 || engine.has_pending() {
+        assert!(Instant::now() < deadline, "the app's audit arrives");
+        engine.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let kept = engine
+        .audit_report(&audit::AuditScope::Workspace)
+        .expect("kept");
+    let mut from_app = serde_json::to_value(&kept).unwrap();
+    // The revisions count the index's and catalog's updates, which differ between the two runs.
+    from_cli["revision"] = serde_json::Value::Null;
+    from_app["revision"] = serde_json::Value::Null;
+    assert_eq!(from_app, from_cli, "the same report, counts and detail");
+    assert_eq!(kept.counts().excluded, 1);
+    assert_eq!(
+        from_cli["completeness"]["status"], "partial",
+        "page-age is unavailable"
+    );
+
+    // Every `quality.*` finding the command line prints is the problem the app lists, at the
+    // same place, and there are no others.
+    let text = stdout(&cli(&["audit", &root_text]));
+    let mut printed: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains(" quality."))
+        .collect();
+    printed.sort_unstable();
+    let mut listed: Vec<String> = engine
+        .problems()
+        .iter()
+        .flat_map(|(path, problems)| {
+            let relative = adoc_audit_path(path.strip_prefix(&root).unwrap());
+            problems
+                .iter()
+                .filter(|problem| matches!(problem.code, audit::FindingCode::Rule(_)))
+                .map(move |problem| {
+                    let place = if problem.whole_file {
+                        relative.clone()
+                    } else {
+                        format!("{relative}:{}:{}", problem.line, problem.column)
+                    };
+                    let severity = match problem.severity {
+                        adoc_core::DiagnosticSeverity::Error => "error",
+                        adoc_core::DiagnosticSeverity::Warning => "warning",
+                        adoc_core::DiagnosticSeverity::Information => "info",
+                    };
+                    format!(
+                        "{place}: {severity} {} {}",
+                        problem.code.as_str(),
+                        problem.message
+                    )
+                })
+        })
+        .collect();
+    listed.sort_unstable();
+    assert!(!listed.is_empty());
+    assert_eq!(listed, printed);
+}
+
+/// `path` with `/` separators, as reports name files.
+fn adoc_audit_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}

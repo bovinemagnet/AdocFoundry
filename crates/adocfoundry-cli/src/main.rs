@@ -359,6 +359,15 @@ fn audit_text(
             coverage.component, coverage.listed, coverage.pages
         ));
     }
+    for status in report.providers() {
+        match &status.state {
+            audit::ProviderState::Disabled => {}
+            audit::ProviderState::Ran => lines.push(format!("Provider {}: ran", status.provider)),
+            audit::ProviderState::Unavailable { .. } => {
+                lines.push(format!("Provider {}: unavailable", status.provider));
+            }
+        }
+    }
     let partial = matches!(report.completeness(), audit::Completeness::Partial(_));
     lines.push(
         match report.verdict() {

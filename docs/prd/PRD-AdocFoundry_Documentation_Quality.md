@@ -308,3 +308,22 @@ Existing repository issues mentioned above remain independent and must not be si
 - **Filters.** `ProblemFilter` (severity, code, component, version, module), `Engine::filtered_problems` and `Engine::problem_place` are in the engine. The filter itself is view state in the app, set from the filter bar or by the overview's links. A component descriptor belongs to its component version and to no module, and a module chosen without a component version matches that module in any.
 - **Links from the overview.** A severity or rule count filters by that severity or code. A component version's coverage filters to its unlisted pages (that version and `quality.navigation.unlisted-page`), and is a link only when it has some. Skips and exclusions are counted, and each exclusion is shown with its reason, but they are not links, since Problems lists neither.
 - **Tests.** `audit_findings_listed_once_in_problems`, `excluded_findings_are_not_problems`, `quality_problems_follow_edits`, `problems_filter_by_severity_code_and_place` and `run_audit_builds_the_audit_then_builds_it_again` are in the engine's `tests/audit.rs`. `audit_panel_opens_exact_source_location`, `audit_overview_counts_filter_problems` and `problem_filter_choices_clear_one_by_one` run on GPUI's test platform. The Filter ▾ menu's items are not driven by a test (gpui-component's popup menu gives its items no selectors); they set the same filter the tested paths do.
+
+### Q6 (#305): optional providers, documentation and end-to-end QA
+
+- **Providers are an interface, not implementations.** `adoc-audit`'s `providers.rs` registers the four planned providers, with stable names, what each needs and the issue it is tracked in: `compatibility` (#104), `external-links` (#86), `page-age` (#289) and `vale` (#85). Those issues stay as they are, and none is implemented here.
+  - `[quality] providers = [...]` enables providers by name. An unknown name is a `[quality]` problem, and both settings files' providers apply.
+  - Whoever runs a provider reports it to the builder with `provider_ran` or `provider_unavailable(reason)`. `finish` gives every registered provider a `ProviderStatus`: `disabled`, `ran`, or `unavailable` with its reason.
+  - An enabled provider that nothing ran is unavailable, giving a `provider-unavailable` gap (§5.4). The report is then partial: it passes by default, exits 2 in strict mode, and leaves the core findings unchanged.
+  - The states appear in JSON (`providers`), in SARIF's run properties, as a `Provider <name>:` line in the text format, and under Optional providers in the Quality panel.
+- **Schema.** `providers` is a new top-level field, added to an unreleased schema, so `SCHEMA_VERSION` stays 1. The three snapshots changed only by this field.
+- **Offline, checked.** `cargo xtask layers` now checks that `adoc-audit`'s sources name no file, process, network or thread API (`ADOC_AUDIT_FORBIDDEN_PATHS`), with the test `audit_is_offline` (PRD test 15). A provider's work runs where its needs are allowed: a tool on an engine worker, Git history through `adoc-git`, and the network only in `adocfoundry`, which hands results to the engine. The developer guide describes that route.
+- **End to end.** `cli_and_app_report_the_same_audit` audits a copy of the multi-component fixture under a workspace policy that has a severity override, an exclusion and an enabled provider. It checks that the command line's JSON equals the report the engine keeps, as the app keeps it, apart from the revisions. It also checks that every `quality.*` finding the text format prints is the problem the app lists, at the same line and column.
+- **Real corpus.** On the 533-page real corpus, `adocfoundry-cli audit` takes 2.1 s including indexing and finds 426 warnings, with complete coverage and nothing written. The manual checks of the app, the code-scanning upload and validation against the SARIF schema are listed in `docs/qa/quality.md` and have not been run.
+- **Documentation.** The user guide's new *The quality audit* page covers the rules, completeness, the policy, exclusions, CI, the providers and the scope limitations. The limitations are:
+  - remote sources are not detected;
+  - navigation is read as written, so a nav file's includes and attribute entries are skipped rather than expanded;
+  - inline images are not checked;
+  - ignored folders are not gaps;
+  - existing diagnostics keep their severity;
+  - there is no score.

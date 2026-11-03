@@ -1,0 +1,218 @@
+= The quality audit
+Paul Snow
+:revnumber: 0.0.0
+:description: What the documentation quality audit reports, how its policy, exclusions and optional providers work, how to use it in CI and what it does not cover.
+
+[[what-it-is]]
+== What it is
+
+The quality audit is an offline, deterministic assessment of an Antora workspace.
+`adocfoundry-cli audit` runs it (see xref:command-line.adoc#audit[]).
+In the app, Run Audit runs it, and the Quality panel and Problems show the result (see xref:using-the-editor.adoc[]).
+
+The command line and the app share one implementation.
+For the same workspace and policy they report the same findings, counts and coverage.
+The core audit makes no network request, runs no program and writes no file.
+`cargo xtask layers` checks the audit crate's sources for this.
+
+[[what-it-reports]]
+== What it reports
+
+The audit reports every existing diagnostic of the files in scope, listed once, with its own code, severity and message.
+See xref:diagnostics.adoc[].
+A navigation file's unresolved entry is its `adoc.unresolved-xref-file`.
+
+It adds three rules of its own.
+
+`quality.navigation.unlisted-page`::
+A published page that no navigation file of its own component version reaches.
+A published page is an `.adoc` file in a `pages` folder whose name and folders do not start with `_` or `.`.
+Aliases count, and the start page counts as listed.
+
+`quality.page.missing-title`::
+A published page with no document title.
+It is skipped when an include before the first section may supply one.
+
+`quality.image.missing-alt`::
+A block image macro (`image::`) in a page or partial with no alternative text written at all.
+Inline images are not checked.
+
+It also reports each component version's navigation coverage: the listed pages out of the pages, with undetermined pages counted.
+
+[[completeness]]
+== Completeness
+
+A report is one of three kinds.
+
+Complete::
+Everything in scope was audited by every enabled rule and provider.
+
+Partial::
+Something was missed.
+Each gap has a stable reason.
++
+`scope-not-indexed`:::
+A folder could not be read.
+
+`provider-unavailable`:::
+An enabled provider could not run.
+
+`remote-component-missing`:::
+Reserved.
+It is not detected yet.
+
+Unavailable::
+Nothing in scope could be audited, such as a component that is not checked out.
+
+A construct a rule cannot judge is a skip.
+A skip is counted per rule and listed, and it never makes a report partial.
+Examples are a navigation file with an `include::`, an entry that names an `+{attribute}+`, an unreadable navigation file, and a title an include may supply.
+
+[[policy]]
+== The policy
+
+The policy is the `[quality]` table of `.adocfoundry.toml`.
+See xref:settings.adoc[Settings] for each key as a table row.
+
+[source,toml]
+----
+[quality]
+fail_on = "warning"
+require_complete = true
+providers = ["vale"]
+enabled = true
+
+[quality.rules]
+"quality.navigation.unlisted-page" = "info"
+"quality.image.missing-alt" = "error"
+
+[[quality.exclusions]]
+rule = "quality.navigation.unlisted-page"
+resource = "product:ROOT:internal-notes.adoc"
+reason = "Deliberately unlisted staff-only page"
+----
+
+`fail_on`::
+The lowest severity that fails a gate: `none`, `warning` or `error`.
+The default is `error`.
+
+`require_complete`::
+Makes a partial audit exit with 2, as `--require-complete` does.
+An unavailable audit always exits with 2.
+The default is `false`.
+
+`[quality.rules]`::
+The severity of a `quality.*` rule: `off`, `info`, `warning` or `error`.
+Existing diagnostics keep their severity and cannot be set here.
+
+`[[quality.exclusions]]`::
+An accepted finding, with a `rule`, a `resource` and a `reason`.
+See <<exclusions>>.
+
+`providers`::
+An array of the optional providers to run.
+See <<providers>>.
+
+`enabled`::
+Keeps the audit current from the moment a workspace opens.
+Only the app reads it.
+
+The command line reads only the workspace file, never the user file, so CI gets the same result on every machine.
+The app reads both files.
+A rule's severity from the workspace file wins, and the exclusions and providers of both files apply.
+Invalid `[quality]` settings are warned about.
+On the command line they make the command exit with 2, after the report is written.
+
+[[exclusions]]
+== Exclusions
+
+An exclusion names one rule and one resource.
+The resource is an Antora resource ID with its component and module.
+
+* `product:ROOT:internal.adoc` covers every version.
+* `3.0@product:ROOT:internal.adoc` covers one version.
+* `~@guide:ROOT:notes.adoc` covers a versionless component.
+
+A reason is required.
+An unqualified resource or a duplicate is refused.
+
+An excluded finding stays in the report with its reason.
+In JSON it is under `excluded`, and in SARIF it is a suppressed result.
+In the app the Quality panel counts it and lists it with its reason, and Problems does not show it.
+An excluded finding never fails a gate.
+
+There are no globs and no folder-wide exclusions.
+
+[[ci]]
+== Using it in CI
+
+The exit code is 0 below `fail_on`, and 1 at or above it.
+It is 2 when the audit is unavailable, when it is partial under `--require-complete`, or when the settings are invalid.
+2 takes precedence over 1, and 1 over 0.
+The report is always written in full first.
+
+Strict mode (`--require-complete`, or `require_complete = true`) is recommended in CI, so a gap cannot pass unnoticed.
+The command-line page has a complete CI example.
+See xref:command-line.adoc#audit[audit] and its _Using it in CI_ section.
+
+SARIF paths are relative to the audited root.
+Audit from the repository root when you upload the report to code scanning.
+
+[[providers]]
+== Optional providers
+
+Checks that need something the core audit never uses are optional providers.
+Each is off until `[quality] providers` names it.
+
+[cols="2,4,2,1"]
+|===
+|Name |What it checks |Needs |Issue
+
+|`compatibility`
+|Constructs the native renderer approximates, and theme keys PDF export ignores.
+|The workspace
+|https://github.com/bovinemagnet/AdocFoundry/issues/104[#104]
+
+|`external-links`
+|External links that no longer answer.
+|The network
+|https://github.com/bovinemagnet/AdocFoundry/issues/86[#86]
+
+|`page-age`
+|Pages not changed in a long time.
+|Git history
+|https://github.com/bovinemagnet/AdocFoundry/issues/289[#289]
+
+|`vale`
+|Prose style alerts.
+|The `vale` program
+|https://github.com/bovinemagnet/AdocFoundry/issues/85[#85]
+|===
+
+None is in this build yet.
+An enabled provider that does not run is reported as `unavailable` with its reason.
+For now the reason is that the build has none yet, and the issue that tracks it.
+It is also a `provider-unavailable` gap.
+The audit is then partial, so it passes by default but exits with 2 in strict mode.
+The core audit's findings are unchanged.
+
+Every report lists every provider's state: `disabled`, `ran` or `unavailable`.
+
+* In JSON, the state is under `providers`.
+* In SARIF, it is in the run's properties.
+* In the text output, each enabled provider has a `Provider <name>: …` line.
+* In the Quality panel, it is under Optional providers.
+
+[[limitations]]
+== Scope and limitations
+
+* The audit covers the local checkout: the components and versions in the workspace's folders, not a published site.
+* A playbook's remote sources that are not checked out are not detected yet, so such a workspace audits as complete over what it has.
+* Navigation is read as written.
+A navigation file's `include::` and attribute entries are skipped, not expanded.
+Navigation that only a publishing step produces is not seen.
+* Only block image macros are checked for alternative text, and text given through an attribute counts as present.
+* Folders in `[workspace] ignore` are never audited and are not a gap.
+A folder that could not be read is a gap.
+* Existing diagnostics keep their severity and cannot be turned off by the audit, only excluded resource by resource.
+* There is no overall score, only counts and coverage with their denominators.

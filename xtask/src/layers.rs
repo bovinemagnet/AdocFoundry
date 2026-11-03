@@ -107,6 +107,22 @@ pub const SPELL_CRATES: &[&str] = &["spellbook"];
 /// Source-level imports forbidden in `adoc-lang`.
 const ADOC_LANG_FORBIDDEN_PATHS: &[&str] = &["lsp_types", "lsp_server", "url::"];
 
+/// What `adoc-audit` must never name, so the core audit stays offline and pure: no files of its
+/// own (it reads only through the caller's reader), no subprocesses, no network, no threads.
+/// Optional providers that need any of these run outside it (`adoc_audit::PROVIDERS`).
+const ADOC_AUDIT_FORBIDDEN_PATHS: &[&str] = &[
+    "std::fs",
+    "File::open",
+    "File::create",
+    "OpenOptions",
+    "std::process",
+    "Command::new",
+    "std::net",
+    "TcpStream",
+    "UdpSocket",
+    "std::thread",
+];
+
 #[derive(Debug, Eq, PartialEq)]
 pub struct Manifest {
     pub name: String,
@@ -238,15 +254,17 @@ pub fn check_manifest(manifest: &Manifest) -> Vec<String> {
 
 /// Checks Rust sources for imports that a crate must not use.
 pub fn check_sources(name: &str, files: &BTreeMap<PathBuf, String>) -> Vec<String> {
-    if name != "adoc-lang" {
-        return Vec::new();
-    }
+    let forbidden_paths = match name {
+        "adoc-lang" => ADOC_LANG_FORBIDDEN_PATHS,
+        "adoc-audit" => ADOC_AUDIT_FORBIDDEN_PATHS,
+        _ => return Vec::new(),
+    };
     let mut violations = Vec::new();
     for (path, text) in files {
-        for forbidden in ADOC_LANG_FORBIDDEN_PATHS {
+        for forbidden in forbidden_paths {
             if text.contains(forbidden) {
                 violations.push(format!(
-                    "{}: adoc-lang must not reference `{forbidden}`",
+                    "{}: {name} must not reference `{forbidden}`",
                     path.display()
                 ));
             }
@@ -594,6 +612,38 @@ libc = "=0.2.0"
         files.insert(PathBuf::from("c.rs"), "fn fine() {}".to_owned());
         assert_eq!(check_sources("adoc-lang", &files).len(), 2);
         assert!(check_sources("adoc-ls", &files).is_empty());
+    }
+
+    /// The core audit names no file, process, network or thread API, in a synthetic crate and
+    /// in `adoc-audit` itself.
+    #[test]
+    fn audit_is_offline() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            PathBuf::from("a.rs"),
+            "std::process::Command::new(\"vale\")".to_owned(),
+        );
+        files.insert(
+            PathBuf::from("b.rs"),
+            "let s = std::net::TcpStream::connect(a);".to_owned(),
+        );
+        files.insert(
+            PathBuf::from("c.rs"),
+            "let t = std::fs::read(p);".to_owned(),
+        );
+        files.insert(PathBuf::from("e.rs"), "let f = File::create(p);".to_owned());
+        files.insert(PathBuf::from("d.rs"), "fn fine() {}".to_owned());
+        let violations = check_sources("adoc-audit", &files);
+        assert_eq!(violations.len(), 6, "{violations:#?}");
+        assert!(violations[0].contains("adoc-audit must not reference `std::process`"));
+
+        let mut sources = BTreeMap::new();
+        collect_sources(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/adoc-audit/src"),
+            &mut sources,
+        );
+        assert!(sources.len() > 5, "the crate's sources are read");
+        assert_eq!(check_sources("adoc-audit", &sources), Vec::<String>::new());
     }
 
     /// A package and its dependencies as `(dependency, kind)`, `None` for a normal dependency.

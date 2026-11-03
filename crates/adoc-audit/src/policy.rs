@@ -1,11 +1,14 @@
 //! The workspace's audit policy: rule severities, exclusions, and what fails a gate.
 
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use adoc_antora::{parse_resource_id, ResourceFamily};
 use serde::{Deserialize, Serialize};
 
-use crate::{Excluded, Finding, FindingCode, RuleId, Severity};
+use crate::{Excluded, Finding, FindingCode, ProviderId, RuleId, Severity};
 
 /// The lowest severity that fails a gate.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -168,6 +171,7 @@ impl Exclusion {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PolicyError {
     UnknownRule(String),
+    UnknownProvider(String),
     /// An existing diagnostic's severity cannot be changed by the audit.
     NotConfigurable(String),
     InvalidLevel(String),
@@ -190,6 +194,7 @@ impl fmt::Display for PolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownRule(rule) => write!(formatter, "unknown rule `{rule}`"),
+            Self::UnknownProvider(provider) => write!(formatter, "unknown provider `{provider}`"),
             Self::NotConfigurable(code) => write!(
                 formatter,
                 "`{code}` is an existing diagnostic and keeps its own severity"
@@ -218,7 +223,8 @@ impl fmt::Display for PolicyError {
 
 impl std::error::Error for PolicyError {}
 
-/// How an audit is judged: each rule's severity, the exclusions, and the gate.
+/// How an audit is judged: each rule's severity, the exclusions, the optional providers enabled,
+/// and the gate.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Policy {
     pub fail_on: FailOn,
@@ -227,6 +233,8 @@ pub struct Policy {
     /// Severities set for rules; `None` turns a rule off.
     severities: BTreeMap<RuleId, Option<Severity>>,
     exclusions: Vec<Exclusion>,
+    /// The optional providers to run; none by default.
+    providers: BTreeSet<ProviderId>,
 }
 
 impl Policy {
@@ -286,6 +294,19 @@ impl Policy {
     #[must_use]
     pub fn exclusions(&self) -> &[Exclusion] {
         &self.exclusions
+    }
+
+    /// Enables the optional provider named `name` (`crate::PROVIDERS`).
+    pub fn enable_provider(&mut self, name: &str) -> Result<(), PolicyError> {
+        let provider = ProviderId::from_name(name)
+            .ok_or_else(|| PolicyError::UnknownProvider(name.to_owned()))?;
+        self.providers.insert(provider);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn provider_enabled(&self, provider: ProviderId) -> bool {
+        self.providers.contains(&provider)
     }
 
     /// The first exclusion matching `finding`.
@@ -490,5 +511,22 @@ mod tests {
         );
         policy.set_severity(UNLISTED, "off").unwrap();
         assert_eq!(policy.apply(page(Some("3.0"), "b.adoc")), Applied::Off);
+    }
+
+    #[test]
+    fn providers_are_off_until_enabled_by_name() {
+        let mut policy = Policy::default();
+        assert!(!policy.provider_enabled(ProviderId::VALE));
+        policy.enable_provider("vale").unwrap();
+        assert!(policy.provider_enabled(ProviderId::VALE));
+        assert!(!policy.provider_enabled(ProviderId::EXTERNAL_LINKS));
+        assert_eq!(
+            policy.enable_provider("spellcheck"),
+            Err(PolicyError::UnknownProvider("spellcheck".to_owned()))
+        );
+        assert_eq!(
+            PolicyError::UnknownProvider("spellcheck".to_owned()).to_string(),
+            "unknown provider `spellcheck`"
+        );
     }
 }

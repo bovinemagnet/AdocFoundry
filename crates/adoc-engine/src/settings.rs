@@ -309,9 +309,9 @@ impl Default for PdfSettings {
 }
 
 /// The `[quality]` table: whether the documentation quality audit is kept current, and the
-/// policy it is judged by (`fail_on`, `require_complete`, `[quality.rules]` and
-/// `[[quality.exclusions]]`). Both layers may set it: a rule's severity from the workspace file
-/// wins, and the exclusions of both files apply.
+/// policy it is judged by (`fail_on`, `require_complete`, `[quality.rules]`,
+/// `[[quality.exclusions]]` and the optional `providers`). Both layers may set it: a rule's
+/// severity from the workspace file wins, and the exclusions and providers of both files apply.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QualitySettings {
     /// Keep the audit current while editing. Off, the audit runs only when asked for.
@@ -497,6 +497,10 @@ impl Settings {
                 }
                 if section == "quality" && key == "exclusions" {
                     self.apply_quality_exclusions(&source, value);
+                    continue;
+                }
+                if section == "quality" && key == "providers" {
+                    self.apply_quality_providers(&source, value);
                     continue;
                 }
                 // `[sidebar.navigation]` and `[sidebar.modules]` are tables of their own.
@@ -751,6 +755,25 @@ impl Settings {
         self.warnings.push(format!("{source}: `{name}`: {problem}"));
     }
 
+    /// `[quality] providers`: each optional provider named enabled, or a warning. Both layers'
+    /// providers are enabled.
+    fn apply_quality_providers(&mut self, source: &str, value: &toml::Value) {
+        let Some(names) = value.as_array() else {
+            self.warn_quality(source, "quality.providers", "expected an array of strings");
+            return;
+        };
+        for (index, name) in names.iter().enumerate() {
+            let setting = format!("quality.providers[{}]", index + 1);
+            let Some(name) = name.as_str() else {
+                self.warn_quality(source, &setting, "expected a string");
+                continue;
+            };
+            if let Err(problem) = self.quality.policy.enable_provider(name) {
+                self.warn_quality(source, &setting, &problem.to_string());
+            }
+        }
+    }
+
     /// A warning about the `[quality]` settings, kept in [`QualitySettings::problems`] too.
     fn warn_quality(&mut self, source: &str, name: &str, problem: &str) {
         self.warn(source, name, problem);
@@ -830,7 +853,7 @@ fn is_known(section: &str, key: &str) -> bool {
             | ("updates", "check")
             | (
                 "quality",
-                "enabled" | "fail_on" | "require_complete" | "rules" | "exclusions"
+                "enabled" | "fail_on" | "require_complete" | "rules" | "exclusions" | "providers"
             )
             | (
                 "graph",
@@ -1399,6 +1422,29 @@ note = "unknown"
             .map(|exclusion| exclusion.path.as_str())
             .collect();
         assert_eq!(kept, ["b.adoc", "c.adoc"]);
+    }
+
+    #[test]
+    fn quality_providers_are_enabled_by_name_from_either_layer() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(&user, "[quality]\nproviders = [\"vale\"]\n").unwrap();
+        fs::write(
+            directory.path().join(WORKSPACE_SETTINGS_FILE),
+            "[quality]\nproviders = [\"external-links\", \"spellcheck\", 3]\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(directory.path())).unwrap();
+        let policy = &settings.quality.policy;
+        assert!(policy.provider_enabled(crate::audit::ProviderId::VALE));
+        assert!(policy.provider_enabled(crate::audit::ProviderId::EXTERNAL_LINKS));
+        assert!(!policy.provider_enabled(crate::audit::ProviderId::PAGE_AGE));
+        assert_eq!(settings.warnings.len(), 2, "{:#?}", settings.warnings);
+        assert!(
+            settings.warnings[0].contains("`quality.providers[2]`: unknown provider `spellcheck`")
+        );
+        assert!(settings.warnings[1].contains("`quality.providers[3]`: expected a string"));
+        assert_eq!(settings.quality.problems, settings.warnings);
     }
 
     #[test]

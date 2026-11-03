@@ -268,6 +268,24 @@ expression: "stdout(&cli(&[\"audit\", FIXTURE, \"--format\",\n\"sarif\"])).repla
       "properties": {
         "schemaVersion": 1,
         "completeness": "complete",
+        "providers": [
+          {
+            "provider": "compatibility",
+            "state": "disabled"
+          },
+          {
+            "provider": "external-links",
+            "state": "disabled"
+          },
+          {
+            "provider": "page-age",
+            "state": "disabled"
+          },
+          {
+            "provider": "vale",
+            "state": "disabled"
+          }
+        ],
         "counts": {
           "info": 1,
           "warning": 6,

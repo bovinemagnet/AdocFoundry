@@ -99,6 +99,7 @@ colour_by = "component"          # component | module | family
 [quality]
 fail_on = "warning"
 require_complete = true
+# providers = []
 
 [quality.rules]
 "quality.navigation.unlisted-page" = "info"
@@ -353,6 +354,11 @@ check = true                     # look for a newer release at start-up
 |none
 |Findings accepted for one resource each: `rule` (a rule or diagnostic code), `resource` (a resource ID naming at least its component and module, such as `product:ROOT:internal.adoc`; with no version it covers every version, and `~@` only the versionless component) and `reason`, which is required. Excluded findings stay in the report with their reason and never fail it.
 
+|`quality.providers`
+|array of strings
+|`[]`
+|The optional providers to run: `compatibility`, `external-links`, `page-age` and `vale`. None is in this build yet, so an enabled one is reported unavailable and leaves the audit partial. Both files may set it, and both files' providers are enabled. See xref:quality-audit.adoc[].
+
 |`updates.check`
 |boolean
 |`true`
@@ -365,7 +371,7 @@ See xref:pdf-export.adoc[Exporting to PDF].
 
 A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `graph.*`, `quality.*`, `spelling.enabled` and `spelling.language`.
 The two depths override separately.
-Both files may set `[quality]`: a rule's severity from the workspace file wins, and the exclusions of both files apply.
+Both files may set `[quality]`: a rule's severity from the workspace file wins, and the exclusions and the providers of both files apply.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.
 `git.*` is also accepted only in the user file, so a repository cannot change how the editor treats it.
 `sidebar.remember_expansion` is also accepted only in the user file, because it decides what is saved outside the repository.

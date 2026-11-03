@@ -91,6 +91,7 @@ Information diagnostics never fail the check.
 
 `audit` opens the workspace at `<root>`, waits for indexing to finish and audits the documentation's quality.
 It reports every diagnostic `check` reports, with the same codes, severities and messages, and the audit's own rules.
+See xref:quality-audit.adoc[] for the policy, exclusions and limitations.
 
 `quality.navigation.unlisted-page`::
 A published page that no navigation file of its own component version lists. The start page counts as listed.
@@ -198,6 +199,9 @@ The last line is the result: `Result: pass`, `Result: pass, with partial coverag
 
 |`skips`
 |The constructs a rule could not judge.
+
+|`providers`
+|Every optional provider's state, as `{ "provider", "state", "reason" }`. The `reason` appears only for `unavailable`.
 |===
 
 A finding has `code`, `severity`, `message` and `location`, and, for an Antora resource, `coordinate`.
@@ -209,11 +213,15 @@ Each finding is a result with its rule.
 An excluded finding is a result with an external suppression that gives the exclusion's reason.
 Locations are relative to the root (`uriBaseId` `ROOT0`), with one-based lines and character columns.
 Completeness is a property of the run, and each gap is a tool execution notification.
+The providers' states are in the run's `properties.providers`.
+
+In the text format, each enabled provider has a `Provider <name>: ran` or `Provider <name>: unavailable` line.
 
 === Completeness
 
 Completeness is about coverage: whether everything in scope was audited.
 A folder that could not be read makes the audit partial (`scope-not-indexed`).
+An enabled optional provider that could not run does the same (`provider-unavailable`); see xref:quality-audit.adoc#providers[Optional providers].
 
 A construct a rule cannot judge is a skip, such as a navigation file that includes another file, or a title that may come from an include.
 A skip is counted and listed, but it does not make the audit partial.
