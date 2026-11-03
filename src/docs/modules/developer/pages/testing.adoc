@@ -128,6 +128,13 @@ It checks each Antora fixture and compares the output with `insta` snapshots.
 It also follows a link in `tests/fixtures/xrefs/`.
 `new_module_makes_a_module_through_the_engine_command` runs `new-module` and compares what it prints with a snapshot.
 
+`crates/adocfoundry-cli/tests/impact.rs` runs `impact` against temporary Git repositories.
+The tests are:
+
+* `impact_json_is_reproducible_against_fixture_refs`, an `insta` snapshot (`impact__impact_json.snap`) of the JSON report, with the commit ids replaced by placeholders;
+* `impact_text_tells_rendered_content_from_references`
+* `impact_cli_handles_no_git`
+
 == New Module tests
 
 `crates/adoc-engine/tests/new_module.rs` drives `module.new` headlessly.

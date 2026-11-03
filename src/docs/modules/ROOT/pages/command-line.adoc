@@ -11,6 +11,8 @@ It needs no display, which makes it suitable for continuous integration.
 adocfoundry-cli check <root> [--format text|json] [--fail-on warning|error]
 adocfoundry-cli audit <root> [--component [<version>@]<name>] [--format text|json|sarif]
     [--output <file>] [--fail-on none|warning|error] [--require-complete]
+adocfoundry-cli impact <root> (--base <ref> --head <ref> | --against HEAD | --changed-file <path>...)
+    [--format text|json] [--output <file>] [--max-impacts <n>] [--require-complete]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
@@ -399,6 +401,167 @@ branch main
 
 If `<root>` is not in a Git repository the command fails with an error and exits with 2.
 The other subcommands do not look at Git.
+
+[[impact]]
+== impact
+
+`impact` reports what a change to the documentation may affect, and why.
+It reads the workspace under `<root>` and takes exactly one source of the change.
+Git stays off unless the source is a pair of revisions.
+
+[source,sh]
+----
+adocfoundry-cli impact docs --base main --head HEAD
+adocfoundry-cli impact docs --against HEAD --format json --output impact.json
+adocfoundry-cli impact docs --changed-file modules/ROOT/pages/install.adoc
+----
+
+=== Sources
+
+[cols="2,4"]
+|===
+|Option |Meaning
+
+|`--base <ref> --head <ref>`
+|Two local Git revisions: branches, tags, `HEAD~1` or commit ids. Both sides are read from the revisions' own files in Git. The working tree is never read, nothing is checked out or fetched, and the repository is not changed.
+
+|`--against HEAD`
+|`HEAD` against the working tree, which is the files on disk. The command line has no unsaved buffers.
+
+|`--changed-file <path>`
+|The paths named, relative to the root or absolute, against the working tree. Repeat the option for more paths. No base revision and no Git are needed. A path that exists is modified. A path that does not exist was removed, and then the report is partial (`no-base-revision`), since what used it cannot be known.
+|===
+
+Giving more than one source is an error.
+
+=== Kinds of impact
+
+[cols="2,4"]
+|===
+|Kind |Meaning
+
+|Rendered content that may change (`render`)
+|The changed page, and every page that includes the changed file, through nested partials.
+
+|References to review (`reference_integrity`)
+|Xrefs to a page that was moved or removed, and references to an anchor that was removed. An xref to a moved page is `broken` when the referring page still writes it, `resolved by alias` when the moved page's `page-aliases` covers it, and `resolved by change` when the reference no longer names it. A removed anchor is shown with its `#id`. A change to a page's prose never reaches the pages that merely link to it.
+
+|Navigation (`navigation`)
+|A changed navigation file or `antora.yml`, as the pages its component version's navigation lists before and after (`listed`, `unlisted`), and navigation entries that name a moved or removed page. It is reported for that component version only.
+
+|Publications (`publication`)
+|Each `[pdf.profiles]` profile whose selection holds an affected page. The impact is `potential` when the profile names content the revision does not have.
+|===
+
+Each impact has these facts:
+
+* its confidence, `confirmed` or `potential`;
+* the changed file it comes from;
+* which revision's evidence shows it: `base`, `head` or `both`;
+* the dependency path (`via`);
+* the span of the reference that links them.
+
+=== Output
+
+The text format is the default.
+It starts with `Impact of <what was compared>: complete|partial|unavailable`.
+Next come what is not covered and the changed files.
+The impacts follow, grouped by kind, each with `via a → b → c` and `at <file> bytes <start>–<end>`.
+A note ends the report when the list was cut.
+
+With `--format json` the output is the report.
+It holds these fields:
+
+* `schema_version`;
+* `source`, whose `kind` is `git-refs` (with the `base` and `head` specs and commits), `working-tree` or `paths`;
+* `completeness`, with a `status` and `gaps`;
+* `changes`;
+* `impacts`;
+* `counts` per kind, before any cut;
+* `truncated` (`shown` and `total`), present when more than `--max-impacts` impacts were found.
+
+`--max-impacts <n>` limits the impacts listed.
+The default is 1,000.
+Paths are relative to the root and never absolute.
+The output is deterministic, so the same refs give the same report.
+`--output <file>` writes the report to a file.
+Standard output holds only the report, and messages go to standard error.
+
+=== Completeness
+
+A gap has a stable reason.
+
+[cols="2,4"]
+|===
+|Reason |Meaning
+
+|`no-base-revision`
+|A path was removed and there is no base revision to say what used it.
+
+|`asset-consumers-not-analysed`
+|A changed image or attachment. Its users are not traced yet.
+
+|`not-in-catalog`
+|A changed file is in no component version the workspace holds.
+
+|`outside-every-root`
+|A changed file is outside every root of the workspace.
+
+|`revision-descriptor-unreadable`
+|An `antora.yml` in a revision could not be read.
+|===
+
+=== Exit codes
+
+[cols="1,4"]
+|===
+|Code |Meaning
+
+|0
+|The analysis finished, however many impacts it found. Many consumers is never a failure.
+
+|2
+|The source is invalid: an unknown ref, a folder in no Git repository for a ref comparison, a path outside the root, or more than one source. Also, with `--require-complete`, the report is partial or unavailable.
+|===
+
+=== Limits
+
+* Images and attachments are not traced yet.
+* Dynamic includes, such as `+include::{attr}/x.adoc[]+`, whose target the index cannot resolve are not followed.
+* Components in other repositories are not analysed (the `not-in-catalog` gap).
+
+=== Using it in CI
+
+This job produces the report as an artifact on pull requests.
+
+[source,yaml]
+----
+name: Documentation impact
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  impact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install adocfoundry-cli
+        run: cargo install --git https://github.com/bovinemagnet/AdocFoundry adocfoundry-cli
+      - name: Analyse the change
+        run: |
+          adocfoundry-cli impact docs --base "origin/${{ github.base_ref }}" --head HEAD --format json --output impact.json
+          adocfoundry-cli impact docs --base "origin/${{ github.base_ref }}" --head HEAD --output impact.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: documentation-impact
+          path: impact.*
+----
+
+`fetch-depth: 0` makes the base branch's commits available locally, because the command never fetches.
+The job grants no write permission and posts nothing.
+Posting a pull request comment is left to a separate, opt-in step.
 
 [[new-module]]
 == new-module

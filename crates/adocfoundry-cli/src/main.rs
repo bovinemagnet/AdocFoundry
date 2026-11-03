@@ -49,6 +49,8 @@ const USAGE: &str = "usage:
   adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
   adocfoundry-cli doctor [<root>] [--format text|json]
+  adocfoundry-cli impact <root> (--base <ref> --head <ref> | --against HEAD | --changed-file <path>…)
+      [--format text|json] [--output <file>] [--max-impacts <n>] [--require-complete]
   adocfoundry-cli new-module <component-root> <name> [--families pages,partials,images]
       [--no-nav] [--index-title <title>]
   adocfoundry-cli --version";
@@ -89,6 +91,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
         "graph" => graph(rest),
         "doctor" => doctor(rest),
         "new-module" => new_module(rest),
+        "impact" => impact(rest),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
 }
@@ -161,6 +164,199 @@ fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
         println!("listed modules/{name}/nav.adoc in antora.yml");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Reports what a change to the documentation may affect (Impact PRD §§6, 7 and 9): between two
+/// Git refs, `HEAD` against the working tree, or for paths named, as text or JSON. The exit
+/// code is 0 for a finished analysis, however many impacts; 2 when the source is invalid or
+/// unavailable, or the analysis is partial under `--require-complete`.
+fn impact(arguments: &[String]) -> Result<ExitCode, String> {
+    let require_complete = arguments
+        .iter()
+        .any(|argument| argument == "--require-complete");
+    let arguments: Vec<String> = arguments
+        .iter()
+        .filter(|argument| *argument != "--require-complete")
+        .cloned()
+        .collect();
+    let (positional, options) = parse_options(
+        &arguments,
+        &[
+            "base",
+            "head",
+            "against",
+            "changed-file",
+            "format",
+            "output",
+            "max-impacts",
+        ],
+    )?;
+    let [root] = positional.as_slice() else {
+        return Err(USAGE.to_owned());
+    };
+    let format = option(&options, "format").unwrap_or("text");
+    if !matches!(format, "text" | "json") {
+        return Err(format!("unknown format `{format}`"));
+    }
+    let changed: Vec<PathBuf> = options
+        .iter()
+        .filter(|(name, _)| *name == "changed-file")
+        .map(|(_, path)| PathBuf::from(path))
+        .collect();
+    let source = match (
+        option(&options, "base"),
+        option(&options, "head"),
+        option(&options, "against"),
+        changed.is_empty(),
+    ) {
+        (Some(base), Some(head), None, true) => adoc_engine::ChangeSource::GitRefs {
+            base: base.to_owned(),
+            head: head.to_owned(),
+        },
+        (None, None, Some("HEAD"), true) => adoc_engine::ChangeSource::WorkingTree,
+        (None, None, Some(other), true) => {
+            return Err(format!(
+                "--against compares with `HEAD` only, not `{other}`; use --base and --head"
+            ))
+        }
+        (None, None, None, false) => adoc_engine::ChangeSource::Paths(changed),
+        _ => {
+            return Err(format!(
+                "give one of --base <ref> --head <ref>, --against HEAD or --changed-file <path>\n{USAGE}"
+            ))
+        }
+    };
+    let mut limits = adoc_engine::impact::Limits::default();
+    if let Some(max) = option(&options, "max-impacts") {
+        limits.impacts = max
+            .parse()
+            .map_err(|_| format!("--max-impacts takes a number, not `{max}`"))?;
+    }
+    let root = adoc_index::normalize_path(Path::new(root));
+    let mut engine = open_engine(&root, false)?;
+    let report = match engine.analyse_impact(&source, limits) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("adocfoundry-cli: {error}");
+            return Ok(ExitCode::from(2));
+        }
+    };
+    let written = match format {
+        "json" => serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?,
+        _ => impact_text(&report),
+    };
+    match option(&options, "output") {
+        Some(file) => std::fs::write(file, format!("{written}\n"))
+            .map_err(|error| format!("{file}: {error}"))?,
+        None => println!("{written}"),
+    }
+    let incomplete = !report.is_complete();
+    Ok(ExitCode::from(if require_complete && incomplete {
+        2
+    } else {
+        0
+    }))
+}
+
+/// A report for reading: what was compared and how far, the changes, then the impacts by
+/// kind, each with why, rendered content apart from references to review.
+fn impact_text(report: &adoc_engine::impact::ImpactReport) -> String {
+    use adoc_engine::impact::{Completeness, ImpactKind, ReportSource};
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let source = match &report.source {
+        Some(ReportSource::GitRefs { base, head }) => format!(
+            "{} ({}) against {} ({})",
+            head.spec,
+            &head.commit[..head.commit.len().min(12)],
+            base.spec,
+            &base.commit[..base.commit.len().min(12)]
+        ),
+        Some(ReportSource::WorkingTree { base, .. }) => format!(
+            "the working tree against {} ({})",
+            base.spec,
+            &base.commit[..base.commit.len().min(12)]
+        ),
+        Some(ReportSource::Paths) | None => "the paths named, with no base revision".to_owned(),
+    };
+    let status = match &report.completeness {
+        Completeness::Complete => "complete",
+        Completeness::Partial { .. } => "partial",
+        Completeness::Unavailable { .. } => "unavailable",
+    };
+    let _ = writeln!(out, "Impact of {source}: {status}");
+    if let Completeness::Partial { gaps } | Completeness::Unavailable { gaps } =
+        &report.completeness
+    {
+        for gap in gaps {
+            let _ = writeln!(out, "  not covered ({}): {}", gap.reason, gap.detail);
+        }
+    }
+    let _ = writeln!(out, "\nChanged ({}):", report.changes.len());
+    for change in &report.changes {
+        match &change.from {
+            Some(from) => {
+                let _ = writeln!(out, "  {} {} (from {from})", change.kind, change.path);
+            }
+            None => {
+                let _ = writeln!(out, "  {} {}", change.kind, change.path);
+            }
+        }
+    }
+    for (kind, title) in [
+        (ImpactKind::Render, "Rendered content that may change"),
+        (ImpactKind::ReferenceIntegrity, "References to review"),
+        (ImpactKind::Navigation, "Navigation"),
+        (ImpactKind::Publication, "Publications"),
+    ] {
+        let impacts: Vec<_> = report
+            .impacts
+            .iter()
+            .filter(|impact| impact.kind == kind)
+            .collect();
+        if impacts.is_empty() {
+            continue;
+        }
+        let _ = writeln!(out, "\n{title} ({}):", impacts.len());
+        for impact in impacts {
+            let what = impact.resource_id.as_deref().unwrap_or(&impact.path);
+            let mut line = format!("  {what}");
+            if let Some(publication) = &impact.publication {
+                line = format!("  {publication}: {what}");
+            }
+            if let Some(status) = impact.status {
+                let status = serde_json::to_value(status)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_default();
+                let _ = write!(line, " [{}]", status.replace('_', " "));
+            }
+            if impact.confidence == adoc_engine::impact::Confidence::Potential {
+                line.push_str(" (potential)");
+            }
+            if let Some(anchor) = &impact.anchor {
+                let _ = write!(line, " #{anchor}");
+            }
+            let _ = writeln!(out, "{line}");
+            let _ = writeln!(out, "      via {}", impact.via.join(" → "));
+            if let Some(source) = &impact.source {
+                let _ = writeln!(
+                    out,
+                    "      at {} bytes {}–{}",
+                    source.path, source.range.start, source.range.end
+                );
+            }
+        }
+    }
+    if let Some(truncated) = report.truncated {
+        let _ = writeln!(
+            out,
+            "\nShown {} of {} impacts; --max-impacts raises the limit.",
+            truncated.shown, truncated.total
+        );
+    }
+    out.trim_end().to_owned()
 }
 
 /// Positional arguments and `(name, value)` options.
