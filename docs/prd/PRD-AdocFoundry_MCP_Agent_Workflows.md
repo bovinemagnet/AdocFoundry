@@ -5,7 +5,7 @@
 | Status | **Proposed / draft — not approved for implementation** |
 | Date | 2026-11-03 |
 | Scope | Expand `adoc-mcp` from a document-access interface into a safe, Antora-aware documentation engineering interface for MCP clients |
-| Related work | Quality and Impact PRDs (`docs/prd/PRD-AdocFoundry_Documentation_Quality.md`, `docs/prd/PRD-AdocFoundry_Documentation_Impact.md`, merged in #298); [Quality epic #299](https://github.com/bovinemagnet/AdocFoundry/issues/299); [Impact epic #306](https://github.com/bovinemagnet/AdocFoundry/issues/306); [New Module #290](https://github.com/bovinemagnet/AdocFoundry/issues/290); [New Project #291](https://github.com/bovinemagnet/AdocFoundry/issues/291); [Dependency Inspector #100](https://github.com/bovinemagnet/AdocFoundry/issues/100) |
+| Related work | Epic #313; Quality and Impact PRDs (`docs/prd/PRD-AdocFoundry_Documentation_Quality.md`, `docs/prd/PRD-AdocFoundry_Documentation_Impact.md`, merged in #298); [Quality epic #299](https://github.com/bovinemagnet/AdocFoundry/issues/299); [Impact epic #306](https://github.com/bovinemagnet/AdocFoundry/issues/306); [New Module #290](https://github.com/bovinemagnet/AdocFoundry/issues/290); [New Project #291](https://github.com/bovinemagnet/AdocFoundry/issues/291); [Dependency Inspector #100](https://github.com/bovinemagnet/AdocFoundry/issues/100) |
 | Architecture | `CLAUDE.md`, `docs/design/DESIGN-AdocFoundry_Architecture.md`, `crates/adoc-mcp/`, and crate constraints checked by `cargo xtask layers` |
 | Target protocol | Model Context Protocol as supported by the pinned `rmcp` (=3.7.0, protocol versions up to 2026-07-28); negotiate feature support rather than assuming every client implements the latest protocol |
 
@@ -356,17 +356,17 @@ Every work package adds unit, integration and negative/security tests. MCP trans
 
 Build checks: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo xtask layers`, `cargo deny check`. Add feature-specific `adoc-mcp` integration tests and measured budget tests for large synthetic Antora workspaces.
 
-## 12. Work packages and issue decomposition (proposed; issues not yet created)
+## 12. Work packages and issue decomposition
 
-| WP | Deliverable | Dependencies | Acceptance milestone |
-| --- | --- | --- | --- |
-| M1 | MCP result contracts, tool metadata, stable errors, resource/list pagination | Existing server | Existing clients still work; structured outputs and cursors verified |
-| M2 | `list_pages`, `get_outline`, `get_page_context`, `find_references` | Existing catalog/index; #99 for full attribute provenance | A client can locate any relevant page without reading the entire workspace |
-| M3 | Read-only `quality_audit` tool | Quality #300–#303; coordinate with #305 | MCP quality matches CLI with explicit completeness |
-| M4 | Read-only `analyse_impact` tool | Impact #307–#310 | MCP impact matches CLI, including two-ref snapshots |
-| M5 | Change previews, revision checks, session ownership and safe apply | Existing engine preview/undo infrastructure | Stale or conflicting writes are rejected; multi-file failure contract tested |
-| M6 | Antora-aware `create_page`, `create_partial`, `create_module`; defer `create_project` as required | Existing page commands, #290, #291–#295 | Created content resolves and nav/undo are correct |
-| M7 | `validate_publication`, optional `build_site`, prompts/subscriptions, end-to-end QA and documentation | Quality/Impact contracts; #293 for builds | Read-only release report and opt-in optional capabilities verified |
+| WP | Issue | Deliverable | Dependencies | Acceptance milestone |
+| --- | --- | --- | --- | --- |
+| M1 | #314 | MCP result contracts, tool metadata, stable errors, resource/list pagination | Existing server | Existing clients still work; structured outputs and cursors verified |
+| M2 | #315 | `list_pages`, `get_outline`, `get_page_context`, `find_references` | Existing catalog/index; #99 for full attribute provenance | A client can locate any relevant page without reading the entire workspace |
+| M3 | #316 | Read-only `quality_audit` tool | Quality #300–#303; coordinate with #305 | MCP quality matches CLI with explicit completeness |
+| M4 | #317 | Read-only `analyse_impact` tool | Impact #307–#310 | MCP impact matches CLI, including two-ref snapshots |
+| M5 | #318 | Change previews, revision checks, session ownership and safe apply | Existing engine preview/undo infrastructure | Stale or conflicting writes are rejected; multi-file failure contract tested |
+| M6 | #319 | Antora-aware `create_page`, `create_partial`, `create_module`; defer `create_project` as required | Existing page commands, #290, #291–#295 | Created content resolves and nav/undo are correct |
+| M7 | #320 | `validate_publication`, optional `build_site`, prompts/subscriptions, end-to-end QA and documentation | Quality/Impact contracts; #293 for builds | Read-only release report and opt-in optional capabilities verified |
 
 **Suggested order:** M1 → M2; M3/M4 as their engine APIs stabilise; M5 before expanding agent-driven mutations; M6 once its underlying engine commands exist; M7 after the core workflows. One reviewable PR per work package, with sub-issues if a package grows. Do not close existing Quality, Impact or New Project issues merely because an MCP adapter exists.
 
