@@ -29,6 +29,22 @@ fn pump_until(engine: &mut Engine, mut done: impl FnMut(&Engine) -> bool) -> boo
     false
 }
 
+/// Pumps until the engine has had nothing to do for 300 ms (at most ten seconds): what the
+/// watcher saw of a test's own setup, which FSEvents can report after the watch began, is
+/// applied before the test makes the change it checks.
+fn settle(engine: &mut Engine) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut quiet = Instant::now();
+    while quiet.elapsed() < Duration::from_millis(300) && Instant::now() < deadline {
+        engine.pump();
+        if engine.has_pending() {
+            assert!(engine.wait_for_workers(Duration::from_secs(10)));
+            quiet = Instant::now();
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn engine_without_user_settings() -> Engine {
     Engine::new(Settings::load(None, None).unwrap().with_git_opt_in())
 }
@@ -171,7 +187,10 @@ fn descriptor_change_reloads_component() {
         .component("before", Some("1.0"))
         .is_some());
 
-    thread::sleep(Duration::from_millis(100));
+    // A whole index again, from the folders made above reported late, would also find
+    // `after`, but announces no `CatalogChanged`.
+    settle(&mut engine);
+    let _ = events.try_iter().count();
     fs::write(root.join("antora.yml"), "name: after\nversion: '1.0'\n").unwrap();
 
     assert!(pump_until(&mut engine, |engine| engine
