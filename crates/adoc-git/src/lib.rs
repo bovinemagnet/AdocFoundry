@@ -9,6 +9,7 @@ mod diff;
 mod error;
 mod remote;
 mod repository;
+mod revision;
 #[cfg(feature = "test-support")]
 pub mod testing;
 
@@ -21,6 +22,7 @@ pub use diff::line_hunks;
 pub use error::GitError;
 pub use remote::{remote_link_for_line, HostKind};
 pub use repository::Repository;
+pub use revision::{Revision, TreeChange};
 
 /// What `HEAD` points at.
 #[derive(Clone, Debug, Eq, PartialEq)]

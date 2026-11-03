@@ -18,7 +18,8 @@ pub use descriptor::{
     DescriptorError, DescriptorErrorKind,
 };
 pub use discovery::{
-    discover_antora_workspace, discover_antora_workspace_ignoring, DiscoveryResult,
+    discover_antora_files, discover_antora_workspace, discover_antora_workspace_ignoring,
+    DiscoveryResult,
 };
 pub use module::Module;
 pub use nav::{parse_nav, NavEntry};

@@ -23,6 +23,6 @@ mod snapshot;
 pub use analyse::{analyse, Limits, Publication, PublicationSelection};
 pub use report::{
     ByteRange, Change, ChangeKind, Completeness, Confidence, EvidenceSide, Gap, Impact, ImpactKind,
-    ImpactReport, ImpactStatus, SourceSpan, SCHEMA_VERSION,
+    ImpactReport, ImpactStatus, ReportSource, RevisionRef, SourceSpan, SCHEMA_VERSION,
 };
 pub use snapshot::DependencySnapshot;

@@ -77,6 +77,9 @@ pub struct Engine {
     pub(crate) group_created: BTreeMap<UndoGroup, Vec<crate::new_page::CreatedFile>>,
     /// The modules groups made, for their descriptors and folders on undo and redo.
     pub(crate) group_modules: BTreeMap<UndoGroup, crate::new_module::MadeModule>,
+    /// Revision snapshots for impact analysis, by tree id.
+    #[cfg_attr(not(feature = "git"), allow(dead_code))]
+    pub(crate) impact: crate::impact_analysis::ImpactCache,
     /// The documents taking part in each applied preview's group, which is undone and redone
     /// only as a whole.
     pub(crate) group_documents: BTreeMap<UndoGroup, Vec<DocumentId>>,
@@ -198,6 +201,7 @@ impl Engine {
             group_moves: BTreeMap::new(),
             group_created: BTreeMap::new(),
             group_modules: BTreeMap::new(),
+            impact: crate::impact_analysis::ImpactCache::default(),
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
             typing: false,

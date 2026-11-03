@@ -1070,8 +1070,8 @@ It checks that the command line's report and the engine's kept audit agree under
 
 The `adoc-impact` crate, re-exported as `adoc_engine::impact`, works out which pages a change affects.
 Like `adoc-audit` it is pure and synchronous: no threads, Git, file writes, processes or network.
-The engine does not use it yet.
-The engine's comparison of two revisions and the command line come in later work packages.
+The engine feeds it changes from Git, the working tree or explicit paths (see <<impact-change-sources>>).
+The command line comes in a later work package.
 
 A `DependencySnapshot` is one side of a comparison: a `WorkspaceState` (index and catalog) at one revision, with the roots its paths are shown relative to.
 `DependencySnapshot::borrowed` takes the live workspace.
@@ -1106,6 +1106,64 @@ It is sorted, its paths are relative to a root and use `/`, and none is absolute
 
 `counts` by kind are counted before `Limits { depth, impacts }` cuts the list.
 `truncated: { shown, total }` then says how much was cut.
+
+[[impact-change-sources]]
+=== Change sources and revision snapshots
+
+`Engine::analyse_impact(&ChangeSource, Limits)` returns an `ImpactReport` or an `ImpactError` (`src/impact_analysis.rs`).
+It runs on the calling thread, as the command line and the MCP server need.
+The app's inspector will run it on a worker.
+A `ChangeSource` is one of three:
+
+* `GitRefs { base, head }` compares two revisions. The working tree and the live index are never read.
+* `WorkingTree` compares `HEAD` with the working tree: the files on disk, as `Repository::status` reports them, and the open pages' unsaved buffers. The report says so with `unsaved_buffers`.
+* `Paths(paths)` uses no Git. A path that exists is modified. One that does not was removed, and the report is `partial` with `no-base-revision`.
+
+The report's `source` says what was compared: `git-refs` with each revision's spec and commit, `working-tree` or `paths`.
+An explicit comparison reads Git whatever `[git] enabled` says, as that setting governs the live Git state only.
+
+A revision's snapshot is built from Git objects alone:
+
+. The commit's tree is listed under the roots, honouring `[workspace] ignore`.
+. Each AsciiDoc and YAML file's text is read from its blob. Other files are only listed, as the catalog needs their paths.
+. `discover_antora_files` catalogues the files, and the same parser builds a `WorkspaceState`.
+
+The engine keeps up to four snapshots, cached by tree id.
+A revision whose descriptor cannot be read gives the gap `revision-descriptor-unreadable`.
+Publications are the `[pdf.profiles]` profiles.
+
+The errors are:
+
+* `NoRepository`: no repository, or a build without the engine's `git` feature, where only paths are analysed.
+* `UnknownRevision`: Git cannot resolve a spec.
+* `Git`: any other Git failure.
+* `OutsideRoots`: a path in no root.
+
+In a release build, a comparison of two commits of a 2,000-page component takes about 0.9 s, building both snapshots.
+Again with the snapshots cached, it takes about 50 ms.
+
+==== Reading a revision
+
+`adoc-git` reads a revision from object data alone (`src/revision.rs`).
+It never reads the working tree, the index or `HEAD`, and never fetches or runs `git`.
+
+* `Repository::resolve_revision(spec)` returns a `Revision { spec, commit, tree }`. A spec is a branch, tag, `HEAD`, `HEAD~2` or commit id, as Git reads it. Anything else is `GitError::UnknownRevision`.
+* `tree_files(&revision)` lists every file of the commit's tree, in path order.
+* `text_at(&revision, path)` returns a file's text at the revision, or `None` when it is absent or not UTF-8.
+* `tree_changes(&base, &head)` returns `TreeChange`s: `Added`, `Modified`, `Removed` and `Renamed { from, to, similarity }`. Renames are detected as Git detects them by default. `similarity` is in per cent, and 100 for a move found by object id.
+
+==== Discovery from a file list
+
+`adoc-antora` has `discover_antora_files(roots, files, ignore)`.
+It takes a revision's files as absolute paths and their text, and follows the rules of `discover_antora_workspace`.
+Both share one cataloguing function, `catalog_component`:
+
+* A folder holding `antora.yml` and files under `modules/` is a component version.
+* Each folder under `modules/` holding files is a module.
+* `nav.adoc` there is the module's navigation file.
+* `page-aliases` are read from a page's header.
+* Folders named in `ignore` are skipped.
+* The playbook is the first root's.
 
 == Reports and inspection
 

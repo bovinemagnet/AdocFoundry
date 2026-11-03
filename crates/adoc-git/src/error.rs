@@ -14,6 +14,11 @@ pub enum GitError {
     NoIdentity,
     /// The index holds nothing that `HEAD` does not.
     NothingToCommit,
+    /// `spec` names no commit in the repository.
+    UnknownRevision {
+        spec: String,
+        message: String,
+    },
 }
 
 impl GitError {
@@ -37,6 +42,9 @@ impl fmt::Display for GitError {
                  (git config --global user.name \"Your Name\"; git config --global user.email you@example.com)",
             ),
             Self::NothingToCommit => formatter.write_str("nothing is staged to commit"),
+            Self::UnknownRevision { spec, message } => {
+                write!(formatter, "`{spec}` names no commit here: {message}")
+            }
         }
     }
 }

@@ -611,3 +611,69 @@ fn discovery_in_a_workspace_of_20000_pages() {
     assert!(engine.incoming_references(&lonely, None).is_empty());
     println!("references to an unlinked page: {:?}", started.elapsed());
 }
+
+/// Impact analysis between two commits of a 2,000-page component (Impact PRD §6.1, "Cost"):
+/// both revisions' snapshots built from Git objects, then the same comparison again with them
+/// cached by tree id.
+#[test]
+#[ignore = "timing probe"]
+fn impact_between_two_revisions_of_2000_pages() {
+    use adoc_engine::{impact::Limits, ChangeSource};
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    let repo = adoc_git::testing::TestRepo::init(&root);
+    repo.write(
+        "antora.yml",
+        "name: big\nversion: '1.0'\nnav:\n- modules/ROOT/nav.adoc\n",
+    );
+    let mut nav = String::new();
+    for page in 0..2_000 {
+        repo.write(
+            &format!("modules/ROOT/pages/page-{page}.adoc"),
+            &format!(
+                "= Page {page}\n\ninclude::partial$shared.adoc[]\n\nSee xref:page-{}.adoc[].\n",
+                (page + 1) % 2_000
+            ),
+        );
+        let _ = writeln!(nav, "* xref:page-{page}.adoc[]");
+    }
+    repo.write("modules/ROOT/nav.adoc", &nav);
+    repo.write("modules/ROOT/partials/shared.adoc", "Shared.\n");
+    let base = repo.commit_all("base");
+    repo.write("modules/ROOT/partials/shared.adoc", "Shared, changed.\n");
+    let head = repo.commit_all("head");
+
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(120)));
+    let source = ChangeSource::GitRefs { base, head };
+    let started = Instant::now();
+    let report = engine
+        .analyse_impact(
+            &source,
+            Limits {
+                depth: 32,
+                impacts: 5_000,
+            },
+        )
+        .unwrap();
+    println!(
+        "first comparison (two snapshots built): {:?}, {} impacts",
+        started.elapsed(),
+        report.impacts.len()
+    );
+    assert_eq!(report.counts.render, 2_000);
+    let started = Instant::now();
+    let again = engine
+        .analyse_impact(
+            &source,
+            Limits {
+                depth: 32,
+                impacts: 5_000,
+            },
+        )
+        .unwrap();
+    println!("again, snapshots cached: {:?}", started.elapsed());
+    assert_eq!(again, report);
+}
