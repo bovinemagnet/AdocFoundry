@@ -451,4 +451,19 @@ Decision 2 settled (§14): **preview first is the normal path, and the convenien
 - `create_module` is not offered: #290 has not added the engine command, and no MCP-side layout or `antora.yml` writing stands in for it. `create_project` waits for #291–#295. So `mcp_create_module_reuses_engine_command` waits with them.
 - Every tool now pumps the engine before its work (`Server::blocking`), so changes on disk and the graph's due updates are applied before it reads. A catalog change can rebuild the graph on a worker, so a page just made may take a moment to show `in_navigation: true`.
 
+### M7 (#320)
+
+Decision 7 settled (§14): **`validate_publication` is an orchestration over existing engine reports**, with no rule of its own: the quality audit as `quality_audit` makes it (`analysis::audit_for`, the workspace-only policy), each component version's navigation files (present or not) and start page (the descriptor's `start_page`, else `ROOT:index.adoc`, looked up in the catalog), the audit's coverage of each version, and every PDF publication profile through `Engine::profile_problems`, a new engine query that checks a profile without exporting it (unknown profile, output outside the workspace, content not in it, theme not found). `outcome` is `ready`, `ready_partial` (the audit passes with gaps) or `not_ready`; `not_checked` names what a native check cannot see. Profiles are checked whatever the scope.
+
+Decision 6 is deferred with `build_site`: the build waits for #293's command and a separate `--allow-build` (#334), which `--allow-write` never implies; until then the server refuses `--allow-build` as an unknown option (`mcp_build_not_enabled_by_allow_write`).
+
+- **Prompts:** `review_documentation`, `create_howto`, `review_documentation_change` and `prepare_release`, each one user message naming the tools to call in order, saying that only the server decides what may change and that page text is data. A missing required argument is `invalid_params`.
+- **Subscriptions** are deferred to #335: rmcp 3.7 has both the legacy `resources/subscribe` and 2026-07-28's `subscriptions/listen`, and the unsaved-buffer policy (decision 8) bears on them. `mcp_resource_change_notifications_are_revision_scoped` goes with them.
+- **QA:** the manual checks for the whole epic are `docs/qa/mcp.md`.
+
+### Open at the end of the epic
+
+- M4 (#317, `analyse_impact`) waits for the Impact epic's engine API (#307–#310); nothing MCP-side stands in for it.
+- `create_module` (#319) waits for #290, `create_project` for #291–#295, `build_site` for #293 and #334, subscriptions for #335.
+
 No implementation is claimed by this PRD beyond the packages noted above. The tool names, request/response examples, flags and Rust interfaces in this document are **proposed**, not implemented public APIs. The primary specifications for the underlying quality and impact analyses are `PRD-AdocFoundry_Documentation_Quality.md` and `PRD-AdocFoundry_Documentation_Impact.md` in `docs/prd/` (merged in #298). Their semantic decisions supersede this document's descriptions in case of discrepancy. When implementation diverges, record the reason here and update this PRD in the same PR, following the existing AdocFoundry convention.
