@@ -13,6 +13,11 @@ pub(crate) fn in_repository(_: &Path) -> bool {
     false
 }
 
+/// No repository is looked for.
+pub(crate) fn repository_root(_: &Path) -> Option<PathBuf> {
+    None
+}
+
 /// No repository can be made without Git.
 pub(crate) fn init_repository(_: &Path) -> Result<(), String> {
     Err("this build has no Git support".to_owned())

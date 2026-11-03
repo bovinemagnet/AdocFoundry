@@ -31,6 +31,14 @@ pub(crate) fn in_repository(path: &Path) -> bool {
     matches!(Repository::discover(path), Ok(Some(_)))
 }
 
+/// The root of the working tree holding `path`, if any.
+pub(crate) fn repository_root(path: &Path) -> Option<PathBuf> {
+    Repository::discover(path)
+        .ok()
+        .flatten()
+        .map(|repository| repository.workdir().to_path_buf())
+}
+
 /// Makes an empty repository in `path`, through `gix`.
 pub(crate) fn init_repository(path: &Path) -> Result<(), String> {
     Repository::init(path)

@@ -56,13 +56,17 @@ pub struct NewProject {
     pub gitignore: bool,
     /// Initialise a Git repository in `root`; nothing is done when `root` is in one already.
     pub git_init: bool,
+    /// A local `antora-playbook.yml` and a `package.json` with the Antora CLI beside
+    /// `antora.yml`, and a commented `.adocfoundry.toml` in `root` when it has none, so the
+    /// project builds with `npm install` and `npm run build`.
+    pub playbook: bool,
     pub template: TemplateId,
 }
 
 impl NewProject {
     /// A request for the component `name` in `root` with the defaults the dialog offers: the
     /// title from the name, versionless, pages, partials and images, a README, a
-    /// `.gitignore` and a Git repository.
+    /// `.gitignore`, a local playbook and a Git repository.
     #[must_use]
     pub fn new(root: PathBuf, name: &str) -> Self {
         Self {
@@ -76,6 +80,7 @@ impl NewProject {
             readme: true,
             gitignore: true,
             git_init: true,
+            playbook: true,
             template: TemplateId::Minimal,
         }
     }
@@ -184,14 +189,16 @@ fn project_new(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
 /// previews.
 #[must_use]
 pub fn planned_tree(request: &NewProject) -> Vec<PathBuf> {
-    plan(request, &descriptor_text(request))
+    plan(request, &descriptor_text(request), None)
         .files
         .into_iter()
         .map(|(path, _)| path)
         .collect()
 }
 
-fn plan(request: &NewProject, descriptor: &str) -> Plan {
+/// The project's files and folders, the playbook building from the repository at
+/// `repository` (the folder in none when `None`).
+fn plan(request: &NewProject, descriptor: &str, repository: Option<&Path>) -> Plan {
     let component = request.component_root();
     let title = request.title();
     let index_title = match request.index_title.trim() {
@@ -211,6 +218,17 @@ fn plan(request: &NewProject, descriptor: &str) -> Plan {
     }
     if request.readme {
         files.push((component.join("README.adoc"), readme_text(request, &title)));
+    }
+    if request.playbook {
+        files.push((
+            component.join(adoc_antora::PLAYBOOK_FILE),
+            playbook_text(request, &title, &component, repository),
+        ));
+        files.push((component.join("package.json"), package_text(request)));
+        let settings = normalize_path(&request.root).join(".adocfoundry.toml");
+        if !settings.exists() {
+            files.push((settings, SETTINGS_TEXT.to_owned()));
+        }
     }
     let mut folders = Vec::new();
     if component != normalize_path(&request.root) {
@@ -264,12 +282,96 @@ fn descriptor_text(request: &NewProject) -> String {
 }
 
 fn readme_text(request: &NewProject, title: &str) -> String {
-    format!(
+    let mut text = format!(
         "= {title}\n\n\
          The documentation of {title}, an Antora component named `{name}`: its pages are in \
          `modules/ROOT/pages`, and `antora.yml` lists its navigation.\n\n\
          Check it for broken references with:\n\n\
          [source,sh]\n----\nadocfoundry-cli check .\n----\n",
+        name = request.name,
+    );
+    if request.playbook {
+        text.push_str(
+            "\nBuild the site with Antora, which needs Node.js and a Git repository; the pages \
+             are written to `build/site`:\n\n\
+             [source,sh]\n----\nnpm install\nnpm run build\n----\n",
+        );
+    }
+    text
+}
+
+/// The default UI bundle Antora's own documentation names, fetched when the site is built.
+const UI_BUNDLE: &str = "https://gitlab.com/antora/antora-ui-default/-/jobs/artifacts/HEAD/raw/build/ui-bundle.zip?job=bundle-stable";
+
+/// The workspace settings written beside a new project: every key commented, as an example.
+const SETTINGS_TEXT: &str = "\
+# AdocFoundry's settings for this folder. Every key is optional; remove the `#` to use one.
+
+# [pdf]
+# theme = \"default\"
+
+# [quality]
+# enabled = true
+";
+
+/// A playbook that builds the component at `component` from the working tree of the repository
+/// at `repository`: Antora reads a local source from its repository's root, named relative to
+/// the playbook, with `start_path` the component's folder within it.
+fn playbook_text(
+    request: &NewProject,
+    title: &str,
+    component: &Path,
+    repository: Option<&Path>,
+) -> String {
+    let base = repository.map_or_else(|| normalize_path(&request.root), Path::to_path_buf);
+    let inside: Vec<String> = component
+        .strip_prefix(&base)
+        .map(|relative| {
+            relative
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    let url = if inside.is_empty() {
+        ".".to_owned()
+    } else {
+        vec![".."; inside.len()].join("/")
+    };
+    let mut lines = vec![
+        "site:".to_owned(),
+        format!("  title: {}", yaml_quoted(title)),
+        format!("  start_page: {}::index.adoc", request.name),
+        "content:".to_owned(),
+        "  sources:".to_owned(),
+    ];
+    if repository.is_none() {
+        lines.push(
+            "  # Antora builds from a Git repository: run `git init` in this folder first."
+                .to_owned(),
+        );
+    }
+    lines.push(format!("  - url: {url}"));
+    lines.push("    branches: HEAD".to_owned());
+    if !inside.is_empty() {
+        lines.push(format!("    start_path: {}", inside.join("/")));
+    }
+    lines.extend([
+        "ui:".to_owned(),
+        "  bundle:".to_owned(),
+        format!("    url: {UI_BUNDLE}"),
+        "    snapshot: true".to_owned(),
+        "output:".to_owned(),
+        "  dir: build/site".to_owned(),
+        String::new(),
+    ]);
+    lines.join("\n")
+}
+
+fn package_text(request: &NewProject) -> String {
+    format!(
+        "{{\n  \"name\": \"{name}\",\n  \"private\": true,\n  \"scripts\": {{\n    \"build\": \"antora \
+         antora-playbook.yml\"\n  }},\n  \"devDependencies\": {{\n    \"antora\": \"3.2.x\"\n  }}\n}}\n",
         name = request.name,
     )
 }
@@ -458,10 +560,13 @@ impl Engine {
         self.check_new_project(request)
             .map_err(|problem| EngineError::InvalidRequest(problem.message))?;
         let root = normalize_path(&request.root);
-        let plan = plan(request, descriptor);
+        // The repository the project is in, or the one it makes, which its playbook builds from.
+        let existing = crate::git::repository_root(&root);
+        let init = request.git_init && existing.is_none();
+        let built_from = existing.or_else(|| init.then(|| root.clone()));
+        let plan = plan(request, descriptor, built_from.as_deref());
         let descriptor = plan.component.join("antora.yml");
-        let repository =
-            (request.git_init && !crate::git::in_repository(&root)).then_some(root.as_path());
+        let repository = init.then_some(root.as_path());
         let new_root = !self.roots.iter().any(|known| root.starts_with(known));
 
         self.applying = true;

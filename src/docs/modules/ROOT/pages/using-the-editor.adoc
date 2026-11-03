@@ -996,6 +996,8 @@ Only Minimal is offered for now.
 * "Initialise a Git repository", ticked by default.
 It is not shown when the folder is in a repository already.
 * "Add a README", ticked by default.
+* "Add a local playbook and build setup", ticked by default.
+It adds `antora-playbook.yml`, `package.json` and, when the folder has none, `.adocfoundry.toml`.
 
 Beside the fields, the dialog lists the files that will be made, updated as you type, and the folder that will hold `antora.yml`.
 
@@ -1012,7 +1014,7 @@ Create, or kbd:[Enter], does nothing while a problem shows, and the dialog stays
 
 === After Create
 
-The project is made in one step: `antora.yml`, a `ROOT` module with an index page and a navigation file, `.gitignore`, a README, and a repository, as chosen.
+The project is made in one step: `antora.yml`, a `ROOT` module with an index page and a navigation file, `.gitignore`, a README, a local playbook and build setup, and a repository, as chosen.
 Then:
 
 * the folder becomes part of the workspace, if it was not already,
@@ -1024,7 +1026,20 @@ Undo removes every file still as it was made, and the folders left empty.
 A repository it made is kept.
 The welcome panel comes back if the workspace has no component again.
 
-The local playbook and Build Site, and other templates, are not part of this dialog yet.
+The local playbook files are these:
+
+* `antora-playbook.yml` beside `antora.yml`.
+It sets `site.title` to the component's title and `site.start_page` to `<name>::index.adoc`, with one content source on `branches: HEAD`, the default Antora UI bundle and `output.dir: build/site`.
+The source's `url` is the repository's root as seen from the playbook's folder: `.` when the component is at the repository's root, and `..` with `start_path: docs` when it is in `docs/` of a code repository.
+With no repository, and none to be made, the playbook still has `url: .` and a comment saying to run `git init` first, since Antora cannot build from a folder that is not a repository.
+* `package.json` beside it, with a `build` script that runs `antora antora-playbook.yml` and `antora` 3.2.x as a development dependency.
+There is no lockfile, and nothing is installed.
+* `.adocfoundry.toml` in the chosen folder, only when it has none, with `[pdf] theme` and `[quality] enabled` as commented examples.
+
+The README, when made, says how to build the site: `npm install`, then `npm run build`.
+That needs Node.js and a Git repository, and the site goes to `build/site`.
+AdocFoundry runs neither Node nor Antora, so the app stays usable without Node.
+Other templates are not part of this dialog yet.
 
 [[new-module]]
 == Make a new module

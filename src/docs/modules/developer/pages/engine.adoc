@@ -937,6 +937,12 @@ A folder outside every workspace root becomes a root, and the component joins th
 A removed `antora.yml` now takes its component out of the catalog, without recording a descriptor issue.
 That is what lets undo remove a component cleanly.
 
+`NewProject::playbook` (true by default) adds `antora-playbook.yml`, `package.json` and, when the folder has none, `.adocfoundry.toml`.
+The playbook's source `url` and `start_path` come from the repository the project is in, or the one it makes: `url: .` when the component is at the repository's root, and `url: ..` with `start_path: docs` when it is in `docs/`.
+With no repository, it writes `url: .` and a comment saying to run `git init`.
+A playbook is found at a workspace root as before, else beside the first component version's `antora.yml` that has one, from disk and from a Git revision's files.
+`adoc.antora.unresolved-start-page` warns on the value of the playbook's `site.start_page` when it names no page in the workspace.
+
 A Git repository is made with `adoc_git::Repository::init`, through `gix` and never the `git` executable.
 It is made only when the folder is not already inside a repository, so one is never nested, and nothing is staged or committed.
 Undo removes the files still as they were written, then the folders left empty.

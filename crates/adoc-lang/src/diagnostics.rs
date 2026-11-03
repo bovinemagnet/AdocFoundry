@@ -206,6 +206,33 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
     diagnostics
 }
 
+/// The playbook's problems when `path` is it: a `site.start_page` that names no page in the
+/// workspace, a warning on its value.
+#[must_use]
+pub fn playbook_diagnostics(antora: &AntoraCatalog, path: &Path) -> Vec<Diagnostic> {
+    let Some(playbook) = antora.playbook() else {
+        return Vec::new();
+    };
+    if normalize_path(&playbook.path) != normalize_path(path) {
+        return Vec::new();
+    }
+    let Some((page, range)) = &playbook.start_page else {
+        return Vec::new();
+    };
+    if antora.resolve_start_page(page).is_some() {
+        return Vec::new();
+    }
+    vec![Diagnostic {
+        code: DiagnosticCode::AntoraUnresolvedStartPage,
+        severity: DiagnosticSeverity::Warning,
+        message: format!(
+            "the site's start page `{page}` is not a page in the workspace; name it as \
+             `component::page.adoc` or `version@component:module:page.adoc`"
+        ),
+        range: *range,
+    }]
+}
+
 /// Warnings for a file inside a component whose `antora.yml` could not be read.
 ///
 /// Such a component is missing from the catalog, so every Antora feature is silently off for

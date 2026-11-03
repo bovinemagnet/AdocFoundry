@@ -86,6 +86,12 @@ The keys it uses are `name`, `title`, `version`, `display_version`, `prerelease`
 |An `asciidoc.attributes` value in an `antora.yml` is a list or a mapping.
 Antora takes a string, a number, `true`, `false` or `~`, so the attribute is skipped and the rest of the descriptor still loads.
 
+|`adoc.antora.unresolved-start-page`
+|Warning
+|The playbook's `site.start_page` names no page in the workspace.
+The id must name its component, as `component::page.adoc` or `version@component:module:page.adoc`.
+A version left out means the latest, and a module left out means `ROOT`.
+
 |`adoc.antora.resolved-via-alias`
 |Information
 |An xref resolves only because the target page lists the id in `page-aliases`. The message suggests the current id.
@@ -114,3 +120,4 @@ The tab updates when typing pauses and shows each problem's line and column, the
 Diagnostics inside `antora.yml` itself (`adoc.antora.missing-key`, `adoc.antora.unknown-key`, `adoc.antora.missing-nav-file` and `adoc.antora.invalid-attribute-value`) appear at the line where each problem is written.
 They are read from the file on disk, not from an unsaved buffer, and are recomputed when the descriptor changes on disk.
 A descriptor that is not valid YAML gets only `adoc.antora.invalid-descriptor`.
+`adoc.antora.unresolved-start-page` appears in the playbook, on its `site.start_page` value.

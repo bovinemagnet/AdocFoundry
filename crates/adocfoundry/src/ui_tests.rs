@@ -7585,8 +7585,8 @@ fn empty_folder_shows_the_welcome_panel(cx: &mut TestAppContext) {
     click("welcome-new-project", &mut cx);
     redraw(&app, &mut cx);
     assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
-    // Named from the folder, in the folder itself: seven files and nothing wrong.
-    assert_eq!(listed_files(&mut cx), 7);
+    // Named from the folder, in the folder itself: ten files and nothing wrong.
+    assert_eq!(listed_files(&mut cx), 10);
     assert!(cx.debug_bounds("new-project-problem-location").is_none());
     assert!(cx.debug_bounds("new-project-problem-name").is_none());
 }
@@ -7601,7 +7601,7 @@ fn non_antora_pages_folder_offers_a_project(cx: &mut TestAppContext) {
     click("welcome-new-project", &mut cx);
     redraw(&app, &mut cx);
     // The folder has pages, so the project goes in `docs`.
-    assert_eq!(listed_files(&mut cx), 7);
+    assert_eq!(listed_files(&mut cx), 10);
     assert!(cx.debug_bounds("new-project-problem-location").is_none());
     cx.simulate_keystrokes("enter");
     redraw(&app, &mut cx);
@@ -7618,7 +7618,7 @@ fn new_project_dialog_validates_live_and_previews_the_tree(cx: &mut TestAppConte
     cx.dispatch_action(crate::editor::bindings::NewProject);
     redraw(&app, &mut cx);
     assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
-    assert_eq!(listed_files(&mut cx), 7);
+    assert_eq!(listed_files(&mut cx), 10);
 
     // The name field has focus, holding `site`: a space makes it no component name.
     cx.simulate_input(" X");
@@ -7638,8 +7638,11 @@ fn new_project_dialog_validates_live_and_previews_the_tree(cx: &mut TestAppConte
     assert!(cx.debug_bounds("new-project-problem-name").is_none());
     assert!(cx.debug_bounds("new-project-component").is_some());
 
-    // Without a README the list is one file shorter.
+    // Without a README the list is one file shorter, and three without the playbook.
     click("new-project-readme", &mut cx);
+    redraw(&app, &mut cx);
+    assert_eq!(listed_files(&mut cx), 9);
+    click("new-project-playbook", &mut cx);
     redraw(&app, &mut cx);
     assert_eq!(listed_files(&mut cx), 6);
 }

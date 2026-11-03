@@ -111,6 +111,7 @@ Git is opt-in for `adoc-ls`: it looks for no repository unless the user settings
 | `adoc.antora.unknown-key` | An `antora.yml` has a key Antora does not use. |
 | `adoc.antora.missing-nav-file` | A `nav` entry in `antora.yml` names a file that does not exist. |
 | `adoc.antora.invalid-attribute-value` | An `asciidoc.attributes` value in `antora.yml` is a list or mapping. |
+| `adoc.antora.unresolved-start-page` | The playbook's `site.start_page` names no page in the workspace. |
 | `adoc.antora.resolved-via-alias` | A reference resolves only through a page alias. |
 | `adoc.antora.nav-unresolved` | A navigation entry does not resolve. |
 | `adoc.antora.version-not-on-branch` | A component version is not on the branch being edited. |

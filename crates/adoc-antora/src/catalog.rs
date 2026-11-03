@@ -177,6 +177,31 @@ impl AntoraCatalog {
             .max_by(|left, right| compare_component_versions(left, right))
     }
 
+    /// The page a playbook's `site.start_page` names: a resource id that names its component
+    /// (a version omitted meaning the latest, a module omitted `ROOT`), of the page family.
+    #[must_use]
+    pub fn resolve_start_page(&self, id: &str) -> Option<&AntoraResource> {
+        let id = crate::parse_resource_id(id).ok()?;
+        let component = id.component.as_deref()?;
+        if id
+            .family
+            .is_some_and(|family| family != ResourceFamily::Page)
+        {
+            return None;
+        }
+        let version = match &id.version {
+            Some(version) => self.component(component, Some(version))?,
+            None => self.latest_version(component)?,
+        };
+        self.resolve(&AntoraCoordinate {
+            component: component.to_owned(),
+            version: version.version.clone(),
+            module: id.module.clone().unwrap_or_else(|| "ROOT".to_owned()),
+            family: ResourceFamily::Page,
+            relative_path: PathBuf::from(&id.path),
+        })
+    }
+
     /// Every version of component `name`, latest first.
     #[must_use]
     pub fn versions_of(&self, name: &str) -> Vec<&ComponentDescriptor> {

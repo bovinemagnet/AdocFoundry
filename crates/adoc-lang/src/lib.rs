@@ -221,10 +221,12 @@ pub fn completion_in(
 }
 
 /// Every diagnostic for the indexed file at `path`, including problems with the component
-/// descriptor when `path` is an `antora.yml`.
+/// descriptor when `path` is an `antora.yml`, and with the site's start page when it is the
+/// playbook.
 #[must_use]
 pub fn diagnostics(ws: &WorkspaceState, path: &Path) -> Vec<Diagnostic> {
     let mut found = diagnostics::diagnostics(&ws.index, &ws.antora, path);
+    found.extend(diagnostics::playbook_diagnostics(&ws.antora, path));
     found.extend(diagnostics::descriptor_diagnostics(
         &ws.descriptor_issues,
         path,
@@ -294,6 +296,11 @@ pub fn workspace_diagnostics(ws: &WorkspaceState) -> Vec<(PathBuf, Vec<Diagnosti
             .map(|issue| normalize_path(&issue.path)),
     );
     paths.extend(ws.descriptor_problems.keys().cloned());
+    paths.extend(
+        ws.antora
+            .playbook()
+            .map(|playbook| normalize_path(&playbook.path)),
+    );
     paths.sort();
     paths.dedup();
     paths

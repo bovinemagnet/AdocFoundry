@@ -2,13 +2,16 @@
 source: crates/adocfoundry-cli/tests/cli.rs
 expression: "format!(\"{}\\n--- antora.yml\\n{descriptor}\", stdout(&output))"
 ---
+made .adocfoundry.toml
 made .gitignore
 made README.adoc
+made antora-playbook.yml
 made antora.yml
 made modules/ROOT/images/.gitkeep
 made modules/ROOT/nav.adoc
 made modules/ROOT/pages/index.adoc
 made modules/ROOT/partials/.gitkeep
+made package.json
 
 --- antora.yml
 name: demo

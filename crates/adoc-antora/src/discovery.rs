@@ -34,9 +34,11 @@ pub fn discover_antora_workspace_ignoring(
     component_roots.dedup();
 
     let mut result = DiscoveryResult::default();
-    // The first root with a playbook supplies the site-wide attributes.
-    for root in roots {
-        let path = root.join(crate::PLAYBOOK_FILE);
+    // The first root with a playbook supplies the site-wide attributes, else the first
+    // component version with one beside its `antora.yml` (a component in `docs/` of a code
+    // repository, with its local playbook).
+    for folder in roots.iter().chain(&component_roots) {
+        let path = folder.join(crate::PLAYBOOK_FILE);
         if path.is_file() {
             match crate::read_playbook(&normalize_path(&path)) {
                 Ok(playbook) => result.catalog.set_playbook(Some(playbook)),
@@ -248,7 +250,8 @@ fn catalog_component(
 /// Discovers the components among `files`, a revision's files by absolute path with their text,
 /// by the rules disk discovery follows: a folder holding `antora.yml` and files under
 /// `modules/` is a component version, each folder under `modules/` holding files a module, and
-/// the playbook is the first root's. Nothing is read from disk. Folders named in `ignore` are
+/// the playbook is the first root's, else the first component version's beside its
+/// `antora.yml`, as disk discovery finds it. Nothing is read from disk. Folders named in `ignore` are
 /// skipped, as disk discovery skips them.
 pub fn discover_antora_files(
     roots: &[PathBuf],
@@ -262,16 +265,6 @@ pub fn discover_antora_files(
         })
     };
     let mut result = DiscoveryResult::default();
-    for root in roots {
-        let path = normalize_path(&root.join(crate::PLAYBOOK_FILE));
-        if let Some(source) = files.get(&path) {
-            match crate::parse_playbook(&path, source) {
-                Ok(playbook) => result.catalog.set_playbook(Some(playbook)),
-                Err(error) => result.issues.push(error),
-            }
-            break;
-        }
-    }
     let mut component_roots: Vec<PathBuf> = files
         .keys()
         .filter(|path| path.file_name() == Some(OsStr::new("antora.yml")))
@@ -290,6 +283,16 @@ pub fn discover_antora_files(
         .collect();
     component_roots.sort();
     component_roots.dedup();
+    for folder in roots.iter().chain(&component_roots) {
+        let path = normalize_path(&folder.join(crate::PLAYBOOK_FILE));
+        if let Some(source) = files.get(&path) {
+            match crate::parse_playbook(&path, source) {
+                Ok(playbook) => result.catalog.set_playbook(Some(playbook)),
+                Err(error) => result.issues.push(error),
+            }
+            break;
+        }
+    }
     for root in component_roots {
         let descriptor_path = root.join("antora.yml");
         let source = &files[&descriptor_path];
@@ -419,6 +422,57 @@ mod tests {
             .map(|alias| alias.path.as_str())
             .collect();
         assert_eq!(aliases, ["old-guide.adoc"]);
+    }
+
+    /// A component in `docs/` of a code repository keeps its local playbook beside
+    /// `antora.yml`; with none at the root, that one is the site's.
+    #[test]
+    fn a_playbook_beside_a_component_is_the_site_s_when_no_root_has_one() {
+        let root = tempfile::tempdir().unwrap();
+        let docs = root.path().join("docs");
+        std::fs::create_dir_all(docs.join("modules/ROOT/pages")).unwrap();
+        std::fs::write(docs.join("antora.yml"), "name: demo\nversion: ~\n").unwrap();
+        std::fs::write(docs.join("modules/ROOT/pages/index.adoc"), "= Home\n").unwrap();
+        std::fs::write(
+            docs.join("antora-playbook.yml"),
+            "site:\n  title: Demo\n  start_page: demo::index.adoc\n",
+        )
+        .unwrap();
+        let discovery = discover_antora_workspace(&[root.path().to_path_buf()]).unwrap();
+        let playbook = discovery
+            .catalog
+            .playbook()
+            .expect("found beside the component");
+        assert_eq!(playbook.site_title.as_deref(), Some("Demo"));
+        let start = discovery
+            .catalog
+            .resolve_start_page(&playbook.start_page.as_ref().unwrap().0)
+            .unwrap();
+        assert!(start.source_path.ends_with("pages/index.adoc"));
+        for missing in [
+            "demo::missing.adoc",
+            "index.adoc",
+            "other::index.adoc",
+            "demo:ROOT:partial$index.adoc",
+        ] {
+            assert!(
+                discovery.catalog.resolve_start_page(missing).is_none(),
+                "{missing}"
+            );
+        }
+
+        // The same from a file list, as a Git revision is read.
+        let files: std::collections::BTreeMap<std::path::PathBuf, String> = [
+            ("docs/antora.yml", "name: demo\nversion: ~\n"),
+            ("docs/modules/ROOT/pages/index.adoc", "= Home\n"),
+            ("docs/antora-playbook.yml", "site:\n  title: Demo\n"),
+        ]
+        .into_iter()
+        .map(|(path, text)| (root.path().join(path), text.to_owned()))
+        .collect();
+        let listed =
+            crate::discover_antora_files(&[root.path().to_path_buf()], &files, &[] as &[&str]);
+        assert!(listed.catalog.playbook().is_some());
     }
 
     #[test]

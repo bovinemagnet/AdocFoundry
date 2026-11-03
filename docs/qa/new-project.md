@@ -25,7 +25,8 @@ Run each item on macOS 13+, Windows 10+ and Ubuntu 22.04+, from a build of `main
 7. **After Create.** `index.adoc` opens with the preview docked and rendering it, the Files panel shows it, Navigation lists its one entry, and a notification says "Created <name> with N files." with Undo. `adocfoundry-cli check <folder>` reports nothing.
 8. **Undo.** Undo in the notification removes every file still as it was made and the folders left empty; a file edited after Create is kept; a `.git` made is kept. The welcome returns.
 9. **A folder outside the workspace.** With a component open, make a project in another folder: it joins the workspace as a second root, and its pages resolve.
-10. **Keyboard.** Tab moves through the fields in order, Escape cancels, and Enter creates only when nothing is wrong.
+10. **Antora builds it.** On a machine with Node.js and network access, in the folder holding `antora-playbook.yml`: `npm install && npm run build` writes `build/site/index.html` with no `WARN` in the log, before any commit, for a project in an empty folder and for one in `docs/` of a code repository. Without a repository (Git left out), the build stops saying a local content source must be a Git repository, as the playbook's comment warns. `new_project_writes_a_playbook_that_antora_accepts` runs this when `antora` is on `PATH`.
+11. **Keyboard.** Tab moves through the fields in order, Escape cancels, and Enter creates only when nothing is wrong.
 
 ## Results
 
