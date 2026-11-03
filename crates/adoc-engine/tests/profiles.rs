@@ -289,3 +289,37 @@ fn a_profile_cannot_write_outside_the_workspace() {
         root.join("out/x.pdf")
     );
 }
+
+#[test]
+fn a_profile_is_checked_without_exporting() {
+    let (_directory, root, engine) = book_workspace(PROFILES);
+    for name in ["admin-guide", "guide", "install"] {
+        assert_eq!(
+            engine.profile_problems(name),
+            Vec::<String>::new(),
+            "{name}"
+        );
+    }
+    assert!(engine.profile_problems("missing")[0].contains("no PDF profile"));
+
+    let (_directory, _root, engine) = book_workspace(
+        "[pdf.profiles.gone]\npage = \"guide/modules/ROOT/pages/gone.adoc\"\n\n\
+         [pdf.profiles.old]\ncomponent = \"9.9@guide\"\n\n\
+         [pdf.profiles.navless]\nnav = [\"guide/modules/ROOT/missing-nav.adoc\"]\n\n\
+         [pdf.profiles.themeless]\ncomponent = \"1.0@guide\"\ntheme = \"no-such-theme\"\n",
+    );
+    let first = |name: &str| engine.profile_problems(name).join("; ");
+    assert!(first("gone").contains("gone.adoc"), "{}", first("gone"));
+    assert!(first("old").contains("9.9"), "{}", first("old"));
+    assert!(
+        first("navless").contains("missing-nav.adoc"),
+        "{}",
+        first("navless")
+    );
+    assert!(
+        first("themeless").contains("no-such-theme"),
+        "{}",
+        first("themeless")
+    );
+    assert!(!root.join("install.pdf").exists(), "nothing exported");
+}

@@ -13,6 +13,7 @@ mod creation;
 mod discovery;
 mod http;
 mod paths;
+mod publication;
 mod responses;
 mod schemas;
 mod server;

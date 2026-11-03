@@ -207,6 +207,68 @@ impl Engine {
         })
     }
 
+    /// What would stop the profile `name` from exporting, found without exporting: an unknown
+    /// profile, an output outside the workspace, content that is not in it (a page not indexed,
+    /// a component version not in the catalog, a navigation file missing) or a theme that is
+    /// neither a bundled or workspace theme nor a file there. Empty when it would start.
+    #[must_use]
+    pub fn profile_problems(&self, name: &str) -> Vec<String> {
+        let args = match self.profile_export_args(name) {
+            Ok(args) => args,
+            Err(error) => return vec![error.to_string()],
+        };
+        let mut problems = Vec::new();
+        match &args.target {
+            ExportTarget::File(path) => {
+                if self.workspace.index.file(path).is_none() {
+                    problems.push(format!(
+                        "its page {} is not in the workspace",
+                        path.display()
+                    ));
+                }
+            }
+            ExportTarget::Component { name, version } => {
+                let found = match version {
+                    Some(version) => self
+                        .workspace
+                        .antora
+                        .component(name, Some(version))
+                        .is_some(),
+                    None => !self.workspace.antora.versions_of(name).is_empty(),
+                };
+                if !found {
+                    let version = version
+                        .as_deref()
+                        .map(|version| format!(" {version}"))
+                        .unwrap_or_default();
+                    problems.push(format!(
+                        "its component {name}{version} is not in the workspace"
+                    ));
+                }
+            }
+            ExportTarget::Navigation(files) => {
+                for file in files {
+                    if !file.is_file() {
+                        problems.push(format!("its navigation file {} is missing", file.display()));
+                    }
+                }
+            }
+            ExportTarget::Page(_) => {}
+        }
+        if let Some(theme) = &args.theme {
+            let file = theme.ends_with(".yml") || theme.ends_with(".yaml");
+            let known = if file {
+                Path::new(theme).is_file()
+            } else {
+                self.pdf_themes().iter().any(|choice| choice.name == *theme)
+            };
+            if !known {
+                problems.push(format!("its theme `{theme}` is not found"));
+            }
+        }
+        problems
+    }
+
     /// The themes an export can use: the bundled ones, then each `<name>-theme.yml` in
     /// `[pdf] themes_dir`, by name.
     #[must_use]
