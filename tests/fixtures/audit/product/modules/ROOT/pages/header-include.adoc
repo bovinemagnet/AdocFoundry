@@ -1,0 +1,3 @@
+include::partial$header.adoc[]
+
+The title comes from the partial.

@@ -261,6 +261,25 @@ pub struct RuleState {
     pub severity: Option<Severity>,
 }
 
+/// How much of one component version's navigation reaches its pages.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct NavCoverage {
+    pub component: String,
+    /// `None` for a versionless component.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// The navigation files its `antora.yml` lists.
+    pub navigation_files: usize,
+    /// Its published pages: every page but those Antora hides (a name beginning with `_`).
+    pub pages: usize,
+    /// Pages a navigation entry reaches, each once however many entries reach it; the start
+    /// page counts, being linked from the component's title.
+    pub listed: usize,
+    /// Pages the navigation may or may not reach, because it includes other files, names an
+    /// attribute, or could not be read.
+    pub undetermined: usize,
+}
+
 /// How many findings of each kind a report holds.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Counts {
@@ -284,6 +303,7 @@ pub struct AuditReport {
     rules: Vec<RuleState>,
     completeness: Completeness,
     counts: Counts,
+    coverage: Vec<NavCoverage>,
     findings: Vec<Finding>,
     excluded: Vec<Excluded>,
     skips: Vec<Skip>,
@@ -337,6 +357,12 @@ impl AuditReport {
         self.counts
     }
 
+    /// Navigation coverage of each component version audited, in component and version order.
+    #[must_use]
+    pub fn coverage(&self) -> &[NavCoverage] {
+        &self.coverage
+    }
+
     #[must_use]
     pub fn findings(&self) -> &[Finding] {
         &self.findings
@@ -383,6 +409,7 @@ pub struct AuditBuilder {
     roots: Vec<String>,
     findings: Vec<Finding>,
     skips: Vec<Skip>,
+    coverage: Vec<NavCoverage>,
     partial: Vec<Gap>,
     unavailable: Vec<Gap>,
 }
@@ -396,6 +423,7 @@ impl AuditBuilder {
             roots,
             findings: Vec::new(),
             skips: Vec::new(),
+            coverage: Vec::new(),
             partial: Vec::new(),
             unavailable: Vec::new(),
         }
@@ -407,6 +435,10 @@ impl AuditBuilder {
 
     pub fn skip(&mut self, skip: Skip) {
         self.skips.push(skip);
+    }
+
+    pub fn coverage(&mut self, coverage: NavCoverage) {
+        self.coverage.push(coverage);
     }
 
     /// Coverage missing from part of the scope: the report is partial.
@@ -488,6 +520,10 @@ impl AuditBuilder {
             }
         }
 
+        let mut coverage = self.coverage;
+        coverage.sort();
+        coverage.dedup();
+
         AuditReport {
             schema_version: SCHEMA_VERSION,
             scope: self.scope,
@@ -504,6 +540,7 @@ impl AuditBuilder {
                 .collect(),
             completeness,
             counts,
+            coverage,
             findings,
             excluded,
             skips,
@@ -690,6 +727,14 @@ mod tests {
             ),
             code: FindingCode::Diagnostic(DiagnosticCode::UnresolvedInclude),
             reason: "The include target uses the attribute `{snippets}`".to_owned(),
+        });
+        builder.coverage(NavCoverage {
+            component: "product".to_owned(),
+            version: Some("3.0".to_owned()),
+            navigation_files: 1,
+            pages: 4,
+            listed: 2,
+            undetermined: 0,
         });
         builder.gap(Gap {
             reason: GapReason::RemoteComponentMissing,

@@ -51,6 +51,16 @@ expression: sample()
     "excluded": 1,
     "skipped": 1
   },
+  "coverage": [
+    {
+      "component": "product",
+      "version": "3.0",
+      "navigation_files": 1,
+      "pages": 4,
+      "listed": 2,
+      "undetermined": 0
+    }
+  ],
   "findings": [
     {
       "code": "adoc.unresolved-xref-file",

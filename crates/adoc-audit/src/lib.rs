@@ -12,7 +12,8 @@
 //!
 //! The audit does not restate what the existing diagnostics already report. A finding for one
 //! of them carries its [`adoc_core::DiagnosticCode`] ([`FindingCode::Diagnostic`]), its severity
-//! and its message unchanged; no `quality.*` rule is ever defined for the same fault (an
+//! and its message, unchanged but for paths beneath a workspace root, which are written relative
+//! to it so that no absolute path leaves the machine in a report; no `quality.*` rule is ever defined for the same fault (an
 //! unresolved navigation entry, for one, stays `adoc.antora.nav-unresolved`). The policy can
 //! exclude such a finding for one resource, but cannot change its severity.
 //!
@@ -22,14 +23,18 @@
 //! by every enabled rule. A construct a rule cannot assert, such as a dynamic include, is a
 //! [`Skip`], counted and listed, and does not make a report partial.
 
+mod content;
+mod navigation;
 mod policy;
 mod report;
 mod rules;
+mod workspace;
 
 pub use policy::{Exclusion, FailOn, Policy, PolicyError, TargetVersion, Verdict};
 pub use report::{
     portable_path, AuditBuilder, AuditReport, AuditScope, Completeness, Coordinate, Counts,
-    Evidence, Excluded, Finding, Gap, GapReason, Location, Revision, RuleState, Severity, Skip,
-    SCHEMA_VERSION,
+    Evidence, Excluded, Finding, Gap, GapReason, Location, NavCoverage, Revision, RuleState,
+    Severity, Skip, SCHEMA_VERSION,
 };
 pub use rules::{Category, FindingCode, RuleId, RuleSpec, RULES};
+pub use workspace::{audit, AuditInput};

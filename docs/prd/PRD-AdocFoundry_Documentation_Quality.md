@@ -217,7 +217,6 @@ An Antora multi-component fixture can be audited offline from CLI and GUI with m
 
 Each is settled before work starts on the package it affects, and the outcome is recorded in that package's PR and in the Implementation Notes.
 
-- Should unlisted pages be warnings by default, or informational in all new workspaces?
 - How are publication-only nav variations represented? (Remote playbook sources are `remote-component-missing`, §5.4.)
 - Does SARIF belong in the initial release or the immediate following work package?
 
@@ -243,3 +242,23 @@ Existing repository issues mentioned above remain independent and must not be si
   - `AuditReport` is built by `AuditBuilder::finish`, which applies the policy, sorts deterministically and keeps identical findings once.
   - The CI table of §5.4 is `AuditReport::verdict` (`Verdict::exit_code` gives 0, 1 or 2), so the CLI and MCP share one decision.
 - **Docs.** The user documentation of `[quality]` waits until an audit can be run (Q4 and Q6).
+
+### Q2 (#301): navigation coverage and the initial content rules
+
+- **Entry point.** `adoc_audit::audit(&AuditInput, AuditScope) -> AuditBuilder`. The input is the `WorkspaceState`, the normalised roots, and a reader for navigation files, so unsaved buffers can stand in for files on disk. It reads every in-scope file once: a whole audit, meant for a worker. Q3 makes it incremental. `adoc-audit` now depends on `adoc-index` and `adoc-lang` as well.
+- **Existing diagnostics** are every in-scope file's `adoc_lang::diagnostics` (what the Problems panel shows), and each `antora.yml`'s, with their codes, severities, messages and ranges unchanged. A broken descriptor is reported on each file of its component, as in Problems.
+- **No absolute paths.** A message's paths beneath a workspace root are written relative to it with `/` separators, so no absolute path leaves the machine in a report; `adoc.antora.invalid-descriptor`'s message names the descriptor by its full path. Likewise a navigation file that cannot be read is named relative to its root, and the reader's error message is left out, since a front end's reader may put a path in it.
+- **Navigation diagnostics.** `adoc.antora.nav-unresolved` comes only from the navigation trees, so no file diagnostic or Problems entry reports it, and the audit adds it once per entry. An entry whose target names an attribute is a skip rather than a finding, since it cannot be resolved without the build's attributes.
+- **Unlisted pages.**
+  - A published page is listed when an entry of one of its own component version's navigation files reaches it, including through a page alias. An entry in another component's navigation does not list it (§5.2: "the relevant component/version").
+  - The start page (`start_page`, else `ROOT:index.adoc`) counts as listed.
+  - A published page is an `.adoc` file in a `pages` folder whose name, and the folders on whose path, do not begin with `_` or `.`. The real corpus has `.gitkeep`, `.md`, `.html` and `.pdf` files there, which Antora does not publish as pages.
+  - A version that lists no navigation files has nothing to be listed in, and its pages are not reported.
+  - When a version's navigation has an `include::` line (which the navigation parser does not follow), an `{attribute}` target, or a file that cannot be read, its unlisted pages are skips.
+- **Default severity.** Unlisted pages default to `warning`, settling the open decision in §12. On the 533-page real corpus, 309 pages are unlisted, and a sample of them appear in no navigation file. `[quality.rules]` sets the rule to `info` or `off` for a workspace that lists pages sparingly.
+- **Coverage.** Each version's `NavCoverage` counts its navigation files, published pages, listed pages (each once, however many entries reach it) and undetermined pages, for the overview's ratios (§7).
+- **Missing title.** Checked on published pages. An empty `=` line is reported, and no title at all is reported unless a `doctitle` attribute gives one. An include before the first section may supply the title, so that case is a skip.
+- **Missing alt text.**
+  - Checked on the block image macros of published pages and of partials. The parser records block images only, so inline images are not checked; recording them would change `adoc-parser`, which runs on every keystroke and feeds the editor's own image diagnostics.
+  - Text counts as written in any form: a first positional attribute, a named `alt`, an attribute reference, or text quoted empty (`[""]`), the author's sign of a decorative image. Only a macro with no text at all is reported. Other decorative or generated images are left to exclusions.
+- **Unavailable scope.** A component or version not in the catalog makes the audit unavailable (`remote-component-missing`).

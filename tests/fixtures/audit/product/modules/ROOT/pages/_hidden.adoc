@@ -1,0 +1,3 @@
+= Hidden
+
+Antora does not publish a page whose name begins with an underscore.
