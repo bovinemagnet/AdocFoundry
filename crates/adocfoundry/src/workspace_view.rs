@@ -55,6 +55,7 @@ use crate::{
 };
 
 mod build_site;
+mod delete_file;
 mod impact;
 mod new_project;
 
@@ -4767,6 +4768,17 @@ impl WorkspaceView {
                     .and_then(|id| engine.document(id))
                     .filter(|document| document.asciidoc && !document.untitled)
                     .map(|document| document.path.clone());
+                // Any file a tab shows can be deleted, once there is somewhere to keep it.
+                let deletable = target
+                    .and_then(|target| match target {
+                        TabItem::Document(id) => engine
+                            .document(id)
+                            .filter(|document| !document.untitled)
+                            .map(|document| document.path.clone()),
+                        TabItem::Image(id) => engine.image(id).map(|image| image.path.clone()),
+                    })
+                    .filter(|_| engine.can_delete_files());
+                let deleted_in = workspace.clone();
                 let menu = match target {
                     Some(target) => {
                         let app = app.clone();
@@ -4812,7 +4824,7 @@ impl WorkspaceView {
                                 }),
                         )
                     });
-                match page {
+                let menu = match page {
                     Some(page) => {
                         let (inspected_in, inspected) = (shown_in.clone(), page.clone());
                         menu.separator()
@@ -4831,6 +4843,18 @@ impl WorkspaceView {
                                 }),
                             )
                     }
+                    None => menu,
+                };
+                match deletable {
+                    Some(path) => menu.separator().item(
+                        PopupMenuItem::new("Delete File…")
+                            .action(Box::new(DeleteFile))
+                            .on_click(move |_, window, cx| {
+                                let _ = deleted_in.update(cx, |workspace, cx| {
+                                    workspace.confirm_delete(&path, window, cx);
+                                });
+                            }),
+                    ),
                     None => menu,
                 }
             })
@@ -5095,6 +5119,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_build_site))
             .on_action(cx.listener(Self::on_analyse_impact))
             .on_action(cx.listener(Self::on_inspect_impact))
+            .on_action(cx.listener(Self::on_delete_file))
+            .on_action(cx.listener(Self::on_undo_delete))
             .on_action(cx.listener(Self::on_compare_revisions))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))

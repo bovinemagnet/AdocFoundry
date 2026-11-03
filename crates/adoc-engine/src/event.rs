@@ -126,6 +126,10 @@ pub enum EngineEvent {
     },
     /// The impact inspector's analysis started or finished: `Engine::impact_inspection`.
     ImpactChanged,
+    /// `file.delete` moved the file aside: `Engine::last_deleted` names it until it is put back.
+    FileDeleted(PathBuf),
+    /// `file.undo_delete` put the file back.
+    FileRestored(PathBuf),
     /// A site build started or wrote more: `Engine::site_build` has its log.
     SiteBuildOutput,
     /// A site build finished: the site's index page when it wrote one, or why it failed.

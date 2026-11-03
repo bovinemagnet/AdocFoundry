@@ -68,6 +68,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::DOCUMENT_CLOSE_OTHERS),
             Command(ids::DOCUMENT_CLOSE_CLEAN),
             Command(ids::DOCUMENT_CLOSE_ALL),
+            Command(ids::FILE_DELETE),
             Separator,
             Command(ids::SETTINGS_OPEN),
             Command(ids::SETTINGS_RELOAD),
@@ -80,6 +81,7 @@ const MENUS: &[(&str, &[Entry])] = &[
         &[
             Command(ids::EDIT_UNDO),
             Command(ids::EDIT_REDO),
+            Command(ids::FILE_UNDO_DELETE),
             Separator,
             Command(ids::WORKSPACE_SEARCH),
             Command(ids::WORKSPACE_REPLACE),
@@ -522,8 +524,8 @@ mod tests {
         );
         let edit = labels(&menus[1]);
         assert_eq!(
-            edit[..3],
-            ["Undo".to_owned(), "Redo".to_owned(), "-".to_owned()]
+            edit[..4],
+            ["Undo", "Redo", "Undo Delete", "-"].map(str::to_owned)
         );
         assert_eq!(labels(&menus[3])[0], "Command Palette");
     }

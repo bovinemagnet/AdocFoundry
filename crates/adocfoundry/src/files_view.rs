@@ -413,6 +413,15 @@ impl FilesView {
         }
     }
 
+    /// Deletes the file at `path`, after asking.
+    fn delete(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.confirm_delete(path, window, cx)
+            });
+        }
+    }
+
     /// Shows the page at `path` in the graph window.
     fn show_in_graph(&mut self, path: &Path, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -520,6 +529,7 @@ fn files_menu(
     row: Option<Row>,
     files: WeakEntity<FilesView>,
     show_excluded: bool,
+    can_delete: bool,
 ) -> PopupMenu {
     let mut menu = menu;
     if let Some(row) = row.filter(|row| row.kind != RowKind::Note) {
@@ -584,6 +594,16 @@ fn files_menu(
                 }),
             )
             .separator();
+        if row.kind == RowKind::File && can_delete {
+            let (files, deleted) = (files.clone(), path.clone());
+            menu = menu
+                .item(
+                    PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
+                        let _ = files.update(cx, |files, cx| files.delete(&deleted, window, cx));
+                    }),
+                )
+                .separator();
+        }
         if matches!(row.kind, RowKind::Directory | RowKind::Root) {
             let files = files.clone();
             let dir = row.path.clone();
@@ -623,6 +643,7 @@ impl Render for FilesView {
         let files = cx.weak_entity();
         let rows = self.rows.clone();
         let show_excluded = self.app.read(cx).engine.show_excluded();
+        let can_delete = self.app.read(cx).engine.can_delete_files();
         let footer = self.selected_path(cx);
         let row_menu = {
             let files = files.clone();
@@ -637,13 +658,14 @@ impl Render for FilesView {
                     rows.get(&entry.item().id).cloned(),
                     files.clone(),
                     show_excluded,
+                    can_delete,
                 )
             }
         };
         let panel_menu = {
             let files = files.clone();
             move |menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
-                files_menu(menu, None, files.clone(), show_excluded)
+                files_menu(menu, None, files.clone(), show_excluded, can_delete)
             }
         };
         let list = tree(&self.tree, move |index, entry, _selected, _window, cx| {

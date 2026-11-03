@@ -242,7 +242,7 @@ impl Engine {
     }
 
     /// Waits for the next worker message and applies it; false when none came in time.
-    fn apply_next_worker_message(&mut self) -> bool {
+    pub(crate) fn apply_next_worker_message(&mut self) -> bool {
         match self.worker_receiver.recv_timeout(SAVE_TIMEOUT) {
             Ok(message) => {
                 self.apply_worker_message(message);

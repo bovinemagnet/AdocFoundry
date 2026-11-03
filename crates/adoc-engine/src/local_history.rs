@@ -36,7 +36,7 @@ const PATH_FILE: &str = "path";
 /// `[history] max_size_mb`.
 pub const HISTORY_SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-const DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
+pub(crate) const DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
 const MEGABYTE: u64 = 1024 * 1024;
 
 #[derive(Default)]
@@ -274,7 +274,7 @@ fn digest(text: &str) -> String {
         .collect()
 }
 
-fn millis(time: SystemTime) -> u64 {
+pub(crate) fn millis(time: SystemTime) -> u64 {
     time.duration_since(UNIX_EPOCH).map_or(0, |since| {
         u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
     })
