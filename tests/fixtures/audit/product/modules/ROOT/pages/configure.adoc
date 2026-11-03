@@ -1,0 +1,4 @@
+= Configure
+:page-aliases: old-name.adoc
+
+Listed in the navigation through its alias.

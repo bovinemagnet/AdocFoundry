@@ -153,6 +153,8 @@ version = "0.5.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
+ "adoc-index",
+ "adoc-lang",
  "insta",
  "serde",
  "serde_json",

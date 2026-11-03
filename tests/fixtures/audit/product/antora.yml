@@ -1,0 +1,6 @@
+name: product
+title: Product
+version: '3.0'
+nav:
+- modules/ROOT/nav.adoc
+- modules/admin/nav.adoc

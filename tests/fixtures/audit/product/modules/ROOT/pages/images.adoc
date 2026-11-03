@@ -1,0 +1,13 @@
+= Images
+
+image::a.png[]
+
+image::b.png[A diagram of b]
+
+An inline image:c.png[width=20] without text.
+
+image::d.png[alt="Described by name"]
+
+image::e.png[{alt-e}]
+
+image::f.png[""]

@@ -1,0 +1,5 @@
+A page with no document title.
+
+== A section
+
+Text.
