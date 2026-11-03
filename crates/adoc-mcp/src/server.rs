@@ -399,7 +399,8 @@ impl Drop for Waiting {
 impl Server {
     pub fn new(mut engine: Engine, roots: Vec<PathBuf>, allow_write: bool) -> Self {
         let events = engine.subscribe();
-        let mut tool_router = Self::tool_router() + Self::discovery_router();
+        let mut tool_router =
+            Self::tool_router() + Self::discovery_router() + Self::analysis_router();
         if !allow_write {
             for name in WRITE_TOOLS {
                 tool_router.remove_route(name);

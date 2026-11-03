@@ -12,6 +12,8 @@ In the app, Run Audit runs it, and the Quality panel and Problems show the resul
 
 The command line and the app share one implementation.
 For the same workspace and policy they report the same findings, counts and coverage.
+MCP clients get the same report through the MCP server's `quality_audit` tool (see xref:mcp-server.adoc#quality-audit[]).
+It uses the same policy and gives the same findings, counts and completeness, with the findings paged.
 The core audit makes no network request, runs no program and writes no file.
 `cargo xtask layers` checks the audit crate's sources for this.
 

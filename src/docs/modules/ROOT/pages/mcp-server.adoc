@@ -196,6 +196,68 @@ Each has:
 The value a build sees also depends on the playbook, the command line, soft and hard sets, and the order of declarations.
 These are not yet traced (issue #99), so no effective value is given or invented.
 
+[#quality-audit]
+== Auditing quality
+
+`quality_audit` is a read-only tool.
+It audits the documentation's quality exactly as `adocfoundry-cli audit --format json` does.
+See xref:command-line.adoc[the command line] and xref:quality-audit.adoc[The quality audit].
+
+The policy is the workspace's own `.adocfoundry.toml` `[quality]` table, read from the first root as the command line reads it.
+The user's settings file is never read, so every client and CI see the same result.
+
+[cols="2,3,4"]
+|===
+|Tool |Arguments |Result
+
+|`quality_audit`
+|`component?`, `version?`, `rules?`, `severity?`, `include_excluded?`, `require_complete?`, `fail_on?`, `cursor?`, `limit?`
+|The audit report, with its findings paged: see <<paging>>.
+|===
+
+The arguments are:
+
+`component` and `version`::
+The scope. `version` is a version name such as `3.0` and needs a `component`. Without it every version of the component is audited. `~` is refused, as an audit's scope cannot select the versionless version alone.
+
+`rules`::
+List only findings with these codes. A code is a rule id such as `quality.page.missing-title`, or a diagnostic code such as `adoc.unresolved-xref-file`. The counts stay the whole report's.
+
+`severity`::
+List only findings at least this severe: `info`, `warning` or `error`.
+
+`include_excluded`::
+Also list the findings the policy excludes, with their reasons. It is false by default, though `counts.excluded` is always given.
+
+`require_complete` and `fail_on`::
+Override the policy, as `--require-complete` and `--fail-on` do.
+
+`cursor` and `limit`::
+Page the findings.
+
+The answer is the audit report.
+It has its own `schema_version`, the scope, the rules and their severities, the providers and their states, `completeness` with any gaps, `counts`, the navigation `coverage`, `skips` and `findings`.
+The findings are paged, at most 500 a page.
+`findings_total` is how many the filters take, and `next_cursor` resumes the list.
+Each finding has a `region` (one-based lines and character columns) besides its byte range.
+
+Every page carries the whole report's completeness, counts and coverage.
+A client that reads only one page still sees whether the audit is partial.
+
+The tool adds these fields:
+
+* `verdict`, which is `pass`, `fail` or `untrustworthy`, as the policy judges the report.
+* `exit_code`, what the command line would exit with: 0, 1 or 2. It is also 2 when the `[quality]` settings are invalid, which `policy_problems` lists.
+* `outcome`, which is `pass` only for a complete audit. It is `pass_partial` when nothing failed in what was audited but not everything was, for example when an enabled optional provider cannot run in this build. A partial report is never taken for a plain pass. The other outcomes are `fail` and `untrustworthy`.
+* `workspace_revision`.
+
+A skipped dynamic construct, such as a navigation file with an `include::`, is counted and listed under `skips`.
+It never makes the audit partial by itself.
+
+The tool runs no optional provider, such as Vale or external links, and makes no network request.
+A cursor belongs to its arguments and policy, so changing a filter or an override starts again.
+Use `check` for diagnostics alone.
+
 == Write tools
 
 These tools are offered only with `--allow-write`.
@@ -259,11 +321,11 @@ The server alone decides what runs.
 [#paging]
 == Pages of results
 
-`check`, `symbols`, `list_pages` and `find_references` take `cursor?` and `limit?`.
+`check`, `symbols`, `list_pages`, `find_references` and `quality_audit` take `cursor?` and `limit?`.
 `limit` is at most 500, which is also the default.
 Their answer adds:
 
-* `total`, the number of items in the whole list. `list_pages` gives none, since counting would read every resource.
+* `total`, the number of items in the whole list. `list_pages` gives none, since counting would read every resource. `quality_audit` gives `findings_total` instead.
 * `next_cursor`, which you pass as `cursor` to get the next page. It is null on the last page.
 * `workspace_revision`, the workspace revision that the list was made at.
 
