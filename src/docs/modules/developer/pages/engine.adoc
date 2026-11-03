@@ -1048,6 +1048,48 @@ The tests are:
 * `cli_and_app_report_the_same_audit`, in the same file.
 It checks that the command line's report and the engine's kept audit agree under a workspace policy, and that every `quality.*` finding printed is the problem the app lists at the same place.
 
+[[impact-analysis]]
+== The impact analysis
+
+The `adoc-impact` crate, re-exported as `adoc_engine::impact`, works out which pages a change affects.
+Like `adoc-audit` it is pure and synchronous: no threads, Git, file writes, processes or network.
+The engine does not use it yet.
+The engine's comparison of two revisions and the command line come in later work packages.
+
+A `DependencySnapshot` is one side of a comparison: a `WorkspaceState` (index and catalog) at one revision, with the roots its paths are shown relative to.
+`DependencySnapshot::borrowed` takes the live workspace.
+`DependencySnapshot::owned` holds a revision built from Git objects.
+Every question goes through the index's reverse maps and `adoc-lang`'s resolution: `includes_of`, `references_to`, `references_to_anchor`, `reference_target_path`, section ids, and `graph::links_from` for a navigation file's entries.
+Nothing parses or resolves a second way, and nothing scans every file.
+
+`analyse(changes, base, head, publications, limits)` returns an `ImpactReport`.
+A `Change` is a `path` and a `ChangeKind`: `Added`, `Modified`, `Removed` or `Renamed { from }`.
+`base` is `None` for explicit paths.
+
+The rules are:
+
+* *Render.* The changed page and every page including it, transitively through partials. The walk is breadth-first with a visited set, so cycles end, and it has a depth limit.
+* *Reference integrity.* For a removed or moved file, its xref referrers come from the base revision. A referrer is `broken` when the head revision still writes the reference and it no longer leads there. It is `resolved_by_alias` when it now resolves to the moved page through `page-aliases`, and `resolved_by_change` otherwise. For a modified page, an anchor in base and not in head makes its referrers, from both sides, reviews. An added file's referrers that now resolve are `now_resolves`. Ordinary prose changes never reach xref referrers.
+* *Navigation.* A changed navigation file listed in `antora.yml`, or a changed `antora.yml`, compares the pages its component version's navigation lists between base and head (`listed`, `unlisted`). A navigation entry naming a moved or removed page is a navigation impact.
+* *Publication.* Each `Publication { name, selection }` whose selection holds a page with a render or navigation impact is affected. A selection is `PublicationSelection::Page`, `Component { name, version }` or `Navigation(files)`. The impact is `potential` when the selection names content the head revision does not hold.
+
+Every impact has a `kind`, a `confidence` (`confirmed` or `potential`), a `status`, the affected `path`, `resource_id`, `component`, `version` and `publication`, and the changed file it comes from (`origin`).
+`evidence` says which side shows it (`base`, `head` or `both`).
+`via` is the dependency path from the changed file, `source` the referencing span (path and byte range) and `anchor` the anchor, if any.
+
+The report is deterministic.
+It is sorted, its paths are relative to a root and use `/`, and none is absolute.
+`SCHEMA_VERSION` is 1.
+`completeness` is `complete`, `partial` or `unavailable`, with gaps:
+
+* `no-base-revision`: a removed or moved path with no base.
+* `asset-consumers-not-analysed`: a changed image or attachment. The pages that show or link it are not traced yet, as the index has no reverse map of images.
+* `not-in-catalog`: a file in no component version the workspace holds.
+* `outside-every-root`.
+
+`counts` by kind are counted before `Limits { depth, impacts }` cuts the list.
+`truncated: { shown, total }` then says how much was cut.
+
 == Reports and inspection
 
 Headless front ends need answers that are not editor features.

@@ -15,6 +15,7 @@ flowchart TD
         git["adoc-git"]
         pdf["adoc-pdf"]
         audit["adoc-audit<br/>(quality audit model)"]
+        impact["adoc-impact<br/>(impact analysis model)"]
     end
     subgraph L1["L1: language crates"]
         parser["adoc-parser"]
@@ -52,10 +53,14 @@ flowchart TD
     engine --> pdf
     engine --> graph
     engine --> audit
+    engine --> impact
     pdf --> render
     audit --> antora
     audit --> lang
     audit --> index
+    impact --> antora
+    impact --> lang
+    impact --> index
     render --> dom
     model --> dom
     lang --> index
@@ -71,3 +76,4 @@ flowchart TD
     model --> core
     pdf --> core
     audit --> core
+    impact --> core

@@ -69,6 +69,8 @@ mod writer;
 pub use about::{About, Notice, Notices, DOCUMENTATION};
 /// The documentation quality audit's model: rules, reports and the `[quality]` policy.
 pub use adoc_audit as audit;
+/// The documentation impact analysis, for front ends, which never name the crate.
+pub use adoc_impact as impact;
 #[cfg(feature = "typst")]
 pub use adoc_pdf::{PageAnchor, PreviewPage};
 pub use auto_save::AUTO_SAVE_DELAY;

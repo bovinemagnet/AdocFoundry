@@ -1,0 +1,8 @@
+= Installing
+
+include::partial$intro.adoc[]
+
+[#setup]
+== Setting up
+
+Steps.

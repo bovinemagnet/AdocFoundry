@@ -379,6 +379,23 @@ The tests are:
 
 A unit test in `crates/adoc-mcp/src/analysis.rs` checks that a passing partial audit is never a plain pass.
 
+`crates/adoc-impact/tests/impact.rs` drives `analyse` on copies of `tests/fixtures/impact`.
+The fixture has a component `product` at 1.0 (`v1`, with nested partials, an anchor and navigation) and at 2.0 (`v2`).
+Each test indexes a base copy, changes files on disk and indexes again as the head revision.
+The tests are:
+
+* `impact_partial_propagates_transitively`
+* `impact_page_prose_does_not_propagate_xrefs`
+* `impact_removed_anchor_flags_reference_review`
+* `impact_nav_change_is_version_scoped`
+* `impact_profiles_only_when_selected`
+* `impact_handles_cycles_and_truncation`
+* `impact_missing_remote_components_reports_partial`
+* `impact_removed_partial_consumers_come_from_base`
+* `impact_moved_page_finds_base_references`
+* `impact_explicit_removed_path_is_partial`
+* `impact_report_is_deterministic`, an `insta` snapshot of the report
+
 `crates/adoc-mcp/tests/changes.rs` drives `preview_changes` and `apply_changes` over stdio, on copies of `tests/fixtures/discovery`.
 The tests are:
 

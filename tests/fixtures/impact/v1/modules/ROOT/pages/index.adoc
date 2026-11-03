@@ -1,0 +1,5 @@
+= Product
+
+include::partial$intro.adoc[]
+
+See xref:install.adoc#setup[setting up].
