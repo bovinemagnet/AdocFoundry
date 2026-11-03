@@ -922,9 +922,25 @@ Further engine methods serve it:
 `src/problems.rs` keeps the diagnostics of the whole workspace, so a front end does not diagnose it again itself.
 A front end opts in with `Engine::enable_problems()`; the app does in `AppState::new`, while the CLI, `adoc-ls` and `adoc-mcp` do not and pay nothing.
 `Engine::problems()` returns each file with problems as a `BTreeMap<PathBuf, Vec<Problem>>`, and `Engine::problem_count()` returns their number.
-A `Problem` holds `range`, `line`, `column`, `severity`, `code` and `message`.
+A `Problem` holds `range`, `line`, `column`, `severity`, `code`, `message` and `whole_file`.
 `line` and `column` count from 1, the column in characters rather than bytes.
 They are computed from the index's own text of the file, or for a component descriptor from the file, read through the engine's `FileAccess`.
+`code` is a `FindingCode` (re-exported as `adoc_engine::audit::FindingCode`): either an existing `DiagnosticCode` or one of the audit's `quality.*` rule IDs, so rule IDs never become `adoc-core` diagnostic codes.
+`whole_file` is true for a finding about the whole file, and its range is then the file's start.
+
+While the quality audit is kept as well, the kept audit's `quality.*` findings are problems too.
+They are taken from each file's kept part and the findings of the component versions' parts about that file, under the `[quality]` policy through `adoc_audit::Policy::apply`, the same function `AuditBuilder::finish` uses.
+So an excluded finding, or one whose rule is turned off, is not listed, and a problem's severity is the report's.
+The existing diagnostics the audit aggregates are already problems and are not added again.
+Each finding's line and column are worked out when its part is audited (on the worker for a whole build) from the same text, so listing them reads no file.
+After an edit only the files whose parts changed, and the files a re-audited version's old and new findings name, are updated.
+A whole build, enabling the problems, or a settings change updates them all.
+The timing probe `audit_upkeep_in_a_component_of_2000_pages` in `tests/perf.rs` measures it: about 55 µs on the engine thread for an edit in a component of 2,000 pages, against about 10 ms if every finding were rebuilt.
+
+`ProblemFilter` has `severity`, `code`, `component`, `version` (`Some(None)` for a versionless component) and `module`, each `None` letting anything through.
+`Engine::filtered_problems(&filter)` returns the problems it lets through, by file.
+`Engine::problem_place(path)` gives a file's `ProblemPlace` (component, version and module), from the catalog's context for the path.
+A component descriptor (`antora.yml`) belongs to its component version and to no module.
 
 Whenever every open document is re-diagnosed, a worker diagnoses the whole workspace again over a copy of `WorkspaceState`.
 It is started from `pump`, so a burst of changes runs one pass, and the generation of a newer pass drops an older result.
@@ -955,6 +971,10 @@ Changes made while a build runs wait for its result, and a newer build's generat
 `Engine::audit_now_with(scope, &policy)` does the same under a policy the front end gives, as the command line does to apply `--fail-on` and `--require-complete` over the workspace's settings.
 Both, and `audit_report`, add a `scope-not-indexed` gap for each folder in scope that the last whole index could not read, which the engine keeps from the index worker's report.
 So the kept report and a fresh one always agree.
+
+`Engine::run_audit()`, behind the command `quality.run_audit` (Run Quality Audit), keeps the audit as `enable_audit` does and, if it was kept already, builds it again as a whole.
+`Engine::audit_enabled()` says whether the audit is kept, and `Engine::audit_stale()` whether the kept result is older than the workspace (a build or a change waits; it is false before the first build).
+Reloading the settings puts the kept audit together again under the new policy, publishing `AuditChanged` and updating the quality problems, and an audit turned on again by `[quality] enabled` after being off is built again.
 
 Each change publishes `EngineEvent::AuditChanged`, `Engine::audit_builds()` counts whole builds, and `has_pending()` counts audit work still due.
 The probes `AuditFile` and `AuditVersion` count the parts audited, so `tests/audit.rs` checks that an edit audits only the files it can change, and a page edit no version.

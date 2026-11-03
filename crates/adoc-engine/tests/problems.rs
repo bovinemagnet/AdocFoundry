@@ -11,8 +11,8 @@ use std::{
 
 use adoc_core::{DiagnosticCode, SourceRange};
 use adoc_engine::{
-    commands::ids, normalize_path, CommandArgs, Engine, EngineEvent, ManualClock, Settings,
-    INDEX_SETTLE,
+    audit::FindingCode, commands::ids, normalize_path, CommandArgs, Engine, EngineEvent,
+    ManualClock, Settings, INDEX_SETTLE,
 };
 
 fn engine_with_problems() -> (Engine, ManualClock) {
@@ -43,7 +43,15 @@ fn codes_in(engine: &Engine, path: &Path) -> Vec<DiagnosticCode> {
     engine
         .problems()
         .get(&normalize_path(path))
-        .map(|problems| problems.iter().map(|problem| problem.code).collect())
+        .map(|problems| {
+            problems
+                .iter()
+                .filter_map(|problem| match problem.code {
+                    FindingCode::Diagnostic(code) => Some(code),
+                    FindingCode::Rule(_) => None,
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -74,7 +82,10 @@ fn problems_are_computed_off_the_engine_thread() {
 
     let cafe = &engine.problems()[&normalize_path(&root.join("café.adoc"))];
     assert_eq!(cafe.len(), 1);
-    assert_eq!(cafe[0].code, DiagnosticCode::UnresolvedAnchor);
+    assert_eq!(
+        cafe[0].code,
+        FindingCode::Diagnostic(DiagnosticCode::UnresolvedAnchor)
+    );
     assert_eq!((cafe[0].line, cafe[0].column), (3, 6));
     assert_eq!(cafe[0].message, "Unresolved AsciiDoc anchor: nowhere");
     let start = "= Café\n\nÉté: ".len();

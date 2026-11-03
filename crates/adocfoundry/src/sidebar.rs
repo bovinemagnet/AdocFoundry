@@ -5,13 +5,14 @@
 //! Every leaf's id encodes where clicking it leads, so one handler serves all of them.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
 };
 
-use adoc_core::SourceRange;
+use adoc_core::{DiagnosticSeverity, SourceRange};
 use adoc_engine::{
-    Branch, DocumentId, DocumentSymbol, Engine, GitChange, NavItem, SidebarPanel, WorkspaceState,
+    audit::FindingCode, Branch, DocumentId, DocumentSymbol, Engine, GitChange, NavItem,
+    ProblemFilter, SidebarPanel, WorkspaceState,
 };
 use gpui::{
     div, Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Window,
@@ -406,24 +407,31 @@ pub fn families(engine: &Engine) -> Vec<Node> {
         .collect()
 }
 
-/// The workspace's problems grouped by file, each opening its location: what the engine
-/// keeps, so nothing is diagnosed or read here.
-pub fn problems(engine: &Engine, roots: &[PathBuf]) -> (Vec<TreeItem>, usize) {
+/// The problems `filter` lets through, grouped by file, each opening its location, and how
+/// many there are: what the engine keeps, so nothing is diagnosed or read here. A problem about
+/// the whole file shows no position, and opens the file at its start.
+pub fn problems(
+    engine: &Engine,
+    roots: &[PathBuf],
+    filter: &ProblemFilter,
+) -> (Vec<TreeItem>, usize) {
     let mut count = 0;
     let mut salt = 0;
     let items = engine
-        .problems()
-        .iter()
+        .filtered_problems(filter)
+        .into_iter()
         .map(|(path, problems)| {
             let children = problems
-                .iter()
+                .into_iter()
                 .map(|problem| {
                     count += 1;
                     salt += 1;
-                    TreeItem::new(
-                        target_id(path, problem.range, salt),
-                        format!("{}:{} {}", problem.line, problem.column, problem.message),
-                    )
+                    let label = if problem.whole_file {
+                        problem.message.clone()
+                    } else {
+                        format!("{}:{} {}", problem.line, problem.column, problem.message)
+                    };
+                    TreeItem::new(target_id(path, problem.range, salt), label)
                 })
                 .collect();
             folder(
@@ -434,6 +442,77 @@ pub fn problems(engine: &Engine, roots: &[PathBuf]) -> (Vec<TreeItem>, usize) {
         })
         .collect();
     (items, count)
+}
+
+/// What the Problems panel's filter offers: the severities, codes and rules, component versions
+/// and modules of the problems there are, each once, in order.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProblemFacets {
+    pub severities: Vec<DiagnosticSeverity>,
+    pub codes: Vec<FindingCode>,
+    pub versions: Vec<(String, Option<String>)>,
+    /// The modules of the component version chosen, or of every one.
+    pub modules: Vec<String>,
+}
+
+/// The facets of the workspace's problems, under `filter`'s choice of component version.
+pub fn problem_facets(engine: &Engine, filter: &ProblemFilter) -> ProblemFacets {
+    let mut severities = Vec::new();
+    let mut codes = BTreeMap::new();
+    let mut versions = BTreeSet::new();
+    let mut modules = BTreeSet::new();
+    for (path, problems) in engine.problems() {
+        for problem in problems {
+            if !severities.contains(&problem.severity) {
+                severities.push(problem.severity);
+            }
+            codes.insert(problem.code.as_str(), problem.code);
+        }
+        if let Some(place) = engine.problem_place(path) {
+            let chosen = filter
+                .component
+                .as_ref()
+                .is_none_or(|component| *component == place.component)
+                && filter
+                    .version
+                    .as_ref()
+                    .is_none_or(|version| *version == place.version);
+            if chosen {
+                modules.extend(place.module.clone());
+            }
+            versions.insert((place.component, place.version));
+        }
+    }
+    let order = |severity: &DiagnosticSeverity| match severity {
+        DiagnosticSeverity::Error => 0,
+        DiagnosticSeverity::Warning => 1,
+        DiagnosticSeverity::Information => 2,
+    };
+    severities.sort_by_key(order);
+    ProblemFacets {
+        severities,
+        codes: codes.into_values().collect(),
+        versions: versions.into_iter().collect(),
+        modules: modules.into_iter().collect(),
+    }
+}
+
+/// A severity as the Problems filter and the Quality overview name it.
+pub fn severity_label(severity: DiagnosticSeverity) -> &'static str {
+    match severity {
+        DiagnosticSeverity::Error => "Errors",
+        DiagnosticSeverity::Warning => "Warnings",
+        DiagnosticSeverity::Information => "Information",
+    }
+}
+
+/// A component version as the Problems filter and the Quality overview name it: `product 3.0`,
+/// or `guide` for a versionless component.
+pub fn version_label(component: &str, version: Option<&str>) -> String {
+    match version {
+        Some(version) => format!("{component} {version}"),
+        None => component.to_owned(),
+    }
 }
 
 /// One row of the Changes panel: a changed file a writer edits.

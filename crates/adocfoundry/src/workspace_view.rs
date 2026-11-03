@@ -29,7 +29,7 @@ use gpui_component::{
     h_flex,
     input::{Editor, EditorState, Input, InputState},
     list::ListItem,
-    menu::{ContextMenuExt as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     notification::Notification,
     resizable::{h_resizable, resizable_panel},
     select::{Select, SelectState},
@@ -88,6 +88,7 @@ enum SidebarTab {
     Families,
     Files,
     Problems,
+    Quality,
     Changes,
     Graph,
 }
@@ -169,7 +170,17 @@ pub struct WorkspaceView {
         Subscription,
     )>,
     problems: Entity<TreeState>,
+    /// How many problems the workspace has, and how many the Problems filter lets through.
     problem_count: usize,
+    problems_shown: usize,
+    /// Which problems the Problems panel lists, set from its filter bar or the Quality overview.
+    problem_filter: adoc_engine::ProblemFilter,
+    /// What the filter bar offers, from the problems there are.
+    problem_facets: sidebar::ProblemFacets,
+    /// The Quality overview, from the engine's kept audit, and whether the audit has changed
+    /// since: it is built again only when shown.
+    quality: crate::quality_view::Overview,
+    quality_outdated: bool,
     /// The pages whose tabs show unsaved edits, as last drawn.
     shown_dirty: std::collections::HashSet<DocumentId>,
     /// The Changes panel's rows, built when Git status or the open pages change.
@@ -469,6 +480,11 @@ impl WorkspaceView {
             },
             problems: cx.new(|cx| TreeState::new(cx)),
             problem_count: 0,
+            problems_shown: 0,
+            problem_filter: adoc_engine::ProblemFilter::default(),
+            problem_facets: sidebar::ProblemFacets::default(),
+            quality: crate::quality_view::Overview::of(&app.read(cx).engine),
+            quality_outdated: false,
             shown_dirty: std::collections::HashSet::new(),
             change_rows: None,
             selection_words: std::cell::Cell::new(None),
@@ -516,8 +532,9 @@ impl WorkspaceView {
                 }
             });
         }
-        // The problems found before this window opened.
+        // The problems found before this window opened, and the audit kept before.
         view.show_problems(cx);
+        view.show_quality(cx);
         if let (Some(duration), Some(editor)) = (
             crate::typing_bench::requested(),
             view.active_editor().cloned(),
@@ -628,6 +645,7 @@ impl WorkspaceView {
                 self.rebuild_catalog_trees(cx);
             }
             EngineEvent::ProblemsChanged => self.show_problems(cx),
+            EngineEvent::AuditChanged => self.show_quality(cx),
             EngineEvent::NavigationChanged => self.follow_active(window, cx),
             EngineEvent::ExpansionChanged(panel) => self.show_tree(*panel, cx),
             EngineEvent::PreviewTabReplaced { old, new } => {
@@ -659,6 +677,8 @@ impl WorkspaceView {
             EngineEvent::SettingsChanged => {
                 self.apply_theme(window, cx);
                 self.warn_about_settings(window, cx);
+                // `[quality] enabled` may have turned the audit on.
+                self.show_quality(cx);
             }
             EngineEvent::CommandFailed { command, error } => {
                 window.push_notification(format!("{command}: {error}"), cx);
@@ -1056,15 +1076,210 @@ impl WorkspaceView {
         }));
     }
 
-    /// The Problems panel's rows, from the problems the engine keeps.
+    /// The Problems panel's rows, from the problems the engine keeps that the filter lets
+    /// through, and what the filter bar offers.
     fn show_problems(&mut self, cx: &mut Context<Self>) {
-        let (items, count) = {
+        let (items, shown, count, facets) = {
             let engine = &self.app.read(cx).engine;
-            sidebar::problems(engine, engine.roots())
+            let (items, shown) = sidebar::problems(engine, engine.roots(), &self.problem_filter);
+            let facets = sidebar::problem_facets(engine, &self.problem_filter);
+            (items, shown, engine.problem_count(), facets)
         };
         self.problem_count = count;
+        self.problems_shown = shown;
+        self.problem_facets = facets;
         self.problems
             .update(cx, |tree, cx| tree.set_items(items, cx));
+        cx.notify();
+    }
+
+    /// Shows the Problems panel with `filter`, as a count in the Quality overview does.
+    pub(crate) fn filter_problems(
+        &mut self,
+        filter: adoc_engine::ProblemFilter,
+        cx: &mut Context<Self>,
+    ) {
+        self.problem_filter = filter;
+        self.sidebar_tab = SidebarTab::Problems;
+        self.show_problems(cx);
+    }
+
+    /// Changes the Problems filter with `change`, from the filter bar.
+    fn change_problem_filter(
+        &mut self,
+        change: impl FnOnce(&mut adoc_engine::ProblemFilter),
+        cx: &mut Context<Self>,
+    ) {
+        change(&mut self.problem_filter);
+        self.show_problems(cx);
+    }
+
+    /// The Quality overview again, from the engine's kept audit, if it is shown; else when it
+    /// next is, so a change to the audit puts the report together only for a reader.
+    fn show_quality(&mut self, cx: &mut Context<Self>) {
+        if self.sidebar_tab == SidebarTab::Quality {
+            self.quality = crate::quality_view::Overview::of(&self.app.read(cx).engine);
+            self.quality_outdated = false;
+            cx.notify();
+        } else {
+            self.quality_outdated = true;
+        }
+    }
+
+    /// Runs the audit (Run Audit) and shows the Quality overview.
+    pub(crate) fn run_audit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.invoke(ids::QUALITY_RUN_AUDIT, CommandArgs::None, window, cx);
+        self.sidebar_tab = SidebarTab::Quality;
+        self.show_quality(cx);
+    }
+
+    fn on_run_audit(&mut self, _: &RunAudit, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_audit(window, cx);
+    }
+
+    /// The Problems panel: its filter bar, then the problems it lets through.
+    fn render_problems(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        v_flex()
+            .size_full()
+            .child(self.render_problem_filter(cx))
+            .child(div().flex_1().min_h_0().child(self.render_tree(
+                &self.problems.clone(),
+                "problems",
+                cx,
+            )))
+            .into_any_element()
+    }
+
+    /// The Problems filter bar: a menu of what to filter by, then a button for each choice
+    /// made, which clears it, and how many problems are shown.
+    fn render_problem_filter(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use adoc_engine::ProblemFilter;
+        let facets = self.problem_facets.clone();
+        let filter = self.problem_filter.clone();
+        let view = cx.weak_entity();
+        let choose = move |label: String,
+                           checked: bool,
+                           change: Box<dyn Fn(&mut ProblemFilter)>|
+              -> PopupMenuItem {
+            let view = view.clone();
+            PopupMenuItem::new(label)
+                .checked(checked)
+                .on_click(move |_, _, cx| {
+                    if let Some(view) = view.upgrade() {
+                        view.update(cx, |view, cx| view.change_problem_filter(&change, cx));
+                    }
+                })
+        };
+        let menu_filter = filter.clone();
+        let menu = Button::new("problems-filter")
+            .label("Filter ▾")
+            .xsmall()
+            .ghost()
+            .dropdown_menu(move |mut menu, _, _| {
+                let filter = &menu_filter;
+                menu = menu.label("Severity");
+                for severity in facets.severities.clone() {
+                    let on = filter.severity == Some(severity);
+                    menu = menu.item(choose(
+                        sidebar::severity_label(severity).to_owned(),
+                        on,
+                        Box::new(move |filter| {
+                            filter.severity = (!on).then_some(severity);
+                        }),
+                    ));
+                }
+                menu = menu.separator().label("Code or rule");
+                for code in facets.codes.clone() {
+                    let on = filter.code == Some(code);
+                    menu = menu.item(choose(
+                        code.as_str().to_owned(),
+                        on,
+                        Box::new(move |filter| filter.code = (!on).then_some(code)),
+                    ));
+                }
+                if !facets.versions.is_empty() {
+                    menu = menu.separator().label("Component version");
+                }
+                for (component, version) in facets.versions.clone() {
+                    let on = filter.component.as_ref() == Some(&component)
+                        && filter.version.as_ref() == Some(&version);
+                    let label = sidebar::version_label(&component, version.as_deref());
+                    menu = menu.item(choose(
+                        label,
+                        on,
+                        Box::new(move |filter| {
+                            filter.component = (!on).then(|| component.clone());
+                            filter.version = (!on).then(|| version.clone());
+                            filter.module = None;
+                        }),
+                    ));
+                }
+                if !facets.modules.is_empty() {
+                    menu = menu.separator().label("Module");
+                }
+                for module in facets.modules.clone() {
+                    let on = filter.module.as_ref() == Some(&module);
+                    menu = menu.item(choose(
+                        module.clone(),
+                        on,
+                        Box::new(move |filter| filter.module = (!on).then(|| module.clone())),
+                    ));
+                }
+                menu
+            });
+        // Each choice's label, and how clearing it changes the filter.
+        type Clear = fn(&mut ProblemFilter);
+        let mut chips: Vec<(String, Clear)> = Vec::new();
+        if let Some(severity) = filter.severity {
+            chips.push((sidebar::severity_label(severity).to_owned(), |filter| {
+                filter.severity = None;
+            }));
+        }
+        if let Some(code) = filter.code {
+            chips.push((code.as_str().to_owned(), |filter| filter.code = None));
+        }
+        if let Some(component) = &filter.component {
+            let version = filter.version.clone().flatten();
+            chips.push((
+                sidebar::version_label(component, version.as_deref()),
+                |filter| {
+                    filter.component = None;
+                    filter.version = None;
+                },
+            ));
+        }
+        if let Some(module) = &filter.module {
+            chips.push((format!("Module {module}"), |filter| filter.module = None));
+        }
+        h_flex()
+            .flex_wrap()
+            .gap_1()
+            .px_1()
+            .py_0p5()
+            .text_xs()
+            .child(menu)
+            .children(
+                chips
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (label, clear))| {
+                        Button::new(("problems-filter-clear", index))
+                            .debug_selector(move || format!("problems-filter-clear-{index}"))
+                            .label(format!("{label} ×"))
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.change_problem_filter(clear, cx);
+                            }))
+                    }),
+            )
+            .when(!filter.is_empty(), |bar| {
+                bar.child(
+                    div()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{} of {}", self.problems_shown, self.problem_count)),
+                )
+            })
     }
 
     /// The rows `panel` shows, each indented two spaces a level, with `+` after an open branch
@@ -1147,6 +1362,46 @@ impl WorkspaceView {
     pub fn show_problems_for_test(&mut self, cx: &mut Context<Self>) {
         self.sidebar_tab = SidebarTab::Problems;
         cx.notify();
+    }
+
+    /// The Problems panel's rows, in order, every file's open: each problem with the file it is
+    /// in, the files' own rows left out.
+    #[cfg(test)]
+    pub fn problem_entries_for_test(&self, cx: &App) -> Vec<(String, String)> {
+        let state = self.problems.read(cx);
+        let mut file = String::new();
+        let mut entries = Vec::new();
+        for entry in (0..).map_while(|ix| state.entry(ix)) {
+            let label = entry.item().label.to_string();
+            if entry.is_folder() {
+                file = label;
+            } else {
+                entries.push((file.clone(), label));
+            }
+        }
+        entries
+    }
+
+    /// Shows the Quality overview.
+    #[cfg(test)]
+    pub fn show_quality_for_test(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_tab = SidebarTab::Quality;
+        self.show_quality(cx);
+    }
+
+    /// The Quality overview as last built.
+    #[cfg(test)]
+    pub fn quality_for_test(&self) -> &crate::quality_view::Overview {
+        &self.quality
+    }
+
+    /// The Problems filter, and whether the Problems panel is shown.
+    #[cfg(test)]
+    pub fn problem_filter_for_test(&self) -> (&adoc_engine::ProblemFilter, bool) {
+        (
+            &self.problem_filter,
+            self.sidebar_tab == SidebarTab::Problems,
+        )
     }
 
     /// The labels of the Changes panel's rows, in order.
@@ -4024,6 +4279,7 @@ impl WorkspaceView {
                 SidebarTab::Problems,
                 format!("Problems ({})", self.problem_count),
             ),
+            (SidebarTab::Quality, "Quality".to_owned()),
         ];
         if git {
             panels.push((SidebarTab::Changes, "Changes".to_owned()));
@@ -4050,9 +4306,14 @@ impl WorkspaceView {
                 .render_tree(&self.families.clone(), "families", cx)
                 .into_any_element(),
             SidebarTab::Files => self.files.clone().into_any_element(),
-            SidebarTab::Problems => self
-                .render_tree(&self.problems.clone(), "problems", cx)
-                .into_any_element(),
+            SidebarTab::Problems => self.render_problems(cx),
+            SidebarTab::Quality => {
+                if self.quality_outdated {
+                    self.quality = crate::quality_view::Overview::of(&self.app.read(cx).engine);
+                    self.quality_outdated = false;
+                }
+                crate::quality_view::render(&self.quality, cx.weak_entity(), cx)
+            }
             SidebarTab::Changes => self.render_changes(cx),
             SidebarTab::Graph => self.graph.clone().into_any_element(),
         };
@@ -4680,6 +4941,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_go_to_symbol_in_page))
             .on_action(cx.listener(Self::on_rename_anchor))
             .on_action(cx.listener(Self::on_reindex))
+            .on_action(cx.listener(Self::on_run_audit))
             .on_action(cx.listener(Self::on_refresh_git))
             .on_action(cx.listener(Self::on_revert_change))
             .on_action(cx.listener(Self::on_format_table))

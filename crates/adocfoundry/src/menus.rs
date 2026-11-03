@@ -69,6 +69,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::SETTINGS_OPEN),
             Command(ids::SETTINGS_RELOAD),
             Command(ids::WORKSPACE_REINDEX),
+            Command(ids::QUALITY_RUN_AUDIT),
         ],
     ),
     (

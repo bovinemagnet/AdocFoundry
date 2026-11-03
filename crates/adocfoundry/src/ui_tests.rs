@@ -7232,3 +7232,247 @@ fn tab_moves_through_the_nodes_and_enter_opens_one(cx: &mut TestAppContext) {
     assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
         == Some((configure.clone(), true))));
 }
+
+/// A copy of the audit fixture in a workspace window, with its first page of `guide` open and
+/// the audit run, once the problems and the overview show it.
+fn audited_workspace(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    copy_tree(&fixture("audit"), &root);
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let guide = root.join("guide/modules/ROOT/pages/intro.adoc");
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![guide.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| workspace.update(cx, |workspace, cx| workspace.run_audit(window, cx)));
+    let ready = drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            let workspace = workspace.read(cx);
+            !workspace.quality_for_test().sections.is_empty()
+                && workspace
+                    .problem_entries_for_test(cx)
+                    .iter()
+                    .any(|(_, label)| label.contains("is in no navigation file"))
+                && !app.read(cx).engine.has_pending()
+        })
+    });
+    assert!(ready, "the audit arrives in the overview and the problems");
+    (directory, root, app, workspace, cx)
+}
+
+/// Draws the window as the platform would, so rows have bounds to click.
+fn draw(cx: &mut VisualTestContext) {
+    for _ in 0..2 {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+}
+
+/// Clicks the element tagged with the selector `selector` names.
+fn click_drawn(selector: String, cx: &mut VisualTestContext) {
+    let selector: &'static str = Box::leak(selector.into_boxed_str());
+    draw(cx);
+    click(selector, cx);
+}
+
+/// A quality finding in Problems opens its page at its place, though it is in another
+/// component from the page open.
+#[gpui::test]
+fn audit_panel_opens_exact_source_location(cx: &mut TestAppContext) {
+    let (_directory, root, app, workspace, mut cx) = audited_workspace(cx);
+    cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_problems_for_test(cx)));
+    let rows = cx.update(|_, cx| workspace.read(cx).problem_rows_for_test(cx));
+    let snippet = rows
+        .iter()
+        .position(|row| row.ends_with("snippet.adoc"))
+        .expect("the partial's problems");
+    let row = snippet + 1;
+    assert!(
+        rows[row].starts_with("3:1 "),
+        "the image's place: {rows:#?}"
+    );
+    click_drawn(format!("problems-row-{row}"), &mut cx);
+    let opened = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .active()
+            .and_then(|id| engine.document(id))
+            .map(|document| document.path.clone())
+    });
+    assert_eq!(
+        opened,
+        Some(root.join("product/modules/ROOT/partials/snippet.adoc"))
+    );
+    draw(&mut cx);
+    // The image macro is selected, on line 3 from its first column.
+    let selection = cx.update(|_, cx| {
+        workspace
+            .read(cx)
+            .active_editor_for_test()
+            .map(|editor| editor.read(cx).selection(cx))
+    });
+    let start = "A snippet.\n\n".len();
+    assert_eq!(selection, Some(start..start + "image::p.png[]".len()));
+    let caret = cx.update(|window, cx| workspace.read(cx).caret_line_column(window, cx));
+    assert_eq!(caret.map(|(line, _)| line), Some(2), "line 3");
+}
+
+/// A count in the Quality overview shows Problems filtered to exactly the findings it counts.
+#[gpui::test]
+fn audit_overview_counts_filter_problems(cx: &mut TestAppContext) {
+    let (_directory, _root, app, workspace, mut cx) = audited_workspace(cx);
+    let report = cx.update(|_, cx| {
+        app.read(cx)
+            .engine
+            .audit_report(&adoc_engine::audit::AuditScope::Workspace)
+            .unwrap()
+    });
+    let alt = adoc_engine::audit::FindingCode::Rule(adoc_engine::audit::RuleId::MISSING_ALT);
+    let unlisted = adoc_engine::audit::FindingCode::Rule(adoc_engine::audit::RuleId::UNLISTED_PAGE);
+    // Each finding as Problems shows it: its file and its row.
+    let expected = |keep: &dyn Fn(&adoc_engine::audit::Finding) -> bool| -> Vec<(String, String)> {
+        let mut rows: Vec<(String, String)> = report
+            .findings()
+            .iter()
+            .filter(|finding| keep(finding))
+            .map(|finding| {
+                let file = finding
+                    .location
+                    .path
+                    .replace('/', std::path::MAIN_SEPARATOR_STR);
+                (file, finding.message.clone())
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    let shown = |cx: &mut VisualTestContext| -> Vec<(String, String)> {
+        let mut rows: Vec<(String, String)> = cx
+            .update(|_, cx| workspace.read(cx).problem_entries_for_test(cx))
+            .into_iter()
+            .map(|(file, label)| {
+                // A problem at a place starts with its line and column.
+                let message = match label.split_once(' ') {
+                    Some((place, rest))
+                        if place.contains(':')
+                            && place.chars().next().is_some_and(|c| c.is_ascii_digit()) =>
+                    {
+                        rest.to_owned()
+                    }
+                    _ => label,
+                };
+                (file, message)
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    let open = |label: &str, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| workspace.show_quality_for_test(cx))
+        });
+        let labels = cx.update(|_, cx| workspace.read(cx).quality_for_test().labels());
+        let index = labels
+            .iter()
+            .position(|row| row == label)
+            .unwrap_or_else(|| panic!("{label} in {labels:#?}"));
+        click_drawn(format!("quality-row-{index}"), cx);
+        let (filter, in_problems) = cx.update(|_, cx| {
+            let (filter, shown) = workspace.read(cx).problem_filter_for_test();
+            (filter.clone(), shown)
+        });
+        assert!(in_problems, "{label} opens Problems");
+        filter
+    };
+
+    let filter = open("quality.image.missing-alt: 2", &mut cx);
+    assert_eq!(filter.code, Some(alt));
+    let rows = shown(&mut cx);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows, expected(&|finding| finding.code == alt));
+
+    let filter = open("product 3.0: 7 of 8 pages listed", &mut cx);
+    assert_eq!(filter.version, Some(Some("3.0".to_owned())));
+    assert_eq!(
+        shown(&mut cx),
+        expected(&|finding| finding.code == unlisted
+            && finding.coordinate.as_ref().is_some_and(|coordinate| {
+                coordinate.component == "product" && coordinate.version.as_deref() == Some("3.0")
+            }))
+    );
+
+    let warnings = report.counts().warning;
+    open(&format!("Warnings: {warnings}"), &mut cx);
+    assert_eq!(
+        shown(&mut cx),
+        expected(&|finding| finding.severity == adoc_engine::audit::Severity::Warning),
+        "every warning the audit counts, and no other"
+    );
+}
+
+/// Each choice the Problems filter has made is a button that clears it.
+#[gpui::test]
+fn problem_filter_choices_clear_one_by_one(cx: &mut TestAppContext) {
+    let (_directory, _root, app, workspace, mut cx) = audited_workspace(cx);
+    let alt = adoc_engine::audit::FindingCode::Rule(adoc_engine::audit::RuleId::MISSING_ALT);
+    cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.filter_problems(
+                adoc_engine::ProblemFilter {
+                    severity: Some(adoc_core::DiagnosticSeverity::Warning),
+                    code: Some(alt),
+                    ..adoc_engine::ProblemFilter::default()
+                },
+                cx,
+            );
+        });
+    });
+    let shown = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| workspace.read(cx).problem_entries_for_test(cx).len())
+    };
+    assert_eq!(shown(&mut cx), 2);
+    // The severity's button comes first; then the rule's is first.
+    click_drawn("problems-filter-clear-0".to_owned(), &mut cx);
+    let filter = cx.update(|_, cx| workspace.read(cx).problem_filter_for_test().0.clone());
+    assert_eq!(filter.severity, None);
+    assert_eq!(filter.code, Some(alt));
+    click_drawn("problems-filter-clear-0".to_owned(), &mut cx);
+    let filter = cx.update(|_, cx| workspace.read(cx).problem_filter_for_test().0.clone());
+    assert!(filter.is_empty());
+    let all = cx.update(|_, cx| app.read(cx).engine.problem_count());
+    assert_eq!(shown(&mut cx), all);
+}
