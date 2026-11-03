@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 /// The read-only tools: the ten that came before the contracts, kept as they were, and the
 /// discovery tools added since.
-const READ_TOOLS: [&str; 16] = [
+const READ_TOOLS: [&str; 17] = [
     "check",
     "find_references",
     "get_nav",
@@ -29,6 +29,7 @@ const READ_TOOLS: [&str; 16] = [
     "resolve",
     "search",
     "symbols",
+    "validate_publication",
 ];
 
 /// The tools a client had before the contracts, whose names and answers stay.
@@ -45,8 +46,9 @@ const EXISTING_READ_TOOLS: [&str; 10] = [
     "symbols",
 ];
 
-const WRITE_TOOLS: [&str; 6] = [
+const WRITE_TOOLS: [&str; 7] = [
     "apply_changes",
+    "create_module",
     "create_page",
     "create_partial",
     "edit_page",
@@ -93,6 +95,7 @@ fn read_calls() -> Vec<(&'static str, Value)> {
             json!({ "resource_id": "latest@demo:ROOT:partial$welcome.adoc" }),
         ),
         ("quality_audit", json!({})),
+        ("validate_publication", json!({})),
         (
             "preview_changes",
             json!({ "operations": [{

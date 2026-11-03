@@ -646,3 +646,42 @@ fn pdf_profile_writes_what_the_app_writes() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("no PDF profile `missing`"));
 }
+
+#[test]
+fn new_module_makes_a_module_through_the_engine_command() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    copy_tree(
+        &repository_root().join("tests/fixtures/antora-single-component"),
+        &root,
+    );
+    let root_text = root.to_string_lossy().into_owned();
+    let output = cli(&[
+        "new-module",
+        &root_text,
+        "admin",
+        "--families",
+        "pages,partials",
+        "--index-title",
+        "Administration",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let descriptor = std::fs::read_to_string(root.join("antora.yml")).unwrap();
+    insta::assert_snapshot!(
+        "new_module",
+        format!("{}\n--- antora.yml\n{descriptor}", stdout(&output))
+    );
+    assert!(
+        std::fs::read_to_string(root.join("modules/admin/pages/index.adoc"))
+            .unwrap()
+            .starts_with("= Administration\n")
+    );
+
+    let again = cli(&["new-module", &root_text, "admin"]);
+    assert!(!again.status.success());
+    assert!(String::from_utf8_lossy(&again.stderr).contains("exists already"));
+}

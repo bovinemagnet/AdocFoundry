@@ -23,7 +23,8 @@ use adoc_engine::{
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::{
-        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, Implementation,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult,
+        GetPromptRequestParams, GetPromptResponse, Implementation, ListPromptsResult,
         ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
         ProtocolVersion, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
         Resource, ResourceContents, ResourceTemplate, ServerCapabilities, ServerConfig,
@@ -42,13 +43,14 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 6] = [
+const WRITE_TOOLS: [&str; 7] = [
     "edit_page",
     "rename_page",
     "export_pdf",
     "apply_changes",
     "create_page",
     "create_partial",
+    "create_module",
 ];
 
 /// At most this many items in a list result that is not paged; the total is stated, and
@@ -422,7 +424,8 @@ impl Server {
             + Self::discovery_router()
             + Self::analysis_router()
             + Self::changes_router()
-            + Self::creation_router();
+            + Self::creation_router()
+            + Self::publication_router();
         if !allow_write {
             for name in WRITE_TOOLS {
                 tool_router.remove_route(name);
@@ -1232,6 +1235,7 @@ impl ServerHandler for Server {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_prompts()
                 .build(),
         )
         .with_server_info(Implementation::new("adoc-mcp", env!("CARGO_PKG_VERSION")))
@@ -1272,6 +1276,28 @@ impl ServerHandler for Server {
             }
             other => other,
         })
+    }
+
+    /// The workflow recipes (`publication.rs`): text naming the tools to call, granting nothing.
+    async fn list_prompts(
+        &self,
+        _: Option<PaginatedRequestParams>,
+        _: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        Ok(ListPromptsResult::with_all_items(
+            crate::publication::prompts(),
+        ))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, ErrorData> {
+        let arguments = request.arguments.unwrap_or_default();
+        crate::publication::get_prompt(&request.name, &arguments)
+            .map(Into::into)
+            .map_err(protocol_error)
     }
 
     /// The router's tools, without output schemas for a session that predates them.

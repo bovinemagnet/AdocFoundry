@@ -503,6 +503,9 @@ It exports the open buffer, and needs no Typst.
 
 `Engine::export_blocking(args, timeout)` runs the same job and waits, for the command-line `pdf`, and `Engine::is_exporting()` is true while a job is in flight.
 The settings' `[pdf]` table supplies the default theme, the themes and fonts directories, the site address and the standards.
+`Engine::profile_export_args(name)` turns a publication profile into export arguments.
+`Engine::profile_problems(name)` says what would stop a profile from exporting, without exporting: an unknown profile, an output outside the workspace, content not in it, or a theme not found.
+The MCP server's `validate_publication` reports it.
 See xref:pdf.adoc[PDF export] for the flow and the crate.
 
 == Word counts
@@ -895,6 +898,20 @@ Each entry's resolved target is matched against the active page's Antora coordin
 `Engine::undo` and `Engine::redo` call `replay_creations` after `replay_moves`.
 Undo deletes the file only while it holds exactly what New Page wrote and the page has no unsaved edits.
 Redo writes the file again and reopens it without changing the active tab.
+
+[[new-module]]
+== New Module
+
+`new_module.rs` makes a module in an existing component version.
+`module.new` takes `CommandArgs::NewModule(NewModule { component, name, families, nav, index_title })`.
+`Engine::new_module_components()` returns the component versions a front end offers, each with its label, its existing modules, whether `antora.yml` has a `nav:` list, and whether the active page is in it.
+`Engine::check_new_module` is the validation that the dialog and the command share, so a name is refused in the same way in both.
+Nothing is written until it passes.
+
+The descriptor edit is one inserted line (`nav_list_edit`), made through the descriptor document's undo history.
+It is saved at once, because the catalog reads descriptors from disk.
+Undo and redo save and reload it again (`replay_module`).
+Undo removes the files made unless one was changed, then removes only the folders that are empty.
 
 [#staged-changes]
 == Staged changes

@@ -126,6 +126,25 @@ ADOCFOUNDRY_TYPING_BENCH=10 adocfoundry <folder> <file>
 `crates/adocfoundry-cli/tests/cli.rs` runs the binary through `CARGO_BIN_EXE_adocfoundry-cli`.
 It checks each Antora fixture and compares the output with `insta` snapshots.
 It also follows a link in `tests/fixtures/xrefs/`.
+`new_module_makes_a_module_through_the_engine_command` runs `new-module` and compares what it prints with a snapshot.
+
+== New Module tests
+
+`crates/adoc-engine/tests/new_module.rs` drives `module.new` headlessly.
+The tests are:
+
+* `new_module_creates_families_nav_and_index`
+* `new_module_appends_to_the_nav_list_preserving_indentation`
+* `new_module_creates_the_nav_key_when_absent`
+* `new_module_refuses_an_existing_name`
+* `new_module_refuses_root_when_root_exists`
+* `new_module_refuses_a_non_list_nav`
+* `undo_removes_untouched_files_and_reverts_the_descriptor`
+* `undo_keeps_a_file_edited_after_creation`
+* `new_module_resolves_without_reindex`
+* `the_components_a_module_can_go_in`
+
+The application test `ui_tests::new_module_dialog_validates_live` checks that the dialog shows the folder or the reason as the name is typed.
 
 == Preview and render tests
 
@@ -421,9 +440,10 @@ The tests are:
 `crates/adoc-mcp/tests/creation.rs` drives `create_page` and `create_partial` over stdio.
 The tests are:
 
-* `mcp_write_denied_by_default`, where every mutating tool (`apply_changes`, `create_page`, `create_partial`, `edit_page`, `export_pdf` and `rename_page`) is unlisted and refused with `permission_denied` without `--allow-write`, and no file beneath the root is made, changed or removed. All are offered with it.
+* `mcp_write_denied_by_default`, where every mutating tool (`apply_changes`, `create_module`, `create_page`, `create_partial`, `edit_page`, `export_pdf` and `rename_page`) is unlisted and refused with `permission_denied` without `--allow-write`, and no file beneath the root is made, changed or removed. All are offered with it.
 * `create_page_resolves_and_is_listed_in_its_navigation`, which checks the resource id, the entry in the navigation file, and that `get_page_context` finds the page in navigation once the engine has applied it. Collisions, ambiguous versions, bad names and a mismatched `expected_nav_hash` are refused.
 * `create_partial_gives_the_include_that_names_it`
+* `mcp_create_module_reuses_engine_command`, which checks that `create_module` makes the module through `module.new`, and answers with `module`, `path`, `made`, `descriptor` and `index_page`
 
 A unit test in `crates/adoc-mcp/src/creation.rs`, `mcp_create_page_updates_nav_and_undo`, calls the tool inside the server and checks that one undo in the new page takes back the page and its navigation entry, as in the app.
 The test helper `common::snapshot` records every file beneath a root and what it holds.
@@ -442,6 +462,18 @@ A unit test in `crates/adoc-mcp/src/server.rs`, `mcp_timeout_does_not_block_othe
 It checks that a tool answers `timeout` within the shortened wait, that a full queue answers `unavailable`, and that the tool works once the lock is free.
 
 `crates/adoc-mcp/src/responses.rs` has unit tests for the error code names, the cursors and the protocol-version rule.
+
+`crates/adoc-mcp/tests/publication.rs` drives `validate_publication` and the prompts.
+The tests are:
+
+* `validate_publication_reports_what_the_engine_checks`, which checks the start pages by default, the navigation files, the coverage, a ready profile and a broken one, the `not_ready` and `ready` outcomes, and a scope error
+* `the_prompts_are_recipes_that_grant_nothing`, which checks the four prompts, each naming its tools and saying that the server decides, that the tools are unchanged, and that a missing argument and an unknown prompt are refused
+* `mcp_build_not_enabled_by_allow_write`, which checks that `--allow-write` offers no build tool, that `build_site` is unknown, and that `--allow-build` is refused as an unknown option until issue #334
+
+The engine's `a_profile_is_checked_without_exporting`, in `crates/adoc-engine/tests/profiles.rs`, covers `Engine::profile_problems`.
+
+The manual checks of the whole MCP epic are in `docs/qa/mcp.md` in the repository.
+They cover real clients, HTTP, and the negative and security cases by hand.
 
 == Application tests
 
