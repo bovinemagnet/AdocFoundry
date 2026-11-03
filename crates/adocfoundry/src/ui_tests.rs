@@ -7523,3 +7523,179 @@ fn problem_filter_choices_clear_one_by_one(cx: &mut TestAppContext) {
     let all = cx.update(|_, cx| app.read(cx).engine.problem_count());
     assert_eq!(shown(&mut cx), all);
 }
+
+/// A window on the folder `site`, empty until `prepare` fills it, once its welcome is drawn.
+fn welcome_window(
+    prepare: impl FnOnce(&Path),
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("site"));
+    std::fs::create_dir(&root).unwrap();
+    prepare(&root);
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view =
+            cx.new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), vec![], window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("welcome").is_some()
+    }));
+    (directory, root, app, workspace, cx)
+}
+
+/// Draws the window again once the engine has been drained.
+fn redraw(app: &Entity<AppState>, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}
+
+/// How many files the New Project dialog lists.
+fn listed_files(cx: &mut VisualTestContext) -> usize {
+    (0..)
+        .take_while(|number| {
+            cx.debug_bounds(Box::leak(
+                format!("new-project-file-{number}").into_boxed_str(),
+            ))
+            .is_some()
+        })
+        .count()
+}
+
+#[gpui::test]
+fn empty_folder_shows_the_welcome_panel(cx: &mut TestAppContext) {
+    let (_directory, _root, app, _workspace, mut cx) = welcome_window(|_| {}, cx);
+    assert!(cx.debug_bounds("welcome-no-documentation").is_some());
+    assert!(cx.debug_bounds("welcome-not-antora").is_none());
+
+    click("welcome-new-project", &mut cx);
+    redraw(&app, &mut cx);
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    // Named from the folder, in the folder itself: seven files and nothing wrong.
+    assert_eq!(listed_files(&mut cx), 7);
+    assert!(cx.debug_bounds("new-project-problem-location").is_none());
+    assert!(cx.debug_bounds("new-project-problem-name").is_none());
+}
+
+#[gpui::test]
+fn non_antora_pages_folder_offers_a_project(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, mut cx) = welcome_window(
+        |root| std::fs::write(root.join("notes.adoc"), "= Notes\n").unwrap(),
+        cx,
+    );
+    assert!(cx.debug_bounds("welcome-not-antora").is_some());
+    click("welcome-new-project", &mut cx);
+    redraw(&app, &mut cx);
+    // The folder has pages, so the project goes in `docs`.
+    assert_eq!(listed_files(&mut cx), 7);
+    assert!(cx.debug_bounds("new-project-problem-location").is_none());
+    cx.simulate_keystrokes("enter");
+    redraw(&app, &mut cx);
+    assert!(root.join("docs/antora.yml").is_file());
+    assert!(
+        root.join("notes.adoc").is_file(),
+        "the pages stay where they are"
+    );
+}
+
+#[gpui::test]
+fn new_project_dialog_validates_live_and_previews_the_tree(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, mut cx) = welcome_window(|_| {}, cx);
+    cx.dispatch_action(crate::editor::bindings::NewProject);
+    redraw(&app, &mut cx);
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(listed_files(&mut cx), 7);
+
+    // The name field has focus, holding `site`: a space makes it no component name.
+    cx.simulate_input(" X");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("new-project-problem-name").is_some());
+    assert!(cx.debug_bounds("new-project-component").is_none());
+    cx.simulate_keystrokes("enter");
+    redraw(&app, &mut cx);
+    assert!(
+        cx.update(gpui_component::WindowExt::has_active_dialog),
+        "refused, the dialog stays open"
+    );
+    assert!(!root.join("antora.yml").exists());
+
+    cx.simulate_keystrokes("backspace backspace");
+    redraw(&app, &mut cx);
+    assert!(cx.debug_bounds("new-project-problem-name").is_none());
+    assert!(cx.debug_bounds("new-project-component").is_some());
+
+    // Without a README the list is one file shorter.
+    click("new-project-readme", &mut cx);
+    redraw(&app, &mut cx);
+    assert_eq!(listed_files(&mut cx), 6);
+}
+
+#[gpui::test]
+fn new_project_opens_index_with_preview_and_trees(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, mut cx) = welcome_window(|_| {}, cx);
+    cx.dispatch_action(crate::editor::bindings::NewProject);
+    redraw(&app, &mut cx);
+    cx.simulate_keystrokes("enter");
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("nav-row-0").is_some()
+    }));
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    let index = root.join("modules/ROOT/pages/index.adoc");
+    let (active, preview, component) = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        (
+            engine
+                .document(engine.active().unwrap())
+                .unwrap()
+                .path
+                .clone(),
+            engine.preview_layout().visible,
+            engine.workspace().antora.component("site", None).is_some(),
+        )
+    });
+    assert_eq!(active, index);
+    assert!(preview, "the preview is docked");
+    assert!(component);
+    assert!(cx.debug_bounds("welcome").is_none());
+    assert!(root.join(".git").is_dir(), "a repository by default");
+    assert_eq!(
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len()),
+        1
+    );
+}
+
+#[gpui::test]
+fn new_project_toast_undo_removes_the_files(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, mut cx) = welcome_window(|_| {}, cx);
+    cx.dispatch_action(crate::editor::bindings::NewProject);
+    redraw(&app, &mut cx);
+    cx.simulate_keystrokes("enter");
+    redraw(&app, &mut cx);
+    assert!(root.join("antora.yml").is_file());
+    click("new-project-undo", &mut cx);
+    redraw(&app, &mut cx);
+    let left: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, [".git"], "only the repository is kept");
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.debug_bounds("welcome-no-documentation").is_some()
+    }));
+}

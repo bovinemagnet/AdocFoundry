@@ -46,6 +46,7 @@ actions!(
         RenamePage,
         NewPage,
         NewModule,
+        NewProject,
         RenameAnchor,
         Reindex,
         OpenSettings,
@@ -194,6 +195,7 @@ fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
         ids::PAGE_RENAME => KeyBinding::new(keys, RenamePage, workspace),
         ids::PAGE_NEW => KeyBinding::new(keys, NewPage, workspace),
         ids::MODULE_NEW => KeyBinding::new(keys, NewModule, workspace),
+        ids::PROJECT_NEW => KeyBinding::new(keys, NewProject, workspace),
         ids::ANCHOR_RENAME => KeyBinding::new(keys, RenameAnchor, workspace),
         ids::WORKSPACE_REINDEX => KeyBinding::new(keys, Reindex, workspace),
         ids::QUALITY_RUN_AUDIT => KeyBinding::new(keys, RunAudit, workspace),
@@ -290,6 +292,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::PAGE_RENAME => Box::new(RenamePage),
         ids::PAGE_NEW => Box::new(NewPage),
         ids::MODULE_NEW => Box::new(NewModule),
+        ids::PROJECT_NEW => Box::new(NewProject),
         ids::ANCHOR_RENAME => Box::new(RenameAnchor),
         ids::WORKSPACE_REINDEX => Box::new(Reindex),
         ids::QUALITY_RUN_AUDIT => Box::new(RunAudit),
@@ -465,8 +468,6 @@ mod tests {
             ids::SPELLING_ADD_TO_WORKSPACE,
             ids::SPELLING_ADD_TO_USER,
             ids::PAGE_NEW_PARTIAL,
-            // Its dialog, and with it its action, comes with #294.
-            ids::PROJECT_NEW,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

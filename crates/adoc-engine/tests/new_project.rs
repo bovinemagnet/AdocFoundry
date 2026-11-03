@@ -11,7 +11,7 @@ use std::{
 use adoc_core::SourceRange;
 use adoc_engine::{
     commands::ids, normalize_path, planned_tree, CommandArgs, CommandOutcome, Engine, EngineError,
-    NewPage, NewProject, Settings,
+    NewPage, NewProject, NewProjectField, Settings, Welcome,
 };
 use adoc_git::{testing::TestRepo, Repository};
 
@@ -280,12 +280,13 @@ fn new_project_refuses_inside_an_existing_component() {
 fn new_project_validates_its_fields() {
     let setup = Setup::new();
     let request = setup.request();
-    for (request, problem) in [
+    for (request, field, problem) in [
         (
             NewProject {
                 name: "Demo".to_owned(),
                 ..request.clone()
             },
+            NewProjectField::Name,
             "not a component name",
         ),
         (
@@ -293,6 +294,7 @@ fn new_project_validates_its_fields() {
                 version: Some("1.0/beta".to_owned()),
                 ..request.clone()
             },
+            NewProjectField::Version,
             "not a version",
         ),
         (
@@ -300,6 +302,7 @@ fn new_project_validates_its_fields() {
                 version: Some("one two".to_owned()),
                 ..request.clone()
             },
+            NewProjectField::Version,
             "not a version",
         ),
         (
@@ -307,16 +310,79 @@ fn new_project_validates_its_fields() {
                 subfolder: Some("../outside".to_owned()),
                 ..request.clone()
             },
+            NewProjectField::Subfolder,
             "subfolder",
         ),
         (
             NewProject::new(setup.workspace.join("missing"), "demo"),
+            NewProjectField::Location,
             "is not a folder",
         ),
     ] {
-        let problem_found = setup.engine.check_new_project(&request).unwrap_err();
-        assert!(problem_found.contains(problem), "{problem_found}");
+        let found = setup.engine.check_new_project(&request).unwrap_err();
+        assert_eq!(found.field, field, "{found}");
+        assert!(found.message.contains(problem), "{found}");
     }
+}
+
+#[test]
+fn the_dialog_starts_from_the_open_folder() {
+    let setup = Setup::new();
+    let request = setup.engine.new_project_request();
+    assert_eq!(request.root, setup.workspace);
+    assert_eq!(request.name, "work", "named from the folder");
+    assert_eq!(request.subfolder, None, "the folder is empty");
+    assert!(request.git_init, "the folder is in no repository");
+    assert!(!setup.engine.in_repository(&setup.workspace));
+    assert!(setup.engine.check_new_project(&request).is_ok());
+
+    // A folder with files in a repository: a `docs` subfolder, and no repository to make.
+    let setup = Setup::with(|workspace| {
+        let repo = TestRepo::init(workspace);
+        repo.write("src/main.rs", "fn main() {}\n");
+    });
+    let request = setup.engine.new_project_request();
+    assert_eq!(request.subfolder.as_deref(), Some("docs"));
+    assert!(!request.git_init);
+    assert!(setup.engine.in_repository(&setup.workspace));
+
+    // A folder whose name is no component name gives none.
+    let setup = Setup::with(|_| {});
+    let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    let odd = setup.workspace.join("My Docs!");
+    fs::create_dir(&odd).unwrap();
+    engine.open_workspace(vec![odd]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert_eq!(engine.new_project_request().name, "my-docs");
+    let none = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    assert_eq!(none.new_project_request().root, PathBuf::new());
+}
+
+#[test]
+fn welcome_follows_what_the_folder_holds() {
+    let none = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    assert_eq!(none.welcome(), Some(Welcome::NoFolder));
+
+    let mut setup = Setup::new();
+    assert_eq!(
+        setup.engine.welcome(),
+        Some(Welcome::NoDocumentation(setup.workspace.clone()))
+    );
+
+    let setup_pages = Setup::with(|workspace| {
+        fs::write(workspace.join("notes.adoc"), "= Notes\n").unwrap();
+    });
+    assert_eq!(
+        setup_pages.engine.welcome(),
+        Some(Welcome::NotAntora(setup_pages.workspace.clone()))
+    );
+
+    setup.make(setup.request()).unwrap();
+    assert_eq!(
+        setup.engine.welcome(),
+        None,
+        "a component: nothing to offer"
+    );
 }
 
 #[test]

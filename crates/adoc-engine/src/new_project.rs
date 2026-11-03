@@ -105,6 +105,40 @@ impl NewProject {
     }
 }
 
+/// The field of the New Project dialog a problem belongs under.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NewProjectField {
+    Location,
+    Subfolder,
+    Name,
+    Version,
+    Git,
+}
+
+/// Why a project cannot be made, and the field it belongs under.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NewProjectProblem {
+    pub field: NewProjectField,
+    pub message: String,
+}
+
+impl std::fmt::Display for NewProjectProblem {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+/// What the app offers while no tab is open in a workspace with no Antora component.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Welcome {
+    /// No folder is open.
+    NoFolder,
+    /// The folder holds no AsciiDoc page.
+    NoDocumentation(PathBuf),
+    /// The folder's pages are in no Antora component.
+    NotAntora(PathBuf),
+}
+
 /// What a group's project needs on undo and redo: its descriptor, read again, and the folders
 /// it made, removed again while empty.
 #[derive(Clone, Debug)]
@@ -261,36 +295,43 @@ fn enclosing_component(folder: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// `name` made into a component name: lower case, each run of other characters a `-`; empty
+/// when nothing is left.
+fn component_name(name: &str) -> String {
+    let mut slug = String::new();
+    for character in name.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_' {
+            slug.push(character);
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    slug.trim_end_matches('-').to_owned()
+}
+
 impl Engine {
-    /// Why `request` cannot be made, or the folder its `antora.yml` will be in when it can;
-    /// checked before anything is written, and as a dialog types.
-    pub fn check_new_project(&self, request: &NewProject) -> Result<PathBuf, String> {
+    /// Why `request` cannot be made, the first problem in the order the New Project dialog
+    /// shows its fields, or the folder its `antora.yml` will be in when it can; checked before
+    /// anything is written, and as a dialog types.
+    pub fn check_new_project(&self, request: &NewProject) -> Result<PathBuf, NewProjectProblem> {
+        use NewProjectField::{Git, Location, Name, Subfolder, Version};
+        let problem = |field, message: String| Err(NewProjectProblem { field, message });
         let root = normalize_path(&request.root);
+        if root.as_os_str().is_empty() {
+            return problem(Location, "choose a folder for the project".to_owned());
+        }
         if !root.is_dir() {
-            return Err(format!("{} is not a folder", root.display()));
-        }
-        if request.name == "ROOT" || !valid_module_name(&request.name) {
-            return Err(format!(
-                "`{}` is not a component name: use lower-case letters, digits, `.`, `_` and \
-                 `-`, starting with a letter or digit",
-                request.name
-            ));
-        }
-        if let Some(version) = request.version() {
-            if version.is_empty() || version.contains('/') || version.contains(char::is_whitespace)
-            {
-                return Err(format!(
-                    "`{version}` is not a version: leave it empty for an unversioned component, \
-                     or use no spaces and no `/`"
-                ));
-            }
+            return problem(Location, format!("{} is not a folder", root.display()));
         }
         if let Some(found) = enclosing_component(&root) {
-            return Err(format!(
-                "{} is in the component at {}; add a module to it with New Module instead",
-                root.display(),
-                found.display()
-            ));
+            return problem(
+                Location,
+                format!(
+                    "{} is in the component at {}; add a module to it with New Module instead",
+                    root.display(),
+                    found.display()
+                ),
+            );
         }
         let component = request.component_root();
         match request.subfolder.as_deref().map(str::trim) {
@@ -299,29 +340,106 @@ impl Engine {
                     .components()
                     .all(|part| matches!(part, Component::Normal(_)));
                 if !plain {
-                    return Err(format!(
-                        "the subfolder `{subfolder}` must be a folder name inside {}",
-                        root.display()
-                    ));
+                    return problem(
+                        Subfolder,
+                        format!(
+                            "the subfolder `{subfolder}` must be a folder name inside {}",
+                            root.display()
+                        ),
+                    );
                 }
                 if component.exists() {
-                    return Err(format!("{} exists already", component.display()));
+                    return problem(Subfolder, format!("{} exists already", component.display()));
                 }
             }
-            _ => {
-                if !is_empty_folder(&root)? {
-                    return Err(format!(
-                        "{} is not empty: choose an empty folder, or make the project in a \
-                         subfolder such as `docs`",
-                        root.display()
-                    ));
+            _ => match is_empty_folder(&root) {
+                Err(message) => return problem(Location, message),
+                Ok(false) => {
+                    return problem(
+                        Location,
+                        format!(
+                            "{} is not empty: choose an empty folder, or make the project in a \
+                             subfolder such as `docs`",
+                            root.display()
+                        ),
+                    )
                 }
+                Ok(true) => {}
+            },
+        }
+        if request.name == "ROOT" || !valid_module_name(&request.name) {
+            return problem(
+                Name,
+                format!(
+                    "`{}` is not a component name: use lower-case letters, digits, `.`, `_` \
+                     and `-`, starting with a letter or digit",
+                    request.name
+                ),
+            );
+        }
+        if let Some(version) = request.version() {
+            if version.is_empty() || version.contains('/') || version.contains(char::is_whitespace)
+            {
+                return problem(
+                    Version,
+                    format!(
+                        "`{version}` is not a version: leave it empty for an unversioned \
+                         component, or use no spaces and no `/`"
+                    ),
+                );
             }
         }
         if request.git_init && !cfg!(feature = "git") {
-            return Err("this build has no Git support: leave the repository out".to_owned());
+            return problem(
+                Git,
+                "this build has no Git support: leave the repository out".to_owned(),
+            );
         }
         Ok(component)
+    }
+
+    /// What the New Project dialog starts from: the first root (or no folder), named from it,
+    /// in a `docs` subfolder when it holds files already, with a repository made when it is in
+    /// none.
+    #[must_use]
+    pub fn new_project_request(&self) -> NewProject {
+        let Some(root) = self.roots.first().cloned() else {
+            return NewProject::new(PathBuf::new(), "");
+        };
+        let name = root
+            .file_name()
+            .map(|name| component_name(&name.to_string_lossy()))
+            .filter(|name| valid_module_name(name) && name != "ROOT")
+            .unwrap_or_default();
+        let subfolder = (!is_empty_folder(&root).unwrap_or(true)).then(|| "docs".to_owned());
+        NewProject {
+            subfolder,
+            git_init: !self.in_repository(&root),
+            ..NewProject::new(root, &name)
+        }
+    }
+
+    /// Whether `path` is in a Git working tree; false without Git.
+    #[must_use]
+    pub fn in_repository(&self, path: &Path) -> bool {
+        crate::git::in_repository(path)
+    }
+
+    /// What to offer in place of an editor while no tab is open and the workspace holds no
+    /// Antora component; `None` while a whole index is under way, so nothing flashes.
+    #[must_use]
+    pub fn welcome(&self) -> Option<Welcome> {
+        let Some(root) = self.roots.first() else {
+            return Some(Welcome::NoFolder);
+        };
+        if self.is_indexing_workspace() || self.workspace.antora.components().next().is_some() {
+            return None;
+        }
+        Some(if self.workspace.index.files().next().is_some() {
+            Welcome::NotAntora(root.clone())
+        } else {
+            Welcome::NoDocumentation(root.clone())
+        })
     }
 
     /// Makes the project `request` asks for as one undo group and opens its index page
@@ -338,7 +456,7 @@ impl Engine {
         descriptor: &str,
     ) -> Result<DocumentId, EngineError> {
         self.check_new_project(request)
-            .map_err(EngineError::InvalidRequest)?;
+            .map_err(|problem| EngineError::InvalidRequest(problem.message))?;
         let root = normalize_path(&request.root);
         let plan = plan(request, descriptor);
         let descriptor = plan.component.join("antora.yml");
