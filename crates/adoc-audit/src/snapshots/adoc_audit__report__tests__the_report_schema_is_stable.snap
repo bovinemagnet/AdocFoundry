@@ -1,0 +1,145 @@
+---
+source: crates/adoc-audit/src/report.rs
+expression: sample()
+---
+{
+  "schema_version": 1,
+  "scope": {
+    "kind": "component",
+    "name": "product",
+    "version": "3.0"
+  },
+  "revision": {
+    "index": 42,
+    "catalog": 5
+  },
+  "roots": [
+    "docs"
+  ],
+  "fail_on": "error",
+  "require_complete": false,
+  "rules": [
+    {
+      "rule": "quality.image.missing-alt",
+      "severity": "warning"
+    },
+    {
+      "rule": "quality.navigation.unlisted-page",
+      "severity": "warning"
+    },
+    {
+      "rule": "quality.page.missing-title",
+      "severity": "warning"
+    }
+  ],
+  "completeness": {
+    "status": "partial",
+    "gaps": [
+      {
+        "reason": "remote-component-missing",
+        "detail": "The playbook names a source that is not checked out",
+        "affected": [
+          "platform"
+        ]
+      }
+    ]
+  },
+  "counts": {
+    "info": 0,
+    "warning": 1,
+    "error": 1,
+    "excluded": 1,
+    "skipped": 1
+  },
+  "findings": [
+    {
+      "code": "adoc.unresolved-xref-file",
+      "severity": "error",
+      "message": "about index.adoc",
+      "location": {
+        "root": 0,
+        "path": "modules/ROOT/pages/index.adoc",
+        "range": {
+          "start": 120,
+          "end": 124
+        }
+      },
+      "coordinate": {
+        "component": "product",
+        "version": "3.0",
+        "module": "ROOT",
+        "family": "page",
+        "path": "index.adoc"
+      }
+    },
+    {
+      "code": "quality.navigation.unlisted-page",
+      "severity": "warning",
+      "message": "about install.adoc",
+      "location": {
+        "root": 0,
+        "path": "modules/ROOT/pages/install.adoc",
+        "range": {
+          "start": 0,
+          "end": 4
+        }
+      },
+      "coordinate": {
+        "component": "product",
+        "version": "3.0",
+        "module": "ROOT",
+        "family": "page",
+        "path": "install.adoc"
+      },
+      "evidence": [
+        {
+          "message": "Not listed in modules/ROOT/nav.adoc",
+          "location": {
+            "root": 0,
+            "path": "modules/ROOT/nav.adoc"
+          }
+        }
+      ],
+      "remediation": "Add an entry to a navigation file"
+    }
+  ],
+  "excluded": [
+    {
+      "finding": {
+        "code": "quality.navigation.unlisted-page",
+        "severity": "warning",
+        "message": "about internal.adoc",
+        "location": {
+          "root": 0,
+          "path": "modules/ROOT/pages/internal.adoc",
+          "range": {
+            "start": 0,
+            "end": 4
+          }
+        },
+        "coordinate": {
+          "component": "product",
+          "version": "3.0",
+          "module": "ROOT",
+          "family": "page",
+          "path": "internal.adoc"
+        }
+      },
+      "reason": "Staff-only page"
+    }
+  ],
+  "skips": [
+    {
+      "location": {
+        "root": 0,
+        "path": "modules/ROOT/pages/index.adoc",
+        "range": {
+          "start": 300,
+          "end": 330
+        }
+      },
+      "code": "adoc.unresolved-include",
+      "reason": "The include target uses the attribute `{snippets}`"
+    }
+  ]
+}

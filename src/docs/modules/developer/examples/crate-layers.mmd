@@ -14,6 +14,7 @@ flowchart TD
         model["adoc-model"]
         git["adoc-git"]
         pdf["adoc-pdf"]
+        audit["adoc-audit<br/>(quality audit model)"]
     end
     subgraph L1["L1: language crates"]
         parser["adoc-parser"]
@@ -50,7 +51,9 @@ flowchart TD
     engine --> git
     engine --> pdf
     engine --> graph
+    engine --> audit
     pdf --> render
+    audit --> antora
     render --> dom
     model --> dom
     lang --> index
@@ -65,3 +68,4 @@ flowchart TD
     render --> core
     model --> core
     pdf --> core
+    audit --> core

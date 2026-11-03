@@ -29,6 +29,7 @@ pub const LAYERS: &[(&str, u8)] = &[
     ("adoc-model", 2),
     ("adoc-git", 2),
     ("adoc-pdf", 2),
+    ("adoc-audit", 2),
     ("adoc-engine", 3),
     ("adocfoundry", 4),
     ("adocfoundry-cli", 4),
@@ -44,6 +45,15 @@ pub const SAME_LAYER_ALLOWED: &[(&str, &str)] = &[
     ("adoc-lang", "adoc-antora"),
     ("adoc-pdf", "adoc-render"),
 ];
+
+/// Crates whose logic the engine orchestrates: front ends reach them only through
+/// `adoc-engine`, never by naming them, so every front end gets the same results.
+pub const ENGINE_ONLY: &[&str] = &["adoc-audit"];
+
+/// The front ends, the crates of the top layer.
+fn is_front_end(name: &str) -> bool {
+    layer_of(name) == Some(4)
+}
 
 /// UI framework crates, permitted only in `adocfoundry`.
 pub const UI_CRATES: &[&str] = &[
@@ -185,6 +195,16 @@ pub fn check_manifest(manifest: &Manifest) -> Vec<String> {
             violations.push(format!(
                 "{name} depends on LSP crate {dependency}; only adoc-ls may"
             ));
+        }
+    }
+
+    if is_front_end(name) {
+        for dependency in &manifest.dependencies {
+            if ENGINE_ONLY.contains(&dependency.as_str()) {
+                violations.push(format!(
+                    "{name} depends on {dependency}; front ends reach it only through adoc-engine"
+                ));
+            }
         }
     }
 
@@ -513,6 +533,19 @@ libc = "=0.2.0"
     fn accepts_a_crate_depending_on_itself() {
         // A dev-dependency on the crate itself turns on a feature for its own tests.
         assert!(check_manifest(&manifest("adoc-git", &["adoc-git", "adoc-core"])).is_empty());
+    }
+
+    #[test]
+    fn front_ends_reach_engine_only_crates_through_the_engine() {
+        assert!(check_manifest(&manifest("adoc-engine", &["adoc-audit"])).is_empty());
+        for front_end in ["adocfoundry", "adocfoundry-cli", "adoc-ls", "adoc-mcp"] {
+            assert_eq!(
+                check_manifest(&manifest(front_end, &["adoc-engine", "adoc-audit"])),
+                [format!(
+                    "{front_end} depends on adoc-audit; front ends reach it only through adoc-engine"
+                )]
+            );
+        }
     }
 
     #[test]

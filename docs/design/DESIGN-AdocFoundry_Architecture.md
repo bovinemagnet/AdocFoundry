@@ -236,6 +236,7 @@ AdocFoundry/
     adoc-render              L2  (from zed-asciidoc) + NativeRenderer
     adoc-diagrams            L2  Phase 2
     adoc-pdf                 L2  Phase 4
+    adoc-audit               L2  documentation quality audit: rules, reports, policy
     adoc-engine              L3  sessions, commands, undo, watcher, settings
     adoc-ls                  L4  (from zed-asciidoc) LSP binary
     adocfoundry-cli          L4  headless binary
