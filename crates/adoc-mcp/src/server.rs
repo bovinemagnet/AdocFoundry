@@ -425,7 +425,8 @@ impl Server {
             + Self::analysis_router()
             + Self::changes_router()
             + Self::creation_router()
-            + Self::publication_router();
+            + Self::publication_router()
+            + Self::impact_router();
         if !allow_write {
             for name in WRITE_TOOLS {
                 tool_router.remove_route(name);

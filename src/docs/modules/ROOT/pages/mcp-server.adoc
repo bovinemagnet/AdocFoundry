@@ -258,6 +258,62 @@ The tool runs no optional provider, such as Vale or external links, and makes no
 A cursor belongs to its arguments and policy, so changing a filter or an override starts again.
 Use `check` for diagnostics alone.
 
+[#impact]
+== Analysing impact
+
+`analyse_impact` is a read-only tool.
+It gives the documentation impact analysis exactly as `adocfoundry-cli impact` reports it.
+See xref:command-line.adoc#impact[the command line], which documents the impact kinds, statuses and completeness gaps in full.
+
+[cols="2,3,4"]
+|===
+|Tool |Arguments |Result
+
+|`analyse_impact`
+|`source`, `component?`, `version?`, `include_provenance?`, `max_depth?`, `cursor?`, `limit?`
+|The impact report, with its impacts filtered and paged: see <<paging>>.
+|===
+
+The arguments are:
+
+`source`::
+Required. It names what changed, as exactly one of these:
++
+* `{ "type": "git_refs", "base": "<ref>", "head": "<ref>" }` compares two local revisions. They are read from Git objects alone. Nothing is fetched or checked out, and the working tree is never read.
+* `{ "type": "working_tree" }` compares `HEAD` with the working tree, including the server's unsaved buffers.
+* `{ "type": "paths", "paths": ["..."] }` takes the files named, against the working tree, with no base revision. Each path must be inside the roots.
+
+`component` and `version`::
+List only impacts in that component or version. `version` needs a `component`. `~` is the versionless version. The counts and completeness stay the whole report's.
+
+`include_provenance`::
+True by default. With false, impacts leave out `via` and `source`, for a shorter answer.
+
+`max_depth`::
+How many includes deep the analysis follows. It is 32 by default.
+
+`cursor` and `limit`::
+Page the impacts, at most 500 a page.
+
+The answer is the impact report.
+It has its own `schema_version`, the `source`, `completeness` with any gaps, `changes`, `impacts` and `counts`.
+`impacts_total` is how many the filters take.
+`next_cursor` resumes the list, and `truncated` is present while more follow.
+`workspace_revision` is given too.
+
+Every page carries the whole report's completeness and counts.
+A client that reads only one page still sees whether the analysis is partial.
+A page's prose change never reaches the pages that merely link to it.
+
+The errors are:
+
+* `not_found`, for a ref that does not exist.
+* `unavailable`, for a Git source when the workspace is in no Git repository. Use `paths` instead.
+* `outside_workspace`, for a path outside the roots.
+* `invalid_argument`, for a `version` without a `component`.
+
+The tool never changes the repository, posts comments or makes a network request.
+
 [#publication]
 == Checking publication
 
@@ -506,7 +562,6 @@ It is not offered yet.
 
 These are not offered, and the server does not list them:
 
-* `analyse_impact` waits for the Impact engine (issues #307 to #310, tracked as #317).
 * `create_project` waits for issues #291 to #295.
 * `build_site` waits for the build command of issue #293 and a separate `--allow-build` flag (issue #334). `--allow-write` never implies it. Until then the server refuses `--allow-build` as an unknown option.
 * Resource-change subscriptions wait for issue #335.
@@ -548,11 +603,11 @@ The server alone decides what runs.
 [#paging]
 == Pages of results
 
-`check`, `symbols`, `list_pages`, `find_references` and `quality_audit` take `cursor?` and `limit?`.
+`check`, `symbols`, `list_pages`, `find_references`, `quality_audit` and `analyse_impact` take `cursor?` and `limit?`.
 `limit` is at most 500, which is also the default.
 Their answer adds:
 
-* `total`, the number of items in the whole list. `list_pages` gives none, since counting would read every resource. `quality_audit` gives `findings_total` instead.
+* `total`, the number of items in the whole list. `list_pages` gives none, since counting would read every resource. `quality_audit` gives `findings_total` instead, and `analyse_impact` gives `impacts_total`.
 * `next_cursor`, which you pass as `cursor` to get the next page. It is null on the last page.
 * `workspace_revision`, the workspace revision that the list was made at.
 
@@ -713,6 +768,13 @@ Call `find_references` on the partial.
 ----
 
 Then call `get_page_context` on each page that includes it.
+
+Calling `analyse_impact` with `paths` gives the same, with every page the partial renders into.
+
+[source,json]
+----
+{ "source": { "type": "paths", "paths": ["modules/ROOT/partials/note.adoc"] } }
+----
 
 == Installing
 
