@@ -9,6 +9,8 @@
 
 mod http;
 mod paths;
+mod responses;
+mod schemas;
 mod server;
 
 use std::{path::PathBuf, process::ExitCode, time::Duration};

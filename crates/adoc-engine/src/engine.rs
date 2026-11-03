@@ -53,6 +53,11 @@ pub struct Engine {
     pub(crate) indexing: usize,
     /// The latest whole-workspace index job; results of earlier ones are dropped.
     pub(crate) index_generation: u64,
+    /// How many times a whole index has replaced the workspace, so a revision taken from the
+    /// old index never equals one of the new.
+    pub(crate) workspace_replacements: u64,
+    /// The last workspace seen by [`Engine::workspace_revision`] and the number given it.
+    pub(crate) workspace_revision: std::cell::Cell<((u64, u64, u64), u64)>,
     pub(crate) watcher: Option<FileWatcher>,
     /// How the next workspace opened is watched: the platform's way, but tests try both.
     pub(crate) watch_mode: crate::workspace::WatchMode,
@@ -177,6 +182,8 @@ impl Engine {
             workers_running: 0,
             indexing: 0,
             index_generation: 0,
+            workspace_replacements: 0,
+            workspace_revision: std::cell::Cell::new(((0, 0, 0), 0)),
             watcher: None,
             watch_mode: crate::workspace::WatchMode::PLATFORM,
             history: crate::navigation::History::default(),
@@ -924,6 +931,25 @@ impl Engine {
     #[must_use]
     pub fn workspace(&self) -> &WorkspaceState {
         &self.workspace
+    }
+
+    /// A number that grows whenever the index or the catalog changes, a whole index replacing
+    /// them included, and stays the same while neither does: a result built at one revision
+    /// still describes the workspace while the revision is unchanged.
+    #[must_use]
+    pub fn workspace_revision(&self) -> u64 {
+        let now = (
+            self.workspace_replacements,
+            self.workspace.index.revision(),
+            self.workspace.antora.revision(),
+        );
+        let (seen, revision) = self.workspace_revision.get();
+        if seen == now {
+            return revision;
+        }
+        // Each part only grows, the replacements count included, so `now` was never seen before.
+        self.workspace_revision.set((now, revision + 1));
+        revision + 1
     }
 
     /// Recomputes the diagnostics of every open document, publishing `DiagnosticsUpdated` for

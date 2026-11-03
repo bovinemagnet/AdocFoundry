@@ -441,6 +441,13 @@ impl Engine {
                 .is_some_and(|watcher| !watcher.pending.is_empty())
     }
 
+    /// True while a whole-workspace index is running, which a list read from the index would
+    /// not yet hold all of. Changes on disk waiting to be applied do not count.
+    #[must_use]
+    pub fn is_indexing_workspace(&self) -> bool {
+        self.indexing > 0
+    }
+
     /// Applies results from worker threads and debounced file-system changes. Returns the number
     /// applied. Front ends call this on a timer while [`Engine::has_pending`] is true.
     pub fn pump(&mut self) -> usize {
@@ -529,6 +536,7 @@ impl Engine {
                     });
                 }
                 self.workspace = *state;
+                self.workspace_replacements += 1;
                 *self.quick_open.borrow_mut() = *quick_open;
                 self.graph_indexed(*graph);
                 self.restore_branch_versions();

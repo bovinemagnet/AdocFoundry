@@ -692,3 +692,40 @@ fn a_burst_of_changed_pages_diagnoses_the_open_ones_a_few_times() {
     let passes = probe::count(Probe::DiagnoseOpen);
     assert!(passes <= 4, "{passes} passes over the open pages");
 }
+
+#[test]
+fn the_workspace_revision_grows_with_every_change_and_only_then() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let indexed = engine.workspace_revision();
+    assert_eq!(engine.workspace_revision(), indexed, "nothing changed");
+
+    let id = engine.open(&page).unwrap();
+    engine
+        .invoke(
+            adoc_engine::commands::ids::EDIT_REPLACE_RANGE,
+            adoc_engine::CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(2, 6),
+                text: "Edited".to_owned(),
+            },
+        )
+        .unwrap();
+    let edited = engine.workspace_revision();
+    assert!(edited > indexed, "an edit replaces the page's entry");
+
+    // A whole index starts its revisions again, yet the workspace's revision still grows.
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let reindexed = engine.workspace_revision();
+    assert!(reindexed > edited);
+    assert_eq!(engine.workspace_revision(), reindexed);
+}
