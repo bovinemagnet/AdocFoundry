@@ -47,10 +47,11 @@ const EXISTING_READ_TOOLS: [&str; 10] = [
     "symbols",
 ];
 
-const WRITE_TOOLS: [&str; 7] = [
+const WRITE_TOOLS: [&str; 8] = [
     "apply_changes",
     "create_module",
     "create_page",
+    "create_project",
     "create_partial",
     "edit_page",
     "export_pdf",

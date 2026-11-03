@@ -8,6 +8,16 @@ use std::{
 
 use crate::{DocumentId, Engine};
 
+/// No repository is looked for.
+pub(crate) fn in_repository(_: &Path) -> bool {
+    false
+}
+
+/// No repository can be made without Git.
+pub(crate) fn init_repository(_: &Path) -> Result<(), String> {
+    Err("this build has no Git support".to_owned())
+}
+
 // Braced, so it is built as `GitState::default()` like the real one.
 #[derive(Default)]
 pub(crate) struct GitState {}

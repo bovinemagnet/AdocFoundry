@@ -8,10 +8,11 @@ mod common;
 use common::{scratch, Client};
 use serde_json::{json, Value};
 
-const MUTATING: [&str; 7] = [
+const MUTATING: [&str; 8] = [
     "apply_changes",
     "create_module",
     "create_page",
+    "create_project",
     "create_partial",
     "edit_page",
     "export_pdf",
@@ -253,5 +254,74 @@ fn mcp_create_module_reuses_engine_command() {
         let refused = client.call_result("create_module", arguments.clone());
         assert_eq!(error_code(&refused), code, "{arguments}");
     }
+    client.stop();
+}
+
+/// `create_project` is New Antora Project's engine command (#292), confined to the server's
+/// roots: it never makes a root of its own.
+#[test]
+fn mcp_create_project_reuses_engine_command() {
+    let (directory, root) = scratch("discovery");
+    std::fs::create_dir(root.join("handbook")).unwrap();
+    let mut client = Client::start(&root, true);
+    let made = client
+        .call(
+            "create_project",
+            json!({ "path": "handbook", "name": "handbook", "title": "The Handbook" }),
+        )
+        .unwrap();
+    assert_eq!(made["path"], "handbook");
+    assert_eq!(
+        made["made"],
+        json!([
+            "handbook/.gitignore",
+            "handbook/README.adoc",
+            "handbook/antora.yml",
+            "handbook/modules/ROOT/images/.gitkeep",
+            "handbook/modules/ROOT/nav.adoc",
+            "handbook/modules/ROOT/pages/index.adoc",
+            "handbook/modules/ROOT/partials/.gitkeep",
+        ])
+    );
+    assert_eq!(made["index_page"], "handbook:ROOT:page$index.adoc");
+    assert_eq!(made["repository"], false, "no repository unless asked");
+    assert!(!root.join("handbook/.git").exists());
+    // The component resolves at once.
+    let pages = client
+        .call("list_pages", json!({ "component": "handbook" }))
+        .unwrap();
+    assert_eq!(
+        pages["items"][0]["resource_id"],
+        "handbook:ROOT:page$index.adoc"
+    );
+
+    let outside = directory.path().join("elsewhere");
+    std::fs::create_dir(&outside).unwrap();
+    for (arguments, code) in [
+        (
+            json!({ "path": "handbook", "name": "again" }),
+            "invalid_argument",
+        ),
+        (
+            json!({ "path": "product", "name": "x", "subfolder": "v3" }),
+            "conflict",
+        ),
+        (
+            json!({ "path": "missing", "name": "x" }),
+            "invalid_argument",
+        ),
+        (
+            json!({ "path": "guide", "name": "Bad Name" }),
+            "invalid_argument",
+        ),
+        (
+            json!({ "path": outside.to_string_lossy(), "name": "x" }),
+            "outside_workspace",
+        ),
+    ] {
+        let refused = client.call_result("create_project", arguments.clone());
+        assert_eq!(error_code(&refused), code, "{arguments}");
+    }
+    assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
     client.stop();
 }

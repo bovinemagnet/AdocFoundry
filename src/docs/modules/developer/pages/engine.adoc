@@ -913,6 +913,29 @@ It is saved at once, because the catalog reads descriptors from disk.
 Undo and redo save and reload it again (`replay_module`).
 Undo removes the files made unless one was changed, then removes only the folders that are empty.
 
+[[new-project]]
+== New Project
+
+`new_project.rs` makes an Antora component in a folder.
+`project.new` takes `CommandArgs::NewProject(NewProject { .. })`.
+`TemplateId::Minimal` is the only template until issue #295.
+`Engine::check_new_project` is the validation that the command and the front ends share.
+It refuses a folder inside an existing component (any folder from it upwards that holds `antora.yml`), a folder that is not empty when no subfolder is given, and a subfolder that exists.
+`Engine::new_project` runs the command.
+`planned_tree(&NewProject)` returns the files it will write, so the dialog of issue #294 can preview them.
+
+The `ROOT` module comes from the same file list as New Module, so the two make the same files.
+`antora.yml` is read back and checked before the command succeeds.
+If it does not read back cleanly, everything written is removed.
+A folder outside every workspace root becomes a root, and the component joins the catalog at once, so its pages resolve without a reindex.
+A removed `antora.yml` now takes its component out of the catalog, without recording a descriptor issue.
+That is what lets undo remove a component cleanly.
+
+A Git repository is made with `adoc_git::Repository::init`, through `gix` and never the `git` executable.
+It is made only when the folder is not already inside a repository, so one is never nested, and nothing is staged or committed.
+Undo removes the files still as they were written, then the folders left empty.
+It keeps the `.git` repository.
+
 [#staged-changes]
 == Staged changes
 

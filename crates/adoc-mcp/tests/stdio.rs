@@ -290,6 +290,7 @@ fn write_tools_need_allow_write() {
         "apply_changes",
         "create_module",
         "create_page",
+        "create_project",
         "create_partial",
         "edit_page",
         "export_pdf",

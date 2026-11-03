@@ -26,6 +26,18 @@ use crate::{
 /// A document's line changes are recomputed once typing pauses this long.
 pub const GIT_SETTLE: Duration = Duration::from_millis(150);
 
+/// Whether `path` is in a Git working tree.
+pub(crate) fn in_repository(path: &Path) -> bool {
+    matches!(Repository::discover(path), Ok(Some(_)))
+}
+
+/// Makes an empty repository in `path`, through `gix`.
+pub(crate) fn init_repository(path: &Path) -> Result<(), String> {
+    Repository::init(path)
+        .map(drop)
+        .map_err(|error| error.to_string())
+}
+
 /// A repository holding at least one workspace root.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitRepository {

@@ -3,8 +3,9 @@
 //! so the page's place, name, navigation entry and undo are the app's. Nothing here writes a
 //! file. Both apply at once and need `--allow-write`; the reviewed path for a change of several
 //! files is `preview_changes` and `apply_changes`, whose `create_page` and `create_partial`
-//! operations stage the same plans. `create_module` invokes New Module's `module.new`;
-//! `create_project` waits for #291–#295.
+//! operations stage the same plans. `create_module` invokes New Module's `module.new`, and
+//! `create_project` New Antora Project's `project.new` (#292), in a folder inside the roots
+//! only, so it never adds a root.
 
 use adoc_engine::{commands::ids, text_hash, CommandArgs, CommandOutcome, NewPage};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -59,6 +60,33 @@ struct CreateModuleArgs {
     index_title: Option<String>,
     /// Make an index page; true by default.
     index: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct CreateProjectArgs {
+    /// The folder to make the project in, inside a workspace root: empty, or holding no
+    /// Antora component when `subfolder` is given.
+    path: String,
+    /// Make the component in this new folder inside `path` (`docs` in a code repository).
+    subfolder: Option<String>,
+    /// The component's `name`: lower-case letters, digits, `.`, `_` and `-`.
+    name: String,
+    /// The component's `title`; the name, title-cased, without it.
+    title: Option<String>,
+    /// The component's `version`; unversioned (`~`) without it.
+    version: Option<String>,
+    /// The `ROOT` module's families besides `pages`: `partials`, `examples`, `images`,
+    /// `attachments`; partials and images without it.
+    families: Option<Vec<String>>,
+    /// The index page's title; the component's title without it.
+    index_title: Option<String>,
+    /// Make a `README.adoc`; true by default.
+    readme: Option<bool>,
+    /// Make a `.gitignore`; true by default.
+    gitignore: Option<bool>,
+    /// Initialise an empty Git repository in `path` when it is in none; false by default.
+    #[serde(default)]
+    git_init: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -272,6 +300,88 @@ impl Server {
                 "made": made,
                 "descriptor": args.navigation.unwrap_or(true).then(|| state.shown(&root.join("antora.yml"))),
                 "index_page": index.is_file().then(|| state.engine.resource_id(&index)).flatten(),
+                "workspace_revision": state.engine.workspace_revision(),
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Make an Antora project in a folder inside the workspace, as the app's New Antora Project does (`project.new`): `antora.yml`, a `ROOT` module with an index page and a navigation file, a `.gitignore` and a README, as one undo step; the folder must be empty, or the project goes in a new `subfolder`. A Git repository is made only with `git_init`, and never inside another.",
+        output_schema = schemas::create_project(),
+        annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn create_project(&self, Parameters(args): Parameters<CreateProjectArgs>) -> Answer {
+        self.run(move |state| {
+            let root = state.confine(&args.path)?;
+            let mut families = Vec::new();
+            match &args.families {
+                None => families.extend(adoc_engine::NewModule::DEFAULT_FAMILIES),
+                Some(names) => {
+                    for name in names {
+                        let family = adoc_engine::ResourceFamily::ALL
+                            .into_iter()
+                            .find(|family| {
+                                family.directory() == name || family.to_string() == *name
+                            })
+                            .ok_or_else(|| Failure::invalid(format!("unknown family `{name}`")))?;
+                        families.push(family);
+                    }
+                }
+            }
+            let request = adoc_engine::NewProject {
+                subfolder: args.subfolder.clone(),
+                title: args.title.clone().unwrap_or_default(),
+                version: args.version.clone(),
+                families,
+                index_title: args.index_title.clone().unwrap_or_default(),
+                readme: args.readme.unwrap_or(true),
+                gitignore: args.gitignore.unwrap_or(true),
+                git_init: args.git_init,
+                ..adoc_engine::NewProject::new(root.clone(), &args.name)
+            };
+            let component = state
+                .engine
+                .check_new_project(&request)
+                .map_err(|problem| {
+                    let code =
+                        if problem.contains("exists already") || problem.contains("not empty") {
+                            ErrorCode::Conflict
+                        } else {
+                            ErrorCode::InvalidArgument
+                        };
+                    Failure::new(code, problem)
+                })?;
+            state.confine(&component.to_string_lossy())?;
+            let had_repository = root.join(".git").exists();
+            let CommandOutcome::Opened(index) = state
+                .engine
+                .invoke(ids::PROJECT_NEW, CommandArgs::NewProject(request.clone()))
+                .map_err(|error| match error {
+                    adoc_engine::EngineError::InvalidRequest(_) => {
+                        Failure::new(ErrorCode::InvalidArgument, error.to_string())
+                    }
+                    other => Failure::from(other),
+                })?
+            else {
+                return Err(Failure::internal("the project has no index page"));
+            };
+            let mut made: Vec<String> = adoc_engine::planned_tree(&request)
+                .iter()
+                .map(|path| state.shown(path))
+                .collect();
+            made.sort();
+            let index_page = state
+                .engine
+                .document(index)
+                .and_then(|document| state.engine.resource_id(&document.path.clone()));
+            Ok(json!({
+                "schema_version": SCHEMA_VERSION,
+                "component": args.name,
+                "path": state.shown(&component),
+                "made": made,
+                "index_page": index_page,
+                "repository": !had_repository && root.join(".git").exists(),
                 "workspace_revision": state.engine.workspace_revision(),
             }))
         })

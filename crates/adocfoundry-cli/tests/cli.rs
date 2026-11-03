@@ -685,3 +685,66 @@ fn new_module_makes_a_module_through_the_engine_command() {
     assert!(!again.status.success());
     assert!(String::from_utf8_lossy(&again.stderr).contains("exists already"));
 }
+
+#[test]
+fn new_project_scaffolds_a_component_that_checks_clean() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("site");
+    std::fs::create_dir(&root).unwrap();
+    let root_text = root.to_string_lossy().into_owned();
+    let output = cli(&["new-project", &root_text, "--name", "demo", "--no-git"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let descriptor = std::fs::read_to_string(root.join("antora.yml")).unwrap();
+    insta::assert_snapshot!(
+        "new_project",
+        format!("{}\n--- antora.yml\n{descriptor}", stdout(&output))
+    );
+    assert!(!root.join(".git").exists());
+
+    let check = cli(&["check", &root_text]);
+    assert!(check.status.success(), "{}", stdout(&check));
+    assert_eq!(stdout(&check), "", "check reports nothing");
+
+    // A folder that is not empty is refused, unless the project goes in a subfolder.
+    let again = cli(&["new-project", &root_text, "--name", "other"]);
+    assert_eq!(again.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&again.stderr).contains("New Module"));
+    let code = directory.path().join("code");
+    std::fs::create_dir(&code).unwrap();
+    std::fs::write(code.join("main.rs"), "fn main() {}\n").unwrap();
+    let code_text = code.to_string_lossy().into_owned();
+    let output = cli(&[
+        "new-project",
+        &code_text,
+        "--name",
+        "tool",
+        "--subfolder",
+        "docs",
+        "--title",
+        "The Tool",
+        "--version",
+        "1.0",
+        "--no-readme",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout(&output).contains("made docs/antora.yml"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(!code.join("docs/README.adoc").exists());
+    assert!(code.join(".git").is_dir(), "Git initialised by default");
+    let descriptor = std::fs::read_to_string(code.join("docs/antora.yml")).unwrap();
+    assert!(
+        descriptor.contains("title: \"The Tool\"\nversion: \"1.0\"\n"),
+        "{descriptor}"
+    );
+}

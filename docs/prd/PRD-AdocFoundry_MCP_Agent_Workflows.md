@@ -476,6 +476,7 @@ Decision 6 is deferred with `build_site`: the build waits for #293's command and
 
 ### Open at the end of the epic
 
-- `create_project` waits for #291–#295 and `build_site` for #293 and #334: the follow-on capabilities §13 says do not block the milestone.
+- `build_site` waits for #293 and #334: a follow-on capability §13 says does not block the milestone.
+- `create_project` came with #292 (named so, as §7.6 has it, though #292 says `new_project`): it invokes `project.new`, and the path policy §7.6 asked for is that the folder and the component's folder must lie inside the server's roots (`outside_workspace` otherwise), so it never adds a root, though the engine's command makes a root of a folder outside them. It makes a Git repository only with `git_init` (false by default, where the CLI and the app's dialog default to one). Templates (#295) are not offered until they exist.
 
 No implementation is claimed by this PRD beyond the packages noted above. The tool names, request/response examples, flags and Rust interfaces in this document are **proposed**, not implemented public APIs. The primary specifications for the underlying quality and impact analyses are `PRD-AdocFoundry_Documentation_Quality.md` and `PRD-AdocFoundry_Documentation_Impact.md` in `docs/prd/` (merged in #298). Their semantic decisions supersede this document's descriptions in case of discrepancy. When implementation diverges, record the reason here and update this PRD in the same PR, following the existing AdocFoundry convention.
