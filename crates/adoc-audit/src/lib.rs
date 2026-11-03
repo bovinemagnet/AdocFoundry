@@ -12,7 +12,8 @@
 //!
 //! The audit does not restate what the existing diagnostics already report. A finding for one
 //! of them carries its [`adoc_core::DiagnosticCode`] ([`FindingCode::Diagnostic`]), its severity
-//! and its message unchanged; no `quality.*` rule is ever defined for the same fault (an
+//! and its message, unchanged but for paths beneath a workspace root, which are written relative
+//! to it so that no absolute path leaves the machine in a report; no `quality.*` rule is ever defined for the same fault (an
 //! unresolved navigation entry, for one, stays `adoc.antora.nav-unresolved`). The policy can
 //! exclude such a finding for one resource, but cannot change its severity.
 //!

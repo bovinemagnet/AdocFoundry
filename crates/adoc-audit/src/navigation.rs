@@ -13,7 +13,8 @@
 use std::{collections::BTreeSet, path::Path};
 
 use adoc_antora::{
-    nav_tree, parse_nav, parse_resource_id, ComponentDescriptor, NavItem, NavTree, ResourceFamily,
+    nav_tree, parse_nav, parse_resource_id, ComponentDescriptor, NavError, NavItem, NavTree,
+    ResourceFamily,
 };
 use adoc_core::{DiagnosticCode, SourceRange};
 
@@ -48,7 +49,7 @@ fn component_version(
             Err(error) => (
                 Vec::new(),
                 Some(Unknown {
-                    reason: format!("Its navigation could not be read: {error}"),
+                    reason: unreadable(context, &error),
                 }),
             ),
         };
@@ -153,6 +154,23 @@ fn component_version(
         }
     }
     builder.coverage(coverage);
+}
+
+/// Why the navigation could not be read, naming files as the report does: relative to their
+/// root, never by an absolute path (a [`NavError`]'s own message holds one).
+fn unreadable(context: &Context<'_>, error: &NavError) -> String {
+    match error {
+        // The reader's message is left out: a front end's reader may name the path in it.
+        NavError::Read { path, .. } => format!(
+            "Its navigation file {} could not be read",
+            context.location(path, None).path
+        ),
+        NavError::OutsideModules { path } => format!(
+            "Its navigation file {} is not in a module",
+            context.location(path, None).path
+        ),
+        NavError::UnknownComponent { .. } => "Its navigation could not be read".to_owned(),
+    }
 }
 
 /// The entries of `tree` whose targets cannot be known without the build: an `include::`

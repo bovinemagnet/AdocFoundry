@@ -152,12 +152,14 @@ impl Context<'_> {
         }
     }
 
-    /// A finding for an existing diagnostic: its code, severity, message and range.
+    /// A finding for an existing diagnostic: its code, severity, message and range. The message
+    /// is the diagnostic's own, except that a path beneath a root is written relative to it
+    /// ([`Context::relative_paths`]).
     pub(crate) fn finding_for(&self, path: &Path, diagnostic: &Diagnostic) -> Finding {
         let mut finding = Finding::new(
             FindingCode::Diagnostic(diagnostic.code),
             Severity::from(diagnostic.severity),
-            diagnostic.message.clone(),
+            self.relative_paths(&diagnostic.message),
             self.location(path, Some(diagnostic.range)),
         );
         finding.coordinate = self.coordinate(path);
@@ -186,6 +188,39 @@ impl Context<'_> {
             (0, name)
         });
         Location::new(root, relative, range)
+    }
+
+    /// `message` with every path beneath a root written relative to it with `/` separators, as
+    /// the report writes paths, so that no absolute path leaves the machine in a report. A root
+    /// named on its own becomes its folder name.
+    pub(crate) fn relative_paths(&self, message: &str) -> String {
+        let mut message = message.to_owned();
+        for root in self.input.roots {
+            let root = normalize_path(root);
+            let absolute = root.to_string_lossy().into_owned();
+            if absolute.is_empty() || !message.contains(&absolute) {
+                continue;
+            }
+            let mut rewritten = String::with_capacity(message.len());
+            let mut rest = message.as_str();
+            while let Some(found) = rest.find(&absolute) {
+                rewritten.push_str(&rest[..found]);
+                rest = &rest[found + absolute.len()..];
+                match rest.strip_prefix(['/', '\\']) {
+                    Some(after) => {
+                        let end = after
+                            .find(|c: char| c == '`' || c == '\'' || c == '"' || c.is_whitespace())
+                            .unwrap_or(after.len());
+                        rewritten.push_str(&after[..end].replace('\\', "/"));
+                        rest = &after[end..];
+                    }
+                    None => rewritten.push_str(&root_name(&root)),
+                }
+            }
+            rewritten.push_str(rest);
+            message = rewritten;
+        }
+        message
     }
 
     /// The coordinate of the Antora resource at `path`, if it is one.
@@ -218,4 +253,42 @@ pub(crate) fn published_page(relative: &Path) -> bool {
             .is_some_and(|part| part.starts_with(['_', '.']))
     });
     adoc && !hidden
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn messages_name_paths_beneath_a_root_relative_to_it() {
+        let workspace = WorkspaceState::new();
+        let roots = [PathBuf::from("/work/docs")];
+        let read = |_: &Path| Ok(String::new());
+        let input = AuditInput {
+            workspace: &workspace,
+            roots: &roots,
+            read: &read,
+        };
+        let context = Context {
+            input: &input,
+            scope: AuditScope::Workspace,
+        };
+        assert_eq!(
+            context.relative_paths("`/work/docs/a/antora.yml` is invalid; see /work/docs/b/c.adoc"),
+            "`a/antora.yml` is invalid; see b/c.adoc"
+        );
+        assert_eq!(
+            context.relative_paths(r"`/work/docs\a\antora.yml` is invalid"),
+            "`a/antora.yml` is invalid",
+            "separators after the root become `/`"
+        );
+        assert_eq!(
+            context.relative_paths("Nothing under /work/docs is indexed"),
+            "Nothing under docs is indexed"
+        );
+        assert_eq!(
+            context.relative_paths("/elsewhere/x.adoc"),
+            "/elsewhere/x.adoc"
+        );
+    }
 }

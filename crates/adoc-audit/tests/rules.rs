@@ -292,3 +292,85 @@ fn the_same_workspace_gives_the_same_report() {
     assert_eq!(whole(), whole());
     assert_eq!(whole().roots(), ["audit"]);
 }
+
+#[test]
+fn an_unreadable_navigation_file_is_named_by_its_relative_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let component = root.join("docs");
+    fs::create_dir_all(component.join("modules/ROOT/pages")).unwrap();
+    fs::write(
+        component.join("antora.yml"),
+        "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    fs::write(component.join("modules/ROOT/pages/index.adoc"), "= Docs\n").unwrap();
+    fs::write(component.join("modules/ROOT/pages/other.adoc"), "= Other\n").unwrap();
+    let mut workspace = WorkspaceState::new();
+    workspace.index_roots(std::slice::from_ref(&root)).unwrap();
+    let roots = [root.clone()];
+    let read = |path: &Path| fs::read_to_string(path);
+    let input = AuditInput {
+        workspace: &workspace,
+        roots: &roots,
+        read: &read,
+    };
+    let report = audit(&input, AuditScope::Workspace).finish(&Policy::default());
+    let skip = report
+        .skips()
+        .iter()
+        .find(|skip| skip.code == UNLISTED)
+        .expect("the unlisted page is skipped");
+    assert!(
+        skip.reason.contains("docs/modules/ROOT/nav.adoc"),
+        "{}",
+        skip.reason
+    );
+    let text = serde_json::to_string(&report).unwrap();
+    let absolute = root.to_string_lossy().replace('\\', "\\\\");
+    assert!(!text.contains(&*absolute), "an absolute path in {text}");
+}
+
+#[test]
+fn existing_messages_name_files_relative_to_their_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let component = root.join("broken");
+    fs::create_dir_all(component.join("modules/ROOT/pages")).unwrap();
+    fs::write(component.join("antora.yml"), "name: [unclosed\n").unwrap();
+    fs::write(
+        component.join("modules/ROOT/pages/index.adoc"),
+        "= Broken\n",
+    )
+    .unwrap();
+    let mut workspace = WorkspaceState::new();
+    workspace.index_roots(std::slice::from_ref(&root)).unwrap();
+    let roots = [root.clone()];
+    let read = |path: &Path| fs::read_to_string(path);
+    let input = AuditInput {
+        workspace: &workspace,
+        roots: &roots,
+        read: &read,
+    };
+    let report = audit(&input, AuditScope::Workspace).finish(&Policy::default());
+    let invalid: Vec<&str> = report
+        .findings()
+        .iter()
+        .filter(|finding| {
+            finding.code == FindingCode::Diagnostic(DiagnosticCode::AntoraInvalidDescriptor)
+        })
+        .map(|finding| finding.message.as_str())
+        .collect();
+    assert!(!invalid.is_empty(), "{:#?}", report.findings());
+    assert!(
+        invalid
+            .iter()
+            .all(|message| message.contains("`broken/antora.yml` is invalid")),
+        "{invalid:#?}"
+    );
+    let text = serde_json::to_string(&report).unwrap();
+    assert!(
+        !text.contains(&*root.to_string_lossy()),
+        "an absolute path in {text}"
+    );
+}
