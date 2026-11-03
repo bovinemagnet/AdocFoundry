@@ -382,6 +382,14 @@ The tests are:
 * `mcp_cursor_rejects_stale_index_revision`, where a page added on disk makes an old cursor stale
 * `check_pages_its_diagnostics_with_a_cursor`
 
+`crates/adoc-mcp/tests/impact.rs` runs the `analyse_impact` tool against temporary Git repositories, made with `adoc_git::testing::TestRepo` (a test-only dependency) and holding `tests/fixtures/impact`.
+The tests are:
+
+* `mcp_impact_partial_propagates_with_evidence`, where a nested partial reaches both including pages, with evidence `both`, dependency paths, and provenance left out on request
+* `mcp_impact_prose_does_not_propagate_via_xref`
+* `mcp_impact_ref_comparison_uses_two_snapshots`, which checks the consumers of a removed partial from the base, the referrers of a moved page as broken, uncommitted work left untouched, and the error codes
+* `mcp_analysis_pagination_does_not_hide_incomplete`, with one impact a page, where every page is partial and carries the whole report's counts
+
 The contract tests cover the discovery tools too.
 Every read tool's structured content conforms to its output schema.
 `EXISTING_READ_TOOLS` holds the ten tools that came before `list_pages`, `get_outline`, `get_page_context` and `find_references`, which must stay.

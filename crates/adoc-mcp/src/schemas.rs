@@ -641,3 +641,57 @@ pub fn create_module() -> Arc<JsonObject> {
         ],
     )
 }
+
+pub fn analyse_impact() -> Arc<JsonObject> {
+    // The impact report of `adoc-impact` (its own `schema_version`), with the impacts paged
+    // and the fields below added; nested parts are the report's.
+    object(
+        json!({
+            "schema_version": { "type": "integer", "description": "The impact report's schema." },
+            "source": any_object(),
+            "completeness": {
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "description": "`complete`, `partial` or `unavailable`." },
+                    "gaps": list(any_object()),
+                },
+                "required": ["status"],
+            },
+            "changes": list(any_object()),
+            "impacts": list(json!({
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "description": "`render`, `reference_integrity`, `navigation` or `publication`." },
+                    "confidence": { "type": "string" },
+                    "status": { "type": "string" },
+                    "path": { "type": "string" },
+                    "resource_id": { "type": "string" },
+                    "component": { "type": "string" },
+                    "version": { "type": "string" },
+                    "publication": { "type": "string" },
+                    "origin": { "type": "string" },
+                    "evidence": { "type": "string", "description": "`base`, `head` or `both`." },
+                    "via": list(json!({ "type": "string" })),
+                    "source": any_object(),
+                    "anchor": { "type": "string" },
+                },
+                "required": ["kind", "confidence", "path", "origin", "evidence"],
+            })),
+            "counts": any_object(),
+            "impacts_total": { "type": "integer", "description": "Impacts the filters take, on every page." },
+            "next_cursor": optional_string(),
+            "truncated": truncated(),
+            "workspace_revision": { "type": "integer" },
+        }),
+        &[
+            "schema_version",
+            "completeness",
+            "changes",
+            "impacts",
+            "counts",
+            "impacts_total",
+            "next_cursor",
+            "workspace_revision",
+        ],
+    )
+}

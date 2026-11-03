@@ -461,9 +461,14 @@ Decision 6 is deferred with `build_site`: the build waits for #293's command and
 - **Subscriptions** are deferred to #335: rmcp 3.7 has both the legacy `resources/subscribe` and 2026-07-28's `subscriptions/listen`, and the unsaved-buffer policy (decision 8) bears on them. `mcp_resource_change_notifications_are_revision_scoped` goes with them.
 - **QA:** the manual checks for the whole epic are `docs/qa/mcp.md`.
 
+### M4 (#317)
+
+- `analyse_impact` maps a `source` selector, exactly one of `git_refs`, `working_tree` and `paths` (a tagged union, so two cannot be given), to `Engine::analyse_impact`, the CLI's call, and pages the report's impacts after filtering them by `component`/`version`; completeness, gaps and counts are the whole report's on every page. `include_provenance: false` drops `via` and `source`; `max_depth` sets the include depth. Errors: an unknown ref `not_found`, no repository for a Git source `unavailable`, a path outside the roots `outside_workspace`.
+- Two-ref mode uses both revisions' own snapshots from Git objects (Impact PRD §6.1); the live index and working tree are never read, which `mcp_impact_ref_comparison_uses_two_snapshots` checks with uncommitted work present.
+- The tests build repositories with `adoc_git::testing::TestRepo`, a dev-dependency of `adoc-mcp` only; the server itself still depends on `adoc-engine` and `adoc-core` alone.
+
 ### Open at the end of the epic
 
-- M4 (#317, `analyse_impact`) waits for the Impact epic's engine API (#307–#310); nothing MCP-side stands in for it.
-- `create_module` (#319) waits for #290, `create_project` for #291–#295, `build_site` for #293 and #334, subscriptions for #335.
+- `create_project` waits for #291–#295, `build_site` for #293 and #334, and subscriptions for #335: the follow-on capabilities §13 says do not block the milestone.
 
 No implementation is claimed by this PRD beyond the packages noted above. The tool names, request/response examples, flags and Rust interfaces in this document are **proposed**, not implemented public APIs. The primary specifications for the underlying quality and impact analyses are `PRD-AdocFoundry_Documentation_Quality.md` and `PRD-AdocFoundry_Documentation_Impact.md` in `docs/prd/` (merged in #298). Their semantic decisions supersede this document's descriptions in case of discrepancy. When implementation diverges, record the reason here and update this PRD in the same PR, following the existing AdocFoundry convention.
