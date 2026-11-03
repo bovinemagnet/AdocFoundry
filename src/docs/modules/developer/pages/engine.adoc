@@ -918,11 +918,11 @@ Undo removes the files made unless one was changed, then removes only the folder
 
 `new_project.rs` makes an Antora component in a folder.
 `project.new` takes `CommandArgs::NewProject(NewProject { .. })`.
-`TemplateId::Minimal` is the only template until issue #295.
+`NewProject.template` is a template id as a string, `minimal` by default.
 `Engine::check_new_project` is the validation that the command and the front ends share.
 It refuses a folder inside an existing component (any folder from it upwards that holds `antora.yml`), a folder that is not empty when no subfolder is given, and a subfolder that exists.
 `Engine::new_project` runs the command.
-`planned_tree(&NewProject)` returns the files it will write, so the dialog can preview them.
+`Engine::planned_tree(&NewProject)` returns the files it will write, so the dialog can preview them.
 
 The New Antora Project dialog and the welcome panel read the engine and keep no rules of their own.
 `Engine::new_project_request` gives the dialog's starting request: the first root, a component name made from its folder name, a `docs` subfolder when the folder holds any files, and a repository when it is in none.
@@ -948,6 +948,26 @@ It is made only when the folder is not already inside a repository, so one is ne
 Undo removes the files still as they were written, then the folders left empty.
 It keeps the `.git` repository.
 `project.new` adopts the playbook it writes into the catalog when the workspace had none, and undo forgets it, so Build Site is offered without a reindex.
+
+[[project-templates]]
+=== Templates
+
+`templates.rs` holds `Template`, `TemplateField`, `TemplateSource` and `DEFAULT_TEMPLATE`.
+`Engine::templates` lists the built-ins and then the templates from folders, and `Engine::template` finds one by id.
+`from_folder` reads a folder, following no links, and refuses what it cannot make: a file that is not UTF-8, more than 500 files, a file over 1 MiB, and a path that leaves the project (`join_relative`).
+`substitute` replaces `+{{name}}+`, `+{{title}}+`, `+{{version}}+`, `+{{index_title}}+` and `+{{year}}+`, in contents and in paths, and leaves any other `+{{...}}+`.
+A copied file replaces one the engine makes at the same path, and a folder with a file of its own gets no `.gitkeep`.
+The engine still writes `antora.yml`, the modules, the README, `.gitignore`, the playbook and `package.json` itself.
+
+`Engine::template_problems` gives the reason for each folder template that does not read and so is left out of `Engine::templates`.
+The dialog shows them.
+
+The built-ins are in `crates/adoc-engine/templates/<id>/`, embedded by the crate's `build.rs`, which makes an `include_str!` of each file.
+`Settings::templates` is a `TemplateSettings { user_dir, workspace_dir }`.
+The user's folder is relative to the user settings file, or `~/`; the workspace's must lie inside the workspace, else it is ignored with a warning.
+Folders are read each time `Engine::templates` is called.
+`NewProjectField::Template` carries a template's problem to the dialog.
+`adoc-antora`'s discovery also finds a playbook in a folder between a component's `antora.yml` and its workspace root.
 
 [[site-build]]
 == Site build

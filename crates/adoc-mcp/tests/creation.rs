@@ -328,3 +328,49 @@ fn mcp_create_project_reuses_engine_command() {
     assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
     client.stop();
 }
+
+/// `create_project` with a built-in template, and only a template the engine lists: never a
+/// folder the agent names.
+#[test]
+fn mcp_create_project_from_a_template() {
+    let (directory, root) = scratch("discovery");
+    std::fs::create_dir(root.join("manual")).unwrap();
+    let mut client = Client::start(&root, true);
+    let made = client
+        .call(
+            "create_project",
+            json!({ "path": "manual", "name": "manual", "template": "product-docs" }),
+        )
+        .unwrap();
+    assert_eq!(made["template"], "product-docs");
+    let files: Vec<&str> = made["made"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file.as_str().unwrap())
+        .collect();
+    for module in ["ROOT", "get-started", "how-to", "reference", "concepts"] {
+        let page = format!("manual/modules/{module}/pages/index.adoc");
+        assert!(files.contains(&page.as_str()), "{page}: {files:?}");
+    }
+    assert!(files.contains(&"manual/modules/ROOT/partials/attributes.adoc"));
+
+    // A template's folder is refused, even a real one.
+    let folder = directory.path().join("house");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("template.toml"), "name = \"House\"\n").unwrap();
+    std::fs::create_dir(root.join("other")).unwrap();
+    for template in [
+        folder.to_string_lossy().into_owned(),
+        "../house".to_owned(),
+        "nope".to_owned(),
+    ] {
+        let refused = client.call_result(
+            "create_project",
+            json!({ "path": "other", "name": "other", "template": template }),
+        );
+        assert_eq!(error_code(&refused), "not_found", "{template}");
+    }
+    assert_eq!(std::fs::read_dir(root.join("other")).unwrap().count(), 0);
+    client.stop();
+}

@@ -65,6 +65,9 @@ diagram_timeout = 30             # seconds a diagram may render (Mermaid include
 node = ""                        # optional absolute path to node; npm is found beside it, else on PATH (Build Site)
 build_timeout = 600              # seconds Build Site may run, npm install included, before it is stopped
 
+[templates]
+dir = "templates"                # folder of project templates, one per subfolder (also allowed in a workspace file, inside the workspace)
+
 [git]
 enabled = true                   # false: no repository is discovered
 show_markers = true              # reserved for change markers
@@ -220,6 +223,11 @@ check = true                     # look for a newer release at start-up
 |integer
 |`600`
 |The number of seconds a site build may run, `npm install` included, before it and every process it started are stopped. A build that writes more than 8 MiB of output is also stopped. User file only.
+
+|`templates.dir`
+|string
+|`"templates"`
+|The folder of project templates for New Antora Project, each template a subfolder holding a `template.toml`. In the user file it is relative to the settings file's folder, or starts with `~/` for the home folder, and by default is the `templates` folder beside it. A workspace file may set it too, relative to the workspace and only to a folder inside it; otherwise it is ignored with a warning. See xref:using-the-editor.adoc#project-templates[Project templates].
 
 |`git.enabled`
 |boolean
@@ -381,7 +389,7 @@ See xref:pdf-export.adoc[Exporting to PDF].
 
 == What a workspace file may set
 
-A workspace file may override `editor.*`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `graph.*`, `quality.*`, `spelling.enabled` and `spelling.language`.
+A workspace file may override `editor.*`, `templates.dir`, `sidebar.navigation.default_expansion`, `sidebar.modules.default_expansion`, `sidebar.follow_active`, `workspace.ignore`, `pdf.*`, `graph.*`, `quality.*`, `spelling.enabled` and `spelling.language`.
 The two depths override separately.
 Both files may set `[quality]`: a rule's severity from the workspace file wins, and the exclusions and the providers of both files apply.
 `tools.*` is accepted only in the user file, so a repository cannot point the editor at an executable of its choosing.

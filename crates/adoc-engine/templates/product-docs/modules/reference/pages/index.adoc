@@ -1,0 +1,4 @@
+= Reference
+include::ROOT:partial$attributes.adoc[]
+
+The facts to look up: settings, commands and limits.

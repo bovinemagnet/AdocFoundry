@@ -60,6 +60,7 @@ mod staging;
 #[cfg(feature = "typst")]
 mod stem;
 mod tabs;
+mod templates;
 mod undo;
 pub mod updates;
 #[cfg(feature = "git")]
@@ -106,9 +107,7 @@ pub use local_history::{SavedVersion, HISTORY_DIR, HISTORY_MAX_PAGE, HISTORY_SWE
 pub use navigation::NavigationPosition;
 pub use new_module::{valid_module_name, ModuleComponent, NewModule};
 pub use new_page::{NewPage, PageModule};
-pub use new_project::{
-    planned_tree, NewProject, NewProjectField, NewProjectProblem, TemplateId, Welcome,
-};
+pub use new_project::{NewProject, NewProjectField, NewProjectProblem, Welcome};
 #[cfg(feature = "typst")]
 pub use pdf_preview::PdfPreview;
 pub use preview::{
@@ -123,8 +122,8 @@ pub use session::{WindowPlacement, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_
 pub use settings::{
     pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, GraphColour,
     GraphSettings, HistorySettings, PdfSettings, QualitySettings, Settings, SidebarSettings,
-    SpellingSettings, ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings,
-    USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    SpellingSettings, TemplateSettings, ThemePreference, ToolSettings, UpdateSettings,
+    WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 pub use site_build::{
     SiteBuild, SiteBuildBlocker, SiteBuildState, DEFAULT_BUILD_TIMEOUT, MAX_BUILD_OUTPUT,
@@ -137,6 +136,7 @@ pub use staging::{text_hash, ChangeSet, FileCreate, StagedFile};
 #[cfg(feature = "typst")]
 pub use stem::StemProvider;
 pub use tabs::{OpenDisposition, TabItem};
+pub use templates::{Template, TemplateField, TemplateSource, DEFAULT_TEMPLATE};
 pub use words::{count_words, WordCount, WORDS_PER_MINUTE, WORD_COUNT_SETTLE};
 
 pub use adoc_core::FileAccess;

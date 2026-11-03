@@ -1,0 +1,4 @@
+= Concepts
+include::ROOT:partial$attributes.adoc[]
+
+How {product-name} works, and why it works that way.

@@ -155,6 +155,18 @@ impl Default for ToolSettings {
     }
 }
 
+/// The `[templates]` table: the folders of New Antora Project's own templates, each a
+/// subfolder holding a `template.toml`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TemplateSettings {
+    /// The user's, `[templates] dir` in the user settings file: `templates` beside that file
+    /// unless it says otherwise, and none without a user settings file.
+    pub user_dir: Option<PathBuf>,
+    /// A team's, `[templates] dir` in the workspace's `.adocfoundry.toml`, relative to the
+    /// workspace and only inside it.
+    pub workspace_dir: Option<PathBuf>,
+}
+
 /// The `[git]` table.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitSettings {
@@ -354,6 +366,7 @@ pub struct Settings {
     pub spelling: SpellingSettings,
     pub graph: GraphSettings,
     pub quality: QualitySettings,
+    pub templates: TemplateSettings,
     /// Problems found while loading, such as unknown keys. Shown once by the front end.
     pub warnings: Vec<String>,
     user_file: Option<PathBuf>,
@@ -431,6 +444,11 @@ impl Settings {
             state_dir: self.state_dir.clone(),
             ..Self::default()
         };
+        fresh.templates.user_dir = fresh
+            .user_file
+            .as_deref()
+            .and_then(Path::parent)
+            .map(|folder| folder.join("templates"));
         if let Some(path) = fresh.user_file.clone() {
             if let Some(table) = read_table(&path)? {
                 fresh.apply(&table, Layer::User, &path);
@@ -510,6 +528,10 @@ impl Settings {
                     self.apply_quality_providers(&source, value);
                     continue;
                 }
+                if section == "templates" && key == "dir" {
+                    self.apply_templates_dir(&source, layer, path, value);
+                    continue;
+                }
                 // `[sidebar.navigation]` and `[sidebar.modules]` are tables of their own.
                 let panel = value.as_table().filter(|_| {
                     section == "sidebar" && matches!(key.as_str(), "navigation" | "modules")
@@ -522,6 +544,47 @@ impl Settings {
                         }
                     }
                     None => self.apply_one(&source, layer, section, key, value),
+                }
+            }
+        }
+    }
+
+    /// `[templates] dir`: from the user file, a path (`~/` the home folder) relative to the
+    /// file's folder; from a workspace's, a folder inside the workspace.
+    fn apply_templates_dir(
+        &mut self,
+        source: &str,
+        layer: Layer,
+        file: &Path,
+        value: &toml::Value,
+    ) {
+        let Some(text) = value.as_str() else {
+            self.warn(source, "templates.dir", "expected a string");
+            return;
+        };
+        let base = file.parent().unwrap_or(Path::new(""));
+        let path = match (text.strip_prefix("~/"), dirs::home_dir()) {
+            (Some(rest), Some(home)) => home.join(rest),
+            _ => base.join(text),
+        };
+        let path = adoc_index::normalize_path(&path);
+        match layer {
+            Layer::User => self.templates.user_dir = Some(path),
+            Layer::Workspace => {
+                let base = adoc_index::normalize_path(base);
+                // Lexically, and once links are followed, as far as the folder exists.
+                let inside = path.starts_with(&base)
+                    && fs::canonicalize(&path).ok().is_none_or(|real| {
+                        fs::canonicalize(&base).is_ok_and(|real_base| real.starts_with(real_base))
+                    });
+                if inside {
+                    self.templates.workspace_dir = Some(path);
+                } else {
+                    self.warn(
+                        source,
+                        "templates.dir",
+                        "must be a folder inside the workspace",
+                    );
                 }
             }
         }
@@ -1215,6 +1278,51 @@ mod tests {
         fs::write(&user, "[sidebar.navigation]\nbreadth = 2\n").unwrap();
         let settings = Settings::load(Some(&user), None).unwrap();
         assert_eq!(settings.warnings.len(), 1, "an unknown key warns");
+    }
+
+    #[test]
+    fn template_folders_are_beside_the_user_file_and_inside_the_workspace() {
+        assert_eq!(Settings::default().templates, TemplateSettings::default());
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("adocfoundry.toml");
+        let workspace = directory.path().join("docs");
+        fs::create_dir(&workspace).unwrap();
+        let settings = Settings::load(Some(&user), Some(&workspace)).unwrap();
+        assert_eq!(
+            settings.templates.user_dir,
+            Some(adoc_index::normalize_path(
+                &directory.path().join("templates")
+            ))
+        );
+        assert_eq!(settings.templates.workspace_dir, None);
+
+        fs::write(&user, "[templates]\ndir = \"house\"\n").unwrap();
+        fs::write(
+            workspace.join(WORKSPACE_SETTINGS_FILE),
+            "[templates]\ndir = \"tools/templates\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(&workspace)).unwrap();
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+        assert_eq!(
+            settings.templates.user_dir,
+            Some(adoc_index::normalize_path(&directory.path().join("house")))
+        );
+        assert_eq!(
+            settings.templates.workspace_dir,
+            Some(adoc_index::normalize_path(
+                &workspace.join("tools/templates")
+            ))
+        );
+
+        fs::write(
+            workspace.join(WORKSPACE_SETTINGS_FILE),
+            "[templates]\ndir = \"../elsewhere\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(&workspace)).unwrap();
+        assert_eq!(settings.templates.workspace_dir, None);
+        assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
     }
 
     #[test]

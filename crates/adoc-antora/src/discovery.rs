@@ -34,10 +34,11 @@ pub fn discover_antora_workspace_ignoring(
     component_roots.dedup();
 
     let mut result = DiscoveryResult::default();
-    // The first root with a playbook supplies the site-wide attributes, else the first
-    // component version with one beside its `antora.yml` (a component in `docs/` of a code
-    // repository, with its local playbook).
-    for folder in roots.iter().chain(&component_roots) {
+    // The first root with a playbook supplies the site-wide attributes, else the nearest one
+    // above the first component version that has one, beside its `antora.yml` or in a folder
+    // between it and its root (a component in `docs/` of a code repository, or several in
+    // `docs/components/`, with their local playbook).
+    for folder in playbook_folders(roots, &component_roots) {
         let path = folder.join(crate::PLAYBOOK_FILE);
         if path.is_file() {
             match crate::read_playbook(&normalize_path(&path)) {
@@ -54,6 +55,28 @@ pub fn discover_antora_workspace_ignoring(
         }
     }
     Ok(result)
+}
+
+/// Where a playbook is looked for, in order: each root, then each component version's folder
+/// and the folders above it up to (not including) its root.
+fn playbook_folders<'a>(
+    roots: &'a [PathBuf],
+    component_roots: &'a [PathBuf],
+) -> impl Iterator<Item = PathBuf> + 'a {
+    roots
+        .iter()
+        .cloned()
+        .chain(component_roots.iter().flat_map(move |component| {
+            let root = roots
+                .iter()
+                .filter(|root| component.starts_with(root))
+                .max_by_key(|root| root.components().count());
+            component
+                .ancestors()
+                .take_while(move |folder| root.is_some_and(|root| *folder != root.as_path()))
+                .map(Path::to_path_buf)
+                .collect::<Vec<_>>()
+        }))
 }
 
 /// The ids a page's `:page-aliases:` header attribute lists, qualified with the page's own
@@ -283,7 +306,7 @@ pub fn discover_antora_files(
         .collect();
     component_roots.sort();
     component_roots.dedup();
-    for folder in roots.iter().chain(&component_roots) {
+    for folder in playbook_folders(roots, &component_roots) {
         let path = normalize_path(&folder.join(crate::PLAYBOOK_FILE));
         if let Some(source) = files.get(&path) {
             match crate::parse_playbook(&path, source) {
@@ -473,6 +496,42 @@ mod tests {
         let listed =
             crate::discover_antora_files(&[root.path().to_path_buf()], &files, &[] as &[&str]);
         assert!(listed.catalog.playbook().is_some());
+    }
+
+    #[test]
+    fn a_playbook_above_components_is_found_up_to_their_root() {
+        let root = tempfile::tempdir().unwrap();
+        let docs = root.path().join("docs");
+        for component in ["guide", "reference"] {
+            let folder = docs.join("components").join(component);
+            std::fs::create_dir_all(folder.join("modules/ROOT/pages")).unwrap();
+            std::fs::write(
+                folder.join("antora.yml"),
+                format!("name: {component}\nversion: ~\n"),
+            )
+            .unwrap();
+            std::fs::write(folder.join("modules/ROOT/pages/index.adoc"), "= Home\n").unwrap();
+        }
+        std::fs::write(docs.join("antora-playbook.yml"), "site:\n  title: Both\n").unwrap();
+        // Above the root, a playbook is not the workspace's.
+        let outside = tempfile::tempdir().unwrap();
+        let nested = outside.path().join("work");
+        std::fs::create_dir_all(nested.join("c/modules/ROOT/pages")).unwrap();
+        std::fs::write(nested.join("c/antora.yml"), "name: c\nversion: ~\n").unwrap();
+        std::fs::write(
+            outside.path().join("antora-playbook.yml"),
+            "site:\n  title: No\n",
+        )
+        .unwrap();
+
+        let discovery = discover_antora_workspace(&[root.path().to_path_buf()]).unwrap();
+        let playbook = discovery
+            .catalog
+            .playbook()
+            .expect("found above the components");
+        assert_eq!(playbook.site_title.as_deref(), Some("Both"));
+        let discovery = discover_antora_workspace(&[nested]).unwrap();
+        assert!(discovery.catalog.playbook().is_none());
     }
 
     #[test]

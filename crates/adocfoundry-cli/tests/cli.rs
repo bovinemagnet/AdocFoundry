@@ -687,6 +687,57 @@ fn new_module_makes_a_module_through_the_engine_command() {
 }
 
 #[test]
+fn new_project_from_a_template_checks_clean() {
+    let directory = tempfile::tempdir().unwrap();
+    for (template, name) in [("multi-component", Some("shop")), ("single-page", None)] {
+        let root = directory.path().join(template);
+        std::fs::create_dir(&root).unwrap();
+        let root_text = root.to_string_lossy().into_owned();
+        let mut arguments = vec![
+            "new-project",
+            &root_text,
+            "--template",
+            template,
+            "--no-git",
+        ];
+        if let Some(name) = name {
+            arguments.extend(["--name", name]);
+        }
+        let output = cli(&arguments);
+        assert!(
+            output.status.success(),
+            "{template}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let check = cli(&["check", &root_text]);
+        assert_eq!(stdout(&check), "", "{template}: check reports nothing");
+        match template {
+            "multi-component" => {
+                assert!(stdout(&output).contains("made components/reference/antora.yml"));
+                assert!(root.join("components/guide/antora.yml").is_file());
+            }
+            _ => assert!(root.join("index.adoc").is_file()),
+        }
+    }
+    // A template that names components needs `--name`; an unknown one is refused.
+    let root = directory.path().join("unnamed");
+    std::fs::create_dir(&root).unwrap();
+    let root_text = root.to_string_lossy().into_owned();
+    let output = cli(&["new-project", &root_text, "--template", "product-docs"]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--name"));
+    let output = cli(&[
+        "new-project",
+        &root_text,
+        "--name",
+        "x",
+        "--template",
+        "nope",
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no template `nope`"));
+}
+
+#[test]
 fn new_project_scaffolds_a_component_that_checks_clean() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("site");

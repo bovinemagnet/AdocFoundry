@@ -617,14 +617,19 @@ With `--subfolder`, the component goes in a new subfolder of a folder that is no
 adocfoundry-cli new-project site --name demo
 adocfoundry-cli new-project site --name demo --title "Demo Guide" --version 1.0 --no-git --no-readme --no-playbook
 adocfoundry-cli new-project my-repo --name handbook --subfolder docs
+adocfoundry-cli new-project site --name demo --template product-docs
+adocfoundry-cli new-project notes --template single-page
 ----
 
 [cols="2,4"]
 |===
 |Option |Meaning
 
+|`--template <id\|folder>`
+|The template: a built-in or listed id (`minimal` by default), or a template's folder. See xref:using-the-editor.adoc#project-templates[Project templates].
+
 |`--name <name>`
-|The component's name. It is required.
+|The component's name. It is required, except for a template that uses no name, such as `single-page`.
 
 |`--title <title>`
 |The component's title. The default is the name in title case.

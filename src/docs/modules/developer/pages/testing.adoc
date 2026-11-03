@@ -172,6 +172,34 @@ The unit test `scaffold_failure_undoes_itself` in `crates/adoc-engine/src/new_pr
 
 `mcp_create_project_reuses_engine_command` in `crates/adoc-mcp/tests/creation.rs` checks that `create_project` makes what the engine command makes.
 
+== Template tests
+
+`crates/adoc-engine/tests/templates.rs` drives templates through `project.new`.
+The tests are:
+
+* `every_builtin_template_scaffolds_and_checks_clean`
+* `single_page_needs_no_component_name`
+* `user_template_dir_is_listed_after_builtins`, which also checks that an unreadable template is left out and reported by `template_problems`
+* `a_template_cannot_write_outside_the_project`
+
+The unit tests in `crates/adoc-engine/src/templates.rs` are:
+
+* `template_substitution_covers_paths_and_contents`
+* `template_toml_hides_unused_fields`
+* `builtins_read_in_order`
+* `templates_refuse_what_they_cannot_make`
+* `folder_templates_follow_no_links_and_hold_text_only`
+* `years_are_counted_from_days`
+
+Other tests are:
+
+* `template_folders_are_beside_the_user_file_and_inside_the_workspace` in `crates/adoc-engine/src/settings.rs`
+* `a_playbook_above_components_is_found_up_to_their_root` in `crates/adoc-antora/src/discovery.rs`
+* `new_project_writes_a_playbook_that_antora_accepts`, which now builds minimal, product-docs and multi-component, each in an empty folder and in `docs/`
+* the CLI's `new_project_from_a_template_checks_clean`
+* the MCP's `mcp_create_project_from_a_template`
+* the app's `template_picker_hides_unused_fields`
+
 == Build Site tests
 
 `crates/adoc-engine/tests/build_site.rs` drives `project.build_site` headlessly.

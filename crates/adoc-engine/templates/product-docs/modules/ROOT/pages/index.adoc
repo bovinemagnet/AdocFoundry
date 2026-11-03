@@ -1,0 +1,9 @@
+= {{index_title}}
+include::partial$attributes.adoc[]
+
+The documentation of {product-name}.
+
+* xref:get-started:index.adoc[Get started]: install {product-name} and use it for the first time.
+* xref:how-to:index.adoc[How-to guides]: the steps for a task you know you want to do.
+* xref:reference:index.adoc[Reference]: the facts to look up, such as settings, commands and limits.
+* xref:concepts:index.adoc[Concepts]: how {product-name} works, and why.

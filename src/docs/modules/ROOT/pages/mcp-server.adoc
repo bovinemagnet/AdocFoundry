@@ -565,6 +565,12 @@ See xref:using-the-editor.adoc#new-module[Make a new module] for the folders, fi
 It applies at once and is not staged.
 Both the folder and the component's folder must lie inside the server's roots.
 
+Its `template` argument is `minimal` by default.
+It takes a built-in id or a listed `user/...` or `workspace/...` id, never a folder path; any other is `not_found`.
+`name` is optional for a template that uses no name.
+The answer adds `template`, and `path` is the folder of the first `antora.yml`, or the page opened for a template with none.
+See xref:using-the-editor.adoc#project-templates[Project templates].
+
 [[build-site]]
 == Building the site
 

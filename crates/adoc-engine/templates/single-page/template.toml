@@ -1,0 +1,5 @@
+name = "Single page"
+description = "No Antora: one AsciiDoc page and AdocFoundry's settings, for a document on its own."
+antora = false
+fields = ["title", "git"]
+open = "index.adoc"

@@ -7810,3 +7810,48 @@ fn build_site_panel_shows_the_log_and_opens_the_site(cx: &mut TestAppContext) {
         cx.update(|_, cx| app.read(cx).engine.site_build().cloned())
     );
 }
+
+/// The template picker (#295) lists the built-ins, and choosing one that uses fewer fields
+/// hides the rest: `single-page` has no component name, version, README or playbook.
+#[gpui::test]
+fn template_picker_hides_unused_fields(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, mut cx) = welcome_window(|_| {}, cx);
+    cx.dispatch_action(crate::editor::bindings::NewProject);
+    redraw(&app, &mut cx);
+    for shown in [
+        "new-project-name",
+        "new-project-version",
+        "new-project-readme",
+        "new-project-playbook",
+    ] {
+        assert!(
+            cx.debug_bounds(shown).is_some(),
+            "{shown} shown for Minimal"
+        );
+    }
+    let minimal = listed_files(&mut cx);
+
+    // Single page is the fourth template.
+    click("new-project-template", &mut cx);
+    redraw(&app, &mut cx);
+    cx.simulate_keystrokes("down down down enter");
+    redraw(&app, &mut cx);
+    for hidden in [
+        "new-project-name",
+        "new-project-version",
+        "new-project-readme",
+        "new-project-playbook",
+    ] {
+        assert!(
+            cx.debug_bounds(hidden).is_none(),
+            "{hidden} hidden for Single page"
+        );
+    }
+    assert!(cx.debug_bounds("new-project-git").is_some());
+    assert_eq!(listed_files(&mut cx), 2, "index.adoc and .adocfoundry.toml");
+    assert_ne!(minimal, 2);
+    assert!(
+        !root.join("index.adoc").exists(),
+        "nothing made until Create"
+    );
+}

@@ -647,7 +647,8 @@ pub fn create_project() -> Arc<JsonObject> {
         json!({
             "schema_version": { "type": "integer" },
             "component": { "type": "string" },
-            "path": { "type": "string", "description": "The folder holding `antora.yml`." },
+            "template": { "type": "string" },
+            "path": { "type": "string", "description": "The folder holding the first `antora.yml`, or the page opened for a template with none." },
             "made": list(json!({ "type": "string" })),
             "index_page": optional_string(),
             "repository": { "type": "boolean", "description": "Whether a Git repository was initialised." },
