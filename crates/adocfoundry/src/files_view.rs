@@ -422,6 +422,38 @@ impl FilesView {
         }
     }
 
+    /// Asks for a name and makes the file in `folder`.
+    fn new_file_in(&mut self, folder: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.new_file_in(folder, window, cx)
+            });
+        }
+    }
+
+    /// Asks for the page's new path, rewriting every xref to it.
+    fn rename(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| workspace.rename_file(path, window, cx));
+        }
+    }
+
+    /// Lists the page at `path` in its module's navigation.
+    fn add_to_nav(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| workspace.add_to_nav(path, window, cx));
+        }
+    }
+
+    /// Asks for a folder and exports each of `pages` to its own PDF there.
+    fn export_pages(&mut self, pages: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.export_pages(pages, window, cx)
+            });
+        }
+    }
+
     /// Shows the page at `path` in the graph window.
     fn show_in_graph(&mut self, path: &Path, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -523,16 +555,40 @@ fn root_label(root: &Path, roots: &[PathBuf]) -> String {
     }
 }
 
+/// What a Files row's menu offers beyond the row's own commands, worked out from the engine as
+/// the menu opens.
+struct RowActions {
+    /// The folder New File makes its file in: the row's own, or the file's.
+    folder: PathBuf,
+    /// The pages Export Pages as PDF exports: the folder's.
+    pages: Vec<PathBuf>,
+    can_add_to_nav: bool,
+}
+
+impl RowActions {
+    fn of(row: &Row, engine: &adoc_engine::Engine) -> Self {
+        let folder = match row.kind {
+            RowKind::Directory | RowKind::Root => row.path.clone(),
+            _ => row.path.parent().map(Path::to_path_buf).unwrap_or_default(),
+        };
+        Self {
+            pages: engine.pages_in_folder(&folder),
+            folder,
+            can_add_to_nav: row.kind == RowKind::File && engine.can_add_to_nav(&row.path),
+        }
+    }
+}
+
 /// The menu of a Files row, or of the panel's space when `row` is `None`.
 fn files_menu(
     menu: PopupMenu,
-    row: Option<Row>,
+    row: Option<(Row, RowActions)>,
     files: WeakEntity<FilesView>,
     show_excluded: bool,
     can_delete: bool,
 ) -> PopupMenu {
     let mut menu = menu;
-    if let Some(row) = row.filter(|row| row.kind != RowKind::Note) {
+    if let Some((row, actions)) = row.filter(|(row, _)| row.kind != RowKind::Note) {
         let path = row.path.clone();
         let relative = row
             .path
@@ -594,6 +650,43 @@ fn files_menu(
                 }),
             )
             .separator();
+        if matches!(row.kind, RowKind::File | RowKind::Directory | RowKind::Root) {
+            let (creating, folder) = (files.clone(), actions.folder.clone());
+            menu = menu.item(
+                PopupMenuItem::new("New File…").on_click(move |_, window, cx| {
+                    let _ = creating.update(cx, |files, cx| files.new_file_in(&folder, window, cx));
+                }),
+            );
+            if row.kind == RowKind::File && adoc_engine::is_asciidoc_path(&path) {
+                let (renaming, renamed) = (files.clone(), path.clone());
+                menu = menu.item(
+                    PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
+                        let _ = renaming.update(cx, |files, cx| files.rename(&renamed, window, cx));
+                    }),
+                );
+            }
+            if actions.can_add_to_nav {
+                let (adding, added) = (files.clone(), path.clone());
+                menu = menu.item(PopupMenuItem::new("Add to Navigation").on_click(
+                    move |_, window, cx| {
+                        let _ = adding.update(cx, |files, cx| files.add_to_nav(&added, window, cx));
+                    },
+                ));
+            }
+            if !actions.pages.is_empty() {
+                let label = if row.kind == RowKind::File {
+                    "Export Folder's Pages as PDF…"
+                } else {
+                    "Export Pages as PDF…"
+                };
+                let (exporting, pages) = (files.clone(), actions.pages.clone());
+                menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                    let pages = pages.clone();
+                    let _ = exporting.update(cx, |files, cx| files.export_pages(pages, window, cx));
+                }));
+            }
+            menu = menu.separator();
+        }
         if row.kind == RowKind::File && can_delete {
             let (files, deleted) = (files.clone(), path.clone());
             menu = menu
@@ -648,18 +741,17 @@ impl Render for FilesView {
         let row_menu = {
             let files = files.clone();
             let rows = rows.clone();
+            let app = self.app.clone();
             move |_: usize,
                   entry: &gpui_component::tree::TreeEntry,
                   menu: PopupMenu,
                   _: &mut Window,
-                  _: &mut Context<TreeState>| {
-                files_menu(
-                    menu,
-                    rows.get(&entry.item().id).cloned(),
-                    files.clone(),
-                    show_excluded,
-                    can_delete,
-                )
+                  cx: &mut Context<TreeState>| {
+                let row = rows.get(&entry.item().id).cloned().map(|row| {
+                    let actions = RowActions::of(&row, &app.read(cx).engine);
+                    (row, actions)
+                });
+                files_menu(menu, row, files.clone(), show_excluded, can_delete)
             }
         };
         let panel_menu = {

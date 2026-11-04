@@ -236,6 +236,35 @@ impl Engine {
     }
 
     /// `dir`, normalised, if it is a root or a folder beneath one, reached without a link.
+    /// The pages directly in `folder`, by name: its AsciiDoc files, leaving out an Antora
+    /// component's partials, examples and attachments. Read from the folder itself, not the
+    /// index; empty for a folder outside the workspace or reached through a link.
+    #[must_use]
+    pub fn pages_in_folder(&self, folder: &Path) -> Vec<PathBuf> {
+        let Ok(folder) = self.listable(folder) else {
+            return Vec::new();
+        };
+        let Ok(entries) = fs::read_dir(&folder) else {
+            return Vec::new();
+        };
+        let mut pages: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .map(|entry| normalize_path(&entry.path()))
+            .filter(|path| adoc_index::is_asciidoc_path(path))
+            .filter(|path| {
+                self.workspace
+                    .antora
+                    .resource_for_path(path)
+                    .is_none_or(|resource| {
+                        resource.coordinate.family == adoc_antora::ResourceFamily::Page
+                    })
+            })
+            .collect();
+        pages.sort();
+        pages
+    }
+
     pub(crate) fn listable(&self, dir: &Path) -> Result<PathBuf, EngineError> {
         let dir = normalize_path(dir);
         let Some(root) = self.roots.iter().find(|root| dir.starts_with(root)) else {

@@ -61,6 +61,8 @@ pub mod ids {
     pub const FILE_UNDO_DELETE: CommandId = CommandId::new("file.undo_delete");
     pub const PAGE_NEW: CommandId = CommandId::new("page.new");
     pub const PAGE_NEW_PARTIAL: CommandId = CommandId::new("page.new_partial");
+    pub const FILE_NEW: CommandId = CommandId::new("file.new");
+    pub const NAV_ADD_PAGE: CommandId = CommandId::new("nav.add_page");
     pub const MODULE_NEW: CommandId = CommandId::new("module.new");
     pub const PROJECT_NEW: CommandId = CommandId::new("project.new");
     pub const PROJECT_BUILD_SITE: CommandId = CommandId::new("project.build_site");
@@ -132,6 +134,7 @@ pub mod ids {
     pub const EXPORT_PDF_PAGE: CommandId = CommandId::new("export.pdf_page");
     pub const EXPORT_PDF_COMPONENT: CommandId = CommandId::new("export.pdf_component");
     pub const EXPORT_PDF_PROFILE: CommandId = CommandId::new("export.pdf_profile");
+    pub const EXPORT_PDF_PAGES: CommandId = CommandId::new("export.pdf_pages");
     pub const EXPORT_HTML_PAGE: CommandId = CommandId::new("export.html_page");
     pub const SPELLING_ADD_TO_WORKSPACE: CommandId = CommandId::new("spelling.add_to_workspace");
     pub const SPELLING_ADD_TO_USER: CommandId = CommandId::new("spelling.add_to_user");

@@ -1284,6 +1284,35 @@ Only the app deletes: the command line, `adoc-ls` and `adoc-mcp` have no state f
 
 The app's side is `crates/adocfoundry/src/workspace_view/delete_file.rs`: the confirmation, which reads `Engine::impact_inspection` for the `ChangeSource::Removal` of the path (see <<impact-inspection>>), and the notification with its Undo.
 
+[#panel-menus]
+=== The panels' file commands
+
+The Files panel's menu, and the page commands of the Navigation and Modules menus, are commands of the engine.
+
+`file.new` (`CommandArgs::Path`) is `Engine::new_file(&Path) -> Result<DocumentId, EngineError>`.
+It makes an empty file of any kind and opens it as the active document, in one undo group that takes the file away, as New Partial's does.
+It refuses a path whose folder does not exist, is outside the roots or is reached through a link (the Files view's `listable` check), and a file that exists.
+`CommandContext::Always` holds.
+
+`nav.add_page` (`CommandArgs::Path`) is `Engine::add_to_nav(&Path)`.
+It lists a page at the end of its module's navigation file (`module.nav`), through the same `nav_entry` placement New Page uses, as one undo group in the navigation file's buffer.
+`Engine::can_add_to_nav(&Path) -> bool` says whether it would: the path is an AsciiDoc page resource of a module with a navigation file, and no navigation tree of its component version (`Engine::nav_trees`) lists it.
+`CommandContext::Antora` holds.
+
+`export.pdf_pages` (`CommandArgs::ExportPages { pages, folder }`, with the `typst` feature only) is `Engine::export_pages(pages, folder)`.
+It queues each page as an article export (`ExportTarget::File`) to `<folder>/<stem>.pdf`, or `<stem>-2.pdf` and so on for later pages named alike.
+The names are the pages', not chosen in a save dialog that would ask, so a page whose output name is already a symbolic link is refused, listed in `failed`, rather than written through; a regular file there, such as an earlier export, is replaced.
+It starts the next only when the last has finished, so a folder of pages is never typeset at once.
+Its pages send no `ExportFinished`; one `EngineEvent::PagesExported { folder, written, failed }` follows the last.
+It refuses no pages, a folder that is not one, and a second batch while one runs.
+
+`Engine::pages_in_folder(&Path) -> Vec<PathBuf>` gives the AsciiDoc files directly in a folder, by name, leaving out Antora partials, examples and attachments.
+It reads the folder itself, one directory and not the index, and is empty outside the roots or through a link.
+
+The app's side is `crates/adocfoundry/src/workspace_view/file_actions.rs`, which holds the actions and the Navigation and Modules row menu (`sidebar_row_menu`), and `files_view.rs` (`RowActions`, worked out as a row's menu opens).
+`sidebar::level_pages` picks a row's level.
+New Page Here… and Rename… open the page and then reuse the New Page and Rename Page dialogs, opened after the menu closes.
+
 ==== Reading a revision
 
 `adoc-git` reads a revision from object data alone (`src/revision.rs`).

@@ -3966,14 +3966,15 @@ fn a_collapsed_branch_survives_a_rebuild(cx: &mut TestAppContext) {
 #[gpui::test]
 fn the_panel_menu_acts_on_its_panel_only(cx: &mut TestAppContext) {
     use adoc_engine::SidebarPanel::{Modules, Navigation};
-    let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let (_directory, app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
     let modules = rows(&workspace, Modules, &mut cx);
     let tabs = cx.update(|_, cx| workspace.read(cx).tab_count(cx));
 
-    // Right-click a row: All of Navigation, then Expand All.
-    click_selector("nav-row-1", gpui::MouseButton::Right, &mut cx);
-    cx.simulate_keystrokes("down enter");
-    cx.run_until_parked();
+    // Right-click a page's row: its own commands (New Page Here…, Rename Page…, Export This
+    // Level as PDF…, Show in Graph, Inspect Impact and, with somewhere to keep deleted files,
+    // Delete File…), then All of Navigation's, Expand All first.
+    let deletes = cx.update(|_, cx| app.read(cx).engine.can_delete_files());
+    pick_from_menu("nav-row-1", 6 + usize::from(deletes), &mut cx);
     let navigation = rows(&workspace, Navigation, &mut cx);
     assert!(
         navigation.contains(&"      Linux".to_owned()),
@@ -8243,5 +8244,112 @@ fn a_long_menu_leaves_the_menu_names_in_a_short_window(cx: &mut TestAppContext) 
     assert!(
         cx.update(|_, cx| app.read(cx).engine.preview_layout().visible),
         "the View menu opened from its name at {names:?}"
+    );
+}
+
+/// Right-clicks the row `selector`, then picks the menu's `item`th item (from one) with the
+/// keyboard.
+fn pick_from_menu(selector: &'static str, item: usize, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    click_selector(selector, gpui::MouseButton::Right, cx);
+    let keys = vec!["down"; item].join(" ");
+    cx.simulate_keystrokes(&format!("{keys} enter"));
+    cx.run_until_parked();
+}
+
+/// The open text of the document at `path`.
+fn text_at(app: &Entity<AppState>, path: &Path, cx: &mut VisualTestContext) -> String {
+    cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.document_for_path(path).expect("the file is open");
+        engine.document(id).unwrap().text.to_string()
+    })
+}
+
+fn active_path(app: &Entity<AppState>, cx: &mut VisualTestContext) -> Option<PathBuf> {
+    cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .active()
+            .and_then(|id| engine.document(id))
+            .map(|document| document.path.clone())
+    })
+}
+
+#[gpui::test]
+fn the_files_menu_makes_a_file_and_adds_a_page_to_the_navigation(cx: &mut TestAppContext) {
+    let (directory, app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let module = adoc_index::normalize_path(directory.path()).join("guide-2.0/modules/ROOT");
+    let pages = module.join("pages");
+    let files =
+        cx.update(|_, cx| workspace.update(cx, |workspace, cx| workspace.show_files_for_test(cx)));
+    cx.update(|_, cx| files.update(cx, |files, cx| files.reveal(&pages, cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx)
+            .iter()
+            .any(|row| row.trim_start() == "pages")
+    }));
+
+    // A folder's menu: Copy Path, Copy Relative Path, Reveal, then New File….
+    let folder = files_row(&files, "pages", &mut cx);
+    let selector: &'static str = Box::leak(format!("files-row-{folder}").into_boxed_str());
+    pick_from_menu(selector, 4, &mut cx);
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    cx.simulate_input("notes.adoc");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let notes = pages.join("notes.adoc");
+    assert_eq!(std::fs::read_to_string(&notes).unwrap(), "");
+    assert_eq!(active_path(&app, &mut cx), Some(notes.clone()));
+
+    // A page's menu: Open, Open Externally, Show in Graph, Inspect Impact, Copy Path, Copy
+    // Relative Path, Reveal, New File…, Rename…, then Add to Navigation, offered as the page
+    // is in no navigation.
+    cx.update(|_, cx| files.update(cx, |files, cx| files.reveal(&notes, cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx)
+            .iter()
+            .any(|row| row.trim_start() == "notes.adoc")
+    }));
+    let row = files_row(&files, "notes.adoc", &mut cx);
+    let selector: &'static str = Box::leak(format!("files-row-{row}").into_boxed_str());
+    pick_from_menu(selector, 10, &mut cx);
+    assert!(
+        text_at(&app, &module.join("nav.adoc"), &mut cx).ends_with("* xref:notes.adoc[]\n"),
+        "{}",
+        text_at(&app, &module.join("nav.adoc"), &mut cx)
+    );
+    assert!(!cx.update(|_, cx| app.read(cx).engine.can_add_to_nav(&notes)));
+}
+
+#[gpui::test]
+fn a_navigation_entry_offers_a_new_page_after_it(cx: &mut TestAppContext) {
+    use adoc_engine::SidebarPanel::Navigation;
+    let (directory, app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let module = adoc_index::normalize_path(directory.path()).join("guide-2.0/modules/ROOT");
+    let home = rows(&workspace, Navigation, &mut cx)
+        .iter()
+        .position(|row| row.trim_start().starts_with("Home"))
+        .expect("a Home entry");
+    let selector: &'static str = Box::leak(format!("nav-row-{home}").into_boxed_str());
+
+    // An entry's menu starts with New Page Here…, which opens the entry's page and asks.
+    pick_from_menu(selector, 1, &mut cx);
+    assert_eq!(
+        active_path(&app, &mut cx),
+        Some(module.join("pages/index.adoc"))
+    );
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    cx.simulate_input("Upgrade");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(module.join("pages/upgrade.adoc").is_file());
+    // After Home and the entries beneath it, at Home's level.
+    let nav = text_at(&app, &module.join("nav.adoc"), &mut cx);
+    assert!(
+        nav.contains("** xref:install.adoc[Install]\n* xref:upgrade.adoc[]\n* xref:faq.adoc[FAQ]"),
+        "{nav}"
     );
 }

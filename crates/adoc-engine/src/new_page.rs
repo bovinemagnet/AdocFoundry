@@ -2,7 +2,9 @@
 //! it, and, when asked, adds `* xref:<slug>.adoc[]` to the module's `nav.adoc` after the
 //! active page's entry. The file and the entry are one undo group: undoing it takes the entry
 //! out and deletes the file, as long as nobody has changed the file since. `page.new_partial`
-//! makes the empty file an include names, undone the same way.
+//! makes the empty file an include names, undone the same way. `file.new` makes an empty file
+//! of any kind in a folder of the workspace, and `nav.add_page` lists an existing page at the
+//! end of its module's navigation file.
 
 use std::{
     fs,
@@ -88,6 +90,44 @@ pub(crate) fn register_new_page(registry: &mut CommandRegistry) {
             CommandContext::Always,
         ),
         page_new_partial,
+    );
+    register(
+        registry,
+        spec(
+            ids::FILE_NEW,
+            "New File…",
+            CommandCategory::Workspace,
+            None,
+            CommandContext::Always,
+        ),
+        |engine, args| {
+            let CommandArgs::Path(path) = args else {
+                return Err(EngineError::InvalidArguments {
+                    command: ids::FILE_NEW,
+                    expected: "the path of the file to make",
+                });
+            };
+            engine.new_file(&path).map(CommandOutcome::Opened)
+        },
+    );
+    register(
+        registry,
+        spec(
+            ids::NAV_ADD_PAGE,
+            "Add to Navigation",
+            CommandCategory::Workspace,
+            None,
+            CommandContext::Antora,
+        ),
+        |engine, args| {
+            let CommandArgs::Path(path) = args else {
+                return Err(EngineError::InvalidArguments {
+                    command: ids::NAV_ADD_PAGE,
+                    expected: "the page to add",
+                });
+            };
+            engine.add_to_nav(&path).map(|()| CommandOutcome::Done)
+        },
     );
 }
 
@@ -292,6 +332,105 @@ impl Engine {
         );
         self.set_active(partial);
         Ok(partial)
+    }
+
+    /// Makes an empty file at `path` and opens it, as one undo step that takes the file away
+    /// again. Refuses a path whose folder does not exist, is outside the workspace or reached
+    /// through a link, and a file that exists already.
+    pub fn new_file(&mut self, path: &Path) -> Result<crate::DocumentId, EngineError> {
+        let path = normalize_path(path);
+        let folder = path
+            .parent()
+            .filter(|folder| folder.is_dir())
+            .ok_or_else(|| {
+                EngineError::InvalidRequest(format!("{} has no folder to go in", path.display()))
+            })?;
+        self.listable(folder)?;
+        if fs::symlink_metadata(&path).is_ok() || self.document_for_path(&path).is_some() {
+            return Err(EngineError::InvalidRequest(format!(
+                "{} already exists",
+                path.display()
+            )));
+        }
+        let (file, group) = self.create_and_open(&path, "")?;
+        self.group_documents.insert(group, vec![file]);
+        self.group_created.insert(
+            group,
+            vec![CreatedFile {
+                path: path.clone(),
+                text: String::new(),
+            }],
+        );
+        self.set_active(file);
+        self.directories_changed(&[path]);
+        Ok(file)
+    }
+
+    /// Whether `page` can be added to its module's navigation: a page of a module with a
+    /// navigation file that no navigation of its component version lists yet.
+    #[must_use]
+    pub fn can_add_to_nav(&self, page: &Path) -> bool {
+        self.nav_addition(page).is_ok()
+    }
+
+    /// Lists `page` at the end of its module's navigation file, as one undo step.
+    pub fn add_to_nav(&mut self, page: &Path) -> Result<(), EngineError> {
+        let (nav, edit) = self.nav_addition(page)?;
+        let id = self.open(&nav)?;
+        let group = self.new_group();
+        self.apply_edits(id, vec![edit], UndoMode::Group(group))?;
+        Ok(())
+    }
+
+    /// The navigation file `page` would be added to and the edit adding it.
+    fn nav_addition(&self, page: &Path) -> Result<(PathBuf, TextEdit), EngineError> {
+        let page = normalize_path(page);
+        let coordinate = self
+            .workspace
+            .antora
+            .resource_for_path(&page)
+            .filter(|_| is_asciidoc_path(&page))
+            .map(|resource| &resource.coordinate)
+            .filter(|coordinate| coordinate.family == ResourceFamily::Page)
+            .ok_or_else(|| {
+                EngineError::InvalidRequest(format!(
+                    "{} is not a page of a component",
+                    page.display()
+                ))
+            })?;
+        let nav = self
+            .workspace
+            .antora
+            .modules()
+            .find(|module| {
+                module.component == coordinate.component
+                    && module.version == coordinate.version
+                    && module.name == coordinate.module
+            })
+            .and_then(|module| module.nav.clone())
+            .ok_or_else(|| {
+                EngineError::InvalidRequest(format!(
+                    "the module {} has no navigation file",
+                    coordinate.module
+                ))
+            })?;
+        let listed = self
+            .nav_trees(&coordinate.component, coordinate.version.as_deref())
+            .map_err(|error| EngineError::InvalidRequest(error.to_string()))?
+            .iter()
+            .any(|tree| find_entry(&tree.items, coordinate).is_some());
+        if listed {
+            return Err(EngineError::InvalidRequest(format!(
+                "{} is in the navigation already",
+                page.display()
+            )));
+        }
+        let target = coordinate
+            .relative_path
+            .to_string_lossy()
+            .replace('\\', "/");
+        let edit = self.nav_entry(&nav, None, &target)?;
+        Ok((nav, edit))
     }
 
     /// Writes `text` to a new file at `path` and opens it in a new undo group, taking the file

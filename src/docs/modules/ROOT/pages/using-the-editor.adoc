@@ -252,6 +252,31 @@ Reveal in Finder::
 Shows the entry in the system's file manager.
 It is called Reveal in File Explorer on Windows and Reveal in File Manager on Linux.
 
+New File…::
+Asks for a name and makes an empty file of any kind, then opens it.
+On a folder, or a workspace folder's root row, the file goes in that folder.
+On a file, it goes in the file's folder.
+It is refused if the file exists, or if the folder is outside the workspace folders or reached through a link.
+Edit > Undo in the new file takes it away again.
+
+Rename…::
+For AsciiDoc files only.
+Opens the page and asks for its new path, as Rename Page does, and every xref to it is rewritten.
+The changes are shown as a preview first.
+
+Add to Navigation::
+Shown only for a page of an Antora module that has a navigation file, when no navigation file of the page's component version lists it yet.
+Adds `* xref:<page>.adoc[]` at the end of the module's navigation file, as one undoable edit.
+The navigation file is left open with the change unsaved, and a notification says to save it.
+
+Export Pages as PDF…::
+Shown on a folder when it holds pages, which are its AsciiDoc files directly in it, leaving out an Antora component's partials, examples and attachments.
+On a file it is called Export Folder's Pages as PDF… and uses the file's folder.
+Asks for a folder, then exports each page to its own PDF there, named `<name>.pdf`.
+Pages named alike become `<name>-2.pdf` and so on.
+The pages are exported one after another, not all at once.
+One notification at the end says how many PDFs were written, and any that failed with the reason, with an Open Folder button.
+
 Refresh Folder::
 Reads the folder again.
 It is for folders only.
@@ -349,8 +374,33 @@ A missing or damaged state file means the configured depths.
 
 === The right-click menu
 
-Right-click a row, or the empty space, in Navigation or Modules to open a menu headed *All of Navigation* or *All of Modules*.
-It acts on the whole panel, and right-clicking never opens a page.
+Right-click a row, or the empty space, in Navigation or Modules to open a menu.
+A row that opens a page, which is a navigation entry linking to a page or a page in Modules, first offers that page's commands, then the commands for the whole panel under *All of Navigation* or *All of Modules*.
+A row that opens no page, such as a component version, module, family or navigation heading without a link, and the empty space offer only the panel's commands.
+Only New Page Here… and Rename Page… open the page.
+The panel's commands never do.
+
+New Page Here…::
+Navigation only.
+Opens the entry's page, then the New Page dialog.
+The new page's navigation entry goes after that entry and the entries beneath it, at its level.
+
+Rename Page…::
+Opens the page and asks for its new path, as Rename Page does.
+
+Add to Navigation::
+As in the Files menu, shown when the page is in no navigation yet.
+This is mostly so in Modules.
+
+Export This Level as PDF…::
+Exports the pages listed at that row's level, which are the row and its siblings that open a page, each once and in order.
+Entries linking to a `#fragment` are left out.
+Each page goes to its own PDF in a folder you choose, as in the Files menu.
+
+Show in Graph, Inspect Impact and Delete File…::
+As in a page tab's menu.
+Delete File… appears when files can be deleted.
+
 With the tree focused, kbd:[Shift+F10] opens the same menu on every platform.
 The arrow keys move through the menu, kbd:[Enter] chooses an item and kbd:[Esc] closes it.
 The arrow keys in the tree itself work as before.

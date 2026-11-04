@@ -100,6 +100,11 @@ pub enum CommandArgs {
     Visual(crate::VisualArgs),
     /// A PDF export: what to export and where to write it.
     Export(crate::ExportArgs),
+    /// Pages to export each as its own PDF into a folder: `export.pdf_pages`.
+    ExportPages {
+        pages: Vec<PathBuf>,
+        folder: PathBuf,
+    },
     /// A publication profile, by name: `[pdf.profiles.<name>]`.
     Profile(String),
     Custom(serde_json::Value),
