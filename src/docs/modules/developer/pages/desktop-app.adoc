@@ -56,12 +56,18 @@ include::example$keystroke-flow.mmd[]
 
 The editor widget owns a display buffer for speed, and the engine rope is the truth.
 
-The widget reports that its text changed but not the edit range.
-The application therefore recovers each edit as the single replacement between the common prefix and suffix of the widget text and the engine text, in `editor/sync.rs`.
+gpui-component 0.9 emits an `InputEditsEvent` with each change of the editor widget: every edit in the order applied (start byte, old end byte, new end byte), each with the widget's text just after it.
+`SourceEditorView` subscribes to it and sends each edit to the engine as `edit.insert_text` or `edit.replace_range`, with the inserted text sliced from the rope after the edit, so typing no longer compares the two texts.
+`SourceEditorView` keeps the versions its own edits made (`own_versions`) and does not reconcile the engine's `DocumentChanged` for them; an edit from elsewhere still reconciles.
+The common prefix and suffix diff in `editor/sync.rs` is kept for three cases only.
 It compares the widget's rope and the engine's rope (both `ropey` 2) chunk against chunk from the start and the end, with slice comparisons and no copy of either text, and allocates only the replacement.
-`sync_widget_to_engine` takes the widget's rope, which a clone shares, and returns the version its edit made.
-`SourceEditorView` keeps those versions (`own_versions`) and does not reconcile the engine's `DocumentChanged` for them; an edit from elsewhere still reconciles.
-That is exact for typing, deletion and paste, and still correct, if wider, for anything else.
+
+* `reconcile` applies the engine's text back to the widget after an edit made elsewhere (undo, replace, rename or reload).
+* The completion, hover and definition providers run inside the widget's own edit, before its edit event arrives, so they bring the engine up to date first with `sync_widget_to_engine`.
+* The widget reports an IME composition as one replacement of the whole text, which the diff narrows before it is sent.
+
+The first two cases give the engine text before the widget's edit event for it arrives.
+The view and the providers therefore share a `Synced` cell holding that text, and the event handler skips the edits up to the one whose text after it equals it, so no edit reaches the engine twice.
 Typing arrives at the engine one character at a time, so undo coalescing works.
 
 In the other direction, a change that originates elsewhere (undo, replace, rename or a reload from disk) arrives as an engine event and is applied back to the widget.

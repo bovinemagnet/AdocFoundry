@@ -25,7 +25,7 @@ use gpui::{
     actions, canvas, div, point, prelude::FluentBuilder as _, px, quad, size, App, AppContext as _,
     BorderStyle, Bounds, Context, Corners, Entity, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Render, ScrollWheelEvent,
+    MouseUpEvent, ParentElement as _, PathBuilder, PinchEvent, Pixels, Render, ScrollEvent,
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, TextAlign, TextRun,
     WeakEntity, Window,
 };
@@ -680,12 +680,7 @@ impl GraphView {
         }
     }
 
-    fn on_scroll_wheel(
-        &mut self,
-        event: &ScrollWheelEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_scroll_wheel(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
         let delta = f32::from(event.delta.pixel_delta(px(16.)).y);
         if delta != 0.0 {
             self.zoom_around((1.0 + delta * 0.0025).clamp(0.5, 2.0), event.position, cx);
@@ -958,7 +953,7 @@ impl GraphView {
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| this.drag = None),
             )
-            .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
+            .on_scroll(cx.listener(Self::on_scroll_wheel))
             .on_pinch(cx.listener(Self::on_pinch))
             .on_action(cx.listener(Self::on_next_node))
             .on_action(cx.listener(Self::on_previous_node))

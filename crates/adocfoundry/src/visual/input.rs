@@ -10,6 +10,7 @@ use gpui::{
 };
 
 use super::{text, Selection, VisualView, VISUAL_CONTEXT};
+use crate::editor::bindings::key_binding;
 
 actions!(
     visual,
@@ -59,7 +60,7 @@ const SELECT_WORD_RIGHT: &str = "ctrl-shift-right";
 /// Binds the visual editor's keys.
 pub fn bind(cx: &mut App) {
     let context = Some(VISUAL_CONTEXT);
-    cx.bind_keys([
+    let bindings = [
         KeyBinding::new("backspace", Backspace, context),
         KeyBinding::new("delete", Delete, context),
         KeyBinding::new("left", Left, context),
@@ -74,16 +75,17 @@ pub fn bind(cx: &mut App) {
         KeyBinding::new("end", End, context),
         KeyBinding::new("shift-home", SelectHome, context),
         KeyBinding::new("shift-end", SelectEnd, context),
-        KeyBinding::new("secondary-a", SelectAll, context),
+        key_binding("secondary-a", SelectAll, context, cx),
         // Option on macOS, Ctrl elsewhere, as the source editor binds them.
         KeyBinding::new(WORD_LEFT, WordLeft, context),
         KeyBinding::new(WORD_RIGHT, WordRight, context),
         KeyBinding::new(SELECT_WORD_LEFT, SelectWordLeft, context),
         KeyBinding::new(SELECT_WORD_RIGHT, SelectWordRight, context),
-        KeyBinding::new("secondary-c", Copy, context),
-        KeyBinding::new("secondary-x", Cut, context),
-        KeyBinding::new("secondary-v", Paste, context),
-    ]);
+        key_binding("secondary-c", Copy, context, cx),
+        key_binding("secondary-x", Cut, context, cx),
+        key_binding("secondary-v", Paste, context, cx),
+    ];
+    cx.bind_keys(bindings);
 }
 
 /// The view's action handlers.

@@ -1,8 +1,9 @@
 //! The source editor: gpui-component's code editor mirroring one engine document.
 //!
 //! The widget owns a display buffer for performance. Every widget edit is sent to the engine as
-//! `edit.insert_text` or `edit.replace_range`; every engine change from elsewhere (undo, replace,
-//! rename, a reload from disk) is applied back to the widget. The engine rope is the truth.
+//! `edit.insert_text` or `edit.replace_range`, exactly as the widget reports it
+//! (`InputEditsEvent`); every engine change from elsewhere (undo, replace, rename, a reload from
+//! disk) is applied back to the widget. The engine rope is the truth.
 
 pub mod bindings;
 pub mod blame;
@@ -22,7 +23,7 @@ use gpui::{
 };
 use gpui_component::{
     highlighter::{Diagnostic, DiagnosticSeverity as WidgetSeverity},
-    input::{Editor, EditorState, InputEvent, RopeExt as _, TabSize},
+    input::{Editor, EditorState, InputEdit, InputEditsEvent, RopeExt as _, TabSize},
     native_menu::NativeMenu,
     ActiveTheme as _, WindowExt as _,
 };
@@ -49,6 +50,44 @@ pub fn sync_widget_to_engine(
         id: document,
         range: SourceRange::new(range.start, range.end),
         text: replacement,
+    };
+    if let Err(error) = app.invoke(command, args, cx) {
+        // The widget and engine disagree in a way an edit cannot express; the engine wins
+        // when the editor next reconciles.
+        eprintln!("adocfoundry: edit rejected: {error}");
+        return None;
+    }
+    app.engine.document(document).map(|open| open.version)
+}
+
+/// The widget text the engine already has without the widget's edit event for it: set when the
+/// engine was brought up to date by a diff (a provider asking before the event arrived) or the
+/// widget was given the engine's text, so the edits up to that text are not sent again.
+pub type Synced = Rc<RefCell<Option<ropey::Rope>>>;
+
+/// Sends one of the widget's edits to the engine, `after` being the widget's text just after it,
+/// returning the document's version after it. A replacement of the whole text (how the widget
+/// reports an IME composition) is narrowed to what changed first.
+fn send_widget_edit(
+    app: &mut AppState,
+    document: DocumentId,
+    edit: &InputEdit,
+    after: &ropey::Rope,
+    cx: &mut Context<AppState>,
+) -> Option<u64> {
+    let whole = app.engine.document(document)?.text.len();
+    if edit.start_byte == 0 && edit.old_end_byte == whole && whole > 0 {
+        return sync_widget_to_engine(app, document, after, cx);
+    }
+    let command = if edit.old_end_byte == edit.start_byte {
+        ids::EDIT_INSERT_TEXT
+    } else {
+        ids::EDIT_REPLACE_RANGE
+    };
+    let args = CommandArgs::Text {
+        id: document,
+        range: SourceRange::new(edit.start_byte, edit.old_end_byte),
+        text: after.slice(edit.start_byte..edit.new_end_byte).to_string(),
     };
     if let Err(error) = app.invoke(command, args, cx) {
         // The widget and engine disagree in a way an edit cannot express; the engine wins
@@ -106,6 +145,7 @@ pub struct SourceEditorView {
     /// The document versions the widget's own edits made, which the engine's
     /// `DocumentChanged` for them need not reconcile.
     own_versions: std::collections::BTreeSet<u64>,
+    synced: Synced,
     state: Entity<EditorState>,
     /// The change markers as last painted.
     marks: Rc<RefCell<Vec<changes::GutterMark>>>,
@@ -164,7 +204,12 @@ impl SourceEditorView {
             state
         });
 
-        let providers = Rc::new(EngineProviders::new(app.downgrade(), document));
+        let synced = Synced::default();
+        let providers = Rc::new(EngineProviders::new(
+            app.downgrade(),
+            document,
+            synced.clone(),
+        ));
         state.update(cx, |state, cx| {
             let lsp = state.lsp_mut();
             lsp.definition_provider = Some(providers.clone());
@@ -185,17 +230,24 @@ impl SourceEditorView {
             cx.notify();
         });
 
-        let mut subscriptions = vec![cx.subscribe(&state, |this, state, event, cx| {
-            if matches!(event, InputEvent::Change) {
-                // A rope clone shares the text.
-                let text = state.read(cx).text().clone();
-                let document = this.document;
-                let version = this.app.update(cx, |app, cx| {
-                    sync_widget_to_engine(app, document, &text, cx)
-                });
-                this.own_versions.extend(version);
-            }
-        })];
+        let mut subscriptions =
+            vec![
+                cx.subscribe(&state, |this, _, event: &InputEditsEvent, cx| {
+                    let edits = event.edits();
+                    // Edits up to the text the engine already has were sent another way.
+                    let sent = this
+                        .synced
+                        .take()
+                        .and_then(|synced| edits.iter().position(|(_, after)| *after == synced));
+                    let document = this.document;
+                    for (edit, after) in &edits[sent.map_or(0, |at| at + 1)..] {
+                        let version = this.app.update(cx, |app, cx| {
+                            send_widget_edit(app, document, edit, after, cx)
+                        });
+                        this.own_versions.extend(version);
+                    }
+                }),
+            ];
         subscriptions.push(cx.subscribe_in(
             &app,
             window,
@@ -253,6 +305,7 @@ impl SourceEditorView {
             caret: None,
             scroll: None,
             own_versions: std::collections::BTreeSet::new(),
+            synced,
             state,
             marks: Rc::default(),
             open_change: None,
@@ -436,6 +489,8 @@ impl SourceEditorView {
                 state.replace(replacement, window, cx);
                 let mapped = |offset| sync::map_offset(offset, &range, inserted);
                 state.set_selected_range(mapped(selection.start)..mapped(selection.end), cx);
+                // The widget reports this edit too, and the engine has it already.
+                self.synced.replace(Some(engine_text));
             }
         });
     }

@@ -23,7 +23,7 @@ This section summarises section 20 of `docs/prd/PRD-AdocFoundry_Phase_1_Implemen
 |GPUI crates
 |`gpui-pre` and `gpui-component`
 |Also `gpui-pre-platform` and `gpui-kit-assets`
-|gpui-pre 0.3.9 moved the platform code into its own crate, and gpui-component 0.8 depends on `gpui-pre` under the name `gpui`. Both extra crates are confined to `adocfoundry` by `cargo xtask layers`.
+|gpui-pre 0.3.9 moved the platform code into its own crate, and gpui-component (0.9 since #210) depends on `gpui-pre` under the name `gpui`. Both extra crates are confined to `adocfoundry` by `cargo xtask layers`.
 
 |LSP types
 |`lsp-types` only in `adoc-ls`
@@ -63,12 +63,12 @@ This section summarises section 20 of `docs/prd/PRD-AdocFoundry_Phase_1_Implemen
 |Folding
 |`folds.scm`
 |The query is written and checked, but not read by the widget
-|gpui-component 0.8 derives folds from multi-line syntax nodes itself.
+|gpui-component 0.9 derives folds from multi-line syntax nodes itself.
 
 |Injections
 |Rust, Java, JS/TS, Python, Go, JSON, YAML, TOML, shell, SQL, XML/HTML and Dockerfile
 |All except XML and Dockerfile
-|gpui-component 0.8 ships no XML or Dockerfile grammar. HTML is injected.
+|gpui-component 0.9 ships no XML or Dockerfile grammar. HTML is injected.
 
 |CLI
 |`follow <file> <byte-offset>`
@@ -77,8 +77,8 @@ This section summarises section 20 of `docs/prd/PRD-AdocFoundry_Phase_1_Implemen
 
 |Editor sync
 |Widget edits sent as edits
-|The edit is recovered as the replacement between the common prefix and suffix of widget and engine text
-|gpui-component 0.8 does not expose edit ranges. Typing still arrives as single-character inserts, so undo coalescing works.
+|Since #210 (gpui-component 0.9) the widget's own edits are sent exactly as it reports them; the common prefix and suffix diff remains only for applying engine changes back, providers asking before the widget's edit event arrives, and IME compositions
+|gpui-component 0.8 did not expose edit ranges; 0.9's `InputEditsEvent` does. Typing still arrives as single-character inserts, so undo coalescing works.
 
 |Packaging
 |Linux aarch64 cross-built with `cross`

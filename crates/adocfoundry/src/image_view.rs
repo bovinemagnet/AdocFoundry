@@ -19,7 +19,7 @@ use adoc_engine::{commands::ids, CommandArgs, EngineEvent, ImageId};
 use gpui::{
     actions, canvas, div, fill, img, point, prelude::FluentBuilder as _, px, size, App,
     AppContext as _, Bounds, Context, Entity, FocusHandle, Focusable, Hsla,
-    InteractiveElement as _, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
     ParentElement as _, Pixels, Point, Render, RenderImage, ScrollHandle,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window,
 };
@@ -32,7 +32,7 @@ use gpui_component::{
 
 use crate::{
     app::AppState,
-    editor::bindings::{platform_binding, ReloadImage, RevealInFiles},
+    editor::bindings::{key_binding, platform_binding, ReloadImage, RevealInFiles},
     image_decode::{byte_size, decode_file, DecodeError, ImageInfo, Limits},
 };
 
@@ -714,13 +714,14 @@ impl Render for ImageView {
 /// to zoom, `0` for actual size and `9` to fit.
 pub fn bind(cx: &mut App) {
     let context = Some(IMAGE_CONTEXT);
-    cx.bind_keys([
-        KeyBinding::new(&platform_binding("cmd-="), ZoomIn, context),
-        KeyBinding::new(&platform_binding("cmd-+"), ZoomIn, context),
-        KeyBinding::new(&platform_binding("cmd--"), ZoomOut, context),
-        KeyBinding::new(&platform_binding("cmd-0"), ActualSize, context),
-        KeyBinding::new(&platform_binding("cmd-9"), FitToWindow, context),
-    ]);
+    let bindings = [
+        key_binding(&platform_binding("cmd-="), ZoomIn, context, cx),
+        key_binding(&platform_binding("cmd-+"), ZoomIn, context, cx),
+        key_binding(&platform_binding("cmd--"), ZoomOut, context, cx),
+        key_binding(&platform_binding("cmd-0"), ActualSize, context, cx),
+        key_binding(&platform_binding("cmd-9"), FitToWindow, context, cx),
+    ];
+    cx.bind_keys(bindings);
 }
 
 #[cfg(test)]
