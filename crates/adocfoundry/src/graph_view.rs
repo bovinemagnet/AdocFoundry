@@ -1792,7 +1792,8 @@ fn paint(drawing: &Drawing, bounds: Bounds<Pixels>, window: &mut Window, cx: &mu
     window.paint_layer(bounds, |window| {
         paint_edges(drawing, &at, window);
         let font = window.text_style().font();
-        let font_size = px(11.);
+        // 11 px at the default rem size, so labels follow `[appearance] font_scale`.
+        let font_size = window.rem_size() * (11. / 16.);
         for node in &drawing.nodes {
             let middle = at(node.at);
             let radius = px(node.radius * scale);

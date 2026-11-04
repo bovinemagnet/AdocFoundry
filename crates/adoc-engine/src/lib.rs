@@ -127,9 +127,9 @@ pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use session::{WindowPlacement, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE};
 pub use settings::{
-    pdf_standard, AppearanceSettings, AutoSave, EditorSettings, ExpansionPolicy, GitSettings,
-    GraphColour, GraphSettings, HistorySettings, PdfSettings, QualitySettings, Settings,
-    SidebarSettings, SpellingSettings, TemplateSettings, ThemePreference, ToolSettings,
+    pdf_standard, AppearanceSettings, AutoSave, EditorSettings, ExpansionPolicy, FontScale,
+    GitSettings, GraphColour, GraphSettings, HistorySettings, PdfSettings, QualitySettings,
+    Settings, SidebarSettings, SpellingSettings, TemplateSettings, ThemePreference, ToolSettings,
     UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 pub use site_build::{

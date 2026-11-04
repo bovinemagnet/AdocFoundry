@@ -849,7 +849,8 @@ It opens the same resource id in the chosen version, in the workspace root that 
 `Settings` loads the user and workspace TOML layers described in xref:ROOT:settings.adoc[Settings].
 The UI never reads the settings file itself.
 
-`Settings::appearance` is an `AppearanceSettings` (`mode`, `light_theme`, `dark_theme` and `themes_dir`), read from the user file only.
+`Settings::appearance` is an `AppearanceSettings` (`mode`, `light_theme`, `dark_theme`, `themes_dir` and `font_scale`), read from the user file only.
+`font_scale` is a `FontScale`, kept in hundredths so settings compare exactly; `factor()` gives the multiplier.
 `appearance.save` takes `CommandArgs::Appearance(AppearanceChoice)` and calls `Engine::save_appearance`, which refuses without a user settings file.
 It uses `Settings::write_appearance`, which edits the file with `toml_edit` so that other lines and the comments above existing keys are kept, writes only `mode`, `light_theme` and `dark_theme`, and takes out an `[editor] theme` line.
 The result goes to a temporary file that is renamed over the settings file, and `reload_settings` then announces `SettingsChanged`.

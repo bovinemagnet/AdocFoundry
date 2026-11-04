@@ -8493,6 +8493,34 @@ fn theme_editor_syntax_switches(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn font_scale_enlarges_the_text(cx: &mut TestAppContext) {
+    let text = "[appearance]\nmode = \"light\"\nfont_scale = 1.5\n";
+    let (_config, user, app, mut cx) = themed_window(text, cx);
+    let sizes = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            let theme = gpui_component::Theme::global(cx);
+            (theme.font_size, theme.mono_font_size, window.rem_size())
+        })
+    };
+    let half_as_large_again = (px(24.), px(19.5), px(24.));
+    assert_eq!(sizes(&mut cx), half_as_large_again);
+    // Another theme keeps the scale.
+    cx.dispatch_action(crate::editor::bindings::ToggleTheme);
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| gpui_component::Theme::global(cx).mode.is_dark()));
+    assert_eq!(sizes(&mut cx), half_as_large_again);
+    // A new scale shows once the settings are read again.
+    let saved = std::fs::read_to_string(&user).unwrap();
+    std::fs::write(&user, saved.replace("font_scale = 1.5", "font_scale = 2")).unwrap();
+    app.update(&mut cx, |app, cx| {
+        app.invoke(ids::SETTINGS_RELOAD, CommandArgs::None, cx)
+            .unwrap();
+    });
+    cx.run_until_parked();
+    assert_eq!(sizes(&mut cx), (px(32.), px(26.), px(32.)));
+}
+
+#[gpui::test]
 fn appearance_invalid_theme_falls_back(cx: &mut TestAppContext) {
     let text = "[appearance]\nmode = \"dark\"\ndark_theme = \"No Such Theme\"\n";
     let (_config, user, app, mut cx) = themed_window(text, cx);

@@ -364,6 +364,40 @@ pub struct AppearanceSettings {
     /// Where user theme files are read from: `themes` beside the user settings file unless
     /// `themes_dir` names another folder (relative to that file's folder, `~/` the home folder).
     pub themes_dir: Option<PathBuf>,
+    /// How many times larger than the default the application's text is drawn.
+    pub font_scale: FontScale,
+}
+
+/// How many times larger than the default the application's text is drawn (`[appearance]
+/// font_scale`, #374): 1 unless set, from [`FontScale::MIN`] to [`FontScale::MAX`]. Kept in
+/// hundredths, so settings compare exactly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FontScale(u16);
+
+impl FontScale {
+    pub const MIN: f64 = 0.5;
+    pub const MAX: f64 = 3.0;
+
+    /// The scale `factor` gives, if it is within the range.
+    #[must_use]
+    pub fn new(factor: f64) -> Option<Self> {
+        (Self::MIN..=Self::MAX)
+            .contains(&factor)
+            // Within the range, so it fits.
+            .then(|| Self((factor * 100.0).round() as u16))
+    }
+
+    /// The multiplier: 1.5 draws text half as large again as the default.
+    #[must_use]
+    pub fn factor(self) -> f32 {
+        f32::from(self.0) / 100.0
+    }
+}
+
+impl Default for FontScale {
+    fn default() -> Self {
+        Self(100)
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -788,6 +822,7 @@ impl Settings {
             }
             ("appearance", "light_theme") => self.appearance.light_theme = Some(theme_name(value)?),
             ("appearance", "dark_theme") => self.appearance.dark_theme = Some(theme_name(value)?),
+            ("appearance", "font_scale") => self.appearance.font_scale = font_scale(value)?,
             ("workspace", "ignore") => {
                 let items = value.as_array().ok_or("expected an array of strings")?;
                 self.workspace.ignore = items.iter().map(string).collect::<Result<_, _>>()?;
@@ -1054,7 +1089,7 @@ fn is_known(section: &str, key: &str) -> bool {
             | ("workspace", "ignore")
             | (
                 "appearance",
-                "mode" | "light_theme" | "dark_theme" | "themes_dir"
+                "mode" | "light_theme" | "dark_theme" | "themes_dir" | "font_scale"
             )
             | (
                 "tools",
@@ -1113,6 +1148,18 @@ fn theme_name(value: &toml::Value) -> Result<String, &'static str> {
         .filter(|name| !name.is_empty())
         .map(str::to_owned)
         .ok_or("expected a theme's name")
+}
+
+/// A multiplier of the default text size, whole or not.
+fn font_scale(value: &toml::Value) -> Result<FontScale, &'static str> {
+    const EXPECTED: &str = "expected a multiplier of the default size from 0.5 to 3, such as 1.5";
+    let factor = match value {
+        toml::Value::Float(factor) => *factor,
+        // Small enough, once in range, to be exact.
+        toml::Value::Integer(factor) => *factor as f64,
+        _ => return Err(EXPECTED),
+    };
+    FontScale::new(factor).ok_or(EXPECTED)
 }
 
 fn string(value: &toml::Value) -> Result<String, &'static str> {
@@ -1851,6 +1898,40 @@ note = "unknown"
         if let Some(home) = dirs::home_dir() {
             assert_eq!(settings.appearance.themes_dir, Some(home.join("my-themes")));
         }
+    }
+
+    #[test]
+    fn appearance_font_scale_is_a_multiplier_of_the_default() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        let root = directory.path().join("workspace");
+        fs::create_dir_all(&root).unwrap();
+        let scale = |text: &str| {
+            fs::write(&user, text).unwrap();
+            let settings = Settings::load(Some(&user), None).unwrap();
+            (settings.appearance.font_scale.factor(), settings.warnings)
+        };
+        assert_eq!(Settings::default().appearance.font_scale.factor(), 1.0);
+        assert_eq!(scale("[appearance]\nfont_scale = 1.5\n"), (1.5, vec![]));
+        assert_eq!(scale("[appearance]\nfont_scale = 2\n"), (2.0, vec![]));
+        assert_eq!(scale("[appearance]\nfont_scale = 0.5\n").0, 0.5);
+        assert_eq!(scale("[appearance]\nfont_scale = 3\n").0, 3.0);
+        for wrong in ["0", "0.25", "3.5", "-1", "\"big\""] {
+            let (factor, warnings) = scale(&format!("[appearance]\nfont_scale = {wrong}\n"));
+            assert_eq!(factor, 1.0, "{wrong}");
+            assert_eq!(warnings.len(), 1, "{wrong}: {warnings:?}");
+            assert!(warnings[0].contains("from 0.5 to 3"), "{warnings:?}");
+        }
+        // A screen is the machine's, not the workspace's.
+        fs::write(&user, "").unwrap();
+        fs::write(
+            root.join(".adocfoundry.toml"),
+            "[appearance]\nfont_scale = 2\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(&root)).unwrap();
+        assert_eq!(settings.appearance.font_scale.factor(), 1.0);
+        assert!(settings.warnings[0].contains("can only be set in the user settings file"));
     }
 
     #[test]

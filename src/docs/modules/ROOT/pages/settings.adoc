@@ -47,6 +47,7 @@ mode = "auto"                    # auto | light | dark
 light_theme = "Solarized Light"  # a light theme's name; the native default when left out
 dark_theme = "Tokyo Night"       # a dark theme's name; the native default when left out
 # themes_dir = "themes"          # relative to the user settings file's folder; ~/ is the home folder
+font_scale = 1.0                 # text this many times the default size, 0.5 to 3
 
 [sidebar]
 remember_expansion = true        # remember opened and closed branches (user file only)
@@ -139,6 +140,7 @@ check = true                     # look for a newer release at start-up
 |positive integer
 |`13`
 |The editor font size.
+`appearance.font_scale` multiplies it.
 
 |`editor.soft_wrap`
 |boolean
@@ -191,6 +193,15 @@ User file only.
 |string
 |`themes`
 |The folder of your own theme files, relative to the user settings file's folder; `~/` is the home folder.
+User file only.
+
+|`appearance.font_scale`
+|number
+|`1`
+|A multiplier of the default text size, as a zoom: `1.5` draws text half as large again and `2` twice as large.
+From `0.5` to `3`, whole or not; anything else, or a value that is not a number, warns and keeps `1`.
+It scales the whole interface together: panels, menus, dialogs, the preview, the visual editor, the graph's labels and the source editor, whose `editor.font_size` it multiplies (`13` at `1.5` draws at `19.5`); spacing sized to the text grows with it.
+It follows every theme, and takes effect when the settings are read again, without a restart.
 User file only.
 These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 
