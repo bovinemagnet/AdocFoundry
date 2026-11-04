@@ -85,6 +85,16 @@ const WORDS: &[&str] = &[
     "^",
     "~",
     "+",
+    // Line breaks with what would start another block on the line after.
+    "\n[note]",
+    "\n----",
+    "\n|===",
+    "\n,===",
+    "\n* item",
+    "\n+",
+    "\n.Title",
+    "\nNOTE: x",
+    "\n== H",
 ];
 
 const MARKS: &[Mark] = &[Mark::Strong, Mark::Emphasis, Mark::Code, Mark::Highlight];
@@ -364,6 +374,29 @@ fn the_session_model_matches_a_rebuild() {
         };
         let after = apply_edits(&model.source, &result.edits);
         let rebuilt = build(&path, &after);
+        // Typing, line breaks included, never splits the block typed into: it is still one
+        // text block. (Counting every block of the page instead would also count acdc-parser
+        // reading text far from the edit differently, which it can, where Asciidoctor reads
+        // only the edited lines differently.)
+        if let Step::InsertText { at, .. } = step {
+            if let Some((_, _, text)) = model.text_block_at(at) {
+                let range = text.range;
+                let end = (range.end + after.len()).saturating_sub(model.source.len());
+                let grown = SourceRange::new(range.start, end.max(range.start));
+                let pieces = rebuilt
+                    .text_blocks()
+                    .filter(|(_, _, text)| {
+                        text.range.start < grown.end && grown.start < text.range.end
+                    })
+                    .count();
+                assert_eq!(
+                    pieces,
+                    1,
+                    "{step:?} split the block it typed into: {:?}",
+                    &after[grown.start..grown.end]
+                );
+            }
+        }
         if let Some(local) = result.model {
             steps += 1;
             let shown = |model: &Model| -> Vec<(String, MarkSet)> {
