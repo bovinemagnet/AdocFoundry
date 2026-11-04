@@ -55,7 +55,9 @@ pub fn dev_info_plist(template: &str, version: &str) -> Result<String, String> {
     if !template.contains(IDENTIFIER) {
         return Err("Info.plist: no CFBundleIdentifier to replace".to_owned());
     }
+    // Read with LF endings, as committed, whatever the checkout gave (CRLF on Windows).
     let mut plist = template
+        .replace("\r\n", "\n")
         .replace(IDENTIFIER, DEV_IDENTIFIER)
         .replace("@VERSION@", version);
     if let Some(start) = plist.find(TYPES) {
@@ -237,6 +239,21 @@ mod tests {
         assert!(!plist.contains("@VERSION@"));
         assert!(!plist.contains("CFBundleDocumentTypes"));
         assert!(!plist.contains("adoc</string>"));
+        assert!(plist.trim_end().ends_with("</dict>\n</plist>"));
+    }
+
+    #[test]
+    fn a_template_checked_out_with_crlf_endings_loses_its_document_types() {
+        // Git on Windows checks the template out with CRLF line endings.
+        let template = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../packaging/macos/Info.plist"),
+        )
+        .unwrap()
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n");
+        let plist = dev_info_plist(&template, "1.2.3").unwrap();
+        assert!(!plist.contains("CFBundleDocumentTypes"));
+        assert!(!plist.contains('\r'));
         assert!(plist.trim_end().ends_with("</dict>\n</plist>"));
     }
 
