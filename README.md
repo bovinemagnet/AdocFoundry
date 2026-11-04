@@ -156,6 +156,8 @@ cd AdocFoundry
 cargo run --release -p adocfoundry -- path/to/docs
 ```
 
+On macOS, `cargo xtask run --release -- path/to/docs` does the same from a development bundle in `target/`, so the Dock shows AdocFoundry's icon rather than the generic one of a bare executable.
+
 If you cloned without `--recurse-submodules`, run `git submodule update --init` first: the grammars live in `grammars/tree-sitter-asciidoc`.
 
 ## Using it
@@ -403,6 +405,7 @@ cargo test --workspace
 cargo deny check
 cargo xtask layers      # the crate dependency ladder
 cargo xtask package     # release build and archive for this platform in dist/
+cargo xtask run         # build and run the app; on macOS from a bundle, with its icon
 cargo xtask notices     # the third-party notices; with a file name, written to it
 ```
 

@@ -12,6 +12,7 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings   # CI treats warnings as errors
 cargo test --workspace
 cargo run -p adocfoundry                                 # launch the desktop app
+cargo xtask run -- path/to/docs                          # the same, on macOS from a bundle with the icon
 cargo run -p adocfoundry-cli -- check tests/fixtures/antora-single-component
 cargo run -p adoc-ls -- --version                        # smoke-test the language server
 cargo deny check                                         # licences and advisories
@@ -288,6 +289,9 @@ There is no SVG, and `librsvg` is not needed.
 
 |macOS
 |`packaging/macos/bundle.sh` makes the `.icns` from the 1024 master with `sips`, which is built into macOS.
+A development build run with `cargo run -p adocfoundry` is a bare executable, so the Dock shows the generic executable icon.
+`cargo xtask run [--release] [-- <args>]` instead runs the binary from a development bundle, `target/<profile>/AdocFoundry.app`, made the same way as the release bundle, so the Dock and the app switcher show the AdocFoundry icon and the app's output still reaches the terminal.
+The development bundle has its own identifier, `io.github.bovinemagnet.AdocFoundry.dev`, so it is never taken for the installed app, and it declares no document types, so it never becomes the app that opens `.adoc` files from the Finder.
 
 |Linux
 |The deb, rpm and Flatpak install the 256 PNG as `share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png`.

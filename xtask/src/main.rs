@@ -8,6 +8,7 @@ mod layers;
 #[allow(dead_code)]
 mod notices;
 mod package;
+mod run;
 
 fn main() -> ExitCode {
     let task = std::env::args().nth(1);
@@ -28,9 +29,10 @@ fn main() -> ExitCode {
         }
         Some("notices") => run_notices(std::env::args().nth(2)),
         Some("bump") => run_bump(std::env::args().nth(2)),
+        Some("run") => run_app(),
         _ => {
             eprintln!(
-                "usage: cargo xtask <task>\n\ntasks:\n  bump       write a release's version into Cargo.toml, the docs and the changelog\n  layers     check the crate dependency ladder\n  notices    write the third-party notices to a file, or print them\n  package    release build and archive for this platform in dist/"
+                "usage: cargo xtask <task>\n\ntasks:\n  bump       write a release's version into Cargo.toml, the docs and the changelog\n  layers     check the crate dependency ladder\n  notices    write the third-party notices to a file, or print them\n  package    release build and archive for this platform in dist/\n  run        build and run the desktop app (on macOS from a bundle, with its icon)"
             );
             ExitCode::FAILURE
         }
@@ -60,6 +62,21 @@ fn run_notices(output: Option<String>) -> ExitCode {
         }
         Err(error) => {
             eprintln!("notices: {output}: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `cargo xtask run [--release] [-- <args>]`: the desktop app, built and run with `args`.
+fn run_app() -> ExitCode {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let request = run::parse(std::env::args_os().skip(2));
+    match run::run(&root, &cargo, request) {
+        Ok(0) => ExitCode::SUCCESS,
+        Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+        Err(error) => {
+            eprintln!("run: {error}");
             ExitCode::FAILURE
         }
     }
