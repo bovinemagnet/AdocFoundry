@@ -388,6 +388,7 @@ impl Layout {
                     coordinate: None,
                     links_out: 0,
                     links_in: 0,
+                    last_changed: None,
                 })
                 .collect(),
             edges: Vec::new(),
@@ -795,6 +796,7 @@ mod tests {
                     coordinate: None,
                     links_out: 0,
                     links_in: 0,
+                    last_changed: None,
                 })
                 .collect(),
             edges,
@@ -820,6 +822,7 @@ mod tests {
                         }),
                         links_out: 0,
                         links_in: 0,
+                        last_changed: None,
                     });
                 }
             }
@@ -969,6 +972,7 @@ mod tests {
             coordinate: None,
             links_out: 1,
             links_in: 0,
+            last_changed: None,
         });
         snapshot.edges.push(GraphEdge {
             from: added.clone(),

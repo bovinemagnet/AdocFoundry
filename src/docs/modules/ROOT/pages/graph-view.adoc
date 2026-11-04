@@ -96,7 +96,10 @@ If less than half of the saved place is on a display, because a screen has been 
 |Limits the graph to the components you choose.
 
 |Colour
-|Colours nodes by Component, Module or Family. Clicking the button moves to the next.
+|Colours nodes by Component, Module or Family, and by Age where pages have xref:graph-view.adoc#graph-page-age[ages]. Clicking the button moves to the next.
+
+|Stale
+|Shows only the pages not changed for a long time, and their neighbours. It is there only where pages have xref:graph-view.adoc#graph-page-age[ages].
 
 |Group
 |Shows "Group: Off", "Group: Module" or "Group: Component". Clicking the button moves to the next, and xref:graph-view.adoc#graph-groups[groups] the nodes. Only the graph window has it.
@@ -280,6 +283,35 @@ Create Partial is unavailable when:
 The side panel lists the selected node's *Links out* and *Backlinks*, one row for each neighbour.
 A row names every kind of link between the two, such as `xref · nav`.
 Clicking a row selects that node.
+Where pages have ages, the panel also says under the selected page's title when it last changed, as described in xref:graph-view.adoc#graph-page-age[How long ago pages changed].
+
+[#graph-page-age]
+=== How long ago pages changed
+
+Where Git is on and the workspace is in a repository, the graph knows when each page last changed.
+A page's age is when the commit that last changed it was made.
+A page moved without a change keeps its age, and a page moved with an edit counts as changed.
+A page older than all the history read is given the time of the oldest commit read, since it is at least that old.
+A page with changes that are not committed, on disk or unsaved in the editor, counts as changed now.
+Without Git (`[git] enabled = false`, no repository or a build without Git), pages have no age and the age options are hidden.
+
+The history is read in the background once the repository is found, and again whenever `HEAD` moves, such as after a commit or a branch switch.
+It follows the first-parent history of `HEAD`, newest first, and stops once every AsciiDoc file of `HEAD` is found or after 10,000 commits.
+Nothing runs the `git` program.
+
+Choose *Age* with the Colour button, after Family.
+Nodes run from green, the most recently changed page in the graph (pages not committed yet included), through amber to red, the oldest.
+Nodes with no age are grey.
+Exported images use the same colours.
+
+While the graph is coloured by age, or while Stale is on, pages unchanged for longer than `[graph] stale_after_days` (365 by default) get a dashed ring in the theme's warning colour.
+The Stale toggle shows only those pages and their neighbours.
+
+The side panel says under the selected page's title when it last changed: "Last changed today", "yesterday", "9 days ago", "14 months ago" or "3 years ago", or "Changed, not committed yet".
+
+`[graph] colour_by` can be `"age"`, and `[graph] stale_after_days` sets the limit.
+See xref:settings.adoc[Settings].
+`adocfoundry-cli graph --ages` adds each page's age to the JSON, as described in xref:command-line.adoc#graph[the command line reference].
 
 == Export the graph
 
@@ -301,7 +333,7 @@ Nodes and edges look as they do on the canvas:
 * Pages are filled, partials are hollow, unresolved targets have a dashed outline and navigation files are squares.
 * Xrefs are solid, includes are dashed, navigation links are dotted and bowed, and links to unresolved targets are dash-dot.
 Repeated links make a heavier edge.
-* Nodes are coloured by component, module or family, as in the window.
+* Nodes are coloured by component, module, family or age, as in the window.
 * Every node is labelled with its title.
 In a browser, hovering over a node shows its title.
 

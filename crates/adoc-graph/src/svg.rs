@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 
 use crate::{
-    style::{colour_groups, node_colour, node_radius},
+    style::{node_radius, Palette},
     ColourBy, EdgeKind, GraphKey, GraphSnapshot, NodeKind, Point,
 };
 
@@ -53,7 +53,7 @@ const MARGIN: f32 = 20.0;
 #[must_use]
 pub fn to_svg(snapshot: &GraphSnapshot, positions: &[Point], style: &SvgStyle) -> String {
     let theme = if style.dark { &DARK } else { &LIGHT };
-    let groups = colour_groups(snapshot, style.colour_by);
+    let palette = Palette::of(snapshot, style.colour_by);
     let at = |place: usize| positions.get(place).copied().unwrap_or_default();
     let radii: Vec<f32> = snapshot
         .nodes
@@ -145,7 +145,8 @@ pub fn to_svg(snapshot: &GraphSnapshot, positions: &[Point], style: &SvgStyle) -
 
     for (place, node) in snapshot.nodes.iter().enumerate() {
         let (point, radius) = (at(place), radii[place]);
-        let colour = node_colour(node, &groups, style.colour_by, style.dark)
+        let colour = palette
+            .colour(node, style.dark)
             .map_or_else(|| theme.muted.to_owned(), |colour| colour.to_hex());
         let (kind, fill, dashes) = match node.kind {
             NodeKind::Page => ("page", colour.as_str(), ""),
@@ -250,6 +251,7 @@ mod tests {
             }),
             links_out: links,
             links_in: 0,
+            last_changed: None,
         }
     }
 

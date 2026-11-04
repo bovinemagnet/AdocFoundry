@@ -57,4 +57,15 @@ impl Engine {
     }
 
     pub(crate) fn restore_branch_versions(&mut self) {}
+
+    /// Without Git no page has an age.
+    #[must_use]
+    pub fn page_age(&self, _: &Path) -> Option<adoc_graph::LastChanged> {
+        None
+    }
+
+    #[must_use]
+    pub fn has_page_ages(&self) -> bool {
+        false
+    }
 }

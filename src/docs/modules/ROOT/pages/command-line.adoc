@@ -22,7 +22,7 @@ adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@
 adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--format json|dot|svg]
-    [--no-partials] [--no-nav] [--unresolved] [--dark]
+    [--no-partials] [--no-nav] [--unresolved] [--ages] [--dark]
 adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
 ----
@@ -682,7 +682,7 @@ For a folder inside a component, use <<new-module>>.
 
 `graph` prints the link graph of the workspace under `<root>`, or of one page's neighbourhood.
 It reads the same graph as the xref:graph-view.adoc[graph window].
-Git stays off.
+Git stays off, unless you give `--ages`.
 
 [source,sh]
 ----
@@ -725,6 +725,10 @@ With `--path`, `dot` and `svg` draw just the path.
 |Draws the SVG for a dark background.
 It applies only to `--format svg`.
 
+|`--ages`
+|Turns Git on, reads the repository's history and adds `last_changed` to each node in the JSON.
+Without it the command never reads Git.
+
 |`--no-partials`
 |Leave out partials.
 
@@ -740,6 +744,9 @@ Ids are paths relative to `<root>`, written with `/`; an unresolved target's id 
 `kind` is `page`, `partial`, `nav` or `unresolved`.
 `coordinate` is `version@component:module:family`, with `~` for an unversioned component, and is left out outside Antora.
 An edge's `kind` is `xref`, `include` or `nav`, and `count` is the number of links it stands for.
+With `--ages`, a node also has `last_changed`: when its page last changed, in seconds since the Unix epoch, or `"uncommitted"` for a page with changes not committed.
+A node with no age has none.
+See xref:graph-view.adoc#graph-page-age[How long ago pages changed].
 
 With `--path`, the JSON is the usual `nodes` and `edges` plus a `path` array, in order.
 Each step has an `id`, a `title`, `links` (the kinds of link from the step before, empty for the first step) and `backwards` (true when the step was reached against a link's direction).

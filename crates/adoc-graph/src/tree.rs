@@ -329,6 +329,7 @@ mod tests {
                 coordinate: None,
                 links_out: 0,
                 links_in: 0,
+                last_changed: None,
             })
             .collect();
         nodes.sort_by(|left, right| left.key.cmp(&right.key));

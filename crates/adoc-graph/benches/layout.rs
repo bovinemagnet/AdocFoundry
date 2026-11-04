@@ -67,6 +67,7 @@ fn graph(nodes: usize, edges: usize) -> GraphSnapshot {
                     }),
                     links_out: 0,
                     links_in: 0,
+                    last_changed: None,
                 }
             })
             .collect(),

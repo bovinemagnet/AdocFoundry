@@ -97,6 +97,8 @@ pub struct GitState {
     blame_built: RefCell<BTreeMap<DocumentId, BuiltBlame>>,
     /// Bumped whenever hunks or blame change, so blame built before is built again.
     blame_stamp: u64,
+    /// When each page last changed, by repository (`page_age.rs`).
+    pub(crate) page_ages: crate::page_age::PageAges,
 }
 
 impl GitState {
@@ -182,6 +184,7 @@ impl Engine {
             .flat_map(|repository| repository.roots.clone())
             .collect();
         self.forget_blames();
+        self.forget_page_ages();
         self.git.repositories.clear();
         self.git.status.clear();
         self.git.refreshes.clear();
@@ -278,6 +281,7 @@ impl Engine {
                 });
             }
             self.replace_status(&repository.workdir, status);
+            self.start_page_ages(&repository.workdir, repository.commit.clone());
             watch.push(repository.git_dir.clone());
             let roots = repository.roots.clone();
             self.git.repositories.push(repository);
@@ -380,10 +384,12 @@ impl Engine {
         // `HEAD` are read again, and their blame. Anything else (a save, staging) only changes
         // what the hunks are of.
         if self.git.repositories[index].commit != commit {
-            self.git.repositories[index].commit = commit;
+            self.git.repositories[index].commit = commit.clone();
             self.forget_head_texts();
             self.forget_blames();
+            self.start_page_ages(workdir, commit);
         }
+        self.page_status_changed();
         self.schedule_all_hunks();
     }
 

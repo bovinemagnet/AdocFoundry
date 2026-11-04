@@ -106,7 +106,8 @@ show_partials = true
 show_nav = true
 show_orphans = true
 show_unresolved = false
-colour_by = "component"          # component | module | family
+colour_by = "component"          # component | module | family | age
+stale_after_days = 365           # pages unchanged longer are ringed
 group = "off"                    # off | module | component
 layout = "force"                 # force | mind-map | radial
 
@@ -393,9 +394,14 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |Show the targets of links that do not resolve as nodes of their own.
 
 |`graph.colour_by`
-|`"component"`, `"module"` or `"family"`
+|`"component"`, `"module"`, `"family"` or `"age"`
 |`"component"`
-|What the graph window colours nodes by.
+|What the graph window colours nodes by. `"age"` colours by when each page last changed, and needs Git history; see xref:graph-view.adoc#graph-page-age[How long ago pages changed].
+
+|`graph.stale_after_days`
+|positive integer
+|`365`
+|How many days a page may go unchanged before the graph rings it as stale. It may be set in the workspace file too. `0` or anything else warns and keeps the default. See xref:graph-view.adoc#graph-page-age[How long ago pages changed].
 
 |`graph.group`
 |`"off"`, `"module"` or `"component"`

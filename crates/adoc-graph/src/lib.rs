@@ -22,7 +22,7 @@ pub use group::{group_name, GroupBy, Groups, OTHER_GROUP};
 pub use layout::{Layout, Point, SETTLED};
 pub use snapshot::NodeInput;
 pub use store::{LinkStore, PathStep, StoredLink};
-pub use style::{colour_groups, node_colour, node_radius, ColourBy, Hsl};
+pub use style::{node_radius, ColourBy, Hsl, Palette};
 pub use svg::{to_svg, to_svg_laid_out, SvgStyle, EXPORT_SEED};
 pub use tree::{MindMap, TreeStyle, LEVEL_GAP, SIBLING_GAP};
 
@@ -103,6 +103,19 @@ pub struct GraphNode {
     pub links_out: usize,
     /// The edges reaching the node in the snapshot.
     pub links_in: usize,
+    /// When its file last changed, where Git says; `None` without Git, outside a repository,
+    /// or for a target that does not resolve.
+    pub last_changed: Option<LastChanged>,
+}
+
+/// When a file last changed, from its Git history.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum LastChanged {
+    /// It has changes not committed yet, so it changed now.
+    Uncommitted,
+    /// Committed at this time, in seconds since the Unix epoch. For a file older than all the
+    /// history read, the oldest commit read: it is at least that old.
+    At(i64),
 }
 
 /// Every link of one kind between two nodes, as one edge.
