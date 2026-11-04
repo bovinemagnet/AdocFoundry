@@ -124,6 +124,13 @@ pub enum EngineEvent {
         output: PathBuf,
         result: Result<crate::ExportSummary, String>,
     },
+    /// `export.pdf_pages` finished: the PDFs written into `folder`, in the order asked, and
+    /// each page that could not be exported with why. Its pages send no `ExportFinished`.
+    PagesExported {
+        folder: PathBuf,
+        written: Vec<PathBuf>,
+        failed: Vec<(PathBuf, String)>,
+    },
     /// The impact inspector's analysis started or finished: `Engine::impact_inspection`.
     ImpactChanged,
     /// `file.delete` moved the file aside: `Engine::last_deleted` names it until it is put back.

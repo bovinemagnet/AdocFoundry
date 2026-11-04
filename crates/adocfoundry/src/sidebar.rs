@@ -164,6 +164,32 @@ pub fn tree_items(nodes: &[Node], engine: &Engine, panel: SidebarPanel) -> Vec<T
         .collect()
 }
 
+/// The pages listed at the level of the row with id `id`: that row and its siblings that open
+/// an AsciiDoc file, in their order, each once, leaving out entries linking to a fragment and
+/// rows that open a line of a navigation file. Empty when `nodes` has no such row.
+pub fn level_pages(nodes: &[Node], id: &str) -> Vec<PathBuf> {
+    if nodes.iter().any(|node| node.id() == id) {
+        let mut pages: Vec<PathBuf> = Vec::new();
+        for node in nodes {
+            let Some(target) = node.target.as_ref().filter(|_| !node.fragment) else {
+                continue;
+            };
+            let page = target.range.is_empty()
+                && adoc_engine::is_asciidoc_path(&target.path)
+                && !pages.contains(&target.path);
+            if page {
+                pages.push(target.path.clone());
+            }
+        }
+        return pages;
+    }
+    nodes
+        .iter()
+        .map(|node| level_pages(&node.children, id))
+        .find(|pages| !pages.is_empty())
+        .unwrap_or_default()
+}
+
 /// The ids of the rows from the root down to the row with id `id`, if `nodes` has one.
 pub fn path_to(nodes: &[Node], id: &str) -> Option<Vec<String>> {
     for node in nodes {
@@ -629,6 +655,51 @@ pub fn display_path(path: &Path, roots: &[PathBuf]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rows_level_is_its_siblings_pages() {
+        let page = |key: &str, path: &str| {
+            let target = Target {
+                path: PathBuf::from(path),
+                range: SourceRange::new(0, 0),
+            };
+            Node::new(key.to_owned(), key, Some(target))
+        };
+        let mut fragment = page("setup", "/m/pages/guide.adoc");
+        fragment.fragment = true;
+        let line = Node::new(
+            "heading".to_owned(),
+            "Heading",
+            Some(Target {
+                path: PathBuf::from("/m/nav.adoc"),
+                range: SourceRange::new(10, 20),
+            }),
+        );
+        let mut guide = page("guide", "/m/pages/guide.adoc");
+        guide.children = vec![fragment, page("install", "/m/pages/install.adoc")];
+        let nodes = vec![Node {
+            children: vec![
+                page("index", "/m/pages/index.adoc"),
+                guide,
+                line,
+                page("again", "/m/pages/index.adoc"),
+                page("image", "/m/images/logo.png"),
+            ],
+            ..Node::new("component".to_owned(), "Component", None)
+        }];
+        let pages = |id: &str| level_pages(&nodes, id);
+        let index = nodes[0].children[0].id();
+        assert_eq!(
+            pages(&index),
+            [
+                PathBuf::from("/m/pages/index.adoc"),
+                PathBuf::from("/m/pages/guide.adoc")
+            ]
+        );
+        let install = nodes[0].children[1].children[1].id();
+        assert_eq!(pages(&install), [PathBuf::from("/m/pages/install.adoc")]);
+        assert!(pages("nowhere").is_empty());
+    }
 
     #[test]
     fn target_ids_round_trip() {

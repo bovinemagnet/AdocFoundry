@@ -12,7 +12,7 @@ use crate::{DocumentId, PdfStandard};
 // The export itself needs Typst; without it only the request and result types remain.
 #[cfg(feature = "typst")]
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     path::Path,
     time::{Duration, Instant},
 };
@@ -171,6 +171,19 @@ struct Job {
     doms: Vec<(PathBuf, Dom)>,
     /// Kept for `export_blocking`, which takes it; otherwise only published.
     keep_result: bool,
+    /// One of `export.pdf_pages`'s pages, reported in its summary rather than on its own.
+    in_batch: bool,
+}
+
+/// `export.pdf_pages` under way: its pages are exported one after another, so a folder of
+/// pages never typesets them all at once.
+#[cfg(feature = "typst")]
+struct Batch {
+    folder: PathBuf,
+    /// Each page still to export, with the PDF it is written to.
+    queue: VecDeque<(PathBuf, PathBuf)>,
+    written: Vec<PathBuf>,
+    failed: Vec<(PathBuf, String)>,
 }
 
 #[cfg(feature = "typst")]
@@ -179,6 +192,7 @@ pub(crate) struct ExportState {
     jobs: BTreeMap<u64, Job>,
     finished: BTreeMap<u64, Result<ExportSummary, String>>,
     next: u64,
+    batch: Option<Batch>,
 }
 
 #[cfg(feature = "typst")]
@@ -219,6 +233,17 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
     register(
         registry,
         spec(
+            ids::EXPORT_PDF_PAGES,
+            "Export Pages as PDF…",
+            CommandCategory::Workspace,
+            None,
+            CommandContext::Always,
+        ),
+        export_pages_command,
+    );
+    register(
+        registry,
+        spec(
             ids::EXPORT_PDF_PROFILE,
             "Export PDF Profile…",
             CommandCategory::Workspace,
@@ -254,6 +279,22 @@ fn profile_command(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutc
     };
     let args = engine.profile_export_args(&name)?;
     engine.start_export(args, false)?;
+    Ok(CommandOutcome::Done)
+}
+
+/// Exports each page to its own PDF in a folder, one page after another.
+#[cfg(feature = "typst")]
+fn export_pages_command(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::ExportPages { pages, folder } = args else {
+        return Err(EngineError::InvalidArguments {
+            command: ids::EXPORT_PDF_PAGES,
+            expected: "the pages to export and the folder to write them in",
+        });
+    };
+    engine.export_pages(pages, folder)?;
     Ok(CommandOutcome::Done)
 }
 
@@ -306,7 +347,105 @@ impl Engine {
         }
     }
 
+    /// Exports each of `pages` to `<folder>/<name>.pdf`, one after another; pages named alike
+    /// are told apart as `<name>-2.pdf` and so on. Reports once, with
+    /// [`EngineEvent::PagesExported`], when the last has finished. Refuses no pages, a folder
+    /// that is not one, and a second request while one is under way.
+    pub fn export_pages(
+        &mut self,
+        pages: Vec<PathBuf>,
+        folder: PathBuf,
+    ) -> Result<(), EngineError> {
+        if pages.is_empty() {
+            return Err(EngineError::InvalidRequest(
+                "there are no pages to export".to_owned(),
+            ));
+        }
+        if !folder.is_dir() {
+            return Err(EngineError::InvalidRequest(format!(
+                "{} is not a folder",
+                folder.display()
+            )));
+        }
+        if self.export.batch.is_some() {
+            return Err(EngineError::Refused(
+                "pages are being exported already".to_owned(),
+            ));
+        }
+        let mut taken = HashSet::new();
+        let queue = pages
+            .into_iter()
+            .map(|page| {
+                let stem = page
+                    .file_stem()
+                    .map_or_else(|| "page".into(), |stem| stem.to_string_lossy().into_owned());
+                let name = (1..)
+                    .map(|n| match n {
+                        1 => format!("{stem}.pdf"),
+                        n => format!("{stem}-{n}.pdf"),
+                    })
+                    .find(|name| taken.insert(name.clone()))
+                    .unwrap_or_default();
+                let output = folder.join(name);
+                (page, output)
+            })
+            .collect();
+        self.export.batch = Some(Batch {
+            folder,
+            queue,
+            written: Vec::new(),
+            failed: Vec::new(),
+        });
+        self.export_next_page();
+        Ok(())
+    }
+
+    /// Starts the batch's next page, recording any that cannot start, and reports the batch
+    /// once none is left.
+    fn export_next_page(&mut self) {
+        loop {
+            let Some(batch) = self.export.batch.as_mut() else {
+                return;
+            };
+            let Some((page, output)) = batch.queue.pop_front() else {
+                let batch = self.export.batch.take().expect("a batch");
+                self.emit(EngineEvent::PagesExported {
+                    folder: batch.folder,
+                    written: batch.written,
+                    failed: batch.failed,
+                });
+                return;
+            };
+            let args = ExportArgs {
+                target: ExportTarget::File(page.clone()),
+                output,
+                theme: None,
+                standards: Vec::new(),
+                fonts_dir: None,
+                typst: None,
+                attributes: Vec::new(),
+            };
+            match self.start_export_job(args, false, true) {
+                Ok(_) => return,
+                Err(error) => {
+                    if let Some(batch) = self.export.batch.as_mut() {
+                        batch.failed.push((page, error.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
     fn start_export(&mut self, args: ExportArgs, keep_result: bool) -> Result<u64, EngineError> {
+        self.start_export_job(args, keep_result, false)
+    }
+
+    fn start_export_job(
+        &mut self,
+        args: ExportArgs,
+        keep_result: bool,
+        in_batch: bool,
+    ) -> Result<u64, EngineError> {
         let mut plan = self.export_plan(&args.target)?;
         if let Plan::Book {
             attributes, title, ..
@@ -340,6 +479,7 @@ impl Engine {
                 stage: Stage::Parsing,
                 doms: Vec::new(),
                 keep_result,
+                in_batch,
             },
         );
         let parser = self.document_parser();
@@ -669,6 +809,22 @@ impl Engine {
         };
         if state.keep_result {
             self.export.finished.insert(job, result.clone());
+        }
+        if state.in_batch {
+            if let Some(batch) = self.export.batch.as_mut() {
+                match result {
+                    Ok(_) => batch.written.push(state.args.output),
+                    Err(error) => {
+                        let page = match state.args.target {
+                            ExportTarget::File(page) => page,
+                            _ => state.args.output,
+                        };
+                        batch.failed.push((page, error));
+                    }
+                }
+            }
+            self.export_next_page();
+            return;
         }
         self.emit(EngineEvent::ExportFinished {
             output: state.args.output,

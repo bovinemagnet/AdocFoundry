@@ -56,6 +56,7 @@ use crate::{
 
 mod build_site;
 mod delete_file;
+mod file_actions;
 mod impact;
 mod new_project;
 
@@ -717,6 +718,11 @@ impl WorkspaceView {
             EngineEvent::ExportFinished { output, result } => {
                 Self::export_finished(output, result, window, cx);
             }
+            EngineEvent::PagesExported {
+                folder,
+                written,
+                failed,
+            } => Self::pages_exported(folder, written, failed, window, cx),
             EngineEvent::SiteBuildOutput => self.site_build_output(cx),
             EngineEvent::SiteBuildFinished { result } => {
                 Self::site_build_finished(result, window, cx);
@@ -4476,7 +4482,17 @@ impl WorkspaceView {
             })
             .when_some(expansion_panel(id), |tree, panel| {
                 let app = self.app.clone();
-                tree.context_menu(move |_, _, menu, _, cx| expansion_menu(menu, panel, &app, cx))
+                let workspace = cx.weak_entity();
+                tree.context_menu(move |_, entry, menu, _, cx| {
+                    file_actions::sidebar_row_menu(
+                        menu,
+                        panel,
+                        &entry.item().id,
+                        &workspace,
+                        &app,
+                        cx,
+                    )
+                })
             })
             .text_sm(),
         );

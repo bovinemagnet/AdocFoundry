@@ -529,6 +529,10 @@ mod tests {
             ids::SPELLING_ADD_TO_WORKSPACE,
             ids::SPELLING_ADD_TO_USER,
             ids::PAGE_NEW_PARTIAL,
+            // The Navigation, Modules and Files panels' menus, on the row they were opened on.
+            ids::FILE_NEW,
+            ids::NAV_ADD_PAGE,
+            ids::EXPORT_PDF_PAGES,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine
