@@ -163,6 +163,16 @@ fn missing_image_is_a_diagnostic_not_a_failure() {
 }
 
 #[test]
+fn a_theme_with_an_empty_list_typesets() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("empty-list-theme.yml");
+    std::fs::write(&path, "extends: default\ncustom_list: []\n").unwrap();
+    let theme = adoc_pdf::load_theme(&adoc_pdf::ThemeSource::File(path)).unwrap();
+    let output = export(&reference(), &theme, &PdfOptions::default()).unwrap();
+    assert!(output.bytes.starts_with(b"%PDF-"));
+}
+
+#[test]
 fn compile_is_deterministic() {
     let options = PdfOptions {
         date: Some((2026, 10, 24)),
@@ -215,4 +225,35 @@ fn corpus_pages_typeset() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+#[test]
+fn a_listing_kept_whole_is_never_cut_off_by_a_small_page() {
+    // On A6 paper with a 24 pt code font, eighteen lines of code are taller than a page.
+    let dir = tempfile::tempdir().unwrap();
+    let theme_path = dir.path().join("small-theme.yml");
+    std::fs::write(
+        &theme_path,
+        "extends: default\npage:\n  size: A6\ncode:\n  font-size: 24\n",
+    )
+    .unwrap();
+    let theme = adoc_pdf::load_theme(&adoc_pdf::ThemeSource::File(theme_path)).unwrap();
+    let lines: Vec<String> = (1..=18).map(|n| format!("line{n:02}")).collect();
+    let text = format!("= Page\n\n----\n{}\n----\n", lines.join("\n"));
+    let page = dir.path().join("page.adoc");
+    std::fs::write(&page, &text).unwrap();
+    let typst = adoc_pdf::to_typst(
+        &common::article(common::view_of(&page)),
+        &theme,
+        &PdfOptions::default(),
+    );
+    let pages = adoc_pdf::typeset_pages(&typst, &theme, &PdfOptions::default()).unwrap();
+    for line in &lines {
+        let shown = pages.iter().any(|page| {
+            page.runs
+                .iter()
+                .any(|run| run.text.contains(line.as_str()) && run.y >= 0.0 && run.y <= page.height)
+        });
+        assert!(shown, "{line} is not on any page");
+    }
 }

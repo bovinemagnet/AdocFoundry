@@ -376,6 +376,26 @@ fn languages_without_a_grammar_keep_typst_s_highlighter() {
 }
 
 #[test]
+fn extreme_list_starts_neither_panic_nor_wrap() {
+    // Debug builds check overflow, so a wrap would panic here.
+    let typst = typst_of(
+        "= Starts\n\n\
+         [start=9223372036854775807]\n. max\n. past\n\n//-\n\n\
+         [%reversed,start=-9223372036854775808]\n. min\n. past\n\n//-\n\n\
+         [decimal,start=-9223372036854775808]\n. min\n\n//-\n\n\
+         [upperroman,start=9223372036854775807]\n. max\n",
+    );
+    let source = &typst.source;
+    for markers in [
+        "#adoc-list(([#\"9223372036854775807.\"], [#\"9223372036854775807.\"],)",
+        "#adoc-list(([#\"-9223372036854775808.\"], [#\"-9223372036854775808.\"],)",
+        "#adoc-list(([#\"-9223372036854775808.\"],)",
+    ] {
+        assert!(source.contains(markers), "no {markers} in\n{source}");
+    }
+}
+
+#[test]
 fn emits_list_styles_and_table_options() {
     let typst = typst_of(
         "= Options\n\n\
@@ -467,4 +487,86 @@ fn image_alignment_and_pdf_width_are_kept() {
         "{source}"
     );
     assert!(source.contains(")), align-to: \"right\")"), "{source}");
+}
+
+/// The line `map` gives for the generated text of the word `word`.
+fn mapped_line(typst: &adoc_pdf::Typst, word: &str) -> u32 {
+    let offset = typst
+        .source
+        .find(word)
+        .unwrap_or_else(|| panic!("no {word} in\n{}", typst.source));
+    typst
+        .map
+        .lookup(offset)
+        .unwrap_or_else(|| panic!("nothing mapped at {word}"))
+        .line
+}
+
+#[test]
+fn nested_blocks_map_to_their_own_lines() {
+    for (what, text) in [
+        (
+            "an example",
+            "= Page\n\n====\nAlpha one.\n\nBravo two.\n====\n",
+        ),
+        (
+            "a titled example",
+            "= Page\n\n.Title\n====\nAlpha one.\n\nBravo two.\n====\n",
+        ),
+        (
+            "a list item",
+            "= Page\n\n* Item\n+\nAlpha one.\n+\nBravo two.\n",
+        ),
+        (
+            "an admonition",
+            "= Page\n\n[NOTE]\n====\nAlpha one.\n\nBravo two.\n====\n",
+        ),
+        (
+            "a sidebar",
+            "= Page\n\n****\nAlpha one.\n\nBravo two.\n****\n",
+        ),
+        (
+            "a table cell",
+            "= Page\n\n|===\na|Alpha one.\n\nBravo two.\n|===\n",
+        ),
+    ] {
+        let typst = typst_of(text);
+        let line =
+            |word: &str| text.lines().position(|line| line.contains(word)).unwrap() as u32 + 1;
+        for word in ["Alpha", "Bravo"] {
+            assert_eq!(
+                mapped_line(&typst, word),
+                line(word),
+                "{word} in {what}:\n{}",
+                typst.source
+            );
+        }
+    }
+}
+
+#[test]
+fn a_listing_fits_unmeasured_only_where_the_page_holds_it() {
+    let lines: Vec<String> = (1..=18).map(|n| format!("line{n:02}")).collect();
+    let text = format!("= Page\n\n----\n{}\n----\n", lines.join("\n"));
+    let view = || common::view_of_text(Path::new("/doc/page.adoc"), &text);
+    let default = to_typst(
+        &common::article(view()),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    assert!(
+        default.source.contains("#adoc-code(fits: true, "),
+        "{}",
+        default.source
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("small-theme.yml");
+    std::fs::write(
+        &path,
+        "extends: default\npage:\n  size: A6\ncode:\n  font-size: 24\n",
+    )
+    .unwrap();
+    let small = adoc_pdf::load_theme(&adoc_pdf::ThemeSource::File(path)).unwrap();
+    let small = to_typst(&common::article(view()), &small, &PdfOptions::default());
+    assert!(small.source.contains("#adoc-code(raw("), "{}", small.source);
 }

@@ -15,6 +15,13 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - Toggle Light/Dark Theme saves the mode it switches to, rather than changing it for the session only (#357).
 - The source editor sends the engine each edit exactly as the editor widget makes it, so typing no longer compares the widget's text with the engine's on every keystroke (#210). The UI framework moves to gpui-component 0.9.0 and gpui-pre 0.3.11, which report the edits. In the Navigation and Modules panels' menu the first Down now selects Expand All, the first command, rather than the menu's title.
 
+### Fixed
+
+- PDF export: a theme holding an empty list (`custom_list: []`) no longer makes export fail with "unexpected comma" (#276).
+- PDF export: an ordered list with an extreme `start` (`[start=9223372036854775807]`, `-9223372036854775808`, or a Greek or Roman style past their range) no longer panics or counts round to negative numbers; counting stops at the ends of the range, and a Roman numeral past 3999 is written in figures (#277).
+- PDF export: Typst errors and positions on PDF pages map back to the right line for blocks inside examples, sidebars, admonitions, quotes, list items, description lists, callouts, titled blocks and table cells, rather than to the container's line or another block's (#275).
+- PDF export: a short block is kept whole without being measured only when the theme's page holds it, so a listing on small paper or in a large code font breaks across pages rather than running off the bottom (#274).
+
 ## 0.6.0 — 2026-11-03
 
 ### Added
