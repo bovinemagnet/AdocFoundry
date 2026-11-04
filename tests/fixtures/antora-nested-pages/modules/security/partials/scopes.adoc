@@ -1,0 +1,3 @@
+Scopes are listed below.
+
+include::partial$scope-list.adoc[]

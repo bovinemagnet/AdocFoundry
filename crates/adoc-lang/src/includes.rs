@@ -15,8 +15,9 @@ pub(crate) const MAX_INCLUDE_DEPTH: usize = 16;
 /// Every file whose content is composed into `path`, `path` itself included.
 ///
 /// Asciidoctor resolves anchors against the assembled document, so an anchor declared in an
-/// included partial is a legitimate target for a reference in the including page. Without
-/// an Antora `context`, only relative and attribute-based include targets are followed.
+/// included partial is a legitimate target for a reference in the including page. The page is
+/// composed in its own Antora context, `context` standing in only for a page outside every
+/// module; without either, only relative and attribute-based include targets are followed.
 #[must_use]
 pub fn composed_files(
     index: &WorkspaceIndex,
@@ -24,15 +25,31 @@ pub fn composed_files(
     context: Option<&AntoraContext>,
     path: &Path,
 ) -> BTreeSet<PathBuf> {
+    let page = antora.context_for_path(path).or_else(|| context.cloned());
+    let contexts = Contexts {
+        page: page.as_ref(),
+        file: page.as_ref(),
+    };
     let mut visited = BTreeSet::new();
-    collect(index, antora, context, path, &mut visited, 0);
+    collect(index, antora, contexts, path, &mut visited, 0);
     visited
+}
+
+/// The contexts an include directive is resolved in.
+#[derive(Clone, Copy)]
+struct Contexts<'a> {
+    /// The page being composed: its attributes, `{partialsdir}` among them, are the
+    /// document's.
+    page: Option<&'a AntoraContext>,
+    /// The file the directive is in, whose module a resource ID is relative to, as Antora
+    /// resolves one; the including file's when it is in no module itself.
+    file: Option<&'a AntoraContext>,
 }
 
 fn collect(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
-    context: Option<&AntoraContext>,
+    contexts: Contexts<'_>,
     path: &Path,
     visited: &mut BTreeSet<PathBuf>,
     depth: usize,
@@ -44,17 +61,22 @@ fn collect(
     let Some(file) = index.file(&path) else {
         return;
     };
+    let own = antora.context_for_path(&path);
+    let contexts = Contexts {
+        file: own.as_ref().or(contexts.file),
+        ..contexts
+    };
 
     for include in &file.document.includes {
         if let Some(target) = resolve_target(
             index,
             antora,
-            context,
+            contexts,
             &path,
             &file.document,
             &include.target,
         ) {
-            collect(index, antora, context, &target, visited, depth + 1);
+            collect(index, antora, contexts, &target, visited, depth + 1);
         }
     }
 }
@@ -76,10 +98,14 @@ pub fn include_map(
     let mut map = BTreeMap::new();
     let mut visited = BTreeSet::new();
     visited.insert(normalize_path(path));
+    let contexts = Contexts {
+        page: context.as_ref(),
+        file: context.as_ref(),
+    };
     map_includes(
         index,
         antora,
-        context.as_ref(),
+        contexts,
         (path, path),
         document,
         &mut map,
@@ -93,7 +119,7 @@ pub fn include_map(
 fn map_includes(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
-    context: Option<&AntoraContext>,
+    contexts: Contexts<'_>,
     (requested, real): (&Path, &Path),
     document: &Document,
     map: &mut BTreeMap<PathBuf, PathBuf>,
@@ -103,9 +129,14 @@ fn map_includes(
     if depth > MAX_INCLUDE_DEPTH {
         return;
     }
+    let own = antora.context_for_path(real);
+    let contexts = Contexts {
+        file: own.as_ref().or(contexts.file),
+        ..contexts
+    };
     let directory = requested.parent().unwrap_or_else(|| Path::new(""));
     for include in &document.includes {
-        let Some(target) = resolve_target(index, antora, context, real, document, &include.target)
+        let Some(target) = resolve_target(index, antora, contexts, real, document, &include.target)
         else {
             continue;
         };
@@ -118,7 +149,7 @@ fn map_includes(
             map_includes(
                 index,
                 antora,
-                context,
+                contexts,
                 (&key, &target),
                 &file.document,
                 map,
@@ -132,14 +163,14 @@ fn map_includes(
 fn resolve_target(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
-    context: Option<&AntoraContext>,
+    contexts: Contexts<'_>,
     current: &Path,
     document: &Document,
     target: &str,
 ) -> Option<PathBuf> {
     if target.contains('$') {
         let id = parse_resource_id(target).ok()?;
-        return AntoraResolver::resolve(antora, &id, context?)
+        return AntoraResolver::resolve(antora, &id, contexts.file?)
             .ok()
             .map(|resource| resource.source_path.clone());
     }
@@ -148,7 +179,7 @@ fn resolve_target(
     if let Some(resolved) = resolve_include_target(document, current, target) {
         return Some(resolved);
     }
-    let substituted = substitute_intrinsic_directories(antora, context?, target)?;
+    let substituted = substitute_intrinsic_directories(antora, contexts.page?, target)?;
     let resolved = normalize_path(&substituted);
     index
         .file(&resolved)
