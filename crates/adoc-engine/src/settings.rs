@@ -353,9 +353,23 @@ pub fn pdf_standard(name: &str) -> Option<crate::PdfStandard> {
     }
 }
 
+/// The `[appearance]` table, user file only: whether the app follows the system's light or dark
+/// appearance or keeps one, and the named theme for each (`None` for the native default).
+/// Without `mode`, `[editor] theme` gives it, as it did before the table existed.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AppearanceSettings {
+    pub mode: ThemePreference,
+    pub light_theme: Option<String>,
+    pub dark_theme: Option<String>,
+    /// Where user theme files are read from: `themes` beside the user settings file unless
+    /// `themes_dir` names another folder (relative to that file's folder, `~/` the home folder).
+    pub themes_dir: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Settings {
     pub editor: EditorSettings,
+    pub appearance: AppearanceSettings,
     pub workspace: WorkspaceSettings,
     pub tools: ToolSettings,
     pub git: GitSettings,
@@ -373,6 +387,10 @@ pub struct Settings {
     workspace_file: Option<PathBuf>,
     /// Whether a settings file set `[git] enabled`, rather than leaving the default.
     git_enabled_set: bool,
+    /// Whether the user file set `[appearance] mode`, which `[editor] theme` then gives way to.
+    appearance_mode_set: bool,
+    /// Whether a settings file set the older `[editor] theme`.
+    editor_theme_set: bool,
     /// Git is off unless a settings file turns it on, as in the language server.
     git_opt_in: bool,
     /// Pages are never saved without Save, whatever the files say; see
@@ -449,6 +467,11 @@ impl Settings {
             .as_deref()
             .and_then(Path::parent)
             .map(|folder| folder.join("templates"));
+        fresh.appearance.themes_dir = fresh
+            .user_file
+            .as_deref()
+            .and_then(Path::parent)
+            .map(|folder| folder.join("themes"));
         if let Some(path) = fresh.user_file.clone() {
             if let Some(table) = read_table(&path)? {
                 fresh.apply(&table, Layer::User, &path);
@@ -465,8 +488,107 @@ impl Settings {
         if fresh.auto_save_off {
             fresh.editor.auto_save = AutoSave::Off;
         }
+        fresh.resolve_appearance_mode();
         *self = fresh;
         Ok(())
+    }
+
+    /// `[appearance] mode` if set, else the older `[editor] theme`; both kept in step.
+    fn resolve_appearance_mode(&mut self) {
+        if !self.appearance_mode_set {
+            self.appearance.mode = self.editor.theme;
+        } else if self.editor_theme_set {
+            let source = self
+                .user_file
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            self.warn(
+                &source,
+                "editor.theme",
+                "is ignored, as `appearance.mode` is set; remove it",
+            );
+        }
+        self.editor.theme = self.appearance.mode;
+    }
+
+    /// Writes the appearance to the user settings file, changing only `[appearance]`'s `mode`,
+    /// `light_theme` and `dark_theme` (a `None` name is taken out) and taking out the older
+    /// `[editor] theme` it replaces, keeping every other line and comment; then reads the
+    /// settings again. Refuses without a user file, and leaves a file it cannot read as it is.
+    pub fn save_appearance(
+        &mut self,
+        mode: ThemePreference,
+        light_theme: Option<&str>,
+        dark_theme: Option<&str>,
+    ) -> Result<(), EngineError> {
+        self.write_appearance(mode, light_theme, dark_theme)?;
+        self.reload()
+    }
+
+    /// [`Self::save_appearance`]'s write, without reading the settings again.
+    pub(crate) fn write_appearance(
+        &self,
+        mode: ThemePreference,
+        light_theme: Option<&str>,
+        dark_theme: Option<&str>,
+    ) -> Result<(), EngineError> {
+        let path = self.user_file.clone().ok_or_else(|| {
+            EngineError::Refused("there is no user settings file to save to".to_owned())
+        })?;
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(EngineError::io(&path, error)),
+        };
+        let mut document: toml_edit::DocumentMut = text
+            .parse()
+            .map_err(|error| EngineError::Settings(format!("{}: {error}", path.display())))?;
+        if let Some(editor) = document
+            .get_mut("editor")
+            .and_then(toml_edit::Item::as_table_like_mut)
+        {
+            editor.remove("theme");
+        }
+        let appearance = document
+            .entry("appearance")
+            .or_insert_with(toml_edit::table)
+            .as_table_like_mut()
+            .ok_or_else(|| {
+                EngineError::Settings(format!("{}: `appearance` is not a table", path.display()))
+            })?;
+        let mode = match mode {
+            ThemePreference::Auto => "auto",
+            ThemePreference::Light => "light",
+            ThemePreference::Dark => "dark",
+        };
+        for (key, text) in [
+            ("mode", Some(mode)),
+            ("light_theme", light_theme),
+            ("dark_theme", dark_theme),
+        ] {
+            match (text, appearance.get_mut(key)) {
+                // A key already there keeps its place and the comments written above it.
+                (Some(text), Some(item)) => *item = toml_edit::value(text),
+                (Some(text), None) => {
+                    appearance.insert(key, toml_edit::value(text));
+                }
+                (None, _) => {
+                    appearance.remove(key);
+                }
+            }
+        }
+        if let Some(folder) = path.parent() {
+            fs::create_dir_all(folder).map_err(|error| EngineError::io(folder, error))?;
+        }
+        // Through a temporary file, so a failed write never leaves half a settings file.
+        let temporary = path.with_extension("toml.saving");
+        fs::write(&temporary, document.to_string())
+            .and_then(|()| fs::rename(&temporary, &path))
+            .map_err(|error| {
+                let _ = fs::remove_file(&temporary);
+                EngineError::io(&path, error)
+            })
     }
 
     #[must_use]
@@ -532,6 +654,10 @@ impl Settings {
                     self.apply_templates_dir(&source, layer, path, value);
                     continue;
                 }
+                if section == "appearance" && key == "themes_dir" && layer == Layer::User {
+                    self.apply_themes_dir(&source, path, value);
+                    continue;
+                }
                 // `[sidebar.navigation]` and `[sidebar.modules]` are tables of their own.
                 let panel = value.as_table().filter(|_| {
                     section == "sidebar" && matches!(key.as_str(), "navigation" | "modules")
@@ -547,6 +673,20 @@ impl Settings {
                 }
             }
         }
+    }
+
+    /// `[appearance] themes_dir`: a path relative to the user file's folder, `~/` the home folder.
+    fn apply_themes_dir(&mut self, source: &str, file: &Path, value: &toml::Value) {
+        let Some(text) = value.as_str().filter(|text| !text.trim().is_empty()) else {
+            self.warn(source, "appearance.themes_dir", "expected a folder");
+            return;
+        };
+        let base = file.parent().unwrap_or(Path::new(""));
+        let path = match (text.strip_prefix("~/"), dirs::home_dir()) {
+            (Some(rest), Some(home)) => home.join(rest),
+            _ => base.join(text),
+        };
+        self.appearance.themes_dir = Some(adoc_index::normalize_path(&path));
     }
 
     /// `[templates] dir`: from the user file, a path (`~/` the home folder) relative to the
@@ -639,13 +779,15 @@ impl Settings {
                 };
             }
             ("editor", "theme") => {
-                self.editor.theme = match value.as_str() {
-                    Some("auto") => ThemePreference::Auto,
-                    Some("light") => ThemePreference::Light,
-                    Some("dark") => ThemePreference::Dark,
-                    _ => return Err("expected \"auto\", \"light\" or \"dark\""),
-                };
+                self.editor.theme = theme_preference(value)?;
+                self.editor_theme_set = true;
             }
+            ("appearance", "mode") => {
+                self.appearance.mode = theme_preference(value)?;
+                self.appearance_mode_set = true;
+            }
+            ("appearance", "light_theme") => self.appearance.light_theme = Some(theme_name(value)?),
+            ("appearance", "dark_theme") => self.appearance.dark_theme = Some(theme_name(value)?),
             ("workspace", "ignore") => {
                 let items = value.as_array().ok_or("expected an array of strings")?;
                 self.workspace.ignore = items.iter().map(string).collect::<Result<_, _>>()?;
@@ -911,6 +1053,10 @@ fn is_known(section: &str, key: &str) -> bool {
             )
             | ("workspace", "ignore")
             | (
+                "appearance",
+                "mode" | "light_theme" | "dark_theme" | "themes_dir"
+            )
+            | (
                 "tools",
                 "asciidoctor"
                     | "git"
@@ -948,6 +1094,25 @@ fn is_known(section: &str, key: &str) -> bool {
                 "enabled" | "keep_days" | "max_versions" | "max_size_mb"
             )
     )
+}
+
+fn theme_preference(value: &toml::Value) -> Result<ThemePreference, &'static str> {
+    match value.as_str() {
+        Some("auto") => Ok(ThemePreference::Auto),
+        Some("light") => Ok(ThemePreference::Light),
+        Some("dark") => Ok(ThemePreference::Dark),
+        _ => Err("expected \"auto\", \"light\" or \"dark\""),
+    }
+}
+
+/// A theme's name as the theme files give it.
+fn theme_name(value: &toml::Value) -> Result<String, &'static str> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .ok_or("expected a theme's name")
 }
 
 fn string(value: &toml::Value) -> Result<String, &'static str> {
@@ -1604,5 +1769,151 @@ note = "unknown"
             Some(crate::audit::Severity::Info)
         );
         assert_eq!(policy.exclusions().len(), 2);
+    }
+
+    #[test]
+    fn appearance_legacy_theme_preserved() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        for (legacy, mode) in [
+            ("auto", ThemePreference::Auto),
+            ("light", ThemePreference::Light),
+            ("dark", ThemePreference::Dark),
+        ] {
+            let text = format!("# mine\n[editor]\ntheme = \"{legacy}\"\n");
+            fs::write(&user, &text).unwrap();
+            let settings = Settings::load(Some(&user), None).unwrap();
+            assert_eq!(settings.appearance.mode, mode);
+            assert_eq!(settings.editor.theme, mode);
+            assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+            assert_eq!(
+                fs::read_to_string(&user).unwrap(),
+                text,
+                "loading writes nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn appearance_precedence_and_user_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(
+            &user,
+            "[editor]\ntheme = \"dark\"\n[appearance]\nmode = \"light\"\n\
+             light_theme = \"Solarized Light\"\ndark_theme = \"Tokyo Night\"\n",
+        )
+        .unwrap();
+        let root = directory.path().join("docs");
+        fs::create_dir(&root).unwrap();
+        fs::write(
+            root.join(WORKSPACE_SETTINGS_FILE),
+            "[appearance]\nmode = \"dark\"\ndark_theme = \"Catppuccin Mocha\"\n\
+             themes_dir = \"themes\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), Some(&root)).unwrap();
+        let appearance = &settings.appearance;
+        assert_eq!(appearance.mode, ThemePreference::Light);
+        assert_eq!(appearance.light_theme.as_deref(), Some("Solarized Light"));
+        assert_eq!(appearance.dark_theme.as_deref(), Some("Tokyo Night"));
+        assert_eq!(appearance.themes_dir, Some(directory.path().join("themes")));
+        let warnings = settings.warnings.join("\n");
+        assert!(warnings.contains("`editor.theme`"), "{warnings}");
+        for key in [
+            "appearance.mode",
+            "appearance.dark_theme",
+            "appearance.themes_dir",
+        ] {
+            assert!(
+                warnings.contains(&format!(
+                    "`{key}`: can only be set in the user settings file"
+                )),
+                "{key}: {warnings}"
+            );
+        }
+        assert_eq!(settings.warnings.len(), 4, "{warnings}");
+    }
+
+    #[test]
+    fn appearance_invalid_values_warn_and_keep_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("user.toml");
+        fs::write(
+            &user,
+            "[appearance]\nmode = \"purple\"\nlight_theme = \"\"\nthemes_dir = \"~/my-themes\"\n",
+        )
+        .unwrap();
+        let settings = Settings::load(Some(&user), None).unwrap();
+        assert_eq!(settings.appearance.mode, ThemePreference::Auto);
+        assert_eq!(settings.appearance.light_theme, None);
+        assert_eq!(settings.warnings.len(), 2, "{:?}", settings.warnings);
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(settings.appearance.themes_dir, Some(home.join("my-themes")));
+        }
+    }
+
+    #[test]
+    fn appearance_saves_only_its_keys() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("config/user.toml");
+        let mut settings = Settings::load(Some(&user), None).unwrap();
+        // No file yet: one is made.
+        settings
+            .save_appearance(ThemePreference::Dark, None, Some("Tokyo Night"))
+            .unwrap();
+        assert_eq!(settings.appearance.mode, ThemePreference::Dark);
+        assert_eq!(
+            settings.appearance.dark_theme.as_deref(),
+            Some("Tokyo Night")
+        );
+
+        fs::write(
+            &user,
+            "# My settings\n[editor]\nfont_size = 15 # bigger\ntheme = \"light\"\n\n\
+             [appearance]\n# chosen in the app\nmode = \"dark\"\n",
+        )
+        .unwrap();
+        settings.reload().unwrap();
+        settings
+            .save_appearance(
+                ThemePreference::Auto,
+                Some("Solarized Light"),
+                Some("Catppuccin Mocha"),
+            )
+            .unwrap();
+        let text = fs::read_to_string(&user).unwrap();
+        assert!(
+            text.starts_with("# My settings\n[editor]\nfont_size = 15 # bigger\n"),
+            "{text}"
+        );
+        assert!(text.contains("# chosen in the app\n"), "{text}");
+        assert!(
+            !text.contains("theme = \"light\""),
+            "the legacy key goes: {text}"
+        );
+        assert!(text.contains("mode = \"auto\""), "{text}");
+        assert!(text.contains("light_theme = \"Solarized Light\""), "{text}");
+        assert_eq!(settings.editor.font_size, 15);
+        assert_eq!(settings.appearance.mode, ThemePreference::Auto);
+        assert_eq!(
+            settings.appearance.light_theme.as_deref(),
+            Some("Solarized Light")
+        );
+        assert!(settings.warnings.is_empty(), "{:?}", settings.warnings);
+
+        // A name left out is taken out of the file.
+        settings
+            .save_appearance(ThemePreference::Light, None, Some("Catppuccin Mocha"))
+            .unwrap();
+        assert!(!fs::read_to_string(&user).unwrap().contains("light_theme"));
+    }
+
+    #[test]
+    fn appearance_cannot_be_saved_without_a_user_file() {
+        let mut settings = Settings::default();
+        assert!(settings
+            .save_appearance(ThemePreference::Dark, None, None)
+            .is_err());
     }
 }

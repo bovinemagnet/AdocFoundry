@@ -8353,3 +8353,184 @@ fn a_navigation_entry_offers_a_new_page_after_it(cx: &mut TestAppContext) {
         "{nav}"
     );
 }
+
+/// A window whose settings file is `user`'s, holding `text`.
+fn themed_window(
+    text: &str,
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    VisualTestContext,
+) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let user = config.path().join("adocfoundry.toml");
+    std::fs::write(&user, text).unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (_workspace, cx) = workspace_window(&app, Vec::new(), cx);
+    (config, user, app, cx)
+}
+
+/// The name of the theme every window shows.
+fn shown_theme(cx: &mut VisualTestContext) -> String {
+    cx.update(|_, cx| gpui_component::Theme::global(cx).theme_name().to_string())
+}
+
+#[gpui::test]
+fn theme_picker_previews_without_save(cx: &mut TestAppContext) {
+    let text = "[appearance]\nmode = \"light\"\n";
+    let (_config, user, _app, mut cx) = themed_window(text, cx);
+    let before = shown_theme(&mut cx);
+    cx.dispatch_action(crate::editor::bindings::SelectTheme);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..4 {
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        seen.insert(shown_theme(&mut cx));
+    }
+    assert!(seen.len() > 1, "highlighting shows each theme: {seen:?}");
+    assert!(seen.iter().any(|name| *name != before), "{seen:?}");
+    assert_eq!(
+        std::fs::read_to_string(&user).unwrap(),
+        text,
+        "nothing saved"
+    );
+}
+
+#[gpui::test]
+fn theme_picker_cancel_restores(cx: &mut TestAppContext) {
+    let text = "[appearance]\nmode = \"dark\"\ndark_theme = \"Tokyo Night\"\n";
+    let (_config, user, _app, mut cx) = themed_window(text, cx);
+    assert_eq!(shown_theme(&mut cx), "Tokyo Night");
+    cx.dispatch_action(crate::editor::bindings::SelectTheme);
+    cx.run_until_parked();
+    // Light themes are listed first, so these show light ones, in light mode.
+    cx.simulate_keystrokes("down down down");
+    cx.run_until_parked();
+    assert_ne!(shown_theme(&mut cx), "Tokyo Night");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(shown_theme(&mut cx), "Tokyo Night");
+    assert!(cx.update(|_, cx| gpui_component::Theme::global(cx).mode.is_dark()));
+    assert_eq!(std::fs::read_to_string(&user).unwrap(), text);
+}
+
+#[gpui::test]
+fn theme_picker_commit_persists(cx: &mut TestAppContext) {
+    let (_config, user, app, mut cx) = themed_window("# mine\n[editor]\nfont_size = 14\n", cx);
+    cx.dispatch_action(crate::editor::bindings::SelectTheme);
+    cx.run_until_parked();
+    cx.simulate_input("Mocha");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    let text = std::fs::read_to_string(&user).unwrap();
+    assert!(
+        text.starts_with("# mine\n[editor]\nfont_size = 14\n"),
+        "{text}"
+    );
+    assert!(text.contains("dark_theme = \"Catppuccin Mocha\""), "{text}");
+    // Following the system, as before: Mocha is the dark half.
+    assert!(text.contains("mode = \"auto\""), "{text}");
+    let appearance = cx.update(|_, cx| app.read(cx).engine.settings().appearance.clone());
+    assert_eq!(appearance.dark_theme.as_deref(), Some("Catppuccin Mocha"));
+    // As after a relaunch: the file alone gives the choice back.
+    let reread = Settings::load(Some(&user), None).unwrap();
+    assert_eq!(
+        reread.appearance.dark_theme.as_deref(),
+        Some("Catppuccin Mocha")
+    );
+}
+
+#[gpui::test]
+fn theme_toggle_is_persistent(cx: &mut TestAppContext) {
+    let text = "[appearance]\nmode = \"light\"\ndark_theme = \"Solarized Dark\"\n";
+    let (_config, user, _app, mut cx) = themed_window(text, cx);
+    cx.dispatch_action(crate::editor::bindings::ToggleTheme);
+    cx.run_until_parked();
+    assert_eq!(shown_theme(&mut cx), "Solarized Dark");
+    assert!(std::fs::read_to_string(&user)
+        .unwrap()
+        .contains("mode = \"dark\""));
+    cx.dispatch_action(crate::editor::bindings::FollowSystemAppearance);
+    cx.run_until_parked();
+    assert!(std::fs::read_to_string(&user)
+        .unwrap()
+        .contains("mode = \"auto\""));
+}
+
+#[gpui::test]
+fn theme_editor_syntax_switches(cx: &mut TestAppContext) {
+    let text = "[appearance]\nmode = \"dark\"\n";
+    let (_config, _user, _app, mut cx) = themed_window(text, cx);
+    let highlight = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            gpui_component::Theme::global(cx)
+                .highlight_theme
+                .name
+                .clone()
+        })
+    };
+    let before = highlight(&mut cx);
+    cx.dispatch_action(crate::editor::bindings::SelectTheme);
+    cx.run_until_parked();
+    cx.simulate_input("Tokyo Night");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(shown_theme(&mut cx), "Tokyo Night");
+    assert_ne!(
+        highlight(&mut cx),
+        before,
+        "the highlighting is the theme's"
+    );
+}
+
+#[gpui::test]
+fn appearance_invalid_theme_falls_back(cx: &mut TestAppContext) {
+    let text = "[appearance]\nmode = \"dark\"\ndark_theme = \"No Such Theme\"\n";
+    let (_config, user, app, mut cx) = themed_window(text, cx);
+    let default = cx.update(|_, cx| {
+        gpui_component::theme::ThemeRegistry::global(cx)
+            .default_dark_theme()
+            .name
+            .to_string()
+    });
+    assert_eq!(shown_theme(&mut cx), default);
+    // The name is kept, to be used if the theme comes back.
+    let appearance = cx.update(|_, cx| app.read(cx).engine.settings().appearance.clone());
+    assert_eq!(appearance.dark_theme.as_deref(), Some("No Such Theme"));
+    assert_eq!(std::fs::read_to_string(&user).unwrap(), text);
+}
+
+#[gpui::test]
+fn theme_reloads_without_busy_loop(cx: &mut TestAppContext) {
+    let text = "[appearance]\nmode = \"light\"\nlight_theme = \"Paper\"\n";
+    let (config, _user, _app, mut cx) = themed_window(text, cx);
+    // Not there yet: the light default, the name kept.
+    assert_ne!(shown_theme(&mut cx), "Paper");
+    let themes = config.path().join("themes");
+    std::fs::create_dir_all(&themes).unwrap();
+    std::fs::write(
+        themes.join("paper.json"),
+        r#"{"name": "Paper", "themes": [{"name": "Paper", "mode": "light"}]}"#,
+    )
+    .unwrap();
+    // Nothing watches the folder: Reload Themes reads it.
+    cx.run_until_parked();
+    assert_ne!(shown_theme(&mut cx), "Paper");
+    cx.dispatch_action(crate::editor::bindings::ReloadThemes);
+    cx.run_until_parked();
+    assert_eq!(shown_theme(&mut cx), "Paper");
+    // Taken away, the default comes back on the next reload.
+    std::fs::remove_file(themes.join("paper.json")).unwrap();
+    cx.dispatch_action(crate::editor::bindings::ReloadThemes);
+    cx.run_until_parked();
+    assert_ne!(shown_theme(&mut cx), "Paper");
+}

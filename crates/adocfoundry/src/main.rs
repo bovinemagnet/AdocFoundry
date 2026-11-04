@@ -4,6 +4,7 @@
 
 mod about;
 mod app;
+mod appearance;
 mod diagnostics;
 mod editor;
 mod files_view;

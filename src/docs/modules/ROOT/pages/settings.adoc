@@ -38,9 +38,15 @@ font_family = "JetBrains Mono"   # falls back to the platform monospace
 font_size = 13
 soft_wrap = true
 tab_width = 2
-theme = "auto"                   # auto | light | dark
+theme = "auto"                   # auto | light | dark; the older setting, used when [appearance] mode is not set
 preview_tabs = true              # false: every page you open stays open
 auto_save = "off"                # off | on_focus_change | after_delay
+
+[appearance]                     # user file only
+mode = "auto"                    # auto | light | dark
+light_theme = "Solarized Light"  # a light theme's name; the native default when left out
+dark_theme = "Tokyo Night"       # a dark theme's name; the native default when left out
+# themes_dir = "themes"          # relative to the user settings file's folder; ~/ is the home folder
 
 [sidebar]
 remember_expansion = true        # remember opened and closed branches (user file only)
@@ -157,7 +163,36 @@ check = true                     # look for a newer release at start-up
 |`editor.theme`
 |`"auto"`, `"light"` or `"dark"`
 |`"auto"`
-|The colour theme.
+|The colour theme: the older setting, used for the mode when `appearance.mode` is not set.
+When both are set, `appearance.mode` wins and a warning says `editor.theme` is ignored.
+Choosing a theme in AdocFoundry takes this line out of the user settings file.
+
+|`appearance.mode`
+|`"auto"`, `"light"` or `"dark"`
+|`editor.theme`'s value, else `"auto"`
+|Whether the application follows the system's light or dark appearance or stays light or dark.
+User file only.
+See xref:using-the-editor.adoc#themes[Themes].
+
+|`appearance.light_theme`
+|string
+|the native Default Light
+|The name of the light theme to show.
+A name that names no light theme, whether missing or a dark theme's, shows the native default with a warning, and the name is kept so the theme is used again once it is back.
+User file only.
+
+|`appearance.dark_theme`
+|string
+|the native Default Dark
+|The name of the dark theme to show, treated as `appearance.light_theme` is.
+User file only.
+
+|`appearance.themes_dir`
+|string
+|`themes`
+|The folder of your own theme files, relative to the user settings file's folder; `~/` is the home folder.
+User file only.
+These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 
 |`sidebar.follow_active`
 |boolean

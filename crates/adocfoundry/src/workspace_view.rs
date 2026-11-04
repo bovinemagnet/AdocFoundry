@@ -37,8 +37,7 @@ use gpui_component::{
     tab::{Tab, TabBar},
     tooltip::Tooltip,
     tree::{tree, TreeEvent, TreeState},
-    v_flex, ActiveTheme as _, Disableable as _, IconName, Sizable as _, Theme, ThemeMode, TitleBar,
-    WindowExt as _,
+    v_flex, ActiveTheme as _, Disableable as _, IconName, Sizable as _, TitleBar, WindowExt as _,
 };
 
 use crate::{
@@ -59,6 +58,7 @@ mod delete_file;
 mod file_actions;
 mod impact;
 mod new_project;
+mod theme_picker;
 
 /// Follows the link at `offset` in `document`: the engine opens and activates the target, and the
 /// workspace view reacts to that. Images and attachments open in the system's default app.
@@ -177,6 +177,8 @@ pub struct WorkspaceView {
     /// operation opens or closes branches.
     nav_nodes: Vec<sidebar::Node>,
     family_nodes: Vec<sidebar::Node>,
+    /// The theme warnings shown already, so each is said once.
+    theme_warnings: std::collections::HashSet<String>,
     /// The file the sidebar trees last followed, with `[sidebar] follow_active`: they follow
     /// again only once another becomes active, so a branch closed over it stays closed.
     followed: Option<PathBuf>,
@@ -466,6 +468,12 @@ impl WorkspaceView {
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace.clone(), window, cx));
         let references = cx.new(|_| ReferencesView::new(app.clone(), workspace));
+        // Following the system, the theme changes when the system's appearance does.
+        subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
+            if this.app.read(cx).engine.settings().appearance.mode == ThemePreference::Auto {
+                this.apply_theme(window, cx);
+            }
+        }));
         subscriptions.push(cx.subscribe(&references, |this, _, event, cx| match event {
             ReferencesEvent::Close => {
                 this.show_references = false;
@@ -495,6 +503,7 @@ impl WorkspaceView {
             families,
             nav_nodes: Vec::new(),
             family_nodes: Vec::new(),
+            theme_warnings: std::collections::HashSet::new(),
             followed: None,
             nav_follow: None,
             families_follow: None,
@@ -2123,14 +2132,6 @@ impl WorkspaceView {
     }
 
     // --- settings and theme ------------------------------------------------------------------
-
-    fn apply_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.app.read(cx).engine.settings().editor.theme {
-            ThemePreference::Auto => Theme::sync_system_appearance(Some(window), cx),
-            ThemePreference::Light => Theme::change(ThemeMode::Light, Some(window), cx),
-            ThemePreference::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
-        }
-    }
 
     fn warn_about_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let warnings = self.app.read(cx).engine.settings().warnings.clone();
@@ -4210,16 +4211,6 @@ impl WorkspaceView {
         self.invoke(ids::SETTINGS_RELOAD, CommandArgs::None, window, cx);
     }
 
-    fn on_toggle_theme(&mut self, _: &ToggleTheme, window: &mut Window, cx: &mut Context<Self>) {
-        let mode = if cx.theme().mode.is_dark() {
-            ThemeMode::Light
-        } else {
-            ThemeMode::Dark
-        };
-        Theme::change(mode, Some(window), cx);
-        cx.notify();
-    }
-
     fn on_open_mirror(&mut self, _: &OpenMirrorWindow, _: &mut Window, cx: &mut Context<Self>) {
         open_secondary_window(self.app.clone(), WindowKind::Mirror, cx);
     }
@@ -5260,6 +5251,11 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_local_history))
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))
+            .on_action(cx.listener(Self::on_select_theme))
+            .on_action(cx.listener(Self::on_follow_system))
+            .on_action(cx.listener(Self::on_light_appearance))
+            .on_action(cx.listener(Self::on_dark_appearance))
+            .on_action(cx.listener(Self::on_reload_themes))
             .on_action(cx.listener(Self::on_open_mirror))
             .on_action(cx.listener(Self::on_palette))
             .on_action(cx.listener(Self::on_toggle_preview))

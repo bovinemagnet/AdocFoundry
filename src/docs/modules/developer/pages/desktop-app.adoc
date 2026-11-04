@@ -409,6 +409,23 @@ The Display section gives the graphics backend, the GPU and display server where
 It embeds the `notices.json` that `build.rs` writes, names the program with the build string from `ADOCFOUNDRY_BUILD`, and shows the dialog for the `ShowAbout` action.
 The dialog is a `uniform_list` of components beside the chosen component's licence texts, with Repository and Documentation buttons and a Copy Licence button.
 
+[#themes]
+== Themes
+
+`src/appearance.rs` holds `ThemeCatalog`, the themes the app can show.
+It starts with the native defaults from gpui-component's `ThemeRegistry`, adds the bundled sets in `crates/adocfoundry/themes/`, embedded with `include_str!`, and then the user's files from the themes folder.
+A catalog is used instead of the registry because the pinned registry can neither remove nor replace a theme, and its only reload watches the folder and drops themes loaded from strings.
+`apply` sets `Theme::light_theme` and `Theme::dark_theme` and calls `Theme::change` or `Theme::sync_system_appearance`, which repaints every window.
+`ThemeCatalog::previewing` shows a theme without choosing it.
+
+`src/workspace_view/theme_picker.rs` is the picker, built on gpui-component's `Command`.
+`on_select` previews the highlighted theme, `on_confirm` saves the choice through the engine's `appearance.save` (see xref:engine.adoc#settings[Settings]), and `on_cancel` and `Dialog::on_close` restore what was shown before.
+The mode commands (Follow System, Light, Dark and Toggle) apply and save the mode in the same way.
+Warnings from reading the themes are shown once each, deferred until the window has its root.
+
+Each theme family has an entry in `ASSETS` in `xtask/src/notices.rs`, so its licence reaches the About dialog's notices.
+The files are `themes/ABOUT-themes`, which gives the source commit, and a `LICENSE-*` file for each family.
+
 [#the-quality-panel]
 == The Quality panel
 

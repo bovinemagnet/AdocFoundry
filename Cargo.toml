@@ -109,6 +109,8 @@ similar = { version = "=2.7.0", default-features = false, features = ["text"] }
 spellbook = "=0.4.2"
 tempfile = "=3.27.0"
 toml = "=1.2.0"
+# Rewrites single keys of the user settings file, keeping its comments and layout.
+toml_edit = { version = "=0.25.17", default-features = false, features = ["parse", "display"] }
 tree-sitter = "=0.26.13"
 # The grammars gpui-component highlights source blocks with, at its versions, for PDF export's
 # highlighting (crates/adoc-pdf/src/highlight).

@@ -105,6 +105,8 @@ pub enum CommandArgs {
         pages: Vec<PathBuf>,
         folder: PathBuf,
     },
+    /// The appearance to save: `appearance.save`.
+    Appearance(crate::AppearanceChoice),
     /// A publication profile, by name: `[pdf.profiles.<name>]`.
     Profile(String),
     Custom(serde_json::Value),
