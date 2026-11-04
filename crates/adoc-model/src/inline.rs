@@ -511,12 +511,15 @@ pub(crate) fn starts_block(line: &str, first: bool) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    let is_run = |c: char, min: usize| trimmed.len() >= min && trimmed.chars().all(|x| x == c);
-    let delimiter = ["-", "=", "*", "_", "+", ".", "/"]
+    // A line beginning with four of a delimiter's characters: acdc-parser ends a paragraph at
+    // one even when more follows on the line (`----and`), though Asciidoctor does not.
+    let delimiter = ['-', '=', '*', '_', '+', '.', '/']
         .iter()
-        .any(|c| is_run(c.chars().next().unwrap_or('-'), 4))
+        .any(|c| trimmed.chars().take(4).filter(|x| x == c).count() == 4)
         || trimmed == "--"
-        || trimmed.starts_with("|===")
+        || ["|===", ",===", ":===", "!==="]
+            .iter()
+            .any(|table| trimmed.starts_with(table))
         || trimmed.starts_with("```")
         || trimmed == "+";
     let marker = crate::build::list_marker(line).is_some();
@@ -547,9 +550,11 @@ pub(crate) fn starts_block(line: &str, first: bool) -> bool {
     .any(|prefix| trimmed.starts_with(prefix));
     let attribute = trimmed.starts_with(':') && trimmed[1..].contains(':');
     let comment = trimmed.starts_with("//");
+    // A block attribute line ends a paragraph wherever it falls in one, as a delimiter does
+    // (Asciidoctor's `block_terminates_paragraph`).
+    let block_attributes = trimmed.starts_with('[') && trimmed.ends_with(']');
     let first_only = first
         && (line.starts_with([' ', '\t'])
-            || (trimmed.starts_with('[') && trimmed.ends_with(']'))
             || (trimmed.starts_with('.')
                 && trimmed.len() > 1
                 && !trimmed[1..].starts_with(['.', ' ']))
@@ -558,7 +563,15 @@ pub(crate) fn starts_block(line: &str, first: bool) -> bool {
                 .any(|prefix| trimmed.starts_with(prefix))
             || trimmed == "<<<"
             || trimmed == "'''");
-    delimiter || marker || heading || description || directive || attribute || comment || first_only
+    delimiter
+        || marker
+        || heading
+        || description
+        || directive
+        || attribute
+        || comment
+        || block_attributes
+        || first_only
 }
 
 /// Whether a new mark around `display` of a block may use the constrained form.

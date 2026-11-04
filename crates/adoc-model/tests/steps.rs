@@ -177,6 +177,93 @@ fn typing_at_a_line_start_cannot_start_another_block() {
 }
 
 #[test]
+fn inserted_attribute_line_mid_paragraph_is_escaped_or_refused() {
+    // Each of these lines ends a paragraph in Asciidoctor wherever it falls in one
+    // (`block_terminates_paragraph`), not only on its first line.
+    for line in [
+        "[note]",
+        "[NOTE]",
+        "[.role]",
+        "[[anchor]]",
+        "[#id]",
+        "----",
+        "====",
+        "|===",
+        ",===",
+        ":===",
+        "!===",
+        "+",
+        // Not delimiters to Asciidoctor, but acdc-parser ends the paragraph at them.
+        "----are counted",
+        "****x",
+        "====x",
+    ] {
+        let model = build("Introduction text.\n");
+        let at = offset(&model.source, " text");
+        let step = Step::InsertText {
+            at,
+            text: format!("\n{line}\nmore"),
+            marks: MarkSet::EMPTY,
+        };
+        let Ok(result) = model.apply(&step) else {
+            continue;
+        };
+        let after = apply_edits(&model.source, &result.edits);
+        assert!(
+            !after.lines().any(|written| written == line),
+            "{line:?} starts a line of {after:?}"
+        );
+        assert_eq!(build(&after).blocks.len(), 1, "{after:?}");
+    }
+    // And on the first line, where a table's other delimiters were not known either.
+    for line in [",===", ":===", "!==="] {
+        let model = build("Introduction text.\n");
+        let (after, _) = apply(
+            &model,
+            Step::InsertText {
+                at: 0,
+                text: format!("{line}\n"),
+                marks: MarkSet::EMPTY,
+            },
+        );
+        assert!(after.starts_with("{empty}"), "{after:?}");
+    }
+}
+
+#[test]
+fn a_typed_line_break_never_leaves_an_empty_line() {
+    // At either end of a block's text, or beside a line break already there, a typed line
+    // break would leave an empty line: a list item with no text, or a paragraph ended.
+    for (text, needle, typed, expected) in [
+        (
+            "* First\n* Second\n",
+            "Second",
+            "\nmore",
+            "* First\n* moreSecond\n",
+        ),
+        (
+            "One line\nanother.\n",
+            "\nanother",
+            "\nmore",
+            "One line\nmore\nanother.\n",
+        ),
+        ("A paragraph.\n", "\n", "end\n", "A paragraph.end\n"),
+    ] {
+        let model = build(text);
+        let (after, _) = apply(
+            &model,
+            Step::InsertText {
+                at: offset(text, needle),
+                text: typed.to_owned(),
+                marks: MarkSet::EMPTY,
+            },
+        );
+        assert_eq!(after, expected);
+        assert_eq!(build(&after).blocks.len(), model.blocks.len(), "{after:?}");
+    }
+}
+
+#[test]
 fn deleting_removes_text_atoms_and_emptied_marks() {
     let model = build("One *two* three (C) four.\n");
     let start = offset(&model.source, "*two*");

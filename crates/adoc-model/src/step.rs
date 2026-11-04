@@ -359,11 +359,14 @@ impl Model {
 
     fn insert_text(&self, at: usize, text: &str, marks: MarkSet) -> Result<StepResult, StepError> {
         let (path, block) = self.editable_at(at)?;
-        let text = sanitise(text, block.context);
+        let display = block.display_offset(at).ok_or(StepError::OutOfRange)?;
+        let mut text = sanitise(text, block.context);
+        if block.context == TextContext::Flow {
+            text = without_empty_lines(&text, &block.display, display);
+        }
         if text.is_empty() {
             return Ok(self.unchanged(SourceRange::new(at, at)));
         }
-        let display = block.display_offset(at).ok_or(StepError::OutOfRange)?;
         if block.plain {
             return self.edit_plain(
                 &path,
@@ -842,6 +845,21 @@ fn sanitise(text: &str, context: TextContext) -> String {
             out
         }
     }
+}
+
+/// `text`, typed at `at` in a flowing block's `display`, without the line breaks that would
+/// leave an empty line: one at either end of the block's text (a list item or admonition
+/// paragraph left with no text on its first line) or beside a line break already there (a
+/// paragraph ended).
+fn without_empty_lines(text: &str, display: &str, at: usize) -> String {
+    let mut text = text;
+    if at == 0 || display[..at].ends_with('\n') {
+        text = text.trim_start_matches('\n');
+    }
+    if at == display.len() || display[at..].starts_with('\n') {
+        text = text.trim_end_matches('\n');
+    }
+    text.to_owned()
 }
 
 fn new_frame(id: u32, mark: Mark, display: &str, start: usize, end: usize) -> Frame {

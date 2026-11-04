@@ -21,6 +21,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - PDF export: an ordered list with an extreme `start` (`[start=9223372036854775807]`, `-9223372036854775808`, or a Greek or Roman style past their range) no longer panics or counts round to negative numbers; counting stops at the ends of the range, and a Roman numeral past 3999 is written in figures (#277).
 - PDF export: Typst errors and positions on PDF pages map back to the right line for blocks inside examples, sidebars, admonitions, quotes, list items, description lists, callouts, titled blocks and table cells, rather than to the container's line or another block's (#275).
 - PDF export: a short block is kept whole without being measured only when the theme's page holds it, so a listing on small paper or in a large code font breaks across pages rather than running off the bottom (#274).
+- Visual editor: typed or pasted text can no longer split a paragraph or list item into two blocks (#176). A line of block attributes (`[note]`, `[.role]`, `[[id]]`) anywhere in the text, not only on its first line, is escaped, as are the comma, colon and exclamation table delimiters (`,===`, `:===`, `!===`) and lines beginning with four of a delimiter's characters (`----and`). A line break typed at either end of a block's text, or beside a line break already there, is left out, since the empty line it would leave ends the block or leaves a list item without text.
 
 ## 0.6.0 — 2026-11-03
 
