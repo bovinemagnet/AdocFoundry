@@ -449,6 +449,8 @@ Pinned nodes, zoom, hover, selection and the toolbar's filters are the view's ow
 Show in Graph, Reset Graph Layout, Show Graph and Show Local Graph are engine commands (`view.graph`, `view.local_graph`, `graph.reset_layout`) and are in `MENUS`.
 The window also keeps `group_by` and the set of collapsed groups, and collapses the engine's snapshot with `GraphSnapshot::collapse` before laying it out.
 It draws each group's hull behind the nodes from the layout's positions, and hit-tests a hull's label band before panning; the band's height follows the rem size, so `[appearance] font_scale` scales it.
+`GraphSettings::layout` (`GraphLayout::Force` or `MindMap(TreeStyle)`) chooses the `arrangement` the view opens with, and the view keeps `mind_root`, the `tree` and the `folded` nodes.
+Each refresh builds the `MindMap`, shows the snapshot restricted to the tree's visible nodes and hands the tree's positions to `Layout::set_targets`; cross-links are drawn dimmed, disclosures are hit-tested before nodes, and the window does not group while laid out as a mind map.
 See xref:ROOT:graph-view.adoc[The link graph].
 
 == Change markers and the Changes panel

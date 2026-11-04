@@ -7358,6 +7358,94 @@ fn grouping_the_graph_collapses_and_expands_a_module(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_graph_switches_to_a_mind_map_and_reroots_on_a_double_click(cx: &mut TestAppContext) {
+    let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let arrangement =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| view.read(cx).arrangement_for_test());
+    let shown = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            view.read(cx)
+                .snapshot_for_test()
+                .nodes
+                .iter()
+                .map(|node| node.title.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+    };
+    let nav = graph_key(&root.join("guide/modules/ROOT/nav.adoc"));
+    let install = graph_key(&root.join(GRAPH_PAGES).join("install.adoc"));
+    let mind_map = adoc_engine::GraphLayout::MindMap(adoc_engine::TreeStyle::Horizontal);
+
+    // With nothing selected and no page open, the map is the navigation's.
+    click("graph-layout", &mut graph_cx);
+    assert_eq!(arrangement(&mut graph_cx), (mind_map, Some(nav.clone())));
+    assert_eq!(
+        shown(&mut graph_cx),
+        std::collections::BTreeSet::from(
+            ["Configure", "Home", "Install", "Users", "nav.adoc"].map(str::to_owned)
+        )
+    );
+    settle_graph(&view, &mut graph_cx);
+
+    // A double click roots it at the page, one link out.
+    let at = graph_cx
+        .update(|_, cx| view.read(cx).node_position_for_test(&install))
+        .unwrap();
+    for clicks in 1..=2 {
+        graph_cx.simulate_event(gpui::MouseDownEvent {
+            button: gpui::MouseButton::Left,
+            position: at,
+            modifiers: gpui::Modifiers::none(),
+            click_count: clicks,
+            first_mouse: false,
+        });
+        graph_cx.simulate_event(gpui::MouseUpEvent {
+            button: gpui::MouseButton::Left,
+            position: at,
+            modifiers: gpui::Modifiers::none(),
+            click_count: clicks,
+        });
+    }
+    graph_cx.run_until_parked();
+    assert_eq!(
+        arrangement(&mut graph_cx),
+        (mind_map, Some(install.clone()))
+    );
+    let around = shown(&mut graph_cx);
+    assert!(
+        around.contains("Configure") && around.contains("Home"),
+        "{around:?}"
+    );
+    assert!(!around.contains("API"), "two links away: {around:?}");
+
+    // Its disclosure closes the branch.
+    settle_graph(&view, &mut graph_cx);
+    let fold = graph_cx
+        .update(|_, cx| view.read(cx).fold_position_for_test(&install))
+        .expect("the root has a disclosure");
+    graph_cx.simulate_click(fold, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    assert_eq!(
+        shown(&mut graph_cx),
+        std::collections::BTreeSet::from(["Install".to_owned()])
+    );
+
+    // Radial, then by force again with the whole workspace.
+    click("graph-layout", &mut graph_cx);
+    assert_eq!(
+        arrangement(&mut graph_cx).0,
+        adoc_engine::GraphLayout::MindMap(adoc_engine::TreeStyle::Radial)
+    );
+    click("graph-layout", &mut graph_cx);
+    assert_eq!(
+        arrangement(&mut graph_cx),
+        (adoc_engine::GraphLayout::Force, None)
+    );
+    assert!(shown(&mut graph_cx).contains("Orphan"));
+}
+
+#[gpui::test]
 fn tab_moves_through_the_nodes_and_enter_opens_one(cx: &mut TestAppContext) {
     let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
     let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);

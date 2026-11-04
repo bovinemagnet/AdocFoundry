@@ -11,6 +11,12 @@
 //! The window may group the nodes by module or component version (`[graph] group`): the layout
 //! draws each group together, a soft hull is drawn behind it, a click on the hull's label
 //! collapses the group into one node, and a click on that node expands it again.
+//!
+//! Both may lay the graph out as a mind map instead (`[graph] layout`): a tree from one root,
+//! left to right or radial, its nodes eased to `adoc-graph`'s [`MindMap`] places. A navigation
+//! file's tree is its navigation; a page's reaches the chosen depth. Links outside the tree
+//! are drawn faintly, a node's disclosure closes and opens its branch, and a double click, or
+//! Root Mind Map Here, roots the map at another node.
 
 use std::{
     cell::Cell,
@@ -22,9 +28,9 @@ use std::{
 
 use adoc_engine::{
     commands::ids, group_name, CommandArgs, CommandOutcome, DocumentId, EdgeKind, Engine,
-    EngineEvent, GraphColour, GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot,
-    GroupBy, Groups, Layout, LinkStyle, NavPlace, NavigationPosition, Neighbour, PathStep,
-    Point as LayoutPoint, TabItem, TextEdit,
+    EngineEvent, GraphColour, GraphFilter, GraphKey, GraphLayout, GraphNodeKind, GraphScope,
+    GraphSnapshot, GroupBy, Groups, Layout, LinkStyle, MindMap, NavPlace, NavigationPosition,
+    Neighbour, PathStep, Point as LayoutPoint, TabItem, TextEdit, TreeStyle,
 };
 use gpui::{
     actions, canvas, div, point, prelude::FluentBuilder as _, px, quad, size, App, AppContext as _,
@@ -98,6 +104,9 @@ const FIT_MARGIN: f32 = 40.0;
 const HULL_PAD: f32 = 22.0;
 /// A collapsed group's radius, at zoom 1.
 const GROUP_RADIUS: f32 = 14.0;
+/// A mind map node's disclosure: its radius, and its gap from the node's edge, in pixels.
+const FOLD_RADIUS: f32 = 5.0;
+const FOLD_GAP: f32 = 4.0;
 
 /// Where a graph view is shown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -134,6 +143,8 @@ struct DrawnNode {
     label: Option<SharedString>,
     dim: bool,
     selected: bool,
+    /// In a mind map, a node with children has a disclosure: whether its branch is closed.
+    folded: Option<bool>,
 }
 
 /// One edge as the canvas draws it, by its ends' places among the nodes.
@@ -215,6 +226,12 @@ pub struct GraphView {
     collapsed: BTreeSet<String>,
     /// The height of a hull's label band, in pixels, from the rem size when last drawn.
     label_band: f32,
+    /// How the graph is laid out; as a mind map, the root chosen, the tree shown and the nodes
+    /// whose branches are closed.
+    arrangement: GraphLayout,
+    mind_root: Option<GraphKey>,
+    tree: Option<MindMap>,
+    folded: BTreeSet<GraphKey>,
     search: Option<Entity<InputState>>,
     query: String,
     snapshot: GraphSnapshot,
@@ -281,6 +298,10 @@ impl GraphView {
             group_by: settings.group.filter(|_| mode == GraphMode::Window),
             collapsed: BTreeSet::new(),
             label_band: 20.0,
+            arrangement: settings.layout,
+            mind_root: None,
+            tree: None,
+            folded: BTreeSet::new(),
             search,
             query: String::new(),
             snapshot: GraphSnapshot::default(),
@@ -335,6 +356,11 @@ impl GraphView {
             return false;
         }
         self.centre = centre;
+        if self.mode == GraphMode::Panel {
+            // The panel's mind map is rooted at the active page.
+            self.mind_root = None;
+            self.folded.clear();
+        }
         true
     }
 
@@ -360,13 +386,22 @@ impl GraphView {
             return;
         };
         let snapshot = self.app.read(cx).engine.graph(&scope, &self.filter);
-        let snapshot = match self.group_by {
-            Some(by) => snapshot.collapse(by, &self.collapsed),
-            None => snapshot,
+        let snapshot = match (self.arrangement, self.group_by) {
+            (GraphLayout::MindMap(_), _) => self.mind_map_of(snapshot),
+            (GraphLayout::Force, Some(by)) => snapshot.collapse(by, &self.collapsed),
+            (GraphLayout::Force, None) => snapshot,
         };
         let recentre = self.local && snapshot.nodes.len() != self.snapshot.nodes.len();
         self.set_snapshot(snapshot);
         self.layout.sync(&self.snapshot);
+        match (self.arrangement, &self.tree) {
+            (GraphLayout::MindMap(style), Some(tree)) => {
+                self.layout
+                    .set_targets(Some(tree.positions(style, &self.folded)));
+            }
+            _ if self.layout.has_targets() => self.layout.set_targets(None),
+            _ => {}
+        }
         if recentre {
             self.fitting = true;
         }
@@ -477,6 +512,109 @@ impl GraphView {
         self.refresh(cx);
     }
 
+    // --- mind maps ---------------------------------------------------------------------------
+
+    /// The tree of `snapshot` from the mind map's root, kept in `tree`, and the snapshot cut
+    /// down to the nodes it shows. The root is the one chosen, else the active page, else the
+    /// first navigation file, else the first node.
+    fn mind_map_of(&mut self, snapshot: GraphSnapshot) -> GraphSnapshot {
+        let centre = self
+            .centre
+            .as_ref()
+            .map(|path| GraphKey::File(std::sync::Arc::from(adoc_engine::normalize_path(path))));
+        let root = [self.mind_root.clone(), centre]
+            .into_iter()
+            .flatten()
+            .find(|key| snapshot.node(key).is_some())
+            .or_else(|| {
+                snapshot
+                    .nodes
+                    .iter()
+                    .find(|node| node.kind == GraphNodeKind::Nav)
+                    .or(snapshot.nodes.first())
+                    .map(|node| node.key.clone())
+            });
+        self.tree = root.and_then(|root| MindMap::build(&snapshot, &root, Some(self.depth)));
+        match &self.tree {
+            Some(tree) => {
+                let shown = tree.visible(&self.folded);
+                snapshot.restrict(|key| shown.contains(key))
+            }
+            None => snapshot,
+        }
+    }
+
+    /// Lays out by force, as a mind map, then radially. Entering a mind map roots it at the
+    /// selected node, if any.
+    fn cycle_arrangement(&mut self, cx: &mut Context<Self>) {
+        self.arrangement = match self.arrangement {
+            GraphLayout::Force => GraphLayout::MindMap(TreeStyle::Horizontal),
+            GraphLayout::MindMap(TreeStyle::Horizontal) => GraphLayout::MindMap(TreeStyle::Radial),
+            GraphLayout::MindMap(TreeStyle::Radial) => GraphLayout::Force,
+        };
+        if self.arrangement == GraphLayout::MindMap(TreeStyle::Horizontal) {
+            self.mind_root = self.selected.clone();
+            self.folded.clear();
+        }
+        if self.arrangement == GraphLayout::Force {
+            self.tree = None;
+        }
+        self.fitting = true;
+        self.refresh(cx);
+    }
+
+    /// Roots the mind map at `key`, laying out as one if not already, every branch open.
+    fn root_mind_map(&mut self, key: &GraphKey, cx: &mut Context<Self>) {
+        if self.arrangement == GraphLayout::Force {
+            self.arrangement = GraphLayout::MindMap(TreeStyle::Horizontal);
+        }
+        self.mind_root = Some(key.clone());
+        self.selected = Some(key.clone());
+        self.folded.clear();
+        self.fitting = true;
+        self.refresh(cx);
+    }
+
+    /// Closes the branch under `key`, or opens it again.
+    fn toggle_fold(&mut self, key: &GraphKey, cx: &mut Context<Self>) {
+        if !self.folded.remove(key) {
+            self.folded.insert(key.clone());
+        }
+        self.refresh(cx);
+    }
+
+    /// The middle of `key`'s disclosure, in window coordinates, if it has one: to the left of
+    /// the node, as its label is to the right.
+    fn fold_centre(&self, key: &GraphKey) -> Option<gpui::Point<Pixels>> {
+        let tree = self.tree.as_ref()?;
+        if tree.children(key).is_empty() {
+            return None;
+        }
+        let node = self.snapshot.node(key)?;
+        let at = self.layout.position(key)?;
+        let radius =
+            adoc_engine::node_radius(node.links_in + node.links_out) * self.zoom.clamp(0.6, 1.6);
+        let centre = self.viewport.get().center();
+        Some(point(
+            centre.x + px(at.x * self.zoom + self.pan.0 - radius - FOLD_GAP - FOLD_RADIUS),
+            centre.y + px(at.y * self.zoom + self.pan.1),
+        ))
+    }
+
+    /// The node whose disclosure is under the window position `at`.
+    fn fold_at(&self, at: gpui::Point<Pixels>) -> Option<GraphKey> {
+        let tree = self.tree.as_ref()?;
+        tree.keys()
+            .filter(|key| self.snapshot.node(key).is_some())
+            .find(|key| {
+                self.fold_centre(key).is_some_and(|centre| {
+                    let (dx, dy) = (f32::from(at.x - centre.x), f32::from(at.y - centre.y));
+                    dx * dx + dy * dy <= (FOLD_RADIUS + HIT_SLOP).powi(2)
+                })
+            })
+            .cloned()
+    }
+
     // --- groups ------------------------------------------------------------------------------
 
     /// Groups by nothing, by module, then by component version, every group expanded.
@@ -555,7 +693,7 @@ impl GraphView {
     /// Every group's nodes and the box around them, at `positions`; none while not grouped. A
     /// collapsed group is a node, not a hull.
     fn hulls(&self, positions: &[LayoutPoint]) -> Vec<Hull> {
-        let Some(by) = self.group_by else {
+        let (Some(by), GraphLayout::Force) = (self.group_by, self.arrangement) else {
             return Vec::new();
         };
         let groups = Groups::of(&self.snapshot, by);
@@ -807,6 +945,11 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle, cx);
+        if let Some(key) = self.fold_at(event.position) {
+            self.drag = None;
+            self.toggle_fold(&key, cx);
+            return;
+        }
         if self.node_under(event.position).is_none() {
             if let Some(group) = self.hull_label_at(event.position) {
                 self.drag = None;
@@ -876,6 +1019,10 @@ impl GraphView {
                 let from = self.selected.clone().filter(|selected| *selected != key);
                 if let (true, Some(from)) = (event.modifiers.shift, from) {
                     self.show_path(from, key, cx);
+                    return;
+                }
+                if clicks >= 2 && self.arrangement != GraphLayout::Force {
+                    self.root_mind_map(&key, cx);
                     return;
                 }
                 self.selected = Some(key.clone());
@@ -1059,6 +1206,11 @@ impl GraphView {
                     label,
                     dim,
                     selected: selected == Some(place),
+                    folded: self
+                        .tree
+                        .as_ref()
+                        .filter(|tree| !tree.children(&node.key).is_empty())
+                        .map(|_| self.folded.contains(&node.key)),
                 }
             })
             .collect();
@@ -1072,13 +1224,18 @@ impl GraphView {
                     Some((_, links)) => links.contains(&(from, to, edge.kind)),
                     None => focus.is_none_or(|focus| from == focus || to == focus),
                 };
+                // A mind map's cross-links are drawn faintly.
+                let cross = self
+                    .tree
+                    .as_ref()
+                    .is_some_and(|tree| !tree.is_tree_link(&edge.from, &edge.to));
                 DrawnEdge {
                     from,
                     to,
                     kind: edge.kind,
                     count: edge.count,
                     unresolved: matches!(edge.to, GraphKey::Unresolved(_)),
-                    dim: !emphasised || nodes[from].dim && nodes[to].dim,
+                    dim: cross || !emphasised || nodes[from].dim && nodes[to].dim,
                 }
             })
             .collect();
@@ -1311,6 +1468,11 @@ impl GraphView {
                     menu = menu.separator();
                 }
                 let menu = menu
+                    .item(item("Root Mind Map Here", |view, key, cx| {
+                        view.root_mind_map(key, cx);
+                    }))
+                    .separator();
+                let menu = menu
                     .item(item("Find References", |view, key, cx| {
                         view.find_references(key, cx);
                     }))
@@ -1502,7 +1664,11 @@ impl GraphView {
                         this.refresh(cx);
                     })),
             )
-            .when(self.local, |bar| bar.child(self.depth_buttons(cx)))
+            .child(self.arrangement_button(cx))
+            .when(
+                self.local || self.arrangement != GraphLayout::Force,
+                |bar| bar.child(self.depth_buttons(cx)),
+            )
             .child(div().flex_1())
             .child(self.zoom_buttons(cx))
             .child(
@@ -1652,6 +1818,20 @@ impl GraphView {
             .child(body)
     }
 
+    fn arrangement_button(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("graph-layout")
+            .label(match self.arrangement {
+                GraphLayout::Force => "Layout: Force",
+                GraphLayout::MindMap(TreeStyle::Horizontal) => "Layout: Mind Map",
+                GraphLayout::MindMap(TreeStyle::Radial) => "Layout: Radial",
+            })
+            .xsmall()
+            .ghost()
+            .debug_selector(|| "graph-layout".to_owned())
+            .tooltip("Lay the graph out by force, or as a mind map from one node")
+            .on_click(cx.listener(|this, _, _, cx| this.cycle_arrangement(cx)))
+    }
+
     fn render_panel_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let filter = self.filter.clone();
         h_flex()
@@ -1673,6 +1853,7 @@ impl GraphView {
                 |f| f.nav = !f.nav,
                 cx,
             ))
+            .child(self.arrangement_button(cx))
             .child(div().flex_1())
             .child(
                 Button::new("graph-open-window")
@@ -1885,6 +2066,20 @@ impl GraphView {
     #[cfg(test)]
     pub fn zoom_for_test(&self) -> f32 {
         self.zoom
+    }
+
+    #[cfg(test)]
+    pub fn arrangement_for_test(&self) -> (GraphLayout, Option<GraphKey>) {
+        (
+            self.arrangement,
+            self.tree.as_ref().map(|tree| tree.root().clone()),
+        )
+    }
+
+    /// Where `key`'s disclosure is drawn, in window coordinates.
+    #[cfg(test)]
+    pub fn fold_position_for_test(&self, key: &GraphKey) -> Option<gpui::Point<Pixels>> {
+        self.fold_centre(key)
     }
 
     #[cfg(test)]
@@ -2137,6 +2332,14 @@ fn paint(drawing: &Drawing, bounds: Bounds<Pixels>, window: &mut Window, cx: &mu
                 _ => (colour, colour, BorderStyle::Solid),
             };
             window.paint_quad(quad(square, corners, background, px(2.), border, style));
+            if let Some(folded) = node.folded {
+                paint_fold(
+                    point(middle.x - radius - px(FOLD_GAP + FOLD_RADIUS), middle.y),
+                    folded,
+                    drawing.label.opacity(alpha),
+                    window,
+                );
+            }
             if node.selected {
                 let ring = square.dilate(px(3.));
                 let ring_corners = match node.kind {
@@ -2176,6 +2379,33 @@ fn paint(drawing: &Drawing, bounds: Bounds<Pixels>, window: &mut Window, cx: &mu
             }
         }
     });
+}
+
+/// A mind map node's disclosure at `centre`: a ring holding − while its branch is open and +
+/// while it is closed.
+fn paint_fold(centre: gpui::Point<Pixels>, folded: bool, colour: Hsla, window: &mut Window) {
+    let ring = Bounds::new(
+        point(centre.x - px(FOLD_RADIUS), centre.y - px(FOLD_RADIUS)),
+        size(px(FOLD_RADIUS * 2.), px(FOLD_RADIUS * 2.)),
+    );
+    window.paint_quad(quad(
+        ring,
+        Corners::all(px(FOLD_RADIUS)),
+        gpui::transparent_black(),
+        px(1.),
+        colour,
+        BorderStyle::Solid,
+    ));
+    let bar = |width: f32, height: f32| {
+        Bounds::new(
+            point(centre.x - px(width / 2.), centre.y - px(height / 2.)),
+            size(px(width), px(height)),
+        )
+    };
+    window.paint_quad(gpui::fill(bar(5., 1.2), colour));
+    if folded {
+        window.paint_quad(gpui::fill(bar(1.2, 5.), colour));
+    }
 }
 
 /// Every edge, gathered into one path for each style, so thousands draw in a few calls: xrefs

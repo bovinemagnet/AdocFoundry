@@ -128,9 +128,10 @@ pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETT
 pub use session::{WindowPlacement, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE};
 pub use settings::{
     pdf_standard, AppearanceSettings, AutoSave, EditorSettings, ExpansionPolicy, FontScale,
-    GitSettings, GraphColour, GraphSettings, HistorySettings, PdfSettings, QualitySettings,
-    Settings, SidebarSettings, SpellingSettings, TemplateSettings, ThemePreference, ToolSettings,
-    UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    GitSettings, GraphColour, GraphLayout, GraphSettings, HistorySettings, PdfSettings,
+    QualitySettings, Settings, SidebarSettings, SpellingSettings, TemplateSettings,
+    ThemePreference, ToolSettings, UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE,
+    WORKSPACE_SETTINGS_FILE,
 };
 pub use site_build::{
     SiteBuild, SiteBuildBlocker, SiteBuildState, DEFAULT_BUILD_TIMEOUT, MAX_BUILD_OUTPUT,
@@ -150,7 +151,8 @@ pub use adoc_core::FileAccess;
 pub use adoc_graph::{
     colour_groups, group_name, node_colour, node_radius, to_svg, to_svg_laid_out, EdgeKind,
     GraphEdge, GraphFilter, GraphKey, GraphNode, GraphSnapshot, GroupBy, Groups, Hsl, Layout,
-    NodeCoordinate, NodeKind as GraphNodeKind, PathStep, Point, SvgStyle, OTHER_GROUP,
+    MindMap, NodeCoordinate, NodeKind as GraphNodeKind, PathStep, Point, SvgStyle, TreeStyle,
+    OTHER_GROUP,
 };
 pub use adoc_index::{is_asciidoc_path, normalize_path};
 #[cfg(feature = "typst")]

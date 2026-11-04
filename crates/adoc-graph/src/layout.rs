@@ -2,12 +2,14 @@
 //! its ends towards a rest length, every node is drawn gently to the centre, and the motion is
 //! damped and cools, so it settles. Above [`BARNES_HUT_ABOVE`] nodes, repulsion is
 //! approximated with a Barnes–Hut quadtree. Grouped ([`Layout::set_grouping`]), each node is
-//! also drawn towards its group's centre, and the groups push each other apart.
+//! also drawn towards its group's centre, and the groups push each other apart. Given targets
+//! ([`Layout::set_targets`], a mind map's places), nodes ease towards them instead of moving
+//! by force.
 //!
 //! Only `f32` arithmetic in a fixed order is used, never trigonometry or a hash map's order, so
 //! the same seed and the same calls give the same positions on every platform.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::{GraphKey, GraphSnapshot, GroupBy, Groups};
 
@@ -48,6 +50,8 @@ const COOLING: f32 = 0.977;
 const COLD: f32 = 0.002;
 /// The heat a drag or a change wakes the layout with.
 const WARM: f32 = 0.3;
+/// With targets: the part of the way to its target a node goes in a step.
+const EASE: f32 = 0.25;
 /// Barnes–Hut's accuracy: a cell is one body when its width over its distance is below this.
 const THETA: f32 = 0.9;
 const MAX_TREE_DEPTH: u8 = 24;
@@ -73,6 +77,10 @@ pub struct Layout {
     /// Each node's group, by place, and how many groups there are; empty while not grouped.
     groups: Vec<usize>,
     group_count: usize,
+    /// Where each node is drawn to instead of by force, by key and then by place; `None` while
+    /// laid out by force.
+    targets: Option<HashMap<GraphKey, Point>>,
+    placed_targets: Vec<Option<Point>>,
 }
 
 impl Layout {
@@ -90,7 +98,35 @@ impl Layout {
             grouping: None,
             groups: Vec::new(),
             group_count: 0,
+            targets: None,
+            placed_targets: Vec::new(),
         }
+    }
+
+    /// Eases each node towards its place in `targets` rather than moving it by force, a node
+    /// with no place staying where it is; `None` goes back to the forces. Either way the layout
+    /// wakes. The targets are kept for every snapshot `sync` takes.
+    pub fn set_targets(&mut self, targets: Option<HashMap<GraphKey, Point>>) {
+        self.targets = targets;
+        self.place_targets();
+        self.heat = 1.0;
+    }
+
+    /// Whether the nodes are eased towards targets.
+    #[must_use]
+    pub fn has_targets(&self) -> bool {
+        self.targets.is_some()
+    }
+
+    fn place_targets(&mut self) {
+        self.placed_targets = match &self.targets {
+            Some(targets) => self
+                .keys
+                .iter()
+                .map(|key| targets.get(key).copied())
+                .collect(),
+            None => Vec::new(),
+        };
     }
 
     /// Groups the nodes by `by`, read from `snapshot` now and from every snapshot `sync` takes,
@@ -200,6 +236,7 @@ impl Layout {
         self.index = index;
         self.edges = edges;
         self.assign_groups(snapshot);
+        self.place_targets();
         if changed {
             self.heat = if old.is_empty() {
                 1.0
@@ -212,6 +249,9 @@ impl Layout {
     /// Moves every node one step of `dt` (1.0 a frame). Returns `false` once the layout has
     /// settled, so a front end can stop asking for frames.
     pub fn step(&mut self, dt: f32) -> bool {
+        if self.targets.is_some() {
+            return self.ease(dt);
+        }
         if self.heat < COLD || self.keys.is_empty() {
             self.heat = 0.0;
             return false;
@@ -239,6 +279,46 @@ impl Layout {
         self.heat *= COOLING;
         if largest < SETTLED {
             self.heat = 0.0;
+        }
+        self.heat >= COLD
+    }
+
+    /// Moves each node with a target part of the way there.
+    fn ease(&mut self, dt: f32) -> bool {
+        if self.heat < COLD {
+            return false;
+        }
+        let share = (EASE * dt).min(1.0);
+        let mut largest = 0.0_f32;
+        for (at, target) in self.placed_targets.iter().enumerate() {
+            let Some(target) = target else {
+                continue;
+            };
+            if self.pinned[at] {
+                continue;
+            }
+            let position = &mut self.positions[at];
+            let (dx, dy) = (target.x - position.x, target.y - position.y);
+            let distance = (dx * dx + dy * dy).sqrt();
+            if distance < SETTLED {
+                *position = *target;
+            } else {
+                position.x += dx * share;
+                position.y += dy * share;
+                largest = largest.max(distance * share);
+            }
+            self.velocities[at] = Point::default();
+        }
+        if largest < SETTLED {
+            // Close enough: put every node exactly in its place.
+            for (at, target) in self.placed_targets.iter().enumerate() {
+                if let (Some(target), false) = (target, self.pinned[at]) {
+                    self.positions[at] = *target;
+                }
+            }
+            self.heat = 0.0;
+        } else {
+            self.heat = 1.0;
         }
         self.heat >= COLD
     }
@@ -959,6 +1039,47 @@ mod tests {
             layout.positions().map(|(_, at)| at).collect::<Vec<_>>()
         };
         assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn targets_draw_nodes_to_their_places() {
+        let snapshot = graph(10, 2);
+        let mut layout = Layout::new(6);
+        layout.sync(&snapshot);
+        let places: HashMap<GraphKey, Point> = snapshot
+            .nodes
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(at, node)| (node.key.clone(), Point::new(at as f32 * 50.0, -20.0)))
+            .collect();
+        let first = snapshot.nodes[0].key.clone();
+        let stays = layout.position(&first).unwrap();
+        let pinned = snapshot.nodes[1].key.clone();
+        layout.pin(&pinned, Point::new(3.0, 4.0));
+        layout.set_targets(Some(places.clone()));
+        assert!(layout.has_targets() && layout.is_moving());
+        layout.settle(200);
+        assert!(!layout.is_moving(), "easing settles");
+        for (key, place) in &places {
+            if *key != pinned {
+                assert_eq!(layout.position(key), Some(*place));
+            }
+        }
+        assert_eq!(
+            layout.position(&first),
+            Some(stays),
+            "a node with no place stays"
+        );
+        assert_eq!(layout.position(&pinned), Some(Point::new(3.0, 4.0)));
+
+        // A sync keeps the targets; none puts the forces back.
+        layout.sync(&snapshot);
+        assert!(layout.has_targets());
+        layout.set_targets(None);
+        assert!(!layout.has_targets() && layout.is_moving());
+        layout.step(1.0);
+        assert_ne!(layout.position(&first), Some(stays));
     }
 
     #[test]

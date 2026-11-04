@@ -16,7 +16,7 @@ use adoc_core::{
 use adoc_engine::{
     commands::ids, normalize_path, CommandArgs, CommandOutcome, EdgeKind, Engine, EngineEvent,
     GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, GroupBy, Groups, Layout,
-    LinkStyle, ManualClock, NavCrumb, NewPage, Settings, INDEX_SETTLE,
+    LinkStyle, ManualClock, MindMap, NavCrumb, NewPage, Settings, TreeStyle, INDEX_SETTLE,
 };
 
 fn fixture() -> PathBuf {
@@ -242,6 +242,32 @@ fn grouped_layout_keeps_modules_together() {
         .edges
         .iter()
         .any(|edge| edge.from == group && name(&edge.to, &root).ends_with("users.adoc")));
+}
+
+/// Rooted at `nav.adoc`, the mind map is the navigation's nesting: Home, Install (with
+/// Configure under it) and Users, the text-only Introduction handing its entries to the
+/// navigation file, and every node placed once.
+#[test]
+fn mind_map_follows_the_nav_tree() {
+    let root = fixture();
+    let engine = open(&root, &ManualClock::new());
+    let snapshot = engine.graph(&GraphScope::Workspace, &everything());
+    let nav = file(&root.join("guide/modules/ROOT/nav.adoc"));
+    let tree = MindMap::build(&snapshot, &nav, Some(1)).unwrap();
+    let titles = |keys: Vec<&GraphKey>| -> Vec<String> {
+        keys.into_iter()
+            .map(|key| snapshot.node(key).unwrap().title.clone())
+            .collect()
+    };
+    assert_eq!(titles(tree.children(&nav)), ["Home", "Install", "Users"]);
+    let install = file(&root.join("guide/modules/ROOT/pages/install.adoc"));
+    assert_eq!(titles(tree.children(&install)), ["Configure"]);
+    assert_eq!(tree.len(), 5, "the navigation's pages, each once");
+    // Install's xref to Configure is the tree's link; Home's to Install is a cross-link.
+    let home = file(&root.join("guide/modules/ROOT/pages/index.adoc"));
+    assert!(!tree.is_tree_link(&home, &install));
+    let positions = tree.positions(TreeStyle::Horizontal, &Default::default());
+    assert!(positions[&nav].x < positions[&install].x);
 }
 
 #[test]
