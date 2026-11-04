@@ -131,6 +131,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 **Also**
 
+- Application themes: View › Select Theme… lists the native defaults, the bundled Catppuccin, Tokyo Night, Solarized, Everforest and Flexoki themes and your own gpui-component JSON theme sets from the themes folder, showing each as you move through the list; Enter keeps it (saved to `[appearance]` in the user settings file), Escape puts back what was shown. Following the system, a theme becomes the light or dark half of the pair, and the app changes with the system's appearance. Appearance: Follow System, Light and Dark, and Toggle Light/Dark Theme, save the mode; Reload Themes reads the themes folder again.
 - A ☰ menu at the left of the title bar that opens into File, Edit, Format, View, Go, Git and Help menus, as in Zed; File ends with Quit (Quit AdocFoundry on macOS, Exit on Windows; Cmd-Q, or Ctrl-Q on Linux, from any window), which asks about unsaved pages as closing the window does; on macOS the menu bar also has the app menu (About, Settings…, Services, Hide, Hide Others, Show All, Quit); a command palette listing every command; light and dark themes; a read-only second window that follows the active document; and TOML settings.
 - Help › About AdocFoundry shows the version, build and licence, links to the repository and the documentation, and every third-party component the app is built from (the crates of the release build, and the bundled fonts, dictionaries and PDF themes) with its version, licence and full licence text, ready to copy.
 
@@ -202,9 +203,15 @@ font_family = "JetBrains Mono"   # falls back to the platform monospace
 font_size = 13
 soft_wrap = true
 tab_width = 2
-theme = "auto"                   # auto | light | dark
+theme = "auto"                   # older: auto | light | dark, used when [appearance] mode is not set
 preview_tabs = true              # false keeps every page you open in a tab of its own
 auto_save = "off"                # off | on_focus_change | after_delay (a second after typing stops)
+
+[appearance]                     # user settings file only; Select Theme… writes it
+mode = "auto"                    # auto (follow the system) | light | dark
+light_theme = "Solarized Light"  # leave out for the native default
+dark_theme = "Tokyo Night"
+# themes_dir = "themes"          # your gpui-component JSON theme sets; beside this file by default
 
 [workspace]
 ignore = [".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]   # never indexed, discovered or watched

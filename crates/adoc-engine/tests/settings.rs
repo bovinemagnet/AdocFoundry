@@ -102,3 +102,34 @@ fn auto_save_stays_off_once_turned_off_whatever_the_files_say() {
         "still off after a reload"
     );
 }
+
+#[test]
+fn saving_the_appearance_writes_the_user_file_and_reloads() {
+    use adoc_engine::{commands::ids, AppearanceChoice, CommandArgs, EngineEvent, ThemePreference};
+    let directory = tempfile::tempdir().unwrap();
+    let user = directory.path().join("adocfoundry.toml");
+    std::fs::write(&user, "[editor]\nfont_size = 15\n").unwrap();
+    let mut engine =
+        adoc_engine::Engine::new(adoc_engine::Settings::load(Some(&user), None).unwrap());
+    let events = engine.subscribe();
+    engine
+        .invoke(
+            ids::APPEARANCE_SAVE,
+            CommandArgs::Appearance(AppearanceChoice {
+                mode: ThemePreference::Dark,
+                light_theme: None,
+                dark_theme: Some("Tokyo Night".to_owned()),
+            }),
+        )
+        .unwrap();
+    let appearance = &engine.settings().appearance;
+    assert_eq!(appearance.mode, ThemePreference::Dark);
+    assert_eq!(appearance.dark_theme.as_deref(), Some("Tokyo Night"));
+    assert_eq!(engine.settings().editor.font_size, 15);
+    assert!(events
+        .try_iter()
+        .any(|event| matches!(event, EngineEvent::SettingsChanged)));
+    assert!(std::fs::read_to_string(&user)
+        .unwrap()
+        .contains("dark_theme = \"Tokyo Night\""));
+}

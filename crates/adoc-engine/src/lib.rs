@@ -4,6 +4,7 @@
 //! [`EngineEvent`]s. Every user-visible action is a [`Command`] with a stable [`CommandId`].
 
 mod about;
+mod appearance;
 mod auto_save;
 mod clock;
 mod command;
@@ -80,6 +81,7 @@ pub use adoc_audit as audit;
 pub use adoc_impact as impact;
 #[cfg(feature = "typst")]
 pub use adoc_pdf::{PageAnchor, PreviewPage};
+pub use appearance::AppearanceChoice;
 pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use command::{
@@ -124,10 +126,10 @@ pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
 pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use session::{WindowPlacement, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE};
 pub use settings::{
-    pdf_standard, AutoSave, EditorSettings, ExpansionPolicy, GitSettings, GraphColour,
-    GraphSettings, HistorySettings, PdfSettings, QualitySettings, Settings, SidebarSettings,
-    SpellingSettings, TemplateSettings, ThemePreference, ToolSettings, UpdateSettings,
-    WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
+    pdf_standard, AppearanceSettings, AutoSave, EditorSettings, ExpansionPolicy, GitSettings,
+    GraphColour, GraphSettings, HistorySettings, PdfSettings, QualitySettings, Settings,
+    SidebarSettings, SpellingSettings, TemplateSettings, ThemePreference, ToolSettings,
+    UpdateSettings, WorkspaceSettings, USER_SETTINGS_FILE, WORKSPACE_SETTINGS_FILE,
 };
 pub use site_build::{
     SiteBuild, SiteBuildBlocker, SiteBuildState, DEFAULT_BUILD_TIMEOUT, MAX_BUILD_OUTPUT,

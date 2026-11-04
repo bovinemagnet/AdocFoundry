@@ -1590,7 +1590,47 @@ See xref:command-line.adoc#doctor[doctor] for the sections and what they mean.
 == Themes
 
 The theme follows the system by default.
-Toggle Light/Dark Theme (`Cmd-K Cmd-T` or `Ctrl-K Ctrl-T`) switches immediately, and the `editor.theme` setting fixes it to `light`, `dark` or `auto`.
+The theme changes how the application looks and never affects PDF export, HTML or the Antora site.
+
+The View menu and the command palette have these commands:
+
+Select Theme...::
+Lists every theme, light ones first, each with its mode, and marks the chosen light and dark ones "chosen".
+Moving through the list shows each theme at once in every window.
+Press kbd:[Enter] to keep the highlighted theme and save it.
+Press kbd:[Esc], or close the list any other way, to put back exactly what was shown before; nothing is saved.
+Typing filters the list.
+
+Toggle Light/Dark Theme (`Cmd-K Cmd-T` or `Ctrl-K Ctrl-T`)::
+Switches to the explicit mode opposite the one shown, and saves it.
+
+Appearance: Follow System, Appearance: Light and Appearance: Dark::
+Set and save the mode.
+
+Reload Themes::
+Reads your themes folder again, as it is not watched.
+A new file's themes become available, a changed file's are read anew and a removed file's go; a chosen theme that goes shows the native default until it is back.
+A notification says how many themes there are.
+
+While the mode is Follow System, the theme you choose becomes the light or dark half of a pair, by its mode, and Follow System stays on.
+The application changes theme whenever the system's appearance changes.
+With an explicit light or dark mode, choosing a theme of the other mode switches to that mode.
+
+Your choice is saved in the `[appearance]` table of the user settings file: only `mode`, `light_theme` and `dark_theme` are written, the file's other lines and comments are kept, and an older `[editor] theme` line is taken out.
+Without a user settings file, or if it cannot be written, the choice is shown for the session and a notification says it was not saved.
+See xref:settings.adoc[Settings] for the `appearance.*` keys.
+
+AdocFoundry includes the native Default Light and Default Dark themes and these bundled themes:
+
+* Catppuccin: Latte (light), and Frappe, Macchiato and Mocha (dark).
+* Tokyo Night: Night, Storm and Moon, all dark.
+* Solarized, Everforest and Flexoki: a Light and a Dark each.
+
+To add your own, put theme-set files (`*.json`) in the themes folder, `themes` beside the user settings file unless `appearance.themes_dir` says otherwise, then run Reload Themes.
+A theme set is a JSON file in gpui-component's format, `{"name": ..., "themes": [{"name": ..., "mode": "light" or "dark", "colors": {...}, "highlight": {...}}]}`; the bundled files in the repository's `crates/adocfoundry/themes/` are examples.
+A theme whose name is already listed, whether built in, bundled or from an earlier file by file name, is skipped with a warning.
+Files that are not theme sets (with a warning), files larger than 1 MiB (with a warning) and links are skipped, and at most 64 files are read.
+Theme files are data: nothing in them is run and nothing is fetched.
 
 == The read-only second window
 

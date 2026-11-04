@@ -1,0 +1,21 @@
+The application themes bundled with AdocFoundry.
+
+The JSON files are gpui-component theme sets, copied unchanged from the GPUI Kit repository,
+https://github.com/longbridge/gpui-kit, at commit dfc11142ca41249472057dac55372b45b15ab8e8,
+from its themes/ folder. GPUI Kit is Copyright 2024 - 2026 Longbridge and licensed under the
+Apache License, Version 2.0 (LICENSE-gpui-kit).
+
+Each set ports the colours of a theme published under its own licence:
+
+- catppuccin.json: Catppuccin, https://github.com/catppuccin/catppuccin, MIT
+  (LICENSE-catppuccin). Latte, Frappe, Macchiato and Mocha.
+- tokyonight.json: Tokyo Night by Folke Lemaitre, https://github.com/folke/tokyonight.nvim,
+  Apache-2.0 (LICENSE-tokyonight). Night, Storm and Moon.
+- solarized.json: Solarized by Ethan Schoonover, https://github.com/altercation/solarized, MIT
+  (LICENSE-solarized). Light and Dark.
+- everforest.json: Everforest by sainnhe, https://github.com/sainnhe/everforest, MIT
+  (LICENSE-everforest). Light and Dark.
+- flexoki.json: Flexoki by Steph Ango, https://github.com/kepano/flexoki, MIT
+  (LICENSE-flexoki). Light and Dark.
+
+Only themes whose original project states one of these licences are bundled.

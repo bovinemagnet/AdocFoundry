@@ -79,6 +79,51 @@ pub const ASSETS: &[Asset] = &[
         files: &["STIXTwoMath-"],
         notices: &["LICENSE-stix", "ABOUT-stixtwomath"],
     },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Catppuccin application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["catppuccin.json"],
+        notices: &["LICENSE-catppuccin", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Tokyo Night application themes",
+        version: "gpui-kit dfc1114",
+        licence: "Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["tokyonight.json"],
+        notices: &["LICENSE-tokyonight", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Solarized application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["solarized.json"],
+        notices: &["LICENSE-solarized", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Everforest application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["everforest.json"],
+        notices: &["LICENSE-everforest", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Flexoki application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["flexoki.json"],
+        notices: &["LICENSE-flexoki", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
     Asset {
         name: "Asciidoctor PDF themes",
         version: "2.3",
