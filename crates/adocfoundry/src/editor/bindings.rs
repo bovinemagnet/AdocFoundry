@@ -2,7 +2,7 @@
 //! plus the few actions that exist only in the UI.
 
 use adoc_engine::{commands::ids, CommandId, Engine};
-use gpui::{actions, App, KeyBinding};
+use gpui::{actions, Action, App, KeyBinding, KeyBindingContextPredicate};
 
 actions!(
     adocfoundry,
@@ -171,109 +171,130 @@ pub fn platform_binding(binding: &str) -> String {
         .join(" ")
 }
 
-fn binding_for(id: CommandId, keys: &str) -> Option<KeyBinding> {
+/// A binding of `keys` to `action` in `context`. Unlike `KeyBinding::new`, which takes only
+/// static keys and refuses `secondary-`, the keys may be built at run time and use
+/// `secondary-` for the platform's primary modifier (Command on macOS, Control elsewhere).
+pub fn key_binding<A: Action>(
+    keys: &str,
+    action: A,
+    context: Option<&str>,
+    cx: &App,
+) -> KeyBinding {
+    let predicate = context.map(|context| {
+        KeyBindingContextPredicate::parse(context)
+            .expect("a key context is a valid predicate")
+            .into()
+    });
+    KeyBinding::load(keys, Box::new(action), predicate, false, None, cx)
+        .unwrap_or_else(|error| panic!("binding {keys:?}: {error:?}"))
+}
+
+fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
     let workspace = Some(WORKSPACE_CONTEXT);
     let editor = Some(EDITOR_CONTEXT);
     let visual = Some(crate::visual::VISUAL_CONTEXT);
     Some(match id {
-        ids::WORKSPACE_OPEN_FOLDER => KeyBinding::new(keys, OpenFolder, workspace),
-        ids::DOCUMENT_OPEN => KeyBinding::new(keys, OpenFile, workspace),
-        ids::WORKSPACE_QUICK_OPEN => KeyBinding::new(keys, QuickOpen, workspace),
-        ids::WORKSPACE_OPEN_RECENT => KeyBinding::new(keys, OpenRecent, workspace),
-        ids::DOCUMENT_SAVE => KeyBinding::new(keys, Save, workspace),
-        ids::DOCUMENT_SAVE_ALL => KeyBinding::new(keys, SaveAll, workspace),
-        ids::DOCUMENT_CLOSE => KeyBinding::new(keys, CloseDocument, workspace),
-        ids::DOCUMENT_CLOSE_OTHERS => KeyBinding::new(keys, CloseOthers, workspace),
-        ids::DOCUMENT_CLOSE_LEFT => KeyBinding::new(keys, CloseLeft, workspace),
-        ids::DOCUMENT_CLOSE_RIGHT => KeyBinding::new(keys, CloseRight, workspace),
-        ids::DOCUMENT_CLOSE_CLEAN => KeyBinding::new(keys, CloseClean, workspace),
-        ids::DOCUMENT_CLOSE_ALL => KeyBinding::new(keys, CloseAll, workspace),
-        ids::DOCUMENT_KEEP_OPEN => KeyBinding::new(keys, KeepOpen, workspace),
-        ids::IMAGE_RELOAD => {
-            KeyBinding::new(keys, ReloadImage, Some(crate::image_view::IMAGE_CONTEXT))
-        }
-        ids::SIDEBAR_EXPAND_ALL => KeyBinding::new(keys, ExpandSidebar, workspace),
-        ids::SIDEBAR_COLLAPSE_ALL => KeyBinding::new(keys, CollapseSidebar, workspace),
-        ids::SIDEBAR_COLLAPSE_ONE_LEVEL => KeyBinding::new(keys, CollapseSidebarLevel, workspace),
-        ids::SIDEBAR_RESET_EXPANSION => KeyBinding::new(keys, ResetSidebar, workspace),
-        ids::EDIT_UNDO => KeyBinding::new(keys, Undo, editor),
-        ids::EDIT_REDO => KeyBinding::new(keys, Redo, editor),
-        ids::NAVIGATE_DEFINITION => KeyBinding::new(keys, GoToDefinition, editor),
-        ids::NAVIGATE_FOLLOW_LINK => KeyBinding::new(keys, FollowLink, editor),
-        ids::NAVIGATE_BACK => KeyBinding::new(keys, GoBack, workspace),
-        ids::NAVIGATE_FORWARD => KeyBinding::new(keys, GoForward, workspace),
-        ids::NAVIGATE_PEEK_INCLUDE => KeyBinding::new(keys, PeekInclude, editor),
-        ids::NAVIGATE_FIND_REFERENCES => KeyBinding::new(keys, FindReferences, editor),
-        ids::NAVIGATE_GO_TO_SYMBOL => KeyBinding::new(keys, GoToSymbol, workspace),
-        ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE => KeyBinding::new(keys, GoToSymbolInPage, workspace),
-        ids::WORKSPACE_SEARCH => KeyBinding::new(keys, FindInWorkspace, workspace),
-        ids::WORKSPACE_REPLACE => KeyBinding::new(keys, ReplaceInWorkspace, workspace),
-        ids::PAGE_RENAME => KeyBinding::new(keys, RenamePage, workspace),
-        ids::PAGE_NEW => KeyBinding::new(keys, NewPage, workspace),
-        ids::MODULE_NEW => KeyBinding::new(keys, NewModule, workspace),
-        ids::PROJECT_NEW => KeyBinding::new(keys, NewProject, workspace),
-        ids::PROJECT_BUILD_SITE => KeyBinding::new(keys, BuildSite, workspace),
-        ids::IMPACT_ANALYSE_CHANGES => KeyBinding::new(keys, AnalyseImpact, workspace),
-        ids::IMPACT_COMPARE_REVISIONS => KeyBinding::new(keys, CompareRevisions, workspace),
-        ids::IMPACT_INSPECT => KeyBinding::new(keys, InspectImpact, workspace),
-        ids::FILE_DELETE => KeyBinding::new(keys, DeleteFile, workspace),
-        ids::FILE_UNDO_DELETE => KeyBinding::new(keys, UndoDelete, workspace),
-        ids::ANCHOR_RENAME => KeyBinding::new(keys, RenameAnchor, workspace),
-        ids::WORKSPACE_REINDEX => KeyBinding::new(keys, Reindex, workspace),
-        ids::QUALITY_RUN_AUDIT => KeyBinding::new(keys, RunAudit, workspace),
-        ids::GIT_REFRESH => KeyBinding::new(keys, RefreshGit, workspace),
-        ids::GIT_REVERT_HUNK => KeyBinding::new(keys, RevertChange, workspace),
-        ids::EDIT_FORMAT_TABLE => KeyBinding::new(keys, FormatTable, workspace),
-        ids::GIT_NEXT_CHANGE => KeyBinding::new(keys, NextChange, workspace),
-        ids::GIT_PREVIOUS_CHANGE => KeyBinding::new(keys, PreviousChange, workspace),
-        ids::GIT_SHOW_CHANGES => KeyBinding::new(keys, ShowChanges, workspace),
-        ids::NAVIGATE_OPEN_IN_VERSION => KeyBinding::new(keys, OpenInVersion, workspace),
-        ids::GIT_SHOW_BLAME => KeyBinding::new(keys, ToggleBlame, workspace),
-        ids::NAVIGATE_OPEN_ON_REMOTE => KeyBinding::new(keys, OpenOnRemote, workspace),
-        ids::NAVIGATE_COPY_REMOTE_LINK => KeyBinding::new(keys, CopyRemoteLink, workspace),
-        ids::GIT_STAGE => KeyBinding::new(keys, StageFile, workspace),
-        ids::GIT_UNSTAGE => KeyBinding::new(keys, UnstageFile, workspace),
-        ids::GIT_STAGE_ALL_ADOC => KeyBinding::new(keys, StageAll, workspace),
-        ids::GIT_COMMIT => KeyBinding::new(keys, CommitChanges, workspace),
-        ids::GIT_PUSH => KeyBinding::new(keys, Push, workspace),
-        ids::GIT_SAVE_AND_COMMIT => KeyBinding::new(keys, SaveAndCommit, workspace),
-        ids::EXPORT_PDF_PAGE => KeyBinding::new(keys, ExportPagePdf, workspace),
-        ids::EXPORT_HTML_PAGE => KeyBinding::new(keys, ExportPageHtml, workspace),
-        ids::DOCUMENT_LOCAL_HISTORY => KeyBinding::new(keys, LocalHistory, workspace),
-        ids::DOCUMENT_RECOVER_UNSAVED => KeyBinding::new(keys, RecoverUnsaved, workspace),
-        ids::EXPORT_PDF_COMPONENT => KeyBinding::new(keys, ExportComponentPdf, workspace),
-        ids::EXPORT_PDF_PROFILE => KeyBinding::new(keys, ExportPdfProfile, workspace),
-        ids::SETTINGS_OPEN => KeyBinding::new(keys, OpenSettings, workspace),
-        ids::APP_CHECK_FOR_UPDATES => KeyBinding::new(keys, CheckForUpdates, workspace),
-        ids::APP_DIAGNOSTICS => KeyBinding::new(keys, ShowDiagnostics, workspace),
-        ids::APP_ABOUT => KeyBinding::new(keys, ShowAbout, workspace),
+        ids::WORKSPACE_OPEN_FOLDER => key_binding(keys, OpenFolder, workspace, cx),
+        ids::DOCUMENT_OPEN => key_binding(keys, OpenFile, workspace, cx),
+        ids::WORKSPACE_QUICK_OPEN => key_binding(keys, QuickOpen, workspace, cx),
+        ids::WORKSPACE_OPEN_RECENT => key_binding(keys, OpenRecent, workspace, cx),
+        ids::DOCUMENT_SAVE => key_binding(keys, Save, workspace, cx),
+        ids::DOCUMENT_SAVE_ALL => key_binding(keys, SaveAll, workspace, cx),
+        ids::DOCUMENT_CLOSE => key_binding(keys, CloseDocument, workspace, cx),
+        ids::DOCUMENT_CLOSE_OTHERS => key_binding(keys, CloseOthers, workspace, cx),
+        ids::DOCUMENT_CLOSE_LEFT => key_binding(keys, CloseLeft, workspace, cx),
+        ids::DOCUMENT_CLOSE_RIGHT => key_binding(keys, CloseRight, workspace, cx),
+        ids::DOCUMENT_CLOSE_CLEAN => key_binding(keys, CloseClean, workspace, cx),
+        ids::DOCUMENT_CLOSE_ALL => key_binding(keys, CloseAll, workspace, cx),
+        ids::DOCUMENT_KEEP_OPEN => key_binding(keys, KeepOpen, workspace, cx),
+        ids::IMAGE_RELOAD => key_binding(
+            keys,
+            ReloadImage,
+            Some(crate::image_view::IMAGE_CONTEXT),
+            cx,
+        ),
+        ids::SIDEBAR_EXPAND_ALL => key_binding(keys, ExpandSidebar, workspace, cx),
+        ids::SIDEBAR_COLLAPSE_ALL => key_binding(keys, CollapseSidebar, workspace, cx),
+        ids::SIDEBAR_COLLAPSE_ONE_LEVEL => key_binding(keys, CollapseSidebarLevel, workspace, cx),
+        ids::SIDEBAR_RESET_EXPANSION => key_binding(keys, ResetSidebar, workspace, cx),
+        ids::EDIT_UNDO => key_binding(keys, Undo, editor, cx),
+        ids::EDIT_REDO => key_binding(keys, Redo, editor, cx),
+        ids::NAVIGATE_DEFINITION => key_binding(keys, GoToDefinition, editor, cx),
+        ids::NAVIGATE_FOLLOW_LINK => key_binding(keys, FollowLink, editor, cx),
+        ids::NAVIGATE_BACK => key_binding(keys, GoBack, workspace, cx),
+        ids::NAVIGATE_FORWARD => key_binding(keys, GoForward, workspace, cx),
+        ids::NAVIGATE_PEEK_INCLUDE => key_binding(keys, PeekInclude, editor, cx),
+        ids::NAVIGATE_FIND_REFERENCES => key_binding(keys, FindReferences, editor, cx),
+        ids::NAVIGATE_GO_TO_SYMBOL => key_binding(keys, GoToSymbol, workspace, cx),
+        ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE => key_binding(keys, GoToSymbolInPage, workspace, cx),
+        ids::WORKSPACE_SEARCH => key_binding(keys, FindInWorkspace, workspace, cx),
+        ids::WORKSPACE_REPLACE => key_binding(keys, ReplaceInWorkspace, workspace, cx),
+        ids::PAGE_RENAME => key_binding(keys, RenamePage, workspace, cx),
+        ids::PAGE_NEW => key_binding(keys, NewPage, workspace, cx),
+        ids::MODULE_NEW => key_binding(keys, NewModule, workspace, cx),
+        ids::PROJECT_NEW => key_binding(keys, NewProject, workspace, cx),
+        ids::PROJECT_BUILD_SITE => key_binding(keys, BuildSite, workspace, cx),
+        ids::IMPACT_ANALYSE_CHANGES => key_binding(keys, AnalyseImpact, workspace, cx),
+        ids::IMPACT_COMPARE_REVISIONS => key_binding(keys, CompareRevisions, workspace, cx),
+        ids::IMPACT_INSPECT => key_binding(keys, InspectImpact, workspace, cx),
+        ids::FILE_DELETE => key_binding(keys, DeleteFile, workspace, cx),
+        ids::FILE_UNDO_DELETE => key_binding(keys, UndoDelete, workspace, cx),
+        ids::ANCHOR_RENAME => key_binding(keys, RenameAnchor, workspace, cx),
+        ids::WORKSPACE_REINDEX => key_binding(keys, Reindex, workspace, cx),
+        ids::QUALITY_RUN_AUDIT => key_binding(keys, RunAudit, workspace, cx),
+        ids::GIT_REFRESH => key_binding(keys, RefreshGit, workspace, cx),
+        ids::GIT_REVERT_HUNK => key_binding(keys, RevertChange, workspace, cx),
+        ids::EDIT_FORMAT_TABLE => key_binding(keys, FormatTable, workspace, cx),
+        ids::GIT_NEXT_CHANGE => key_binding(keys, NextChange, workspace, cx),
+        ids::GIT_PREVIOUS_CHANGE => key_binding(keys, PreviousChange, workspace, cx),
+        ids::GIT_SHOW_CHANGES => key_binding(keys, ShowChanges, workspace, cx),
+        ids::NAVIGATE_OPEN_IN_VERSION => key_binding(keys, OpenInVersion, workspace, cx),
+        ids::GIT_SHOW_BLAME => key_binding(keys, ToggleBlame, workspace, cx),
+        ids::NAVIGATE_OPEN_ON_REMOTE => key_binding(keys, OpenOnRemote, workspace, cx),
+        ids::NAVIGATE_COPY_REMOTE_LINK => key_binding(keys, CopyRemoteLink, workspace, cx),
+        ids::GIT_STAGE => key_binding(keys, StageFile, workspace, cx),
+        ids::GIT_UNSTAGE => key_binding(keys, UnstageFile, workspace, cx),
+        ids::GIT_STAGE_ALL_ADOC => key_binding(keys, StageAll, workspace, cx),
+        ids::GIT_COMMIT => key_binding(keys, CommitChanges, workspace, cx),
+        ids::GIT_PUSH => key_binding(keys, Push, workspace, cx),
+        ids::GIT_SAVE_AND_COMMIT => key_binding(keys, SaveAndCommit, workspace, cx),
+        ids::EXPORT_PDF_PAGE => key_binding(keys, ExportPagePdf, workspace, cx),
+        ids::EXPORT_HTML_PAGE => key_binding(keys, ExportPageHtml, workspace, cx),
+        ids::DOCUMENT_LOCAL_HISTORY => key_binding(keys, LocalHistory, workspace, cx),
+        ids::DOCUMENT_RECOVER_UNSAVED => key_binding(keys, RecoverUnsaved, workspace, cx),
+        ids::EXPORT_PDF_COMPONENT => key_binding(keys, ExportComponentPdf, workspace, cx),
+        ids::EXPORT_PDF_PROFILE => key_binding(keys, ExportPdfProfile, workspace, cx),
+        ids::SETTINGS_OPEN => key_binding(keys, OpenSettings, workspace, cx),
+        ids::APP_CHECK_FOR_UPDATES => key_binding(keys, CheckForUpdates, workspace, cx),
+        ids::APP_DIAGNOSTICS => key_binding(keys, ShowDiagnostics, workspace, cx),
+        ids::APP_ABOUT => key_binding(keys, ShowAbout, workspace, cx),
         // From any window, the graph and the detached preview too: the app handles it.
-        ids::APP_QUIT => KeyBinding::new(keys, Quit, None),
-        ids::SETTINGS_RELOAD => KeyBinding::new(keys, ReloadSettings, workspace),
-        ids::VIEW_TOGGLE_PREVIEW => KeyBinding::new(keys, TogglePreview, workspace),
-        ids::VIEW_DETACH_PREVIEW => KeyBinding::new(keys, DetachPreview, workspace),
-        ids::VIEW_TOGGLE_SCROLL_SYNC => KeyBinding::new(keys, TogglePreviewScrollSync, workspace),
-        ids::VIEW_TOGGLE_PDF_PREVIEW => KeyBinding::new(keys, TogglePdfPreview, workspace),
-        ids::PREVIEW_PIN => KeyBinding::new(keys, PinPreview, workspace),
-        ids::VIEW_SHOW_SOURCE => KeyBinding::new(keys, ShowSource, workspace),
-        ids::VIEW_SHOW_VISUAL => KeyBinding::new(keys, ShowVisual, workspace),
-        ids::VIEW_SHOW_SPLIT => KeyBinding::new(keys, ShowSplit, workspace),
-        ids::VIEW_GRAPH => KeyBinding::new(keys, ShowGraph, workspace),
-        ids::VIEW_LOCAL_GRAPH => KeyBinding::new(keys, ShowLocalGraph, workspace),
-        ids::GRAPH_RESET_LAYOUT => KeyBinding::new(keys, ResetGraphLayout, workspace),
-        ids::GRAPH_EXPORT => KeyBinding::new(keys, ExportGraph, workspace),
-        ids::EDIT_TOGGLE_STRONG => KeyBinding::new(keys, ToggleStrong, visual),
-        ids::EDIT_TOGGLE_EMPHASIS => KeyBinding::new(keys, ToggleEmphasis, visual),
-        ids::EDIT_TOGGLE_CODE => KeyBinding::new(keys, ToggleCode, visual),
-        ids::EDIT_TOGGLE_HIGHLIGHT => KeyBinding::new(keys, ToggleHighlight, visual),
-        ids::EDIT_INSERT_LINK => KeyBinding::new(keys, InsertLink, visual),
-        ids::EDIT_REMOVE_LINK => KeyBinding::new(keys, RemoveLink, visual),
-        ids::VISUAL_SPLIT_BLOCK => KeyBinding::new(keys, NewParagraph, visual),
-        ids::EDIT_INDENT_LIST_ITEM => KeyBinding::new(keys, IndentListItem, visual),
-        ids::EDIT_OUTDENT_LIST_ITEM => KeyBinding::new(keys, OutdentListItem, visual),
-        ids::EDIT_TOGGLE_BULLET_LIST => KeyBinding::new(keys, ToggleBulletList, visual),
-        ids::EDIT_TOGGLE_NUMBERED_LIST => KeyBinding::new(keys, ToggleNumberedList, visual),
-        ids::EDIT_TOGGLE_CHECKLIST => KeyBinding::new(keys, ToggleChecklist, visual),
+        ids::APP_QUIT => key_binding(keys, Quit, None, cx),
+        ids::SETTINGS_RELOAD => key_binding(keys, ReloadSettings, workspace, cx),
+        ids::VIEW_TOGGLE_PREVIEW => key_binding(keys, TogglePreview, workspace, cx),
+        ids::VIEW_DETACH_PREVIEW => key_binding(keys, DetachPreview, workspace, cx),
+        ids::VIEW_TOGGLE_SCROLL_SYNC => key_binding(keys, TogglePreviewScrollSync, workspace, cx),
+        ids::VIEW_TOGGLE_PDF_PREVIEW => key_binding(keys, TogglePdfPreview, workspace, cx),
+        ids::PREVIEW_PIN => key_binding(keys, PinPreview, workspace, cx),
+        ids::VIEW_SHOW_SOURCE => key_binding(keys, ShowSource, workspace, cx),
+        ids::VIEW_SHOW_VISUAL => key_binding(keys, ShowVisual, workspace, cx),
+        ids::VIEW_SHOW_SPLIT => key_binding(keys, ShowSplit, workspace, cx),
+        ids::VIEW_GRAPH => key_binding(keys, ShowGraph, workspace, cx),
+        ids::VIEW_LOCAL_GRAPH => key_binding(keys, ShowLocalGraph, workspace, cx),
+        ids::GRAPH_RESET_LAYOUT => key_binding(keys, ResetGraphLayout, workspace, cx),
+        ids::GRAPH_EXPORT => key_binding(keys, ExportGraph, workspace, cx),
+        ids::EDIT_TOGGLE_STRONG => key_binding(keys, ToggleStrong, visual, cx),
+        ids::EDIT_TOGGLE_EMPHASIS => key_binding(keys, ToggleEmphasis, visual, cx),
+        ids::EDIT_TOGGLE_CODE => key_binding(keys, ToggleCode, visual, cx),
+        ids::EDIT_TOGGLE_HIGHLIGHT => key_binding(keys, ToggleHighlight, visual, cx),
+        ids::EDIT_INSERT_LINK => key_binding(keys, InsertLink, visual, cx),
+        ids::EDIT_REMOVE_LINK => key_binding(keys, RemoveLink, visual, cx),
+        ids::VISUAL_SPLIT_BLOCK => key_binding(keys, NewParagraph, visual, cx),
+        ids::EDIT_INDENT_LIST_ITEM => key_binding(keys, IndentListItem, visual, cx),
+        ids::EDIT_OUTDENT_LIST_ITEM => key_binding(keys, OutdentListItem, visual, cx),
+        ids::EDIT_TOGGLE_BULLET_LIST => key_binding(keys, ToggleBulletList, visual, cx),
+        ids::EDIT_TOGGLE_NUMBERED_LIST => key_binding(keys, ToggleNumberedList, visual, cx),
+        ids::EDIT_TOGGLE_CHECKLIST => key_binding(keys, ToggleChecklist, visual, cx),
         _ => return None,
     })
 }
@@ -416,7 +437,7 @@ pub fn bind(engine: &Engine, cx: &mut App) {
         .filter(|spec| !unbound_here(spec.id))
         .filter_map(|spec| {
             let keys = platform_binding(spec.default_binding?);
-            binding_for(spec.id, &keys)
+            binding_for(spec.id, &keys, cx)
         })
         .collect();
     // Undo and redo in the visual editor are the engine's, as in the source editor.
@@ -428,34 +449,37 @@ pub fn bind(engine: &Engine, cx: &mut App) {
         // The marks and Insert Link work in the source editor too, on its selection.
         let editor = Some(EDITOR_CONTEXT);
         match spec.id {
-            ids::EDIT_UNDO => bindings.push(KeyBinding::new(&keys, Undo, visual)),
-            ids::EDIT_REDO => bindings.push(KeyBinding::new(&keys, Redo, visual)),
-            ids::EDIT_TOGGLE_STRONG => bindings.push(KeyBinding::new(&keys, ToggleStrong, editor)),
+            ids::EDIT_UNDO => bindings.push(key_binding(&keys, Undo, visual, cx)),
+            ids::EDIT_REDO => bindings.push(key_binding(&keys, Redo, visual, cx)),
+            ids::EDIT_TOGGLE_STRONG => bindings.push(key_binding(&keys, ToggleStrong, editor, cx)),
             ids::EDIT_TOGGLE_EMPHASIS => {
-                bindings.push(KeyBinding::new(&keys, ToggleEmphasis, editor));
+                bindings.push(key_binding(&keys, ToggleEmphasis, editor, cx));
             }
-            ids::EDIT_TOGGLE_CODE => bindings.push(KeyBinding::new(&keys, ToggleCode, editor)),
-            ids::EDIT_INSERT_LINK => bindings.push(KeyBinding::new(&keys, InsertLink, editor)),
+            ids::EDIT_TOGGLE_CODE => bindings.push(key_binding(&keys, ToggleCode, editor, cx)),
+            ids::EDIT_INSERT_LINK => bindings.push(key_binding(&keys, InsertLink, editor, cx)),
             _ => {}
         }
     }
     // The Navigation and Modules panels' menu, from the keyboard, where a tree has focus.
     bindings.push(KeyBinding::new("shift-f10", SidebarMenu, Some("Tree")));
     let workspace = Some(WORKSPACE_CONTEXT);
-    bindings.push(KeyBinding::new(
+    bindings.push(key_binding(
         &platform_binding("cmd-shift-p"),
         CommandPalette,
         workspace,
+        cx,
     ));
-    bindings.push(KeyBinding::new(
+    bindings.push(key_binding(
         &platform_binding("cmd-k cmd-t"),
         ToggleTheme,
         workspace,
+        cx,
     ));
-    bindings.push(KeyBinding::new(
+    bindings.push(key_binding(
         &platform_binding("cmd-k cmd-n"),
         OpenMirrorWindow,
         workspace,
+        cx,
     ));
     // The app menu's keys on macOS, as every Mac app has them.
     if cfg!(target_os = "macos") {

@@ -670,7 +670,7 @@ impl Render for PreviewView {
                     .id("preview-scroll")
                     .flex_1()
                     .min_h_0()
-                    .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+                    .on_scroll(cx.listener(|_, _, window, cx| {
                         // After the scroll itself has been applied.
                         cx.defer_in(window, |this, _, cx| this.scrolled(cx));
                     }))

@@ -17,21 +17,27 @@ use lsp_types::{
     HoverContents, LocationLink, MarkupContent, MarkupKind, Range, TextEdit, Uri,
 };
 
-use crate::{app::AppState, editor::sync_widget_to_engine};
+use crate::{
+    app::AppState,
+    editor::{sync_widget_to_engine, Synced},
+};
 
 pub struct EngineProviders {
     app: WeakEntity<AppState>,
     document: DocumentId,
     /// The offset of the last definition request, which is the link a click follows.
     last_definition_offset: Cell<usize>,
+    /// Shared with the editor view, which then does not send again the edits a sync sent.
+    synced: Synced,
 }
 
 impl EngineProviders {
-    pub fn new(app: WeakEntity<AppState>, document: DocumentId) -> Self {
+    pub fn new(app: WeakEntity<AppState>, document: DocumentId, synced: Synced) -> Self {
         Self {
             app,
             document,
             last_definition_offset: Cell::new(0),
+            synced,
         }
     }
 
@@ -39,12 +45,17 @@ impl EngineProviders {
         self.last_definition_offset.get()
     }
 
-    /// Brings the engine up to date with the widget's text before asking it anything.
+    /// Brings the engine up to date with the widget's text before asking it anything. The
+    /// widget asks within the edit it is making, before its edit event arrives, so the engine
+    /// can be a keystroke behind.
     fn sync(&self, text: &Rope, cx: &mut App) -> Option<gpui::Entity<AppState>> {
         let app = self.app.upgrade()?;
-        app.update(cx, |app, cx| {
+        let synced = app.update(cx, |app, cx| {
             sync_widget_to_engine(app, self.document, text, cx)
         });
+        if synced.is_some() {
+            self.synced.replace(Some(text.clone()));
+        }
         Some(app)
     }
 }

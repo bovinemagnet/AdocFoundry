@@ -1,8 +1,11 @@
-//! Keeping the editor widget's display buffer and the engine rope identical.
+//! Keeping the editor widget's display buffer and the engine rope identical where no exact edit
+//! is at hand.
 //!
-//! The widget reports only that its text changed, so the edit is recovered as the single
-//! replacement between the common prefix and suffix of the two texts. That is exact for typing,
-//! deletion and paste, and still correct (if wider) for anything else. Both are ropes, compared
+//! The widget's own edits reach the engine as it reports them. A diff is left for the rest:
+//! applying the engine's text back to the widget, bringing the engine up to date when a
+//! provider asks before the widget's edit event has arrived, and narrowing the whole-text
+//! replacement the widget reports for an IME composition. The edit is recovered as the single
+//! replacement between the common prefix and suffix of the two texts. Both are ropes, compared
 //! chunk against chunk where they start and end, so nothing is copied: only the replacement
 //! itself is.
 

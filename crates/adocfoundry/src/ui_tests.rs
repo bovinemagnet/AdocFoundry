@@ -96,10 +96,11 @@ fn typing_reaches_the_engine_and_undo_goes_through_it(cx: &mut TestAppContext) {
     assert_eq!(widget_text(&editor, &mut cx), "= Page\n");
 }
 
-/// A typed character is found by one diff of the widget's and the engine's text, and the
-/// engine's echo of it is not applied back: nothing per keystroke is the whole page twice.
+/// A typed character reaches the engine as the widget's own edit, with no diff of the two
+/// texts, and the engine's echo of it is not applied back: nothing per keystroke is the whole
+/// page.
 #[gpui::test]
-fn typing_diffs_once_and_never_reconciles(cx: &mut TestAppContext) {
+fn typing_forwards_the_exact_edit_without_diffing(cx: &mut TestAppContext) {
     use adoc_core::probe::{self, Probe};
     init(cx);
     let directory = tempfile::tempdir().unwrap();
@@ -127,7 +128,7 @@ fn typing_diffs_once_and_never_reconciles(cx: &mut TestAppContext) {
         cx.run_until_parked();
     }
     assert_eq!(document_text(&app, &mut cx), "= Page\ntyping some prose he");
-    assert_eq!(probe::count(Probe::Diff), 20);
+    assert_eq!(probe::count(Probe::Diff), 0);
     assert_eq!(probe::count(Probe::Reconcile), 0);
 
     // An edit made elsewhere is still applied to the widget.
@@ -151,6 +152,55 @@ fn typing_diffs_once_and_never_reconciles(cx: &mut TestAppContext) {
         "// note\n= Page\ntyping some prose he"
     );
     assert_eq!(probe::count(Probe::Reconcile), 1);
+}
+
+/// An edit the engine already has is never applied to it twice: neither the widget's echo of
+/// an engine edit applied back to it, nor a keystroke the completion provider brought the
+/// engine up to date with before its edit event arrived.
+#[gpui::test]
+fn typing_after_an_engine_edit_and_a_completion_keeps_one_text(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("page.adoc");
+    std::fs::write(&path, "= Page\n").unwrap();
+    let mut engine = Engine::new(Settings::default());
+    let document = engine.open(&path).unwrap();
+    let app = app_with(engine, cx);
+    let (editor, window) = editor_window(&app, document, cx);
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.reveal(SourceRange::new(7, 7), window, cx)
+        });
+    });
+    cx.run_until_parked();
+    let typed = |keys: &str, cx: &mut VisualTestContext| {
+        for key in keys.split(' ') {
+            cx.simulate_keystrokes(key);
+            cx.run_until_parked();
+        }
+    };
+    typed("a b", &mut cx);
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id: document,
+                    range: SourceRange::new(0, 0),
+                    text: "// note\n".to_owned(),
+                },
+                cx,
+            )
+            .unwrap();
+        });
+    });
+    cx.run_until_parked();
+    // `<<` asks the engine for anchors, bringing it up to date first.
+    typed("space < < c", &mut cx);
+    let expected = "// note\n= Page\nab <<c";
+    assert_eq!(widget_text(&editor, &mut cx), expected);
+    assert_eq!(document_text(&app, &mut cx), expected);
 }
 
 #[gpui::test]
@@ -3922,7 +3972,7 @@ fn the_panel_menu_acts_on_its_panel_only(cx: &mut TestAppContext) {
 
     // Right-click a row: All of Navigation, then Expand All.
     click_selector("nav-row-1", gpui::MouseButton::Right, &mut cx);
-    cx.simulate_keystrokes("down down enter");
+    cx.simulate_keystrokes("down enter");
     cx.run_until_parked();
     let navigation = rows(&workspace, Navigation, &mut cx);
     assert!(
@@ -3943,7 +3993,7 @@ fn the_panel_menu_acts_on_its_panel_only(cx: &mut TestAppContext) {
     // Collapse One Level, twice: Install, then Home.
     for _ in 0..2 {
         click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
-        cx.simulate_keystrokes("down down down down enter");
+        cx.simulate_keystrokes("down down down enter");
         cx.run_until_parked();
     }
     assert_eq!(
@@ -3975,7 +4025,7 @@ fn the_panel_space_offers_the_menu_too(cx: &mut TestAppContext) {
     cx.simulate_mouse_up(below, gpui::MouseButton::Right, gpui::Modifiers::none());
     cx.run_until_parked();
     // Collapse All.
-    cx.simulate_keystrokes("down down down enter");
+    cx.simulate_keystrokes("down down enter");
     cx.run_until_parked();
     assert_eq!(
         rows(&workspace, Navigation, &mut cx),
@@ -4004,7 +4054,7 @@ fn collapsing_hands_the_selection_to_the_row_still_shown(cx: &mut TestAppContext
     let (_directory, _app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
     // Expand All, then select 2.0's Linux, row 3.
     click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
-    cx.simulate_keystrokes("down down enter");
+    cx.simulate_keystrokes("down enter");
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     click("nav-row-3", &mut cx);
@@ -4014,12 +4064,12 @@ fn collapsing_hands_the_selection_to_the_row_still_shown(cx: &mut TestAppContext
     assert_eq!(selected(&mut cx).as_deref(), Some("Linux"));
     // Collapse One Level closes Install, hiding Linux: Install is selected.
     click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
-    cx.simulate_keystrokes("down down down down enter");
+    cx.simulate_keystrokes("down down down enter");
     cx.run_until_parked();
     assert_eq!(selected(&mut cx).as_deref(), Some("Install"));
     // Collapse All: the version row.
     click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
-    cx.simulate_keystrokes("down down down enter");
+    cx.simulate_keystrokes("down down enter");
     cx.run_until_parked();
     assert_eq!(selected(&mut cx).as_deref(), Some("Guide 2.0"));
 }
@@ -4067,7 +4117,7 @@ fn shift_f10_opens_the_panel_menu(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("shift-f10");
     cx.run_until_parked();
     // Expand All.
-    cx.simulate_keystrokes("down down enter");
+    cx.simulate_keystrokes("down enter");
     cx.run_until_parked();
     let navigation = rows(&workspace, Navigation, &mut cx);
     assert!(
@@ -5068,7 +5118,7 @@ fn a_branch_closed_over_the_active_page_stays_closed(cx: &mut TestAppContext) {
     // Collapse All, then the same page again: nothing reopens.
     cx.update(|window, cx| window.draw(cx).clear(cx));
     click_selector("nav-row-0", gpui::MouseButton::Right, &mut cx);
-    cx.simulate_keystrokes("down down down enter");
+    cx.simulate_keystrokes("down down enter");
     cx.run_until_parked();
     assert_eq!(
         rows(&workspace, Navigation, &mut cx),
@@ -6910,11 +6960,12 @@ fn graph_canvas_pans_and_zooms_around_the_pointer(cx: &mut TestAppContext) {
     // move away.
     let zoom = graph_cx.update(|_, cx| view.read(cx).zoom_for_test());
     let at = position(&mut graph_cx);
-    graph_cx.simulate_event(gpui::ScrollWheelEvent {
+    graph_cx.simulate_event(gpui::ScrollEvent {
         position: at,
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(120.))),
         modifiers: gpui::Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     graph_cx.run_until_parked();
     assert!(graph_cx.update(|_, cx| view.read(cx).zoom_for_test()) > zoom);
