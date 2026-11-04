@@ -20,6 +20,7 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings   # CI treats warnings as errors
 cargo test --workspace
 cargo run -p adocfoundry                                 # launch the desktop app
+cargo xtask run -- path/to/docs                          # the same; on macOS from a dev bundle in target/, so the Dock shows the icon
 cargo run -p adocfoundry-cli -- check tests/fixtures/antora-single-component
 cargo run -p adocfoundry-cli -- pdf tests/fixtures/pdf/reference/article.adoc --output /tmp/article.pdf
 cargo run -p adoc-ls -- --version                        # smoke-test the language server

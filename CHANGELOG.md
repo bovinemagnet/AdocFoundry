@@ -4,6 +4,10 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ## Unreleased
 
+### Added
+
+- `cargo xtask run [--release] [-- <args>]` builds the desktop app and runs it. On macOS it runs from a development bundle in `target/` (`AdocFoundry.app`, with its own identifier and no document types), so the Dock and the app switcher show the anvil icon instead of the generic one of a bare executable that `cargo run` gives (#363).
+
 ### Changed
 
 - The source editor sends the engine each edit exactly as the editor widget makes it, so typing no longer compares the widget's text with the engine's on every keystroke (#210). The UI framework moves to gpui-component 0.9.0 and gpui-pre 0.3.11, which report the edits. In the Navigation and Modules panels' menu the first Down now selects Expand All, the first command, rather than the menu's title.
