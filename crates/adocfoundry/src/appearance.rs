@@ -16,7 +16,7 @@ use std::{
 };
 
 use adoc_engine::{AppearanceSettings, ThemePreference};
-use gpui::{App, Global, Window};
+use gpui::{px, App, Global, Window};
 use gpui_component::theme::{Theme, ThemeConfig, ThemeMode, ThemeRegistry, ThemeSet};
 
 /// The theme sets built into the app.
@@ -251,7 +251,43 @@ pub fn apply(
         ThemePreference::Light => Theme::change(ThemeMode::Light, window, cx),
         ThemePreference::Dark => Theme::change(ThemeMode::Dark, window, cx),
     }
+    cx.set_global(FontScale(appearance.font_scale.factor()));
+    scale_fonts(cx);
     warnings
+}
+
+/// gpui-component's text sizes, for a theme that sets none: the rem size, which every length
+/// given in rems follows, and the monospaced size.
+const FONT_SIZE: f32 = 16.0;
+const MONO_FONT_SIZE: f32 = 13.0;
+
+/// `[appearance] font_scale` as last applied.
+struct FontScale(f32);
+
+impl Global for FontScale {}
+
+/// The multiplier text is drawn at (#374): 1 unless `[appearance] font_scale` says otherwise.
+pub fn font_scale(cx: &App) -> f32 {
+    cx.try_global::<FontScale>().map_or(1.0, |scale| scale.0)
+}
+
+/// Draws the application's text at its theme's sizes times the font scale. Applying a theme
+/// keeps the sizes it does not set, so this follows every change of theme.
+fn scale_fonts(cx: &mut App) {
+    let scale = font_scale(cx);
+    let theme = Theme::global_mut(cx);
+    let config = if theme.mode.is_dark() {
+        &theme.dark_theme
+    } else {
+        &theme.light_theme
+    };
+    let (size, mono) = (
+        config.font_size.unwrap_or(FONT_SIZE),
+        config.mono_font_size.unwrap_or(MONO_FONT_SIZE),
+    );
+    theme.font_size = px(size * scale);
+    theme.mono_font_size = px(mono * scale);
+    cx.refresh_windows();
 }
 
 /// Shows `theme` alone, for the picker, without changing what is saved.
@@ -264,6 +300,7 @@ pub fn preview(theme: &Rc<ThemeConfig>, cx: &mut App) {
         current.light_theme = theme.clone();
     }
     Theme::change(mode, None, cx);
+    scale_fonts(cx);
 }
 
 /// Whether the picker is previewing, so that nothing else changes the theme meanwhile.

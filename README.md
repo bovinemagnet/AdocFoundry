@@ -212,6 +212,7 @@ mode = "auto"                    # auto (follow the system) | light | dark
 light_theme = "Solarized Light"  # leave out for the native default
 dark_theme = "Tokyo Night"
 # themes_dir = "themes"          # your gpui-component JSON theme sets; beside this file by default
+font_scale = 1.0                 # draw all text this many times larger, 0.5 to 3: 1.5 for a big, high-resolution screen
 
 [workspace]
 ignore = [".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]   # never indexed, discovered or watched

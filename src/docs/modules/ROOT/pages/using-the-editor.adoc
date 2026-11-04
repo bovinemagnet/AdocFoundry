@@ -1620,6 +1620,10 @@ Your choice is saved in the `[appearance]` table of the user settings file: only
 Without a user settings file, or if it cannot be written, the choice is shown for the session and a notification says it was not saved.
 See xref:settings.adoc[Settings] for the `appearance.*` keys.
 
+To make all text larger on a big or high-resolution screen, set `appearance.font_scale` in the user settings file, for example `font_scale = 1.5`.
+It scales the whole interface and the source editor together, with any theme, and applies when the settings are read again, without a restart.
+See xref:settings.adoc[Settings].
+
 AdocFoundry includes the native Default Light and Default Dark themes and these bundled themes:
 
 * Catppuccin: Latte (light), and Frappe, Macchiato and Mocha (dark).

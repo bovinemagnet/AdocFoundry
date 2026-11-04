@@ -417,6 +417,8 @@ It starts with the native defaults from gpui-component's `ThemeRegistry`, adds t
 A catalog is used instead of the registry because the pinned registry can neither remove nor replace a theme, and its only reload watches the folder and drops themes loaded from strings.
 `apply` sets `Theme::light_theme` and `Theme::dark_theme` and calls `Theme::change` or `Theme::sync_system_appearance`, which repaints every window.
 `ThemeCatalog::previewing` shows a theme without choosing it.
+After every theme change `apply` sets gpui-component's `Theme::font_size` (the rem size every rem length follows) and `mono_font_size` to the theme's sizes, 16 and 13 when it sets none, times the font scale.
+The source editor multiplies `editor.font_size` by the scale, and the graph's labels are sized from the rem size.
 
 `src/workspace_view/theme_picker.rs` is the picker, built on gpui-component's `Command`.
 `on_select` previews the highlighted theme, `on_confirm` saves the choice through the engine's `appearance.save` (see xref:engine.adoc#settings[Settings]), and `on_cancel` and `Dialog::on_close` restore what was shown before.

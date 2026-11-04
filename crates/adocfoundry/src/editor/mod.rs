@@ -816,7 +816,8 @@ impl Render for SourceEditorView {
             .editor
             .font_family
             .clone();
-        let font_size = self.app.read(cx).engine.settings().editor.font_size as f32;
+        let settings = self.app.read(cx).engine.settings();
+        let font_size = settings.editor.font_size as f32 * settings.appearance.font_scale.factor();
         let engine = &self.app.read(cx).engine;
         let hunks = if engine.settings().git.show_markers {
             changes::near_view(self.state.read(cx), engine.git().hunks_for(self.document))
