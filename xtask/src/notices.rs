@@ -124,6 +124,91 @@ pub const ASSETS: &[Asset] = &[
         files: &["flexoki.json"],
         notices: &["LICENSE-flexoki", "LICENSE-gpui-kit", "ABOUT-themes"],
     },
+    // GPUI Kit's own theme.
+    Asset {
+        name: "Aurora application themes",
+        version: "gpui-kit dfc1114",
+        licence: "Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["aurora.json"],
+        notices: &["LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Alduin application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["alduin.json"],
+        notices: &["LICENSE-alduin", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Asciinema application themes",
+        version: "gpui-kit dfc1114",
+        licence: "Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["asciinema.json"],
+        notices: &[
+            "LICENSE-asciinema-player",
+            "LICENSE-gpui-kit",
+            "ABOUT-themes",
+        ],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Gruvbox application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["gruvbox.json"],
+        notices: &["LICENSE-gruvbox", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Hybrid application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["hybrid.json"],
+        notices: &["LICENSE-hybrid", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Jellybeans application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["jellybeans.json"],
+        notices: &["LICENSE-jellybeans", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "macOS Classic application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["macos-classic.json"],
+        notices: &["LICENSE-macos-classic", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Mellifluous application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["mellifluous.json"],
+        notices: &["LICENSE-mellifluous", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
+    // The colours' own licence, then GPUI Kit's for the theme set it ported them to.
+    Asset {
+        name: "Spaceduck application themes",
+        version: "gpui-kit dfc1114",
+        licence: "MIT AND Apache-2.0",
+        folder: "crates/adocfoundry/themes",
+        files: &["spaceduck.json"],
+        notices: &["LICENSE-spaceduck", "LICENSE-gpui-kit", "ABOUT-themes"],
+    },
     Asset {
         name: "Asciidoctor PDF themes",
         version: "2.3",

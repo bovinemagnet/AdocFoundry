@@ -17,5 +17,26 @@ Each set ports the colours of a theme published under its own licence:
   (LICENSE-everforest). Light and Dark.
 - flexoki.json: Flexoki by Steph Ango, https://github.com/kepano/flexoki, MIT
   (LICENSE-flexoki). Light and Dark.
+- alduin.json: Alduin by Alessandro Yorba, https://github.com/AlessandroYorba/Alduin, MIT, as
+  stated in its colors/alduin.vim (LICENSE-alduin). Dark.
+- asciinema.json: the asciinema theme of asciinema-player, https://github.com/asciinema/asciinema-player,
+  Apache-2.0 (LICENSE-asciinema-player). Dark.
+- gruvbox.json: Gruvbox by Pavel Pertsev, https://github.com/morhetz/gruvbox, MIT, as stated in
+  its README.md and package.json (LICENSE-gruvbox). Light and Dark.
+- hybrid.json: Hybrid by Andrew Wong, https://github.com/w0ng/vim-hybrid, MIT, as stated in its
+  colors/hybrid.vim (LICENSE-hybrid). Light and Dark.
+- jellybeans.json: Jellybeans by NanoTech, https://github.com/nanotech/jellybeans.vim, MIT, as
+  stated in its colors/jellybeans.vim (LICENSE-jellybeans). Dark.
+- macos-classic.json: macOS Classic by Jason Lee, https://github.com/huacnlee/zed-theme-macos-classic,
+  MIT (LICENSE-macos-classic). Light and Dark.
+- mellifluous.json: Mellifluous by Ramojus Lapinskas, https://github.com/ramojus/mellifluous.nvim,
+  MIT (LICENSE-mellifluous). Light and Dark.
+- spaceduck.json: Spaceduck by Guillermo Rodriguez, https://github.com/pineapplegiant/spaceduck,
+  MIT (LICENSE-spaceduck). Dark.
 
-Only themes whose original project states one of these licences are bundled.
+aurora.json is GPUI Kit's own theme, Aurora Light, under GPUI Kit's licence alone.
+
+Only themes whose original project states one of these licences are bundled. GPUI Kit's other
+themes are not: Adventure, Adventure Time and Kibble (no licence known), Fahrenheit and Harper
+(CC-BY-SA-4.0), Molokai (based on Monokai, whose copyright its licence keeps apart), Twilight
+(no licence stated) and Ayu (taken from Zed's repository).
