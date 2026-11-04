@@ -13,6 +13,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ### Changed
 
+- A pause in typing parses the active page once, on a worker, rather than once each for the preview, the visual model, the word count and the spell check, the visual model's on the UI thread: in split mode with the preview shown and 20 tabs open, the longest the engine thread is held while a 5,000-line page settles falls from about 44 ms to 18 ms. A page's parse no longer copies every open buffer, only shares them (#183).
 - Toggle Light/Dark Theme saves the mode it switches to, rather than changing it for the session only (#357).
 - The source editor sends the engine each edit exactly as the editor widget makes it, so typing no longer compares the widget's text with the engine's on every keystroke (#210). The UI framework moves to gpui-component 0.9.0 and gpui-pre 0.3.11, which report the edits. In the Navigation and Modules panels' menu the first Down now selects Expand All, the first command, rather than the menu's title.
 

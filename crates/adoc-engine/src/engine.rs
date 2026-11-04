@@ -108,6 +108,7 @@ pub struct Engine {
     pub(crate) applying: bool,
     pub(crate) rendered: crate::rendered::PreviewState,
     pub(crate) visual: crate::visual::VisualState,
+    pub(crate) parses: crate::parses::Parses,
     pub(crate) git: crate::git::GitState,
     pub(crate) tabs: crate::tabs::Tabs,
     pub(crate) expansion: crate::expansion::Expansion,
@@ -225,6 +226,7 @@ impl Engine {
             applying: false,
             rendered: crate::rendered::PreviewState::default(),
             visual: crate::visual::VisualState::default(),
+            parses: crate::parses::Parses::default(),
             git: crate::git::GitState::default(),
             tabs: crate::tabs::Tabs::default(),
             expansion: crate::expansion::Expansion::default(),
@@ -426,6 +428,7 @@ impl Engine {
         self.pending_index.remove(&id);
         self.forget_preview(id);
         self.forget_visual(id);
+        self.forget_parse(id);
         self.forget_hunks(id);
         self.forget_word_count(id);
         self.forget_spelling(id);

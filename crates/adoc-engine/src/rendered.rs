@@ -17,8 +17,10 @@ use adoc_dom::{AcdcParser, DocumentParser, Dom, IncludeResolver, ParseInput};
 use adoc_index::normalize_path;
 use adoc_lang::WorkspaceState;
 use adoc_render::{build_view, DiagramView, ResolvedLink, ViewResolver, ViewTree};
+use ropey::Rope;
 
 use crate::{
+    parses::Lookup,
     worker::{self, Crashed},
     workspace::WorkerMessage,
     DocumentId, Engine, EngineEvent,
@@ -112,9 +114,11 @@ struct Snapshot {
     parser: Arc<dyn DocumentParser>,
     id: DocumentId,
     generation: u64,
+    /// The ticket its parse is shared with ([`Engine::share_next_parse`]).
+    ticket: u64,
     version: u64,
     path: PathBuf,
-    text: String,
+    text: Arc<str>,
     attributes: Vec<(String, String)>,
     includes: SnapshotIncludes,
 }
@@ -123,7 +127,7 @@ struct Snapshot {
 pub(crate) struct OwnedInput {
     pub(crate) version: u64,
     pub(crate) path: PathBuf,
-    pub(crate) text: String,
+    pub(crate) text: Arc<str>,
     pub(crate) attributes: Vec<(String, String)>,
     pub(crate) includes: SnapshotIncludes,
 }
@@ -160,7 +164,8 @@ impl OwnedInput {
 /// from their buffers, anything else from disk.
 pub(crate) struct SnapshotIncludes {
     map: BTreeMap<PathBuf, PathBuf>,
-    buffers: HashMap<PathBuf, String>,
+    /// Open buffers, shared rather than copied: a rope's clone is cheap.
+    buffers: HashMap<PathBuf, Rope>,
     access: FileAccess,
     read: Mutex<BTreeSet<PathBuf>>,
 }
@@ -173,7 +178,7 @@ impl IncludeResolver for SnapshotIncludes {
             return None;
         }
         let text = match self.buffers.get(&path) {
-            Some(text) => text.clone(),
+            Some(text) => text.to_string(),
             None => fs::read_to_string(&path).ok()?,
         };
         if let Ok(mut read) = self.read.lock() {
@@ -382,8 +387,31 @@ impl Engine {
             .collect();
         for id in &due {
             self.rendered.scheduled.remove(id);
-            if let Some(snapshot) = self.preview_snapshot(*id) {
-                self.spawn_preview(snapshot);
+            match self.shared_parse(*id) {
+                // Parsed already for the visual model or another consumer.
+                Lookup::Ready(parse) => {
+                    self.rendered.next_generation += 1;
+                    let generation = self.rendered.next_generation;
+                    self.rendered.latest.insert(*id, generation);
+                    self.preview_parsed(
+                        *id,
+                        generation,
+                        parse.version,
+                        parse.dom.clone(),
+                        parse.sources.clone(),
+                    );
+                }
+                // Being parsed for another consumer: the preview waits for that parse.
+                Lookup::Running => {
+                    self.rendered.scheduled.insert(*id, now);
+                }
+                // Its parse crashed: the preview keeps the view it had until the page changes.
+                Lookup::Failed => {}
+                Lookup::Missing => {
+                    if let Some(snapshot) = self.preview_snapshot(*id) {
+                        self.spawn_preview(snapshot);
+                    }
+                }
             }
         }
         due.len()
@@ -394,10 +422,12 @@ impl Engine {
         self.rendered.next_generation += 1;
         let generation = self.rendered.next_generation;
         self.rendered.latest.insert(id, generation);
+        let ticket = self.share_next_parse(id, input.version);
         Some(Snapshot {
             parser: self.document_parser(),
             id,
             generation,
+            ticket,
             version: input.version,
             path: input.path,
             text: input.text,
@@ -420,7 +450,7 @@ impl Engine {
         let document = self.documents.get(&id)?;
         Some(self.owned_input(
             &document.path,
-            document.text.to_string(),
+            document.text.to_string().into(),
             document.version,
             document.parsed(),
         ))
@@ -434,7 +464,7 @@ impl Engine {
         }
         let text = self.file_access.read_to_string(path).ok()?;
         let parsed = adoc_parser::parse(&crate::document::uri_for(path), &text).document;
-        Some(self.owned_input(path, text, 0, &parsed))
+        Some(self.owned_input(path, text.into(), 0, &parsed))
     }
 
     /// The attributes a page is parsed with before its own header: the playbook's, its
@@ -463,7 +493,7 @@ impl Engine {
     fn owned_input(
         &self,
         path: &Path,
-        text: String,
+        text: Arc<str>,
         version: u64,
         parsed: &adoc_core::Document,
     ) -> OwnedInput {
@@ -478,7 +508,7 @@ impl Engine {
             .documents
             .values()
             .filter(|open| open.path != path)
-            .map(|open| (open.path.clone(), open.text.to_string()))
+            .map(|open| (open.path.clone(), open.text.clone()))
             .collect();
         OwnedInput {
             version,
@@ -497,8 +527,13 @@ impl Engine {
     fn spawn_preview(&mut self, snapshot: Snapshot) {
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
-        let crashed = |error| WorkerMessage::Crashed {
-            job: Crashed::Preview,
+        let (id, version, ticket) = (snapshot.id, snapshot.version, snapshot.ticket);
+        let crashed = move |error| WorkerMessage::Crashed {
+            job: Crashed::Preview {
+                id,
+                version,
+                ticket,
+            },
             error,
         };
         worker::spawn(sender, crashed, move |sender| {
@@ -506,6 +541,7 @@ impl Engine {
                 parser,
                 id,
                 generation,
+                ticket,
                 version,
                 path,
                 text,
@@ -515,7 +551,7 @@ impl Engine {
             let input = OwnedInput {
                 version,
                 path,
-                text,
+                text: text.clone(),
                 attributes,
                 includes,
             };
@@ -523,8 +559,10 @@ impl Engine {
             let _ = sender.send(WorkerMessage::PreviewParsed {
                 id,
                 generation,
+                ticket,
                 version,
-                dom: Box::new(dom),
+                text,
+                dom: Arc::new(dom),
                 sources,
             });
         });
@@ -535,7 +573,7 @@ impl Engine {
         id: DocumentId,
         generation: u64,
         version: u64,
-        dom: Dom,
+        dom: Arc<Dom>,
         sources: BTreeSet<PathBuf>,
     ) {
         let state = &self.rendered;
@@ -556,7 +594,7 @@ impl Engine {
             Parsed {
                 version,
                 path,
-                dom: Arc::new(dom),
+                dom,
                 sources,
                 waiting: BTreeSet::new(),
             },
@@ -642,6 +680,7 @@ impl Engine {
     /// Chooses the parser previews are built with.
     pub fn set_document_parser(&mut self, parser: Arc<dyn DocumentParser>) {
         self.rendered.parser = Some(parser);
+        self.parses_changed(None);
         self.preview_workspace_changed();
     }
 

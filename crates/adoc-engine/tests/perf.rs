@@ -179,6 +179,62 @@ fn visual_typing_loop() {
     report("visual typing (20 tabs)", samples);
 }
 
+/// A pause in typing in split mode, the preview shown and 20 tabs open: the longest one pump
+/// holds the engine thread while the preview, the visual model, the word count and the spell
+/// check catch up, which once included parsing the page there (#183), and the whole settle.
+#[test]
+#[ignore = "timing probe"]
+fn settle_in_split_mode() {
+    use std::time::Duration;
+
+    let (_directory, mut engine, id) = typing_workspace(20);
+    engine.enable_word_count();
+    engine.enable_spelling();
+    engine
+        .invoke(ids::VIEW_SHOW_SPLIT, CommandArgs::Document(id))
+        .unwrap();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None)
+        .unwrap();
+    let settle = |engine: &mut Engine| {
+        let started = Instant::now();
+        let mut longest = Duration::ZERO;
+        while engine.has_pending() {
+            let pump = Instant::now();
+            engine.pump();
+            longest = longest.max(pump.elapsed());
+            std::thread::sleep(Duration::from_millis(2));
+            assert!(started.elapsed() < Duration::from_secs(60), "never settled");
+        }
+        (longest, started.elapsed())
+    };
+    settle(&mut engine);
+    let at = engine
+        .document(id)
+        .unwrap()
+        .text_string()
+        .find("The ")
+        .unwrap();
+    let (mut longest, mut whole) = (Vec::new(), Vec::new());
+    for _ in 0..10 {
+        engine
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(at, at),
+                    text: "x".to_owned(),
+                },
+            )
+            .unwrap();
+        let (pump, settled) = settle(&mut engine);
+        longest.push(pump);
+        whole.push(settled);
+    }
+    report("longest pump of a settle in split mode (20 tabs)", longest);
+    report("whole settle in split mode (20 tabs)", whole);
+}
+
 /// A book's export, for its time and peak memory: 300 pages of sections, admonitions, code and
 /// tables in one component's navigation. Run it under `/usr/bin/time -l` (macOS) or
 /// `/usr/bin/time -v` (Linux) to read the peak; a 1,833-page documentation book peaked at
