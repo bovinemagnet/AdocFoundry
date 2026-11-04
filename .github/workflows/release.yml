@@ -75,10 +75,19 @@ jobs:
           # Apple's Developer ID G2 intermediate, which issued the certificate: without it
           # codesign cannot build the chain to Apple's root and fails with
           # errSecInternalComponent. Checked against its known digest before it is trusted.
-          intermediate="$RUNNER_TEMP/DeveloperIDG2CA.cer"
-          curl -fsSL -o "$intermediate" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
-          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $intermediate" | shasum -a 256 -c -
-          security import "$intermediate" -k "$keychain"
+          # On the macOS 15 image it is already there (the import fails with "The specified item
+          # already exists in the keychain"), so it is imported only when no keychain that
+          # codesign reads holds it: the new one, the user's search list or the system's.
+          intermediate_sha256="F16CD3C54C7F83CEA4BF1A3E6A0819C8AAA8E4A1528FD144715F350643D2DF3A"
+          if security find-certificate -a -Z "$keychain" $(security list-keychains -d user | tr -d '"') \
+              /Library/Keychains/System.keychain | grep -qx "SHA-256 hash: $intermediate_sha256"; then
+            echo "A keychain already holds the Developer ID G2 intermediate."
+          else
+            intermediate="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+            curl -fsSL -o "$intermediate" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+            echo "$intermediate_sha256  $intermediate" | shasum -a 256 -c -
+            security import "$intermediate" -k "$keychain"
+          fi
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
       # The identity only when its certificate was imported: bundle.sh signs with whatever
