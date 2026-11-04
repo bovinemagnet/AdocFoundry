@@ -21,11 +21,18 @@ fn engine_with_clock() -> (Engine, ManualClock) {
     engine_with(Settings::load(None, None).unwrap())
 }
 
-/// Pumps until the workers are idle, as a front end's timer would.
+/// Pumps until the workers are idle and a pump starts nothing more, as a front end's timer
+/// would: a check runs after the page's shared parse, and one made stale while it ran (by a
+/// late watcher event, say) starts again on the next pump.
 fn settle(engine: &mut Engine) {
-    engine.pump();
-    assert!(engine.wait_for_workers(WAIT));
-    engine.pump();
+    for _ in 0..20 {
+        let started = engine.pump();
+        assert!(engine.wait_for_workers(WAIT));
+        if started == 0 {
+            return;
+        }
+    }
+    panic!("the engine kept starting work");
 }
 
 fn page(directory: &tempfile::TempDir, name: &str, text: &str) -> PathBuf {
