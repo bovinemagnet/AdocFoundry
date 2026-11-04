@@ -416,6 +416,20 @@ impl Engine {
                 });
                 return;
             };
+            // The names are the pages', not chosen in a save dialog that would ask, so a link
+            // planted at one is refused rather than written through. A PDF there is replaced.
+            if std::fs::symlink_metadata(&output).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                if let Some(batch) = self.export.batch.as_mut() {
+                    batch.failed.push((
+                        page,
+                        format!(
+                            "{} is a link, which is not written through",
+                            output.display()
+                        ),
+                    ));
+                }
+                continue;
+            }
             let args = ExportArgs {
                 target: ExportTarget::File(page.clone()),
                 output,

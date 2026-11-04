@@ -293,3 +293,46 @@ fn export_pages_refuses_nothing_to_export_or_a_missing_folder() {
         .is_err());
     assert!(!setup.engine.is_exporting());
 }
+
+/// A link planted at an output's name is not written through: that page fails, the rest are
+/// exported, and the link's target is untouched.
+#[cfg(unix)]
+#[test]
+fn export_pages_never_writes_through_a_link() {
+    let mut setup = Setup::new();
+    let events = setup.engine.subscribe();
+    let out = setup.directory.path().join("pdfs");
+    fs::create_dir_all(&out).unwrap();
+    let elsewhere = setup.directory.path().join("precious.txt");
+    fs::write(&elsewhere, "keep me").unwrap();
+    std::os::unix::fs::symlink(&elsewhere, out.join("index.pdf")).unwrap();
+    let index = setup.alpha().join("pages/index.adoc");
+    setup
+        .engine
+        .invoke(
+            ids::EXPORT_PDF_PAGES,
+            CommandArgs::ExportPages {
+                pages: vec![index.clone(), setup.alpha().join("pages/guide.adoc")],
+                folder: out.clone(),
+            },
+        )
+        .unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while setup.engine.is_exporting() && std::time::Instant::now() < deadline {
+        setup.engine.wait_for_workers(WAIT);
+        setup.engine.pump();
+    }
+    let (written, failed) = events
+        .try_iter()
+        .find_map(|event| match event {
+            EngineEvent::PagesExported {
+                written, failed, ..
+            } => Some((written, failed)),
+            _ => None,
+        })
+        .expect("a PagesExported event");
+    assert_eq!(written, [out.join("guide.pdf")]);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(failed[0].0, index);
+    assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "keep me");
+}
