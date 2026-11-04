@@ -336,3 +336,35 @@ fn export_pages_never_writes_through_a_link() {
     assert_eq!(failed[0].0, index);
     assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "keep me");
 }
+
+/// A hard link at an output's name looks like any file, so the PDF replaces the name rather
+/// than being written into the file it shares, which keeps what it held.
+#[cfg(unix)]
+#[test]
+fn export_pages_replaces_a_hard_link_rather_than_writing_into_it() {
+    let mut setup = Setup::new();
+    let out = setup.directory.path().join("pdfs");
+    fs::create_dir_all(&out).unwrap();
+    let elsewhere = setup.directory.path().join("precious.txt");
+    fs::write(&elsewhere, "keep me").unwrap();
+    fs::hard_link(&elsewhere, out.join("guide.pdf")).unwrap();
+    setup
+        .engine
+        .invoke(
+            ids::EXPORT_PDF_PAGES,
+            CommandArgs::ExportPages {
+                pages: vec![setup.alpha().join("pages/guide.adoc")],
+                folder: out.clone(),
+            },
+        )
+        .unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while setup.engine.is_exporting() && std::time::Instant::now() < deadline {
+        setup.engine.wait_for_workers(WAIT);
+        setup.engine.pump();
+    }
+    assert!(fs::read(out.join("guide.pdf"))
+        .unwrap()
+        .starts_with(b"%PDF"));
+    assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "keep me");
+}

@@ -1301,7 +1301,8 @@ It lists a page at the end of its module's navigation file (`module.nav`), throu
 
 `export.pdf_pages` (`CommandArgs::ExportPages { pages, folder }`, with the `typst` feature only) is `Engine::export_pages(pages, folder)`.
 It queues each page as an article export (`ExportTarget::File`) to `<folder>/<stem>.pdf`, or `<stem>-2.pdf` and so on for later pages named alike.
-The names are the pages', not chosen in a save dialog that would ask, so a page whose output name is already a symbolic link is refused, listed in `failed`, rather than written through; a regular file there, such as an earlier export, is replaced.
+The names are the pages', not chosen in a save dialog that would ask, so each PDF is written to a new file in the folder and renamed over its output name, which replaces whatever name is there, a symbolic or hard link included, and never writes into the file a link leads to; an earlier export there is replaced.
+A page whose output name is already a symbolic link when its turn comes is refused before it is typeset, and listed in `failed`.
 It starts the next only when the last has finished, so a folder of pages is never typeset at once.
 Its pages send no `ExportFinished`; one `EngineEvent::PagesExported { folder, written, failed }` follows the last.
 It refuses no pages, a folder that is not one, and a second batch while one runs.
