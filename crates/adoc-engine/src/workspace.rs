@@ -83,8 +83,19 @@ pub(crate) enum WorkerMessage {
     PreviewParsed {
         id: crate::DocumentId,
         generation: u64,
+        ticket: u64,
         version: u64,
-        dom: Box<adoc_dom::Dom>,
+        text: Arc<str>,
+        dom: Arc<adoc_dom::Dom>,
+        sources: std::collections::BTreeSet<PathBuf>,
+    },
+    /// The active page parsed for its consumers to share (`parses.rs`).
+    Parsed {
+        id: crate::DocumentId,
+        version: u64,
+        ticket: u64,
+        text: Arc<str>,
+        dom: Arc<adoc_dom::Dom>,
         sources: std::collections::BTreeSet<PathBuf>,
     },
     DiagramRendered {
@@ -621,10 +632,39 @@ impl Engine {
             WorkerMessage::PreviewParsed {
                 id,
                 generation,
+                ticket,
                 version,
+                text,
                 dom,
                 sources,
-            } => self.preview_parsed(id, generation, version, *dom, sources),
+            } => {
+                let shared = crate::parses::SharedParse {
+                    id,
+                    version,
+                    text,
+                    dom: dom.clone(),
+                    sources: sources.clone(),
+                };
+                self.parse_arrived(ticket, shared);
+                self.preview_parsed(id, generation, version, dom, sources);
+            }
+            WorkerMessage::Parsed {
+                id,
+                version,
+                ticket,
+                text,
+                dom,
+                sources,
+            } => self.parse_arrived(
+                ticket,
+                crate::parses::SharedParse {
+                    id,
+                    version,
+                    text,
+                    dom,
+                    sources,
+                },
+            ),
             WorkerMessage::DiagramRendered { checksum, result } => {
                 self.diagram_rendered(&checksum, result);
             }

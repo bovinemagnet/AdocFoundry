@@ -13,8 +13,18 @@ use crate::{commands::ids, workspace::WorkerMessage, DocumentId, Engine, EngineE
 
 /// A job with no failure of its own to report, named by what to settle when its worker panics.
 pub(crate) enum Crashed {
-    /// Parsing a page for the preview.
-    Preview,
+    /// Parsing a page for the preview, its result shared with `ticket`.
+    Preview {
+        id: DocumentId,
+        version: u64,
+        ticket: u64,
+    },
+    /// Parsing the active page for its consumers to share (`parses.rs`).
+    Parse {
+        id: DocumentId,
+        version: u64,
+        ticket: u64,
+    },
     /// Counting the active page's words. Nothing waits for it, and the page is counted again
     /// once it changes.
     WordCount,
@@ -38,7 +48,23 @@ impl Engine {
     pub(crate) fn worker_crashed(&mut self, job: Crashed, error: String) {
         let failed = match job {
             // The preview keeps the view it had until the page next changes.
-            Crashed::Preview => Some((ids::VIEW_TOGGLE_PREVIEW, "the preview")),
+            Crashed::Preview {
+                id,
+                version,
+                ticket,
+            } => {
+                self.parse_crashed(id, version, ticket);
+                Some((ids::VIEW_TOGGLE_PREVIEW, "the preview"))
+            }
+            // Its consumers go without, as each would had it parsed the page itself.
+            Crashed::Parse {
+                id,
+                version,
+                ticket,
+            } => {
+                self.parse_crashed(id, version, ticket);
+                None
+            }
             Crashed::WordCount => None,
             Crashed::Spelling {
                 id,

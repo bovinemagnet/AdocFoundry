@@ -24,6 +24,7 @@ use adoc_render::ViewTree;
 use crate::{
     commands::{ids, register, spec},
     engine::UndoMode,
+    parses::{Lookup, SharedParse},
     CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
     Engine, EngineError, EngineEvent, TextEdit,
 };
@@ -188,15 +189,36 @@ impl Engine {
         self.visual.sessions.remove(&id);
     }
 
-    /// Parses `id` and builds its model and view now.
+    /// Builds the model and view of `id` now, from the page's shared parse, or parsing it
+    /// here when it has none ready.
     fn build_visual(&mut self, id: DocumentId) {
-        let parser = self.document_parser();
-        let Some(input) = self.parse_input(id) else {
+        let parse = match self.shared_parse(id) {
+            Lookup::Ready(parse) => parse,
+            _ => {
+                let parser = self.document_parser();
+                let Some(input) = self.parse_input(id) else {
+                    return;
+                };
+                let parse = Arc::new(input.parse_shared(id, parser.as_ref()));
+                self.remember_parse(parse.clone());
+                parse
+            }
+        };
+        self.build_visual_from(&parse);
+    }
+
+    /// Builds the model and view of the page `parse` read.
+    fn build_visual_from(&mut self, parse: &SharedParse) {
+        let Some(path) = self
+            .documents
+            .get(&parse.id)
+            .map(|document| document.path.clone())
+        else {
             return;
         };
-        let (version, path, text) = (input.version, input.path.clone(), input.text.clone());
-        let (dom, sources) = input.parse(parser.as_ref());
-        let model = Model::build(&path, &text, &dom);
+        let (id, version, dom) = (parse.id, parse.version, parse.dom.clone());
+        let sources = parse.sources.clone();
+        let model = Model::build(&path, &parse.text, &dom);
         let (view, waiting) = self.view_of(&path, &dom, true);
         let current = Arc::new(VisualDocument {
             document: id,
@@ -211,7 +233,7 @@ impl Engine {
             id,
             Session {
                 current,
-                dom: Arc::new(dom),
+                dom,
                 sources,
                 stale: false,
                 due: None,
@@ -226,6 +248,7 @@ impl Engine {
     /// Marks the models assembled from `path` out of date, unless a visual command is
     /// editing that model itself.
     pub(crate) fn visual_source_changed(&mut self, path: &Path) {
+        self.parses_changed(Some(path));
         let due = self.clock.now() + MODEL_SETTLE;
         let applying = self.visual.applying;
         let documents = &self.documents;
@@ -246,6 +269,7 @@ impl Engine {
 
     /// Marks every model out of date, after a catalog or index change.
     pub(crate) fn visual_workspace_changed(&mut self) {
+        self.parses_changed(None);
         let due = self.clock.now() + MODEL_SETTLE;
         for session in self.visual.sessions.values_mut() {
             session.stale = true;
@@ -288,8 +312,23 @@ impl Engine {
                 None
             })
             .collect();
+        // After typing, the parse is made on a worker, or taken from the preview's.
         for id in due {
-            self.build_visual(id);
+            match self.shared_parse(id) {
+                Lookup::Ready(parse) => self.build_visual_from(&parse),
+                Lookup::Running => continue,
+                // The model shown stays until the page next changes.
+                Lookup::Failed => {
+                    if let Some(session) = self.visual.sessions.get_mut(&id) {
+                        session.due = None;
+                    }
+                }
+                Lookup::Missing => {
+                    if !self.start_shared_parse(id) {
+                        self.build_visual(id);
+                    }
+                }
+            }
             rebuilt += 1;
         }
         if let Some(id) = active.filter(|id| self.visual.unbuilt(*id)) {

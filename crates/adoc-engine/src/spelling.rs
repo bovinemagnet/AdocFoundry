@@ -16,6 +16,8 @@ use adoc_spell::{Dictionaries, WordList};
 
 use crate::{
     commands::{ids, register, spec},
+    parses::{Lookup, SharedParse},
+    rendered::OwnedInput,
     workspace::WorkerMessage,
     CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DocumentId,
     Engine, EngineError, EngineEvent, TextEdit,
@@ -42,6 +44,12 @@ pub struct Misspelling {
     pub range: SourceRange,
     pub word: String,
     pub suggestions: Vec<String>,
+}
+
+/// What a check reads its page from.
+enum Source {
+    Parsed(Arc<SharedParse>),
+    Input(OwnedInput),
 }
 
 /// A document's last check: the version and word lists it checked, and what it found.
@@ -149,12 +157,30 @@ impl Engine {
         let Some((id, version)) = due else {
             return 0;
         };
-        let Some(input) = self.parse_input(id) else {
+        let generation = self.spelling.generation;
+        // The active page is checked from its shared parse; others are parsed for the check.
+        let source = match self.shared_parse(id) {
+            Lookup::Ready(parse) => Source::Parsed(parse),
+            Lookup::Running => return 0,
+            Lookup::Failed => {
+                self.spelling_crashed(id, version, generation);
+                return 0;
+            }
+            Lookup::Missing if self.start_shared_parse(id) => return 1,
+            Lookup::Missing => match self.parse_input(id) {
+                Some(input) => Source::Input(input),
+                None => return 0,
+            },
+        };
+        let Some(path) = self
+            .documents
+            .get(&id)
+            .map(|document| document.path.clone())
+        else {
             return 0;
         };
-        let generation = self.spelling.generation;
         self.spelling.checking = Some((id, version, generation));
-        let lists = self.word_lists_for(&input.path);
+        let lists = self.word_lists_for(&path);
         let dictionaries = self.spelling.dictionaries.clone();
         let configured = self.settings.spelling.language.clone();
         let parser = self.document_parser();
@@ -169,9 +195,11 @@ impl Engine {
             error,
         };
         crate::worker::spawn(sender, crashed, move |sender| {
-            let (path, text) = (input.path.clone(), input.text.clone());
-            let (dom, _) = input.parse(parser.as_ref());
-            let model = Model::build(&path, &text, &dom);
+            let parse = match source {
+                Source::Parsed(parse) => parse,
+                Source::Input(input) => Arc::new(input.parse_shared(id, parser.as_ref())),
+            };
+            let model = Model::build(&path, &parse.text, &parse.dom);
             let misspellings = check_model(&model, &dictionaries, &configured, &lists);
             let _ = sender.send(WorkerMessage::SpellingChecked {
                 id,

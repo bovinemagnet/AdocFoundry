@@ -46,6 +46,14 @@ fn version(engine: &Engine, id: DocumentId) -> u64 {
     engine.document(id).unwrap().version
 }
 
+/// Pumps once the model's settle has passed: after typing the page is parsed on a worker, and
+/// the model is built when the parse is back.
+fn settle_model(engine: &mut Engine) {
+    engine.pump();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    engine.pump();
+}
+
 fn show_visual(engine: &mut Engine, id: DocumentId) {
     engine
         .invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(id))
@@ -250,7 +258,7 @@ fn source_edits_rebuild_the_model_after_settle() {
     assert!(engine.has_pending());
 
     clock.advance(MODEL_SETTLE);
-    engine.pump();
+    settle_model(&mut engine);
     assert_eq!(shown(&engine, id), ["First and second."]);
     assert_eq!(engine.visual(id).unwrap().version, version(&engine, id));
 }
@@ -351,7 +359,7 @@ fn included_files_rebuild_the_model() {
         )
         .unwrap();
     clock.advance(MODEL_SETTLE + Duration::from_millis(1));
-    engine.pump();
+    settle_model(&mut engine);
     assert_eq!(
         included(&engine),
         ["Before.", "Now From the partial.", "After."]
@@ -900,7 +908,7 @@ fn a_command_that_changes_nothing_leaves_a_settling_model_to_settle() {
     assert_eq!(shown(&engine, id), ["First."]);
 
     clock.advance(MODEL_SETTLE);
-    engine.pump();
+    settle_model(&mut engine);
     assert_eq!(shown(&engine, id), ["First and second."]);
 }
 
@@ -922,4 +930,141 @@ fn closing_a_tab_shows_the_next_page_s_model_current() {
         .unwrap();
     assert_eq!(engine.active(), Some(second_id));
     assert_eq!(shown(&engine, second_id), ["Second page."]);
+}
+
+/// The engine's own parser, counting the pages it parses.
+struct CountingParser(Arc<std::sync::atomic::AtomicUsize>);
+
+impl adoc_dom::DocumentParser for CountingParser {
+    fn name(&self) -> &'static str {
+        "counting"
+    }
+
+    fn parse(&self, input: &adoc_dom::ParseInput<'_>) -> adoc_dom::Dom {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        adoc_dom::DocumentParser::parse(&adoc_dom::AcdcParser, input)
+    }
+}
+
+/// Pumps, waiting for the workers, until nothing is left to do, `step` apart.
+fn settle_with(engine: &mut Engine, clock: &ManualClock, step: Duration) {
+    for _ in 0..50 {
+        engine.pump();
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
+        engine.pump();
+        if !engine.has_pending() {
+            return;
+        }
+        clock.advance(step);
+    }
+    panic!("the engine did not settle");
+}
+
+#[test]
+fn one_settle_parses_once_in_split_mode() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = page(directory.path(), "page.adoc", "First.\n");
+    let (mut engine, clock) = engine_with_clock();
+    let parses = Arc::new(AtomicUsize::new(0));
+    engine.set_document_parser(Arc::new(CountingParser(parses.clone())));
+    engine.enable_word_count();
+    engine.enable_spelling();
+    let id = engine.open(&path).unwrap();
+    engine
+        .invoke(ids::VIEW_SHOW_SPLIT, CommandArgs::Document(id))
+        .unwrap();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None)
+        .unwrap();
+    settle_with(&mut engine, &clock, Duration::from_millis(50));
+
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(5, 5),
+                text: " and secnod".to_owned(),
+            },
+        )
+        .unwrap();
+    parses.store(0, Ordering::SeqCst);
+    settle_with(&mut engine, &clock, Duration::from_millis(50));
+
+    // The preview, the visual model, the word count and the spell check all follow the edit...
+    let version = version(&engine, id);
+    assert_eq!(engine.rendered_preview(id).unwrap().version, version);
+    assert_eq!(engine.visual(id).unwrap().version, version);
+    assert_eq!(shown(&engine, id), ["First and secnod."]);
+    assert_eq!(engine.word_count(id).unwrap().words, 3);
+    assert_eq!(
+        engine
+            .misspellings(id)
+            .iter()
+            .map(|misspelling| misspelling.word.as_str())
+            .collect::<Vec<_>>(),
+        ["secnod"]
+    );
+    // ...from one parse of the page.
+    assert_eq!(parses.load(Ordering::SeqCst), 1);
+}
+
+/// The engine's parser, panicking on a page holding "boom" and counting the pages it parses.
+struct PanickingParser(Arc<std::sync::atomic::AtomicUsize>);
+
+impl adoc_dom::DocumentParser for PanickingParser {
+    fn name(&self) -> &'static str {
+        "panicking"
+    }
+
+    fn parse(&self, input: &adoc_dom::ParseInput<'_>) -> adoc_dom::Dom {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        assert!(!input.text.contains("boom"), "the parser gave up");
+        adoc_dom::DocumentParser::parse(&adoc_dom::AcdcParser, input)
+    }
+}
+
+#[test]
+fn a_shared_parse_that_crashes_is_not_tried_again() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = page(directory.path(), "page.adoc", "First.\n");
+    let (mut engine, clock) = engine_with_clock();
+    let parses = Arc::new(AtomicUsize::new(0));
+    engine.set_document_parser(Arc::new(PanickingParser(parses.clone())));
+    engine.enable_word_count();
+    engine.enable_spelling();
+    let id = engine.open(&path).unwrap();
+    engine
+        .invoke(ids::VIEW_SHOW_SPLIT, CommandArgs::Document(id))
+        .unwrap();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None)
+        .unwrap();
+    settle_with(&mut engine, &clock, Duration::from_millis(50));
+    let events = engine.subscribe();
+
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(5, 5),
+                text: " boom".to_owned(),
+            },
+        )
+        .unwrap();
+    parses.store(0, Ordering::SeqCst);
+    // Settles, rather than parsing the page again for each consumer, or over and over.
+    settle_with(&mut engine, &clock, Duration::from_millis(50));
+    assert_eq!(parses.load(Ordering::SeqCst), 1);
+    assert_eq!(shown(&engine, id), ["First."], "the model shown stays");
+    let failed = events
+        .try_iter()
+        .filter(|event| matches!(event, EngineEvent::CommandFailed { .. }))
+        .count();
+    assert_eq!(failed, 1, "the preview says once that it crashed");
 }

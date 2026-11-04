@@ -43,6 +43,7 @@ mod navigation;
 mod new_module;
 mod new_page;
 mod new_project;
+mod parses;
 #[cfg(feature = "typst")]
 mod pdf_preview;
 mod preview;

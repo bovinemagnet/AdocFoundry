@@ -8,7 +8,7 @@ use std::{
 
 use adoc_dom::{Block, BlockKind, Dom, Inline};
 
-use crate::{workspace::WorkerMessage, DocumentId, Engine, EngineEvent};
+use crate::{parses::Lookup, workspace::WorkerMessage, DocumentId, Engine, EngineEvent};
 
 /// How long the active page must go unchanged before it is counted again.
 pub const WORD_COUNT_SETTLE: Duration = Duration::from_millis(500);
@@ -108,6 +108,23 @@ impl Engine {
         if let Some(changed) = self.words.changed.get(&id) {
             if self.clock.now() < *changed + WORD_COUNT_SETTLE {
                 return 0;
+            }
+        }
+        // The active page's shared parse: counted at once when it is ready, else asked for.
+        match self.shared_parse(id) {
+            Lookup::Ready(parse) => {
+                self.words_counted(id, version, WordCount::new(prose_words(&parse.dom)));
+                return 1;
+            }
+            Lookup::Running => return 0,
+            Lookup::Failed => {
+                self.words.counting = Some((id, version)); // As a count that crashed.
+                return 0;
+            }
+            Lookup::Missing => {
+                if self.start_shared_parse(id) {
+                    return 1;
+                }
             }
         }
         let Some(input) = self.parse_input(id) else {

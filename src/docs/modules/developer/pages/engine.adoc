@@ -466,6 +466,7 @@ include::example$preview-pipeline.mmd[]
 ----
 
 The parse runs on a worker thread against a snapshot of the open buffers, so unsaved edits show.
+The open buffers are shared as rope clones rather than copied, and become strings only when the page includes them.
 The worker reports back over the same channel as indexing, and `pump()` applies it.
 A result is dropped when a newer job has started for the document, or when the document or a file it includes changed after the job started.
 An edit during a render therefore never flashes the old text; the replacement job follows after the settle time.
@@ -484,6 +485,18 @@ The engine registers a `StemProvider`, a `DiagramProvider` for the kinds `stem-a
 Formulas render to SVG on a worker with `adoc_pdf::render_math_svg` at 15 pt (block) and 13 pt (inline), and are cached by checksum like diagrams.
 The view tree's `ViewKind::Stem` carries a `DiagramView` (pending, an SVG path or failed), and `ViewInline::Stem` carries an optional SVG path.
 The export's view tree asks for no formula images, because the PDF typesets them itself.
+
+=== One parse of the active page
+
+The preview, the visual model, the word count and the spell check all need a parse of the active page.
+`crates/adoc-engine/src/parses.rs` keeps one shared parse of it, a `SharedParse`: the version, the text parsed, the `adoc-dom` tree and every file it read.
+Whichever consumer is due first starts it on a worker, and the preview's own parse is shared the same way.
+The others wait for it and take it when it arrives, and the consumers already due are given it straight away, so one pause in typing parses the page once.
+A preview that comes due while another consumer's parse of that version is running waits for it, and one that finds a current shared parse builds its view from it without a worker.
+The shared parse is kept only while the page's version and every file it read are unchanged.
+A change to any file, or to the catalog or index, also stops a parse still running from being shared, since what it reads is not known yet.
+A shared parse that crashes is not started again for that version: the preview and model keep what they show, and the word count and spell check go without, until the page changes.
+Only the active page has a shared parse, so the spell check of a background page still parses it on its own worker.
 
 [[the-export-service]]
 == The export service
@@ -514,7 +527,8 @@ The engine counts the words of the active page for the status bar.
 Counting is opt-in: a front end calls `Engine::enable_word_count()`, as the app does in `AppState::new`, while the CLI, `adoc-ls` and `adoc-mcp` never count.
 
 Only the active document is counted.
-`WORD_COUNT_SETTLE` (500 ms) after the last change to the page, a worker parses a snapshot with `OwnedInput::parse`, the parse the preview uses, and counts the prose in the `adoc-dom` tree.
+`WORD_COUNT_SETTLE` (500 ms) after the last change to the page, the prose of the page's shared parse is counted.
+If no other consumer has started that parse, it is started on a worker.
 Switching to another tab, or opening a page, counts it straight away.
 The count is in `crates/adoc-engine/src/words.rs`.
 
@@ -568,8 +582,10 @@ Showing the source again drops it.
 The text is the truth, so the model is rebuilt from a parse whenever it could differ from it.
 
 * A typed source edit marks the model stale and schedules a rebuild after `MODEL_SETTLE`.
-When that time passes, `pump` rebuilds the model of the active page.
+When that time passes, the active page is parsed on a worker, or the preview's parse is taken.
+The model is rebuilt on the engine thread once the parse is back.
 * After a command other than source typing, the active page's model is rebuilt before the command returns, but only if that command made a model stale.
+It is built from the shared parse when that is current, else the page is parsed there and then, and that parse is then shared.
 So undo, replace, rename, a reload from disk and an edit to an included file are never seen through an old model on the page being shown.
 * A read-only command (Quick Open, hover, About and so on) rebuilds nothing.
 A model that only earlier source typing made stale keeps waiting for its `MODEL_SETTLE` rebuild.
