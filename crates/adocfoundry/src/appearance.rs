@@ -26,6 +26,21 @@ pub const BUNDLED: &[(&str, &str)] = &[
     ("solarized.json", include_str!("../themes/solarized.json")),
     ("everforest.json", include_str!("../themes/everforest.json")),
     ("flexoki.json", include_str!("../themes/flexoki.json")),
+    ("aurora.json", include_str!("../themes/aurora.json")),
+    ("alduin.json", include_str!("../themes/alduin.json")),
+    ("asciinema.json", include_str!("../themes/asciinema.json")),
+    ("gruvbox.json", include_str!("../themes/gruvbox.json")),
+    ("hybrid.json", include_str!("../themes/hybrid.json")),
+    ("jellybeans.json", include_str!("../themes/jellybeans.json")),
+    (
+        "macos-classic.json",
+        include_str!("../themes/macos-classic.json"),
+    ),
+    (
+        "mellifluous.json",
+        include_str!("../themes/mellifluous.json"),
+    ),
+    ("spaceduck.json", include_str!("../themes/spaceduck.json")),
 ];
 
 /// The largest theme file read, and the most files read from the themes folder.
@@ -321,6 +336,19 @@ mod tests {
             "Solarized Dark",
             "Everforest Dark",
             "Flexoki Light",
+            "Aurora Light",
+            "Alduin",
+            "Asciinema",
+            "Gruvbox Light",
+            "Gruvbox Dark",
+            "Hybrid Light",
+            "Hybrid Dark",
+            "Jellybeans",
+            "macOS Classic Light",
+            "macOS Classic Dark",
+            "Mellifluous Light",
+            "Mellifluous Dark",
+            "Spaceduck",
             "Default Light",
             "Default Dark",
         ] {

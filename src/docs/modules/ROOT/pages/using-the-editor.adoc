@@ -1624,7 +1624,9 @@ AdocFoundry includes the native Default Light and Default Dark themes and these 
 
 * Catppuccin: Latte (light), and Frappe, Macchiato and Mocha (dark).
 * Tokyo Night: Night, Storm and Moon, all dark.
-* Solarized, Everforest and Flexoki: a Light and a Dark each.
+* Solarized, Everforest, Flexoki, Gruvbox, Hybrid, macOS Classic and Mellifluous: a Light and a Dark each.
+* Alduin, Asciinema, Jellybeans and Spaceduck: dark only.
+* Aurora: Aurora Light, light only.
 
 To add your own, put theme-set files (`*.json`) in the themes folder, `themes` beside the user settings file unless `appearance.themes_dir` says otherwise, then run Reload Themes.
 A theme set is a JSON file in gpui-component's format, `{"name": ..., "themes": [{"name": ..., "mode": "light" or "dark", "colors": {...}, "highlight": {...}}]}`; the bundled files in the repository's `crates/adocfoundry/themes/` are examples.
