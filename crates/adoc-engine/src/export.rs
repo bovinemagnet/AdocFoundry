@@ -791,6 +791,7 @@ impl Engine {
         state.stage = Stage::Typesetting;
         let unread = unread_pages(&state.doms);
         let args = state.args.clone();
+        let replace = state.in_batch;
         let plan = state.plan.clone();
         let document = assemble(&plan, views);
         let first_page = plan.paths().into_iter().next();
@@ -808,7 +809,7 @@ impl Engine {
         };
         crate::worker::spawn(sender, crashed, move |sender| {
             let result = theme
-                .and_then(|theme| typeset(&document, &theme, &options, &args))
+                .and_then(|theme| typeset(&document, &theme, &options, &args, replace))
                 .map(|mut summary| {
                     summary.diagnostics.extend(unread);
                     summary
@@ -1055,13 +1056,17 @@ fn assemble(plan: &Plan, views: Vec<(PathBuf, ViewTree)>) -> Document {
     }
 }
 
-/// Typesets `document` and writes the PDF (and the Typst, when asked).
+/// Typesets `document` and writes the PDF (and the Typst, when asked). With `replace`, as for
+/// `export.pdf_pages`, whose file names nobody confirmed, the PDF is written to a new file
+/// beside the output and renamed over it: the rename replaces whatever name is there, a link
+/// included, and never writes into what a symbolic or hard link leads to.
 #[cfg(feature = "typst")]
 fn typeset(
     document: &Document,
     theme: &LoadedTheme,
     options: &PdfOptions,
     args: &ExportArgs,
+    replace: bool,
 ) -> Result<ExportSummary, String> {
     let typst = adoc_pdf::to_typst(document, theme, options);
     // A profile may name a folder, such as `build/`, that does not exist yet.
@@ -1079,8 +1084,20 @@ fn typeset(
             .map_err(|error| format!("{}: {error}", path.display()))?;
     }
     let output = adoc_pdf::compile(&typst, theme, options).map_err(|error| error.to_string())?;
-    std::fs::write(&args.output, &output.bytes)
-        .map_err(|error| format!("{}: {error}", args.output.display()))?;
+    let failed = |error: std::io::Error| format!("{}: {error}", args.output.display());
+    if replace {
+        let folder = args
+            .output
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let mut file = tempfile::NamedTempFile::new_in(folder).map_err(failed)?;
+        std::io::Write::write_all(&mut file, &output.bytes).map_err(failed)?;
+        file.persist(&args.output)
+            .map_err(|error| failed(error.error))?;
+    } else {
+        std::fs::write(&args.output, &output.bytes).map_err(failed)?;
+    }
     let mut diagnostics: Vec<ExportDiagnostic> = output
         .diagnostics
         .iter()
