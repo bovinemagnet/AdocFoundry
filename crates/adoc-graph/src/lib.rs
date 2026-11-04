@@ -2,7 +2,8 @@
 //! edges, the [`LinkStore`] of each file's links kept by file, walks outwards from a node,
 //! snapshots filtered for display, groups of nodes by module or component version
 //! ([`Groups`], [`GraphSnapshot::collapse`]), a force-directed [`Layout`], and the graph drawn as
-//! SVG ([`to_svg`]) in the colours the app's canvas uses.
+//! SVG ([`to_svg`]) in the colours the app's canvas uses, and mind maps ([`MindMap`]): a tree
+//! of the snapshot from one root, laid out left to right or radially.
 //!
 //! The engine decides what the links are and when they change; this crate only keeps them.
 //! Nothing here knows about a UI framework, so the layout is tested and benchmarked headlessly.
@@ -13,6 +14,7 @@ mod snapshot;
 mod store;
 mod style;
 mod svg;
+mod tree;
 
 use std::{collections::BTreeSet, path::Path, sync::Arc};
 
@@ -22,6 +24,7 @@ pub use snapshot::NodeInput;
 pub use store::{LinkStore, PathStep, StoredLink};
 pub use style::{colour_groups, node_colour, node_radius, ColourBy, Hsl};
 pub use svg::{to_svg, to_svg_laid_out, SvgStyle, EXPORT_SEED};
+pub use tree::{MindMap, TreeStyle, LEVEL_GAP, SIBLING_GAP};
 
 /// A node of the graph: a file, or a link target that does not resolve.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -129,6 +132,46 @@ impl GraphSnapshot {
             .binary_search_by(|node| node.key.cmp(key))
             .ok()
             .map(|at| &self.nodes[at])
+    }
+
+    /// The snapshot with only the nodes `keep` accepts and the edges between them, each node's
+    /// links in and out counted again.
+    #[must_use]
+    pub fn restrict(&self, keep: impl Fn(&GraphKey) -> bool) -> Self {
+        let nodes: Vec<GraphNode> = self
+            .nodes
+            .iter()
+            .filter(|node| keep(&node.key))
+            .cloned()
+            .collect();
+        let kept: std::collections::HashSet<&GraphKey> =
+            nodes.iter().map(|node| &node.key).collect();
+        let edges: Vec<GraphEdge> = self
+            .edges
+            .iter()
+            .filter(|edge| kept.contains(&edge.from) && kept.contains(&edge.to))
+            .cloned()
+            .collect();
+        let mut counts: std::collections::HashMap<&GraphKey, (usize, usize)> =
+            std::collections::HashMap::new();
+        for edge in &edges {
+            counts.entry(&edge.from).or_default().0 += 1;
+            counts.entry(&edge.to).or_default().1 += 1;
+        }
+        let counts: Vec<(usize, usize)> = nodes
+            .iter()
+            .map(|node| counts.get(&node.key).copied().unwrap_or_default())
+            .collect();
+        let mut nodes = nodes;
+        for (node, (out, into)) in nodes.iter_mut().zip(counts) {
+            node.links_out = out;
+            node.links_in = into;
+        }
+        Self {
+            revision: self.revision,
+            nodes,
+            edges,
+        }
     }
 
     /// The part of the snapshot a path covers: its nodes, and the edges of the kinds it took

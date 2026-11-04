@@ -108,6 +108,7 @@ show_orphans = true
 show_unresolved = false
 colour_by = "component"          # component | module | family
 group = "off"                    # off | module | component
+layout = "force"                 # force | mind-map | radial
 
 [quality]
 fail_on = "warning"
@@ -400,6 +401,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |`"off"`, `"module"` or `"component"`
 |`"off"`
 |What the graph window groups nodes by when it opens. See xref:graph-view.adoc#graph-groups[Groups]. Any other value warns and keeps the default.
+
+|`graph.layout`
+|`"force"`, `"mind-map"` or `"radial"`
+|`"force"`
+|How the graph window and the Graph panel lay the graph out when they open. See xref:graph-view.adoc#graph-mind-map[Mind maps]. Any other value warns and keeps the default.
 
 |`quality.enabled`
 |boolean

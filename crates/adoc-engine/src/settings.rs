@@ -254,6 +254,14 @@ impl Default for SpellingSettings {
 /// What colours the link graph's nodes.
 pub use adoc_graph::ColourBy as GraphColour;
 
+/// How the graph is laid out: by force, or as a mind map from one root.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GraphLayout {
+    #[default]
+    Force,
+    MindMap(adoc_graph::TreeStyle),
+}
+
 /// The `[graph]` table: what the link graph shows when it is first opened.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GraphSettings {
@@ -266,6 +274,8 @@ pub struct GraphSettings {
     pub colour_by: GraphColour,
     /// What the graph window groups the nodes by, if anything.
     pub group: Option<adoc_graph::GroupBy>,
+    /// How the graph window and panel lay the graph out.
+    pub layout: GraphLayout,
 }
 
 impl Default for GraphSettings {
@@ -278,6 +288,7 @@ impl Default for GraphSettings {
             show_unresolved: false,
             colour_by: GraphColour::Component,
             group: None,
+            layout: GraphLayout::Force,
         }
     }
 }
@@ -902,6 +913,14 @@ impl Settings {
                     _ => return Err("expected \"off\", \"module\" or \"component\""),
                 };
             }
+            ("graph", "layout") => {
+                self.graph.layout = match value.as_str() {
+                    Some("force") => GraphLayout::Force,
+                    Some("mind-map") => GraphLayout::MindMap(adoc_graph::TreeStyle::Horizontal),
+                    Some("radial") => GraphLayout::MindMap(adoc_graph::TreeStyle::Radial),
+                    _ => return Err("expected \"force\", \"mind-map\" or \"radial\""),
+                };
+            }
             ("quality", "enabled") => self.quality.enabled = boolean(value)?,
             ("quality", "fail_on") => {
                 self.quality.policy.fail_on = value
@@ -1135,6 +1154,7 @@ fn is_known(section: &str, key: &str) -> bool {
                     | "show_unresolved"
                     | "colour_by"
                     | "group"
+                    | "layout"
             )
             | (
                 "history",
@@ -1250,7 +1270,7 @@ mod tests {
         fs::write(
             &workspace,
             "[graph]\ndepth = 2\nshow_nav = false\nshow_unresolved = true\ncolour_by = \"module\"\n\
-             group = \"component\"\n[graph.extra]\n",
+             group = \"component\"\nlayout = \"radial\"\n[graph.extra]\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
@@ -1258,19 +1278,31 @@ mod tests {
         assert!(!settings.graph.show_nav && settings.graph.show_unresolved);
         assert_eq!(settings.graph.colour_by, GraphColour::Module);
         assert_eq!(settings.graph.group, Some(adoc_graph::GroupBy::Component));
+        assert_eq!(
+            settings.graph.layout,
+            GraphLayout::MindMap(adoc_graph::TreeStyle::Radial)
+        );
         assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
 
         fs::write(
             &workspace,
-            "[graph]\ndepth = 4\ncolour_by = \"size\"\ngroup = \"family\"\n",
+            "[graph]\ndepth = 4\ncolour_by = \"size\"\ngroup = \"family\"\nlayout = \"tree\"\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.graph, GraphSettings::default());
-        assert_eq!(settings.warnings.len(), 3);
-        fs::write(&workspace, "[graph]\ngroup = \"off\"\n").unwrap();
+        assert_eq!(settings.warnings.len(), 4);
+        fs::write(
+            &workspace,
+            "[graph]\ngroup = \"off\"\nlayout = \"mind-map\"\n",
+        )
+        .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!((settings.graph.group, settings.warnings.len()), (None, 0));
+        assert_eq!(
+            settings.graph.layout,
+            GraphLayout::MindMap(adoc_graph::TreeStyle::Horizontal)
+        );
     }
 
     #[test]

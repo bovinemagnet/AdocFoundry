@@ -101,8 +101,11 @@ If less than half of the saved place is on a display, because a screen has been 
 |Group
 |Shows "Group: Off", "Group: Module" or "Group: Component". Clicking the button moves to the next, and xref:graph-view.adoc#graph-groups[groups] the nodes. Only the graph window has it.
 
+|Layout
+|Shows "Layout: Force", "Layout: Mind Map" or "Layout: Radial". Clicking the button moves to the next, and draws the graph as a xref:graph-view.adoc#graph-mind-map[mind map]. The Graph panel has it too.
+
 |Workspace or Local
-|Switches between the whole workspace and the active page's neighbourhood. Local has a depth of 1 to 3 links.
+|Switches between the whole workspace and the active page's neighbourhood. Local has a depth of 1 to 3 links. While the graph is laid out as a mind map, the depth buttons set how far the map reaches from its root.
 
 |Zoom out, Zoom in, Fit
 |Change the zoom. Fit shows the whole graph.
@@ -117,14 +120,55 @@ If less than half of the saved place is on a display, because a screen has been 
 * Scroll the wheel, or pinch, to zoom around the pointer.
 * Drag a node to pin it where you drop it. Release with kbd:[Alt] held to unpin it.
 * Hover over a node to highlight it and its neighbours and dim the rest.
-* Click a node to select it and open its page in the preview tab. Double-click keeps the page open.
+* Click a node to select it and open its page in the preview tab. Double-click keeps the page open, except in a mind map, where it makes the node the root.
 * kbd:[Shift]-click a node to show the xref:graph-view.adoc#_the_path_between_two_pages[path] from the selected node to it. The selection stays where it was and nothing opens.
 * Click the label of a group's hull to collapse the group into one node, and click a group's node to expand it. See xref:graph-view.adoc#graph-groups[Groups].
+* In a mind map, click the small ring to the left of a node to close or open its branch. See xref:graph-view.adoc#graph-mind-map[Mind maps].
 * kbd:[Tab] and kbd:[Shift+Tab] move the selection between nodes in title order. kbd:[Enter] opens the selected node, or expands the selected group.
 
 A node is sized by how many links it has.
 Partials are hollow, unresolved targets have a dashed outline, and navigation files are squares.
 Labels show when you have zoomed in, and always for the hovered and selected node, their neighbours and the search matches.
+
+[#graph-mind-map]
+=== Mind maps
+
+The Layout button chooses how the graph is drawn: by force, as a mind map or as a radial map.
+Clicking it moves from Force to Mind Map, to Radial and back to Force.
+Both the graph window and the Graph panel have it, and nodes glide into their new places.
+
+A mind map draws the graph as a tree from one root, left to right.
+The root is on the left and each level is a column to its right.
+Leaves are evenly spaced and each parent is centred on its children, so siblings never overlap.
+A radial map draws the same tree with the root in the middle and each level a ring around it.
+
+The tree follows the root:
+
+* Rooted at a navigation file, the tree is the navigation's own nesting, following navigation links only.
+An entry with no page, such as a plain-text heading, hands its entries to the entry above it, as the graph's navigation edges do.
+* Rooted at a page, the tree is the page and everything within the depth you choose, 1 to 3, following links of every kind in both directions.
+The window shows the depth buttons while it is laid out as a mind map.
+
+Each node is placed once, at its first and shallowest place.
+Navigation links are preferred to xrefs, and xrefs to includes.
+Siblings are in title order.
+Every other link between two nodes of the tree, such as an xref between two branches or a second place in the navigation, is a cross-link.
+Cross-links are drawn faintly, so no link is hidden.
+The Partials, Navigation, Orphans, Unresolved and component filters still apply.
+
+When you switch to Mind Map the root is the selected node, else the active page, else the first navigation file, else the first node.
+In the Graph panel the root follows the active page.
+Double-click a node to root the map there, or choose *Root Mind Map Here* from its right-click menu.
+A single click still selects a node and opens its page in the preview.
+
+A node with children has a small ring to its left, holding − while its branch is open and + while it is closed.
+Click it to close or open the branch; the nodes under a closed branch are hidden.
+Rooting the map again, or switching to Mind Map, opens every branch.
+
+The window does not group nodes while it is laid out as a mind map, so there are no hulls.
+Grouping comes back when it is laid out by force.
+Export Graph saves the graph as laid out on the canvas, so a mind map is exported as a mind map.
+The `[graph] layout` setting chooses how the window and panel lay the graph out when they open.
 
 [#graph-groups]
 === Groups
@@ -176,6 +220,9 @@ Writes `+include::<target>[]+` on the caret's line when that line is blank, othe
 
 |Reveal in Files
 |Selects the file in the Files panel.
+
+|Root Mind Map Here
+|Roots the xref:graph-view.adoc#graph-mind-map[mind map] at this node, switching to Mind Map first if the graph is laid out by force.
 
 |Show Path from Selection
 |The last item, after a separator.
