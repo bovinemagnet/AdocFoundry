@@ -107,6 +107,7 @@ show_nav = true
 show_orphans = true
 show_unresolved = false
 colour_by = "component"          # component | module | family
+group = "off"                    # off | module | component
 
 [quality]
 fail_on = "warning"
@@ -394,6 +395,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |`"component"`, `"module"` or `"family"`
 |`"component"`
 |What the graph window colours nodes by.
+
+|`graph.group`
+|`"off"`, `"module"` or `"component"`
+|`"off"`
+|What the graph window groups nodes by when it opens. See xref:graph-view.adoc#graph-groups[Groups]. Any other value warns and keeps the default.
 
 |`quality.enabled`
 |boolean

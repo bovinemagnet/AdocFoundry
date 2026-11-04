@@ -183,6 +183,7 @@ mod tests {
             .map(|node| match &node.key {
                 GraphKey::File(path) => path.display().to_string(),
                 GraphKey::Unresolved(text) => format!("?{text}"),
+                GraphKey::Group(name) => format!("[{name}]"),
             })
             .collect()
     }

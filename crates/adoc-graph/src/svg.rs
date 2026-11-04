@@ -152,13 +152,15 @@ pub fn to_svg(snapshot: &GraphSnapshot, positions: &[Point], style: &SvgStyle) -
             NodeKind::Nav => ("nav", colour.as_str(), ""),
             NodeKind::Partial => ("partial", "none", ""),
             NodeKind::Unresolved => ("unresolved", "none", " stroke-dasharray=\"3 2\""),
+            NodeKind::Group => ("group", colour.as_str(), ""),
         };
         let title = escape(&node.title);
-        if node.kind == NodeKind::Nav {
+        if matches!(node.kind, NodeKind::Nav | NodeKind::Group) {
+            let corner = if node.kind == NodeKind::Nav { 2 } else { 6 };
             let _ = writeln!(
                 svg,
                 "<rect class=\"node {kind}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" \
-                 height=\"{:.1}\" rx=\"2\" fill=\"{fill}\" stroke=\"{colour}\"{dashes}>\
+                 height=\"{:.1}\" rx=\"{corner}\" fill=\"{fill}\" stroke=\"{colour}\"{dashes}>\
                  <title>{title}</title></rect>",
                 point.x - radius,
                 point.y - radius,

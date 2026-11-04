@@ -15,8 +15,8 @@ use adoc_core::{
 };
 use adoc_engine::{
     commands::ids, normalize_path, CommandArgs, CommandOutcome, EdgeKind, Engine, EngineEvent,
-    GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, LinkStyle, ManualClock,
-    NavCrumb, NewPage, Settings, INDEX_SETTLE,
+    GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, GroupBy, Groups, Layout,
+    LinkStyle, ManualClock, NavCrumb, NewPage, Settings, INDEX_SETTLE,
 };
 
 fn fixture() -> PathBuf {
@@ -106,6 +106,7 @@ fn name(key: &GraphKey, root: &Path) -> String {
             .to_string_lossy()
             .replace('\\', "/"),
         GraphKey::Unresolved(text) => format!("?{text}"),
+        GraphKey::Group(name) => format!("[{name}]"),
     }
 }
 
@@ -176,6 +177,71 @@ fn graph_builds_from_the_fixture() {
         })
         .collect();
     insta::assert_json_snapshot!(serde_json::json!({ "nodes": nodes, "edges": edges }));
+}
+
+/// Grouped by module, the fixture's layout settles with every node nearer the centre of its
+/// own module than of any other, and a module collapses into one node.
+#[test]
+fn grouped_layout_keeps_modules_together() {
+    let root = fixture();
+    let engine = open(&root, &ManualClock::new());
+    let snapshot = engine.graph(&GraphScope::Workspace, &everything());
+    let groups = Groups::of(&snapshot, GroupBy::Module);
+    assert_eq!(
+        groups.names,
+        [
+            "1.0@guide:ROOT",
+            "1.0@guide:admin",
+            "Other",
+            "reference:ROOT"
+        ]
+    );
+    let mut layout = Layout::new(7);
+    layout.sync(&snapshot);
+    layout.set_grouping(Some(GroupBy::Module), &snapshot);
+    layout.settle(2_000);
+    assert!(!layout.is_moving());
+    let at = |key: &GraphKey| layout.position(key).unwrap();
+    let mut centres = vec![(0.0_f32, 0.0_f32, 0.0_f32); groups.names.len()];
+    for (node, &group) in snapshot.nodes.iter().zip(&groups.of) {
+        let point = at(&node.key);
+        centres[group] = (
+            centres[group].0 + point.x,
+            centres[group].1 + point.y,
+            centres[group].2 + 1.0,
+        );
+    }
+    for (node, &own) in snapshot.nodes.iter().zip(&groups.of) {
+        let point = at(&node.key);
+        let distance = |(x, y, n): (f32, f32, f32)| {
+            ((point.x - x / n).powi(2) + (point.y - y / n).powi(2)).sqrt()
+        };
+        for (group, &centre) in centres.iter().enumerate() {
+            assert!(
+                group == own || distance(centres[own]) < distance(centre),
+                "{} is nearer {}",
+                name(&node.key, &root),
+                groups.names[group]
+            );
+        }
+    }
+
+    let collapsed = snapshot.collapse(GroupBy::Module, &["1.0@guide:ROOT".to_owned()].into());
+    let names = names(&collapsed, &root);
+    assert!(names.contains(&"[1.0@guide:ROOT]".to_owned()), "{names:?}");
+    assert!(!names
+        .iter()
+        .any(|name| name.starts_with("guide/modules/ROOT")));
+    let group = GraphKey::Group("1.0@guide:ROOT".to_owned());
+    assert_eq!(
+        collapsed.node(&group).map(|node| node.kind),
+        Some(GraphNodeKind::Group)
+    );
+    // The nav file's link to Users, and Install's, are one edge from the group now.
+    assert!(collapsed
+        .edges
+        .iter()
+        .any(|edge| edge.from == group && name(&edge.to, &root).ends_with("users.adoc")));
 }
 
 #[test]

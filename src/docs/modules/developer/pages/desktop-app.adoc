@@ -447,6 +447,8 @@ The panel is `SidebarTab::Graph`, the last tab.
 The view reads `Engine::graph` snapshots, steps an `adoc-graph` `Layout` on animation frames and draws it with `gpui::canvas`, so the layout and the graph itself stay free of the UI framework.
 Pinned nodes, zoom, hover, selection and the toolbar's filters are the view's own state; clicks open pages through `navigate.go_to`, with `OpenDisposition::Preview` for a click and `Persistent` for a double click.
 Show in Graph, Reset Graph Layout, Show Graph and Show Local Graph are engine commands (`view.graph`, `view.local_graph`, `graph.reset_layout`) and are in `MENUS`.
+The window also keeps `group_by` and the set of collapsed groups, and collapses the engine's snapshot with `GraphSnapshot::collapse` before laying it out.
+It draws each group's hull behind the nodes from the layout's positions, and hit-tests a hull's label band before panning; the band's height follows the rem size, so `[appearance] font_scale` scales it.
 See xref:ROOT:graph-view.adoc[The link graph].
 
 == Change markers and the Changes panel

@@ -7299,6 +7299,64 @@ fn graph_toolbar_filters_and_searches(cx: &mut TestAppContext) {
     assert!(dimmed.contains(&graph_key(&root.join(GRAPH_PAGES).join("index.adoc"))));
 }
 
+/// Stops the graph's layout and draws the window again, so nodes and hulls stay where a test
+/// clicks them.
+fn settle_graph(view: &Entity<crate::graph_view::GraphView>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        view.update(cx, |view, _| view.settle_for_test());
+        window.refresh();
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn grouping_the_graph_collapses_and_expands_a_module(cx: &mut TestAppContext) {
+    let (_directory, root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let grouping =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| view.read(cx).grouping_for_test());
+    assert_eq!(grouping(&mut graph_cx), (None, None));
+    click("graph-group", &mut graph_cx);
+    let module = Some(adoc_engine::GroupBy::Module);
+    assert_eq!(grouping(&mut graph_cx), (module, module));
+    settle_graph(&view, &mut graph_cx);
+
+    // A click on the hull's label collapses the module into one node.
+    let name = "1.0@guide:ROOT";
+    let group = adoc_engine::GraphKey::Group(name.to_owned());
+    let install = graph_key(&root.join(GRAPH_PAGES).join("install.adoc"));
+    let label = graph_cx
+        .update(|_, cx| view.read(cx).hull_label_for_test(name))
+        .expect("the module's hull is drawn");
+    graph_cx.simulate_click(label, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    let shown = |cx: &mut VisualTestContext, key: &adoc_engine::GraphKey| {
+        cx.update(|_, cx| view.read(cx).snapshot_for_test().node(key).is_some())
+    };
+    assert!(shown(&mut graph_cx, &group));
+    assert!(!shown(&mut graph_cx, &install));
+    assert!(graph_cx
+        .update(|_, cx| view.read(cx).hull_label_for_test(name))
+        .is_none());
+
+    // A click on the group's node expands it again.
+    settle_graph(&view, &mut graph_cx);
+    let at = graph_cx
+        .update(|_, cx| view.read(cx).node_position_for_test(&group))
+        .unwrap();
+    graph_cx.simulate_click(at, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    assert!(!shown(&mut graph_cx, &group));
+    assert!(shown(&mut graph_cx, &install));
+
+    // Grouping by component version, then not at all.
+    click("graph-group", &mut graph_cx);
+    let component = Some(adoc_engine::GroupBy::Component);
+    assert_eq!(grouping(&mut graph_cx), (component, component));
+    click("graph-group", &mut graph_cx);
+    assert_eq!(grouping(&mut graph_cx), (None, None));
+}
+
 #[gpui::test]
 fn tab_moves_through_the_nodes_and_enter_opens_one(cx: &mut TestAppContext) {
     let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);

@@ -1,14 +1,15 @@
 //! A seeded, deterministic force-directed layout: every pair of nodes repels, every edge pulls
 //! its ends towards a rest length, every node is drawn gently to the centre, and the motion is
 //! damped and cools, so it settles. Above [`BARNES_HUT_ABOVE`] nodes, repulsion is
-//! approximated with a Barnes–Hut quadtree.
+//! approximated with a Barnes–Hut quadtree. Grouped ([`Layout::set_grouping`]), each node is
+//! also drawn towards its group's centre, and the groups push each other apart.
 //!
 //! Only `f32` arithmetic in a fixed order is used, never trigonometry or a hash map's order, so
 //! the same seed and the same calls give the same positions on every platform.
 
 use std::collections::BTreeMap;
 
-use crate::{GraphKey, GraphSnapshot};
+use crate::{GraphKey, GraphSnapshot, GroupBy, Groups};
 
 /// A position in layout units. A front end maps it to pixels with its pan and zoom.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -50,6 +51,10 @@ const WARM: f32 = 0.3;
 /// Barnes–Hut's accuracy: a cell is one body when its width over its distance is below this.
 const THETA: f32 = 0.9;
 const MAX_TREE_DEPTH: u8 = 24;
+/// Grouped: how hard a node is drawn towards its group's centre, and how hard each pair of
+/// groups pushes apart, as if every node of one pushed every node of the other six times more.
+const GROUP_PULL: f32 = 0.1;
+const GROUP_REPULSION: f32 = 6.0 * REPULSION;
 
 /// The positions of a graph's nodes, by key.
 #[derive(Clone, Debug)]
@@ -64,6 +69,10 @@ pub struct Layout {
     /// Each pair of nodes an edge joins, once, in index order.
     edges: Vec<(usize, usize)>,
     heat: f32,
+    grouping: Option<GroupBy>,
+    /// Each node's group, by place, and how many groups there are; empty while not grouped.
+    groups: Vec<usize>,
+    group_count: usize,
 }
 
 impl Layout {
@@ -78,6 +87,41 @@ impl Layout {
             pinned: Vec::new(),
             edges: Vec::new(),
             heat: 0.0,
+            grouping: None,
+            groups: Vec::new(),
+            group_count: 0,
+        }
+    }
+
+    /// Groups the nodes by `by`, read from `snapshot` now and from every snapshot `sync` takes,
+    /// or with `None` stops. Wakes the layout if that changes anything.
+    pub fn set_grouping(&mut self, by: Option<GroupBy>, snapshot: &GraphSnapshot) {
+        let before = (self.grouping, std::mem::take(&mut self.groups));
+        self.grouping = by;
+        self.assign_groups(snapshot);
+        if (self.grouping, &self.groups) != (before.0, &before.1) {
+            self.wake();
+        }
+    }
+
+    /// What groups the nodes, if anything.
+    #[must_use]
+    pub fn grouping(&self) -> Option<GroupBy> {
+        self.grouping
+    }
+
+    fn assign_groups(&mut self, snapshot: &GraphSnapshot) {
+        match self.grouping {
+            // The layout holds its nodes in the snapshot's order.
+            Some(by) if snapshot.nodes.len() == self.keys.len() => {
+                let groups = Groups::of(snapshot, by);
+                self.group_count = groups.names.len();
+                self.groups = groups.of;
+            }
+            _ => {
+                self.group_count = 0;
+                self.groups.clear();
+            }
         }
     }
 
@@ -155,6 +199,7 @@ impl Layout {
         self.keys = keys;
         self.index = index;
         self.edges = edges;
+        self.assign_groups(snapshot);
         if changed {
             self.heat = if old.is_empty() {
                 1.0
@@ -244,6 +289,8 @@ impl Layout {
 
     /// Unpins every node and lays the graph out again from its seeded start.
     pub fn reset(&mut self) {
+        let (groups, group_count) = (std::mem::take(&mut self.groups), self.group_count);
+        let grouping = self.grouping.take();
         let snapshot_keys = std::mem::take(&mut self.keys);
         let edges = std::mem::take(&mut self.edges);
         self.positions.clear();
@@ -279,6 +326,8 @@ impl Layout {
             ..snapshot
         };
         self.sync(&snapshot);
+        // The same nodes, so the same groups.
+        (self.grouping, self.groups, self.group_count) = (grouping, groups, group_count);
         self.heat = 1.0;
     }
 
@@ -365,7 +414,48 @@ impl Layout {
             forces[j].x -= dx * pull;
             forces[j].y -= dy * pull;
         }
+        if !self.groups.is_empty() {
+            self.group_forces(&mut forces);
+        }
         forces
+    }
+
+    /// Draws each node towards its group's centre, and pushes each group away from the others
+    /// in proportion to both groups' sizes.
+    fn group_forces(&self, forces: &mut [Point]) {
+        let count = self.group_count;
+        let mut centres = vec![Point::default(); count];
+        let mut sizes = vec![0.0_f32; count];
+        for (&group, position) in self.groups.iter().zip(&self.positions) {
+            centres[group].x += position.x;
+            centres[group].y += position.y;
+            sizes[group] += 1.0;
+        }
+        for (centre, &size) in centres.iter_mut().zip(&sizes) {
+            if size > 0.0 {
+                centre.x /= size;
+                centre.y /= size;
+            }
+        }
+        let mut pushes = vec![Point::default(); count];
+        for g in 0..count {
+            for h in g + 1..count {
+                if sizes[g] == 0.0 || sizes[h] == 0.0 {
+                    continue;
+                }
+                let push = repel(centres[g], centres[h], GROUP_REPULSION / REPULSION, g, h);
+                pushes[g].x += push.x * sizes[h];
+                pushes[g].y += push.y * sizes[h];
+                pushes[h].x -= push.x * sizes[g];
+                pushes[h].y -= push.y * sizes[g];
+            }
+        }
+        for ((force, &group), position) in forces.iter_mut().zip(&self.groups).zip(&self.positions)
+        {
+            let (centre, push) = (centres[group], pushes[group]);
+            force.x += (centre.x - position.x) * GROUP_PULL + push.x;
+            force.y += (centre.y - position.y) * GROUP_PULL + push.y;
+        }
     }
 }
 
@@ -404,7 +494,7 @@ fn mix(seed: u64, key: &GraphKey, salt: u64) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ salt;
     let (bytes, path): (&[u8], bool) = match key {
         GraphKey::File(path) => (path.as_os_str().as_encoded_bytes(), true),
-        GraphKey::Unresolved(text) => (text.as_bytes(), false),
+        GraphKey::Unresolved(text) | GraphKey::Group(text) => (text.as_bytes(), false),
     };
     for &byte in bytes {
         // `\` is ASCII, never part of a longer character in the encoding.
@@ -588,7 +678,7 @@ mod tests {
     use std::{path::Path, sync::Arc};
 
     use super::*;
-    use crate::{EdgeKind, GraphEdge, GraphNode, NodeKind};
+    use crate::{EdgeKind, GraphEdge, GraphNode, NodeCoordinate, NodeKind};
 
     fn key(name: &str) -> GraphKey {
         GraphKey::File(Arc::from(Path::new(name)))
@@ -629,6 +719,80 @@ mod tests {
                 .collect(),
             edges,
         }
+    }
+
+    /// Three components of three modules of 20 pages each, the pages of a module linking to
+    /// each other and every fifth page to one in another module, some in another component.
+    pub(crate) fn grouped_graph() -> GraphSnapshot {
+        let mut nodes = Vec::new();
+        for component in ["alpha", "beta", "gamma"] {
+            for module in ["ROOT", "admin", "api"] {
+                for page in 0..20 {
+                    nodes.push(GraphNode {
+                        key: key(&format!("{component}/{module}/p{page:02}")),
+                        title: String::new(),
+                        kind: NodeKind::Page,
+                        coordinate: Some(NodeCoordinate {
+                            component: component.to_owned(),
+                            version: None,
+                            module: module.to_owned(),
+                            family: "page".to_owned(),
+                        }),
+                        links_out: 0,
+                        links_in: 0,
+                    });
+                }
+            }
+        }
+        nodes.sort_by(|left, right| left.key.cmp(&right.key));
+        let mut edges = Vec::new();
+        for (at, node) in nodes.iter().enumerate() {
+            let (module, page) = (at / 20, at % 20);
+            let mut targets = vec![module * 20 + (page + 1) % 20, module * 20 + (page + 3) % 20];
+            if page % 5 == 0 {
+                targets.push(((module + 1 + page / 5) % 9) * 20 + page);
+            }
+            for to in targets {
+                edges.push(GraphEdge {
+                    from: node.key.clone(),
+                    to: nodes[to].key.clone(),
+                    kind: EdgeKind::Xref,
+                    count: 1,
+                });
+            }
+        }
+        edges.sort();
+        edges.dedup();
+        GraphSnapshot {
+            revision: 1,
+            nodes,
+            edges,
+        }
+    }
+
+    /// Whether every node is nearer the centre of its own group than of any other.
+    pub(crate) fn groups_kept_together(layout: &Layout, snapshot: &GraphSnapshot) -> bool {
+        let groups = Groups::of(snapshot, GroupBy::Module);
+        let mut centres = vec![(0.0_f32, 0.0_f32, 0.0_f32); groups.names.len()];
+        for (node, &group) in snapshot.nodes.iter().zip(&groups.of) {
+            let at = layout.position(&node.key).unwrap();
+            centres[group].0 += at.x;
+            centres[group].1 += at.y;
+            centres[group].2 += 1.0;
+        }
+        let centres: Vec<Point> = centres
+            .into_iter()
+            .map(|(x, y, n)| Point::new(x / n, y / n))
+            .collect();
+        snapshot.nodes.iter().zip(&groups.of).all(|(node, &own)| {
+            let at = layout.position(&node.key).unwrap();
+            let distance = |centre: Point| Point::new(at.x - centre.x, at.y - centre.y).length();
+            let mine = distance(centres[own]);
+            centres
+                .iter()
+                .enumerate()
+                .all(|(group, &centre)| group == own || mine < distance(centre))
+        })
     }
 
     fn settle(layout: &mut Layout, steps: usize) -> usize {
@@ -745,6 +909,56 @@ mod tests {
             let moved = Point::new(now.x - at.x, now.y - at.y).length();
             assert!(moved <= REST_LENGTH, "{key:?} moved {moved}");
         }
+    }
+
+    #[test]
+    fn grouped_layout_keeps_modules_together() {
+        let snapshot = grouped_graph();
+        let mut ungrouped = Layout::new(4);
+        ungrouped.sync(&snapshot);
+        ungrouped.settle(2_000);
+        assert!(
+            !groups_kept_together(&ungrouped, &snapshot),
+            "the links alone do not keep the modules apart"
+        );
+
+        let mut layout = Layout::new(4);
+        layout.sync(&snapshot);
+        layout.set_grouping(Some(GroupBy::Module), &snapshot);
+        assert_eq!(layout.grouping(), Some(GroupBy::Module));
+        layout.settle(2_000);
+        assert!(!layout.is_moving(), "a grouped layout settles");
+        assert!(groups_kept_together(&layout, &snapshot));
+
+        // A reset keeps the grouping, and so does a sync of a changed snapshot.
+        layout.reset();
+        layout.settle(2_000);
+        assert!(groups_kept_together(&layout, &snapshot));
+        let mut fewer = snapshot.clone();
+        fewer.nodes.pop();
+        let gone = fewer.nodes.len();
+        fewer.edges.retain(|edge| {
+            edge.from != snapshot.nodes[gone].key && edge.to != snapshot.nodes[gone].key
+        });
+        layout.sync(&fewer);
+        layout.settle(2_000);
+        assert!(groups_kept_together(&layout, &fewer));
+
+        layout.set_grouping(None, &fewer);
+        assert!(layout.is_moving(), "ungrouping wakes the layout");
+    }
+
+    #[test]
+    fn grouped_layout_is_deterministic() {
+        let snapshot = grouped_graph();
+        let run = || {
+            let mut layout = Layout::new(9);
+            layout.sync(&snapshot);
+            layout.set_grouping(Some(GroupBy::Component), &snapshot);
+            layout.settle(300);
+            layout.positions().map(|(_, at)| at).collect::<Vec<_>>()
+        };
+        assert_eq!(run(), run());
     }
 
     #[test]

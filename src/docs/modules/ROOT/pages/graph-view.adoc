@@ -98,6 +98,9 @@ If less than half of the saved place is on a display, because a screen has been 
 |Colour
 |Colours nodes by Component, Module or Family. Clicking the button moves to the next.
 
+|Group
+|Shows "Group: Off", "Group: Module" or "Group: Component". Clicking the button moves to the next, and xref:graph-view.adoc#graph-groups[groups] the nodes. Only the graph window has it.
+
 |Workspace or Local
 |Switches between the whole workspace and the active page's neighbourhood. Local has a depth of 1 to 3 links.
 
@@ -116,11 +119,36 @@ If less than half of the saved place is on a display, because a screen has been 
 * Hover over a node to highlight it and its neighbours and dim the rest.
 * Click a node to select it and open its page in the preview tab. Double-click keeps the page open.
 * kbd:[Shift]-click a node to show the xref:graph-view.adoc#_the_path_between_two_pages[path] from the selected node to it. The selection stays where it was and nothing opens.
-* kbd:[Tab] and kbd:[Shift+Tab] move the selection between nodes in title order. kbd:[Enter] opens the selected node.
+* Click the label of a group's hull to collapse the group into one node, and click a group's node to expand it. See xref:graph-view.adoc#graph-groups[Groups].
+* kbd:[Tab] and kbd:[Shift+Tab] move the selection between nodes in title order. kbd:[Enter] opens the selected node, or expands the selected group.
 
 A node is sized by how many links it has.
 Partials are hollow, unresolved targets have a dashed outline, and navigation files are squares.
 Labels show when you have zoomed in, and always for the hovered and selected node, their neighbours and the search matches.
+
+[#graph-groups]
+=== Groups
+
+The Group button draws each module, or each component version, together.
+The layout pulls each node towards the other nodes of its group and pushes the groups apart.
+A soft rounded hull, tinted with the colour of the group's first node, is drawn behind each group's nodes, with the group's name in a label band across its top.
+
+A group is named as an Antora resource ID writes it: `version@component:module` for a module, such as `1.0@guide:ROOT`, and `version@component` for a component version.
+The `version@` is left out for a component with no version.
+Files outside Antora and unresolved targets form one group named `Other`.
+
+Click a hull's label to collapse the group into one node.
+It is a rounded square, always labelled with the group's name.
+Its links to other nodes merge by kind into one edge each, drawn heavier when it stands for several links, and links inside the group are left out.
+Click the group's node, press kbd:[Enter] with it selected, or choose *Expand Group* from its right-click menu to expand it again.
+Its nodes spread out from where it was.
+Changing the grouping expands every group.
+
+Only the graph window groups.
+The Graph panel in the sidebar does not.
+The `[graph] group` setting chooses what the window groups by when it opens.
+Export Graph saves what the window shows, with collapsed groups as nodes.
+The hulls are not drawn in the exported image.
 
 Right-click a node for its menu:
 

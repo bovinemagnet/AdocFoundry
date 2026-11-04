@@ -7,19 +7,24 @@
 //! node pins it (released with Alt held, it is let go). Hovering a node highlights it and its
 //! neighbours. A click selects a node and opens its page as a preview, a double click keeps it
 //! open, and both go through `navigate.go_to` as every other way of opening a page does.
+//!
+//! The window may group the nodes by module or component version (`[graph] group`): the layout
+//! draws each group together, a soft hull is drawn behind it, a click on the hull's label
+//! collapses the group into one node, and a click on that node expands it again.
 
 use std::{
     cell::Cell,
     cell::RefCell,
+    collections::BTreeSet,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 use adoc_engine::{
-    commands::ids, CommandArgs, CommandOutcome, DocumentId, EdgeKind, Engine, EngineEvent,
-    GraphColour, GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, Layout,
-    LinkStyle, NavPlace, NavigationPosition, Neighbour, PathStep, Point as LayoutPoint, TabItem,
-    TextEdit,
+    commands::ids, group_name, CommandArgs, CommandOutcome, DocumentId, EdgeKind, Engine,
+    EngineEvent, GraphColour, GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot,
+    GroupBy, Groups, Layout, LinkStyle, NavPlace, NavigationPosition, Neighbour, PathStep,
+    Point as LayoutPoint, TabItem, TextEdit,
 };
 use gpui::{
     actions, canvas, div, point, prelude::FluentBuilder as _, px, quad, size, App, AppContext as _,
@@ -89,6 +94,10 @@ const HIT_SLOP: f32 = 4.0;
 const DRAG_START: f32 = 3.0;
 /// The space kept around the graph when it is fitted to the canvas, in pixels.
 const FIT_MARGIN: f32 = 40.0;
+/// The space between a group's hull and its outermost nodes, in pixels.
+const HULL_PAD: f32 = 22.0;
+/// A collapsed group's radius, at zoom 1.
+const GROUP_RADIUS: f32 = 14.0;
 
 /// Where a graph view is shown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,10 +147,49 @@ struct DrawnEdge {
     dim: bool,
 }
 
+/// A group's hull as the canvas draws it: the box around its nodes, in layout units.
+#[derive(Clone)]
+struct DrawnHull {
+    low: LayoutPoint,
+    high: LayoutPoint,
+    label: SharedString,
+    colour: Hsla,
+}
+
+/// One group's nodes: its name, the box around them in layout units, and the place of its
+/// first node, whose colour the hull takes.
+struct Hull {
+    name: String,
+    low: LayoutPoint,
+    high: LayoutPoint,
+    first: usize,
+}
+
+/// A hull's box on the canvas, and the band at its top where its label is, in window pixels.
+fn hull_bounds(
+    low: LayoutPoint,
+    high: LayoutPoint,
+    zoom: f32,
+    pan: (f32, f32),
+    centre: gpui::Point<Pixels>,
+    band: f32,
+) -> (Bounds<Pixels>, Bounds<Pixels>) {
+    let x = |at: f32| centre.x + px(at * zoom + pan.0);
+    let y = |at: f32| centre.y + px(at * zoom + pan.1);
+    let top_left = point(x(low.x) - px(HULL_PAD), y(low.y) - px(HULL_PAD + band));
+    let bottom_right = point(x(high.x) + px(HULL_PAD), y(high.y) + px(HULL_PAD));
+    let body = Bounds::from_corners(top_left, bottom_right);
+    let label = Bounds::new(top_left, size(body.size.width, px(band)));
+    (body, label)
+}
+
 /// Everything the canvas paints, worked out in `render`.
 struct Drawing {
     nodes: Vec<DrawnNode>,
     edges: Vec<DrawnEdge>,
+    hulls: Vec<DrawnHull>,
+    /// The height of a hull's label band, in pixels.
+    band: f32,
     zoom: f32,
     pan: (f32, f32),
     edge: Hsla,
@@ -162,6 +210,11 @@ pub struct GraphView {
     centre: Option<PathBuf>,
     filter: GraphFilter,
     colour_by: GraphColour,
+    /// What the window groups the nodes by, and the groups drawn as one node each.
+    group_by: Option<GroupBy>,
+    collapsed: BTreeSet<String>,
+    /// The height of a hull's label band, in pixels, from the rem size when last drawn.
+    label_band: f32,
     search: Option<Entity<InputState>>,
     query: String,
     snapshot: GraphSnapshot,
@@ -225,6 +278,9 @@ impl GraphView {
             centre: None,
             filter: settings.filter(),
             colour_by: settings.colour_by,
+            group_by: settings.group.filter(|_| mode == GraphMode::Window),
+            collapsed: BTreeSet::new(),
+            label_band: 20.0,
             search,
             query: String::new(),
             snapshot: GraphSnapshot::default(),
@@ -244,6 +300,7 @@ impl GraphView {
             menu_target: Rc::default(),
             _subscriptions: subscriptions,
         };
+        view.layout.set_grouping(view.group_by, &view.snapshot);
         view.follow_active(cx);
         view.refresh(cx);
         view
@@ -303,6 +360,10 @@ impl GraphView {
             return;
         };
         let snapshot = self.app.read(cx).engine.graph(&scope, &self.filter);
+        let snapshot = match self.group_by {
+            Some(by) => snapshot.collapse(by, &self.collapsed),
+            None => snapshot,
+        };
         let recentre = self.local && snapshot.nodes.len() != self.snapshot.nodes.len();
         self.set_snapshot(snapshot);
         self.layout.sync(&self.snapshot);
@@ -414,6 +475,146 @@ impl GraphView {
     fn set_filter(&mut self, change: impl FnOnce(&mut GraphFilter), cx: &mut Context<Self>) {
         change(&mut self.filter);
         self.refresh(cx);
+    }
+
+    // --- groups ------------------------------------------------------------------------------
+
+    /// Groups by nothing, by module, then by component version, every group expanded.
+    fn cycle_grouping(&mut self, cx: &mut Context<Self>) {
+        self.group_by = match self.group_by {
+            None => Some(GroupBy::Module),
+            Some(GroupBy::Module) => Some(GroupBy::Component),
+            Some(GroupBy::Component) => None,
+        };
+        self.collapsed.clear();
+        self.refresh(cx);
+        self.layout.set_grouping(self.group_by, &self.snapshot);
+        cx.notify();
+    }
+
+    /// Draws the group `name` as one node, where its nodes were.
+    fn collapse_group(&mut self, name: &str, cx: &mut Context<Self>) {
+        let Some(by) = self.group_by else {
+            return;
+        };
+        let members: Vec<LayoutPoint> = self
+            .snapshot
+            .nodes
+            .iter()
+            .filter(|node| group_name(node, by) == name)
+            .filter_map(|node| self.layout.position(&node.key))
+            .collect();
+        self.collapsed.insert(name.to_owned());
+        self.refresh(cx);
+        if !members.is_empty() {
+            let count = members.len() as f32;
+            let (x, y) = members
+                .iter()
+                .fold((0.0, 0.0), |(x, y), at| (x + at.x, y + at.y));
+            self.move_node(
+                &GraphKey::Group(name.to_owned()),
+                LayoutPoint::new(x / count, y / count),
+            );
+        }
+    }
+
+    /// Draws the nodes of the collapsed group `name` again, around where it was.
+    fn expand_group(&mut self, name: &str, cx: &mut Context<Self>) {
+        let (Some(by), true) = (self.group_by, self.collapsed.remove(name)) else {
+            return;
+        };
+        let at = self.layout.position(&GraphKey::Group(name.to_owned()));
+        self.refresh(cx);
+        let Some(at) = at else {
+            return;
+        };
+        let members: Vec<GraphKey> = self
+            .snapshot
+            .nodes
+            .iter()
+            .filter(|node| node.kind != GraphNodeKind::Group && group_name(node, by) == name)
+            .map(|node| node.key.clone())
+            .collect();
+        // Spread on a small grid, so the repulsion parts them every way.
+        let side = (members.len() as f32).sqrt().ceil().max(1.0) as usize;
+        for (n, key) in members.iter().enumerate() {
+            let offset = |k: usize| (k as f32 - (side as f32 - 1.0) / 2.0) * 8.0;
+            self.move_node(
+                key,
+                LayoutPoint::new(at.x + offset(n % side), at.y + offset(n / side)),
+            );
+        }
+    }
+
+    /// Moves the node `key` to `at`, free to move on from there.
+    fn move_node(&mut self, key: &GraphKey, at: LayoutPoint) {
+        self.layout.pin(key, at);
+        self.layout.unpin(key);
+    }
+
+    /// Every group's nodes and the box around them, at `positions`; none while not grouped. A
+    /// collapsed group is a node, not a hull.
+    fn hulls(&self, positions: &[LayoutPoint]) -> Vec<Hull> {
+        let Some(by) = self.group_by else {
+            return Vec::new();
+        };
+        let groups = Groups::of(&self.snapshot, by);
+        let mut hulls: Vec<Option<Hull>> = groups.names.iter().map(|_| None).collect();
+        for (place, (node, &group)) in self.snapshot.nodes.iter().zip(&groups.of).enumerate() {
+            if node.kind == GraphNodeKind::Group {
+                continue;
+            }
+            let at = positions[place];
+            match &mut hulls[group] {
+                Some(hull) => {
+                    hull.low = LayoutPoint::new(hull.low.x.min(at.x), hull.low.y.min(at.y));
+                    hull.high = LayoutPoint::new(hull.high.x.max(at.x), hull.high.y.max(at.y));
+                }
+                slot => {
+                    *slot = Some(Hull {
+                        name: groups.names[group].clone(),
+                        low: at,
+                        high: at,
+                        first: place,
+                    });
+                }
+            }
+        }
+        hulls.into_iter().flatten().collect()
+    }
+
+    /// The group whose hull's label is under the window position `at`.
+    fn hull_label_at(&self, at: gpui::Point<Pixels>) -> Option<String> {
+        let centre = self.viewport.get().center();
+        self.hulls(&self.positions())
+            .into_iter()
+            .rev()
+            .find(|hull| {
+                let (_, label) = hull_bounds(
+                    hull.low,
+                    hull.high,
+                    self.zoom,
+                    self.pan,
+                    centre,
+                    self.label_band,
+                );
+                label.contains(&at)
+            })
+            .map(|hull| hull.name)
+    }
+
+    /// Where each node is, in the snapshot's order.
+    fn positions(&self) -> Vec<LayoutPoint> {
+        // The layout holds its nodes in the snapshot's order.
+        if self.layout.len() == self.snapshot.nodes.len() {
+            self.layout.positions().map(|(_, at)| at).collect()
+        } else {
+            self.snapshot
+                .nodes
+                .iter()
+                .map(|node| self.layout.position(&node.key).unwrap_or_default())
+                .collect()
+        }
     }
 
     // --- opening -----------------------------------------------------------------------------
@@ -606,6 +807,13 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus_handle, cx);
+        if self.node_under(event.position).is_none() {
+            if let Some(group) = self.hull_label_at(event.position) {
+                self.drag = None;
+                self.collapse_group(&group, cx);
+                return;
+            }
+        }
         self.drag = Some(match self.node_under(event.position) {
             Some(key) => Drag::Node {
                 key,
@@ -660,6 +868,10 @@ impl GraphView {
                 clicks,
                 ..
             }) => {
+                if let GraphKey::Group(name) = &key {
+                    self.expand_group(name, cx);
+                    return;
+                }
                 // Shift-click: a path from the selection, which stays where it is.
                 let from = self.selected.clone().filter(|selected| *selected != key);
                 if let (true, Some(from)) = (event.modifiers.shift, from) {
@@ -721,8 +933,10 @@ impl GraphView {
     }
 
     fn on_open_node(&mut self, _: &OpenNode, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(key) = self.selected.clone() {
-            self.open(&key, false, cx);
+        match self.selected.clone() {
+            Some(GraphKey::Group(name)) => self.expand_group(&name, cx),
+            Some(key) => self.open(&key, false, cx),
+            None => {}
         }
     }
 
@@ -781,15 +995,7 @@ impl GraphView {
         };
         let groups = adoc_engine::colour_groups(&self.snapshot, self.colour_by);
         let all_labels = self.zoom >= LABEL_ZOOM || nodes_shown.len() <= 12;
-        // The layout holds its nodes in the snapshot's order.
-        let positions: Vec<LayoutPoint> = if self.layout.len() == nodes_shown.len() {
-            self.layout.positions().map(|(_, at)| at).collect()
-        } else {
-            nodes_shown
-                .iter()
-                .map(|node| self.layout.position(&node.key).unwrap_or_default())
-                .collect()
-        };
+        let positions = self.positions();
         // A path shown takes the place of the hover and the search: its nodes numbered, its
         // links drawn, and the rest dimmed.
         let path = self.path.as_ref().map(|steps| {
@@ -827,6 +1033,7 @@ impl GraphView {
                 };
                 let label = match on_path {
                     Some(Some(order)) => Some(format!("{order}. {}", node.title).into()),
+                    _ if node.kind == GraphNodeKind::Group => Some(node.title.clone().into()),
                     Some(None) => all_labels.then(|| node.title.clone().into()),
                     None => (all_labels
                         || (focus.is_some() && emphasised)
@@ -836,7 +1043,11 @@ impl GraphView {
                 };
                 DrawnNode {
                     at: positions[place],
-                    radius: adoc_engine::node_radius(node.links_in + node.links_out),
+                    radius: if node.kind == GraphNodeKind::Group {
+                        GROUP_RADIUS
+                    } else {
+                        adoc_engine::node_radius(node.links_in + node.links_out)
+                    },
                     kind: node.kind,
                     colour: node_colour(
                         node,
@@ -871,9 +1082,21 @@ impl GraphView {
                 }
             })
             .collect();
+        let hulls = self
+            .hulls(&positions)
+            .into_iter()
+            .map(|hull| DrawnHull {
+                low: hull.low,
+                high: hull.high,
+                label: hull.name.into(),
+                colour: nodes[hull.first].colour,
+            })
+            .collect();
         Drawing {
             nodes,
             edges,
+            hulls,
+            band: self.label_band,
             zoom: self.zoom,
             pan: self.pan,
             edge: theme.muted_foreground.opacity(0.55),
@@ -915,6 +1138,8 @@ impl GraphView {
         if self.fitting {
             self.fit();
         }
+        // A label and its margins, so the band follows `[appearance] font_scale`.
+        self.label_band = f32::from(window.rem_size()) * 1.25;
         let drawing = self.drawing(cx);
         let viewport = self.viewport.clone();
         let menu_target = self.menu_target.clone();
@@ -1007,10 +1232,21 @@ impl GraphView {
                     .selected
                     .as_ref()
                     .is_some_and(|selected| *selected != key);
+                if let GraphKey::Group(name) = &key {
+                    return menu
+                        .item(PopupMenuItem::new(name.clone()).disabled(true))
+                        .separator()
+                        .item(item("Expand Group", |view, key, cx| {
+                            if let GraphKey::Group(name) = key {
+                                view.expand_group(name, cx);
+                            }
+                        }));
+                }
                 let (page, partial, xref, include) = {
                     let graph = this.read(cx);
                     let engine = &graph.app.read(cx).engine;
                     match &key {
+                        GraphKey::Group(_) => (false, false, None, None),
                         GraphKey::Unresolved(target) => (
                             engine.new_page_for(target).is_some(),
                             engine.new_partial_for(target).is_some(),
@@ -1150,6 +1386,11 @@ impl GraphView {
             GraphColour::Module => "Colour: Module",
             GraphColour::Family => "Colour: Family",
         };
+        let group = match self.group_by {
+            None => "Group: Off",
+            Some(GroupBy::Module) => "Group: Module",
+            Some(GroupBy::Component) => "Group: Component",
+        };
         h_flex()
             .flex_wrap()
             .gap_1()
@@ -1238,6 +1479,15 @@ impl GraphView {
                         };
                         cx.notify();
                     })),
+            )
+            .child(
+                Button::new("graph-group")
+                    .label(group)
+                    .xsmall()
+                    .ghost()
+                    .debug_selector(|| "graph-group".to_owned())
+                    .tooltip("Group the nodes by module or component version")
+                    .on_click(cx.listener(|this, _, _, cx| this.cycle_grouping(cx))),
             )
             .child(
                 Button::new("graph-scope")
@@ -1637,6 +1887,30 @@ impl GraphView {
         self.zoom
     }
 
+    #[cfg(test)]
+    pub fn grouping_for_test(&self) -> (Option<GroupBy>, Option<GroupBy>) {
+        (self.group_by, self.layout.grouping())
+    }
+
+    /// The middle of the label of the hull of group `name`, in window coordinates.
+    #[cfg(test)]
+    pub fn hull_label_for_test(&self, name: &str) -> Option<gpui::Point<Pixels>> {
+        let centre = self.viewport.get().center();
+        let hull = self
+            .hulls(&self.positions())
+            .into_iter()
+            .find(|hull| hull.name == name)?;
+        let (_, label) = hull_bounds(
+            hull.low,
+            hull.high,
+            self.zoom,
+            self.pan,
+            centre,
+            self.label_band,
+        );
+        Some(label.center())
+    }
+
     /// The nodes drawn dimmed, as the hover, selection and search leave them.
     #[cfg(test)]
     pub fn dimmed_for_test(&self, cx: &App) -> Vec<GraphKey> {
@@ -1749,7 +2023,7 @@ fn key_name(key: &GraphKey) -> String {
         GraphKey::File(path) => path
             .file_name()
             .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
-        GraphKey::Unresolved(text) => text.clone(),
+        GraphKey::Unresolved(text) | GraphKey::Group(text) => text.clone(),
     }
 }
 
@@ -1790,10 +2064,54 @@ fn paint(drawing: &Drawing, bounds: Bounds<Pixels>, window: &mut Window, cx: &mu
         )
     };
     window.paint_layer(bounds, |window| {
-        paint_edges(drawing, &at, window);
         let font = window.text_style().font();
         // 11 px at the default rem size, so labels follow `[appearance] font_scale`.
         let font_size = window.rem_size() * (11. / 16.);
+        for hull in &drawing.hulls {
+            let (body, label) = hull_bounds(
+                hull.low,
+                hull.high,
+                drawing.zoom,
+                drawing.pan,
+                centre,
+                drawing.band,
+            );
+            if !bounds.intersects(&body) {
+                continue;
+            }
+            window.paint_quad(quad(
+                body,
+                Corners::all(px(12.)),
+                hull.colour.opacity(0.07),
+                px(1.),
+                hull.colour.opacity(0.35),
+                BorderStyle::Solid,
+            ));
+            let run = TextRun {
+                len: hull.label.len(),
+                font: font.clone(),
+                color: drawing.label.opacity(0.75),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let shaped =
+                window
+                    .text_system()
+                    .shape_line(hull.label.clone(), font_size, &[run], None);
+            let _ = shaped.paint(
+                point(
+                    label.origin.x + px(8.),
+                    label.origin.y + (label.size.height - font_size * 1.3) / 2.,
+                ),
+                font_size * 1.3,
+                TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
+        }
+        paint_edges(drawing, &at, window);
         for node in &drawing.nodes {
             let middle = at(node.at);
             let radius = px(node.radius * scale);
@@ -1808,6 +2126,7 @@ fn paint(drawing: &Drawing, bounds: Bounds<Pixels>, window: &mut Window, cx: &mu
             }
             let corners = match node.kind {
                 GraphNodeKind::Nav => Corners::all(px(2.)),
+                GraphNodeKind::Group => Corners::all(radius * 0.4),
                 _ => Corners::all(radius),
             };
             let (background, border, style) = match node.kind {
