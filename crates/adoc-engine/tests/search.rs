@@ -984,7 +984,29 @@ fn a_search_reads_an_open_page_s_unsaved_text() {
         })
         .unwrap();
     assert!(engine.wait_for_workers(Duration::from_secs(10)));
-    assert_eq!(batches(&events), [(1, true, false)]);
+    // However the matches are batched, which depends on how long the search takes: every
+    // batch but the last says more may come, and the last that the search ended.
+    let batches: Vec<_> = events
+        .try_iter()
+        .filter_map(|event| match event {
+            EngineEvent::SearchResults {
+                results,
+                done,
+                limited,
+                ..
+            } => Some((results, done, limited)),
+            _ => None,
+        })
+        .collect();
+    let (last, earlier) = batches.split_last().expect("no search results");
+    assert!(earlier.iter().all(|(_, done, _)| !done), "{batches:?}");
+    assert_eq!((last.1, last.2), (true, false));
+    let matches: Vec<_> = batches.iter().flat_map(|(results, ..)| results).collect();
+    assert_eq!(matches.len(), 1, "{matches:?}");
+    assert_eq!(matches[0].path, path);
+    // "= Page\n\nUnsaved zebra. Saved text.\n": the unsaved text, not the file's.
+    assert_eq!(matches[0].range, adoc_core::SourceRange::new(16, 21));
+    assert_eq!(matches[0].line, 2);
 }
 
 #[test]

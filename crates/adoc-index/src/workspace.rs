@@ -30,6 +30,7 @@ pub(crate) fn collect_asciidoc_files(
     }
 
     on_directory(path);
+    adoc_core::probe::hit(adoc_core::probe::Probe::IndexWalk);
     let Ok(mut entries) = fs::read_dir(path).and_then(Iterator::collect::<io::Result<Vec<_>>>)
     else {
         unreadable.push(normalize_path(path));

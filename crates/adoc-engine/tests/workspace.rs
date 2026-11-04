@@ -423,13 +423,27 @@ fn opening_a_workspace_neither_watches_nor_indexes_on_the_callers_thread() {
     }
 
     let mut engine = engine_without_user_settings();
+    // Counted per thread, so only what `open_workspace` does on this one, however busy the
+    // machine is.
+    adoc_core::probe::reset();
     let started = Instant::now();
     engine
         .open_workspace(vec![directory.path().to_path_buf()])
         .unwrap();
     let opened = started.elapsed();
+    assert_eq!(
+        adoc_core::probe::count(adoc_core::probe::Probe::IndexWalk),
+        0,
+        "walked here"
+    );
+    assert_eq!(
+        adoc_core::probe::count(adoc_core::probe::Probe::Watch),
+        0,
+        "watched here"
+    );
+    // Only a gross regression: walking 20,000 folders here would take far longer.
     assert!(
-        opened < Duration::from_millis(50),
+        opened < Duration::from_secs(5),
         "open_workspace took {opened:?}"
     );
     assert!(engine.wait_for_workers(Duration::from_secs(30)));

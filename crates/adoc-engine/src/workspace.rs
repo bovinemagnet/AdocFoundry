@@ -244,6 +244,7 @@ impl Watches {
         if self.full || self.watched.contains(path) {
             return;
         }
+        adoc_core::probe::hit(adoc_core::probe::Probe::Watch);
         match self.watcher.watch(path, recursive) {
             Ok(()) => {
                 self.watched.insert(path.to_path_buf());

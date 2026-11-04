@@ -305,6 +305,7 @@ pub fn preview_pages(
             }
         }
     }
+    adoc_core::probe::hit(adoc_core::probe::Probe::PreviewTypeset);
     let (document, _, world) = typeset(typst, theme, options)?;
     let source = |span: typst::syntax::Span| {
         world

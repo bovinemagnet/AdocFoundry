@@ -87,6 +87,8 @@ fn the_pdf_preview_follows_the_page() {
     // Typing returns at once; the pages follow once the page settles, typeset on a worker.
     let end = "= Page\n\nFirst paragraph.\n".len();
     let started = Instant::now();
+    // Counted per thread: typesetting on this one would count here, however busy the machine.
+    adoc_core::probe::reset();
     engine
         .invoke(
             ids::EDIT_INSERT_TEXT,
@@ -99,13 +101,14 @@ fn the_pdf_preview_follows_the_page() {
         .unwrap();
     clock.advance(PREVIEW_SETTLE);
     engine.pump();
-    assert!(
-        started.elapsed() < Duration::from_millis(500),
-        "the edit waited {:?}",
-        started.elapsed()
-    );
     settle(&mut engine);
     eprintln!("edit to PDF preview: {:?}", started.elapsed());
+    // Neither the edit nor any pump that followed typeset the page on this thread.
+    assert_eq!(
+        adoc_core::probe::count(adoc_core::probe::Probe::PreviewTypeset),
+        0,
+        "typeset on the caller's thread"
+    );
     assert_eq!(pdf_ready(&events, id), [1]);
     let preview = engine.pdf_preview(id).unwrap();
     assert_eq!(preview.version, 1);

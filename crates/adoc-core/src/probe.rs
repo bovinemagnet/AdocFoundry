@@ -38,9 +38,15 @@ pub enum Probe {
     AuditVersion,
     /// A catalog resource read while listing resources, `Engine::resources_after`.
     ListResource,
+    /// A folder read by the index's walk of the roots.
+    IndexWalk,
+    /// A watch placed on a folder of the workspace.
+    Watch,
+    /// A document typeset for the PDF preview, `adoc_pdf::preview_pages`.
+    PreviewTypeset,
 }
 
-const PROBES: usize = 15;
+const PROBES: usize = 18;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -82,4 +88,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::ListResource as usize == PROBES - 1);
+const _: () = assert!(Probe::PreviewTypeset as usize == PROBES - 1);
