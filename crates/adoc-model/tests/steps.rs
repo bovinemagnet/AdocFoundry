@@ -565,3 +565,20 @@ fn editing_a_link_changes_only_what_changed() {
     );
     assert_eq!(after, "Read xref:guide.adoc[our guide].\n");
 }
+
+#[test]
+fn a_typed_plus_never_continues_the_list_item() {
+    // acdc-parser reads a line beginning `+ ` in a list item as a list continuation, which
+    // Asciidoctor does only for `+` alone: typed there, it is kept in the item's text.
+    let model = build("* Zoom In (+).\n* Fit.\n");
+    let (after, _) = apply(
+        &model,
+        Step::InsertText {
+            at: offset(&model.source, " (+)"),
+            text: "\n+".to_owned(),
+            marks: MarkSet::EMPTY,
+        },
+    );
+    assert_eq!(after, "* Zoom In\n{empty}+ (+).\n* Fit.\n");
+    assert_eq!(build(&after).text_blocks().count(), 2, "{after:?}");
+}
