@@ -647,6 +647,42 @@ mod tests {
     }
 
     #[test]
+    fn cross_module_fragment_resolves_through_target_includes() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-nested-pages");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+
+        // `tokens` is declared in a partial `security:auth.adoc` includes from its own module.
+        let page = root.join("modules/ROOT/pages/index.adoc");
+        index.index_source(&page, "= Home\n\nxref:security:auth.adoc#tokens[]\n");
+        assert_eq!(diagnostics(&index, &antora, &page), Vec::new());
+    }
+
+    #[test]
+    fn nested_includes_resolve_against_the_including_file_s_module() {
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-nested-pages");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+
+        // `security:partial$scopes.adoc` includes `partial$scope-list.adoc`, which Antora
+        // resolves in `security`, the module of the file the directive is in.
+        let page = root.join("modules/ROOT/pages/index.adoc");
+        index.index_source(
+            &page,
+            "= Home\n\ninclude::security:partial$scopes.adoc[]\n\nSee <<scope-list>>.\n",
+        );
+        assert_eq!(diagnostics(&index, &antora, &page), Vec::new());
+    }
+
+    #[test]
     fn resolves_navigation_file_xrefs_against_its_module() {
         let root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/antora-nested-pages");

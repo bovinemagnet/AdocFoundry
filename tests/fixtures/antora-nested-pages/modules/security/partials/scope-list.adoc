@@ -1,0 +1,4 @@
+[[scope-list]]
+.Scopes
+* read
+* write

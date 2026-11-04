@@ -1,0 +1,4 @@
+[[tokens]]
+== Tokens
+
+Tokens expire after an hour.
