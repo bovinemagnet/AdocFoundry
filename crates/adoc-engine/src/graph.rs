@@ -663,13 +663,15 @@ impl Engine {
                 .get(&**path)
                 .cloned()
                 .unwrap_or_else(|| file_name(path)),
-            GraphKey::Unresolved(text) => text.clone(),
+            GraphKey::Unresolved(text) | GraphKey::Group(text) => text.clone(),
         }
     }
 
     fn node_kind(&self, key: &GraphKey) -> NodeKind {
-        let GraphKey::File(path) = key else {
-            return NodeKind::Unresolved;
+        let path = match key {
+            GraphKey::File(path) => path,
+            GraphKey::Unresolved(_) => return NodeKind::Unresolved,
+            GraphKey::Group(_) => return NodeKind::Group,
         };
         self.file_kind(key, path, self.workspace.antora.resource_for_path(path))
     }
@@ -734,6 +736,7 @@ impl Engine {
                 (kind, coordinate)
             }
             GraphKey::Unresolved(_) => (NodeKind::Unresolved, None),
+            GraphKey::Group(_) => (NodeKind::Group, None),
         };
         NodeInput {
             key: key.clone(),

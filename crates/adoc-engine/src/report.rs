@@ -391,7 +391,7 @@ mod git_status {
 fn report_id(key: &crate::GraphKey, root: &Path) -> String {
     match key {
         crate::GraphKey::File(path) => display_path(path, root),
-        crate::GraphKey::Unresolved(text) => text.clone(),
+        crate::GraphKey::Unresolved(text) | crate::GraphKey::Group(text) => text.clone(),
     }
 }
 
@@ -412,6 +412,7 @@ fn report_of(snapshot: &crate::GraphSnapshot, root: &Path) -> GraphReport {
                     GraphNodeKind::Partial => "partial",
                     GraphNodeKind::Nav => "nav",
                     GraphNodeKind::Unresolved => "unresolved",
+                    GraphNodeKind::Group => "group",
                 },
                 coordinate: node.coordinate.as_ref().map(|coordinate| {
                     format!(

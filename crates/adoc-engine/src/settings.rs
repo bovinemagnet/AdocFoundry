@@ -264,6 +264,8 @@ pub struct GraphSettings {
     pub show_orphans: bool,
     pub show_unresolved: bool,
     pub colour_by: GraphColour,
+    /// What the graph window groups the nodes by, if anything.
+    pub group: Option<adoc_graph::GroupBy>,
 }
 
 impl Default for GraphSettings {
@@ -275,6 +277,7 @@ impl Default for GraphSettings {
             show_orphans: true,
             show_unresolved: false,
             colour_by: GraphColour::Component,
+            group: None,
         }
     }
 }
@@ -891,6 +894,14 @@ impl Settings {
                     _ => return Err("expected \"component\", \"module\" or \"family\""),
                 };
             }
+            ("graph", "group") => {
+                self.graph.group = match value.as_str() {
+                    Some("off") => None,
+                    Some("module") => Some(adoc_graph::GroupBy::Module),
+                    Some("component") => Some(adoc_graph::GroupBy::Component),
+                    _ => return Err("expected \"off\", \"module\" or \"component\""),
+                };
+            }
             ("quality", "enabled") => self.quality.enabled = boolean(value)?,
             ("quality", "fail_on") => {
                 self.quality.policy.fail_on = value
@@ -1123,6 +1134,7 @@ fn is_known(section: &str, key: &str) -> bool {
                     | "show_orphans"
                     | "show_unresolved"
                     | "colour_by"
+                    | "group"
             )
             | (
                 "history",
@@ -1238,19 +1250,27 @@ mod tests {
         fs::write(
             &workspace,
             "[graph]\ndepth = 2\nshow_nav = false\nshow_unresolved = true\ncolour_by = \"module\"\n\
-             [graph.extra]\n",
+             group = \"component\"\n[graph.extra]\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.graph.depth, 2);
         assert!(!settings.graph.show_nav && settings.graph.show_unresolved);
         assert_eq!(settings.graph.colour_by, GraphColour::Module);
+        assert_eq!(settings.graph.group, Some(adoc_graph::GroupBy::Component));
         assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
 
-        fs::write(&workspace, "[graph]\ndepth = 4\ncolour_by = \"size\"\n").unwrap();
+        fs::write(
+            &workspace,
+            "[graph]\ndepth = 4\ncolour_by = \"size\"\ngroup = \"family\"\n",
+        )
+        .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.graph, GraphSettings::default());
-        assert_eq!(settings.warnings.len(), 2);
+        assert_eq!(settings.warnings.len(), 3);
+        fs::write(&workspace, "[graph]\ngroup = \"off\"\n").unwrap();
+        let settings = Settings::load(None, Some(directory.path())).unwrap();
+        assert_eq!((settings.graph.group, settings.warnings.len()), (None, 0));
     }
 
     #[test]

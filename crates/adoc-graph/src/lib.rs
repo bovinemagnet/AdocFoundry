@@ -1,11 +1,13 @@
 //! A graph of how files link to each other, with no AsciiDoc knowledge: its keys, nodes and
 //! edges, the [`LinkStore`] of each file's links kept by file, walks outwards from a node,
-//! snapshots filtered for display, a force-directed [`Layout`], and the graph drawn as SVG
-//! ([`to_svg`]) in the colours the app's canvas uses.
+//! snapshots filtered for display, groups of nodes by module or component version
+//! ([`Groups`], [`GraphSnapshot::collapse`]), a force-directed [`Layout`], and the graph drawn as
+//! SVG ([`to_svg`]) in the colours the app's canvas uses.
 //!
 //! The engine decides what the links are and when they change; this crate only keeps them.
 //! Nothing here knows about a UI framework, so the layout is tested and benchmarked headlessly.
 
+mod group;
 mod layout;
 mod snapshot;
 mod store;
@@ -14,6 +16,7 @@ mod svg;
 
 use std::{collections::BTreeSet, path::Path, sync::Arc};
 
+pub use group::{group_name, GroupBy, Groups, OTHER_GROUP};
 pub use layout::{Layout, Point, SETTLED};
 pub use snapshot::NodeInput;
 pub use store::{LinkStore, PathStep, StoredLink};
@@ -27,6 +30,8 @@ pub enum GraphKey {
     File(Arc<Path>),
     /// The target's text as written.
     Unresolved(String),
+    /// A group of nodes collapsed into one, by its name ([`GraphSnapshot::collapse`]).
+    Group(String),
 }
 
 impl GraphKey {
@@ -35,7 +40,7 @@ impl GraphKey {
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::File(path) => Some(path),
-            Self::Unresolved(_) => None,
+            Self::Unresolved(_) | Self::Group(_) => None,
         }
     }
 }
@@ -70,6 +75,8 @@ pub enum NodeKind {
     Nav,
     /// A target that does not resolve.
     Unresolved,
+    /// A group collapsed into one node.
+    Group,
 }
 
 /// Where a file sits in an Antora workspace.
@@ -202,6 +209,7 @@ impl GraphFilter {
             NodeKind::Partial => self.partials,
             NodeKind::Nav => self.nav,
             NodeKind::Unresolved => self.unresolved,
+            NodeKind::Group => true,
         }
     }
 }
