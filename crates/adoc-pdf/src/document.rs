@@ -179,6 +179,7 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         page_urls: options.page_urls.clone(),
         toc_levels: facts.toc_levels(),
         access: options.access.clone(),
+        fits_lines: fits_lines(theme, &page_geometry(theme)),
     };
     let mut emitter = Emitter::new(&pages, &emit_options);
 
@@ -460,6 +461,41 @@ fn page_geometry(theme: &LoadedTheme) -> PageGeometry {
         width,
         height,
         margin,
+    }
+}
+
+/// Lines a block's estimate may reach and still be kept whole without measuring it on paper
+/// of a common size.
+const FITS_LINES: usize = 20;
+
+/// The most lines `emit::estimated_lines` may give a block for it to fit on a page for
+/// certain: half the lines of the page's body at the larger of the prose and code line heights,
+/// fewer where a line holds fewer than the 60 characters the estimate counts to one, and never
+/// more than `FITS_LINES`. A block estimated at more is measured.
+fn fits_lines(theme: &LoadedTheme, page: &PageGeometry) -> usize {
+    const CHARACTERS_PER_LINE: f64 = 60.0;
+    // Wider than most glyphs, so as to count fewer characters to a line than fit.
+    const GLYPH_WIDTH_EM: f64 = 0.6;
+    let positive = |key: &str| {
+        theme
+            .keys
+            .get(key)
+            .and_then(ThemeValue::as_number)
+            .filter(|value| *value > 0.0)
+    };
+    let base_size = positive("base_font_size").unwrap_or(12.0);
+    let base_height = positive("base_line_height").unwrap_or(1.0);
+    let code_size = positive("code_font_size").unwrap_or(base_size);
+    let code_height = positive("code_line_height").unwrap_or(base_height);
+    let line = (base_size * base_height).max(code_size * code_height);
+    let [top, right, bottom, left] = page.margin;
+    let per_line = (page.width - left - right) / (base_size.max(code_size) * GLYPH_WIDTH_EM);
+    let lines =
+        (page.height - top - bottom) / line * (per_line / CHARACTERS_PER_LINE).min(1.0) / 2.0;
+    if lines.is_finite() && lines > 0.0 {
+        (lines as usize).min(FITS_LINES)
+    } else {
+        0
     }
 }
 

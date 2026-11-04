@@ -143,7 +143,11 @@ pub(crate) fn theme_value(key: &str, value: &ThemeValue) -> String {
         ThemeValue::Color(value) => color(value),
         ThemeValue::List(items) => {
             let items: Vec<String> = items.iter().map(|item| theme_value(key, item)).collect();
-            format!("({},)", items.join(", "))
+            if items.is_empty() {
+                "()".to_owned()
+            } else {
+                format!("({},)", items.join(", "))
+            }
         }
         ThemeValue::Map(entries) => {
             let entries: Vec<String> = entries
@@ -206,6 +210,15 @@ mod tests {
                 &ThemeValue::List(vec![ThemeValue::Number(4.0), ThemeValue::Number(12.0)])
             ),
             "(4pt, 12pt,)"
+        );
+        // Typst's empty array is `()`; one item keeps its comma, or it is not an array.
+        assert_eq!(theme_value("custom_list", &ThemeValue::List(vec![])), "()");
+        assert_eq!(
+            theme_value(
+                "custom_list",
+                &ThemeValue::List(vec![ThemeValue::Number(2.0)])
+            ),
+            "(2.0,)"
         );
         assert!(is_length_key("heading_min_height_after"));
         assert!(!is_length_key("heading_line_height"));

@@ -80,6 +80,9 @@ pub struct EmitOptions {
     pub page_urls: HashMap<PathBuf, String>,
     /// Which image files may be read.
     pub access: FileAccess,
+    /// The most lines a block may be estimated to take for it to be kept whole without being
+    /// measured (`fits_lines`); none is when zero.
+    pub fits_lines: usize,
 }
 
 pub(crate) struct Emitter<'a> {
@@ -267,20 +270,23 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    /// Blocks inside a container: no margin after the last.
-    fn content(&mut self, blocks: &[ViewBlock]) -> String {
-        let start = self.out.len();
+    // Containers write their blocks in place, between their own text before and after, so
+    // that each block's map entry stays on the text it was recorded for.
+
+    /// Blocks inside a container, as content: no margin after the last.
+    fn content(&mut self, blocks: &[ViewBlock]) {
+        self.push("[");
         self.blocks(blocks, Gaps::Inside);
-        let body = self.out.split_off(start);
-        format!("[{body}]")
+        self.push("]");
     }
 
     /// An item's text, then its blocks, the item spacing apart.
-    fn item_body(&mut self, content: &[ViewInline], blocks: &[ViewBlock], gaps: Gaps) -> String {
+    fn item_body(&mut self, content: &[ViewInline], blocks: &[ViewBlock], gaps: Gaps) {
         // The trailing break makes the text a paragraph, spaced as Prawn spaces lines.
-        let mut body = self.inlines(content);
-        if blocks.is_empty() && !body.is_empty() {
-            body.push_str("\n\n");
+        let text = self.inlines(content);
+        self.push(&text);
+        if blocks.is_empty() && !text.is_empty() {
+            self.push("\n\n");
         }
         if !blocks.is_empty() {
             let gap = if gaps == Gaps::Items {
@@ -288,14 +294,46 @@ impl<'a> Emitter<'a> {
             } else {
                 "prose-bottom"
             };
-            if !body.is_empty() {
-                let _ = write!(body, "\n\n#v({gap})\n\n");
+            if !text.is_empty() {
+                let _ = write!(self.out, "\n\n#v({gap})\n\n");
             }
-            let start = self.out.len();
             self.blocks(blocks, gaps);
-            body.push_str(&self.out.split_off(start));
         }
-        body
+    }
+
+    /// `[` an item's body `]`, or `none` for a body with nothing in it; whether it had any.
+    fn item_content_or_none(
+        &mut self,
+        content: &[ViewInline],
+        blocks: &[ViewBlock],
+        gaps: Gaps,
+    ) -> bool {
+        let start = self.out.len();
+        self.push("[");
+        self.item_body(content, blocks, gaps);
+        if self.out[start + 1..].trim().is_empty() {
+            self.truncate(start);
+            self.push("none");
+            false
+        } else {
+            self.push("]");
+            true
+        }
+    }
+
+    /// Cuts the output back to `len`, and the map entries with it.
+    fn truncate(&mut self, len: usize) {
+        self.out.truncate(len);
+        self.map.entries.retain_mut(|(range, _)| {
+            range.end = range.end.min(len);
+            range.start < range.end
+        });
+    }
+
+    /// Removes trailing whitespace written since `start`.
+    fn trim_end_since(&mut self, start: usize) {
+        let len = start + self.out[start..].trim_end().len();
+        self.truncate(len);
     }
 
     fn record<F: FnOnce(&mut Self)>(&mut self, span: &SourceSpan, emit: F) {
@@ -323,19 +361,29 @@ impl<'a> Emitter<'a> {
             match this.caption_text(block).filter(|_| !owns_title) {
                 Some(caption) => {
                     let below = matches!(block.kind, ViewKind::Image(_) | ViewKind::Diagram(_));
+                    let _ = write!(
+                        this.out,
+                        "#adoc-captioned({}[{caption}], [",
+                        this.fits_argument(block)
+                    );
                     let start = this.out.len();
                     this.block_inner(block);
-                    let body = this.out.split_off(start);
-                    let _ = writeln!(
-                        this.out,
-                        "#adoc-captioned({}[{caption}], [{}], below: {below})\n",
-                        fits_argument(block),
-                        body.trim_end()
-                    );
+                    this.trim_end_since(start);
+                    let _ = writeln!(this.out, "], below: {below})\n");
                 }
                 None => this.block_inner(block),
             }
         });
+    }
+
+    /// `fits: true, ` for a block that its text shows fits on a page, so the template keeps it
+    /// whole without measuring it; empty otherwise, and the block is measured.
+    fn fits_argument(&self, block: &ViewBlock) -> &'static str {
+        if estimated_lines(block).is_some_and(|lines| lines <= self.options.fits_lines) {
+            "fits: true, "
+        } else {
+            ""
+        }
     }
 
     fn caption_text(&mut self, block: &ViewBlock) -> Option<String> {
@@ -446,100 +494,88 @@ impl<'a> Emitter<'a> {
                     }
                 };
                 let _ = depth;
-                let mut bodies = Vec::new();
-                for item in items {
-                    let body = self.item_body(&item.content, &item.blocks, Gaps::Items);
-                    bodies.push(format!("[{body}]"));
+                let markers: Vec<String> =
+                    markers.iter().map(|marker| format!("[{marker}]")).collect();
+                let _ = write!(self.out, "#adoc-list(({},), (", markers.join(", "));
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        self.push(", ");
+                    }
+                    self.push("[");
+                    self.item_body(&item.content, &item.blocks, Gaps::Items);
+                    self.push("]");
                 }
+                self.push(",))\n\n");
                 match kind {
                     ListKind::Ordered => self.olist_depth -= 1,
                     _ => self.ulist_depth -= 1,
                 }
-                let markers: Vec<String> =
-                    markers.iter().map(|marker| format!("[{marker}]")).collect();
-                let _ = writeln!(
-                    self.out,
-                    "#adoc-list(({},), ({},))\n",
-                    markers.join(", "),
-                    bodies.join(", ")
-                );
             }
             ViewKind::DescriptionList(items) => {
-                let style = block.style.as_deref();
-                let mut entries = Vec::new();
-                for item in items {
-                    let term = self.inlines(&item.term);
-                    let description = self.item_body(&item.content, &item.blocks, Gaps::Inside);
-                    let description = if description.trim().is_empty() {
-                        "none".to_owned()
-                    } else {
-                        format!("[{description}]")
-                    };
-                    entries.push((term, description));
-                }
-                match style {
+                let qanda = block.style.as_deref() == Some("qanda");
+                match block.style.as_deref() {
                     Some("qanda") => {
-                        let markers: Vec<String> = (1..=entries.len())
+                        let markers: Vec<String> = (1..=items.len())
                             .map(|number| format!("[{}]", text(&format!("{number}."))))
                             .collect();
-                        let bodies: Vec<String> = entries
-                            .iter()
-                            .map(|(term, description)| {
-                                let description = if description == "none" {
-                                    String::new()
-                                } else {
-                                    format!("\n\n#v(list-gap)\n\n#{description}")
-                                };
-                                format!("[#emph[{term}]{description}]")
-                            })
-                            .collect();
-                        let _ = writeln!(
-                            self.out,
-                            "#adoc-list(({},), ({},))\n",
-                            markers.join(", "),
-                            bodies.join(", ")
-                        );
+                        let _ = write!(self.out, "#adoc-list(({},), (", markers.join(", "));
                     }
-                    Some("horizontal") => {
-                        let entries: Vec<String> = entries
-                            .iter()
-                            .map(|(term, description)| format!("([{term}], {description})"))
-                            .collect();
-                        let _ = writeln!(self.out, "#adoc-hlist(({},))\n", entries.join(", "));
+                    Some("horizontal") => self.push("#adoc-hlist(("),
+                    _ => self.push("#adoc-dlist(("),
+                }
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        self.push(", ");
                     }
-                    _ => {
-                        let entries: Vec<String> = entries
-                            .iter()
-                            .map(|(term, description)| format!("([{term}], {description})"))
-                            .collect();
-                        let _ = writeln!(self.out, "#adoc-dlist(({},))\n", entries.join(", "));
+                    let term = self.inlines(&item.term);
+                    if qanda {
+                        let _ = write!(self.out, "[#emph[{term}]");
+                        let start = self.out.len();
+                        self.push("\n\n#v(list-gap)\n\n#");
+                        if !self.item_content_or_none(&item.content, &item.blocks, Gaps::Inside) {
+                            self.truncate(start);
+                        }
+                        self.push("]");
+                    } else {
+                        let _ = write!(self.out, "([{term}], ");
+                        self.item_content_or_none(&item.content, &item.blocks, Gaps::Inside);
+                        self.push(")");
                     }
                 }
+                self.push(",))\n\n");
             }
             ViewKind::CalloutList(items) => {
-                let mut entries = Vec::new();
-                for item in items {
-                    let body = self.item_body(&item.content, &item.blocks, Gaps::Items);
-                    entries.push(format!("({}, [{body}])", item.number));
+                self.push("#adoc-callouts((");
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        self.push(", ");
+                    }
+                    let _ = write!(self.out, "({}, [", item.number);
+                    self.item_body(&item.content, &item.blocks, Gaps::Items);
+                    self.push("])");
                 }
-                let _ = writeln!(self.out, "#adoc-callouts(({},))\n", entries.join(", "));
+                self.push(",))\n\n");
             }
             ViewKind::Admonition { kind, blocks } => {
-                let body = self.content(blocks);
                 let title = self.caption_text(block);
-                let body = match title {
-                    Some(title) => format!(
-                        "[#block(sticky: true, strong[{title}])\n\n#v(prose-bottom)\n\n#{body}]"
-                    ),
-                    None => body,
-                };
-                let _ = writeln!(
+                let _ = write!(
                     self.out,
-                    "#adoc-admonition({}{}, {}, {body})\n",
-                    fits_argument(block),
+                    "#adoc-admonition({}{}, {}, ",
+                    self.fits_argument(block),
                     string(admonition_name(*kind)),
                     string(admonition_label(*kind))
                 );
+                if let Some(title) = &title {
+                    let _ = write!(
+                        self.out,
+                        "[#block(sticky: true, strong[{title}])\n\n#v(prose-bottom)\n\n#"
+                    );
+                }
+                self.content(blocks);
+                if title.is_some() {
+                    self.push("]");
+                }
+                self.push(")\n\n");
             }
             ViewKind::Code {
                 language,
@@ -565,13 +601,17 @@ impl<'a> Emitter<'a> {
                     Some(lines) => format!("adoc-highlighted(({lines}), {raw})"),
                     None => raw,
                 };
-                let _ = writeln!(self.out, "#adoc-code({}{body})\n", fits_argument(block));
+                let _ = writeln!(
+                    self.out,
+                    "#adoc-code({}{body})\n",
+                    self.fits_argument(block)
+                );
             }
             ViewKind::Literal(text) => {
                 let _ = writeln!(
                     self.out,
                     "#adoc-code({}raw({}, block: true))\n",
-                    fits_argument(block),
+                    self.fits_argument(block),
                     string(text)
                 );
             }
@@ -580,11 +620,11 @@ impl<'a> Emitter<'a> {
                 citation,
                 blocks,
             } => {
-                let body = self.content(blocks);
+                let _ = write!(self.out, "#adoc-quote({}", self.fits_argument(block));
+                self.content(blocks);
                 let _ = writeln!(
                     self.out,
-                    "#adoc-quote({}{body}, {}, {})\n",
-                    fits_argument(block),
+                    ", {}, {})\n",
                     optional_string(attribution.as_deref()),
                     optional_string(citation.as_deref())
                 );
@@ -598,7 +638,7 @@ impl<'a> Emitter<'a> {
                 let _ = writeln!(
                     self.out,
                     "#adoc-quote({}[{}], {}, {}, prefix: \"verse\")\n",
-                    fits_argument(block),
+                    self.fits_argument(block),
                     lines.join("#linebreak()"),
                     optional_string(attribution.as_deref()),
                     optional_string(citation.as_deref())
@@ -608,29 +648,27 @@ impl<'a> Emitter<'a> {
                 let title = self
                     .caption_text(block)
                     .map_or_else(|| "none".to_owned(), |title| format!("[{title}]"));
-                let body = self.content(blocks);
-                let fits = fits_argument(block);
-                let _ = writeln!(
-                    self.out,
-                    "#adoc-container({fits}\"sidebar\", {title}, {body})\n"
-                );
+                let fits = self.fits_argument(block);
+                let _ = write!(self.out, "#adoc-container({fits}\"sidebar\", {title}, ");
+                self.content(blocks);
+                self.push(")\n\n");
             }
             ViewKind::Example(blocks) if block.options.contains("collapsible") => {
                 // As asciidoctor-pdf draws one: its caption, then its blocks, indented.
-                let body = self.content(blocks);
-                let _ = writeln!(self.out, "#adoc-collapsible({body})\n");
+                self.push("#adoc-collapsible(");
+                self.content(blocks);
+                self.push(")\n\n");
             }
             ViewKind::Example(blocks) => {
-                let body = self.content(blocks);
-                let fits = fits_argument(block);
-                let _ = writeln!(
-                    self.out,
-                    "#adoc-container({fits}\"example\", none, {body})\n"
-                );
+                let fits = self.fits_argument(block);
+                let _ = write!(self.out, "#adoc-container({fits}\"example\", none, ");
+                self.content(blocks);
+                self.push(")\n\n");
             }
             ViewKind::Open(blocks) => {
-                let body = self.content(blocks);
-                let _ = writeln!(self.out, "#adoc-open({body})\n");
+                self.push("#adoc-open(");
+                self.content(blocks);
+                self.push(")\n\n");
             }
             ViewKind::Table(table) => {
                 self.table(block, table);
@@ -768,26 +806,6 @@ impl<'a> Emitter<'a> {
         } else {
             columns
         };
-        let header = table.header.as_ref().map_or_else(
-            || "none".to_owned(),
-            |cells| {
-                let cells: Vec<String> = cells.iter().map(|cell| self.cell(cell, true)).collect();
-                format!("({},)", cells.join(", "))
-            },
-        );
-        let mut rows = Vec::new();
-        for row in &table.rows {
-            for cell in row {
-                rows.push(self.cell(cell, false));
-            }
-        }
-        let footer = table.footer.as_ref().map_or_else(
-            || "none".to_owned(),
-            |cells| {
-                let cells: Vec<String> = cells.iter().map(|cell| self.cell(cell, false)).collect();
-                format!("({},)", cells.join(", "))
-            },
-        );
         // Every row, the header's and footer's too: the last draws the frame's bottom.
         let row_count = table.rows.len()
             + usize::from(table.header.is_some())
@@ -812,28 +830,64 @@ impl<'a> Emitter<'a> {
             None if autowidth => options.push_str(", width: auto"),
             None => {}
         }
-        let _ = writeln!(
-            self.out,
-            "#adoc-table(({},), {header}, ({}), {footer}{options})\n",
-            columns.join(", "),
-            rows.iter()
-                .map(|row| format!("{row}, "))
-                .collect::<String>()
-        );
+        let _ = write!(self.out, "#adoc-table(({},), ", columns.join(", "));
+        self.header_or_footer(table.header.as_deref(), true);
+        self.push(", (");
+        for row in &table.rows {
+            for cell in row {
+                self.cell(cell, false);
+                self.push(", ");
+            }
+        }
+        self.push("), ");
+        self.header_or_footer(table.footer.as_deref(), false);
+        let _ = writeln!(self.out, "{options})\n");
     }
 
-    fn cell(&mut self, cell: &ViewCell, header: bool) -> String {
-        let body = if cell.style == CellStyle::AsciiDoc {
-            let start = self.out.len();
+    /// A header or footer row's cells, or `none`.
+    fn header_or_footer(&mut self, cells: Option<&[ViewCell]>, header: bool) {
+        let Some(cells) = cells else {
+            self.push("none");
+            return;
+        };
+        self.push("(");
+        for (index, cell) in cells.iter().enumerate() {
+            if index > 0 {
+                self.push(", ");
+            }
+            self.cell(cell, header);
+        }
+        self.push(",)");
+    }
+
+    fn cell(&mut self, cell: &ViewCell, header: bool) {
+        let align = match cell.align {
+            Align::Start => "left",
+            Align::Centre => "center",
+            Align::End => "right",
+        };
+        let valign = match cell.valign {
+            VAlign::Top => "top",
+            VAlign::Middle => "horizon",
+            VAlign::Bottom => "bottom",
+        };
+        let _ = write!(
+            self.out,
+            "table.cell(colspan: {}, rowspan: {}, align: {align} + {valign})[",
+            cell.colspan.max(1),
+            cell.rowspan.max(1)
+        );
+        if cell.style == CellStyle::AsciiDoc {
             self.blocks(&cell.blocks, Gaps::Inside);
-            self.out.split_off(start)
         } else {
-            let mut parts = Vec::new();
-            for block in &cell.blocks {
+            for (index, block) in cell.blocks.iter().enumerate() {
+                if index > 0 {
+                    self.push("\n\n#v(prose-bottom)\n\n");
+                }
                 match &block.kind {
                     ViewKind::Paragraph(content) => {
                         let inline = self.inlines(content);
-                        parts.push(match cell.style {
+                        let part = match cell.style {
                             CellStyle::Emphasis => format!("#emph[{inline}]"),
                             CellStyle::Strong => format!("#strong[{inline}]"),
                             CellStyle::Header if !header => format!("#strong[{inline}]"),
@@ -845,35 +899,15 @@ impl<'a> Emitter<'a> {
                                 )
                             }
                             _ => inline,
-                        });
+                        };
+                        self.push(&part);
                     }
-                    _ => {
-                        let start = self.out.len();
-                        self.block(block);
-                        parts.push(self.out.split_off(start));
-                    }
+                    _ => self.block(block),
                 }
             }
-            let mut body = parts.join("\n\n#v(prose-bottom)\n\n");
-            body.push_str("\n\n");
-            body
-        };
-        let align = match cell.align {
-            Align::Start => "left",
-            Align::Centre => "center",
-            Align::End => "right",
-        };
-        let valign = match cell.valign {
-            VAlign::Top => "top",
-            VAlign::Middle => "horizon",
-            VAlign::Bottom => "bottom",
-        };
-        let align = format!("{align} + {valign}");
-        format!(
-            "table.cell(colspan: {}, rowspan: {}, align: {align})[{body}]",
-            cell.colspan.max(1),
-            cell.rowspan.max(1)
-        )
+            self.push("\n\n");
+        }
+        self.push("]");
     }
 
     /// The virtual path a file is served at; the same file always gets the same path.
@@ -1257,31 +1291,38 @@ fn ordered_numbers(block: &ViewBlock, count: usize) -> Vec<i64> {
         .get("start")
         .and_then(|start| start.trim().parse::<i64>().ok())
         .unwrap_or(if reversed { count as i64 } else { 1 });
+    // Counting stops at the ends of `i64` rather than wrapping round.
     (0..count as i64)
         .map(|index| {
             if reversed {
-                start - index
+                start.saturating_sub(index)
             } else {
-                start + index
+                start.saturating_add(index)
             }
         })
         .collect()
 }
 
 /// An ordered list item's marker in the list's numbering `style`, as asciidoctor-pdf writes
-/// it. A letter or numeral has no number below one, so such a number is written in figures.
+/// it. A letter or numeral has no number below one, so such a number is written in figures, as
+/// is a numeral past `MAX_ROMAN`, which would otherwise be a run of thousands of `M`s.
 fn ordered_marker(style: &str, number: i64) -> String {
+    const MAX_ROMAN: usize = 3999;
     let positive = usize::try_from(number).ok().filter(|number| *number > 0);
     let label = match (style, positive) {
         ("unstyled" | "unnumbered" | "no-bullet" | "none", _) => return String::new(),
-        ("decimal", _) if number.abs() < 10 => {
-            format!("{}0{}", if number < 0 { "-" } else { "" }, number.abs())
+        ("decimal", _) if number.unsigned_abs() < 10 => {
+            format!(
+                "{}0{}",
+                if number < 0 { "-" } else { "" },
+                number.unsigned_abs()
+            )
         }
         ("loweralpha", Some(number)) => alpha(number, false),
         ("upperalpha", Some(number)) => alpha(number, true),
-        ("lowerroman", Some(number)) => roman(number).to_lowercase(),
-        ("upperroman", Some(number)) => roman(number),
-        ("lowergreek", Some(number)) => char::from_u32(0x03b1 + (number as u32 - 1) % 25)
+        ("lowerroman", Some(number)) if number <= MAX_ROMAN => roman(number).to_lowercase(),
+        ("upperroman", Some(number)) if number <= MAX_ROMAN => roman(number),
+        ("lowergreek", Some(number)) => char::from_u32(0x03b1 + ((number - 1) % 25) as u32)
             .map_or_else(|| number.to_string(), String::from),
         _ => number.to_string(),
     };
@@ -1352,21 +1393,6 @@ fn admonition_label(kind: AdmonitionKind) -> &'static str {
     }
 }
 
-/// Listing text with each callout's circled number at the end of its line.
-/// Lines a block's estimate may reach and still be kept whole without measuring it: well under a
-/// page even at a large base font size or on small paper.
-const FITS_LINES: usize = 20;
-
-/// `fits: true, ` for a block that its text shows fits on a page, so the template keeps it
-/// whole without measuring it; empty otherwise, and the block is measured.
-fn fits_argument(block: &ViewBlock) -> &'static str {
-    if estimated_lines(block).is_some_and(|lines| lines <= FITS_LINES) {
-        "fits: true, "
-    } else {
-        ""
-    }
-}
-
 /// The lines a block can take at most, estimated generously from its text: each line of code
 /// or verse, a line for every 60 characters of a paragraph, and one for the spacing around each
 /// block. `None` when its height cannot be told from its text: images, diagrams, media, tables,
@@ -1425,6 +1451,7 @@ fn estimated_lines(block: &ViewBlock) -> Option<usize> {
     }
 }
 
+/// Listing text with each callout's circled number at the end of its line.
 fn with_callouts(text: &str, callouts: &[adoc_render::Callout]) -> String {
     if callouts.is_empty() {
         return text.to_owned();
@@ -1568,6 +1595,17 @@ mod tests {
         assert_eq!(ordered_marker("arabic", 0), "0.");
         assert_eq!(ordered_marker("loweralpha", 0), "0.");
         assert_eq!(ordered_marker("unstyled", 1), "");
+        assert_eq!(ordered_marker("decimal", -3), "-03.");
+        assert_eq!(ordered_marker("decimal", i64::MIN), "-9223372036854775808.");
+        // Past the numerals' range, a number is written in figures rather than as a string
+        // of thousands of `M`s.
+        assert_eq!(ordered_marker("upperroman", 3999), "MMMCMXCIX.");
+        assert_eq!(ordered_marker("upperroman", 4000), "4000.");
+        assert_eq!(ordered_marker("lowergreek", 1 << 32), "\u{3c5}.");
+        assert_eq!(
+            ordered_marker("lowerroman", i64::MAX),
+            "9223372036854775807."
+        );
         assert_eq!(alpha(26, false), "z");
         assert_eq!(roman(1994), "MCMXCIV");
     }
@@ -1595,5 +1633,71 @@ mod tests {
         assert_eq!(image_size("60%").as_deref(), Some("60%"));
         assert_eq!(image_size("200").as_deref(), Some("150pt"));
         assert_eq!(image_size("1in").as_deref(), Some("72pt"));
+    }
+
+    /// Over the render and PDF fixtures: every map entry lies within the generated source,
+    /// and any two either nest or are apart, as blocks in blocks do.
+    #[test]
+    fn map_entries_nest_within_the_source() {
+        use adoc_dom::{AcdcParser, DocumentParser as _, ParseInput};
+
+        let fixtures =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+        let theme = crate::load_theme(&crate::ThemeSource::Bundled("default".into())).unwrap();
+        let mut dirs = vec![fixtures.join("render"), fixtures.join("pdf")];
+        let mut checked = 0;
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|extension| extension != "adoc") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                let dom = AcdcParser.parse(&ParseInput::new(&path, &text));
+                let view = adoc_render::build_view(&path, &dom, &adoc_render::LocalResolver);
+                let document = crate::Document::Article(super::PageView {
+                    key: "p0".to_owned(),
+                    view,
+                    depth: 0,
+                });
+                let typst = crate::to_typst(&document, &theme, &crate::PdfOptions::default());
+                let entries = &typst.map.entries;
+                for (range, span) in entries {
+                    assert!(range.start < range.end && range.end <= typst.source.len());
+                    // A block begun by a plain word, a paragraph's, has that word in its text.
+                    let Some(written) = (span.path == path)
+                        .then(|| text.get(span.range.start..span.range.end))
+                        .flatten()
+                    else {
+                        continue;
+                    };
+                    let word = written.split_whitespace().next().unwrap_or("");
+                    let word = word.trim_end_matches(['.', ',', ':', ';']);
+                    if word.len() >= 3 && word.chars().all(|c| c.is_ascii_alphabetic()) {
+                        let generated = typst.source[range.clone()].to_lowercase();
+                        assert!(
+                            generated.contains(&word.to_lowercase()),
+                            "{word} (line {}) is not in {generated:?} in {}",
+                            span.line,
+                            path.display()
+                        );
+                    }
+                }
+                for (a, _) in entries {
+                    for (b, _) in entries {
+                        let apart = a.end <= b.start || b.end <= a.start;
+                        let nested = (a.start <= b.start && b.end <= a.end)
+                            || (b.start <= a.start && a.end <= b.end);
+                        assert!(apart || nested, "{a:?} crosses {b:?} in {}", path.display());
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 10, "{checked} fixtures");
     }
 }

@@ -183,7 +183,10 @@ These follow asciidoctor-pdf's `arrange_block` and `arrange_heading`.
 
 `keep()` measures a block only when the emitter cannot tell from the block's text that it fits on a page.
 The emitter estimates the block's lines: each line of code or verse, a line per 60 characters of a paragraph, and one for the spacing around each nested block.
-It writes `fits: true` for blocks of 20 lines or fewer.
+It writes `fits: true` for a block whose estimate is within a budget worked out from the theme.
+The budget is half the lines of the page's body at the larger of the prose and code line heights, reduced where a line holds fewer than 60 characters at the larger font size, and never more than 20.
+So a listing on small paper or in a large code font is measured, and breaks across pages, rather than kept whole and cut off at the bottom of the page.
+On A4 and Letter with the default theme the budget is 20.
 Those become plain unbreakable blocks without measuring.
 Images, diagrams, tables and maths are always measured.
 Running titles look up one list of headings with their pages, which Typst works out once, by binary search, instead of filtering every heading on every page.
