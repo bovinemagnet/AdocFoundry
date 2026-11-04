@@ -50,6 +50,7 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 |On Ubuntu, macOS 15 and Windows: `cargo test --workspace --exclude adocfoundry`, then `cargo build -p adocfoundry`. Building needs no display.
 On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15, so the fidelity test and `pdf_regression` run instead of skipping. These tools are needed only by CI, never at runtime.
 On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
+Each run restores the dependencies' build output with `Swatinem/rust-cache`, keyed by OS, Rust version and `Cargo.lock`; only runs on `main` save it, so pull requests reuse `main`'s cache and the three caches stay within GitHub's 10 GB per repository.
 
 |`pdf-standards`
 |On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1, and as PDF/A-1b and PDF/A-1a. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both of those standards too, but not under PDF/A-1, because its Mermaid diagram uses transparency. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.

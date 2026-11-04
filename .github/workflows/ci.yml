@@ -48,6 +48,12 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+      # The dependencies' build output, keyed by OS, rustc and Cargo.lock. Only main saves it:
+      # pull requests restore main's, so the three OS caches stay within the repository's 10 GB
+      # and a pull request never evicts them.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install GPUI system libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
