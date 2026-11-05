@@ -107,6 +107,8 @@ pub enum CommandArgs {
     },
     /// The appearance to save: `appearance.save`.
     Appearance(crate::AppearanceChoice),
+    /// The id of the font set to save: `appearance.save_font_set`.
+    FontSet(String),
     /// A publication profile, by name: `[pdf.profiles.<name>]`.
     Profile(String),
     Custom(serde_json::Value),

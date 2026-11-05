@@ -1581,8 +1581,8 @@ It lists the version, the system, the PDF theme and fonts, the tools it found an
 Choose *Copy* to put the report on the clipboard, then paste it into the issue.
 
 The application's report is the one `adocfoundry-cli doctor` prints, with a Display section added.
-That section gives the graphics backend (Metal on macOS, DirectX 11 on Windows, wgpu on Linux), the GPU where the platform reports one, the display server on Linux (Wayland or X11), the scale factor, and whether the editor and interface fonts are installed.
-A font that is not installed is marked `(not installed, so a fallback is used)`.
+That section gives the graphics backend (Metal on macOS, DirectX 11 on Windows, wgpu on Linux), the GPU where the platform reports one, the display server on Linux (Wayland or X11), the scale factor, the font set, and its interface, source and reading fonts.
+Each family is marked `(bundled)`, `(found)` or `(not installed, so a fallback is used)`.
 
 The tools are asked for their versions in the background, so the dialog appears once they have answered.
 See xref:command-line.adoc#doctor[doctor] for the sections and what they mean.
@@ -1600,6 +1600,13 @@ Moving through the list shows each theme at once in every window.
 Press kbd:[Enter] to keep the highlighted theme and save it.
 Press kbd:[Esc], or close the list any other way, to put back exactly what was shown before; nothing is saved.
 Typing filters the list.
+
+Select Font Set...::
+Just after Select Theme... in the View menu.
+Lists the font sets and previews each as it is highlighted, across the whole window.
+Press kbd:[Enter] to keep the highlighted set and save it; only `font_set` is written and the rest of the settings file is kept.
+Press kbd:[Esc] to put back what was shown.
+See xref:settings.adoc#font-sets[Font sets].
 
 Toggle Light/Dark Theme (`Cmd-K Cmd-T` or `Ctrl-K Ctrl-T`)::
 Switches to the explicit mode opposite the one shown, and saves it.

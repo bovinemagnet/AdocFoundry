@@ -36,6 +36,8 @@ gpui = { workspace = true, features = ["test-support"] }
 gpui-component = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 tree-sitter.workspace = true
+# To check that each font file shipped declares the family it is listed under.
+skrifa.workspace = true
 
 [lints]
 workspace = true

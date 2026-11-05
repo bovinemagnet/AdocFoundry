@@ -13,9 +13,9 @@ use gpui_component::{
 
 /// Completes `doctor` with the app's section, runs it off the main thread (it runs each tool
 /// for its version) and shows the report.
-pub fn show(doctor: Doctor, editor_font: &str, window: &mut Window, cx: &mut App) {
+pub fn show(doctor: Doctor, window: &mut Window, cx: &mut App) {
     let mut doctor = doctor.program("AdocFoundry", env!("CARGO_PKG_VERSION"));
-    doctor.add_section(display_section(editor_font, window, cx));
+    doctor.add_section(display_section(window, cx));
     let task = cx.background_spawn(async move { doctor.run() });
     window
         .spawn(cx, async move |cx| {
@@ -26,7 +26,7 @@ pub fn show(doctor: Doctor, editor_font: &str, window: &mut Window, cx: &mut App
 }
 
 /// The graphics backend and the fonts the app draws with.
-fn display_section(editor_font: &str, window: &Window, cx: &App) -> DoctorSection {
+fn display_section(window: &Window, cx: &App) -> DoctorSection {
     let backend = if cfg!(target_os = "macos") {
         "Metal"
     } else if cfg!(windows) {
@@ -62,15 +62,22 @@ fn display_section(editor_font: &str, window: &Window, cx: &App) -> DoctorSectio
     section = section.line("Scale factor", window.scale_factor().to_string());
     let families = cx.text_system().all_font_names();
     let font = |family: &str| {
-        if families.iter().any(|name| name == family) {
+        if crate::fonts::is_bundled(family) {
+            format!("{family} (bundled)")
+        } else if families.iter().any(|name| name == family) {
             format!("{family} (found)")
         } else {
             format!("{family} (not installed, so a fallback is used)")
         }
     };
-    section
-        .line("Editor font", font(editor_font))
-        .line("Interface font", font(&cx.theme().font_family))
+    match crate::fonts::described(cx) {
+        Some((set, interface, source, reading)) => section
+            .line("Font set", set)
+            .line("Interface font", font(&interface))
+            .line("Source font", font(&source))
+            .line("Reading font", font(&reading)),
+        None => section.line("Interface font", font(&cx.theme().font_family)),
+    }
 }
 
 fn open(text: String, window: &mut Window, cx: &mut App) {

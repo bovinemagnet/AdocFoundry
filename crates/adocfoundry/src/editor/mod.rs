@@ -745,13 +745,7 @@ impl SourceEditorView {
                                 .bg(cx.theme().muted)
                                 .rounded(cx.theme().radius)
                                 .font_family(
-                                    self.app
-                                        .read(cx)
-                                        .engine
-                                        .settings()
-                                        .editor
-                                        .font_family
-                                        .clone(),
+                                    crate::fonts::source(self.app.read(cx).engine.settings(), cx).0,
                                 )
                                 .text_sm()
                                 .children(lines.into_iter().map(|line| {
@@ -808,16 +802,9 @@ impl Focusable for SourceEditorView {
 impl Render for SourceEditorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::renders::rendered(crate::renders::View::Editor);
-        let font_family = self
-            .app
-            .read(cx)
-            .engine
-            .settings()
-            .editor
-            .font_family
-            .clone();
         let settings = self.app.read(cx).engine.settings();
-        let font_size = settings.editor.font_size as f32 * settings.appearance.font_scale.factor();
+        let (font_family, font_size) = crate::fonts::source(settings, cx);
+        let font_size = font_size as f32 * settings.appearance.font_scale.factor();
         let engine = &self.app.read(cx).engine;
         let hunks = if engine.settings().git.show_markers {
             changes::near_view(self.state.read(cx), engine.git().hunks_for(self.document))

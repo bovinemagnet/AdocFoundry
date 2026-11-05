@@ -22,6 +22,7 @@ mod event;
 mod expansion;
 mod export;
 mod files;
+mod font_sets;
 mod format_table;
 #[cfg(feature = "git")]
 mod git;
@@ -102,6 +103,7 @@ pub use event::EngineEvent;
 pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE_FILE};
 pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
 pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};
+pub use font_sets::{built_in_font_sets, FontSet, Fonts, DEFAULT_FONT_SET};
 #[cfg(feature = "git")]
 pub use git::{GitRepository, GitState, GIT_SETTLE};
 pub use graph::{GraphScope, NavCrumb, NavPlace, Neighbour};

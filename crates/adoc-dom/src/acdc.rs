@@ -77,35 +77,42 @@ pub(crate) fn unsupported_page(page: &Path, text: &str) -> Block {
     }
 }
 
-/// Requested include path → the file the resolver actually read, its text and where its `\r`s
-/// were, so spans name real files and end on character boundaries in them.
+/// Requested include path → the file the resolver actually read, its text and where the bytes
+/// acdc does not read were, so spans name real files and end on character boundaries in them.
 type ResolvedIncludes = Arc<Mutex<HashMap<PathBuf, Resolved>>>;
 
-/// An included file as read: its real path, its text and where its `\r`s were.
+/// An included file as read: its real path, its text and where the bytes acdc does not read
+/// were.
 type Resolved = (PathBuf, Arc<str>, Arc<[usize]>);
 
-/// `text` with each `\r\n` as `\n`, as acdc reads line ends, and where each `\r` was removed:
-/// the offset of its `\n` in the text without them. acdc's offsets are in the text without
-/// them; [`original_offset`] maps one back to the file's.
-fn without_crs(text: &str) -> (String, Vec<usize>) {
-    if !text.contains("\r\n") {
-        return (text.to_owned(), Vec::new());
-    }
+/// `text` as acdc reads it: each `\r\n` as `\n` and no spaces or tabs at the end of a line, and
+/// where each byte was removed: the offset of the line's end in the text without them, once per
+/// byte. acdc's offsets are in the text without them; [`original_offset`] maps one back to the
+/// file's.
+fn as_acdc_reads(text: &str) -> (String, Vec<usize>) {
     let mut out = String::with_capacity(text.len());
     let mut removed = Vec::new();
-    let mut rest = text;
-    while let Some(at) = rest.find("\r\n") {
-        out.push_str(&rest[..at]);
-        removed.push(out.len());
-        out.push('\n');
-        rest = &rest[at + 2..];
+    for line in text.split_inclusive('\n') {
+        let (content, end) = match line.strip_suffix("\r\n") {
+            Some(content) => (content, "\n"),
+            None => match line.strip_suffix('\n') {
+                Some(content) => (content, "\n"),
+                None => (line, ""),
+            },
+        };
+        let kept = content.trim_end_matches([' ', '\t']);
+        out.push_str(kept);
+        removed.extend(std::iter::repeat_n(
+            out.len(),
+            line.len() - kept.len() - end.len(),
+        ));
+        out.push_str(end);
     }
-    out.push_str(rest);
     (out, removed)
 }
 
-/// The file's offset of acdc's `offset`: past every removed `\r` before it, and past the one
-/// at it too when `inclusive` (the offset of a character a span ends with).
+/// The file's offset of acdc's `offset`: past every removed byte before it, and past those at
+/// it too when `inclusive` (the offset of a character a span ends with).
 fn original_offset(removed: &[usize], offset: usize, inclusive: bool) -> usize {
     offset + removed.partition_point(|&at| if inclusive { at <= offset } else { at < offset })
 }
@@ -140,7 +147,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
                         Some(tags) => select_tagged(&text, tags),
                         None => text,
                     };
-                    let (lf, removed) = without_crs(&text);
+                    let (lf, removed) = as_acdc_reads(&text);
                     if let Ok(mut map) = resolved.lock() {
                         map.insert(
                             requested.clone(),
@@ -173,7 +180,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         Ok(options) => options,
         Err(error) => return failed(&page, input.text, &error.to_string()),
     };
-    let (lf, page_crs) = without_crs(input.text);
+    let (lf, page_removed) = as_acdc_reads(input.text);
     let protected = for_acdc(&lf);
     let parsed = match acdc::parse(&protected, &options) {
         Ok(parsed) => parsed,
@@ -184,7 +191,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         parsed: &parsed,
         page,
         page_text: input.text,
-        page_crs,
+        page_removed,
         resolved,
         verbatim: std::cell::Cell::new(false),
     };
@@ -543,8 +550,8 @@ struct Converter<'p> {
     parsed: &'p acdc::ParseResult,
     page: PathBuf,
     page_text: &'p str,
-    /// Where the page's `\r`s were, for [`original_offset`].
-    page_crs: Vec<usize>,
+    /// Where the page's bytes that acdc does not read were, for [`original_offset`].
+    page_removed: Vec<usize>,
     resolved: HashMap<PathBuf, Resolved>,
     /// Set while converting verbatim content, which takes no replacements.
     verbatim: std::cell::Cell<bool>,
@@ -621,7 +628,7 @@ impl Converter<'_> {
         let location = &source.location;
         // acdc's end offset is the start of the last character; spans end after it.
         let (text, removed): (Option<&str>, &[usize]) = match &source.file {
-            None => (Some(self.page_text), &self.page_crs),
+            None => (Some(self.page_text), &self.page_removed),
             Some(file) => match self.resolved.get(file) {
                 Some((_, text, removed)) => (Some(&**text), &**removed),
                 None => (None, &[]),

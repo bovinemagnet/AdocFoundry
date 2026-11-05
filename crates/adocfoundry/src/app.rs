@@ -43,6 +43,7 @@ impl EventEmitter<EngineEvent> for AppState {}
 
 impl AppState {
     pub fn new(mut engine: Engine, cx: &mut Context<Self>) -> Self {
+        crate::fonts::init(cx);
         // The app shows documents as tabs, so browsing may reuse a preview tab.
         engine.enable_preview_tabs();
         // The status bar shows the active page's words.
