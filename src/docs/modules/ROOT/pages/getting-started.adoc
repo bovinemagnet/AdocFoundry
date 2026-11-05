@@ -18,12 +18,32 @@ AdocFoundry needs no Ruby, Node.js or Java at run time.
 
 Download `AdocFoundry-<version>-macos-universal.dmg`, open it and drag AdocFoundry to Applications.
 
+Alternatively, install it with Homebrew from the `bovinemagnet/tap` tap (https://github.com/bovinemagnet/homebrew-tap).
+This needs macOS 13 or later.
+
+[source,sh]
+----
+brew install --cask bovinemagnet/tap/adocfoundry
+----
+
+You can also add the tap first with `brew tap bovinemagnet/tap`, then run `brew install --cask adocfoundry`.
+The cask installs the same signed, notarised universal DMG from the GitHub release into `/Applications/AdocFoundry.app`.
+It also links `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` from inside the app bundle into Homebrew's `bin`, so they are on your `PATH` without further steps.
+
+To remove the app and those links, run the following.
+
+[source,sh]
+----
+brew uninstall --cask adocfoundry
+----
+
 Releases built with the project's signing credentials are signed with a Developer ID and notarised, so the app opens without a prompt.
 A release built without them (every release up to 0.2.1) is signed ad hoc, and macOS asks before opening it the first time: Control-click the app, choose *Open*, then confirm.
 The release notes on GitHub say which a release is.
 
-The command-line tools are in `AdocFoundry.app/Contents/MacOS`.
+With a DMG installed by hand, the command-line tools are in `AdocFoundry.app/Contents/MacOS`.
 Link them onto your `PATH` to use them from a terminal.
+An app installed with Homebrew needs no linking.
 
 [source,sh]
 ----
@@ -76,6 +96,8 @@ macOS::
 AdocFoundry downloads the universal DMG with the system's `curl` and checks it against the release's `SHA256SUMS`.
 It mounts the DMG read-only and checks the new app with `codesign --verify --strict --deep` and Gatekeeper (`spctl`), and that its Team ID is that of the running app.
 It then copies the new app beside the running one, swaps the two, quits and relaunches.
+An app installed with Homebrew updates itself the same way, because its cask declares that the app updates itself, so `brew upgrade` leaves it alone.
+`brew upgrade --greedy` also works once the cask has the new release.
 
 Windows::
 AdocFoundry downloads `adocfoundry-<version>-<arch>.msi` (`x86_64` or `aarch64`) and checks it against `SHA256SUMS`.

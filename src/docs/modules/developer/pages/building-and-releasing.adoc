@@ -336,6 +336,16 @@ git push origin v0.7.0
 
 The `version` job of the release workflow fails the run if the tag and the three files disagree.
 
+Once the release is published, update the Homebrew cask in the https://github.com/bovinemagnet/homebrew-tap[`bovinemagnet/homebrew-tap`] repository.
+Set `version` and `sha256` in `Casks/adocfoundry.rb`, taking the `sha256` from the DMG's line in the release's `SHA256SUMS`, check the cask, then merge the change.
+This step is manual for now, and automating it is tracked in https://github.com/bovinemagnet/AdocFoundry/issues/391[#391].
+
+[source,sh]
+----
+brew style --cask bovinemagnet/tap/adocfoundry
+brew audit --cask --online bovinemagnet/tap/adocfoundry
+----
+
 Each release has its manual checks in an issue labelled `qa` (0.7.0's is https://github.com/bovinemagnet/AdocFoundry/issues/385[#385]), drawn from the checklists in `docs/qa/`.
 
 The documentation site stays unversioned and shows the release as its display version, set as `display_version` in `src/docs/antora.yml` (currently `0.7.0`).
