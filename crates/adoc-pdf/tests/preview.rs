@@ -111,6 +111,54 @@ fn a_changed_font_is_read_again() {
     assert_eq!(count(Probe::FontRead), 2);
 }
 
+/// Issue #188: a kept theme is loaded again only when it is chosen differently or one of its
+/// files, the theme or one it extends, changes on disk.
+#[test]
+fn a_kept_theme_is_current_until_one_of_its_files_changes() {
+    use adoc_core::probe::{count, reset, Probe};
+    use adoc_core::FileAccess;
+    use adoc_pdf::{KeptTheme, ThemeSource};
+
+    let (directory, _) = acme_theme_copy();
+    let source = ThemeSource::File(directory.path().join("acme-theme.yml"));
+    reset();
+    let kept = KeptTheme::load(&source, &FileAccess::Any).unwrap();
+    assert_eq!(count(Probe::ThemeLoad), 1);
+    assert_eq!(
+        kept.theme(),
+        &adoc_pdf::load_theme(&source).unwrap(),
+        "the same theme as a load"
+    );
+    assert!(kept.is_current(&source, &FileAccess::Any));
+    assert!(!kept.is_current(&ThemeSource::Bundled("default".into()), &FileAccess::Any));
+    let elsewhere = FileAccess::Within(vec![directory.path().join("fonts")]);
+    assert!(
+        !kept.is_current(&source, &elsewhere),
+        "read with other access"
+    );
+    // The theme it extends gains a key, so its size differs whatever the clock's resolution.
+    let base = directory.path().join("acme-base-theme.yml");
+    let mut text = std::fs::read_to_string(&base).unwrap();
+    text.push_str("sidebar:\n  font-color: 333333\n");
+    std::fs::write(&base, text).unwrap();
+    assert!(!kept.is_current(&source, &FileAccess::Any));
+    let again = KeptTheme::load(&source, &FileAccess::Any).unwrap();
+    assert!(again.is_current(&source, &FileAccess::Any));
+    assert_ne!(again.theme(), kept.theme());
+    assert_eq!(count(Probe::ThemeLoad), 2);
+}
+
+/// A bundled theme never changes.
+#[test]
+fn a_kept_bundled_theme_stays_current() {
+    use adoc_core::FileAccess;
+    use adoc_pdf::{KeptTheme, ThemeSource};
+
+    let source = ThemeSource::Bundled("default".into());
+    let kept = KeptTheme::load(&source, &FileAccess::Any).unwrap();
+    assert!(kept.is_current(&source, &FileAccess::Any));
+}
+
 /// Issue #188: the preview keeps what Typst memoised, so compiling the same page again reuses
 /// it. A timing probe, run with `--ignored --release`.
 #[test]

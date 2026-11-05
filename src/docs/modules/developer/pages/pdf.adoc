@@ -334,6 +334,11 @@ The offset is found from the glyphs' Typst spans through the emitter's `SourceMa
 
 The preview's compiles keep Typst's memoisation cache between them and reuse the fonts already loaded, so a recompile after an edit reuses the layout of the blocks the edit left alone.
 
+The preview also keeps its theme between typesettings, as an `adoc_pdf::KeptTheme`: the loaded theme with the `ThemeSource` it was chosen by, the `FileAccess` it was read with, and the modification time and size of each theme file, noted before the file is read.
+The worker reuses it while `KeptTheme::is_current` is true, and loads the theme again only when it is chosen differently or the theme, or a file it extends, changes its modification time or size.
+A bundled theme has no files, so it stays current.
+A theme edit therefore shows at the next typesetting, after the next edit to the page; exports still load the theme each time.
+
 The app's `src/preview/pdf.rs` rasterises the SVG pages on a background task with the image viewer's decoder (`image_decode`).
 It drops the results of superseded rasterisations by generation and releases replaced images from the GPU.
 `anchor_at` picks the line a click falls on.

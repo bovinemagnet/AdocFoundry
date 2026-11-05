@@ -10,6 +10,7 @@ use std::{
     fmt,
     path::{Path, PathBuf},
     sync::OnceLock,
+    time::SystemTime,
 };
 
 use adoc_core::FileAccess;
@@ -214,6 +215,61 @@ pub fn load_theme_within(
     source: &ThemeSource,
     access: &FileAccess,
 ) -> Result<LoadedTheme, ThemeError> {
+    load(source, access).map(|(theme, _)| theme)
+}
+
+/// A file's modification time and size.
+type Stamp = (Option<SystemTime>, u64);
+
+/// Each theme file read, with its stamp, or none when it could not be read.
+type Stamps = Vec<(PathBuf, Option<Stamp>)>;
+
+fn stamp(path: &Path) -> Option<Stamp> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.modified().ok(), metadata.len()))
+}
+
+/// A loaded theme kept with the files it was read from, to load it again only when it is chosen
+/// differently or one of them changes, as the PDF preview does between typesettings.
+#[derive(Debug)]
+pub struct KeptTheme {
+    source: ThemeSource,
+    access: FileAccess,
+    theme: LoadedTheme,
+    stamps: Stamps,
+}
+
+impl KeptTheme {
+    /// Loads a theme as [`load_theme_within`] does, noting each of its files' modification time
+    /// and size before reading it.
+    pub fn load(source: &ThemeSource, access: &FileAccess) -> Result<Self, ThemeError> {
+        adoc_core::probe::hit(adoc_core::probe::Probe::ThemeLoad);
+        let (theme, stamps) = load(source, access)?;
+        Ok(Self {
+            source: source.clone(),
+            access: access.clone(),
+            theme,
+            stamps,
+        })
+    }
+
+    /// Whether loading `source` with `access` would give this theme: chosen the same way, and
+    /// none of its files changed since it was read. A bundled theme's files never change.
+    #[must_use]
+    pub fn is_current(&self, source: &ThemeSource, access: &FileAccess) -> bool {
+        self.source == *source
+            && self.access == *access
+            && self.stamps.iter().all(|(path, was)| stamp(path) == *was)
+    }
+
+    #[must_use]
+    pub fn theme(&self) -> &LoadedTheme {
+        &self.theme
+    }
+}
+
+/// A theme, and each file read for it with its stamp.
+fn load(source: &ThemeSource, access: &FileAccess) -> Result<(LoadedTheme, Stamps), ThemeError> {
     let mut loader = Loader {
         access: access.clone(),
         ..Loader::default()
@@ -268,13 +324,14 @@ pub fn load_theme_within(
             ),
         });
     }
-    Ok(LoadedTheme {
+    let theme = LoadedTheme {
         keys: loader.keys,
         fonts: loader.fonts,
         fallbacks: loader.fallbacks,
         dir,
         warnings: loader.warnings,
-    })
+    };
+    Ok((theme, loader.stamps))
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -309,6 +366,8 @@ struct Loader {
     current: Option<PathBuf>,
     /// Which theme files may be read.
     access: FileAccess,
+    /// Each theme file read, stamped before it was read.
+    stamps: Stamps,
 }
 
 /// The theme categories asciidoctor-pdf's converter reads.
@@ -500,6 +559,7 @@ impl Loader {
                 (text, None)
             }
             ThemeFile::Path(path) => {
+                self.stamps.push((path.clone(), stamp(path)));
                 let text = self
                     .access
                     .read_to_string(path)

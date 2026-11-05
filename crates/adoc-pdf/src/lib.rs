@@ -21,6 +21,6 @@ pub use export::{
 pub use fonts::missing_fonts;
 
 pub use theme::{
-    load_theme, load_theme_within, Color, FontCatalog, FontFaces, FontFile, LoadedTheme,
+    load_theme, load_theme_within, Color, FontCatalog, FontFaces, FontFile, KeptTheme, LoadedTheme,
     ThemeError, ThemeKeys, ThemeSource, ThemeValue, ThemeWarning,
 };

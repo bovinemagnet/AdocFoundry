@@ -46,9 +46,11 @@ pub enum Probe {
     PreviewTypeset,
     /// A theme's font file read from disk and parsed.
     FontRead,
+    /// A PDF theme loaded from its files, `adoc_pdf::KeptTheme::load`.
+    ThemeLoad,
 }
 
-const PROBES: usize = 19;
+const PROBES: usize = 20;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -90,4 +92,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::FontRead as usize == PROBES - 1);
+const _: () = assert!(Probe::ThemeLoad as usize == PROBES - 1);

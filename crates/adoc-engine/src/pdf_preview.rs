@@ -2,11 +2,13 @@
 //! view of the preview target is typeset on a worker as the PDF export would typeset the page,
 //! with the theme and fonts chosen as the export chooses them, and published as SVG pages with
 //! the source of each line ([`EngineEvent::PdfPreviewReady`]). One typesetting runs at a time;
-//! a view that arrives meanwhile waits, and only the newest is typeset next.
+//! a view that arrives meanwhile waits, and only the newest is typeset next. The theme is kept
+//! between typesettings and loaded again only when it is chosen differently or one of its files
+//! changes.
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use adoc_pdf::{Document, PageView, PreviewPage};
+use adoc_pdf::{Document, KeptTheme, PageView, PreviewPage};
 
 use crate::{workspace::WorkerMessage, DocumentId, Engine, EngineEvent, ExportArgs, ExportTarget};
 
@@ -27,6 +29,8 @@ pub(crate) struct PdfPreviewState {
     /// The document to typeset once it finishes.
     waiting: Option<DocumentId>,
     published: HashMap<DocumentId, Arc<PdfPreview>>,
+    /// The theme the last typesetting used.
+    theme: Option<Arc<KeptTheme>>,
 }
 
 impl Engine {
@@ -76,6 +80,7 @@ impl Engine {
         self.pdf_preview.running = true;
         self.workers_running += 1;
         let path = preview.path.clone();
+        let kept = self.pdf_preview.theme.clone();
         let crashed = move |error| WorkerMessage::PdfPreviewTypeset {
             preview: Box::new(PdfPreview {
                 document: id,
@@ -83,20 +88,24 @@ impl Engine {
                 path,
                 pages: Err(format!("typesetting crashed: {error}")),
             }),
+            theme: None,
         };
         crate::worker::spawn(sender, crashed, move |sender| {
-            let pages = adoc_pdf::load_theme_within(&source, &access)
-                .map_err(|error| error.to_string())
-                .and_then(|theme| {
-                    let document = Document::Article(PageView {
-                        key: "p0".to_owned(),
-                        view: preview.view.clone(),
-                        depth: 0,
-                    });
-                    let typst = adoc_pdf::to_typst(&document, &theme, &options);
-                    adoc_pdf::preview_pages(&typst, &theme, &options)
-                        .map_err(|error| error.to_string())
+            let theme = match kept {
+                Some(kept) if kept.is_current(&source, &access) => Ok(kept),
+                _ => KeptTheme::load(&source, &access).map(Arc::new),
+            };
+            let kept = theme.as_ref().ok().cloned();
+            let pages = theme.map_err(|error| error.to_string()).and_then(|kept| {
+                let theme = kept.theme();
+                let document = Document::Article(PageView {
+                    key: "p0".to_owned(),
+                    view: preview.view.clone(),
+                    depth: 0,
                 });
+                let typst = adoc_pdf::to_typst(&document, theme, &options);
+                adoc_pdf::preview_pages(&typst, theme, &options).map_err(|error| error.to_string())
+            });
             let _ = sender.send(WorkerMessage::PdfPreviewTypeset {
                 preview: Box::new(PdfPreview {
                     document: id,
@@ -104,12 +113,20 @@ impl Engine {
                     path: preview.path.clone(),
                     pages,
                 }),
+                theme: kept,
             });
         });
     }
 
-    pub(crate) fn pdf_preview_typeset(&mut self, preview: PdfPreview) {
+    pub(crate) fn pdf_preview_typeset(
+        &mut self,
+        preview: PdfPreview,
+        theme: Option<Arc<KeptTheme>>,
+    ) {
         self.pdf_preview.running = false;
+        if theme.is_some() {
+            self.pdf_preview.theme = theme;
+        }
         let (id, version) = (preview.document, preview.version);
         if self.documents.contains_key(&id) {
             self.pdf_preview.published.insert(id, Arc::new(preview));
