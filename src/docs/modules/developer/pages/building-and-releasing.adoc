@@ -18,7 +18,7 @@ cargo run -p adoc-ls -- --version                        # smoke-test the langua
 cargo deny check                                         # licences and advisories
 cargo xtask layers                                       # the crate dependency ladder
 cargo xtask package                                      # release build and archive in dist/
-cargo xtask bump 0.6.0                                   # set the version for a release
+cargo xtask bump 0.7.0                                   # set the version for a release
 cargo xtask notices target/THIRD-PARTY-NOTICES.txt       # the third-party licence notices
 ----
 
@@ -328,18 +328,17 @@ A release goes in this order:
 
 [source,sh]
 ----
-cargo xtask bump 0.6.0
-git commit -am "Release 0.6.0"
-git tag v0.6.0
-git push origin v0.6.0
+cargo xtask bump 0.7.0
+git commit -am "Release 0.7.0"
+git tag v0.7.0
+git push origin v0.7.0
 ----
 
 The `version` job of the release workflow fails the run if the tag and the three files disagree.
 
-The manual checks for a release are in `docs/qa/phase5.md`.
-Every item of `docs/qa/phase1.md` to `docs/qa/phase4.md` is also re-run on all three platforms.
+Each release has its manual checks in an issue labelled `qa` (0.7.0's is https://github.com/bovinemagnet/AdocFoundry/issues/385[#385]), drawn from the checklists in `docs/qa/`.
 
-The documentation site stays unversioned and shows the release as its display version, set as `display_version` in `src/docs/antora.yml` (currently `0.6.0`).
+The documentation site stays unversioned and shows the release as its display version, set as `display_version` in `src/docs/antora.yml` (currently `0.7.0`).
 
 == Conventions for contributions
 

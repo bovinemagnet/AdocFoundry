@@ -138,7 +138,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "adoc-antora"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "globset",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-audit"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
@@ -163,11 +163,11 @@ dependencies = [
 
 [[package]]
 name = "adoc-core"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "adoc-diagrams"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "merman",
  "sha2 0.10.9",
@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-dom"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "acdc-parser",
  "adoc-core",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-engine"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-antora",
  "adoc-audit",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-git"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "adoc-git",
@@ -231,11 +231,11 @@ dependencies = [
 
 [[package]]
 name = "adoc-graph"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "adoc-impact"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-index"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "adoc-parser",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-lang"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-ls"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "adoc-engine",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-math"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "asciimath-parser",
  "mitex",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-mcp"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "adoc-engine",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-model"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "adoc-dom",
@@ -328,14 +328,14 @@ dependencies = [
 
 [[package]]
 name = "adoc-parser"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
 ]
 
 [[package]]
 name = "adoc-pdf"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "adoc-dom",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-render"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-antora",
  "adoc-core",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "adoc-spell"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "spellbook",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "adocfoundry"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "adoc-engine",
@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "adocfoundry-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "adoc-core",
  "adoc-dom",
@@ -12696,7 +12696,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "serde_json",
  "tempfile",
