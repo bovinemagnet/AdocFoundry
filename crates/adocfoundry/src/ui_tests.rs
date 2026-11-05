@@ -1815,6 +1815,84 @@ fn blame_column_toggles_and_hover_shows_the_commit(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("blame-column").is_none());
 }
 
+/// Toggle Blame from the menu or a key goes through the `ToggleBlame` action: the second turns
+/// the column off again.
+#[gpui::test]
+fn toggle_blame_from_the_menu_turns_the_column_on_and_off(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("page.adoc", "= Page\n\nText.\n");
+    test.commit_all("Write the page");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![dir.path().join("page.adoc")], cx);
+    settle_engine(&app, &mut cx);
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+
+    for shown in [true, false, true, false] {
+        cx.dispatch_action(crate::editor::bindings::ToggleBlame);
+        settle_engine(&app, &mut cx);
+        assert_eq!(cx.update(|_, cx| editor.read(cx).shows_blame()), shown);
+        assert_eq!(cx.debug_bounds("blame-column").is_some(), shown);
+    }
+    // From the command palette, as people run it.
+    for shown in [true, false, true, false] {
+        cx.simulate_keystrokes("secondary-shift-p");
+        cx.run_until_parked();
+        cx.simulate_input("Toggle Blame");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        settle_engine(&app, &mut cx);
+        assert_eq!(
+            cx.update(|_, cx| editor.read(cx).shows_blame()),
+            shown,
+            "from the palette"
+        );
+        assert_eq!(cx.debug_bounds("blame-column").is_some(), shown);
+    }
+    // From the ☰ menu's View menu, opened by clicks, as people use it (#388).
+    for shown in [true, false, true, false] {
+        // The menu is built as it opens: count the items the keys move through to reach it.
+        let steps = cx.update(|_, cx| {
+            let menus = crate::menus::menus(&app.read(cx).engine);
+            let view = menus.iter().find(|menu| menu.name == "View").unwrap();
+            let enabled: Vec<&str> = view
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    crate::menus::Item::Action {
+                        label,
+                        disabled: false,
+                        ..
+                    } => Some(label.as_ref()),
+                    _ => None,
+                })
+                .collect();
+            enabled
+                .iter()
+                .position(|label| *label == "Toggle Blame")
+                .unwrap()
+                + 1
+        });
+        click("app-menu", &mut cx);
+        click("app-menu-View", &mut cx);
+        cx.simulate_keystrokes(&vec!["down"; steps].join(" "));
+        cx.simulate_keystrokes("enter");
+        settle_engine(&app, &mut cx);
+        assert_eq!(
+            cx.update(|_, cx| editor.read(cx).shows_blame()),
+            shown,
+            "from the View menu"
+        );
+        assert_eq!(cx.debug_bounds("blame-column").is_some(), shown);
+    }
+}
+
 #[gpui::test]
 fn save_and_commit_commits_the_page_and_counts_it_unpushed(cx: &mut TestAppContext) {
     init(cx);
