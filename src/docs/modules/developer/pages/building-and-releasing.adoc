@@ -40,6 +40,11 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 `.github/workflows/ci.yml` runs on pull requests and on pushes to `main`. It does not run on `v*` tags by itself; `release.yml` calls it (`workflow_call`) on the tagged commit, so a tagged release is tested as well as built.
 
+A pull request or push that changes only documentation, `.md` and `.adoc` files, runs no CI at all, through `paths` filters on both triggers.
+`.md` and `.adoc` files under `crates/` and `tests/` still run it, because they are the templates the engine builds in and the fixtures the tests read.
+The docs site's pages, `README.md`, `AGENTS.md` and the design document are read by some tests too (the visual editor's round-trip tests over `src/docs`, `theme_keys` over the theme keys partial, and `every_crate_is_documented` in `xtask`), so a change to them alone is checked only by the next run that changes code.
+A tagged release always runs CI, since `workflow_call` has no path filter.
+
 [cols="1,4"]
 |===
 |Job |What it does
@@ -335,6 +340,16 @@ git push origin v0.7.0
 ----
 
 The `version` job of the release workflow fails the run if the tag and the three files disagree.
+
+Once the release is published, update the Homebrew cask in the https://github.com/bovinemagnet/homebrew-tap[`bovinemagnet/homebrew-tap`] repository.
+Set `version` and `sha256` in `Casks/adocfoundry.rb`, taking the `sha256` from the DMG's line in the release's `SHA256SUMS`, check the cask, then merge the change.
+This step is manual for now, and automating it is tracked in https://github.com/bovinemagnet/AdocFoundry/issues/391[#391].
+
+[source,sh]
+----
+brew style --cask bovinemagnet/tap/adocfoundry
+brew audit --cask --online bovinemagnet/tap/adocfoundry
+----
 
 Each release has its manual checks in an issue labelled `qa` (0.7.0's is https://github.com/bovinemagnet/AdocFoundry/issues/385[#385]), drawn from the checklists in `docs/qa/`.
 
