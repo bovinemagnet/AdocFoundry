@@ -1873,7 +1873,11 @@ fn toggle_blame_from_the_menu_turns_the_column_on_and_off(cx: &mut TestAppContex
                     _ => None,
                 })
                 .collect();
-            enabled.iter().position(|label| *label == "Toggle Blame").unwrap() + 1
+            enabled
+                .iter()
+                .position(|label| *label == "Toggle Blame")
+                .unwrap()
+                + 1
         });
         click("app-menu", &mut cx);
         click("app-menu-View", &mut cx);
