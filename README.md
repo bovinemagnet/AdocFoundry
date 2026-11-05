@@ -425,12 +425,27 @@ cargo xtask notices     # the third-party notices; with a file name, written to 
 The workspace is a ladder of crates, each depending only on those below it:
 
 ```text
-adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
-adoc-engine              documents, commands, undo, workspace, watcher, settings, search, preview, visual model
-adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   view tree and HTML; diagrams; the editable model; Git; PDF
-adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang
-adoc-core
+L4  adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
+L3  adoc-engine     documents, commands, undo, workspace, watcher, settings, search, preview, visual model, graph
+L2  adoc-render     the view tree and HTML
+    adoc-diagrams   diagrams
+    adoc-model      the visual editor's model
+    adoc-git        Git, over gix
+    adoc-pdf        PDF export
+    adoc-audit      the documentation quality audit
+    adoc-impact     documentation impact analysis
+L1  adoc-parser     the line-oriented parser
+    adoc-dom        the full document tree
+    adoc-antora     Antora's model and resolver
+    adoc-index      the workspace index
+    adoc-lang       language features
+    adoc-math       STEM notation to Typst maths
+    adoc-spell      spell checking
+    adoc-graph      the link graph and its layout
+L0  adoc-core       domain types
 ```
+
+`cargo xtask layers` checks the ladder in CI: a crate may use only crates in lower layers, apart from a few listed pairs in the same layer, and front ends reach `adoc-audit` and `adoc-impact` only through `adoc-engine`.
 
 `adoc-dom` holds the full document tree behind the `DocumentParser` trait and is the only crate that names a parser crate (acdc-parser, and asciidoc-parser for comparison). `adoc-model` is the visual editor's model: it reads each text block of a page losslessly (every source byte is text, a mark delimiter or part of an atom), checks its reading against the parser's, and turns edits into the smallest source edits; its property tests (`cargo test -p adoc-model --test roundtrip`) check that building and writing back is the identity on every fixture and documentation page and that a long random editing session changes only the lines it edited. The fidelity harness (`cargo test -p adocfoundry-cli --test fidelity`) compares `render` with Asciidoctor over `tests/fixtures/render/` (block structure, paragraph text, and how block attributes and options show: list numbering, table frame, grid, stripes and width, cell alignment, image placement, collapsible blocks), and skips itself when `asciidoctor --version` fails.
 

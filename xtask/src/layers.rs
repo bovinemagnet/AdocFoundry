@@ -752,4 +752,47 @@ libc = "=0.2.0"
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         assert_eq!(run(&root).unwrap(), Vec::<String>::new());
     }
+
+    /// Whether `text` names `name` as a word of its own: `adocfoundry` is not named by
+    /// `adocfoundry-cli`.
+    fn names(text: &str, name: &str) -> bool {
+        let part_of_name = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+        text.match_indices(name).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + name.len()..].chars().next();
+            !before.is_some_and(part_of_name) && !after.is_some_and(part_of_name)
+        })
+    }
+
+    #[test]
+    fn names_a_crate_only_as_a_word() {
+        assert!(names("`adocfoundry` (the app)", "adocfoundry"));
+        assert!(names("crates/adocfoundry/", "adocfoundry"));
+        assert!(!names("`adocfoundry-cli`", "adocfoundry"));
+        assert!(!names("adoc-lang-server", "adoc-lang"));
+    }
+
+    /// Issue #197: the guides other than the project's own instructions, and the developer
+    /// documentation's crate table and diagram, describe the real ladder, so every crate in
+    /// `LAYERS` is named in each.
+    #[test]
+    fn every_crate_is_documented() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut missing = Vec::new();
+        for file in [
+            "AGENTS.md",
+            "README.md",
+            "docs/design/DESIGN-AdocFoundry_Architecture.md",
+            "src/docs/modules/developer/pages/architecture.adoc",
+            "src/docs/modules/developer/examples/crate-layers.mmd",
+        ] {
+            let text = fs::read_to_string(root.join(file)).unwrap();
+            for (name, _) in LAYERS {
+                if !names(&text, name) {
+                    missing.push(format!("{file} does not name {name}"));
+                }
+            }
+        }
+        assert_eq!(missing, Vec::<String>::new());
+    }
 }

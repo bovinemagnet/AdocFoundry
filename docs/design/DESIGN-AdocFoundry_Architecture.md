@@ -10,7 +10,7 @@ AdocFoundry ([bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoun
 
 | Layer | Decision | Fallback |
 | --- | --- | --- |
-| GUI | GPUI via gpui-kit / gpui-component 0.8 (Apache-2.0), gated by a two-week spike | egui 0.37, the stack WordCraft, PdfCraft and Lockbook ship on |
+| GUI | GPUI via gpui-kit / gpui-component 0.8 (Apache-2.0; 0.9 since the 0.7.0 cycle), gated by a two-week spike | egui 0.37, the stack WordCraft, PdfCraft and Lockbook ship on |
 | Language layer | Reuse `adoc-core`, `adoc-parser`, `adoc-antora`, `adoc-index`, `adoc-render` and the tree-sitter grammar fork; move them into the AdocFoundry workspace | — |
 | Full AST | acdc-parser 0.11 behind an `adoc-dom` trait (owned tree, positions mapped through includes, book doctype) | asciidoc-parser 0.31 as second implementation, same fixture corpus |
 | Preview | Render the AST to native elements; HTML kept for export and fidelity diffs | wry webview behind a feature flag |
@@ -196,59 +196,67 @@ Mermaid needs a DOM and font metrics in JavaScript, so embedding a JS engine is 
 
 **Recommendation: generate Typst from the AST and compile in-process.** It is the only route that delivers book-style output (chapters, running content, TOC, index, PDF/UA) without building a layout engine, and Typst's own crate split proves it works as a library. The asciidoctor-pdf YAML theme model maps cleanly: themes flatten to a key map with `extends:` inheritance, `$variable` references and arithmetic (`round($base_font_size * 1.25)`) evaluated at load; `page` keys become `page()` arguments, `base`/`heading` keys become `set text`/`show heading` rules, `header`/`footer` recto/verso columns become a three-cell grid in `page.header`/`page.footer`, `title-page`/`toc`/`index` keys become template functions, `font.catalog` becomes font files handed to the Typst `World`. Bundle Noto Serif, Noto Sans and M+ 1mn as asciidoctor-pdf does so the `default` theme renders identically out of the box. Krilla direct is the fallback if Typst's layout ever proves too opinionated for a theme.
 
-## Proposed architecture
+## Architecture
 
-AdocFoundry is one Cargo workspace at [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) that adopts the five `adoc-*` crates from zed-asciidoc, adds a document-model layer above them, and keeps every front end (GPUI app, CLI, LSP) as a thin consumer of one engine.
+AdocFoundry is one Cargo workspace at [bovinemagnet/AdocFoundry](https://github.com/bovinemagnet/AdocFoundry) that adopted the five `adoc-*` crates from zed-asciidoc, added a document-model layer above them, and keeps every front end (GPUI app, CLI, LSP, MCP) as a thin consumer of one engine. The ladder and layout below are the workspace as shipped. The Phase 1 proposal had the same five layers with three front ends; the later phases added crates to each layer.
 
 ```text
-Front ends        adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)
-                          |                      |               |
-                          v                      v               v
-Engine            adoc-engine: sessions, documents, command registry, undo, watcher, settings
+Front ends        adocfoundry (GPUI app)   adocfoundry-cli   adoc-ls (LSP)   adoc-mcp (MCP)
+                          |                      |               |               |
+                          v                      v               v               v
+Engine            adoc-engine: sessions, documents, command registry, undo, watcher, settings, events
                           |
                           v
-Document services adoc-model (P3)   adoc-render (P2)   adoc-diagrams (P2)   adoc-pdf (P4)
+Document services adoc-render   adoc-diagrams   adoc-model   adoc-git   adoc-pdf   adoc-audit   adoc-impact
                           |
                           v
-Language layer    adoc-parser   adoc-dom (new)   adoc-antora   adoc-index   (adoc-lang, see Phase 1 spec)
+Language layer    adoc-parser   adoc-dom   adoc-antora   adoc-index   adoc-lang   adoc-math   adoc-spell   adoc-graph
                           |
                           v
 Core              adoc-core: Document, LineIndex, SourceRange, Section, Anchor, Reference, Diagnostic
 ```
 
-*Crate ladder: 5 layers, 3 front ends. Arrows are the only permitted dependency direction. The rendered diagram is in the Claude Doc version.*
+*Crate ladder: 5 layers, 4 front ends. Arrows are the only permitted dependency direction.*
 
-Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. The accented boxes are the two pieces that do not exist yet in any form: the GPUI shell and `adoc-dom`.
+Arrows show the only permitted dependency direction; a crate never imports a crate above it, and only `adocfoundry` imports GPUI. `cargo xtask layers` checks the ladder in CI from `LAYERS` in `xtask/src/layers.rs`, with a few same-layer pairs allowed (`adoc-index` and `adoc-lang` on `adoc-parser`; `adoc-lang` on `adoc-index` and `adoc-antora`; `adoc-pdf` on `adoc-render`). Front ends reach `adoc-audit` and `adoc-impact` only through the engine.
 
 **Workspace layout** (Typst/Zed pattern: `crates/*`, shared `[workspace.package]`, `default-members` on the app binary):
 
 ```
 AdocFoundry/
-  Cargo.toml                 workspace; default-members = ["crates/adocfoundry"]
+  Cargo.toml                 workspace; default-members = ["crates/adocfoundry"]; [patch.crates-io] for vendor/
   crates/
-    adoc-core                L0  (from zed-asciidoc)
-    adoc-parser              L1  (from zed-asciidoc)
-    adoc-antora              L1  (from zed-asciidoc)
-    adoc-index               L1  (from zed-asciidoc)
-    adoc-dom                 L1  new: full AST behind `trait DocumentParser`
+    adoc-core                L0  domain types (from zed-asciidoc)
+    adoc-parser              L1  line-oriented semantic parser (from zed-asciidoc)
+    adoc-dom                 L1  full AST behind `trait DocumentParser`; the only crate naming a parser crate
+    adoc-antora              L1  antora.yml, the playbook, the catalog and resolver (from zed-asciidoc)
+    adoc-index               L1  the workspace index (from zed-asciidoc)
+    adoc-lang                L1  editor-agnostic language features (extracted from adoc-ls)
+    adoc-math                L1  Phase 5: AsciiMath and LaTeX to checked Typst maths
     adoc-spell               L1  spell checking: Hunspell dictionaries, words, word lists
-    adoc-model               L2  Phase 3: editable tree + steps
-    adoc-render              L2  (from zed-asciidoc) + NativeRenderer
-    adoc-diagrams            L2  Phase 2
-    adoc-pdf                 L2  Phase 4
+    adoc-graph               L1  Phase 7: link graph, layout, groups, mind maps, SVG
+    adoc-render              L2  view tree and HTML backend (from zed-asciidoc)
+    adoc-diagrams            L2  Phase 2: Mermaid in process, other tools on PATH, cache
+    adoc-model               L2  Phase 3: the visual editor's model and steps
+    adoc-git                 L2  Git over gix: status, diffs, revisions, history
+    adoc-pdf                 L2  Phase 4: themes, Typst emitter and World; themes/ and fonts/ bundled here
     adoc-audit               L2  documentation quality audit: rules, reports, policy
     adoc-impact              L2  documentation impact analysis: rules over two revisions, report
-    adoc-engine              L3  sessions, commands, undo, watcher, settings
-    adoc-ls                  L4  (from zed-asciidoc) LSP binary
+    adoc-engine              L3  sessions, commands, undo, watcher, settings, events
+    adocfoundry              L4  GPUI app; languages/ (tree-sitter queries), themes/, fonts/, wix/
     adocfoundry-cli          L4  headless binary
-    adocfoundry              L4  GPUI app
-  grammars/                  git submodule or vendored tree-sitter-asciidoc (master branch)
-  themes/                    bundled PDF themes (base, default, default-sans)
-  fonts/                     Noto Serif, Noto Sans, M+ 1mn (OFL)
+    adoc-ls                  L4  LSP binary (from zed-asciidoc), on the engine since Phase 5
+    adoc-mcp                 L4  Phase 5: MCP server over stdio, and Streamable HTTP since Phase 6
+  grammars/                  tree-sitter-asciidoc, a git submodule on its master branch
+  vendor/                    evalexpr stand-in and patched comemo (see vendor/README.md)
+  xtask/                     layers, package, run, notices, bump
+  packaging/                 icons, desktop entry, macOS bundle script, Flatpak manifest, smoke tests
+  src/docs/                  the user and developer documentation, an Antora site
+  docs/                      this design, the phase specifications (prd/) and manual QA records (qa/)
   tests/fixtures/            Antora components, parity corpus vs Asciidoctor
 ```
 
-Whether the five existing crates move into this workspace or stay in zed-asciidoc and are consumed as git dependencies is an open question (see Risks). Moving them and leaving zed-asciidoc as a thin extension that depends on AdocFoundry's `adoc-ls` is the cleaner end state.
+The five existing crates moved into this workspace with their history in Phase 1, and zed-asciidoc is now a thin extension that installs AdocFoundry's `adoc-ls` (see the open questions below).
 
 **Data flow on a keystroke (Phase 2 onward)**
 
@@ -266,8 +274,8 @@ Whether the five existing crates move into this workspace or stay in zed-asciido
 | Paths | `adoc-index::normalize_path` already stays lexical; Antora resource IDs always use `/`; Windows needs long-path handling and case-insensitive matching flagged, never assumed |
 | File watching | `notify` crate with debouncing; Antora descriptors re-read on change (gap in adoc-ls today) |
 | External tools | `dot`, `plantuml`, `mmdc` found via PATH and a settings override; never required |
-| Packaging | macOS universal DMG (signed, notarised), Windows MSI x64 + ARM64, Linux AppImage + Flatpak + deb/rpm, the PdfCraft matrix; `cargo-dist` or `cargo-packager` |
-| Binary size budget | Under 40 MB without the optional QuickJS fallback; Typst and its fonts are the largest contributors |
+| Packaging | macOS DMG (signed and notarised when the secrets are set), Windows MSI and zip, Linux AppImage, deb and rpm, with a Flatpak manifest; built by `release.yml` with `packaging/macos/bundle.sh`, `cargo-wix`, `cargo-deb`, `cargo-generate-rpm` and `linuxdeploy`, then smoke-tested (`packaging/smoke-test.py`) |
+| Binary size budget | Under 40 MB; Typst and its fonts are the largest contributors. Not yet measured in CI (#196) |
 
 ## Phase 1 — AsciiDoc editor with Antora support and link following
 
@@ -416,6 +424,23 @@ Phase 5 turns the four phases into a release and opens the engine to other tools
 - **`adoc-ls`:** it moves onto `adoc-engine`, so LSP clients get the app's diagnostics, references, page rename with link updates and PDF export.
 - **`adoc-mcp`:** a stdio MCP server over the engine's commands, read-only unless started with `--allow-write`.
 
+## Phase 6 — Inline STEM, MCP over HTTP, signed releases and updates
+
+Phase 6 does the four things Phase 5 left for later. It is specified in [`docs/prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md`](../prd/PRD-AdocFoundry_Phase_6_Implementation_Specification.md) and adds no crate.
+
+- **Inline STEM:** `stem:[…]` is typeset in the line of text in the preview and the visual editor, on the text's baseline (#57).
+- **MCP over HTTP:** `adoc-mcp --http <addr>` serves MCP's Streamable HTTP transport on a loopback address, to clients that hold its token (#56).
+- **Signed releases:** the macOS app is signed with a Developer ID, notarised and stapled, and the Windows executables and MSI are signed with Authenticode, when the project's secrets are set (#54).
+- **Updates:** the app notices a newer release and says so once; with the user's consent it updates itself in place on macOS and Windows (#55).
+
+## Phase 7 — Graph view
+
+Phase 7 draws how a workspace's pages link together. It is specified in [`docs/prd/PRD-AdocFoundry_Phase_7_Implementation_Specification.md`](../prd/PRD-AdocFoundry_Phase_7_Implementation_Specification.md).
+
+- **The link graph:** the engine keeps a graph of pages, partials and navigation files, joined by xrefs, includes and navigation entries, current as pages change and without rescanning the workspace (#272).
+- **`adoc-graph`:** a new L1 crate with no UI framework and no internal dependencies: the graph's store, a deterministic force-directed layout (Barnes–Hut above 500 nodes), grouping, mind maps and SVG output.
+- **The views:** the whole workspace in its own window and the active page's neighbourhood in the sidebar, with search, filters, colouring (by component, module, family or page age) and clicks that open pages; `adocfoundry-cli graph` and the MCP `link_graph` tool draw the same graph.
+
 ## Risks, open questions and spikes
 
 The biggest risks are supply-chain ones: every pure-Rust AsciiDoc parser and the GPUI snapshot crates are single-maintainer, pre-1.0 projects. The design answers that with traits and a fixture corpus rather than with a bet on any one of them.
@@ -439,7 +464,7 @@ The biggest risks are supply-chain ones: every pure-Rust AsciiDoc parser and the
 - [ ] Where generated diagram images live: committed under `images/` (Antora-friendly) or in a workspace cache?
 - [x] Should `adoc-ls` gain the engine's command layer so Zed users get rename and preview commands for free, or stay minimal? **Decided: it moves onto `adoc-engine` in Phase 5** (WP 5.6).
 - [x] STEM rendering route for preview and PDF (Typst math in both is the simplest consistent answer). **Decided: Typst maths in both**, native in PDFs and as SVG in the preview and HTML (Phase 5, WP 5.4–5.5).
-- [ ] Whether to keep the Asciidoctor.js-in-QuickJS renderer at all once the fidelity corpus is stable.
+- [x] Whether to keep the Asciidoctor.js-in-QuickJS renderer at all once the fidelity corpus is stable. **Decided: never built.** The native renderer is the only one in process, compared with Asciidoctor itself, when it is on `PATH`, by the fidelity harness.
 
 **Spikes before committing, two weeks each**
 
