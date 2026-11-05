@@ -69,6 +69,9 @@ resvg = { version = "=0.46.0", default-features = false, features = ["text", "sy
 hayro = "=0.7.1"
 hayro-syntax = "=0.7.2"
 gpui-platform = { package = "gpui-pre-platform", version = "=0.3.11", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
+# macOS's text system on its own, for the app's font tests: the Mac platform can be made only on
+# the main thread, which tests do not run on.
+gpui-apple = { package = "gpui-pre-apple", version = "=0.3.11", features = ["font-kit"] }
 # Built from the grammar submodule by the grammar's own binding crates.
 tree-sitter-asciidoc = { path = "grammars/tree-sitter-asciidoc/tree-sitter-asciidoc" }
 tree-sitter-asciidoc-inline = { path = "grammars/tree-sitter-asciidoc/tree-sitter-asciidoc_inline" }

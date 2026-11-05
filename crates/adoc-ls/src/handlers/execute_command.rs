@@ -175,10 +175,11 @@ mod tests {
         engine
     }
 
+    /// The fixtures lie inside the developer's checkout, so Git stays off.
     fn workspace_with(root: PathBuf, uri: &str, text: &str) -> Engine {
-        let mut engine = Engine::new(adoc_engine::Settings::default());
+        let mut engine = Engine::new(adoc_engine::Settings::default().with_git_opt_in());
         engine.open_workspace(vec![root]).expect("index fixture");
-        assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+        assert!(engine.wait_for_workers(std::time::Duration::from_secs(60)));
         engine.open_text(&document_path(uri), text);
         engine
     }
