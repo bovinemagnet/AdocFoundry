@@ -5,15 +5,36 @@ use std::collections::BTreeSet;
 
 use adoc_engine::BlameLine;
 use gpui::{
-    canvas, point, px, App, Bounds, DispatchPhase, Entity, Font, Hsla, IntoElement, MouseMoveEvent,
-    Pixels, SharedString, Styled as _, TextAlign, TextRun, WeakEntity,
+    canvas, point, px, App, Bounds, ContentMask, DispatchPhase, Entity, Font, Hsla, IntoElement,
+    MouseMoveEvent, Pixels, SharedString, Styled as _, TextAlign, TextRun, WeakEntity,
 };
 use gpui_component::input::{EditorState, RopeExt as _};
 
 use super::SourceEditorView;
 
-/// Width of the blame column.
-pub const COLUMN: Pixels = px(240.);
+/// The most characters a line's blame shows in the column, its ellipsis included.
+const COLUMN_CHARS: usize = 35;
+/// Space either side of the column's text.
+const PADDING: Pixels = px(6.);
+/// The column's text size, as a fraction of the source editor's.
+const TEXT_SCALE: f32 = 0.85;
+/// The column's width when the font's measure is unknown.
+const FALLBACK: Pixels = px(240.);
+
+/// The size the column's text is drawn at, beside source text of `source_size` pixels.
+#[must_use]
+pub fn text_size(source_size: f32) -> Pixels {
+    px(source_size * TEXT_SCALE)
+}
+
+/// The width of the blame column for a font whose widest character advances `advance` at the
+/// column's text size: room for the longest text it shows, whatever the font and its scale.
+#[must_use]
+pub fn column_width(advance: Option<Pixels>) -> Pixels {
+    advance.map_or(FALLBACK, |advance| {
+        advance * COLUMN_CHARS as f32 + PADDING * 2.
+    })
+}
 
 /// The buffer lines the editor shows, each with the bounds of its start in window coordinates.
 pub fn visible_lines(state: &EditorState, area: Bounds<Pixels>) -> Vec<(usize, Bounds<Pixels>)> {
@@ -84,7 +105,7 @@ fn column_text(line: &BlameLine, now: i64) -> String {
         None => line.summary.clone(),
     };
     let mut chars = text.chars();
-    let short: String = chars.by_ref().take(34).collect();
+    let short: String = chars.by_ref().take(COLUMN_CHARS - 1).collect();
     if chars.next().is_some() {
         format!("{short}…")
     } else {
@@ -100,51 +121,69 @@ pub fn now() -> i64 {
         .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0))
 }
 
-/// Paints the blame of each visible line in a column `left` of the element it is placed in.
+/// Paints the blame of each visible line in a column `width` wide, to the left of the element
+/// it is placed in, in `font` at `font_size`, clipped to the column.
 pub fn column(
     state: Entity<EditorState>,
     blame: std::sync::Arc<Vec<BlameLine>>,
     font: Font,
+    font_size: Pixels,
     colour: Hsla,
-    left: Pixels,
+    width: Pixels,
 ) -> impl IntoElement {
     canvas(
         move |area, _, cx| visible_lines(state.read(cx), area),
         move |area, lines, window, cx| {
-            let font_size = window.text_style().font_size.to_pixels(window.rem_size()) * 0.85;
-            let now = now();
-            for (line, bounds) in lines {
-                let Some(blamed) = blame.get(line) else {
-                    continue;
-                };
-                let text: SharedString = column_text(blamed, now).into();
-                let run = TextRun {
-                    len: text.len(),
-                    font: font.clone(),
-                    color: colour,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                };
-                let shaped = window
-                    .text_system()
-                    .shape_line(text, font_size, &[run], None);
-                let _ = shaped.paint(
-                    point(area.left() + px(6.), bounds.top()),
-                    bounds.size.height,
-                    TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                );
-            }
+            let mask = ContentMask { bounds: area };
+            window.with_content_mask(Some(mask), |window| {
+                paint_column(&lines, &blame, &font, font_size, colour, area, window, cx);
+            });
         },
     )
     .absolute()
     .top_0()
-    .left(left)
+    .left(-width)
     .h_full()
-    .w(COLUMN)
+    .w(width)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_column(
+    lines: &[(usize, Bounds<Pixels>)],
+    blame: &[BlameLine],
+    font: &Font,
+    font_size: Pixels,
+    colour: Hsla,
+    area: Bounds<Pixels>,
+    window: &mut gpui::Window,
+    cx: &mut App,
+) {
+    let now = now();
+    for &(line, bounds) in lines {
+        let Some(blamed) = blame.get(line) else {
+            continue;
+        };
+        let text: SharedString = column_text(blamed, now).into();
+        let run = TextRun {
+            len: text.len(),
+            font: (*font).clone(),
+            color: colour,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let shaped = window
+            .text_system()
+            .shape_line(text, font_size, &[run], None);
+        let _ = shaped.paint(
+            point(area.left() + PADDING, bounds.top()),
+            bounds.size.height,
+            TextAlign::Left,
+            None,
+            window,
+            cx,
+        );
+    }
 }
 
 /// Watches the pointer over the editor's gutter, telling `view` which line it rests on.
@@ -199,6 +238,33 @@ mod tests {
         assert_eq!(relative_time(now - 65 * 86_400, now), "2 months ago");
         assert_eq!(relative_time(now - 400 * 86_400, now), "1 year ago");
         assert_eq!(relative_time(now + 50, now), "just now", "a clock ahead");
+    }
+
+    /// The column holds its longest text at any size of the source font, as `font_scale` and the
+    /// font sets change it, rather than running into the page's text.
+    #[test]
+    fn the_column_holds_its_longest_text_at_any_size() {
+        let long = BlameLine {
+            line: 0,
+            commit: Some("abc1234".to_owned()),
+            author: "Someone With A Rather Long Name Indeed".to_owned(),
+            time: 0,
+            summary: String::new(),
+        };
+        let chars = column_text(&long, 1_000_000_000).chars().count();
+        assert_eq!(chars, COLUMN_CHARS, "cut to the column, with its ellipsis");
+        let mut previous = px(0.);
+        // A monospaced character's advance at 0.85 of 10 to 40 pixels.
+        for advance in [5.1, 6.63, 8.16, 12.0, 20.4] {
+            let width = column_width(Some(px(advance)));
+            assert!(
+                width >= px(advance) * chars as f32 + PADDING * 2.,
+                "{advance}: {width:?}"
+            );
+            assert!(width > previous, "wider for a larger font");
+            previous = width;
+        }
+        assert_eq!(column_width(None), FALLBACK);
     }
 
     #[test]

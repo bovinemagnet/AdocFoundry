@@ -26,6 +26,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ### Fixed
 
+- The blame column no longer runs into the page's text (#388): it is as wide as its longest line of blame in the source editor's font, at the font set's size and `[appearance] font_scale`, and its text is clipped to it.
 - On a page with a line ending in spaces or tabs, every block after that line was given the wrong place in the source, which the preview's scroll sync and clicks, the visual editor and PDF export's error positions all use, and a short paragraph straight after such a line could be lost: acdc-parser strips that whitespace before parsing, and its offsets were mapped back only for removed carriage returns (#383).
 - Visual editor: a typed line beginning `+` and a word in a list item (`+word`) no longer ends the item, and nor does `+ text` (#383, #380). acdc-parser reads such a line as a list continuation, which Asciidoctor does only for a `+` alone, so the editor writes `{empty}` before it.
 - `adocfoundry-cli` commands other than `git-status` no longer read Git: opening the workspace read the settings again and turned it back on.

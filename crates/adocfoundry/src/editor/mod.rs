@@ -800,7 +800,7 @@ impl Focusable for SourceEditorView {
 }
 
 impl Render for SourceEditorView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::renders::rendered(crate::renders::View::Editor);
         let settings = self.app.read(cx).engine.settings();
         let (font_family, font_size) = crate::fonts::source(settings, cx);
@@ -847,6 +847,13 @@ impl Render for SourceEditorView {
             .with_priority(1)
         });
         let font = gpui::font(font_family.clone());
+        // Sized from the source font, so its text keeps to it at any size or scale.
+        let blame_size = blame::text_size(font_size);
+        let blame_width = self.show_blame.then(|| {
+            let text_system = window.text_system();
+            let id = text_system.resolve_font(&font);
+            blame::column_width(text_system.em_advance(id, blame_size).ok())
+        });
         let editor = div()
             .relative()
             .flex_1()
@@ -886,8 +893,9 @@ impl Render for SourceEditorView {
                     self.state.clone(),
                     blame,
                     font,
+                    blame_size,
                     cx.theme().muted_foreground,
-                    -blame::COLUMN,
+                    blame_width.unwrap_or_default(),
                 ))
             });
         gpui_component::h_flex()
@@ -901,13 +909,13 @@ impl Render for SourceEditorView {
                     let _ = crate::spelling::apply(&this.app, action.document, &action.choice, cx);
                 }),
             )
-            .when(self.show_blame, |row| {
+            .when_some(blame_width, |row, width| {
                 row.child(
                     div()
                         .debug_selector(|| "blame-column".to_owned())
                         .flex_none()
                         .h_full()
-                        .w(blame::COLUMN)
+                        .w(width)
                         .bg(cx.theme().muted),
                 )
             })
