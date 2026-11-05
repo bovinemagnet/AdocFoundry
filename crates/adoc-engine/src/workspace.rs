@@ -186,6 +186,8 @@ pub(crate) enum WorkerMessage {
     #[cfg(feature = "typst")]
     PdfPreviewTypeset {
         preview: Box<crate::PdfPreview>,
+        /// The theme it was typeset with, to keep for the next.
+        theme: Option<std::sync::Arc<adoc_pdf::KeptTheme>>,
     },
     GraphBuilt {
         generation: u64,
@@ -738,7 +740,9 @@ impl Engine {
             #[cfg(feature = "typst")]
             WorkerMessage::ExportFinished { job, result } => self.export_finished(job, result),
             #[cfg(feature = "typst")]
-            WorkerMessage::PdfPreviewTypeset { preview } => self.pdf_preview_typeset(*preview),
+            WorkerMessage::PdfPreviewTypeset { preview, theme } => {
+                self.pdf_preview_typeset(*preview, theme);
+            }
             WorkerMessage::GraphBuilt { generation, built } => self.graph_built(generation, *built),
             WorkerMessage::Crashed { job, error } => self.worker_crashed(job, error),
             WorkerMessage::IndexFailed { generation, error } => {

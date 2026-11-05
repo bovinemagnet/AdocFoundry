@@ -151,3 +151,68 @@ fn a_page_that_cannot_be_typeset_says_why() {
     let error = engine.pdf_preview(id).unwrap().pages.clone().unwrap_err();
     assert!(error.contains("missing-theme"), "{error}");
 }
+
+/// Issue #188: the preview keeps its theme between typesettings, and a change to a theme file,
+/// here one the theme extends, shows on the next.
+#[test]
+fn a_theme_change_shows_on_the_next_preview() {
+    let directory = tempfile::tempdir().unwrap();
+    let base = directory.path().join("house-base-theme.yml");
+    fs::write(&base, "extends: default\npage:\n  size: A4\n").unwrap();
+    fs::write(
+        directory.path().join("house-theme.yml"),
+        "extends: house-base\nbase:\n  font-color: 222222\n",
+    )
+    .unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(
+        &page,
+        "= Page\n:pdf-themesdir: .\n:pdf-theme: house\n\nText.\n",
+    )
+    .unwrap();
+    let (mut engine, clock) = engine_with_clock();
+    let events = engine.subscribe();
+    let id = engine.open(&page).unwrap();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PDF_PREVIEW, CommandArgs::None)
+        .unwrap();
+    settle(&mut engine);
+    assert_eq!(pdf_ready(&events, id), [0]);
+    let width = |engine: &Engine| {
+        let preview = engine.pdf_preview(id).unwrap();
+        let pages = preview
+            .pages
+            .as_ref()
+            .unwrap_or_else(|error| panic!("{error}"));
+        pages[0].width
+    };
+    let a4 = width(&engine);
+
+    let edit = |engine: &mut Engine, offset: usize| {
+        engine
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(offset, offset),
+                    text: "x".to_owned(),
+                },
+            )
+            .unwrap();
+        clock.advance(PREVIEW_SETTLE);
+        settle(engine);
+    };
+    let end = fs::read_to_string(&page).unwrap().len();
+    edit(&mut engine, end);
+    assert_eq!(pdf_ready(&events, id), [1]);
+    assert_eq!(width(&engine), a4, "the same theme");
+
+    fs::write(
+        &base,
+        "extends: default\npage:\n  size: A5 # a size of its own\n",
+    )
+    .unwrap();
+    edit(&mut engine, end);
+    assert_eq!(pdf_ready(&events, id), [2]);
+    assert!(width(&engine) < a4, "A5 is narrower than A4");
+}
