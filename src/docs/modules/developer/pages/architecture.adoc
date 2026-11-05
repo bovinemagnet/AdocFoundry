@@ -46,6 +46,10 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 |Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it. It also finds references (`references_at`, `page_references`, `includes_of`) and renames anchors (`rename_anchor`), and `graph::links_from` resolves the xrefs and includes of one file for the link graph.
 
 |L1
+|`adoc-math`
+|Converts STEM notation to Typst maths markup: AsciiMath through `asciimath-parser`, converted in-house, and LaTeX through `mitex`. `is_safe` refuses any markup holding code (`#`) or a name outside Typst's maths scope and `HELPERS`. Only checked markup (`TypstMath`) ever reaches Typst's `eval`, and whoever evaluates it defines `HELPERS` in its scope. It has no internal dependencies. `adoc-pdf` typesets the checked maths in PDFs (see xref:pdf.adoc#_maths[Maths]), and the engine uses it for typeset STEM in the preview and HTML, which comes with the engine's `typst` feature.
+
+|L1
 |`adoc-spell`
 |Spell checking with no knowledge of AsciiDoc. It wraps `spellbook`, which no other crate names (`cargo xtask layers` checks this). `Dictionaries` holds the bundled SCOWL `en_GB` and `en_US` dictionaries and any others loaded from a folder. `words` splits text into checkable words, skipping those that are not words (`OBJECT` stands in for an atom), and `WordList` holds the workspace and user word lists. The engine's `src/spelling.rs` reads prose from the visual model and checks open pages on a worker.
 
