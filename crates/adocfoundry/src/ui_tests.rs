@@ -1855,6 +1855,38 @@ fn toggle_blame_from_the_menu_turns_the_column_on_and_off(cx: &mut TestAppContex
         );
         assert_eq!(cx.debug_bounds("blame-column").is_some(), shown);
     }
+    // From the ☰ menu's View menu, opened by clicks, as people use it (#388).
+    for shown in [true, false, true, false] {
+        // The menu is built as it opens: count the items the keys move through to reach it.
+        let steps = cx.update(|_, cx| {
+            let menus = crate::menus::menus(&app.read(cx).engine);
+            let view = menus.iter().find(|menu| menu.name == "View").unwrap();
+            let enabled: Vec<&str> = view
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    crate::menus::Item::Action {
+                        label,
+                        disabled: false,
+                        ..
+                    } => Some(label.as_ref()),
+                    _ => None,
+                })
+                .collect();
+            enabled.iter().position(|label| *label == "Toggle Blame").unwrap() + 1
+        });
+        click("app-menu", &mut cx);
+        click("app-menu-View", &mut cx);
+        cx.simulate_keystrokes(&vec!["down"; steps].join(" "));
+        cx.simulate_keystrokes("enter");
+        settle_engine(&app, &mut cx);
+        assert_eq!(
+            cx.update(|_, cx| editor.read(cx).shows_blame()),
+            shown,
+            "from the View menu"
+        );
+        assert_eq!(cx.debug_bounds("blame-column").is_some(), shown);
+    }
 }
 
 #[gpui::test]
