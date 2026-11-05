@@ -582,3 +582,34 @@ fn a_typed_plus_never_continues_the_list_item() {
     assert_eq!(after, "* Zoom In\n{empty}+ (+).\n* Fit.\n");
     assert_eq!(build(&after).text_blocks().count(), 2, "{after:?}");
 }
+
+#[test]
+fn a_typed_plus_before_a_word_never_continues_the_list_item() {
+    // acdc-parser also reads a line beginning `+word` in a list item as a list continuation:
+    // typed there, it is kept in the item's text, as a `+ ` line is.
+    let model = build("* Images open in a tab.\n* Fit.\n");
+    let (after, _) = apply(
+        &model,
+        Step::InsertText {
+            at: offset(&model.source, "open in"),
+            text: "\n+".to_owned(),
+            marks: MarkSet::EMPTY,
+        },
+    );
+    assert_eq!(after, "* Images \n{empty}+open in a tab.\n* Fit.\n");
+    assert_eq!(build(&after).text_blocks().count(), 2, "{after:?}");
+}
+
+#[test]
+fn an_edit_leaves_inline_plus_markup_at_a_line_start_alone() {
+    let model = build("A para\n+mono+ text.\n");
+    let (after, _) = apply(
+        &model,
+        Step::InsertText {
+            at: offset(&model.source, "para"),
+            text: "short ".to_owned(),
+            marks: MarkSet::EMPTY,
+        },
+    );
+    assert_eq!(after, "A short para\n+mono+ text.\n");
+}

@@ -521,11 +521,12 @@ pub(crate) fn starts_block(line: &str, first: bool) -> bool {
             .iter()
             .any(|table| trimmed.starts_with(table))
         || trimmed.starts_with("```")
-        // A list continuation; acdc-parser also reads `+ text` in a list item as one, though
-        // Asciidoctor needs `+` alone.
+        // A list continuation; acdc-parser also reads any line beginning `+` in a list item as
+        // one, though Asciidoctor needs `+` alone. A closing `+` may be inline markup, kept.
         || trimmed == "+"
         || trimmed.starts_with("+ ")
-        || trimmed.starts_with("+\t");
+        || trimmed.starts_with("+\t")
+        || (trimmed.starts_with('+') && !trimmed[1..].contains('+'));
     let marker = crate::build::list_marker(line).is_some();
     let heading = {
         let level = trimmed
