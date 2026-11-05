@@ -7,6 +7,7 @@
 mod blame;
 mod diff;
 mod error;
+mod history;
 mod remote;
 mod repository;
 mod revision;
@@ -20,6 +21,7 @@ use adoc_core::SourceRange;
 pub use blame::{blame_through, BlameLine};
 pub use diff::line_hunks;
 pub use error::GitError;
+pub use history::{LastChange, LastChanges, HISTORY_LIMIT};
 pub use remote::{remote_link_for_line, HostKind};
 pub use repository::Repository;
 pub use revision::{Revision, TreeChange};

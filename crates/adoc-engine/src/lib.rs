@@ -43,6 +43,8 @@ mod navigation;
 mod new_module;
 mod new_page;
 mod new_project;
+#[cfg(feature = "git")]
+mod page_age;
 mod parses;
 #[cfg(feature = "typst")]
 mod pdf_preview;
@@ -149,10 +151,9 @@ pub use words::{count_words, WordCount, WORDS_PER_MINUTE, WORD_COUNT_SETTLE};
 
 pub use adoc_core::FileAccess;
 pub use adoc_graph::{
-    colour_groups, group_name, node_colour, node_radius, to_svg, to_svg_laid_out, EdgeKind,
-    GraphEdge, GraphFilter, GraphKey, GraphNode, GraphSnapshot, GroupBy, Groups, Hsl, Layout,
-    MindMap, NodeCoordinate, NodeKind as GraphNodeKind, PathStep, Point, SvgStyle, TreeStyle,
-    OTHER_GROUP,
+    group_name, node_radius, to_svg, to_svg_laid_out, EdgeKind, GraphEdge, GraphFilter, GraphKey,
+    GraphNode, GraphSnapshot, GroupBy, Groups, Hsl, LastChanged, Layout, MindMap, NodeCoordinate,
+    NodeKind as GraphNodeKind, Palette, PathStep, Point, SvgStyle, TreeStyle, OTHER_GROUP,
 };
 pub use adoc_index::{is_asciidoc_path, normalize_path};
 #[cfg(feature = "typst")]

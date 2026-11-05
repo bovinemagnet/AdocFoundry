@@ -80,6 +80,19 @@ pub struct GraphReportNode {
     pub coordinate: Option<String>,
     pub links_out: usize,
     pub links_in: usize,
+    /// When the file last changed, where Git says: seconds since the Unix epoch, or
+    /// `"uncommitted"` for a file with changes not committed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_changed: Option<ReportedChange>,
+}
+
+/// When a node's file last changed, as [`GraphReportNode::last_changed`] writes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ReportedChange {
+    At(i64),
+    /// Always `"uncommitted"`.
+    Uncommitted(&'static str),
 }
 
 /// An edge of [`Engine::graph_report`]: every link of one kind between two nodes.
@@ -425,6 +438,10 @@ fn report_of(snapshot: &crate::GraphSnapshot, root: &Path) -> GraphReport {
                 }),
                 links_out: node.links_out,
                 links_in: node.links_in,
+                last_changed: node.last_changed.map(|changed| match changed {
+                    crate::LastChanged::At(time) => ReportedChange::At(time),
+                    crate::LastChanged::Uncommitted => ReportedChange::Uncommitted("uncommitted"),
+                }),
             })
             .collect(),
         edges: snapshot

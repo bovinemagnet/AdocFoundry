@@ -11,7 +11,8 @@ use std::{
 
 use adoc_core::SourceRange;
 use adoc_engine::{
-    commands::ids, CommandArgs, Engine, EngineEvent, GitChange, Head, HunkKind, Settings,
+    commands::ids, CommandArgs, Engine, EngineEvent, GitChange, GraphFilter, GraphScope, Head,
+    HunkKind, LastChanged, Settings,
 };
 use adoc_git::testing::TestRepo;
 
@@ -217,6 +218,91 @@ fn git_disabled_setting_skips_discovery() {
     engine.reload_settings().unwrap();
     assert!(engine.wait_for_workers(Duration::from_secs(10)));
     assert_eq!(engine.git().repositories().len(), 1);
+}
+
+const DAY: i64 = 86_400;
+
+/// A page's age follows `HEAD`: the commit that last changed it, then now while it has
+/// changes not committed, then the commit that commits them. The graph's node shows it.
+#[test]
+fn page_ages_follow_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("docs/page.adoc", "= Page\n\nFirst paragraph.\n");
+    test.write("docs/other.adoc", "= Other\n");
+    test.commit_all_at("first", 100 * DAY);
+    test.write("docs/other.adoc", "= Other\n\nEdited.\n");
+    test.commit_all_at("second", 200 * DAY);
+    let mut engine = engine();
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let page = dir.path().join("docs/page.adoc");
+    let other = dir.path().join("docs/other.adoc");
+    assert!(pump_until(&mut engine, |engine| engine.has_page_ages()));
+    assert_eq!(engine.page_age(&page), Some(LastChanged::At(100 * DAY)));
+    assert_eq!(engine.page_age(&other), Some(LastChanged::At(200 * DAY)));
+    let node = |engine: &Engine| {
+        engine
+            .graph(&GraphScope::Workspace, &GraphFilter::default())
+            .nodes
+            .into_iter()
+            .find(|node| node.title == "Page")
+            .and_then(|node| node.last_changed)
+    };
+    assert!(pump_until(&mut engine, |engine| node(engine)
+        == Some(LastChanged::At(100 * DAY))));
+
+    // Changed on disk and not committed: changed now.
+    test.write("docs/page.adoc", "= Page\n\nSecond paragraph.\n");
+    engine.invoke(ids::GIT_REFRESH, CommandArgs::None).unwrap();
+    assert!(pump_until(&mut engine, |engine| engine.page_age(&page)
+        == Some(LastChanged::Uncommitted)));
+    assert!(pump_until(&mut engine, |engine| node(engine)
+        == Some(LastChanged::Uncommitted)));
+
+    // Committed: the commit's time.
+    test.commit_all_at("third", 300 * DAY);
+    engine.invoke(ids::GIT_REFRESH, CommandArgs::None).unwrap();
+    assert!(pump_until(&mut engine, |engine| engine.page_age(&page)
+        == Some(LastChanged::At(300 * DAY))));
+    assert_eq!(engine.page_age(&other), Some(LastChanged::At(200 * DAY)));
+
+    // An unsaved edit in a buffer is not committed either.
+    let id = engine.open(&other).unwrap();
+    engine
+        .invoke(
+            ids::EDIT_INSERT_TEXT,
+            CommandArgs::Text {
+                id,
+                range: SourceRange::new(0, 0),
+                text: "// note\n".to_owned(),
+            },
+        )
+        .unwrap();
+    assert_eq!(engine.page_age(&other), Some(LastChanged::Uncommitted));
+}
+
+#[test]
+fn page_ages_are_empty_without_git() {
+    let dir = tempfile::tempdir().unwrap();
+    repository(dir.path());
+    let config = tempfile::tempdir().unwrap();
+    let user = config.path().join("adocfoundry.toml");
+    fs::write(&user, "[git]\nenabled = false\n").unwrap();
+    let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    pump_until(&mut engine, |engine| !engine.has_pending());
+    assert!(!engine.has_page_ages());
+    let page = dir.path().join("docs/page.adoc");
+    assert_eq!(engine.page_age(&page), None);
+    let graph = engine.graph(&GraphScope::Workspace, &GraphFilter::default());
+    assert!(!graph.nodes.is_empty());
+    assert!(graph.nodes.iter().all(|node| node.last_changed.is_none()));
 }
 
 /// A repository with a page of ten numbered lines, open in an engine over it.

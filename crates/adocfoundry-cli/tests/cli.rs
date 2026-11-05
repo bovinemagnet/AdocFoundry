@@ -133,6 +133,49 @@ fn graph_prints_json() {
         .all(|edge| edge["kind"] != "nav"));
 }
 
+/// `--ages` adds when each page last changed, from its Git history, or `uncommitted`.
+#[test]
+fn graph_prints_ages_from_git() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = adoc_git::testing::TestRepo::init(directory.path());
+    repo.write("old.adoc", "= Old\n\nSee xref:new.adoc[].\n");
+    repo.write("new.adoc", "= New\n");
+    repo.commit_all_at("first", 86_400);
+    repo.write("new.adoc", "= New\n\nEdited.\n");
+    repo.commit_all_at("second", 2 * 86_400);
+    repo.write("draft.adoc", "= Draft\n");
+    let root = directory.path().to_str().unwrap();
+
+    let output = cli(&["graph", root, "--ages"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let age = |id: &str| {
+        report["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|node| node["id"] == id)
+            .map(|node| node["last_changed"].clone())
+            .unwrap()
+    };
+    assert_eq!(age("old.adoc"), 86_400);
+    assert_eq!(age("new.adoc"), 2 * 86_400);
+    assert_eq!(age("draft.adoc"), "uncommitted");
+
+    // Without it, Git is not read and no node has an age.
+    let plain = cli(&["graph", root]);
+    let report: serde_json::Value = serde_json::from_slice(&plain.stdout).unwrap();
+    assert!(report["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|node| node.get("last_changed").is_none()));
+}
+
 #[test]
 fn graph_prints_dot() {
     let output = cli(&[

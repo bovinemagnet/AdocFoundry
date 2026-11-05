@@ -90,6 +90,19 @@ impl TestRepo {
     /// # Panics
     /// When the commit cannot be written.
     pub fn commit_all(&self, message: &str) -> String {
+        self.commit_tree(message, None)
+    }
+
+    /// Commits every file as [`TestRepo::commit_all`] does, authored and committed at `seconds`
+    /// since the Unix epoch.
+    ///
+    /// # Panics
+    /// When the commit cannot be written.
+    pub fn commit_all_at(&self, message: &str, seconds: i64) -> String {
+        self.commit_tree(message, Some(seconds))
+    }
+
+    fn commit_tree(&self, message: &str, seconds: Option<i64>) -> String {
         let mut files = Vec::new();
         collect_files(&self.dir, &self.dir, &mut files);
         let mut editor = self
@@ -110,11 +123,30 @@ impl TestRepo {
             .map(gix::Id::detach)
             .into_iter()
             .collect();
-        let id = self
-            .repo
-            .commit("HEAD", message, tree, parents)
-            .expect("commit")
-            .detach();
+        let id = match seconds {
+            None => self.repo.commit("HEAD", message, tree, parents),
+            Some(seconds) => {
+                let signature = gix::actor::Signature {
+                    name: "Test Writer".into(),
+                    email: "writer@example.com".into(),
+                    time: gix::date::Time::new(seconds, 0),
+                };
+                let (mut committer, mut author) = (
+                    gix::date::parse::TimeBuf::default(),
+                    gix::date::parse::TimeBuf::default(),
+                );
+                self.repo.commit_as(
+                    signature.to_ref(&mut committer),
+                    signature.to_ref(&mut author),
+                    "HEAD",
+                    message,
+                    tree,
+                    parents,
+                )
+            }
+        }
+        .expect("commit")
+        .detach();
         self.write_index(tree);
         id.to_string()
     }

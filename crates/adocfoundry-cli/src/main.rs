@@ -12,7 +12,7 @@
 //!     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
 //! adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
 //! adocfoundry-cli git-status <root> [--format text|json]
-//! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]]
+//! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
 //!     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
 //! adocfoundry-cli doctor [<root>] [--format text|json]
 //! adocfoundry-cli --version
@@ -46,7 +46,7 @@ const USAGE: &str = "usage:
       [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
   adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
   adocfoundry-cli git-status <root> [--format text|json]
-  adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]]
+  adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
   adocfoundry-cli doctor [<root>] [--format text|json]
   adocfoundry-cli impact <root> (--base <ref> --head <ref> | --against HEAD | --changed-file <path>…)
@@ -469,7 +469,13 @@ fn option<'a>(options: &[(&str, &'a str)], name: &str) -> Option<&'a str> {
 /// An engine over the workspace at `root`, indexed. Git is looked at only when `git` is true.
 fn open_engine(root: &Path, git: bool) -> Result<Engine, String> {
     let mut settings = Settings::load(None, None).map_err(|error| error.to_string())?;
-    settings.git.enabled = git;
+    if git {
+        settings.git.enabled = true;
+    } else {
+        // Opt-in rather than off, so opening the workspace, which reads the settings again,
+        // does not turn it back on.
+        settings = settings.with_git_opt_in();
+    }
     open_engine_with(root, settings)
 }
 
@@ -1050,6 +1056,7 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
         "--unresolved",
         "--dark",
         "--undirected",
+        "--ages",
     ];
     let flag = |name: &str| arguments.iter().any(|argument| argument == name);
     let mut rest: Vec<String> = arguments
@@ -1102,7 +1109,18 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
         unresolved: flag("--unresolved"),
         ..GraphFilter::default()
     };
-    let engine = open_engine(&root, false)?;
+    // Ages come from Git history, read once the repository is found.
+    let ages = flag("--ages");
+    let mut engine = open_engine(&root, ages)?;
+    if ages {
+        for _ in 0..3 {
+            engine.pump();
+            if !engine.wait_for_workers(INDEX_TIMEOUT) {
+                return Err("reading the Git history did not finish".to_owned());
+            }
+        }
+        engine.pump();
+    }
     if let Some((from, to)) = ends {
         if option(&options, "page").is_some() {
             return Err("`--path` and `--page` cannot be used together".to_owned());

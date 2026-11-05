@@ -276,6 +276,8 @@ pub struct GraphSettings {
     pub group: Option<adoc_graph::GroupBy>,
     /// How the graph window and panel lay the graph out.
     pub layout: GraphLayout,
+    /// Pages unchanged for longer than this many days are marked stale.
+    pub stale_after_days: u32,
 }
 
 impl Default for GraphSettings {
@@ -289,6 +291,7 @@ impl Default for GraphSettings {
             colour_by: GraphColour::Component,
             group: None,
             layout: GraphLayout::Force,
+            stale_after_days: 365,
         }
     }
 }
@@ -902,7 +905,8 @@ impl Settings {
                     Some("component") => GraphColour::Component,
                     Some("module") => GraphColour::Module,
                     Some("family") => GraphColour::Family,
-                    _ => return Err("expected \"component\", \"module\" or \"family\""),
+                    Some("age") => GraphColour::Age,
+                    _ => return Err("expected \"component\", \"module\", \"family\" or \"age\""),
                 };
             }
             ("graph", "group") => {
@@ -912,6 +916,9 @@ impl Settings {
                     Some("component") => Some(adoc_graph::GroupBy::Component),
                     _ => return Err("expected \"off\", \"module\" or \"component\""),
                 };
+            }
+            ("graph", "stale_after_days") => {
+                self.graph.stale_after_days = positive(value)?;
             }
             ("graph", "layout") => {
                 self.graph.layout = match value.as_str() {
@@ -1155,6 +1162,7 @@ fn is_known(section: &str, key: &str) -> bool {
                     | "colour_by"
                     | "group"
                     | "layout"
+                    | "stale_after_days"
             )
             | (
                 "history",
@@ -1270,7 +1278,7 @@ mod tests {
         fs::write(
             &workspace,
             "[graph]\ndepth = 2\nshow_nav = false\nshow_unresolved = true\ncolour_by = \"module\"\n\
-             group = \"component\"\nlayout = \"radial\"\n[graph.extra]\n",
+             group = \"component\"\nlayout = \"radial\"\nstale_after_days = 90\n[graph.extra]\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
@@ -1278,6 +1286,7 @@ mod tests {
         assert!(!settings.graph.show_nav && settings.graph.show_unresolved);
         assert_eq!(settings.graph.colour_by, GraphColour::Module);
         assert_eq!(settings.graph.group, Some(adoc_graph::GroupBy::Component));
+        assert_eq!(settings.graph.stale_after_days, 90);
         assert_eq!(
             settings.graph.layout,
             GraphLayout::MindMap(adoc_graph::TreeStyle::Radial)
@@ -1286,19 +1295,21 @@ mod tests {
 
         fs::write(
             &workspace,
-            "[graph]\ndepth = 4\ncolour_by = \"size\"\ngroup = \"family\"\nlayout = \"tree\"\n",
+            "[graph]\ndepth = 4\ncolour_by = \"size\"\ngroup = \"family\"\nlayout = \"tree\"\n\
+             stale_after_days = 0\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!(settings.graph, GraphSettings::default());
-        assert_eq!(settings.warnings.len(), 4);
+        assert_eq!(settings.warnings.len(), 5);
         fs::write(
             &workspace,
-            "[graph]\ngroup = \"off\"\nlayout = \"mind-map\"\n",
+            "[graph]\ngroup = \"off\"\nlayout = \"mind-map\"\ncolour_by = \"age\"\n",
         )
         .unwrap();
         let settings = Settings::load(None, Some(directory.path())).unwrap();
         assert_eq!((settings.graph.group, settings.warnings.len()), (None, 0));
+        assert_eq!(settings.graph.colour_by, GraphColour::Age);
         assert_eq!(
             settings.graph.layout,
             GraphLayout::MindMap(adoc_graph::TreeStyle::Horizontal)

@@ -144,6 +144,13 @@ pub(crate) enum WorkerMessage {
         blame: Result<Vec<adoc_git::BlameLine>, String>,
     },
     #[cfg(feature = "git")]
+    PageAges {
+        workdir: PathBuf,
+        run: u64,
+        commit: Option<String>,
+        found: crate::page_age::FoundAges,
+    },
+    #[cfg(feature = "git")]
     Pushed {
         workdir: PathBuf,
         result: Result<String, String>,
@@ -707,6 +714,13 @@ impl Engine {
                 generation,
                 blame,
             } => self.git_blamed(id, generation, blame),
+            #[cfg(feature = "git")]
+            WorkerMessage::PageAges {
+                workdir,
+                run,
+                commit,
+                found,
+            } => self.page_ages_read(workdir, run, commit, found),
             #[cfg(feature = "git")]
             WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
             WorkerMessage::SiteBuildLine { generation, line } => {

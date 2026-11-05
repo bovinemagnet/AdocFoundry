@@ -129,14 +129,24 @@ impl GraphSnapshot {
             .iter()
             .filter(|node| !collapsed.contains(&group_name(node, by)))
             .cloned()
-            .chain(members.into_iter().map(|(name, members)| GraphNode {
-                key: GraphKey::Group(name.clone()),
-                title: name,
-                kind: NodeKind::Group,
-                // The members share a module or component version, which colours the node.
-                coordinate: members[0].coordinate.clone(),
-                links_out: 0,
-                links_in: 0,
+            .chain(members.into_iter().map(|(name, members)| {
+                GraphNode {
+                    key: GraphKey::Group(name.clone()),
+                    title: name,
+                    kind: NodeKind::Group,
+                    // The members share a module or component version, which colours the node.
+                    coordinate: members[0].coordinate.clone(),
+                    links_out: 0,
+                    links_in: 0,
+                    // The group changed when its newest member did.
+                    last_changed: members
+                        .iter()
+                        .filter_map(|member| member.last_changed)
+                        .max_by_key(|changed| match changed {
+                            crate::LastChanged::Uncommitted => i64::MAX,
+                            crate::LastChanged::At(time) => *time,
+                        }),
+                }
             }))
             .collect();
         nodes.sort_by(|left, right| left.key.cmp(&right.key));
@@ -190,6 +200,7 @@ mod tests {
             }),
             links_out: 0,
             links_in: 0,
+            last_changed: None,
         }
     }
 

@@ -7446,6 +7446,85 @@ fn the_graph_switches_to_a_mind_map_and_reroots_on_a_double_click(cx: &mut TestA
 }
 
 #[gpui::test]
+fn the_graph_colours_by_age_and_rings_stale_pages(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    copy_tree(&fixture("graph"), &root);
+    // Everything committed two years ago, then Install edited yesterday.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let day = 86_400;
+    let repo = adoc_git::testing::TestRepo::init(directory.path());
+    repo.commit_all_at("first", now - 730 * day);
+    let install = root.join(GRAPH_PAGES).join("install.adoc");
+    std::fs::write(&install, "= Install\n\nSee xref:configure.adoc[].\n").unwrap();
+    repo.commit_all_at("edit Install", now - day);
+
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view =
+            cx.new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), vec![], window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            let engine = &app.read(cx).engine;
+            engine.graph_revision() > 0 && engine.has_page_ages()
+        })
+    }));
+    let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let install = graph_key(&install);
+    let index = graph_key(&root.join(GRAPH_PAGES).join("index.adoc"));
+
+    // Component, Module, Family, then Age, which rings the pages unchanged for a year.
+    for _ in 0..3 {
+        click("graph-colour", &mut graph_cx);
+    }
+    assert_eq!(
+        graph_cx.update(|_, cx| view.read(cx).colour_for_test()),
+        adoc_engine::GraphColour::Age
+    );
+    let stale = graph_cx.update(|_, cx| view.read(cx).stale_for_test(cx));
+    assert!(stale.contains(&index), "{stale:?}");
+    assert!(!stale.contains(&install));
+    click("graph-colour", &mut graph_cx);
+    assert_eq!(
+        graph_cx.update(|_, cx| view.read(cx).colour_for_test()),
+        adoc_engine::GraphColour::Component
+    );
+    assert!(graph_cx
+        .update(|_, cx| view.read(cx).stale_for_test(cx))
+        .is_empty());
+
+    // Stale keeps the stale pages and their neighbours: Install links to Configure, which is
+    // stale, so it stays; the orphan nobody links to is stale on its own.
+    click("graph-stale", &mut graph_cx);
+    let shown = |cx: &mut VisualTestContext, key: &adoc_engine::GraphKey| {
+        cx.update(|_, cx| view.read(cx).snapshot_for_test().node(key).is_some())
+    };
+    assert!(shown(&mut graph_cx, &index) && shown(&mut graph_cx, &install));
+    assert!(!graph_cx
+        .update(|_, cx| view.read(cx).stale_for_test(cx))
+        .is_empty());
+
+    // The side panel says when the selected page last changed.
+    settle_graph(&view, &mut graph_cx);
+    let at = graph_cx
+        .update(|_, cx| view.read(cx).node_position_for_test(&install))
+        .unwrap();
+    graph_cx.simulate_click(at, gpui::Modifiers::none());
+    graph_cx.run_until_parked();
+    assert!(graph_cx.debug_bounds("graph-last-changed").is_some());
+}
+
+#[gpui::test]
 fn tab_moves_through_the_nodes_and_enter_opens_one(cx: &mut TestAppContext) {
     let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
     let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);

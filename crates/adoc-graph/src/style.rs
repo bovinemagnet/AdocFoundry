@@ -1,7 +1,7 @@
 //! How nodes look, shared by every drawing of the graph: their size, and their colour by
-//! component, module or family, so the app's canvas and an exported image agree.
+//! component, module, family or age, so the app's canvas and an exported image agree.
 
-use crate::{GraphNode, GraphSnapshot};
+use crate::{GraphNode, GraphSnapshot, LastChanged};
 
 /// What colours the nodes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -10,6 +10,8 @@ pub enum ColourBy {
     Component,
     Module,
     Family,
+    /// How long ago the node's file last changed, from recent to old across the snapshot.
+    Age,
 }
 
 /// A colour as hue, saturation and lightness, each from 0 to 1.
@@ -47,33 +49,93 @@ pub fn node_radius(links: usize) -> f32 {
     (4.0 + (links as f32).sqrt() * 1.6).min(14.0)
 }
 
-/// Each colour group's place, in name order: components, modules or families.
-#[must_use]
-pub fn colour_groups(snapshot: &GraphSnapshot, by: ColourBy) -> Vec<String> {
-    let mut groups: Vec<String> = snapshot
-        .nodes
-        .iter()
-        .filter_map(|node| group_of(node, by))
-        .collect();
-    groups.sort();
-    groups.dedup();
-    groups
+/// The colours of one snapshot's nodes: each colour group's place, in name order
+/// (components, modules or families), or the span of its nodes' ages.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Palette {
+    by: ColourBy,
+    groups: Vec<String>,
+    /// The newest and oldest change among the nodes, uncommitted changes counting as newer than
+    /// any commit.
+    ages: Option<(i64, i64)>,
+}
+
+/// An uncommitted change's place on the age scale: newer than any commit.
+fn age_key(changed: LastChanged) -> i64 {
+    match changed {
+        LastChanged::Uncommitted => i64::MAX,
+        LastChanged::At(time) => time,
+    }
+}
+
+impl Palette {
+    #[must_use]
+    pub fn of(snapshot: &GraphSnapshot, by: ColourBy) -> Self {
+        let mut groups: Vec<String> = snapshot
+            .nodes
+            .iter()
+            .filter_map(|node| group_of(node, by))
+            .collect();
+        groups.sort();
+        groups.dedup();
+        let ages = snapshot
+            .nodes
+            .iter()
+            .filter_map(|node| node.last_changed)
+            .filter_map(|changed| match changed {
+                LastChanged::At(time) => Some(time),
+                LastChanged::Uncommitted => None,
+            })
+            .fold(None, |span: Option<(i64, i64)>, time| {
+                Some(span.map_or((time, time), |(newest, oldest)| {
+                    (newest.max(time), oldest.min(time))
+                }))
+            });
+        Self { by, groups, ages }
+    }
+
+    #[must_use]
+    pub fn by(&self) -> ColourBy {
+        self.by
+    }
+
+    /// A node's colour: its group's place in a palette of hues that also differ in lightness,
+    /// or by age a scale from green (recent) through amber to red (old), set for a light
+    /// background or a dark one. `None` for nodes outside Antora, unresolved targets and, by
+    /// age, nodes with no history, which are drawn grey.
+    #[must_use]
+    pub fn colour(&self, node: &GraphNode, dark: bool) -> Option<Hsl> {
+        if self.by == ColourBy::Age {
+            let changed = node.last_changed?;
+            // 0 for the newest, 1 for the oldest.
+            let old = match self.ages {
+                Some((newest, oldest)) if newest > oldest => {
+                    let time = age_key(changed).min(newest);
+                    (newest - time) as f32 / (newest - oldest) as f32
+                }
+                _ => 0.0,
+            };
+            return Some(Hsl {
+                h: 0.33 * (1.0 - old),
+                s: 0.7,
+                l: if dark { 0.6 } else { 0.45 },
+            });
+        }
+        node_colour(node, &self.groups, self.by, dark)
+    }
 }
 
 fn group_of(node: &GraphNode, by: ColourBy) -> Option<String> {
     let coordinate = node.coordinate.as_ref()?;
-    Some(match by {
-        ColourBy::Component => coordinate.component.clone(),
-        ColourBy::Module => format!("{}:{}", coordinate.component, coordinate.module),
-        ColourBy::Family => coordinate.family.clone(),
-    })
+    match by {
+        ColourBy::Component => Some(coordinate.component.clone()),
+        ColourBy::Module => Some(format!("{}:{}", coordinate.component, coordinate.module)),
+        ColourBy::Family => Some(coordinate.family.clone()),
+        ColourBy::Age => None,
+    }
 }
 
-/// A node's colour: its group's place in a palette of hues that also differ in lightness, set
-/// for a light background or a dark one. `None` for nodes outside Antora and unresolved
-/// targets, which are drawn grey.
-#[must_use]
-pub fn node_colour(node: &GraphNode, groups: &[String], by: ColourBy, dark: bool) -> Option<Hsl> {
+fn node_colour(node: &GraphNode, groups: &[String], by: ColourBy, dark: bool) -> Option<Hsl> {
     const HUES: [f32; 8] = [0.58, 0.08, 0.36, 0.92, 0.15, 0.75, 0.48, 0.0];
     let group = group_of(node, by)?;
     let place = groups.iter().position(|known| *known == group).unwrap_or(0);
@@ -93,7 +155,46 @@ pub fn node_colour(node: &GraphNode, groups: &[String], by: ColourBy, dark: bool
 
 #[cfg(test)]
 mod tests {
+    use std::{path::Path, sync::Arc};
+
     use super::*;
+    use crate::{GraphKey, NodeKind};
+
+    #[test]
+    fn age_runs_from_green_for_the_newest_to_red_for_the_oldest() {
+        let node = |name: &str, last_changed| GraphNode {
+            key: GraphKey::File(Arc::from(Path::new(name))),
+            title: name.to_owned(),
+            kind: NodeKind::Page,
+            coordinate: None,
+            links_out: 0,
+            links_in: 0,
+            last_changed,
+        };
+        let snapshot = GraphSnapshot {
+            revision: 1,
+            nodes: vec![
+                node("new", Some(LastChanged::At(300))),
+                node("middle", Some(LastChanged::At(200))),
+                node("old", Some(LastChanged::At(100))),
+                node("editing", Some(LastChanged::Uncommitted)),
+                node("unknown", None),
+            ],
+            edges: Vec::new(),
+        };
+        let palette = Palette::of(&snapshot, ColourBy::Age);
+        let hue = |at: usize| palette.colour(&snapshot.nodes[at], false).map(|hsl| hsl.h);
+        assert_eq!(hue(0), Some(0.33));
+        assert!((hue(1).unwrap() - 0.165).abs() < 1e-6);
+        assert_eq!(hue(2), Some(0.0));
+        assert_eq!(hue(3), Some(0.33), "uncommitted is as new as the newest");
+        assert_eq!(hue(4), None);
+        // Grouping colours leave age out.
+        assert_eq!(
+            Palette::of(&snapshot, ColourBy::Module).colour(&snapshot.nodes[0], false),
+            None
+        );
+    }
 
     #[test]
     fn hsl_converts_to_hex() {

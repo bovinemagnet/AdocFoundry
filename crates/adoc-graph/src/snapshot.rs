@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use crate::{
-    EdgeKind, GraphEdge, GraphFilter, GraphKey, GraphNode, GraphSnapshot, NodeCoordinate, NodeKind,
-    StoredLink,
+    EdgeKind, GraphEdge, GraphFilter, GraphKey, GraphNode, GraphSnapshot, LastChanged,
+    NodeCoordinate, NodeKind, StoredLink,
 };
 
 /// A node as the caller knows it, before filtering and counting.
@@ -17,6 +17,8 @@ pub struct NodeInput {
     pub coordinate: Option<NodeCoordinate>,
     /// No link leaves or reaches it, of any kind.
     pub orphan: bool,
+    /// When its file last changed, where Git says.
+    pub last_changed: Option<LastChanged>,
 }
 
 impl GraphSnapshot {
@@ -63,6 +65,7 @@ impl GraphSnapshot {
                         kind: NodeKind::Unresolved,
                         coordinate: None,
                         orphan: false,
+                        last_changed: None,
                     });
                 }
                 to if kept.contains_key(to) => {}
@@ -82,6 +85,7 @@ impl GraphSnapshot {
                 coordinate: node.coordinate,
                 links_out: 0,
                 links_in: 0,
+                last_changed: node.last_changed,
             })
             .collect();
         nodes.sort_unstable_by(|left, right| left.key.cmp(&right.key));
@@ -145,6 +149,7 @@ mod tests {
                 family: "page".to_owned(),
             }),
             orphan: !store.is_linked(&file(name)),
+            last_changed: None,
         }
     }
 

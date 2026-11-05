@@ -17,6 +17,10 @@
 //! file's tree is its navigation; a page's reaches the chosen depth. Links outside the tree
 //! are drawn faintly, a node's disclosure closes and opens its branch, and a double click, or
 //! Root Mind Map Here, roots the map at another node.
+//!
+//! Where Git has read the pages' history, nodes may be coloured by how long ago they changed,
+//! pages unchanged for `[graph] stale_after_days` are ringed, the Stale filter shows only them
+//! and their neighbours, and the side panel says when the selected page last changed.
 
 use std::{
     cell::Cell,
@@ -29,8 +33,9 @@ use std::{
 use adoc_engine::{
     commands::ids, group_name, CommandArgs, CommandOutcome, DocumentId, EdgeKind, Engine,
     EngineEvent, GraphColour, GraphFilter, GraphKey, GraphLayout, GraphNodeKind, GraphScope,
-    GraphSnapshot, GroupBy, Groups, Layout, LinkStyle, MindMap, NavPlace, NavigationPosition,
-    Neighbour, PathStep, Point as LayoutPoint, TabItem, TextEdit, TreeStyle,
+    GraphSnapshot, GroupBy, Groups, LastChanged, Layout, LinkStyle, MindMap, NavPlace,
+    NavigationPosition, Neighbour, Palette, PathStep, Point as LayoutPoint, TabItem, TextEdit,
+    TreeStyle,
 };
 use gpui::{
     actions, canvas, div, point, prelude::FluentBuilder as _, px, quad, size, App, AppContext as _,
@@ -145,6 +150,8 @@ struct DrawnNode {
     selected: bool,
     /// In a mind map, a node with children has a disclosure: whether its branch is closed.
     folded: Option<bool>,
+    /// Unchanged for longer than `[graph] stale_after_days`, and ringed.
+    stale: bool,
 }
 
 /// One edge as the canvas draws it, by its ends' places among the nodes.
@@ -207,6 +214,7 @@ struct Drawing {
     nav_edge: Hsla,
     label: Hsla,
     ring: Hsla,
+    stale_ring: Hsla,
 }
 
 pub struct GraphView {
@@ -226,6 +234,8 @@ pub struct GraphView {
     collapsed: BTreeSet<String>,
     /// The height of a hull's label band, in pixels, from the rem size when last drawn.
     label_band: f32,
+    /// Only stale pages and their neighbours are shown.
+    stale_only: bool,
     /// How the graph is laid out; as a mind map, the root chosen, the tree shown and the nodes
     /// whose branches are closed.
     arrangement: GraphLayout,
@@ -298,6 +308,7 @@ impl GraphView {
             group_by: settings.group.filter(|_| mode == GraphMode::Window),
             collapsed: BTreeSet::new(),
             label_band: 20.0,
+            stale_only: false,
             arrangement: settings.layout,
             mind_root: None,
             tree: None,
@@ -390,6 +401,11 @@ impl GraphView {
             (GraphLayout::MindMap(_), _) => self.mind_map_of(snapshot),
             (GraphLayout::Force, Some(by)) => snapshot.collapse(by, &self.collapsed),
             (GraphLayout::Force, None) => snapshot,
+        };
+        let snapshot = if self.stale_only {
+            self.only_stale(snapshot, cx)
+        } else {
+            snapshot
         };
         let recentre = self.local && snapshot.nodes.len() != self.snapshot.nodes.len();
         self.set_snapshot(snapshot);
@@ -510,6 +526,51 @@ impl GraphView {
     fn set_filter(&mut self, change: impl FnOnce(&mut GraphFilter), cx: &mut Context<Self>) {
         change(&mut self.filter);
         self.refresh(cx);
+    }
+
+    // --- ages ----------------------------------------------------------------------------------
+
+    /// The time before which a page counts as stale, in seconds since the Unix epoch.
+    fn stale_before(&self, cx: &App) -> i64 {
+        let days = i64::from(self.app.read(cx).engine.settings().graph.stale_after_days);
+        now_seconds() - days * DAY
+    }
+
+    /// `snapshot` cut down to its stale pages and their neighbours.
+    fn only_stale(&self, snapshot: GraphSnapshot, cx: &App) -> GraphSnapshot {
+        let before = self.stale_before(cx);
+        let stale: std::collections::HashSet<&GraphKey> = snapshot
+            .nodes
+            .iter()
+            .filter(|node| is_stale(node, before))
+            .map(|node| &node.key)
+            .collect();
+        let mut keep: std::collections::HashSet<GraphKey> =
+            stale.iter().map(|key| (*key).clone()).collect();
+        for edge in &snapshot.edges {
+            if stale.contains(&edge.from) || stale.contains(&edge.to) {
+                keep.insert(edge.from.clone());
+                keep.insert(edge.to.clone());
+            }
+        }
+        snapshot.restrict(|key| keep.contains(key))
+    }
+
+    fn toggle_stale(&mut self, cx: &mut Context<Self>) {
+        self.stale_only = !self.stale_only;
+        self.fitting = true;
+        self.refresh(cx);
+    }
+
+    /// The colours the Colour button moves through: by age only where pages have ages.
+    fn next_colour(&self, cx: &App) -> GraphColour {
+        let ages = self.app.read(cx).engine.has_page_ages();
+        match self.colour_by {
+            GraphColour::Component => GraphColour::Module,
+            GraphColour::Module => GraphColour::Family,
+            GraphColour::Family if ages => GraphColour::Age,
+            GraphColour::Family | GraphColour::Age => GraphColour::Component,
+        }
     }
 
     // --- mind maps ---------------------------------------------------------------------------
@@ -1140,7 +1201,10 @@ impl GraphView {
                     .path()
                     .is_some_and(|path| path.to_string_lossy().to_lowercase().contains(&self.query))
         };
-        let groups = adoc_engine::colour_groups(&self.snapshot, self.colour_by);
+        let palette = Palette::of(&self.snapshot, self.colour_by);
+        let stale_before = self.stale_before(cx);
+        // Stale pages are ringed while the colours or the filter are about age.
+        let ring_stale = self.colour_by == GraphColour::Age || self.stale_only;
         let all_labels = self.zoom >= LABEL_ZOOM || nodes_shown.len() <= 12;
         let positions = self.positions();
         // A path shown takes the place of the hover and the search: its nodes numbered, its
@@ -1196,13 +1260,7 @@ impl GraphView {
                         adoc_engine::node_radius(node.links_in + node.links_out)
                     },
                     kind: node.kind,
-                    colour: node_colour(
-                        node,
-                        &groups,
-                        self.colour_by,
-                        dark,
-                        theme.muted_foreground,
-                    ),
+                    colour: node_colour(node, &palette, dark, theme.muted_foreground),
                     label,
                     dim,
                     selected: selected == Some(place),
@@ -1211,6 +1269,7 @@ impl GraphView {
                         .as_ref()
                         .filter(|tree| !tree.children(&node.key).is_empty())
                         .map(|_| self.folded.contains(&node.key)),
+                    stale: ring_stale && is_stale(node, stale_before),
                 }
             })
             .collect();
@@ -1260,6 +1319,7 @@ impl GraphView {
             nav_edge: theme.primary.opacity(0.6),
             label: theme.foreground,
             ring: theme.ring,
+            stale_ring: theme.warning,
         }
     }
 
@@ -1547,7 +1607,9 @@ impl GraphView {
             GraphColour::Component => "Colour: Component",
             GraphColour::Module => "Colour: Module",
             GraphColour::Family => "Colour: Family",
+            GraphColour::Age => "Colour: Age",
         };
+        let ages = self.app.read(cx).engine.has_page_ages();
         let group = match self.group_by {
             None => "Group: Off",
             Some(GroupBy::Module) => "Group: Module",
@@ -1633,15 +1695,24 @@ impl GraphView {
                     .label(colour)
                     .xsmall()
                     .ghost()
+                    .debug_selector(|| "graph-colour".to_owned())
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.colour_by = match this.colour_by {
-                            GraphColour::Component => GraphColour::Module,
-                            GraphColour::Module => GraphColour::Family,
-                            GraphColour::Family => GraphColour::Component,
-                        };
+                        this.colour_by = this.next_colour(cx);
                         cx.notify();
                     })),
             )
+            .when(ages, |bar| {
+                bar.child(
+                    Button::new("graph-stale")
+                        .label("Stale")
+                        .xsmall()
+                        .ghost()
+                        .selected(self.stale_only)
+                        .debug_selector(|| "graph-stale".to_owned())
+                        .tooltip("Show only pages unchanged for a long time, and their neighbours")
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_stale(cx))),
+                )
+            })
             .child(
                 Button::new("graph-group")
                     .label(group)
@@ -2068,6 +2139,24 @@ impl GraphView {
         self.zoom
     }
 
+    /// The nodes drawn with the stale ring.
+    #[cfg(test)]
+    pub fn stale_for_test(&self, cx: &App) -> Vec<GraphKey> {
+        let drawing = self.drawing(cx);
+        self.snapshot
+            .nodes
+            .iter()
+            .zip(drawing.nodes)
+            .filter(|(_, drawn)| drawn.stale)
+            .map(|(node, _)| node.key.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub fn colour_for_test(&self) -> GraphColour {
+        self.colour_by
+    }
+
     #[cfg(test)]
     pub fn arrangement_for_test(&self) -> (GraphLayout, Option<GraphKey>) {
         (
@@ -2141,8 +2230,8 @@ impl Render for GraphView {
                 // Always there, so selecting a node never moves the canvas under the pointer.
                 let selected = self.selected.as_ref().and_then(|key| {
                     let path = key.path()?.to_path_buf();
-                    let title = self.snapshot.node(key)?.title.clone();
-                    Some((path, title))
+                    let node = self.snapshot.node(key)?;
+                    Some((path, node.title.clone(), node.last_changed))
                 });
                 let muted = cx.theme().muted_foreground;
                 let side = v_flex()
@@ -2158,7 +2247,7 @@ impl Render for GraphView {
                         side.child(self.render_path(cx))
                     })
                     .map(|side| match selected {
-                        Some((path, title)) => side
+                        Some((path, title, changed)) => side
                             .child(
                                 div()
                                     .px_2()
@@ -2166,6 +2255,14 @@ impl Render for GraphView {
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .child(title),
                             )
+                            .children(changed.map(|changed| {
+                                div()
+                                    .px_2()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .debug_selector(|| "graph-last-changed".to_owned())
+                                    .child(last_changed_text(changed, now_seconds()))
+                            }))
                             .child(self.render_lists(&path, cx)),
                         None => side.child(
                             div()
@@ -2222,17 +2319,51 @@ fn key_name(key: &GraphKey) -> String {
     }
 }
 
-/// A node's colour on the canvas: its group's, from the palette exported images share, or
-/// `grey` outside Antora.
-fn node_colour(
-    node: &adoc_engine::GraphNode,
-    groups: &[String],
-    by: GraphColour,
-    dark: bool,
-    grey: Hsla,
-) -> Hsla {
-    adoc_engine::node_colour(node, groups, by, dark)
+/// A node's colour on the canvas, from the palette exported images share, or `grey` where it
+/// has none.
+fn node_colour(node: &adoc_engine::GraphNode, palette: &Palette, dark: bool, grey: Hsla) -> Hsla {
+    palette
+        .colour(node, dark)
         .map_or(grey, |colour| gpui::hsla(colour.h, colour.s, colour.l, 1.0))
+}
+
+const DAY: i64 = 86_400;
+
+/// Now, in seconds since the Unix epoch.
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
+        })
+}
+
+/// Whether the node's file was last committed before `before`.
+fn is_stale(node: &adoc_engine::GraphNode, before: i64) -> bool {
+    matches!(node.last_changed, Some(LastChanged::At(time)) if time < before)
+}
+
+/// When a file last changed, as the side panel says it: "Last changed 14 months ago".
+fn last_changed_text(changed: LastChanged, now: i64) -> String {
+    let LastChanged::At(time) = changed else {
+        return "Changed, not committed yet".to_owned();
+    };
+    let days = (now - time).max(0) / DAY;
+    let plural = |count: i64, unit: &str| {
+        if count == 1 {
+            format!("1 {unit} ago")
+        } else {
+            format!("{count} {unit}s ago")
+        }
+    };
+    let ago = match days {
+        0 => "today".to_owned(),
+        1 => "yesterday".to_owned(),
+        2..=44 => plural(days, "day"),
+        45..=547 => plural((days + 15) / 30, "month"),
+        _ => plural((days + 182) / 365, "year"),
+    };
+    format!("Last changed {ago}")
 }
 
 /// Writes the graph image `svg` to `output`: drawn as a PNG at twice its size when the name
@@ -2339,6 +2470,19 @@ fn paint(drawing: &Drawing, bounds: Bounds<Pixels>, window: &mut Window, cx: &mu
                     drawing.label.opacity(alpha),
                     window,
                 );
+            }
+            if node.stale {
+                window.paint_quad(quad(
+                    square.dilate(px(2.)),
+                    match node.kind {
+                        GraphNodeKind::Nav => Corners::all(px(4.)),
+                        _ => Corners::all(radius + px(2.)),
+                    },
+                    gpui::transparent_black(),
+                    px(1.5),
+                    drawing.stale_ring.opacity(alpha),
+                    BorderStyle::Dashed,
+                ));
             }
             if node.selected {
                 let ring = square.dilate(px(3.));
@@ -2474,5 +2618,27 @@ fn paint_edges(
         if let Ok(path) = builder.build() {
             window.paint_path(path, colour);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn last_changed_reads_as_a_rough_age() {
+        let now = 1_000 * DAY;
+        let text = |days_ago: i64| last_changed_text(LastChanged::At(now - days_ago * DAY), now);
+        assert_eq!(text(0), "Last changed today");
+        assert_eq!(text(1), "Last changed yesterday");
+        assert_eq!(text(9), "Last changed 9 days ago");
+        assert_eq!(text(45), "Last changed 2 months ago");
+        assert_eq!(text(425), "Last changed 14 months ago");
+        assert_eq!(text(548), "Last changed 2 years ago");
+        assert_eq!(text(365 * 3), "Last changed 3 years ago");
+        assert_eq!(
+            last_changed_text(LastChanged::Uncommitted, now),
+            "Changed, not committed yet"
+        );
     }
 }

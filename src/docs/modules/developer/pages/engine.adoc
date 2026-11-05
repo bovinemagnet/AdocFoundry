@@ -1408,6 +1408,12 @@ The queries are:
 * `Engine::nav_places`, the trails through the navigation that list a page, and `Engine::neighbours`, a page's links out and in with the kinds merged for each neighbour.
 * `graph_report`, in `report.rs`, which writes the snapshot as the JSON and DOT that `adocfoundry-cli graph` prints and `adoc-mcp`'s `link_graph` returns.
 
+`src/page_age.rs` keeps each page's age for the graph, per working tree.
+It runs `Repository::last_changed` on a worker, started from Git discovery and from a refresh that sees `HEAD`'s commit move, and drops the results of superseded runs.
+`Engine::page_age(path)` gives a `LastChanged`, with a page that has changes not committed (on disk or unsaved) as `Uncommitted`, and `Engine::has_page_ages()` says whether any are known.
+When ages arrive or the Git status changes, the graph's revision is bumped and `EngineEvent::GraphChanged` follows.
+With Git off there are no ages.
+
 The probe `Probe::GraphNode` counts the nodes made for a snapshot, so a test can show that a local graph made only the nodes it reaches.
 The settings are the `[graph]` table (`graph.depth`, `graph.show_partials` and the rest), and the tests and benchmarks (`cargo bench -p adoc-graph` for the layout step, `graph_build` in `cargo bench -p adoc-engine` for 5,000 pages) are in xref:testing.adoc#graph-tests[Testing].
 

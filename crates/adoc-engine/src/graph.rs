@@ -400,6 +400,15 @@ impl GraphState {
 }
 
 impl Engine {
+    /// Pages' ages changed: the graph's nodes show them, so it is told it changed.
+    pub(crate) fn graph_ages_changed(&mut self) {
+        if self.graph.built {
+            self.graph.changed();
+        }
+    }
+}
+
+impl Engine {
     /// The graph `scope` covers, as `filter` allows. Empty, with revision 0, until the first
     /// build lands; empty for a local graph of a file that is not an indexed page.
     #[must_use]
@@ -744,6 +753,7 @@ impl Engine {
             kind,
             coordinate,
             orphan: !self.graph.store.is_linked(key),
+            last_changed: key.path().and_then(|path| self.page_age(path)),
         }
     }
 
