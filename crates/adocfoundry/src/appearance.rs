@@ -275,19 +275,36 @@ pub fn font_scale(cx: &App) -> f32 {
 /// keeps the sizes it does not set, so this follows every change of theme.
 fn scale_fonts(cx: &mut App) {
     let scale = font_scale(cx);
-    let theme = Theme::global_mut(cx);
+    let theme = Theme::global(cx);
     let config = if theme.mode.is_dark() {
-        &theme.dark_theme
+        theme.dark_theme.clone()
     } else {
-        &theme.light_theme
+        theme.light_theme.clone()
     };
     let (size, mono) = (
         config.font_size.unwrap_or(FONT_SIZE),
         config.mono_font_size.unwrap_or(MONO_FONT_SIZE),
     );
+    let families = crate::fonts::theme_families(&config, cx);
+    let theme = Theme::global_mut(cx);
     theme.font_size = px(size * scale);
     theme.mono_font_size = px(mono * scale);
+    if let Some((interface, monospaced)) = families {
+        theme.font_family = interface;
+        theme.mono_font_family = monospaced;
+    }
     cx.refresh_windows();
+}
+
+/// Draws the application's text again in the font set shown.
+pub fn refresh_text(cx: &mut App) {
+    scale_fonts(cx);
+}
+
+/// Whether a picker is previewing, so that nothing else changes what is shown meanwhile.
+pub fn previewing(cx: &App) -> bool {
+    cx.try_global::<ThemeCatalog>()
+        .is_some_and(|catalog| catalog.previewing)
 }
 
 /// Shows `theme` alone, for the picker, without changing what is saved.

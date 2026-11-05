@@ -67,6 +67,7 @@ actions!(
         CommandPalette,
         ToggleTheme,
         SelectTheme,
+        SelectFontSet,
         FollowSystemAppearance,
         UseLightAppearance,
         UseDarkAppearance,
@@ -149,6 +150,7 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
     ("Appearance: Light", ""),
     ("Appearance: Dark", ""),
     ("Reload Themes", ""),
+    ("Select Font Set…", ""),
     ("Zoom In", "secondary-="),
     ("Zoom Out", "secondary--"),
     ("Actual Size", "secondary-0"),
@@ -157,7 +159,7 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
 
 /// The first of the [`UI_ACTIONS`] that act on the image viewer, offered only while an image is
 /// the active tab.
-pub const IMAGE_UI_ACTIONS: usize = 10;
+pub const IMAGE_UI_ACTIONS: usize = 11;
 
 /// Whether command `id`'s default binding is left out on this platform: Windows quits with
 /// Alt-F4, which closes the window, and gives File › Exit no key of its own.
@@ -436,9 +438,10 @@ pub fn ui_action(index: usize) -> Box<dyn gpui::Action> {
         7 => Box::new(UseLightAppearance),
         8 => Box::new(UseDarkAppearance),
         9 => Box::new(ReloadThemes),
-        10 => Box::new(crate::image_view::ZoomIn),
-        11 => Box::new(crate::image_view::ZoomOut),
-        12 => Box::new(crate::image_view::ActualSize),
+        10 => Box::new(SelectFontSet),
+        11 => Box::new(crate::image_view::ZoomIn),
+        12 => Box::new(crate::image_view::ZoomOut),
+        13 => Box::new(crate::image_view::ActualSize),
         _ => Box::new(crate::image_view::FitToWindow),
     }
 }
@@ -550,6 +553,8 @@ mod tests {
             ids::EXPORT_PDF_PAGES,
             // Saved by Select Theme… and the appearance commands, which are the app's own.
             ids::APPEARANCE_SAVE,
+            // Saved by Select Font Set…, which is the app's own.
+            ids::APPEARANCE_SAVE_FONT_SET,
         ];
         let engine = Engine::new(Settings::default());
         let missing: Vec<&str> = engine

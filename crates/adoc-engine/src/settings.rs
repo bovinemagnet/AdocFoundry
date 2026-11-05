@@ -9,7 +9,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::EngineError;
+use crate::{
+    font_sets::{built_in_font_sets, FontSet, Fonts, DEFAULT_FONT_SET},
+    EngineError,
+};
 
 pub const USER_SETTINGS_FILE: &str = "adocfoundry.toml";
 pub const WORKSPACE_SETTINGS_FILE: &str = ".adocfoundry.toml";
@@ -50,7 +53,7 @@ pub enum AutoSave {
 impl Default for EditorSettings {
     fn default() -> Self {
         Self {
-            font_family: "JetBrains Mono".to_owned(),
+            font_family: "IBM Plex Mono".to_owned(),
             font_size: 13,
             soft_wrap: true,
             tab_width: 2,
@@ -380,6 +383,32 @@ pub struct AppearanceSettings {
     pub themes_dir: Option<PathBuf>,
     /// How many times larger than the default the application's text is drawn.
     pub font_scale: FontScale,
+    /// The id of the chosen font set; `None` for [`DEFAULT_FONT_SET`].
+    pub font_set: Option<String>,
+    /// The user's own sets, `[appearance.font_sets.<id>]`.
+    pub own_font_sets: Vec<FontSet>,
+}
+
+impl AppearanceSettings {
+    /// Every set that can be chosen: the built-in ones, then the user's.
+    #[must_use]
+    pub fn font_sets(&self) -> Vec<FontSet> {
+        let mut sets = built_in_font_sets();
+        sets.extend(self.own_font_sets.iter().cloned());
+        sets
+    }
+
+    /// The set `font_set` names, or the default if it names none.
+    #[must_use]
+    pub fn chosen_font_set(&self) -> FontSet {
+        let id = self.font_set.as_deref().unwrap_or(DEFAULT_FONT_SET);
+        let sets = self.font_sets();
+        sets.iter()
+            .find(|set| set.id == id)
+            .or_else(|| sets.iter().find(|set| set.id == DEFAULT_FONT_SET))
+            .cloned()
+            .expect("the default font set is built in")
+    }
 }
 
 /// How many times larger than the default the application's text is drawn (`[appearance]
@@ -439,6 +468,10 @@ pub struct Settings {
     appearance_mode_set: bool,
     /// Whether a settings file set the older `[editor] theme`.
     editor_theme_set: bool,
+    /// Whether a settings file set `[editor] font_family`, which then replaces the font set's.
+    editor_font_family_set: bool,
+    /// Whether a settings file set `[editor] font_size`, which then replaces the font set's.
+    editor_font_size_set: bool,
     /// Git is off unless a settings file turns it on, as in the language server.
     git_opt_in: bool,
     /// Pages are never saved without Save, whatever the files say; see
@@ -537,6 +570,7 @@ impl Settings {
             fresh.editor.auto_save = AutoSave::Off;
         }
         fresh.resolve_appearance_mode();
+        fresh.resolve_font_set();
         *self = fresh;
         Ok(())
     }
@@ -560,6 +594,60 @@ impl Settings {
         self.editor.theme = self.appearance.mode;
     }
 
+    /// Gives the editor its font set's source role, except what a settings file names.
+    fn resolve_font_set(&mut self) {
+        let sets = self.appearance.font_sets();
+        if let Some(id) = self
+            .appearance
+            .font_set
+            .clone()
+            .filter(|id| !sets.iter().any(|set| set.id == *id))
+        {
+            let source = self
+                .user_file
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default();
+            self.warn(
+                &source,
+                "appearance.font_set",
+                &format!("no font set is named \"{id}\"; using {DEFAULT_FONT_SET}"),
+            );
+        }
+        let fonts = self.fonts();
+        self.editor.font_family = fonts.source;
+        self.editor.font_size = fonts.source_size;
+    }
+
+    /// The fonts to draw with, from the chosen font set.
+    #[must_use]
+    pub fn fonts(&self) -> Fonts {
+        self.fonts_of(&self.appearance.chosen_font_set())
+    }
+
+    /// The fonts `set` would draw with under these settings.
+    #[must_use]
+    pub fn fonts_of(&self, set: &FontSet) -> Fonts {
+        let source = if self.editor_font_family_set {
+            self.editor.font_family.clone()
+        } else {
+            set.source.clone()
+        };
+        Fonts {
+            set: set.name.clone(),
+            interface: set.interface.clone(),
+            code: set.code_in_source.then(|| source.clone()),
+            source,
+            source_size: if self.editor_font_size_set {
+                self.editor.font_size
+            } else {
+                set.source_size
+            },
+            reading: set.reading.clone(),
+            reading_size: set.reading_size,
+        }
+    }
+
     /// Writes the appearance to the user settings file, changing only `[appearance]`'s `mode`,
     /// `light_theme` and `dark_theme` (a `None` name is taken out) and taking out the older
     /// `[editor] theme` it replaces, keeping every other line and comment; then reads the
@@ -581,6 +669,34 @@ impl Settings {
         light_theme: Option<&str>,
         dark_theme: Option<&str>,
     ) -> Result<(), EngineError> {
+        let mode = match mode {
+            ThemePreference::Auto => "auto",
+            ThemePreference::Light => "light",
+            ThemePreference::Dark => "dark",
+        };
+        self.write_appearance_keys(
+            true,
+            &[
+                ("mode", Some(mode)),
+                ("light_theme", light_theme),
+                ("dark_theme", dark_theme),
+            ],
+        )
+    }
+
+    /// Writes `[appearance] font_set` to the user settings file, keeping every other line and
+    /// comment, without reading the settings again.
+    pub(crate) fn write_font_set(&self, id: &str) -> Result<(), EngineError> {
+        self.write_appearance_keys(false, &[("font_set", Some(id))])
+    }
+
+    /// Sets `keys` of `[appearance]` in the user settings file (a `None` is taken out), and with
+    /// `drop_editor_theme` takes out the older `[editor] theme`.
+    fn write_appearance_keys(
+        &self,
+        drop_editor_theme: bool,
+        keys: &[(&str, Option<&str>)],
+    ) -> Result<(), EngineError> {
         let path = self.user_file.clone().ok_or_else(|| {
             EngineError::Refused("there is no user settings file to save to".to_owned())
         })?;
@@ -592,11 +708,13 @@ impl Settings {
         let mut document: toml_edit::DocumentMut = text
             .parse()
             .map_err(|error| EngineError::Settings(format!("{}: {error}", path.display())))?;
-        if let Some(editor) = document
-            .get_mut("editor")
-            .and_then(toml_edit::Item::as_table_like_mut)
-        {
-            editor.remove("theme");
+        if drop_editor_theme {
+            if let Some(editor) = document
+                .get_mut("editor")
+                .and_then(toml_edit::Item::as_table_like_mut)
+            {
+                editor.remove("theme");
+            }
         }
         let appearance = document
             .entry("appearance")
@@ -605,21 +723,12 @@ impl Settings {
             .ok_or_else(|| {
                 EngineError::Settings(format!("{}: `appearance` is not a table", path.display()))
             })?;
-        let mode = match mode {
-            ThemePreference::Auto => "auto",
-            ThemePreference::Light => "light",
-            ThemePreference::Dark => "dark",
-        };
-        for (key, text) in [
-            ("mode", Some(mode)),
-            ("light_theme", light_theme),
-            ("dark_theme", dark_theme),
-        ] {
+        for (key, text) in keys {
             match (text, appearance.get_mut(key)) {
                 // A key already there keeps its place and the comments written above it.
-                (Some(text), Some(item)) => *item = toml_edit::value(text),
+                (Some(text), Some(item)) => *item = toml_edit::value(*text),
                 (Some(text), None) => {
-                    appearance.insert(key, toml_edit::value(text));
+                    appearance.insert(key, toml_edit::value(*text));
                 }
                 (None, _) => {
                     appearance.remove(key);
@@ -702,6 +811,17 @@ impl Settings {
                     self.apply_templates_dir(&source, layer, path, value);
                     continue;
                 }
+                if section == "appearance" && key == "font_sets" {
+                    match layer {
+                        Layer::User => self.apply_font_sets(&source, value),
+                        Layer::Workspace => self.warn(
+                            &source,
+                            "appearance.font_sets",
+                            "can only be set in the user settings file",
+                        ),
+                    }
+                    continue;
+                }
                 if section == "appearance" && key == "themes_dir" && layer == Layer::User {
                     self.apply_themes_dir(&source, path, value);
                     continue;
@@ -721,6 +841,59 @@ impl Settings {
                 }
             }
         }
+    }
+
+    /// `[appearance.font_sets.<id>]`: each set of the user's, or a warning. A set with a value it
+    /// cannot use is left out; a key it does not know is only warned about.
+    fn apply_font_sets(&mut self, source: &str, value: &toml::Value) {
+        let Some(sets) = value.as_table() else {
+            self.warn(source, "appearance.font_sets", "expected a table");
+            return;
+        };
+        for (id, entry) in sets {
+            let name = format!("appearance.font_sets.{id}");
+            match self.font_set_from(source, &name, id, entry) {
+                Ok(set) => self.appearance.own_font_sets.push(set),
+                Err(problem) => self.warn(source, &name, problem),
+            }
+        }
+    }
+
+    fn font_set_from(
+        &mut self,
+        source: &str,
+        name: &str,
+        id: &str,
+        entry: &toml::Value,
+    ) -> Result<FontSet, &'static str> {
+        let table = entry.as_table().ok_or("expected a table")?;
+        let built_in = built_in_font_sets();
+        if built_in.iter().any(|set| set.id == id) {
+            return Err("a built-in font set has this id");
+        }
+        let base = match table.get("based_on") {
+            Some(value) => value.as_str(),
+            None => Some(DEFAULT_FONT_SET),
+        };
+        let mut set = built_in
+            .into_iter()
+            .find(|set| Some(set.id.as_str()) == base)
+            .ok_or("`based_on` must name a built-in font set")?;
+        set.id = id.to_owned();
+        set.name = id.to_owned();
+        for (key, value) in table {
+            match key.as_str() {
+                "based_on" => {}
+                "name" => set.name = font_name(value)?,
+                "interface" => set.interface = Some(font_name(value)?),
+                "source" => set.source = font_name(value)?,
+                "source_size" => set.source_size = positive(value)?,
+                "reading" => set.reading = Some(font_name(value)?),
+                "reading_size" => set.reading_size = Some(positive(value)?),
+                _ => self.warn(source, &format!("{name}.{key}"), "unknown key"),
+            }
+        }
+        Ok(set)
     }
 
     /// `[appearance] themes_dir`: a path relative to the user file's folder, `~/` the home folder.
@@ -811,8 +984,14 @@ impl Settings {
 
     fn set(&mut self, section: &str, key: &str, value: &toml::Value) -> Result<(), &'static str> {
         match (section, key) {
-            ("editor", "font_family") => self.editor.font_family = string(value)?,
-            ("editor", "font_size") => self.editor.font_size = positive(value)?,
+            ("editor", "font_family") => {
+                self.editor.font_family = string(value)?;
+                self.editor_font_family_set = true;
+            }
+            ("editor", "font_size") => {
+                self.editor.font_size = positive(value)?;
+                self.editor_font_size_set = true;
+            }
             ("editor", "soft_wrap") => {
                 self.editor.soft_wrap = value.as_bool().ok_or("expected true or false")?;
             }
@@ -837,6 +1016,7 @@ impl Settings {
             ("appearance", "light_theme") => self.appearance.light_theme = Some(theme_name(value)?),
             ("appearance", "dark_theme") => self.appearance.dark_theme = Some(theme_name(value)?),
             ("appearance", "font_scale") => self.appearance.font_scale = font_scale(value)?,
+            ("appearance", "font_set") => self.appearance.font_set = Some(font_name(value)?),
             ("workspace", "ignore") => {
                 let items = value.as_array().ok_or("expected an array of strings")?;
                 self.workspace.ignore = items.iter().map(string).collect::<Result<_, _>>()?;
@@ -1119,7 +1299,7 @@ fn is_known(section: &str, key: &str) -> bool {
             | ("workspace", "ignore")
             | (
                 "appearance",
-                "mode" | "light_theme" | "dark_theme" | "themes_dir" | "font_scale"
+                "mode" | "light_theme" | "dark_theme" | "themes_dir" | "font_scale" | "font_set"
             )
             | (
                 "tools",
@@ -1200,6 +1380,15 @@ fn string(value: &toml::Value) -> Result<String, &'static str> {
 
 fn boolean(value: &toml::Value) -> Result<bool, &'static str> {
     value.as_bool().ok_or("expected true or false")
+}
+
+fn font_name(value: &toml::Value) -> Result<String, &'static str> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .ok_or("expected a name")
 }
 
 fn positive(value: &toml::Value) -> Result<u32, &'static str> {

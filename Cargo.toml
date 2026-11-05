@@ -106,6 +106,7 @@ tokio = { version = "=1.54.1", features = ["rt", "macros", "io-std", "time", "ne
 sha2 = "=0.10.9"
 # Line diffs for crash recovery and local history; already in the tree through insta.
 similar = { version = "=2.7.0", default-features = false, features = ["text"] }
+skrifa = "=0.44.0"
 spellbook = "=0.4.2"
 tempfile = "=3.27.0"
 toml = "=1.2.0"

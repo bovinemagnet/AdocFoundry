@@ -1339,7 +1339,8 @@ fn scroll_sync_works_both_ways(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let page = adoc_index::normalize_path(&directory.path().join("long.adoc"));
     let mut text = String::from("= Long\n");
-    for number in 1..=80 {
+    // Enough below the blocks it scrolls to that, in any font set, the list does not end first.
+    for number in 1..=140 {
         text.push_str(&format!("\nParagraph {number}.\n"));
     }
     std::fs::write(&page, &text).unwrap();
@@ -4960,7 +4961,10 @@ fn diagnostics_show_the_report_and_copy_it(cx: &mut TestAppContext) {
     for line in [
         &format!("  Version:  AdocFoundry {}\n", env!("CARGO_PKG_VERSION")),
         "\nDisplay\n  Graphics:",
-        "  Editor font:",
+        "  Font set:",
+        "IBM Plex Sans (bundled)\n",
+        "  Source font:",
+        "  Reading font:",
         "\nTools\n  asciidoctor:",
         "\nSettings\n",
     ] {
@@ -8517,6 +8521,148 @@ fn themed_window(
     let app = app_with(Engine::new(settings_in(config.path())), cx);
     let (_workspace, cx) = workspace_window(&app, Vec::new(), cx);
     (config, user, app, cx)
+}
+
+/// The interface and monospaced families every window draws with.
+fn shown_families(cx: &mut VisualTestContext) -> (String, String) {
+    cx.update(|_, cx| {
+        let theme = gpui_component::Theme::global(cx);
+        (
+            theme.font_family.to_string(),
+            theme.mono_font_family.to_string(),
+        )
+    })
+}
+
+/// The source editor's family every window draws with.
+fn shown_source(app: &Entity<AppState>, cx: &mut VisualTestContext) -> String {
+    cx.update(|_, cx| crate::fonts::source(app.read(cx).engine.settings(), cx).0)
+}
+
+#[gpui::test]
+fn workshop_draws_every_role_by_default(cx: &mut TestAppContext) {
+    let (_config, _user, app, mut cx) = themed_window("", cx);
+    assert_eq!(
+        shown_families(&mut cx),
+        ("IBM Plex Sans".to_owned(), "IBM Plex Mono".to_owned())
+    );
+    assert_eq!(shown_source(&app, &mut cx), "IBM Plex Mono");
+    let reading = cx.update(|_, cx| crate::fonts::reading_style(cx));
+    assert_eq!(reading.font_family.as_deref(), Some("IBM Plex Sans"));
+    assert_eq!(reading.font_size, Some(px(15.).into()));
+}
+
+#[gpui::test]
+fn the_reading_size_follows_the_font_scale(cx: &mut TestAppContext) {
+    let text = "[appearance]\nfont_scale = 2\nfont_set = \"reading-room\"\n";
+    let (_config, _user, _app, mut cx) = themed_window(text, cx);
+    let reading = cx.update(|_, cx| crate::fonts::reading_style(cx));
+    assert_eq!(reading.font_family.as_deref(), Some("Source Serif 4"));
+    assert_eq!(reading.font_size, Some(px(34.).into()));
+}
+
+#[gpui::test]
+fn current_puts_back_the_fonts_the_app_started_with(cx: &mut TestAppContext) {
+    let (_config, user, _app, mut cx) = themed_window("", cx);
+    std::fs::write(&user, "[appearance]\nfont_set = \"current\"\n").unwrap();
+    cx.dispatch_action(crate::editor::bindings::ReloadSettings);
+    cx.run_until_parked();
+    let (interface, mono) = shown_families(&mut cx);
+    assert_ne!(interface, "IBM Plex Sans");
+    assert_ne!(mono, "IBM Plex Mono");
+    let reading = cx.update(|_, cx| crate::fonts::reading_style(cx));
+    assert_eq!(reading.font_family, None);
+    assert_eq!(reading.font_size, None);
+}
+
+#[gpui::test]
+fn a_set_overrides_a_themes_fonts_and_current_keeps_them(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let user = config.path().join("adocfoundry.toml");
+    std::fs::create_dir(config.path().join("themes")).unwrap();
+    std::fs::write(
+        config.path().join("themes/paper.json"),
+        r#"{"name": "Paper", "themes": [{"name": "Paper", "mode": "light",
+            "font.family": "Paper Sans", "mono_font.family": "Paper Mono"}]}"#,
+    )
+    .unwrap();
+    let text = "[appearance]\nmode = \"light\"\nlight_theme = \"Paper\"\n";
+    std::fs::write(&user, text).unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (_workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    assert_eq!(shown_families(&mut cx).0, "IBM Plex Sans");
+    std::fs::write(&user, format!("{text}font_set = \"current\"\n")).unwrap();
+    cx.dispatch_action(crate::editor::bindings::ReloadSettings);
+    cx.run_until_parked();
+    assert_eq!(
+        shown_families(&mut cx),
+        ("Paper Sans".to_owned(), "Paper Mono".to_owned())
+    );
+}
+
+#[gpui::test]
+fn a_set_naming_a_missing_font_warns_and_falls_back(cx: &mut TestAppContext) {
+    let text = "[appearance]\nfont_set = \"house\"\n\
+                [appearance.font_sets.house]\ninterface = \"No Such Font\"\n";
+    let (_config, _user, _app, mut cx) = themed_window(text, cx);
+    cx.run_until_parked();
+    assert_ne!(shown_families(&mut cx).0, "No Such Font");
+}
+
+#[gpui::test]
+fn the_font_picker_previews_without_saving(cx: &mut TestAppContext) {
+    let text = "[appearance]\nmode = \"light\"\n";
+    let (_config, user, app, mut cx) = themed_window(text, cx);
+    cx.dispatch_action(crate::editor::bindings::SelectFontSet);
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    let mut interface = std::collections::BTreeSet::new();
+    let mut source = std::collections::BTreeSet::new();
+    for _ in 0..3 {
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+        interface.insert(shown_families(&mut cx).0);
+        source.insert(shown_source(&app, &mut cx));
+    }
+    assert!(
+        interface.len() > 1,
+        "highlighting shows each: {interface:?}"
+    );
+    assert!(source.len() > 1, "the editor too: {source:?}");
+    assert_eq!(
+        std::fs::read_to_string(&user).unwrap(),
+        text,
+        "nothing saved"
+    );
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(shown_families(&mut cx).0, "IBM Plex Sans", "put back");
+    assert_eq!(shown_source(&app, &mut cx), "IBM Plex Mono", "put back");
+    assert_eq!(std::fs::read_to_string(&user).unwrap(), text);
+}
+
+#[gpui::test]
+fn the_font_picker_saves_the_set_confirmed(cx: &mut TestAppContext) {
+    let (_config, user, app, mut cx) = themed_window("# mine\n[editor]\ntab_width = 4\n", cx);
+    cx.dispatch_action(crate::editor::bindings::SelectFontSet);
+    cx.run_until_parked();
+    for _ in 0..3 {
+        cx.simulate_keystrokes("down");
+        cx.run_until_parked();
+    }
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let saved = std::fs::read_to_string(&user).unwrap();
+    assert!(
+        saved.starts_with("# mine\n[editor]\ntab_width = 4\n"),
+        "{saved}"
+    );
+    let id = cx.update(|_, cx| app.read(cx).engine.settings().appearance.font_set.clone());
+    let id = id.expect("a set was chosen");
+    assert!(saved.contains(&format!("font_set = \"{id}\"")), "{saved}");
+    assert_ne!(id, "workshop", "the picker moved from the first set");
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
 }
 
 /// The name of the theme every window shows.

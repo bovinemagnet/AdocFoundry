@@ -56,6 +56,7 @@ use crate::{
 mod build_site;
 mod delete_file;
 mod file_actions;
+mod font_picker;
 mod impact;
 mod new_project;
 mod theme_picker;
@@ -4168,15 +4169,7 @@ impl WorkspaceView {
         if let Some(CommandOutcome::Diagnostics(doctor)) =
             self.invoke(ids::APP_DIAGNOSTICS, CommandArgs::None, window, cx)
         {
-            let font = self
-                .app
-                .read(cx)
-                .engine
-                .settings()
-                .editor
-                .font_family
-                .clone();
-            crate::diagnostics::show(*doctor, &font, window, cx);
+            crate::diagnostics::show(*doctor, window, cx);
         }
     }
 
@@ -5252,6 +5245,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_reload_settings))
             .on_action(cx.listener(Self::on_toggle_theme))
             .on_action(cx.listener(Self::on_select_theme))
+            .on_action(cx.listener(Self::on_select_font_set))
             .on_action(cx.listener(Self::on_follow_system))
             .on_action(cx.listener(Self::on_light_appearance))
             .on_action(cx.listener(Self::on_dark_appearance))

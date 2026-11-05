@@ -8,6 +8,7 @@ mod appearance;
 mod diagnostics;
 mod editor;
 mod files_view;
+mod fonts;
 mod graph_view;
 mod history_view;
 mod image_decode;

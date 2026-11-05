@@ -408,6 +408,7 @@ dependencies = [
  "resvg 0.46.0",
  "ropey",
  "serde_json",
+ "skrifa 0.44.0",
  "tempfile",
  "tree-sitter",
  "tree-sitter-asciidoc",

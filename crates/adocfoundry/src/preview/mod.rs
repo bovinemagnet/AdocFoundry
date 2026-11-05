@@ -535,7 +535,7 @@ pub(crate) fn block_context<'a>(
 fn inline_style(window: &Window, cx: &App) -> inlines::InlineStyle {
     let theme = cx.theme();
     inlines::InlineStyle {
-        font: window.text_style().font(),
+        font: crate::fonts::reading_font(window.text_style().font(), cx),
         mono_family: theme.mono_font_family.clone(),
         color: theme.foreground,
         muted: theme.muted_foreground,
@@ -666,8 +666,7 @@ impl Render for PreviewView {
             .children(window_title)
             .child(header)
             .child(
-                div()
-                    .id("preview-scroll")
+                crate::fonts::reading(div().id("preview-scroll"), cx)
                     .flex_1()
                     .min_h_0()
                     .on_scroll(cx.listener(|_, _, window, cx| {

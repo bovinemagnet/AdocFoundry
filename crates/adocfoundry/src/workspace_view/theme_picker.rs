@@ -22,8 +22,10 @@ impl WorkspaceView {
     /// Shows the settings' appearance, telling the user once about any theme it names that
     /// cannot be shown.
     pub(super) fn apply_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let appearance = self.app.read(cx).engine.settings().appearance.clone();
-        let warnings = appearance::apply(&appearance, Some(window), false, cx);
+        let settings = self.app.read(cx).engine.settings();
+        let (appearance, shown) = (settings.appearance.clone(), settings.fonts());
+        let mut warnings = appearance::apply(&appearance, Some(window), false, cx);
+        warnings.extend(crate::fonts::show(shown, false, cx));
         self.warn_about_themes(warnings, window, cx);
     }
 

@@ -400,7 +400,7 @@ The app's image tests are in `src/ui_tests.rs`.
 
 `src/diagnostics.rs` completes the engine's `app.diagnostics` command, which returns a `Doctor` (see xref:engine.adoc#the-doctor[The doctor]).
 It names the program, adds a Display section that only the app can fill, runs the doctor with `cx.background_spawn` so the probing of tools does not block the window, and shows the result in a dialog with a Copy button.
-The Display section gives the graphics backend, the GPU and display server where the platform reports them, the scale factor, and whether the editor and interface fonts are installed.
+The Display section gives the graphics backend, the GPU and display server where the platform reports them, the scale factor, and the font set with its interface, source and reading fonts, each marked bundled, found or not installed.
 
 [[about]]
 == About
@@ -501,3 +501,6 @@ tree-sitter is for highlighting, folding and injections only; every semantic que
 
 gpui-component derives folds from multi-line syntax nodes and does not read `folds.scm`.
 The query is still kept and checked against the grammar.
+
+`src/fonts.rs` ships and loads the fonts of the built-in font sets (their licences are in `crates/adocfoundry/fonts/ABOUT-fonts`) and draws the interface, source and reading roles.
+`src/workspace_view/font_picker.rs` is the picker, built like the theme picker, over the engine's `font_sets.rs` and `appearance.save_font_set`.

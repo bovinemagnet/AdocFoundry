@@ -34,8 +34,8 @@ See xref:using-the-editor.adoc#crash-recovery[Recovering unsaved changes], xref:
 [source,toml]
 ----
 [editor]
-font_family = "JetBrains Mono"   # falls back to the platform monospace
-font_size = 13
+# font_family = "Iosevka"       # replaces the font set's source font
+# font_size = 13                 # replaces the font set's source size
 soft_wrap = true
 tab_width = 2
 theme = "auto"                   # auto | light | dark; the older setting, used when [appearance] mode is not set
@@ -48,6 +48,7 @@ light_theme = "Solarized Light"  # a light theme's name; the native default when
 dark_theme = "Tokyo Night"       # a dark theme's name; the native default when left out
 # themes_dir = "themes"          # relative to the user settings file's folder; ~/ is the home folder
 font_scale = 1.0                 # text this many times the default size, 0.5 to 3
+font_set = "workshop"            # workshop | reading-room | legible | current | one of your own
 
 [sidebar]
 remember_expansion = true        # remember opened and closed branches (user file only)
@@ -127,6 +128,66 @@ reason = "Deliberately unlisted staff-only page"
 check = true                     # look for a newer release at start-up
 ----
 
+[[font-sets]]
+== Font sets
+
+A font set gives three roles: Interface (menus, panels, tabs, dialogs and the status bar), Source (the source editor, and code in the preview, the visual editor and reports) and Reading (prose and headings in the preview and the visual editor).
+`appearance.font_set` chooses one.
+The fonts of `workshop`, `reading-room` and `legible` ship inside the app, so nothing needs installing.
+
+[cols="2,3,3,3"]
+|===
+|Id |Interface |Source |Reading
+
+|`workshop` (default)
+|IBM Plex Sans
+|IBM Plex Mono, 13
+|IBM Plex Sans, 15
+
+|`reading-room`
+|Source Sans 3
+|Source Code Pro, 14
+|Source Serif 4, 17
+
+|`legible`
+|Atkinson Hyperlegible Next
+|Atkinson Hyperlegible Mono, 14
+|Atkinson Hyperlegible Next, 16
+
+|`current`
+|the theme's or the system's interface font
+|the theme's or the system's monospace font; JetBrains Mono in the source editor only, if installed
+|as Interface
+|===
+
+`current` is the fonts the app used before font sets; they do not ship.
+A theme's `font.family` and `mono_font.family` apply only under `current`; any other set overrides them.
+`editor.font_family` and `editor.font_size`, when a settings file names them, replace the set's source role.
+Font sets change the app and never PDF export, which keeps its theme's fonts.
+
+Define a set of your own in the user file:
+
+[source,toml]
+----
+[appearance]
+font_set = "house"
+
+[appearance.font_sets.house]
+name = "House"            # defaults to the id
+based_on = "reading-room" # a built-in id; workshop when left out
+source = "Iosevka"
+source_size = 14
+reading = "Georgia"
+reading_size = 16
+----
+
+A role left out comes from `based_on`.
+The keys are `name`, `based_on`, `interface`, `source`, `source_size`, `reading` and `reading_size`.
+The families must be installed; a missing interface, source or reading family is reported in a notification and falls back to the theme's.
+An id a built-in set has, a bad `based_on` or a bad value leaves the set out with a warning.
+
+*Select Font Set...* in the View menu and the command palette is the quick way to choose; see xref:using-the-editor.adoc#themes[Themes].
+
 == Keys
 
 [cols="2,2,2,4"]
@@ -135,13 +196,15 @@ check = true                     # look for a newer release at start-up
 
 |`editor.font_family`
 |string
-|`"JetBrains Mono"`
-|The editor font. Falls back to the platform monospace font.
+|the font set's source font
+|The source editor's font, replacing the font set's source role when a settings file names it.
+Under `current` it reaches only the source editor; under every other set, code in the preview, the visual editor and reports follows it too.
+See xref:#font-sets[Font sets].
 
 |`editor.font_size`
 |positive integer
-|`13`
-|The editor font size.
+|the font set's source size
+|The source editor's font size, replacing the font set's source size when a settings file names it.
 `appearance.font_scale` multiplies it.
 
 |`editor.soft_wrap`
@@ -196,6 +259,21 @@ User file only.
 |`themes`
 |The folder of your own theme files, relative to the user settings file's folder; `~/` is the home folder.
 User file only.
+
+|`appearance.font_set`
+|string
+|`"workshop"`
+|The font set: `workshop`, `reading-room`, `legible`, `current`, or the id of one of your own.
+An unknown id warns and uses `workshop`.
+User file only.
+See xref:#font-sets[Font sets].
+
+|`appearance.font_sets.<id>`
+|table
+|none
+|A font set of your own.
+User file only.
+See xref:#font-sets[Font sets].
 
 |`appearance.font_scale`
 |number

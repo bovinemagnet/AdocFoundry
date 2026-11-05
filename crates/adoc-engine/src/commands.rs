@@ -63,6 +63,7 @@ pub mod ids {
     pub const PAGE_NEW_PARTIAL: CommandId = CommandId::new("page.new_partial");
     pub const FILE_NEW: CommandId = CommandId::new("file.new");
     pub const APPEARANCE_SAVE: CommandId = CommandId::new("appearance.save");
+    pub const APPEARANCE_SAVE_FONT_SET: CommandId = CommandId::new("appearance.save_font_set");
     pub const NAV_ADD_PAGE: CommandId = CommandId::new("nav.add_page");
     pub const MODULE_NEW: CommandId = CommandId::new("module.new");
     pub const PROJECT_NEW: CommandId = CommandId::new("project.new");
@@ -576,6 +577,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::impact_inspection::register_impact_inspection(registry);
     crate::deletion::register_deletion(registry);
     crate::appearance::register_appearance(registry);
+    crate::font_sets::register_font_sets(registry);
     crate::graph::register_graph(registry);
     #[cfg(feature = "git")]
     {

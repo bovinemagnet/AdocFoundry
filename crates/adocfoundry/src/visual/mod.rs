@@ -1009,7 +1009,10 @@ impl Render for VisualView {
         crate::renders::rendered(crate::renders::View::Visual);
         // Repopulated as this frame's text blocks are drawn.
         self.layouts.borrow_mut().clear();
-        self.measure_formulas(window);
+        // As the rows below are drawn, so that a formula's gap fits the text around it.
+        window.with_text_style(Some(crate::fonts::reading_style(cx)), |window| {
+            self.measure_formulas(window)
+        });
         self.update_rows();
         self.reveal_row();
         self.frame = self
@@ -1063,18 +1066,20 @@ impl Render for VisualView {
             .when(self.shown.is_some(), |view| {
                 let rows = self.rows.clone();
                 view.child(
-                    gpui::list(
-                        self.list.clone(),
-                        cx.processor(move |this, index: usize, window, cx| {
-                            let (Some(frame), Some(row)) = (this.frame.clone(), rows.get(index))
-                            else {
-                                return gpui::Empty.into_any_element();
-                            };
-                            blocks::row(this, &frame, row, index, rows.len(), window, cx)
-                        }),
-                    )
-                    .flex_1()
-                    .min_h_0(),
+                    crate::fonts::reading(div(), cx).flex_1().min_h_0().child(
+                        gpui::list(
+                            self.list.clone(),
+                            cx.processor(move |this, index: usize, window, cx| {
+                                let (Some(frame), Some(row)) =
+                                    (this.frame.clone(), rows.get(index))
+                                else {
+                                    return gpui::Empty.into_any_element();
+                                };
+                                blocks::row(this, &frame, row, index, rows.len(), window, cx)
+                            }),
+                        )
+                        .size_full(),
+                    ),
                 )
             })
             .when(self.shown.is_none(), |view| {

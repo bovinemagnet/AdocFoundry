@@ -1,0 +1,21 @@
+The fonts of the font sets that ship with AdocFoundry, copied unchanged from their publishers.
+Each is licensed under the SIL Open Font License 1.1, in the LICENSE file named beside it.
+
+- IBM Plex Sans 1.1.0 (LICENSE-ibm-plex-sans), https://github.com/IBM/plex, release
+  @ibm/plex-sans@1.1.0, fonts/complete/ttf.
+- IBM Plex Mono 2.5.0 (LICENSE-ibm-plex-mono), https://github.com/IBM/plex, release
+  @ibm/plex-mono@2.5.0, fonts/complete/ttf.
+- Source Sans 3 3.052 (LICENSE-source-sans), https://github.com/adobe-fonts/source-sans,
+  release 3.052R, TTF.
+- Source Code Pro 2.042 upright and 1.062 italic (LICENSE-source-code-pro),
+  https://github.com/adobe-fonts/source-code-pro, release 2.042R-u/1.062R-i/1.026R-vf, TTF.
+- Source Serif 4 4.005 (LICENSE-source-serif), https://github.com/adobe-fonts/source-serif,
+  release 4.005R, Desktop TTF.
+- Atkinson Hyperlegible Next (LICENSE-atkinson-next),
+  https://github.com/googlefonts/atkinson-hyperlegible-next, commit
+  7925f50f649b3813257faf2f4c0b381011f434f1, fonts/ttf.
+- Atkinson Hyperlegible Mono (LICENSE-atkinson-mono),
+  https://github.com/googlefonts/atkinson-hyperlegible-next-mono, commit
+  154d50362016cc3e873eb21d242cd0772384c8f9, fonts/ttf.
+
+Only the regular, italic, semibold and bold styles the app draws with are copied.
