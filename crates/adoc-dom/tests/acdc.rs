@@ -908,3 +908,51 @@ fn spans_are_the_same_with_crlf_line_endings() {
         );
     }
 }
+
+#[test]
+fn spans_are_the_same_with_trailing_whitespace() {
+    // acdc strips the whitespace at the end of each line before it parses; every span must
+    // still cover the same text, or click-to-source, scroll sync and visual edits land a byte
+    // per space too early, on every line after the first.
+    let plain_page = std::fs::read_to_string(fixture("blocks.adoc")).unwrap();
+    let plain_partial = std::fs::read_to_string(fixture("partials/included.adoc")).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("partials")).unwrap();
+    let spaced = |text: &str| text.replace('\n', " \t \n");
+    let spaced_page = spaced(&plain_page);
+    let spaced_partial = spaced(&plain_partial);
+    let page = directory.path().join("blocks.adoc");
+    std::fs::write(&page, &spaced_page).unwrap();
+    std::fs::write(
+        directory.path().join("partials/included.adoc"),
+        &spaced_partial,
+    )
+    .unwrap();
+    let without_spaces = |(line, text): (u32, String)| (line, text.replace(" \t \n", "\n"));
+
+    let plain = parse_fixture("blocks.adoc");
+    let with_spaces = AcdcParser.parse(&ParseInput::new(&page, &spaced_page));
+    let plain_blocks = plain.walk();
+    let spaced_blocks = with_spaces.walk();
+    assert_eq!(plain_blocks.len(), spaced_blocks.len());
+    for (plain_block, spaced_block) in plain_blocks.iter().zip(&spaced_blocks) {
+        assert_eq!(
+            without_spaces(covered(spaced_block, &spaced_page, &spaced_partial)),
+            covered(plain_block, &plain_page, &plain_partial),
+            "{}",
+            plain_block.kind_name()
+        );
+    }
+}
+
+#[test]
+fn trailing_whitespace_with_crlf_keeps_spans() {
+    let text = "One  \r\n \t\r\nTwo.\r\n\r\nThree.\r\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("page.adoc"), text));
+    let covered: Vec<&str> = dom
+        .walk()
+        .iter()
+        .map(|block| &text[block.meta.span.range.start..block.meta.span.range.end])
+        .collect();
+    assert_eq!(covered, ["One", "Two.", "Three."]);
+}

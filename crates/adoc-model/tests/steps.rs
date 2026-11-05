@@ -613,3 +613,20 @@ fn an_edit_leaves_inline_plus_markup_at_a_line_start_alone() {
     );
     assert_eq!(after, "A short para\n+mono+ text.\n");
 }
+
+#[test]
+fn a_line_ending_in_a_space_leaves_later_blocks_where_they_are() {
+    // A line break typed after a word leaves a space at the end of the line.
+    for (source, blocks) in [
+        ("One \n\nh\n", vec!["One", "h"]),
+        ("   \nplain does.\n\nh\n", vec!["plain does.", "h"]),
+        ("One\n\nTwo \n\nh\n\ni\n", vec!["One", "Two", "h", "i"]),
+    ] {
+        let model = build(source);
+        let shown: Vec<&str> = model
+            .text_blocks()
+            .map(|(_, _, text)| &model.source[text.range.start..text.range.end])
+            .collect();
+        assert_eq!(shown, blocks, "{source:?}");
+    }
+}
