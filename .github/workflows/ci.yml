@@ -1,9 +1,24 @@
 name: CI
 
+# A change only to documentation (.md and .adoc files) runs nothing. Those under crates/ and
+# tests/ are templates and fixtures the code builds in or reads, so a change there still runs.
+# Patterns are read in order and the last match decides.
 on:
   pull_request:
+    paths:
+      - '**'
+      - '!**.md'
+      - '!**.adoc'
+      - 'crates/**'
+      - 'tests/**'
   push:
     branches: [main]
+    paths:
+      - '**'
+      - '!**.md'
+      - '!**.adoc'
+      - 'crates/**'
+      - 'tests/**'
   # A version tag runs CI through release.yml, which publishes only once it passes.
   workflow_call:
 

@@ -40,6 +40,11 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 `.github/workflows/ci.yml` runs on pull requests and on pushes to `main`. It does not run on `v*` tags by itself; `release.yml` calls it (`workflow_call`) on the tagged commit, so a tagged release is tested as well as built.
 
+A pull request or push that changes only documentation, `.md` and `.adoc` files, runs no CI at all, through `paths` filters on both triggers.
+`.md` and `.adoc` files under `crates/` and `tests/` still run it, because they are the templates the engine builds in and the fixtures the tests read.
+The docs site's pages, `README.md`, `AGENTS.md` and the design document are read by some tests too (the visual editor's round-trip tests over `src/docs`, `theme_keys` over the theme keys partial, and `every_crate_is_documented` in `xtask`), so a change to them alone is checked only by the next run that changes code.
+A tagged release always runs CI, since `workflow_call` has no path filter.
+
 [cols="1,4"]
 |===
 |Job |What it does
