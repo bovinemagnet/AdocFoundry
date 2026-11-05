@@ -2,7 +2,7 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.7.0 — 2026-11-05
 
 ### Added
 
@@ -21,6 +21,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - The live PDF preview typesets a page after an edit in about 9 ms instead of 23 (#188): its compiles keep what Typst memoised for the last 10 compiles, so the blocks an edit left alone are laid out from the cache (an export still empties it); a theme's own font files are read once per process, and again only when one changes, instead of twice on every compile; the theme is kept between compiles and loaded again only when another is chosen or one of its files changes; and finding the source of each line of text on the pages is a binary search, not a scan of every span.
 - A pause in typing parses the active page once, on a worker, rather than once each for the preview, the visual model, the word count and the spell check, the visual model's on the UI thread: in split mode with the preview shown and 20 tabs open, the longest the engine thread is held while a 5,000-line page settles falls from about 44 ms to 18 ms. A page's parse no longer copies every open buffer, only shares them (#183).
 - The interface, source and reading fonts are Workshop's unless the settings choose otherwise (#383): set `[appearance] font_set = "current"` to keep the fonts used before. `[editor] font_family` and `font_size`, when a settings file names them, still choose the source font.
+- Seven dependencies are updated to their latest compatible releases (#362). `merman` 0.9.3 draws Mermaid diagrams with a new HTML parser, and `notify` 8.2.1 reaches macOS's file events through a different backend, so the file watcher on macOS is new code.
 - Toggle Light/Dark Theme saves the mode it switches to, rather than changing it for the session only (#357).
 - The source editor sends the engine each edit exactly as the editor widget makes it, so typing no longer compares the widget's text with the engine's on every keystroke (#210). The UI framework moves to gpui-component 0.9.0 and gpui-pre 0.3.11, which report the edits. In the Navigation and Modules panels' menu the first Down now selects Expand All, the first command, rather than the menu's title.
 
