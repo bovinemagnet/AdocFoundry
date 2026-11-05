@@ -44,9 +44,11 @@ pub enum Probe {
     Watch,
     /// A document typeset for the PDF preview, `adoc_pdf::preview_pages`.
     PreviewTypeset,
+    /// A theme's font file read from disk and parsed.
+    FontRead,
 }
 
-const PROBES: usize = 18;
+const PROBES: usize = 19;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -88,4 +90,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::PreviewTypeset as usize == PROBES - 1);
+const _: () = assert!(Probe::FontRead as usize == PROBES - 1);
