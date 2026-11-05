@@ -448,8 +448,8 @@ Highlighting through the editor's grammars was added later (issue #61); see xref
 
 |Typst's cache
 |Not specified
-|Emptied after each compile
-|Typst memoises layout in a process-wide cache that nothing else empties. After a 2,000-page book it held about 11 GB, which the app would keep. comemo 0.5 kept the memory of the caches it emptied (call-tree slabs and maps, and accelerator tables). That was 15.5 GB after a 2,058-page book. `vendor/comemo` frees it, leaving 67 MB. See `vendor/README.md`.
+|Emptied after each export; the PDF preview keeps what its last 10 compiles used (#188)
+|Typst memoises layout in a process-wide cache that nothing else empties. After a 2,000-page book it held about 11 GB, which the app would keep. comemo 0.5 kept the memory of the caches it emptied (call-tree slabs and maps, and accelerator tables). That was 15.5 GB after a 2,058-page book. `vendor/comemo` frees it, leaving 67 MB. See `vendor/README.md`. The live PDF preview is the exception: it keeps the results of its last 10 compiles, so the next compile after an edit reuses the layout of the blocks the edit left alone, and typesetting after an edit fell from about 23 ms to about 9 ms. An export empties them too, as the cache is process-wide.
 
 |Lists
 |Not specified
@@ -561,6 +561,11 @@ This section summarises section 12 of `docs/prd/PRD-AdocFoundry_Phase_5_Implemen
 |the emitter marks blocks its text shows fit on a page (`fits: true`, at most 20 estimated lines) so `keep()` measures only the rest.
 Running titles look up one memoised list of headings with a binary search instead of filtering every heading on every page
 |The 1,833-page corpus book: peak 17.1 GB to 9.3 GB, 55 s to 12.6 s. The 617-page one: 8.5 GB to 5.9 GB. `book_memory_probe` exports a synthetic 300-page component. No line or page changed.
+
+|PDF preview (#188)
+|evict with a small age in the preview, a process-wide cache of custom fonts, line gaps from the loaded fonts, and a sorted source map with a binary search
+|`typeset` takes a `Cache`: exports and text compiles still call `evict(0)`, `preview_pages` calls `evict(PREVIEW_CACHE_AGE)` with an age of 10. A theme's own font files are read and parsed once per process, kept by path and read again when their modification time or size changes, the `FileAccess` check still applying on every use. Line gaps go through that font cache rather than being derived from the font set, since `to_typst` writes them before the font set exists. `SourceMap` is sealed when emission ends, sorted with each entry knowing the entry it lies within, and `lookup` is a binary search then a walk outwards
+|The engine probe `pdf_preview_after_typing` reports the preview 109 ms after an edit, from 123 ms, of which 100 ms is the settle delay: typesetting fell from about 23 ms to about 9 ms. `preview_recompile_reuses_the_cache` typesets the reference article in 20.5 ms cold and 6.9 ms warm. With the fixture theme `acme-theme.yml`, which names one font file for four faces, a compile read that file five times and now reads it once per process. Tests: `custom_fonts_are_read_once`, `a_changed_font_is_read_again`, `lookup_prefers_the_entry_recorded_first`, and `map_entries_nest_within_the_source`, which also checks `lookup` against a scan.
 
 |Code highlighting (#16)
 |the source editor's highlighter

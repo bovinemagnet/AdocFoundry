@@ -31,6 +31,7 @@ tree-sitter-typescript.workspace = true
 tree-sitter-yaml.workspace = true
 
 [dev-dependencies]
+adoc-core = { workspace = true, features = ["probe"] }
 adoc-math.workspace = true
 adoc-dom.workspace = true
 hayro-syntax.workspace = true

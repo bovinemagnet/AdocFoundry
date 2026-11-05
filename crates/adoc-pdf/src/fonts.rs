@@ -3,8 +3,10 @@
 //! whatever the font files call themselves.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
+    time::SystemTime,
 };
 
 use adoc_core::FileAccess;
@@ -332,7 +334,33 @@ fn load(
     }
 }
 
+/// A theme's font file as last read: when it was modified, its size, and the font.
+type ReadFont = (Option<SystemTime>, u64, Option<Font>);
+
+/// The font in the file at `path`, read and parsed once per process until the file's
+/// modification time or size changes, since a theme's fonts are loaded on every compile.
 fn read(path: &Path, access: &FileAccess) -> Option<Font> {
+    static READ: OnceLock<Mutex<HashMap<PathBuf, ReadFont>>> = OnceLock::new();
+    if !access.permits(path) {
+        return None;
+    }
+    let metadata = std::fs::metadata(path).ok()?;
+    let (modified, len) = (metadata.modified().ok(), metadata.len());
+    let read = READ.get_or_init(Mutex::default);
+    if let Some((was_modified, was_len, font)) = read
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(path)
+    {
+        if *was_modified == modified && *was_len == len {
+            return font.clone();
+        }
+    }
     let data = access.read(path).ok()?;
-    Font::new(Bytes::new(data), 0)
+    adoc_core::probe::hit(adoc_core::probe::Probe::FontRead);
+    let font = Font::new(Bytes::new(data), 0);
+    read.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(path.to_owned(), (modified, len, font.clone()));
+    font
 }

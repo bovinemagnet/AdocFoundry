@@ -8,7 +8,7 @@ acdc-parser (the `adoc-dom` parser) depends on `evalexpr = "13"`, but `evalexpr`
 
 ## `comemo`
 
-Typst memoises its work through `comemo` 0.5.1, in process-wide caches. `adoc-pdf` empties them after each compile with `comemo::evict(0)`, but comemo keeps the memory those caches grew to: the call trees' slabs and maps, and the accelerator tables, which it clears but does not free. After exporting a 2,000-page book a long-running process (the app) kept about 15 GB allocated, reused by the next export but never returned.
+Typst memoises its work through `comemo` 0.5.1, in process-wide caches. `adoc-pdf` empties them after each export with `comemo::evict(0)` (the live PDF preview keeps what its last 10 compiles used, `evict(10)`), but comemo keeps the memory those caches grew to: the call trees' slabs and maps, and the accelerator tables, which it clears but does not free. After exporting a 2,000-page book a long-running process (the app) kept about 15 GB allocated, reused by the next export but never returned.
 
 `vendor/comemo` is comemo 0.5.1 (MIT OR Apache-2.0, its licences alongside) with two changes, substituted through `[patch.crates-io]`:
 

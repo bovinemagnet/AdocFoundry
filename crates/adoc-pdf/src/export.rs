@@ -117,7 +117,7 @@ pub fn compile(
     theme: &LoadedTheme,
     options: &PdfOptions,
 ) -> Result<PdfOutput, PdfError> {
-    let (document, diagnostics, world) = typeset(typst, theme, options)?;
+    let (document, diagnostics, world) = typeset(typst, theme, options, Cache::Clear)?;
     let map = |list: &[SourceDiagnostic]| -> Vec<PdfDiagnostic> {
         list.iter()
             .map(|diagnostic| diagnostic_of(&world, typst, diagnostic))
@@ -217,7 +217,7 @@ pub fn typeset_pages(
             }
         }
     }
-    let (document, _, _) = typeset(typst, theme, options)?;
+    let (document, _, _) = typeset(typst, theme, options, Cache::Clear)?;
     Ok(document
         .pages()
         .iter()
@@ -306,7 +306,7 @@ pub fn preview_pages(
         }
     }
     adoc_core::probe::hit(adoc_core::probe::Probe::PreviewTypeset);
-    let (document, _, world) = typeset(typst, theme, options)?;
+    let (document, _, world) = typeset(typst, theme, options, Cache::KeepRecent)?;
     let source = |span: typst::syntax::Span| {
         world
             .range(span)
@@ -458,11 +458,26 @@ fn typeset_math(
         .ok_or_else(|| failed("the formula typeset to nothing".to_owned()))
 }
 
+/// What a compile leaves in Typst's memoisation cache, which is process-wide and which
+/// nothing else empties.
+#[derive(Clone, Copy)]
+enum Cache {
+    /// Nothing: a book's cache is gigabytes, and the app would keep it after the export.
+    Clear,
+    /// What the last [`PREVIEW_CACHE_AGE`] compiles used, so the preview's next compile reuses
+    /// the layout of every block the edit left alone.
+    KeepRecent,
+}
+
+/// How many compiles a memoised result outlives its last use by in the preview.
+const PREVIEW_CACHE_AGE: usize = 10;
+
 /// Lays the document out, with every warning found on the way.
 fn typeset(
     typst: &Typst,
     theme: &LoadedTheme,
     options: &PdfOptions,
+    cache: Cache,
 ) -> Result<(PagedDocument, Vec<PdfDiagnostic>, PdfWorld), PdfError> {
     let mut diagnostics: Vec<PdfDiagnostic> = theme
         .warnings
@@ -513,9 +528,10 @@ fn typeset(
         options.access.clone(),
     );
     let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
-    // Typst memoises layout in a process-wide cache that nothing else empties; a book's is
-    // gigabytes, and the app would keep it after the export.
-    typst::comemo::evict(0);
+    typst::comemo::evict(match cache {
+        Cache::Clear => 0,
+        Cache::KeepRecent => PREVIEW_CACHE_AGE,
+    });
     let map = |list: &[SourceDiagnostic]| -> Vec<PdfDiagnostic> {
         list.iter()
             .map(|diagnostic| diagnostic_of(&world, typst, diagnostic))
