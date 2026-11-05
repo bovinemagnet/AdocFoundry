@@ -39,6 +39,9 @@ tree-sitter.workspace = true
 # To check that each font file shipped declares the family it is listed under.
 skrifa.workspace = true
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui-apple.workspace = true
+
 [lints]
 workspace = true
 

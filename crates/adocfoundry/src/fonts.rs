@@ -349,10 +349,18 @@ mod tests {
         }
     }
 
-    /// Through the platform's own text system, which GPUI's test platform does not have.
+    /// The platform's own text system, which GPUI's test platform does not have. On macOS it is
+    /// made on its own, since the Mac platform can be made only on the main thread.
+    fn platform_text_system() -> std::sync::Arc<dyn gpui::PlatformTextSystem> {
+        #[cfg(target_os = "macos")]
+        return std::sync::Arc::new(gpui_apple::AppleTextSystem::new());
+        #[cfg(not(target_os = "macos"))]
+        gpui_platform::current_platform(true).text_system()
+    }
+
     #[test]
     fn the_platform_loads_every_shipped_style() {
-        let system = gpui_platform::current_platform(true).text_system();
+        let system = platform_text_system();
         let files = BUNDLED
             .iter()
             .map(|(_, file)| Cow::Borrowed(*file))
@@ -388,7 +396,7 @@ mod tests {
     /// The source editor's columns line up only in a monospaced font.
     #[test]
     fn every_built_in_source_font_is_monospaced() {
-        let system = gpui_platform::current_platform(true).text_system();
+        let system = platform_text_system();
         let files = BUNDLED
             .iter()
             .map(|(_, file)| Cow::Borrowed(*file))
