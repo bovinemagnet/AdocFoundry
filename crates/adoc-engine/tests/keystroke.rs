@@ -60,11 +60,16 @@ fn one_keystroke_parses_at_most_once() {
     for (index, typed) in "Typed words".chars().enumerate() {
         type_char(&mut engine, id, at + index, &typed.to_string());
     }
-    // Typing waits for its pause; the pause parses the page once, for the index.
+    // Typing waits for its pause; the pause parses the page once, for the index, on a worker.
     assert_eq!(probe::count(Probe::Parse), 0);
     clock.advance(INDEX_SETTLE);
     engine.pump();
-    assert_eq!(probe::count(Probe::Parse), 1);
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    assert_eq!(
+        probe::count(Probe::Parse),
+        0,
+        "nothing parsed on the engine's thread"
+    );
     assert!(engine
         .workspace()
         .index

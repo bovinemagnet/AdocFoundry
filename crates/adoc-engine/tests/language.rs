@@ -188,6 +188,7 @@ fn typing_defers_reindexing_until_typing_pauses() {
     );
     clock.advance(INDEX_SETTLE);
     engine.pump();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
     assert!(indexed(&engine).starts_with("x= Page"));
     assert!(events
         .try_iter()

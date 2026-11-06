@@ -25,6 +25,8 @@ pub(crate) enum Crashed {
         version: u64,
         ticket: u64,
     },
+    /// Parsing a page for the index after a pause in typing, its answer kept with `ticket`.
+    IndexSettle { id: DocumentId, ticket: u64 },
     /// Counting the active page's words. Nothing waits for it, and the page is counted again
     /// once it changes.
     WordCount,
@@ -63,6 +65,11 @@ impl Engine {
                 ticket,
             } => {
                 self.parse_crashed(id, version, ticket);
+                None
+            }
+            // The index keeps the page as it was, as it would had the parse panicked here.
+            Crashed::IndexSettle { id, ticket } => {
+                self.settle_crashed(id, ticket);
                 None
             }
             Crashed::WordCount => None,

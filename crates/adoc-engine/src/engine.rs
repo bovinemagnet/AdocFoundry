@@ -95,6 +95,8 @@ pub struct Engine {
     /// Documents whose typed edits are parsed but not yet in the index, with the time after
     /// which `pump` indexes them.
     pub(crate) pending_index: BTreeMap<DocumentId, std::time::Instant>,
+    /// Pages past their pause, being parsed for the index on a worker.
+    pub(crate) settling: crate::index_settle::Settling,
     /// A typing command is running: a small edit it makes waits for a pause to be indexed.
     pub(crate) typing: bool,
     /// The settings files as last loaded, so a write that leaves them as they were (the app's
@@ -220,6 +222,7 @@ impl Engine {
             impact: crate::impact_analysis::ImpactCache::default(),
             group_documents: BTreeMap::new(),
             pending_index: BTreeMap::new(),
+            settling: crate::index_settle::Settling::default(),
             typing: false,
             settings_loaded: None,
             restoring: false,
@@ -931,32 +934,51 @@ impl Engine {
         &self.settings
     }
 
-    /// Indexes every document whose typed edits are waiting for a pause, and refreshes
-    /// diagnostics. Returns the number indexed.
+    /// Indexes every document whose typed edits are waiting for a pause, or being parsed for
+    /// the index on a worker, and refreshes diagnostics. Returns the number indexed.
     pub(crate) fn flush_index(&mut self) -> usize {
-        self.index_pending(None)
+        let mut ready: Vec<DocumentId> = std::mem::take(&mut self.pending_index)
+            .into_keys()
+            .collect();
+        ready.extend(self.take_settling());
+        ready.sort();
+        ready.dedup();
+        for id in &ready {
+            self.index_now(*id);
+        }
+        ready.len()
     }
 
-    /// Indexes pending documents whose deadline is at or before `due`, or all when `None`.
-    pub(crate) fn index_pending(&mut self, due: Option<std::time::Instant>) -> usize {
+    /// Hands the pending documents whose deadline is at or before `due` to workers, which
+    /// parse them for the index (`index_settle.rs`). Returns the number handed over.
+    pub(crate) fn index_pending(&mut self, due: std::time::Instant) -> usize {
         let ready: Vec<DocumentId> = self
             .pending_index
             .iter()
-            .filter(|(_, deadline)| due.is_none_or(|due| **deadline <= due))
+            .filter(|(_, deadline)| **deadline <= due)
             .map(|(id, _)| *id)
             .collect();
         for id in &ready {
             self.pending_index.remove(id);
-            let Some(document) = self.documents.get(id) else {
-                continue;
-            };
-            let (path, parsed) = (document.path.clone(), document.parsed().clone());
-            let before = adoc_lang::diagnosed_with(&self.workspace, &path);
-            self.workspace.replace_document(path.clone(), parsed);
-            self.graph_file_changed(&path);
-            self.refresh_diagnosed_with(&path, before);
+            self.start_settle(*id);
         }
         ready.len()
+    }
+
+    /// Indexes `id` on this thread and refreshes the diagnostics it decides.
+    fn index_now(&mut self, id: DocumentId) {
+        let Some(document) = self
+            .documents
+            .get(&id)
+            .filter(|document| document.indexed())
+        else {
+            return;
+        };
+        let (path, parsed) = (document.path.clone(), document.parsed().clone());
+        let before = adoc_lang::diagnosed_with(&self.workspace, &path);
+        self.workspace.replace_document(path.clone(), parsed);
+        self.graph_file_changed(&path);
+        self.refresh_diagnosed_with(&path, before);
     }
 
     /// The workspace index, Antora catalog and descriptor problems.
