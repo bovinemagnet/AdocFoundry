@@ -89,26 +89,41 @@ type Resolved = (PathBuf, Arc<str>, Arc<[usize]>);
 /// where each byte was removed: the offset of the line's end in the text without them, once per
 /// byte. acdc's offsets are in the text without them; [`original_offset`] maps one back to the
 /// file's.
+///
+/// A `\r` left after that (one not ending a line) makes acdc trim every line of all its
+/// trailing whitespace instead, so then that is removed too.
 fn as_acdc_reads(text: &str) -> (String, Vec<usize>) {
-    let mut out = String::with_capacity(text.len());
-    let mut removed = Vec::new();
-    for line in text.split_inclusive('\n') {
-        let (content, end) = match line.strip_suffix("\r\n") {
-            Some(content) => (content, "\n"),
-            None => match line.strip_suffix('\n') {
+    let read = |all_whitespace: bool| {
+        let mut out = String::with_capacity(text.len());
+        let mut removed = Vec::new();
+        for line in text.split_inclusive('\n') {
+            let (content, end) = match line.strip_suffix("\r\n") {
                 Some(content) => (content, "\n"),
-                None => (line, ""),
-            },
-        };
-        let kept = content.trim_end_matches([' ', '\t']);
-        out.push_str(kept);
-        removed.extend(std::iter::repeat_n(
-            out.len(),
-            line.len() - kept.len() - end.len(),
-        ));
-        out.push_str(end);
+                None => match line.strip_suffix('\n') {
+                    Some(content) => (content, "\n"),
+                    None => (line, ""),
+                },
+            };
+            let kept = if all_whitespace {
+                content.trim_end()
+            } else {
+                content.trim_end_matches([' ', '\t'])
+            };
+            out.push_str(kept);
+            removed.extend(std::iter::repeat_n(
+                out.len(),
+                line.len() - kept.len() - end.len(),
+            ));
+            out.push_str(end);
+        }
+        (out, removed)
+    };
+    let (out, removed) = read(false);
+    if out.contains('\r') {
+        read(true)
+    } else {
+        (out, removed)
     }
-    (out, removed)
 }
 
 /// The file's offset of acdc's `offset`: past every removed byte before it, and past those at

@@ -7,7 +7,7 @@ use adoc_core::SourceRange;
 use crate::{
     build::Builder,
     inline::{constrained_fits, flatten, Caret, Context, Flat, Frame, Refusal, Unit, UnitKind},
-    mapping::{apply_edits, minimal_edit, Mapping},
+    mapping::{apply_edits, minimal_edit, Assoc, Mapping},
     tree::{Atom, BlockPath, Mark, MarkSet, Model, Node, Piece, TextBlock, TextContext},
     SourceEdit,
 };
@@ -281,10 +281,12 @@ impl Model {
                 stack,
             }],
         );
+        // A link showing nothing selects nothing: both carets after it, or one would land on
+        // each side of a mark's closing delimiter.
         let selection = (
             Caret {
                 display,
-                sticky: false,
+                sticky: length == 0,
             },
             Caret {
                 display: display + length,
@@ -760,7 +762,14 @@ fn remap(
     seen: &mut bool,
 ) {
     let is_edited = node.text.as_ref().is_some_and(|text| text.range == edited);
-    node.range = mapping.map_range(node.range);
+    // A node holding the edited block grows with it; any other stays on its side of the
+    // edit, even an empty one where the edit starts or ends.
+    let side = if *seen { Assoc::After } else { Assoc::Before };
+    node.range = if node.range.start <= edited.start && edited.end <= node.range.end {
+        mapping.map_range(node.range)
+    } else {
+        map_beside(mapping, node.range, side)
+    };
     if let Some(text) = &mut node.text {
         if is_edited {
             *seen = true;
@@ -768,8 +777,8 @@ fn remap(
             if !*seen {
                 *footnotes += count_footnotes(&text.pieces);
             }
-            text.range = mapping.map_range(text.range);
-            remap_pieces(&mut text.pieces, mapping);
+            text.range = map_beside(mapping, text.range, side);
+            remap_pieces(&mut text.pieces, mapping, side);
         }
     }
     for child in &mut node.children {
@@ -777,19 +786,28 @@ fn remap(
     }
 }
 
-fn remap_pieces(pieces: &mut [Piece], mapping: &Mapping) {
+/// `range`, beside the edit and on its `side`, moved through `mapping` without taking in text
+/// inserted at its ends.
+fn map_beside(mapping: &Mapping, range: SourceRange, side: Assoc) -> SourceRange {
+    let start = mapping.map(range.start, side);
+    SourceRange::new(start, mapping.map(range.end, side).max(start))
+}
+
+fn remap_pieces(pieces: &mut [Piece], mapping: &Mapping, side: Assoc) {
     for piece in pieces {
         match piece {
-            Piece::Text { range } | Piece::Atom { range, .. } => *range = mapping.map_range(*range),
+            Piece::Text { range } | Piece::Atom { range, .. } => {
+                *range = map_beside(mapping, *range, side);
+            }
             Piece::Mark {
                 open,
                 close,
                 children,
                 ..
             } => {
-                *open = mapping.map_range(*open);
-                *close = mapping.map_range(*close);
-                remap_pieces(children, mapping);
+                *open = map_beside(mapping, *open, side);
+                *close = map_beside(mapping, *close, side);
+                remap_pieces(children, mapping, side);
             }
         }
     }
@@ -809,14 +827,11 @@ fn count_footnotes(pieces: &[Piece]) -> u32 {
         .sum()
 }
 
-/// The text block whose range (before remapping) started at `range.start`: its node's range
-/// has moved, but the block keeps its start because edits stay inside it.
+/// The edited text block, whose range is still `range`: `remap` moves its node's range but
+/// not its own. Matching the start alone could find an empty block that starts there too.
 fn text_block_mut(nodes: &mut [Node], range: SourceRange) -> Option<&mut TextBlock> {
     for node in nodes {
-        let holds = node
-            .text
-            .as_ref()
-            .is_some_and(|text| text.range.start == range.start && text.range.end >= range.start);
+        let holds = node.text.as_ref().is_some_and(|text| text.range == range);
         if holds {
             return node.text.as_mut();
         }

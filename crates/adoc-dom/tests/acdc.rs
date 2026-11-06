@@ -956,3 +956,17 @@ fn trailing_whitespace_with_crlf_keeps_spans() {
         .collect();
     assert_eq!(covered, ["One", "Two.", "Three."]);
 }
+
+#[test]
+fn a_lone_carriage_return_keeps_spans() {
+    // Found by the `parse_dom` fuzz target. A `\r` outside a `\r\n` makes acdc-parser trim
+    // every line of all its trailing whitespace, not only spaces and tabs.
+    let text = "One\r\u{c}\n\nTwo.\r\r\n\nThree.\u{2003}\n\n\u{e9}\u{e9}\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("page.adoc"), text));
+    let covered: Vec<&str> = dom
+        .walk()
+        .iter()
+        .map(|block| &text[block.meta.span.range.start..block.meta.span.range.end])
+        .collect();
+    assert_eq!(covered, ["One", "Two.", "Three.", "\u{e9}\u{e9}"]);
+}

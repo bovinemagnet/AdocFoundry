@@ -46,6 +46,7 @@ cargo bench -p adoc-engine                         # benchmarks held to budgets 
 cargo test -p adoc-pdf --test themes               # theme loader against asciidoctor-pdf's key maps
 cargo test -p adocfoundry-cli --test pdf_regression   # PDFs vs asciidoctor-pdf, rasterised; skips without it
 ADOC_PDF_OUT=/tmp cargo test -p adoc-pdf --test reference -- --ignored   # write the reference PDFs and Typst
+python3 fuzz/seed.py && cargo +nightly fuzz run parse_dom -- -max_total_time=120 -rss_limit_mb=4096   # fuzz/ (own workspace, nightly, cargo-fuzz 0.13.2); each crash becomes a regression test
 ```
 
 The CLI and engine integration tests use `insta` snapshots (`tests/snapshots/`); review a changed snapshot rather than overwriting it blindly.

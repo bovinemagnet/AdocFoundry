@@ -1,0 +1,81 @@
+# The fuzz targets: a cargo-fuzz project of its own, outside the main workspace (which
+# excludes this folder), built with nightly. The developer documentation's testing page says
+# how to run them.
+[package]
+name = "adocfoundry-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+adoc-antora = { path = "../crates/adoc-antora" }
+adoc-core = { path = "../crates/adoc-core" }
+adoc-dom = { path = "../crates/adoc-dom" }
+# Only for `resource_id_string`, the writer of resource ids the MCP server uses.
+adoc-engine = { path = "../crates/adoc-engine", default-features = false }
+adoc-math = { path = "../crates/adoc-math" }
+adoc-model = { path = "../crates/adoc-model" }
+adoc-parser = { path = "../crates/adoc-parser" }
+adoc-pdf = { path = "../crates/adoc-pdf", features = ["fuzzing"] }
+libfuzzer-sys = "=0.4.13"
+# At the versions the main workspace pins.
+typst-library = "=0.15.1"
+typst-syntax = "=0.15.1"
+
+[workspace]
+members = ["."]
+
+# The main workspace's patches, which apply only to the workspace that names them.
+[patch.crates-io]
+# acdc-parser depends on evalexpr 13, which is AGPL-3.0-only; see vendor/README.md.
+evalexpr = { path = "../vendor/evalexpr" }
+comemo = { path = "../vendor/comemo" }
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "parse_source"
+path = "fuzz_targets/parse_source.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_dom"
+path = "fuzz_targets/parse_dom.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "model_roundtrip"
+path = "fuzz_targets/model_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "antora_resource_id"
+path = "fuzz_targets/antora_resource_id.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "math_is_safe"
+path = "fuzz_targets/math_is_safe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pdf_literal"
+path = "fuzz_targets/pdf_literal.rs"
+test = false
+doc = false
+bench = false
