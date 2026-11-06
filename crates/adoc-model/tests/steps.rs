@@ -615,6 +615,28 @@ fn an_edit_leaves_inline_plus_markup_at_a_line_start_alone() {
 }
 
 #[test]
+fn a_link_with_empty_text_leaves_the_caret_after_it() {
+    // Found by the `model_roundtrip` fuzz target: inside a mark, the start of the selection
+    // went after the mark's closing delimiter and its end before it.
+    let model = build("Some **strong text** here.\n");
+    let range = SourceRange::new(
+        offset(&model.source, "rong"),
+        offset(&model.source, "ere"),
+    );
+    let result = model
+        .apply(&Step::SetLink {
+            range,
+            target: "intro".to_owned(),
+            text: Some(String::new()),
+        })
+        .unwrap();
+    let after = apply_edits(&model.source, &result.edits);
+    assert_eq!(after, "Some **st<<intro,>>**ere.\n");
+    let caret = offset(&after, "**ere");
+    assert_eq!(result.selection, SourceRange::new(caret, caret));
+}
+
+#[test]
 fn a_line_ending_in_a_space_leaves_later_blocks_where_they_are() {
     // A line break typed after a word leaves a space at the end of the line.
     for (source, blocks) in [

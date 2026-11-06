@@ -281,10 +281,12 @@ impl Model {
                 stack,
             }],
         );
+        // A link showing nothing selects nothing: both carets after it, or one would land on
+        // each side of a mark's closing delimiter.
         let selection = (
             Caret {
                 display,
-                sticky: false,
+                sticky: length == 0,
             },
             Caret {
                 display: display + length,
