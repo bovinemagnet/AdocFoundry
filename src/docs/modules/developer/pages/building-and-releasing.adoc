@@ -45,6 +45,26 @@ A pull request or push that changes only documentation, `.md` and `.adoc` files,
 The docs site's pages, `README.md`, `AGENTS.md` and the design document are read by some tests too (the visual editor's round-trip tests over `src/docs`, `theme_keys` over the theme keys partial, and `every_crate_is_documented` in `xtask`), so a change to them alone is checked only by the next run that changes code.
 A tagged release always runs CI, since `workflow_call` has no path filter.
 
+Concurrency: a newer push to a pull request cancels the run it supersedes, through a `concurrency` group per event and ref.
+Runs on `main`, and the tag's run through `release.yml`, always finish.
+
+Time limits: every job in both workflows has `timeout-minutes`, about twice its longest recent run.
+A hung test now fails its job instead of holding a runner for GitHub's six-hour limit, as the v0.6.0 tag's Windows tests did.
+
+Toolchain: each job installs the toolchain `rust-toolchain.toml` names, components included, with `rustup toolchain install` and no name.
+The release jobs add their targets with `rustup target add`.
+So the file is the one place the Rust version is set.
+
+Pinning: every third-party action is pinned to a commit, with its version in a comment.
+Tools are released binaries at pinned versions through `taiki-e/install-action` (`tree-sitter-cli` 0.27.1 in CI; `cargo-wix` 0.3.9, `cargo-deb` 3.8.0 and `cargo-generate-rpm` 0.21.1 in the release), never `cargo install`.
+`packaging/test_workflows.py` fails if a job has no time limit, an action is not pinned to a commit, a tool is installed from source or unpinned, or a download is an unversioned build.
+
+[[ci-caching]]
+Caching: only `test` restores a build cache.
+Its three caches already hold about 11 GB, at GitHub's 10 GB limit for the repository, and `lint` takes about 4 minutes from cold.
+A cache for every job would evict the ones that save the most.
+Which jobs to cache is part of the build-time work in issue #391.
+
 [cols="1,4"]
 |===
 |Job |What it does
@@ -56,13 +76,13 @@ A tagged release always runs CI, since `workflow_call` has no path filter.
 |On Ubuntu, macOS 15 and Windows: `cargo test --workspace --exclude adocfoundry`, then `cargo build -p adocfoundry`. Building needs no display.
 On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15, so the fidelity test and `pdf_regression` run instead of skipping. These tools are needed only by CI, never at runtime.
 On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
-Each run restores the dependencies' build output with `Swatinem/rust-cache`, keyed by OS, Rust version and `Cargo.lock`; only runs on `main` save it, so pull requests reuse `main`'s cache and the three caches stay within GitHub's 10 GB per repository.
+Each run restores the dependencies' build output with `Swatinem/rust-cache`, keyed by OS, Rust version and `Cargo.lock`; only runs on `main` save it, so pull requests reuse `main`'s cache. Only `test` is cached, to keep to the three caches; see the caching paragraph above (<<ci-caching>>).
 
 |`pdf-standards`
 |On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1, and as PDF/A-1b and PDF/A-1a. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both of those standards too, but not under PDF/A-1, because its Mermaid diagram uses transparency. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
 
 |`grammar`
-|Builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
+|Installs `tree-sitter-cli` 0.27.1 as a released binary, builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
 |===
 
 == Release workflow
@@ -112,7 +132,7 @@ The four executables are signed through Azure Artifact Signing (formerly Trusted
 The job checks every signature with `Get-AuthenticodeSignature`.
 
 |`linux`
-|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy` (with its update information set, `gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-<arch>.AppImage.zsync`) and its `.zsync` file, and archives of `adoc-ls`, `adocfoundry-cli` and `adoc-mcp`. Each package and archive carries the dictionaries' licence and the third-party notices: the deb, rpm and AppImage install them as `/usr/share/doc/adocfoundry/SCOWL.txt` and `THIRD-PARTY-NOTICES.txt`, and the archives hold `licenses/SCOWL.txt` and `licenses/THIRD-PARTY-NOTICES.txt`.
+|Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy` (release `1-alpha-20251107-1`, checked against its SHA-256 with `sha256sum -c` before it runs, not the moving `continuous` build; with its update information set, `gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-<arch>.AppImage.zsync`) and its `.zsync` file, and archives of `adoc-ls`, `adocfoundry-cli` and `adoc-mcp`. Each package and archive carries the dictionaries' licence and the third-party notices: the deb, rpm and AppImage install them as `/usr/share/doc/adocfoundry/SCOWL.txt` and `THIRD-PARTY-NOTICES.txt`, and the archives hold `licenses/SCOWL.txt` and `licenses/THIRD-PARTY-NOTICES.txt`.
 It also checks the Flatpak manifest (see below).
 
 |`smoke`
