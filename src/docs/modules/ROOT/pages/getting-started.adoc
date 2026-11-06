@@ -55,6 +55,25 @@ ln -s /Applications/AdocFoundry.app/Contents/MacOS/adoc-ls /usr/local/bin/
 Download the MSI, which can add the tools to your `PATH`, or the portable zip.
 Both are built for x64 and ARM64.
 
+Alternatively, install it with Scoop from the `bovinemagnet/scoop-bucket` bucket (https://github.com/bovinemagnet/scoop-bucket).
+
+[source,pwsh]
+----
+scoop bucket add bovinemagnet https://github.com/bovinemagnet/scoop-bucket
+scoop install adocfoundry
+----
+
+Scoop installs the portable zip for x64 or ARM64 into your Scoop folder, so it needs no administrator rights.
+It adds AdocFoundry to the Start menu under *Scoop Apps*, and puts `adocfoundry-cli`, `adoc-ls` and `adoc-mcp` on your `PATH` without further steps.
+
+To update it, or to remove it, run the following.
+
+[source,pwsh]
+----
+scoop update adocfoundry
+scoop uninstall adocfoundry
+----
+
 Releases built with the project's signing credentials have Authenticode signatures on the executables and the MSI, so SmartScreen does not warn.
 Unsigned releases (every release up to 0.2.1) make SmartScreen ask before running them: choose *More info*, then *Run anyway*.
 
@@ -112,6 +131,7 @@ AdocFoundry does not run AppImageUpdate itself.
 deb, rpm, Flatpak, the portable zip and builds from source::
 The notice only points to the release.
 Update the deb, rpm and Flatpak with their package managers.
+A Scoop install is the portable zip, and *Update…* only applies to the MSI, so update it with `scoop update adocfoundry`.
 
 NOTE: A build that is not signed with a Developer ID on macOS, or not Authenticode-signed on Windows, cannot check signatures, so it only points to the release.
 Every release up to 0.2.1 is ad hoc signed on macOS and unsigned on Windows.
