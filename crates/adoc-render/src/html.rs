@@ -35,7 +35,7 @@ pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
     }
     out.push_str("<div id=\"header\">\n");
     if let Some(title) = &view.title {
-        let _ = writeln!(out, "<h1>{}</h1>", inlines(title));
+        let _ = writeln!(out, "<h1>{}</h1>", page_inlines(view, title));
     }
     if !view.toc.is_empty() {
         toc(&mut out, view);
@@ -52,7 +52,7 @@ pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
                 out,
                 "<div class=\"footnote\" id=\"_footnotedef_{0}\"><a href=\"#_footnoteref_{0}\">{0}</a>. {1}</div>",
                 note.number,
-                inlines(&note.content)
+                page_inlines(view, &note.content)
             );
         }
         out.push_str("</div>\n");
@@ -63,7 +63,7 @@ pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
     out
 }
 
-const STYLE: &str = "<style>\nbody{font-family:sans-serif;max-width:60em;margin:auto;padding:1em;line-height:1.5}\npre{background:#f6f6f6;padding:.6em;overflow:auto}\n.admonitionblock td.icon{font-weight:bold;padding-right:1em}\ntable.tableblock{border-collapse:collapse}td.tableblock,th.tableblock{border:1px solid #ccc;padding:.3em}\n.title{font-style:italic}\n.sidebarblock{border:1px solid #ccc;padding:.6em}\n.exampleblock{border:1px solid #ddd;padding:.6em}\n</style>\n";
+const STYLE: &str = "<style>\nbody{font-family:sans-serif;max-width:60em;margin:auto;padding:1em;line-height:1.5}\npre{background:#f6f6f6;padding:.6em;overflow:auto}\n.admonitionblock td.icon{font-weight:bold;padding-right:1em}\n.admonitionblock td.icon i.fa::before{content:attr(title);font-style:normal}\ntable.tableblock{border-collapse:collapse}td.tableblock,th.tableblock{border:1px solid #ccc;padding:.3em}\n.title{font-style:italic}\n.sidebarblock{border:1px solid #ccc;padding:.6em}\n.exampleblock{border:1px solid #ddd;padding:.6em}\n</style>\n";
 
 fn toc(out: &mut String, view: &ViewTree) {
     out.push_str("<div id=\"toc\" class=\"toc\">\n<div id=\"toctitle\">Table of Contents</div>\n<ul class=\"sectlevel1\">\n");
@@ -102,7 +102,7 @@ fn classes(base: &str, block: &ViewBlock) -> String {
     classes
 }
 
-fn block_title(out: &mut String, block: &ViewBlock) {
+fn block_title(out: &mut String, view: &ViewTree, block: &ViewBlock) {
     if block.title.is_empty() {
         return;
     }
@@ -115,7 +115,7 @@ fn block_title(out: &mut String, block: &ViewBlock) {
         out,
         "<div class=\"title\">{}{}</div>",
         escape(&caption),
-        inlines(&block.title)
+        page_inlines(view, &block.title)
     );
 }
 
@@ -148,7 +148,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 out,
                 "<h{heading}{id}>{}{}</h{heading}>",
                 escape(&number),
-                inlines(title)
+                page_inlines(view, title)
             );
             if *level == 1 {
                 out.push_str("<div class=\"sectionbody\">\n");
@@ -165,13 +165,13 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 out,
                 "<h{heading}{id} class=\"{}\">{}</h{heading}>",
                 classes("discrete", block),
-                inlines(title)
+                page_inlines(view, title)
             );
         }
         ViewKind::Paragraph(content) => {
             let _ = write!(out, "<div{id} class=\"{}\">", classes("paragraph", block));
-            block_title(out, block);
-            let _ = writeln!(out, "<p>{}</p></div>", inlines(content));
+            block_title(out, view, block);
+            let _ = writeln!(out, "<p>{}</p></div>", page_inlines(view, content));
         }
         ViewKind::List { kind, items } => {
             let (class, tag, list) = match kind {
@@ -187,14 +187,14 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 }
             };
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes(&class, block));
-            block_title(out, block);
+            block_title(out, view, block);
             let _ = writeln!(out, "<{tag}{list}>");
             for item in items {
                 out.push_str("<li><p>");
                 if let Some(checked) = item.checked {
                     out.push_str(if checked { "&#10003; " } else { "&#10063; " });
                 }
-                out.push_str(&inlines(&item.content));
+                out.push_str(&page_inlines(view, &item.content));
                 out.push_str("</p>\n");
                 render_blocks(out, view, &item.blocks);
                 out.push_str("</li>\n");
@@ -203,12 +203,16 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
         }
         ViewKind::DescriptionList(items) if block.style.as_deref() == Some("qanda") => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("qlist qanda", block));
-            block_title(out, block);
+            block_title(out, view, block);
             out.push_str("<ol>\n");
             for item in items {
-                let _ = write!(out, "<li><p><em>{}</em></p>", inlines(&item.term));
+                let _ = write!(
+                    out,
+                    "<li><p><em>{}</em></p>",
+                    page_inlines(view, &item.term)
+                );
                 if !item.content.is_empty() {
-                    let _ = write!(out, "<p>{}</p>", inlines(&item.content));
+                    let _ = write!(out, "<p>{}</p>", page_inlines(view, &item.content));
                 }
                 render_blocks(out, view, &item.blocks);
                 out.push_str("</li>\n");
@@ -217,16 +221,16 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
         }
         ViewKind::DescriptionList(items) if block.style.as_deref() == Some("horizontal") => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("hdlist", block));
-            block_title(out, block);
+            block_title(out, view, block);
             out.push_str("<table>\n");
             for item in items {
                 let _ = write!(
                     out,
                     "<tr>\n<td class=\"hdlist1\">\n{}\n</td>\n<td class=\"hdlist2\">\n",
-                    inlines(&item.term)
+                    page_inlines(view, &item.term)
                 );
                 if !item.content.is_empty() {
-                    let _ = writeln!(out, "<p>{}</p>", inlines(&item.content));
+                    let _ = writeln!(out, "<p>{}</p>", page_inlines(view, &item.content));
                 }
                 render_blocks(out, view, &item.blocks);
                 out.push_str("</td>\n</tr>\n");
@@ -235,13 +239,17 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
         }
         ViewKind::DescriptionList(items) => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("dlist", block));
-            block_title(out, block);
+            block_title(out, view, block);
             out.push_str("<dl>\n");
             for item in items {
-                let _ = writeln!(out, "<dt class=\"hdlist1\">{}</dt>", inlines(&item.term));
+                let _ = writeln!(
+                    out,
+                    "<dt class=\"hdlist1\">{}</dt>",
+                    page_inlines(view, &item.term)
+                );
                 out.push_str("<dd>");
                 if !item.content.is_empty() {
-                    let _ = write!(out, "<p>{}</p>", inlines(&item.content));
+                    let _ = write!(out, "<p>{}</p>", page_inlines(view, &item.content));
                 }
                 render_blocks(out, view, &item.blocks);
                 out.push_str("</dd>\n");
@@ -256,7 +264,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             );
             out.push_str("<ol>\n");
             for item in items {
-                let _ = write!(out, "<li><p>{}</p>", inlines(&item.content));
+                let _ = write!(out, "<li><p>{}</p>", page_inlines(view, &item.content));
                 render_blocks(out, view, &item.blocks);
                 out.push_str("</li>\n");
             }
@@ -269,11 +277,21 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 "<div{id} class=\"{}\">",
                 classes(&format!("admonitionblock {}", label.to_lowercase()), block)
             );
+            // With `icons=font`, Font Awesome's element for the stylesheet to draw, unless the
+            // block names an icon image of its own, which is not written.
+            let icon = if font_icons(view) && !block.attributes.contains_key("icon") {
+                format!(
+                    "<i class=\"fa icon-{}\" title=\"{label}\"></i>",
+                    label.to_lowercase()
+                )
+            } else {
+                format!("<div class=\"title\">{label}</div>")
+            };
             let _ = writeln!(
                 out,
-                "<table><tr><td class=\"icon\"><div class=\"title\">{label}</div></td><td class=\"content\">"
+                "<table><tr><td class=\"icon\">{icon}</td><td class=\"content\">"
             );
-            block_title(out, block);
+            block_title(out, view, block);
             match blocks.as_slice() {
                 // `NOTE: text`: the paragraph is the admonition itself, starting on its line,
                 // and Asciidoctor writes its text straight into the cell. A delimited block's
@@ -282,7 +300,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                     if only.span.path == block.span.path && only.span.line == block.span.line =>
                 {
                     if let ViewKind::Paragraph(content) = &only.kind {
-                        let _ = writeln!(out, "{}", inlines(content));
+                        let _ = writeln!(out, "{}", page_inlines(view, content));
                     } else {
                         render_block(out, view, only);
                     }
@@ -301,7 +319,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 "<div{id} class=\"{}\">",
                 classes("listingblock", block)
             );
-            block_title(out, block);
+            block_title(out, view, block);
             out.push_str("<div class=\"content\">\n");
             let code = code_with_callouts(text, callouts);
             match language {
@@ -325,7 +343,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 "<div{id} class=\"{}\">",
                 classes("literalblock", block)
             );
-            block_title(out, block);
+            block_title(out, view, block);
             let _ = writeln!(
                 out,
                 "<div class=\"content\">\n<pre>{}</pre>\n</div>\n</div>",
@@ -338,7 +356,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             blocks,
         } => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("quoteblock", block));
-            block_title(out, block);
+            block_title(out, view, block);
             out.push_str("<blockquote>\n");
             render_blocks(out, view, blocks);
             out.push_str("</blockquote>\n");
@@ -351,7 +369,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             text,
         } => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("verseblock", block));
-            block_title(out, block);
+            block_title(out, view, block);
             let _ = writeln!(out, "<pre class=\"content\">{}</pre>", escape(text));
             attribution_html(out, attribution.as_deref(), citation.as_deref());
             out.push_str("</div>\n");
@@ -375,7 +393,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             let summary = if block.title.is_empty() {
                 "Details".to_owned()
             } else {
-                inlines(&block.title)
+                page_inlines(view, &block.title)
             };
             let _ = writeln!(out, "<summary class=\"title\">{summary}</summary>");
             out.push_str("<div class=\"content\">\n");
@@ -401,7 +419,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                     out,
                     "<caption class=\"title\">{}{}</caption>",
                     escape(&caption),
-                    inlines(&block.title)
+                    page_inlines(view, &block.title)
                 );
             }
             let total: u32 = table
@@ -471,11 +489,14 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                     for block in &cell.blocks {
                         match &block.kind {
                             ViewKind::Paragraph(content) if tag == "th" => {
-                                out.push_str(&inlines(content));
+                                out.push_str(&page_inlines(view, content));
                             }
                             ViewKind::Paragraph(content) => {
-                                let _ =
-                                    write!(out, "<p class=\"tableblock\">{}</p>", inlines(content));
+                                let _ = write!(
+                                    out,
+                                    "<p class=\"tableblock\">{}</p>",
+                                    page_inlines(view, content)
+                                );
                             }
                             _ => render_block(out, view, block),
                         }
@@ -519,7 +540,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 None => img(image),
             };
             let _ = writeln!(out, "<div class=\"content\">\n{shown}\n</div>");
-            block_title(out, block);
+            block_title(out, view, block);
             out.push_str("</div>\n");
         }
         ViewKind::Media { kind, targets } => {
@@ -528,7 +549,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                 MediaKind::Video => ("videoblock", "video"),
             };
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes(class, block));
-            block_title(out, block);
+            block_title(out, view, block);
             let source = targets.first().map(String::as_str).unwrap_or("");
             let _ = writeln!(
                 out,
@@ -548,7 +569,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                     "<div class=\"content\">\n<img src=\"{}\" alt=\"Diagram\">\n</div>",
                     escape(&file_url(path))
                 );
-                block_title(out, block);
+                block_title(out, view, block);
                 out.push_str("</div>\n");
             }
             DiagramView::Pending { source, .. } | DiagramView::Failed { source, .. } => {
@@ -557,7 +578,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                     "<div{id} class=\"{}\">",
                     classes("listingblock diagram", block)
                 );
-                block_title(out, block);
+                block_title(out, view, block);
                 let _ = writeln!(
                     out,
                     "<div class=\"content\">\n<pre>{}</pre>\n</div>\n</div>",
@@ -571,7 +592,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             ..
         } => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("stemblock", block));
-            block_title(out, block);
+            block_title(out, view, block);
             let _ = writeln!(
                 out,
                 "<div class=\"content\">\n<img src=\"{}\" alt=\"{}\">\n</div>\n</div>",
@@ -581,7 +602,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
         }
         ViewKind::Stem { latex, source, .. } => {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("stemblock", block));
-            block_title(out, block);
+            block_title(out, view, block);
             let (open, close) = if *latex {
                 ("\\[", "\\]")
             } else {
@@ -621,7 +642,7 @@ fn container(
     let id = id_attribute(block);
     let _ = writeln!(out, "<div{id} class=\"{}\">", classes(class, block));
     out.push_str("<div class=\"content\">\n");
-    block_title(out, block);
+    block_title(out, view, block);
     render_blocks(out, view, blocks);
     out.push_str("</div>\n</div>\n");
 }
@@ -747,16 +768,33 @@ fn xref_href(target: &str, link: &ResolvedLink) -> String {
 /// HTML for a run of inlines.
 #[must_use]
 pub fn inlines(content: &[ViewInline]) -> String {
+    inlines_with(content, false)
+}
+
+/// Whether the page asks for font icons (`icons=font`), which Asciidoctor writes as Font
+/// Awesome's `<i>` elements for the page's stylesheet to draw.
+fn font_icons(view: &ViewTree) -> bool {
+    view.attributes
+        .get("icons")
+        .is_some_and(|icons| icons == "font")
+}
+
+/// HTML for a run of inlines on the page `view`.
+fn page_inlines(view: &ViewTree, content: &[ViewInline]) -> String {
+    inlines_with(content, font_icons(view))
+}
+
+fn inlines_with(content: &[ViewInline], font_icons: bool) -> String {
     let mut out = String::new();
     for inline in content {
-        inline_html(&mut out, inline);
+        inline_html(&mut out, inline, font_icons);
     }
     out
 }
 
-fn inline_html(out: &mut String, inline: &ViewInline) {
+fn inline_html(out: &mut String, inline: &ViewInline, font_icons: bool) {
     let wrap = |out: &mut String, tag: &str, content: &[ViewInline]| {
-        let _ = write!(out, "<{tag}>{}</{tag}>", inlines(content));
+        let _ = write!(out, "<{tag}>{}</{tag}>", inlines_with(content, font_icons));
     };
     match inline {
         ViewInline::Text(text) => out.push_str(&escape(text)),
@@ -771,7 +809,7 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
                 out,
                 "<span class=\"{}\">{}</span>",
                 escape(&roles.join(" ")),
-                inlines(content)
+                inlines_with(content, font_icons)
             );
         }
         ViewInline::Link { url, content } => {
@@ -779,7 +817,7 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
                 out,
                 "<a href=\"{}\" class=\"bare\">{}</a>",
                 escape(url),
-                inlines(content)
+                inlines_with(content, font_icons)
             );
         }
         ViewInline::Xref {
@@ -797,7 +835,7 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
                 out,
                 "<a href=\"{}\"{class}>{}</a>",
                 escape(&xref_href(target, link)),
-                inlines(content)
+                inlines_with(content, font_icons)
             );
         }
         ViewInline::Anchor(id) => {
@@ -805,6 +843,13 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
         }
         ViewInline::Image(image) => {
             let _ = write!(out, "<span class=\"image\">{}</span>", img(image));
+        }
+        ViewInline::Icon(name) if font_icons => {
+            let _ = write!(
+                out,
+                "<span class=\"icon\"><i class=\"fa fa-{}\"></i></span>",
+                escape(name)
+            );
         }
         ViewInline::Icon(name) => {
             let _ = write!(out, "<span class=\"icon\">[{}]</span>", escape(name));
@@ -859,7 +904,7 @@ fn inline_html(out: &mut String, inline: &ViewInline) {
         }
         ViewInline::Raw(text) => out.push_str(text),
         // Asciidoctor's HTML shows a flow term's text and nothing else.
-        ViewInline::IndexTerm { content, .. } => out.push_str(&inlines(content)),
+        ViewInline::IndexTerm { content, .. } => out.push_str(&inlines_with(content, font_icons)),
     }
 }
 

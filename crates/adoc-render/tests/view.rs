@@ -498,6 +498,44 @@ fn html_follows_asciidoctor_where_forms_differ() {
 }
 
 #[test]
+fn html_writes_font_icons_as_asciidoctor_does() {
+    let text =
+        "= Page\n:icons: font\n\nNOTE: See icon:heart[] here.\n\n[TIP,icon=custom]\nOwn icon.\n";
+    let view = view_of(Path::new("/page.adoc"), text, &LocalResolver);
+    let html = to_html(&view, &HtmlOptions::default());
+    assert!(
+        html.contains("<td class=\"icon\"><i class=\"fa icon-note\" title=\"Note\"></i></td>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<span class=\"icon\"><i class=\"fa fa-heart\"></i></span>"),
+        "{html}"
+    );
+    // A block naming an icon image of its own keeps its label: icon images are not written.
+    assert!(
+        html.contains("<td class=\"icon\"><div class=\"title\">Tip</div></td>"),
+        "{html}"
+    );
+    // A standalone page has no icon font: there the title shows in the icon's place.
+    let page = to_html(&view, &HtmlOptions { standalone: true });
+    assert!(page.contains("content:attr(title)"), "{page}");
+
+    // Without `icons=font`, labels and icons are text.
+    let view = view_of(
+        Path::new("/page.adoc"),
+        &text.replace(":icons: font\n", ""),
+        &LocalResolver,
+    );
+    let html = to_html(&view, &HtmlOptions::default());
+    assert!(html.contains("<div class=\"title\">Note</div>"), "{html}");
+    assert!(
+        html.contains("<span class=\"icon\">[heart]</span>"),
+        "{html}"
+    );
+    assert!(!html.contains("<i class="), "{html}");
+}
+
+#[test]
 fn html_renders_list_styles_and_asciidoc_cells() {
     let text = "= Page\n:experimental:\n\n[qanda]\nWhat?::\n  This.\n\n[horizontal]\nKey:: Value.\n\n[cols=\"1,1a\"]\n|===\n|Plain\n|First.\n\nSecond.\n|===\n\nmenu:File[Save]\n";
     let view = view_of(Path::new("/page.adoc"), text, &LocalResolver);
