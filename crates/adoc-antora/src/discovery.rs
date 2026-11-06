@@ -81,7 +81,7 @@ fn playbook_folders<'a>(
 
 /// The ids a page's `:page-aliases:` header attribute lists, qualified with the page's own
 /// coordinates where they omit them. Ids that do not parse are skipped.
-pub(crate) fn page_aliases(text: &str, page: &AntoraCoordinate) -> Vec<AntoraResourceId> {
+pub fn page_aliases(text: &str, page: &AntoraCoordinate) -> Vec<AntoraResourceId> {
     let Some(value) = header_attribute(text, "page-aliases") else {
         return Vec::new();
     };
