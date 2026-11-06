@@ -52,6 +52,13 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       - run: cargo xtask layers
+      # The desktop entry and AppStream metadata the Linux packages and the Flatpak install, as
+      # software centres and Flathub read them.
+      - name: Linux desktop metadata
+        run: |
+          sudo apt-get install -y appstream desktop-file-utils
+          appstreamcli validate --pedantic --no-net --explain packaging/linux/io.github.bovinemagnet.AdocFoundry.metainfo.xml
+          desktop-file-validate packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop
       # The release smoke test's signature checks, which otherwise run only on a signed release.
       - run: python3 -m unittest discover -s packaging -p 'test_*.py'
 

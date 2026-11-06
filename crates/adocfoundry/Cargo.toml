@@ -64,6 +64,7 @@ assets = [
     ["target/release/adoc-ls", "usr/bin/", "755"],
     ["target/release/adoc-mcp", "usr/bin/", "755"],
     ["../../packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/io.github.bovinemagnet.AdocFoundry.metainfo.xml", "usr/share/metainfo/", "644"],
     ["../../packaging/icons/adocfoundry-256.png", "usr/share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png", "644"],
     ["../../crates/adoc-spell/dictionaries/README.md", "usr/share/doc/adocfoundry/SCOWL.txt", "644"],
     # Written by `cargo xtask notices target/THIRD-PARTY-NOTICES.txt` before packaging.
@@ -78,6 +79,7 @@ assets = [
     { source = "target/release/adoc-ls", dest = "/usr/bin/adoc-ls", mode = "755" },
     { source = "target/release/adoc-mcp", dest = "/usr/bin/adoc-mcp", mode = "755" },
     { source = "packaging/linux/io.github.bovinemagnet.AdocFoundry.desktop", dest = "/usr/share/applications/io.github.bovinemagnet.AdocFoundry.desktop", mode = "644" },
+    { source = "packaging/linux/io.github.bovinemagnet.AdocFoundry.metainfo.xml", dest = "/usr/share/metainfo/io.github.bovinemagnet.AdocFoundry.metainfo.xml", mode = "644" },
     { source = "packaging/icons/adocfoundry-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.github.bovinemagnet.AdocFoundry.png", mode = "644" },
     { source = "crates/adoc-spell/dictionaries/README.md", dest = "/usr/share/doc/adocfoundry/SCOWL.txt", mode = "644", doc = true },
     { source = "target/THIRD-PARTY-NOTICES.txt", dest = "/usr/share/doc/adocfoundry/THIRD-PARTY-NOTICES.txt", mode = "644", doc = true },
