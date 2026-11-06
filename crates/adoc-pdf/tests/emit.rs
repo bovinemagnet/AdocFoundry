@@ -486,7 +486,10 @@ fn image_alignment_and_pdf_width_are_kept() {
         source.contains("#adoc-image(link(\"https://example.org\", image("),
         "{source}"
     );
-    assert!(source.contains(")), align-to: \"right\")"), "{source}");
+    assert!(
+        source.contains(")), align-to: \"right\", natural: 10pt)"),
+        "{source}"
+    );
 }
 
 /// The line `map` gives for the generated text of the word `word`.
@@ -569,4 +572,113 @@ fn a_listing_fits_unmeasured_only_where_the_page_holds_it() {
     let small = adoc_pdf::load_theme(&adoc_pdf::ThemeSource::File(path)).unwrap();
     let small = to_typst(&common::article(view()), &small, &PdfOptions::default());
     assert!(small.source.contains("#adoc-code(raw("), "{}", small.source);
+}
+
+/// `text` written as `page.adoc` beside copies of the reference images and `files`, exported
+/// with `theme`: the generated source and every image as it was laid out, page after page.
+fn images_of(
+    text: &str,
+    files: &[(&str, &str)],
+    theme: &adoc_pdf::LoadedTheme,
+) -> (String, Vec<adoc_pdf::PlacedImage>) {
+    let directory = tempfile::tempdir().unwrap();
+    let images = common::fixtures().join("pdf/reference/images");
+    for name in ["wide.png", "wide-144dpi.png"] {
+        std::fs::copy(images.join(name), directory.path().join(name)).unwrap();
+    }
+    for (name, contents) in files {
+        std::fs::write(directory.path().join(name), contents).unwrap();
+    }
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, text).unwrap();
+    let typst = to_typst(
+        &common::article(common::view_of(&page)),
+        theme,
+        &PdfOptions::default(),
+    );
+    let pages = adoc_pdf::typeset_pages(&typst, theme, &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}\n{}", typst.source));
+    let placed = pages.into_iter().flat_map(|page| page.images).collect();
+    (typst.source, placed)
+}
+
+fn close(actual: f64, expected: f64) -> bool {
+    (actual - expected).abs() < 0.01
+}
+
+#[test]
+fn unsized_raster_image_is_75_percent() {
+    // As asciidoctor-pdf sizes a raster image with no width: 0.75pt to the pixel, whatever
+    // resolution the file records, and never wider than the column. A `width` in pixels is
+    // held to the column too; a percentage is the column's.
+    let (source, placed) = images_of(
+        "= Images\n\nimage::wide.png[Column,pdfwidth=100%]\n\nimage::wide.png[Wide]\n\nimage::wide-144dpi.png[Retina]\n\nimage::wide.png[Too wide,width=1000]\n\nimage::wide.png[Half,width=50%]\n",
+        &[],
+        &common::default_theme(),
+    );
+    assert!(source.contains("natural: 300pt"), "{source}");
+    let widths: Vec<f64> = placed.iter().map(|image| image.width).collect();
+    assert_eq!(widths.len(), 5, "{widths:?}");
+    let column = widths[0];
+    assert!(column > 300.0 && column < 750.0, "{widths:?}");
+    assert!(close(widths[1], 300.0), "{widths:?}");
+    assert!(close(placed[1].height, 75.0), "{placed:?}");
+    assert!(close(widths[2], 300.0), "{widths:?}");
+    assert!(close(widths[3], column), "{widths:?}");
+    assert!(close(widths[4], column / 2.0), "{widths:?}");
+}
+
+#[test]
+fn unsized_svg_images_are_sized_as_asciidoctor_pdf_sizes_them() {
+    // prawn-svg reads a width without units as points and one in pixels at 0.75pt each, and
+    // an SVG with only a view box fills the column.
+    let svg = |attributes: &str| {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" {attributes}><rect width="400" height="100"/></svg>"#
+        )
+    };
+    let (unitless, pixels, view_box, wider) = (
+        svg(r#"width="400" height="100""#),
+        svg(r#"width="400px" height="100px""#),
+        svg(r#"viewBox="0 0 400 100""#),
+        svg(r#"width="2000" height="500""#),
+    );
+    let (_, placed) = images_of(
+        "= Images\n\nimage::wide.png[Column,pdfwidth=100%]\n\nimage::unitless.svg[Unitless]\n\nimage::pixels.svg[Pixels]\n\nimage::view-box.svg[View box]\n\nimage::wider.svg[Wider]\n",
+        &[
+            ("unitless.svg", &unitless),
+            ("pixels.svg", &pixels),
+            ("view-box.svg", &view_box),
+            ("wider.svg", &wider),
+        ],
+        &common::default_theme(),
+    );
+    let widths: Vec<f64> = placed.iter().map(|image| image.width).collect();
+    assert_eq!(widths.len(), 5, "{widths:?}");
+    let column = widths[0];
+    assert!(close(widths[1], 400.0), "{widths:?}");
+    assert!(close(widths[2], 300.0), "{widths:?}");
+    assert!(close(widths[3], column), "{widths:?}");
+    assert!(close(widths[4], column), "{widths:?}");
+}
+
+#[test]
+fn theme_image_width_sizes_images_without_a_pdf_width() {
+    // asciidoctor-pdf takes `pdfwidth`, then `scaledwidth`, then the theme's `image_width`,
+    // then `width`.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("wide-theme.yml");
+    std::fs::write(&path, "extends: default\nimage:\n  width: 50%\n").unwrap();
+    let theme = adoc_pdf::load_theme(&adoc_pdf::ThemeSource::File(path)).unwrap();
+    let (_, placed) = images_of(
+        "= Images\n\nimage::wide.png[Column,pdfwidth=100%]\n\nimage::wide.png[Unsized]\n\nimage::wide.png[Sized,width=100]\n\nimage::wide.png[Scaled,scaledwidth=25%]\n",
+        &[],
+        &theme,
+    );
+    let widths: Vec<f64> = placed.iter().map(|image| image.width).collect();
+    assert_eq!(widths.len(), 4, "{widths:?}");
+    let column = widths[0];
+    assert!(close(widths[1], column / 2.0), "{widths:?}");
+    assert!(close(widths[2], column / 2.0), "{widths:?}");
+    assert!(close(widths[3], column / 4.0), "{widths:?}");
 }

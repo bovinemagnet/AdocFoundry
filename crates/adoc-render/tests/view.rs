@@ -737,3 +737,125 @@ fn special_sections_are_numbered_as_asciidoctor_numbers_them() {
     };
     assert_eq!(number.as_deref(), Some("Annex A:"));
 }
+
+#[test]
+fn captions_follow_the_document_attributes() {
+    /// Numbers or captions, each with its title.
+    type Numbered = Vec<(Option<String>, String)>;
+    fn walk(view: &ViewTree) -> (Numbered, Numbered) {
+        let (mut sections, mut captions) = (Vec::new(), Vec::new());
+        let mut stack: Vec<&adoc_render::ViewBlock> = view.blocks.iter().rev().collect();
+        while let Some(block) = stack.pop() {
+            match &block.kind {
+                ViewKind::Section { number, title, .. } => {
+                    sections.push((number.clone(), ViewInline::plain_text(title)));
+                }
+                _ if !block.title.is_empty() => {
+                    captions.push((block.caption.clone(), ViewInline::plain_text(&block.title)));
+                }
+                _ => {}
+            }
+            stack.extend(block.child_refs().into_iter().rev());
+        }
+        (sections, captions)
+    }
+    fn owned(pairs: &[(Option<&str>, &str)]) -> Numbered {
+        pairs
+            .iter()
+            .map(|(number, title)| (number.map(str::to_owned), (*title).to_owned()))
+            .collect()
+    }
+
+    let path = fixtures().join("render/captions.adoc");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let view = view_of(&path, &text, &LocalResolver);
+    let (sections, captions) = walk(&view);
+    // `figure-caption` relabels figures; `table-caption!` drops the label and the number;
+    // `listing-caption` numbers listings, source listings too.
+    assert_eq!(
+        captions,
+        owned(&[
+            (Some("Abbildung 1."), "A figure"),
+            (None, "A table"),
+            (None, "Another table"),
+            (Some("Listing 1."), "A listing"),
+            (Some("Listing 2."), "A source listing"),
+            (Some("Example 1."), "An example"),
+        ])
+    );
+    // `sectnumlevels: 1` numbers only the top sections.
+    let expected = owned(&[
+        (Some("1."), "Numbered"),
+        (None, "Not numbered"),
+        (None, "Deep"),
+        (Some("2."), "Numbered again"),
+    ]);
+    assert_eq!(sections, expected);
+    let toc: Vec<_> = view
+        .toc
+        .iter()
+        .map(|entry| (entry.number.clone(), entry.title.clone()))
+        .collect();
+    assert_eq!(toc, expected, "the table of contents agrees");
+
+    // Without the attributes, Asciidoctor's defaults: listings uncaptioned, three levels
+    // numbered.
+    let text = "= Defaults\n:sectnums:\n\n== One\n\n=== Two\n\n==== Three\n\n===== Four\n\n.A listing\n----\ntext\n----\n\n.A figure\nimage::a.png[]\n";
+    let view = view_of(Path::new("/docs/defaults.adoc"), text, &LocalResolver);
+    let (sections, captions) = walk(&view);
+    assert_eq!(
+        sections,
+        owned(&[
+            (Some("1."), "One"),
+            (Some("1.1."), "Two"),
+            (Some("1.1.1."), "Three"),
+            (None, "Four"),
+        ])
+    );
+    assert_eq!(
+        captions,
+        owned(&[(None, "A listing"), (Some("Figure 1."), "A figure")])
+    );
+
+    // An unset appendix caption leaves the letter alone, as Asciidoctor does.
+    let text = "= Article\n:sectnums:\n:appendix-caption!:\n\n== Body\n\n[appendix]\n== Extra\n";
+    let view = view_of(Path::new("/docs/article.adoc"), text, &LocalResolver);
+    let (sections, _) = walk(&view);
+    assert_eq!(
+        sections,
+        owned(&[(Some("1."), "Body"), (Some("A."), "Extra")])
+    );
+}
+
+#[test]
+fn cover_images_are_found_as_the_page_images_are() {
+    // As asciidoctor-pdf finds them: an `image:` macro in `imagesdir`, a path beside the page.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("images")).unwrap();
+    std::fs::write(dir.path().join("images/front.png"), b"png").unwrap();
+    std::fs::write(dir.path().join("back.png"), b"png").unwrap();
+    let page = dir.path().join("page.adoc");
+    let text = "= Page\n:imagesdir: images\n:front-cover-image: image:front.png[fit=cover]\n:back-cover-image: back.png\n\nText.\n";
+    let view = view_of(&page, text, &LocalResolver);
+    let path = |name: &str| view.attribute_images[name].path.clone();
+    assert_eq!(
+        path("front-cover-image"),
+        Some(dir.path().join("images/front.png"))
+    );
+    assert_eq!(path("back-cover-image"), Some(dir.path().join("back.png")));
+
+    // No image for `none`, `~` or an empty value.
+    for value in ["none", "~", ""] {
+        let text = format!("= Page\n:front-cover-image: {value}\n\nText.\n");
+        let view = view_of(&page, &text, &LocalResolver);
+        assert!(view.attribute_images.is_empty(), "{value:?}");
+    }
+    assert_eq!(
+        adoc_render::attribute_image("image::cover.pdf[page=2]"),
+        Some(adoc_render::AttributeImage {
+            target: "cover.pdf",
+            attributes: "page=2",
+            macro_form: true,
+        })
+    );
+}

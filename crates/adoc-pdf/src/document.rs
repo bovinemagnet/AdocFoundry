@@ -9,7 +9,7 @@ use std::{
 
 use adoc_core::FileAccess;
 
-use adoc_render::ViewInline;
+use adoc_render::{SourceSpan, ViewImage, ViewInline};
 
 use crate::{
     emit::{EmitOptions, Emitted, Emitter, PageView, SourceMap},
@@ -88,6 +88,22 @@ pub enum BookItem {
 }
 
 impl Document {
+    /// The image a document attribute names, resolved as the page's images are: an article's
+    /// own, or, for a book, that of its first page with the book's value for the attribute.
+    fn attribute_image(&self, name: &str) -> Option<&ViewImage> {
+        match self {
+            Self::Article(page) => page.view.attribute_images.get(name),
+            Self::Book(book) => book.items.iter().find_map(|item| match item {
+                BookItem::Page(page)
+                    if page.view.attributes.get(name) == book.attributes.get(name) =>
+                {
+                    page.view.attribute_images.get(name)
+                }
+                _ => None,
+            }),
+        }
+    }
+
     fn pages(&self) -> Vec<PageView> {
         match self {
             Self::Article(page) => vec![page.clone()],
@@ -179,14 +195,25 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         page_urls: options.page_urls.clone(),
         toc_levels: facts.toc_levels(),
         access: options.access.clone(),
-        fits_lines: fits_lines(theme, &page_geometry(theme)),
+        fits_lines: fits_lines(theme, &page_geometry(theme, &attributes)),
         // Font Awesome's glyphs are private-use code points, which PDF/A-2a forbids.
         font_icons: facts.attribute("icons") == Some("font")
             && !options.standards.contains(&PdfStandard::A2a),
     };
     let mut emitter = Emitter::new(&pages, &emit_options);
+    // Images that cannot be shown are reported against the first page.
+    let span = SourceSpan {
+        path: pages
+            .first()
+            .map(|page| page.view.source.clone())
+            .unwrap_or_default(),
+        ..SourceSpan::default()
+    };
 
-    // Front matter.
+    // The front cover, then the front matter.
+    if let Some(front) = cover(document, &facts, theme, Face::Front) {
+        front.emit(&mut emitter, &span, Face::Front);
+    }
     if facts.title_as_page() {
         if let Some(title) = &title {
             let (main, subtitle) = match document {
@@ -260,6 +287,10 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         }
     }
 
+    if let Some(back) = cover(document, &facts, theme, Face::Back) {
+        back.emit(&mut emitter, &span, Face::Back);
+    }
+
     let mut attributes = attributes.clone();
     if let Some(title) = &title {
         attributes
@@ -302,6 +333,119 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
     }
 }
 
+/// The side of the document a cover is on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Face {
+    Front,
+    Back,
+}
+
+impl Face {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Front => "front",
+            Self::Back => "back",
+        }
+    }
+}
+
+/// A cover page.
+#[derive(Clone, Debug)]
+enum Cover {
+    /// A blank page, for an empty attribute.
+    Blank,
+    /// An image fitted to the page as `fit` says, and the page of a PDF to draw.
+    Image {
+        image: ViewImage,
+        fit: CoverFit,
+        page: u32,
+    },
+}
+
+/// How a cover image fills its page, from the image macro's `fit`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CoverFit {
+    /// Inside the page, the default.
+    Contain,
+    /// Over the whole page, cut at its edges.
+    Cover,
+    /// Stretched to the page.
+    Fill,
+    /// At its own size, no larger than the page (`none`, `scale-down`).
+    Natural,
+}
+
+impl Cover {
+    fn emit(&self, emitter: &mut Emitter<'_>, span: &SourceSpan, face: Face) {
+        match self {
+            Self::Blank => emitter.blank_cover(face),
+            Self::Image { image, fit, page } => emitter.cover(image, span, *fit, *page, face),
+        }
+    }
+}
+
+/// The cover on `face`, as asciidoctor-pdf finds it: the document's `front-cover-image` or
+/// `back-cover-image`, else the theme's `cover_front_image` or `cover_back_image`; an image
+/// macro or a path, `none` or `~` for no cover, empty for a blank page. The document's image is
+/// found as its other images are; the theme's beside the theme.
+fn cover(document: &Document, facts: &Facts<'_>, theme: &LoadedTheme, face: Face) -> Option<Cover> {
+    let name = format!("{}-cover-image", face.name());
+    let (value, from_theme) = match facts.attribute(&name) {
+        Some(value) => (value.to_owned(), false),
+        None => match theme.keys.get(&format!("cover_{}_image", face.name())) {
+            Some(ThemeValue::Text(value)) => (value.clone(), true),
+            _ => return None,
+        },
+    };
+    if value.trim().is_empty() {
+        return Some(Cover::Blank);
+    }
+    let named = adoc_render::attribute_image(&value)?;
+    let image = if from_theme {
+        let path = theme
+            .dir
+            .as_ref()
+            .map_or_else(|| PathBuf::from(named.target), |dir| dir.join(named.target));
+        ViewImage {
+            target: named.target.to_owned(),
+            path: path.is_file().then_some(path),
+            url: None,
+            alt: String::new(),
+            width: None,
+            height: None,
+        }
+    } else {
+        document
+            .attribute_image(&name)
+            .cloned()
+            .unwrap_or_else(|| ViewImage {
+                target: named.target.to_owned(),
+                path: None,
+                url: None,
+                alt: String::new(),
+                width: None,
+                height: None,
+            })
+    };
+    let attribute = |key: &str| {
+        named.attributes.split(',').find_map(|attribute| {
+            let (name, value) = attribute.split_once('=')?;
+            (name.trim() == key).then(|| value.trim().trim_matches(['"', '\'']).to_owned())
+        })
+    };
+    let fit = match attribute("fit").as_deref() {
+        Some("cover") => CoverFit::Cover,
+        Some("fill") => CoverFit::Fill,
+        Some("none" | "scale-down") => CoverFit::Natural,
+        _ => CoverFit::Contain,
+    };
+    let page = attribute("page")
+        .and_then(|page| page.parse().ok())
+        .filter(|page| *page >= 1)
+        .unwrap_or(1);
+    Some(Cover::Image { image, fit, page })
+}
+
 /// A book heading at `depth`: a chapter (depth 1) starts a new page.
 fn heading(emitter: &mut Emitter<'_>, depth: u8, title: &str, label: Option<&str>) {
     if depth <= 1 {
@@ -337,7 +481,8 @@ fn doc_dictionary(
     theme: &LoadedTheme,
     gaps: &[(String, f64)],
 ) {
-    let page = page_geometry(theme);
+    let page = page_geometry(theme, facts.attributes);
+    let (running_at, running_from) = running_start(theme, facts);
     let fallbacks: Vec<String> = theme.fallbacks.iter().map(|name| string(name)).collect();
     let toc_title = facts
         .attribute("toc-title")
@@ -345,7 +490,7 @@ fn doc_dictionary(
         .to_owned();
     let _ = writeln!(
         out,
-        "#let doc = (\n  line-gaps: ({}),\n  lang: {},\n  region: {},\n  hyphenate: {},\n  fallbacks: ({}),\n  page: (width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})),\n  toc-title: {},\n  toc-levels: {},\n  running: {},\n  running-from: {},\n  admonition-icons: ({}),\n)",
+        "#let doc = (\n  line-gaps: ({}),\n  lang: {},\n  region: {},\n  hyphenate: {},\n  fallbacks: ({}),\n  page: (width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})),\n  toc-title: {},\n  toc-levels: {},\n  running: {},\n  running-at: {},\n  running-from: {},\n  title: {},\n  admonition-icons: ({}),\n)",
         if gaps.is_empty() {
             ":".to_owned()
         } else {
@@ -372,7 +517,9 @@ fn doc_dictionary(
         } else {
             format!("(part: none, chapter: none, section: (2, {}))", section_levels(theme) + 1)
         },
-        running_from(theme),
+        string(running_at.name()),
+        running_from,
+        facts.title.as_deref().map_or_else(|| "none".to_owned(), string),
         admonition_icons(theme),
     );
 }
@@ -464,27 +611,95 @@ const PAPER: &[(&str, f64, f64)] = &[
     ("TABLOID", 792.00, 1224.00),
 ];
 
-fn page_geometry(theme: &LoadedTheme) -> PageGeometry {
+/// The page's size and margins: the document's `pdf-page-size`, `pdf-page-layout` and
+/// `pdf-page-margin`, else the theme's `page_size`, `page_layout` and `page_margin`, as
+/// asciidoctor-pdf reads them. A size by a name neither knows is A4.
+fn page_geometry(theme: &LoadedTheme, attributes: &BTreeMap<String, String>) -> PageGeometry {
     let keys = &theme.keys;
-    let (mut width, mut height) = match keys.get("page_size") {
-        Some(ThemeValue::Text(name)) => PAPER
-            .iter()
-            .find(|(paper, _, _)| paper.eq_ignore_ascii_case(name))
-            .map_or((595.28, 841.89), |(_, width, height)| (*width, *height)),
-        Some(ThemeValue::List(items)) if items.len() == 2 => (
-            items[0].as_number().unwrap_or(595.28),
-            items[1].as_number().unwrap_or(841.89),
-        ),
-        _ => (595.28, 841.89),
+    let attribute = |name: &str| {
+        attributes
+            .get(name)
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
     };
-    if matches!(keys.get("page_layout"), Some(ThemeValue::Text(layout)) if layout == "landscape") {
+    let (mut width, mut height) = match attribute("pdf-page-size") {
+        Some(size) => page_size(size).unwrap_or(A4),
+        None => match keys.get("page_size") {
+            Some(ThemeValue::Text(name)) => paper(name).unwrap_or(A4),
+            Some(ThemeValue::List(items)) if items.len() == 2 => (
+                items[0].as_number().unwrap_or(A4.0),
+                items[1].as_number().unwrap_or(A4.1),
+            ),
+            _ => A4,
+        },
+    };
+    let landscape = match attribute("pdf-page-layout") {
+        Some(layout) => layout == "landscape",
+        None => {
+            matches!(keys.get("page_layout"), Some(ThemeValue::Text(layout)) if layout == "landscape")
+        }
+    };
+    if landscape {
         std::mem::swap(&mut width, &mut height);
     }
-    let margin = sides(keys.get("page_margin"), 36.0);
+    let margin = match attribute("pdf-page-margin") {
+        Some(margin) => sides(Some(&page_margin(margin)), 36.0),
+        None => sides(keys.get("page_margin"), 36.0),
+    };
     PageGeometry {
         width,
         height,
         margin,
+    }
+}
+
+const A4: (f64, f64) = (595.28, 841.89);
+
+/// A page size by name, in either case.
+fn paper(name: &str) -> Option<(f64, f64)> {
+    PAPER
+        .iter()
+        .find(|(paper, _, _)| paper.eq_ignore_ascii_case(name.trim()))
+        .map(|(_, width, height)| (*width, *height))
+}
+
+/// A `pdf-page-size`: a name (`Letter`), `[8.5in, 11in]` or `8.5in x 11in`; `None` for a
+/// size asciidoctor-pdf would not read.
+fn page_size(value: &str) -> Option<(f64, f64)> {
+    let pair = value
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .and_then(|inner| inner.split_once(','))
+        .or_else(|| value.split_once('x'))
+        .and_then(|(width, height)| Some((measurement(width)?, measurement(height)?)));
+    match pair {
+        Some((width, height)) => (width > 0.0 && height > 0.0).then_some((width, height)),
+        // A name, `Executive` among them.
+        None => paper(value),
+    }
+}
+
+/// A length with an optional unit (`in`, `mm`, `cm`, `pt`, `px`, `pc`), in points.
+fn measurement(value: &str) -> Option<f64> {
+    let value = value.trim();
+    let split = value
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split);
+    let number: f64 = number.parse().ok()?;
+    crate::theme::to_pt(number, unit).filter(|points| points.is_finite())
+}
+
+/// A `pdf-page-margin`: one length, or up to four in brackets (`[0.5in, 0.67in]`), as
+/// asciidoctor-pdf reads it; a value it cannot read counts as 0, as there.
+fn page_margin(value: &str) -> ThemeValue {
+    let points = |part: &str| ThemeValue::Number(measurement(part).unwrap_or(0.0));
+    match value
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+    {
+        Some(inner) => ThemeValue::List(inner.split(',').take(4).map(points).collect()),
+        None => points(value),
     }
 }
 
@@ -573,11 +788,48 @@ fn section_levels(theme: &LoadedTheme) -> u8 {
         .map_or(2, |levels| levels.clamp(1.0, 5.0) as u8)
 }
 
-/// The body page running content starts on: `running_content_start_at` when it is a number.
-fn running_from(theme: &LoadedTheme) -> u32 {
-    theme
-        .keys
-        .get("running_content_start_at")
-        .and_then(ThemeValue::as_number)
-        .map_or(1, |page| page.max(1.0) as u32)
+/// Where running content starts, from `running_content_start_at`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RunningAt {
+    /// The title page.
+    Title,
+    /// The first page of the table of contents.
+    Toc,
+    /// The page after the table of contents.
+    AfterToc,
+    /// A page of the body, counted from 1.
+    Body,
+}
+
+impl RunningAt {
+    /// The name the template reads.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::Toc => "toc",
+            Self::AfterToc => "after-toc",
+            Self::Body => "body",
+        }
+    }
+}
+
+/// Where running content starts: `running_content_start_at` as asciidoctor-pdf reads it, a
+/// page of the body by number, or by name the title page (`title`), the contents (`toc`) or the
+/// page after them (`after-toc`), each the body's first page where the document has none. The
+/// names only have a meaning where the title is a page of its own; otherwise they mean the
+/// body.
+fn running_start(theme: &LoadedTheme, facts: &Facts<'_>) -> (RunningAt, u32) {
+    match theme.keys.get("running_content_start_at") {
+        Some(ThemeValue::Number(page)) => (RunningAt::Body, page.max(1.0) as u32),
+        Some(ThemeValue::Text(name)) if facts.title_as_page() => (
+            match name.trim() {
+                "title" => RunningAt::Title,
+                "toc" => RunningAt::Toc,
+                "after-toc" => RunningAt::AfterToc,
+                _ => RunningAt::Body,
+            },
+            1,
+        ),
+        _ => (RunningAt::Body, 1),
+    }
 }

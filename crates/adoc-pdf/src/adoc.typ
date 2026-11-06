@@ -502,9 +502,37 @@
 
 // A block image; the body passes the `image` itself, so an error loading it points at the
 // AsciiDoc that named it.
-#let adoc-image(image, align-to: none) = block(
-  width: 100%,
-  align(alignment(if align-to != none { align-to } else { pick("image_align", default: "left") }), image),
+// A block image. `natural` is its width when the document gives it none (`pdfwidth` or
+// `scaledwidth` set the image's own width, and `natural` is `none`): the theme's `image_width`
+// when it sets one, else this length held to the column, or this share of it; `auto` leaves the
+// size to Typst.
+#let adoc-image(body, align-to: none, natural: none) = block(width: 100%, {
+  let placed = align(alignment(if align-to != none { align-to } else { pick("image_align", default: "left") }), body)
+  let themed = pick("image_width")
+  if natural == none or natural == auto and type(themed) not in (length, ratio) {
+    placed
+  } else if type(themed) in (length, ratio) {
+    set image(width: themed)
+    placed
+  } else if type(natural) == ratio {
+    set image(width: natural)
+    placed
+  } else {
+    layout(size => {
+      set image(width: calc.min(natural, size.width))
+      placed
+    })
+  }
+})
+
+// A cover, as asciidoctor-pdf draws one: a page of its own without margins, background or
+// running content, its image in the middle; the front cover is labelled as front matter.
+#let adoc-cover(body, front: true) = page(
+  margin: 0pt,
+  fill: none,
+  background: none,
+  ..if front { (numbering: "i") } else { (:) },
+  align(center + horizon, body),
 )
 
 #let adoc-missing-image(alt) = block(text(fill: base-color.lighten(40%), [\[#alt\]]))
@@ -641,6 +669,7 @@
 // The table of contents: the title as a level 2 heading, then an entry per outlined heading
 // with dot leaders and its page number.
 #let adoc-toc(min-level: 2) = {
+  [#metadata(none) <adoc-toc-start>]
   heading(level: 2, outlined: false, bookmarked: false, doc.toc-title)
   let size = resolve-size(pick("toc_font_size", default: base-size), base-size)
   let ratio = pick("toc_line_height", default: base-line-height)
@@ -661,6 +690,7 @@
     })))
   }
   outline(title: none, target: heading.where(outlined: true))
+  [#metadata(none) <adoc-toc-end>]
 }
 
 // --- title page and running content ----------------------------------------------------------
@@ -697,6 +727,7 @@
     numbering: "i",
     fill: pick("title_page_background_color", "page_background_color"),
     {
+      [#metadata(none) <adoc-title-page>]
       if logo != none and pick("title_page_logo_display") != "none" {
         let la = pick("title_page_logo_align", default: a)
         place(top + left, dy: from-top(pick("title_page_logo_top", default: 10%)) - margin.top,
@@ -743,17 +774,41 @@
   let height = pick(periphery + "_height")
   if height == none or contents == none { return }
   let starts = query(<adoc-running-start>)
-  if starts.len() == 0 or here().page() < starts.first().location().page() { return }
+  if starts.len() == 0 { return }
+  let this-page = here().page()
+  let body = starts.first().location().page()
+  // The first page with running content: the title page, the contents' first page, the page
+  // after the contents (each the body's when there is none), or a page of the body.
+  let first-page(name, after: false) = {
+    let found = query(name)
+    if found.len() == 0 { body } else if after { found.last().location().page() + 1 } else { found.first().location().page() }
+  }
+  let from = if doc.running-at == "title" { first-page(<adoc-title-page>) }
+    else if doc.running-at == "toc" { first-page(<adoc-toc-start>) }
+    else if doc.running-at == "after-toc" { first-page(<adoc-toc-end>, after: true) }
+    else { body + doc.running-from - 1 }
+  if this-page < from { return }
   // Counted from the page the body starts on: a counter update there comes after this page's
-  // background is laid out.
-  let number = here().page() - starts.first().location().page() + 1
-  if number < doc.running-from { return }
+  // background is laid out. A page before the body is numbered in roman numerals from the
+  // first page, as asciidoctor-pdf numbers front matter.
+  let number = this-page - body + 1
   let side = if calc.odd(number) { "recto" } else { "verso" }
   let columns = contents.at(side, default: (:))
   let section = running-title(doc.running.section)
   let chapter = running-title(doc.running.chapter)
+  if this-page < body {
+    // The contents' pages are titled by the contents, a book's other front matter by the
+    // document.
+    let toc = query(<adoc-toc-start>).map(it => it.location().page())
+    let toc-end = query(<adoc-toc-end>).map(it => it.location().page())
+    let in-toc = toc.len() > 0 and toc-end.len() > 0 and this-page >= toc.first() and this-page <= toc-end.first()
+    let book = doc.running.chapter != none
+    (chapter, section) = if in-toc {
+      if book { (doc.toc-title, []) } else { ([], doc.toc-title) }
+    } else if book { (doc.title, []) } else { ([], []) }
+  }
   let ctx = (
-    "page-number": str(number),
+    "page-number": if number < 1 { numbering("i", this-page) } else { str(number) },
     "page-count": str(counter(page).final().first()),
     "part-title": running-title(doc.running.part),
     "chapter-title": chapter,

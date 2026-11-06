@@ -129,6 +129,9 @@ See xref:antora-support.adoc[Antora support].
 With `:sectnums:`, sections are numbered as Asciidoctor numbers them, in the preview, the HTML from the command line and PDF export alike.
 Special sections, such as a `[preface]`, `[glossary]` or `[bibliography]`, and the sections inside them are not numbered and do not count towards the chapters.
 An `[appendix]` is lettered `Appendix A:`, with its sections `A.1.`; `appendix-caption` changes the word.
+`sectnumlevels` (3 unless set) limits the levels that show a number; deeper sections are counted but show none, and the table of contents agrees.
+Blocks are labelled from `figure-caption`, `table-caption`, `example-caption` and `listing-caption`; unsetting one removes the label and the number, and setting one changes the word.
+See xref:pdf-export.adoc[Exporting to PDF] for the details.
 
 == Source blocks
 

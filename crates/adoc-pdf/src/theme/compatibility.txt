@@ -152,8 +152,8 @@ conum_font_size | ignored | Callout numbers use the conum font family and colour
 conum_font_style | ignored | Callout numbers use the conum font family and colour, at the code's size.
 conum_glyphs | ignored | Callout numbers are always circled digits.
 conum_line_height | ignored | Callout numbers use the conum font family and colour, at the code's size.
-cover_back_image | ignored | Cover images are not supported.
-cover_front_image | ignored | Cover images are not supported.
+cover_back_image | approximated | Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and a `page-layout` attribute reference in the path is not replaced.
+cover_front_image | approximated | Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and a `page-layout` attribute reference in the path is not replaced.
 description_list_description_indent | supported
 description_list_term_font_color | supported
 description_list_term_font_family | supported
@@ -295,7 +295,7 @@ image_caption_end | ignored | Captions follow the `caption` keys: above tables, 
 image_caption_max_width | ignored | A caption is as wide as the content area.
 image_caption_text_align | ignored | Captions follow the `caption` keys: above tables, below images.
 image_float_gap | ignored | Floated images are not supported.
-image_width | ignored | An image's width comes from its attributes.
+image_width | approximated | Lengths and percentages of the column; a `vw` width is ignored.
 index_column_gap | supported
 index_columns | supported
 kbd_background_color | supported
@@ -341,14 +341,14 @@ page_column_gap | ignored | The body is set in one column.
 page_columns | ignored | The body is set in one column.
 page_foreground_image | ignored | Page images are not supported.
 page_initial_zoom | ignored | The viewer's defaults apply.
-page_layout | supported
-page_margin | supported
+page_layout | supported | The document's `pdf-page-layout` is read first.
+page_margin | supported | The document's `pdf-page-margin` is read first.
 page_margin_inner | ignored | Recto and verso pages share `page_margin`.
 page_margin_outer | ignored | Recto and verso pages share `page_margin`.
 page_margin_rotated | ignored | Pages are not rotated.
 page_mode | ignored | The viewer's defaults apply.
 page_numbering_start_at | ignored | Page numbering starts at the body.
-page_size | supported
+page_size | supported | The document's `pdf-page-size` is read first.
 prose_margin_bottom | supported
 prose_margin_inner | ignored | Paragraphs are not indented; `prose_margin_bottom` spaces them.
 prose_text_indent | ignored | Paragraphs are not indented; `prose_margin_bottom` spaces them.
@@ -387,7 +387,7 @@ role_<name>_text_decoration | approximated | `underline` and `line-through`.
 role_<name>_text_decoration_color | ignored | Decorations use the text colour and Typst's line width.
 role_<name>_text_decoration_width | ignored | Decorations use the text colour and Typst's line width.
 role_<name>_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.
-running_content_start_at | supported
+running_content_start_at | supported | A page of the body by number, or `title`, `toc` or `after-toc`.
 section_indent | ignored | Sections are not indented.
 sidebar_background_color | supported
 sidebar_border_color | supported

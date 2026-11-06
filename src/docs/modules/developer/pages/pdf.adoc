@@ -128,7 +128,12 @@ It draws the outer border on all sides, the ends, the sides or none, and the inn
 Stripes use the theme's `table_body_stripe_background_color` on even, odd or all rows.
 * `width=` sets a table's share of the page, and `%autowidth` sizes its columns to their content.
 * Cells are aligned vertically with `top`, `horizon` or `bottom`.
-* An image's `float` or `align` places it, and `pdfwidth`, else `scaledwidth`, else `width`, sizes it.
+* An image's `float` or `align` places it.
+`pdfwidth`, else `scaledwidth`, sets its width.
+Otherwise the emitter passes `natural:` to `adoc-image` (`emit::Natural`): points held to the column, a share of the column, or `auto` for Typst's own size.
+It comes from `image_natural_width`, which decodes the image anyway to check it and reads an SVG's root element with `roxmltree`.
+The template applies the theme's `image_width` first.
+An unsized raster image is 0.75pt to the pixel.
 Its `link=` makes it a link, with the URL as a string literal.
 * A `%collapsible` block is its caption, `▼ ` and its title or `Details`, then its blocks indented by the marker, without the example's frame (`adoc-collapsible`).
 
@@ -138,6 +143,16 @@ The template makes the label column `admonition_label_min_width` or 1.5 times th
 `icons.rs`'s `SOLID`, `REGULAR` and `SHIMS` (Font Awesome 4 names) must match the script's lists; the unit test `every_glyph_is_in_its_subset` checks the fonts hold every glyph.
 
 Every attribute value reaches Typst as a string literal or a parsed number.
+
+=== Covers
+
+`document.rs`'s `cover` finds the cover (`Cover`, `CoverFit`, `Face`).
+The emitter's `cover` puts the image through `usable_image`, which applies the same confinement and decoding check as every image and lists the file in the World's files.
+It then writes the template's `adoc-cover`: a `page` with no margin, fill or background, so it has no running content, labelled `i` for the front cover.
+
+Document attribute images are resolved in `adoc-render`.
+`ViewTree::attribute_images` resolves the `IMAGE_ATTRIBUTES` (`front-cover-image` and `back-cover-image`) through the same `ViewResolver::image` as block images, and `adoc_render::attribute_image` parses the values for both crates.
+A book uses its first page's resolved image when that page has the book's value.
 
 === Maths
 
@@ -172,7 +187,7 @@ The application crate's test `preview::highlight_tests::pdf_highlighting_matches
 
 == The template and the spacing model
 
-`adoc.typ` reads the theme as the dictionary `t` and the document's facts as `doc`: the page size and margins, the language and region, the catalogue's fallback families and line gaps, the table of contents' title and levels, and which heading levels running content names as part, chapter and section titles.
+`adoc.typ` reads the theme as the dictionary `t` and the document's facts as `doc`: the page size and margins (from `page_geometry`, the `pdf-page-size`, `pdf-page-layout` and `pdf-page-margin` attributes before the theme's keys), `running-at` (`title`, `toc`, `after-toc` or `body`), `running-from` and `title`, the language and region, the catalogue's fallback families and line gaps, the table of contents' title and levels, and which heading levels running content names as part, chapter and section titles.
 
 The template reproduces Prawn's spacing model rather than Typst's.
 Typst collapses adjacent spacing to the larger value and spaces lines differently, so:
@@ -209,6 +224,7 @@ Footnotes are collected and placed at the bottom of the last page of the article
 The first paragraph of an article's preamble gets the `lead` role, styled only when the theme sets `role_lead_font_size`.
 
 Running content is counted from the page that holds the body's start marker, because a counter update at the start of a page comes after that page's background is laid out.
+The template marks the title page (`<adoc-title-page>`) and each table of contents (`<adoc-toc-start>`, `<adoc-toc-end>`), and `adoc-periphery` starts from those marks for `title`, `toc` and `after-toc`.
 Header and footer text is parsed in `running.rs`: attribute references, constrained `*`, `_` and `` ` ``, character references and a lone `image:` macro.
 Image widths are parsed as numbers before they are written.
 

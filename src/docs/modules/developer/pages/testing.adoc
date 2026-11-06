@@ -342,6 +342,8 @@ As with the other application tests, `ime_composition_commits_once` is not evide
 `crates/adocfoundry-cli/tests/cli.rs` adds `pdf_exports_a_page`, `pdf_exports_a_component` and `pdf_reports_theme_errors`.
 
 The fixtures are in `tests/fixtures/pdf/`: `reference/`, `book/` and `themes/`.
+The reference article includes an unsized 400×100 PNG (`images/wide.png`).
+`TypesetPage::images` (`PlacedImage`) gives where each image was laid out, for tests such as `unsized_raster_image_is_75_percent` (`tests/emit.rs`) and `front_cover_is_the_first_page` (`tests/running.rs`).
 
 === Visual regression
 

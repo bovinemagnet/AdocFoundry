@@ -215,6 +215,7 @@ mod tests {
             toc: Vec::new(),
             footnotes: Vec::new(),
             attributes: std::collections::BTreeMap::new(),
+            attribute_images: std::collections::BTreeMap::new(),
         };
         assert_eq!(
             tree.inline_formulas(),

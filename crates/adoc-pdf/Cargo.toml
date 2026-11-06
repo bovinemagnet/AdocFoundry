@@ -11,6 +11,7 @@ adoc-core.workspace = true
 adoc-math.workspace = true
 adoc-render.workspace = true
 regex.workspace = true
+roxmltree.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
 typst.workspace = true
