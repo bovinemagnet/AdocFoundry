@@ -691,6 +691,10 @@ include::example$event-pump.mmd[]
 
 `pump()` applies worker results and debounced file-system changes and returns the number of events applied.
 `has_pending()` tells a front end whether it should keep pumping, and `wait_for_workers(timeout)` blocks until workers finish, which the command-line checker uses.
+`next_due()` says when `pump` next has something to do of its own accord: the earliest deadline of every settle the engine keeps, at or before now for work that waits only for the next pump.
+`None` means nothing will happen until a worker or the watcher sends something, or the engine is called; work a running worker holds up has no deadline, as its result wakes the front end.
+`has_pending()` is `workers_running > 0 || next_due().is_some()`.
+`set_waker(f)` gives the engine a function to call, from any thread, whenever a worker, the writer or the file watcher sends it something, so a front end can sleep until `next_due` rather than poll; only the first waker is kept.
 
 == The file watcher
 
