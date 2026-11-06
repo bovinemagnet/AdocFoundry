@@ -43,6 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
       - name: Install GPUI system libraries
@@ -72,6 +73,7 @@ jobs:
           df -h /
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
       # The dependencies' build output, keyed by OS, rustc and Cargo.lock. Only main saves it:
@@ -117,6 +119,7 @@ jobs:
         # The app crate's grammar is a workspace member's dependency, so Cargo needs it to
         # resolve the workspace at all.
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
       - run: cargo bench -p adoc-engine --bench budgets
@@ -130,6 +133,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
       - run: cargo build --release -p adocfoundry
@@ -164,6 +168,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
       - run: cargo build --release -p adocfoundry-cli
@@ -196,12 +201,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
-      # A released binary at a pinned version, not a build from source of whatever is newest.
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
-        with:
-          tool: tree-sitter-cli@0.27.1
+      # A pinned version, its dependencies locked and checked against the registry's checksums.
+      - run: cargo install tree-sitter-cli --version 0.27.1 --locked
       - name: Grammar corpus tests
         run: |
           for grammar in tree-sitter-asciidoc tree-sitter-asciidoc_inline; do

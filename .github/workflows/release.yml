@@ -24,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: The tag matches Cargo.toml, the documentation and the changelog
         if: startsWith(github.ref, 'refs/tags/')
         run: python3 packaging/release-version.py check "${GITHUB_REF_NAME#v}"
@@ -45,6 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
       - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -159,13 +162,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
       - run: rustup target add ${{ matrix.target }}
-      # Released binaries at pinned versions, not builds from source of whatever is newest.
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
-        with:
-          tool: cargo-wix@0.3.9
+      # Pinned versions, their dependencies locked and checked against the registry's checksums.
+      - run: cargo install cargo-wix --version 0.3.9 --locked
       - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       # The third-party notices, for the MSI and the zips.
       - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
@@ -256,6 +258,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
       - run: rustup toolchain install
       - name: System libraries
@@ -263,9 +266,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
             libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev file
-      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
-        with:
-          tool: cargo-deb@3.8.0,cargo-generate-rpm@0.21.1
+      - run: cargo install cargo-deb --version 3.8.0 --locked
+      - run: cargo install cargo-generate-rpm --version 0.21.1 --locked
       - run: cargo build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       # The third-party notices, which the deb and rpm take from here.
       - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
@@ -352,6 +354,8 @@ jobs:
       SIGNED: ${{ (matrix.artefact == 'macos' && secrets.APPLE_CERTIFICATE != '') || (matrix.artefact == 'windows-x64' && secrets.AZURE_CLIENT_ID != '') }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ matrix.artefact }}
@@ -406,6 +410,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # The changelog's section for the version, ahead of GitHub's list of pull requests.
       - name: Release notes
         run: python3 packaging/release-version.py notes "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/release-notes.md"

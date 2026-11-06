@@ -126,11 +126,32 @@ class WorkflowsAreReproducible(unittest.TestCase):
     def test_tools_are_installed_at_pinned_versions(self):
         for name in workflows():
             text = read(name)
-            # `cargo install --locked` pins a tool's dependencies, not the tool.
-            self.assertNotRegex(text, r"cargo install\b", f"{name} builds a tool from source")
-            for tools in re.findall(r"(?m)^\s+tool:\s*(.+)$", text):
-                for tool in tools.split(","):
-                    self.assertRegex(tool.strip(), r"^[\w-]+@\d+\.\d+\.\d+$", f"{name}: {tool}")
+            # `--locked` alone pins a tool's dependencies, not the tool; with `--version` both
+            # are fixed, and Cargo checks every crate against the registry's checksums. An
+            # installer action falls back to unchecked downloads for tools it has no hash for.
+            self.assertNotIn("taiki-e/install-action", text, f"{name}: install tools with cargo")
+            for command in re.findall(r"cargo install\b[^\n]*", text):
+                self.assertRegex(
+                    command,
+                    r"^cargo install [\w-]+ --version \d+\.\d+\.\d+ --locked$",
+                    f"{name}: {command}",
+                )
+
+    def test_checkouts_keep_no_credentials(self):
+        # Nothing pushes with git; the token stays out of .git/config for every later step.
+        for name in workflows():
+            lines = read(name).splitlines()
+            for number, line in enumerate(lines):
+                if re.match(r"^\s*-\s+uses:\s*actions/checkout@", line):
+                    step = []
+                    for following in lines[number + 1 :]:
+                        if re.match(r"^\s*-\s", following) or not following.startswith(" " * 8):
+                            break
+                        step.append(following)
+                    self.assertTrue(
+                        any(re.match(r"^\s+persist-credentials:\s*false\s*$", s) for s in step),
+                        f"{name}:{number + 1}: checkout keeps its credentials",
+                    )
 
     def test_downloads_are_versioned_and_checked(self):
         for name in workflows():

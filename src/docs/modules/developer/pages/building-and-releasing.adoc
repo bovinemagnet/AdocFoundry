@@ -55,9 +55,10 @@ Toolchain: each job installs the toolchain `rust-toolchain.toml` names, componen
 The release jobs add their targets with `rustup target add`.
 So the file is the one place the Rust version is set.
 
-Pinning: every third-party action is pinned to a commit, with its version in a comment.
-Tools are released binaries at pinned versions through `taiki-e/install-action` (`tree-sitter-cli` 0.27.1 in CI; `cargo-wix` 0.3.9, `cargo-deb` 3.8.0 and `cargo-generate-rpm` 0.21.1 in the release), never `cargo install`.
-`packaging/test_workflows.py` fails if a job has no time limit, an action is not pinned to a commit, a tool is installed from source or unpinned, or a download is an unversioned build.
+Pinning: every third-party action is pinned to a commit, with its version in a comment, and every checkout sets `persist-credentials: false`, since no step pushes with git.
+Tools are built with `cargo install <tool> --version <x.y.z> --locked` (`tree-sitter-cli` 0.27.1 in CI; `cargo-wix` 0.3.9, `cargo-deb` 3.8.0 and `cargo-generate-rpm` 0.21.1 in the release), so the tool and its dependencies are fixed and Cargo checks each crate against the registry's checksums.
+An installer action was not used, because for tools it has no hash for it falls back to downloads it does not check.
+`packaging/test_workflows.py` fails if a job has no time limit, an action is not pinned to a commit, a checkout keeps its credentials, a tool is installed without a pinned version and `--locked`, or a download is an unversioned build.
 
 [[ci-caching]]
 Caching: only `test` restores a build cache.
@@ -82,7 +83,7 @@ Each run restores the dependencies' build output with `Swatinem/rust-cache`, key
 |On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1, and as PDF/A-1b and PDF/A-1a. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both of those standards too, but not under PDF/A-1, because its Mermaid diagram uses transparency. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
 
 |`grammar`
-|Installs `tree-sitter-cli` 0.27.1 as a released binary, builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
+|Installs `tree-sitter-cli` 0.27.1 (`cargo install --version 0.27.1 --locked`), builds the submodule grammars and runs their corpus tests with `tree-sitter test`, then runs the `queries_compile` test, so a grammar bump that breaks highlighting fails here and not in the app.
 |===
 
 == Release workflow
