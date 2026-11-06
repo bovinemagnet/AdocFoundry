@@ -192,6 +192,7 @@ Relative directories are resolved against the first page of the book.
 
 The bundled fonts are subsets of Noto Serif, Noto Sans and M+ 1mn, the ones asciidoctor-pdf ships.
 Typst's own fonts are not used, so the output depends only on the theme's fonts.
+Admonition icons are drawn from the bundled Font Awesome subset; see <<admonition-icons>>.
 
 Fonts are looked for in this order.
 
@@ -215,6 +216,72 @@ A font that cannot be read is a warning.
 
 Which keys take effect, which are approximated and which are ignored is listed key by key in xref:pdf-theme-keys.adoc[].
 An unknown top-level category produces a warning, and its keys are still available as variables.
+
+[[admonition-icons]]
+=== Admonition icons
+
+When the document sets `:icons: font`, each admonition shows its kind's icon in place of its text label, as asciidoctor-pdf draws it.
+For a book, the attribute comes from the component's `asciidoc.attributes` in `antora.yml`, or the playbook's, like the other book attributes.
+
+The defaults are asciidoctor-pdf's.
+Each icon is 24 pt.
+
+[cols="1,2,1"]
+|===
+|Kind |Icon |Colour
+
+|`NOTE`
+|`fas-info-circle`
+|`#19407C`
+
+|`TIP`
+|`far-lightbulb`
+|`#111111`
+
+|`IMPORTANT`
+|`fas-exclamation-circle`
+|`#BF0000`
+
+|`CAUTION`
+|`fas-fire`
+|`#BF3400`
+
+|`WARNING`
+|`fas-exclamation-triangle`
+|`#BF6900`
+|===
+
+A theme changes them with the `admonition_icon_<kind>` keys `name`, `size` (in points) and `stroke_color`.
+`admonition_label_min_width` sets the width of the label column.
+Without it, the column is one and a half times the icon's size.
+It also applies to text labels, where the column is at least that wide.
+
+[source,yaml]
+----
+admonition:
+  label:
+    min_width: 30
+  icon:
+    tip:
+      name: fas-lightbulb
+      stroke_color: 'E0A000'
+      size: 20
+----
+
+As in asciidoctor-pdf, the icon shrinks to the height of a short admonition, so a one-line admonition is no taller than with a label.
+
+The glyphs come from a bundled subset of Font Awesome Free 5.15.1, the icon font asciidoctor-pdf uses.
+A name may be a `fas-` (solid) or `far-` (regular) name, or a Font Awesome 4 name such as `fa-lightbulb-o` or `info-circle`, which is read as asciidoctor-pdf reads it.
+The bundled solid glyphs are `ban`, `bell`, `bolt`, `bug`, `check`, `check-circle`, `comment`, `comment-alt`, `exclamation`, `exclamation-circle`, `exclamation-triangle`, `fire`, `fire-alt`, `flag`, `hand-paper`, `heart`, `info`, `info-circle`, `lightbulb`, `question`, `question-circle`, `star`, `sticky-note`, `stop-circle`, `thumbtack` and `times-circle`.
+The bundled regular glyphs are `bell`, `check-circle`, `comment`, `comment-alt`, `flag`, `hand-paper`, `heart`, `lightbulb`, `question-circle`, `star`, `sticky-note`, `stop-circle` and `times-circle`.
+A name outside these, including a brand (`fab-`) icon, falls back to the kind's default glyph.
+
+These are not supported: the theme's `admonition_icon_<kind>` `image` key, and a block's own `icon` attribute (`[NOTE,icon=...]`).
+Such a block keeps its text label.
+Inline `icon:name[]` macros are not drawn as icons in the PDF; they remain text, as `[name]`.
+
+PDF/A-2a forbids characters from Unicode's private use area, which Font Awesome's glyphs are, so with `pdf-a-2a` admonitions keep their text labels.
+PDF/A-1a, PDF/A-1b and PDF/UA-1 show the icons.
 
 == Source highlighting
 
@@ -303,6 +370,7 @@ The PDF is always tagged.
 PDF/A-1 is PDF 1.4 and forbids transparency.
 An image or diagram with transparency makes a PDF/A-1 export fail with Typst's error at the line of the image, for example `configure.adoc:7: PDF/A-1b error: the image contains transparency`.
 Mermaid diagrams use opacity, so use PDF/A-2a for documents that contain them.
+PDF/A-2a forbids the characters admonition icons are drawn with, so admonitions keep their text labels; see <<admonition-icons>>.
 PDF/A-1a and PDF/A-1b cannot be combined with PDF/UA-1, which needs PDF 1.5 or later.
 The export fails and says so.
 A document that cannot conform fails the export with Typst's reasons, mapped to source lines.
