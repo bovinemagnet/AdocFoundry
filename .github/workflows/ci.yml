@@ -22,29 +22,41 @@ on:
   # A version tag runs CI through release.yml, which publishes only once it passes.
   workflow_call:
 
+# A newer push to a pull request cancels the run it supersedes; runs on main and on tags always
+# finish. Called from release.yml, the event is the tag's push, so the group is the tag's own.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
+  # A CI build is never rebuilt in place, so incremental artefacts only cost time and cache.
+  CARGO_INCREMENTAL: 0
 
+# Every job's toolchain, components included, is rust-toolchain.toml's (`rustup toolchain
+# install` with no name reads it). Every job has a time limit of about twice its longest recent
+# run, so a hung test fails its job rather than holding a runner for GitHub's six hours.
 jobs:
   lint:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      - run: rustup toolchain install
       - name: Install GPUI system libraries
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
       - run: cargo xtask layers
       # The release smoke test's signature checks, which otherwise run only on a signed release.
       - run: python3 -m unittest discover -s packaging -p 'test_*.py'
 
   test:
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -59,14 +71,15 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       # The dependencies' build output, keyed by OS, rustc and Cargo.lock. Only main saves it:
       # pull requests restore main's, so the three OS caches stay within the repository's 10 GB
       # and a pull request never evicts them.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install GPUI system libraries
@@ -74,7 +87,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev
       # asciidoctor and asciidoctor-pdf are CI-only: the fidelity and PDF regression tests compare
       # against them and skip themselves without them. Nothing needs Ruby at runtime.
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1.336.0
         if: runner.os == 'Linux'
         with:
           ruby-version: '3.3'
@@ -99,26 +112,30 @@ jobs:
   bench:
     # The engine's benchmarks, on the engine thread, each held to its budget; the table goes in
     # the run's summary. Index memory is measured here only, from /proc.
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         # The app crate's grammar is a workspace member's dependency, so Cargo needs it to
         # resolve the workspace at all.
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - run: cargo bench -p adoc-engine --bench budgets
 
   typing:
     # The real app types into a 1 MB page for twenty seconds, through the editor widget and the
     # engine, and the frame intervals go in the run's summary. Recorded only: macOS draws no
     # frames for a window it cannot show, so a run with none says so rather than failing.
+    timeout-minutes: 45
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - run: cargo build --release -p adocfoundry
       - name: Type into a 1 MB page
         run: |
@@ -146,12 +163,14 @@ jobs:
     # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1,
     # and the article as PDF/A-1b and PDF/A-1a (the book's Mermaid diagram uses transparency,
     # which PDF/A-1 forbids).
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - run: cargo build --release -p adocfoundry-cli
       - name: Export the reference PDFs
         run: |
@@ -177,13 +196,16 @@ jobs:
           test "$(echo "$result" | grep -c '^PASS')" -eq 6
 
   grammar:
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install tree-sitter-cli --locked
+      - run: rustup toolchain install
+      # A pinned version, its dependencies locked and checked against the registry's checksums.
+      - run: cargo install tree-sitter-cli --version 0.27.1 --locked
       - name: Grammar corpus tests
         run: |
           for grammar in tree-sitter-asciidoc tree-sitter-asciidoc_inline; do

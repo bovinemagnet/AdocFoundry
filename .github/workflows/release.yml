@@ -7,18 +7,25 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 permissions:
   contents: write
 
+# Every job's toolchain, components included, is rust-toolchain.toml's (`rustup toolchain
+# install` with no name reads it). Every job has a time limit of about twice its longest recent
+# run, so a hung test fails its job rather than holding a runner for GitHub's six hours.
 jobs:
   # A tag must name the version the files give: binaries report Cargo.toml's version, and a
   # package published under another would be offered by the updater again and again. Checked
   # before anything is built; `cargo xtask bump <version>` writes the files.
   version:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: The tag matches Cargo.toml, the documentation and the changelog
         if: startsWith(github.ref, 'refs/tags/')
         run: python3 packaging/release-version.py check "${GITHUB_REF_NAME#v}"
@@ -31,18 +38,19 @@ jobs:
 
   macos:
     needs: version
+    timeout-minutes: 90
     runs-on: macos-15
     env:
       # Signing and notarisation need the Developer ID secrets; without them the app is signed
       # ad hoc, as before.
       SIGNED: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - run: rustup toolchain install
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: Build both architectures
         run: |
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
@@ -129,7 +137,7 @@ jobs:
       - name: Remove the signing keychain
         if: always() && env.SIGNED == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: macos
           path: |
@@ -146,18 +154,20 @@ jobs:
             arch: x64
           - target: aarch64-pc-windows-msvc
             arch: arm64
+    timeout-minutes: 60
     runs-on: windows-latest
     env:
       # Authenticode through Azure Artifact Signing; without its secrets nothing is signed.
       SIGNED: ${{ secrets.AZURE_CLIENT_ID != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - run: cargo install cargo-wix --locked
+      - run: rustup toolchain install
+      - run: rustup target add ${{ matrix.target }}
+      # Pinned versions, their dependencies locked and checked against the registry's checksums.
+      - run: cargo install cargo-wix --version 0.3.9 --locked
       - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       # The third-party notices, for the MSI and the zips.
       - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
@@ -226,7 +236,7 @@ jobs:
           Compress-Archive -Path "$bin/adocfoundry.exe","$bin/adocfoundry-cli.exe","$bin/adoc-ls.exe","$bin/adoc-mcp.exe",LICENSE,README.md,$licenses `
             -DestinationPath "dist/AdocFoundry-$version-windows-${{ matrix.arch }}.zip"
           Compress-Archive -Path "$bin/adoc-ls.exe",$licenses -DestinationPath "dist/adoc-ls-$version-windows-${{ matrix.arch }}.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-${{ matrix.arch }}
           path: |
@@ -243,18 +253,21 @@ jobs:
             arch: x86_64
           - runner: ubuntu-22.04-arm
             arch: aarch64
+    timeout-minutes: 60
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - name: System libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
             libfontconfig-dev libxcb1-dev libx11-xcb-dev libssl-dev file
-      - run: cargo install cargo-deb cargo-generate-rpm --locked
+      - run: cargo install cargo-deb --version 3.8.0 --locked
+      - run: cargo install cargo-generate-rpm --version 0.21.1 --locked
       - run: cargo build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
       # The third-party notices, which the deb and rpm take from here.
       - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
@@ -266,7 +279,13 @@ jobs:
       - name: AppImage
         run: |
           version="${GITHUB_REF_NAME#v}"
-          curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage"
+          # A tagged linuxdeploy, checked against its hash before it runs and packs the AppImage.
+          curl -fsSL -o linuxdeploy "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-${{ matrix.arch }}.AppImage"
+          case "${{ matrix.arch }}" in
+            x86_64) sum=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d ;;
+            aarch64) sum=620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff ;;
+          esac
+          echo "$sum  linuxdeploy" | sha256sum -c
           chmod +x linuxdeploy
           cp packaging/icons/adocfoundry-256.png io.github.bovinemagnet.AdocFoundry.png
           # linuxdeploy keeps what the AppDir holds already: the dictionaries' licence and the
@@ -309,7 +328,7 @@ jobs:
             tar -czf "dist/$bin-$version-linux-${{ matrix.arch }}.tar.gz" -C target/release "$bin" \
               -C "$notices" licenses/SCOWL.txt licenses/THIRD-PARTY-NOTICES.txt
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-${{ matrix.arch }}
           path: dist/*
@@ -328,13 +347,16 @@ jobs:
             artefact: windows-x64
           - runner: ubuntu-22.04
             artefact: linux-x86_64
+    timeout-minutes: 30
     runs-on: ${{ matrix.runner }}
     env:
       # Whether this platform's release job signed its binaries.
       SIGNED: ${{ (matrix.artefact == 'macos' && secrets.APPLE_CERTIFICATE != '') || (matrix.artefact == 'windows-x64' && secrets.AZURE_CLIENT_ID != '') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ matrix.artefact }}
           path: artefacts
@@ -384,20 +406,23 @@ jobs:
   publish:
     needs: [ci, smoke]
     if: startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # The changelog's section for the version, ahead of GitHub's list of pull requests.
       - name: Release notes
         run: python3 packaging/release-version.py notes "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/release-notes.md"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artefacts
           merge-multiple: true
       # The app checks a package against this before it installs it.
       - name: Checksums
         run: (cd artefacts && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: artefacts/*
           body_path: ${{ runner.temp }}/release-notes.md

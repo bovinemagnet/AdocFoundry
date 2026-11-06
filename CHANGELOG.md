@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- CI and the release workflow build the same way next month as today (#195): every third-party action is pinned to a commit, `tree-sitter-cli`, `cargo-wix`, `cargo-deb` and `cargo-generate-rpm` are built at pinned versions with their dependencies locked rather than at whatever is newest, checkouts keep no credentials, linuxdeploy is a tagged release checked against its SHA-256 before it packs the AppImage, and every job's toolchain is the one `rust-toolchain.toml` names. Every job has a time limit, so a hung test fails within two hours instead of holding a runner for six as the v0.6.0 tag's Windows tests did, and a newer push to a pull request cancels the run it supersedes. `packaging/test_workflows.py` checks all of this.
+
 ## 0.7.0 — 2026-11-05
 
 ### Added

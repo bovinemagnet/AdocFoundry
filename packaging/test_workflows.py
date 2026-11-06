@@ -88,5 +88,83 @@ class ReleaseWaitsForCi(unittest.TestCase):
         self.assertNotRegex(triggers, r"(?m)^\s+tags:")
 
 
+def workflows():
+    return sorted(name for name in os.listdir(WORKFLOWS) if name.endswith((".yml", ".yaml")))
+
+
+class WorkflowsAreReproducible(unittest.TestCase):
+    """A run uses the same actions and tools next month as today, and a hung job is stopped."""
+
+    def test_every_job_has_a_time_limit(self):
+        for name in workflows():
+            for job, lines in jobs(read(name)).items():
+                # A job that calls another workflow takes its jobs' limits.
+                if any(re.match(r"^    uses:", line) for line in lines):
+                    continue
+                self.assertTrue(
+                    any(re.match(r"^    timeout-minutes:\s*\d+\s*$", line) for line in lines),
+                    f"{name}: job {job} has no timeout-minutes",
+                )
+
+    def test_actions_are_pinned_to_a_commit(self):
+        for name in workflows():
+            for number, line in enumerate(read(name).splitlines(), 1):
+                match = re.match(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$", line)
+                if not match or match.group(1).startswith("./"):
+                    continue
+                self.assertRegex(
+                    match.group(1),
+                    r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$",
+                    f"{name}:{number}: {match.group(1)} is not pinned to a commit",
+                )
+                self.assertRegex(
+                    match.group(2),
+                    r"#\s*v\d+(\.\d+)*",
+                    f"{name}:{number}: the pinned commit has no version comment",
+                )
+
+    def test_tools_are_installed_at_pinned_versions(self):
+        for name in workflows():
+            text = read(name)
+            # `--locked` alone pins a tool's dependencies, not the tool; with `--version` both
+            # are fixed, and Cargo checks every crate against the registry's checksums. An
+            # installer action falls back to unchecked downloads for tools it has no hash for.
+            self.assertNotIn("taiki-e/install-action", text, f"{name}: install tools with cargo")
+            for command in re.findall(r"cargo install\b[^\n]*", text):
+                self.assertRegex(
+                    command,
+                    r"^cargo install [\w-]+ --version \d+\.\d+\.\d+ --locked$",
+                    f"{name}: {command}",
+                )
+
+    def test_checkouts_keep_no_credentials(self):
+        # Nothing pushes with git; the token stays out of .git/config for every later step.
+        for name in workflows():
+            lines = read(name).splitlines()
+            for number, line in enumerate(lines):
+                if re.match(r"^\s*-\s+uses:\s*actions/checkout@", line):
+                    step = []
+                    for following in lines[number + 1 :]:
+                        if re.match(r"^\s*-\s", following) or not following.startswith(" " * 8):
+                            break
+                        step.append(following)
+                    self.assertTrue(
+                        any(re.match(r"^\s+persist-credentials:\s*false\s*$", s) for s in step),
+                        f"{name}:{number + 1}: checkout keeps its credentials",
+                    )
+
+    def test_downloads_are_versioned_and_checked(self):
+        for name in workflows():
+            text = read(name)
+            self.assertNotIn("/download/continuous/", text, f"{name} downloads a moving build")
+        linux = "\n".join(jobs(read("release.yml"))["linux"])
+        self.assertIn("sha256sum -c", linux, "linuxdeploy is checked before it runs")
+
+    def test_a_superseded_pull_request_run_is_cancelled(self):
+        ci = read("ci.yml").split("\njobs:\n", 1)[0]
+        self.assertRegex(ci, r"(?m)^concurrency:")
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
+
+
 if __name__ == "__main__":
     unittest.main()
