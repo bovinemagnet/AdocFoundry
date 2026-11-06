@@ -1,0 +1,27 @@
+= Font icons
+:icons: font
+
+With `icons=font`, admonitions show their kind's icon in place of the label, and inline icons
+are Font Awesome's.
+
+NOTE: A note, written as a paragraph.
+
+TIP: A tip with an icon:lightbulb[] icon inline.
+
+[IMPORTANT]
+====
+An important block.
+
+With two paragraphs.
+====
+
+.A titled caution
+[CAUTION]
+====
+A caution with a title.
+====
+
+[WARNING]
+A warning in a paragraph block.
+
+An icon:heart[] and an icon:info-circle[] in a paragraph.

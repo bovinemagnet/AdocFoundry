@@ -80,6 +80,14 @@ pub const ASSETS: &[Asset] = &[
         notices: &["LICENSE-stix", "ABOUT-stixtwomath"],
     },
     Asset {
+        name: "Font Awesome Free (subset)",
+        version: "5.15.1",
+        licence: "OFL-1.1",
+        folder: "crates/adoc-pdf/fonts",
+        files: &["fontawesome-"],
+        notices: &["LICENSE-fontawesome", "ABOUT-fontawesome-subset"],
+    },
+    Asset {
         name: "IBM Plex Sans",
         version: "1.1.0",
         licence: "OFL-1.1",

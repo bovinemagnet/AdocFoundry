@@ -298,3 +298,75 @@ fn page_labels_match_the_printed_numbers() {
         }
     }
 }
+
+/// The runs of `page` drawn in the bundled Font Awesome fonts.
+fn icon_runs(page: &TypesetPage) -> Vec<&adoc_pdf::TextRun> {
+    page.runs
+        .iter()
+        .filter(|run| run.font.starts_with("Font Awesome 5 Free"))
+        .collect()
+}
+
+#[test]
+fn admonition_icon_replaces_the_label_with_icons_font() {
+    let theme = common::default_theme();
+    let pages = pages_of("= Doc\n:icons: font\n\nNOTE: Read this first.\n", &theme);
+    let text = pages[0].text();
+    assert!(!text.contains("NOTE"), "{text:?}");
+    assert!(text.contains("Read this first."), "{text:?}");
+    let icons = icon_runs(&pages[0]);
+    assert_eq!(icons.len(), 1, "{:?}", pages[0].runs);
+    assert_eq!(icons[0].text, "\u{f05a}", "fas-info-circle");
+    // asciidoctor-pdf shrinks the 24 pt icon to the height of a one-line block.
+    assert!(
+        icons[0].size > 16.0 && icons[0].size <= 24.0,
+        "{}",
+        icons[0].size
+    );
+
+    // Without `icons=font`, or with an icon image of the block's own, the label is text.
+    for source in [
+        "= Doc\n\nNOTE: Read this first.\n",
+        "= Doc\n:icons: font\n\n[NOTE,icon=custom]\nRead this first.\n",
+    ] {
+        let pages = pages_of(source, &theme);
+        assert!(pages[0].text().contains("NOTE"), "{source:?}");
+        assert!(icon_runs(&pages[0]).is_empty(), "{source:?}");
+    }
+}
+
+#[test]
+fn admonition_icons_follow_the_theme() {
+    let (_dir, theme) = theme_with(
+        "admonition:\n  label:\n    min_width: 100\n  icon:\n    note:\n      name: fa-lightbulb-o\n      size: 12\n      stroke_color: '00AA00'\n    tip:\n      name: fas-rocket\n",
+    );
+    let pages = pages_of(
+        "= Doc\n:icons: font\n\nNOTE: Read this first.\n\nTIP: A tip.\n\nWARNING: Careful.\n",
+        &theme,
+    );
+    let icons: Vec<(&str, f64)> = icon_runs(&pages[0])
+        .iter()
+        .map(|run| (run.text.as_str(), run.size))
+        .collect();
+    assert_eq!(icons.len(), 3, "{icons:?}");
+    // far-lightbulb, at the theme's size.
+    assert_eq!(icons[0], ("\u{f0eb}", 12.0));
+    // A glyph that is not bundled falls back to the kind's own, far-lightbulb.
+    assert_eq!(icons[1].0, "\u{f0eb}");
+    assert_eq!(icons[2].0, "\u{f071}");
+    // The label column is the theme's minimum width wide, not one and a half times the icon.
+    let body_x = |pages: &[TypesetPage]| {
+        pages[0]
+            .runs
+            .iter()
+            .find(|run| run.text.contains("Read this first."))
+            .unwrap()
+            .x
+    };
+    let default = pages_of(
+        "= Doc\n:icons: font\n\nNOTE: Read this first.\n",
+        &common::default_theme(),
+    );
+    let moved = body_x(&pages) - body_x(&default);
+    assert!((moved - (100.0 - 36.0)).abs() < 0.01, "{moved}");
+}

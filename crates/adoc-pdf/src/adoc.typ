@@ -326,13 +326,42 @@
   ..items.map(((term, description)) => (styled(("description_list_term",), term), if description == none { [] } else { description })).flatten(),
 )
 
-#let adoc-admonition(kind, label, body, fits: false) = {
+// With `icon` (`icons=font`) the label is the kind's icon from `doc.admonition-icons`, in a
+// column `admonition_label_min_width` or one and a half times the icon's size wide, as
+// asciidoctor-pdf draws it; otherwise the label's text, at least that minimum wide.
+#let adoc-admonition(kind, label, body, fits: false, icon: false) = {
   let padding = inset(pick("admonition_padding", default: (4pt, 12pt, 4pt, 12pt)))
   let label-padding = inset(pick("admonition_label_padding", default: pick("admonition_padding", default: (4pt, 12pt, 4pt, 12pt))))
   let rule = border(pick("admonition_column_rule_width", default: 0.5pt), pick("admonition_column_rule_color", "base_border_color"))
-  let label = styled(("admonition_label_" + kind, "admonition_label"), transform(pick("admonition_label_" + kind + "_text_transform", "admonition_label_text_transform"), label))
   let label-align = alignment(pick("admonition_label_text_align", default: "center"), default: center)
   let valign = pick("admonition_label_vertical_align", default: "middle")
+  let min-width = pick("admonition_label_min_width")
+  let label = if icon {
+    let data = doc.admonition-icons.at(kind)
+    let width = if min-width != none { min-width } else { data.size * 1.5 }
+    context {
+      // asciidoctor-pdf shrinks the icon to the height of the block (`fit_icon_to_bounds`),
+      // measured here, as `keep` measures, at the page's width.
+      let margin = doc.page.margin
+      let room = doc.page.width - margin.left - margin.right - label-padding.left - width - label-padding.right - padding.left
+      let height = measure(block(width: room, inset: (top: padding.top, bottom: padding.bottom), body)).height
+      let fill = if data.color != none { (fill: data.color) } else { (:) }
+      box(width: width, align(label-align, text(
+        font: data.font,
+        size: calc.min(data.size, height),
+        top-edge: "ascender",
+        bottom-edge: "descender",
+        fallback: false,
+        ..fill,
+        data.glyph,
+      )))
+    }
+  } else {
+    let label = styled(("admonition_label_" + kind, "admonition_label"), transform(pick("admonition_label_" + kind + "_text_transform", "admonition_label_text_transform"), label))
+    if min-width == none { label } else {
+      context box(width: calc.max(measure(label).width, min-width), align(label-align, label))
+    }
+  }
   keep(fits: fits, block(
     width: 100%,
     fill: pick("admonition_background_color"),

@@ -132,6 +132,11 @@ Stripes use the theme's `table_body_stripe_background_color` on even, odd or all
 Its `link=` makes it a link, with the URL as a string literal.
 * A `%collapsible` block is its caption, `▼ ` and its title or `Details`, then its blocks indented by the marker, without the example's frame (`adoc-collapsible`).
 
+With `icons=font`, and no PDF/A-2a, the emitter passes `icon: true` to `adoc-admonition`, unless the block has an `icon` attribute.
+`icons.rs` merges each kind's `admonition_icon_<kind>` keys over asciidoctor-pdf's `AdmonitionIcons` (`admonition_icon`) into `doc.admonition-icons`: the family and glyph as string literals, the size in points and the colour, so no theme string is spliced into code.
+The template makes the label column `admonition_label_min_width` or 1.5 times the size wide, and shrinks the glyph to the block's height (asciidoctor-pdf's `fit_icon_to_bounds`), measured at the page's content width as `keep()` measures.
+`icons.rs`'s `SOLID`, `REGULAR` and `SHIMS` (Font Awesome 4 names) must match the script's lists; the unit test `every_glyph_is_in_its_subset` checks the fonts hold every glyph.
+
 Every attribute value reaches Typst as a string literal or a parsed number.
 
 === Maths
@@ -229,6 +234,9 @@ The line gaps (`line_gaps`, read from `hhea.lineGap`) are read through the same 
 Files are looked for in the given font directories, then the theme's directory.
 An unreadable font is a warning.
 STIX Two Math 2.13 (OFL-1.1) is bundled in `crates/adoc-pdf/fonts/` and registered for equations only.
+Font Awesome Free 5.15.1's solid and regular fonts are bundled as subsets (`fontawesome-solid-subset.ttf` and `fontawesome-regular-subset.ttf`, OFL-1.1, about 7 KB together), made by `crates/adoc-pdf/fonts/fontawesome-subset.py` with fontTools.
+They are registered under the families `Font Awesome 5 Free Solid` and `Font Awesome 5 Free Regular` for admonition icons only.
+Their notices are `LICENSE-fontawesome` and `ABOUT-fontawesome-subset`, listed in `xtask/src/notices.rs` `ASSETS`.
 
 Typst's errors and warnings carry spans in the generated source.
 `SourceMap` maps each to the innermost AsciiDoc span that produced it, so a diagnostic reads `install.adoc:42: unknown image format`.

@@ -4,6 +4,10 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ## Unreleased
 
+### Added
+
+- Admonitions show their icon with `:icons: font` (#191). In a PDF the label's place holds the kind's Font Awesome glyph, as asciidoctor-pdf draws it: the theme's `admonition_icon_<kind>` `name`, `size` and `stroke_color` over asciidoctor-pdf's defaults (`fas-info-circle`, `far-lightbulb`, `fas-exclamation-circle`, `fas-fire`, `fas-exclamation-triangle`, 24 pt), in a column `admonition_label_min_width` wide or one and a half times the icon, the icon shrinking to fit a short block. The glyphs come from a 7 KB subset of Font Awesome Free 5.15.1 (OFL-1.1), bundled with its notice: the five defaults and 34 common alternatives, by `fas-`, `far-` or Font Awesome 4 name; any other name falls back to the kind's default glyph. A block with an `icon` image of its own, and any admonition under PDF/A-2a, which forbids the glyphs' private-use code points, keep the text label. `admonition_label_min_width` now widens text labels too. HTML follows Asciidoctor: `<i class="fa icon-note" title="Note"></i>` in the icon cell and `<span class="icon"><i class="fa fa-heart"></i></span>` for `icon:heart[]`, and a standalone page, which links no icon font, shows the label in the icon's place. `adoc_pdf::TextRun` gains `font` and `size`.
+
 ### Changed
 
 - CI and the release workflow build the same way next month as today (#195): every third-party action is pinned to a commit, `tree-sitter-cli`, `cargo-wix`, `cargo-deb` and `cargo-generate-rpm` are built at pinned versions with their dependencies locked rather than at whatever is newest, checkouts keep no credentials, linuxdeploy is a tagged release checked against its SHA-256 before it packs the AppImage, and every job's toolchain is the one `rust-toolchain.toml` names. Every job has a time limit, so a hung test fails within two hours instead of holding a runner for six as the v0.6.0 tag's Windows tests did, and a newer push to a pull request cancels the run it supersedes. `packaging/test_workflows.py` checks all of this.

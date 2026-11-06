@@ -81,7 +81,8 @@ fn structure(html: &str) -> Vec<String> {
 
 /// How blocks are shown, where a block's attributes and options decide it: each ordered
 /// list's classes and `type`, `start` and `reversed`; each table's classes and width; each
-/// table cell's alignment; each image block's classes and link; and each collapsible block.
+/// table cell's alignment; each image block's classes and link; each collapsible block; and
+/// each font icon's classes and title.
 fn presentation(html: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut rest = html;
@@ -110,6 +111,8 @@ fn presentation(html: &str) -> Vec<String> {
             )),
             "td" | "th" => Some(format!("{name} {classes}")),
             "a" if first == "image" => Some(format!("a image href={:?}", attribute(tag, "href"))),
+            // A font icon (`icons=font`), an admonition's or an inline one.
+            "i" => Some(format!("i {classes} title={:?}", attribute(tag, "title"))),
             "details" | "summary" => Some(name.to_owned()),
             _ => None,
         };
@@ -222,7 +225,7 @@ fn normalising_keeps_blocks_and_paragraph_text() {
         presentation(
             "<div class=\"olist loweralpha\"><ol class=\"loweralpha\" type=\"a\" start=\"3\" reversed>\
              <table class=\"tableblock frame-none\" style=\"width: 50%;\"><td class=\"tableblock valign-top\">\
-             <details><summary class=\"title\">"
+             <details><summary class=\"title\"><i class=\"fa icon-note\" title=\"Note\"></i>"
         ),
         [
             "div olist loweralpha",
@@ -231,6 +234,7 @@ fn normalising_keeps_blocks_and_paragraph_text() {
             "td tableblock valign-top",
             "details",
             "summary",
+            "i fa icon-note title=\"Note\"",
         ]
     );
     assert_eq!(

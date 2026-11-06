@@ -236,6 +236,12 @@ Closing the page before the file is written reports that it was closed.
 
 Unlike PDF export, it needs no typesetter.
 
+With `:icons: font`, admonitions and inline icons are written as Asciidoctor writes them: `<i class="fa icon-note" title="Note"></i>` in the admonition's icon cell, and `<span class="icon"><i class="fa fa-heart"></i></span>` for `icon:heart[]`.
+A Font Awesome stylesheet, such as an Antora site's, draws them.
+The file links no icon font, so it shows each admonition's label in its icon's place, and inline icons are not drawn.
+A block with an `icon` attribute keeps its text label.
+The native preview is unchanged.
+
 == Rendering from the command line
 
 `adocfoundry-cli render` writes a page as the preview renders it.
