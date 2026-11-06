@@ -125,6 +125,8 @@ pub struct EmitOptions {
     /// The most lines a block may be estimated to take for it to be kept whole without being
     /// measured (`fits_lines`); none is when zero.
     pub fits_lines: usize,
+    /// `icons=font`: admonitions show their kind's icon in place of the label.
+    pub font_icons: bool,
 }
 
 pub(crate) struct Emitter<'a> {
@@ -601,10 +603,14 @@ impl<'a> Emitter<'a> {
             }
             ViewKind::Admonition { kind, blocks } => {
                 let title = self.caption_text(block);
+                // As asciidoctor-pdf, a block naming an icon image of its own keeps its label:
+                // icon images are not drawn.
+                let icon = self.options.font_icons && !block.attributes.contains_key("icon");
                 let _ = write!(
                     self.out,
-                    "#adoc-admonition({}{}, {}, ",
+                    "#adoc-admonition({}{}{}, {}, ",
                     self.fits_argument(block),
+                    if icon { "icon: true, " } else { "" },
                     string(admonition_name(*kind)),
                     string(admonition_label(*kind))
                 );

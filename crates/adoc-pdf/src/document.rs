@@ -13,7 +13,7 @@ use adoc_render::ViewInline;
 
 use crate::{
     emit::{EmitOptions, Emitted, Emitter, PageView, SourceMap},
-    running,
+    icons, running,
     theme::{LoadedTheme, ThemeValue},
     typst::{self, string, text},
 };
@@ -180,6 +180,9 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         toc_levels: facts.toc_levels(),
         access: options.access.clone(),
         fits_lines: fits_lines(theme, &page_geometry(theme)),
+        // Font Awesome's glyphs are private-use code points, which PDF/A-2a forbids.
+        font_icons: facts.attribute("icons") == Some("font")
+            && !options.standards.contains(&PdfStandard::A2a),
     };
     let mut emitter = Emitter::new(&pages, &emit_options);
 
@@ -342,7 +345,7 @@ fn doc_dictionary(
         .to_owned();
     let _ = writeln!(
         out,
-        "#let doc = (\n  line-gaps: ({}),\n  lang: {},\n  region: {},\n  hyphenate: {},\n  fallbacks: ({}),\n  page: (width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})),\n  toc-title: {},\n  toc-levels: {},\n  running: {},\n  running-from: {},\n)",
+        "#let doc = (\n  line-gaps: ({}),\n  lang: {},\n  region: {},\n  hyphenate: {},\n  fallbacks: ({}),\n  page: (width: {}, height: {}, margin: (top: {}, right: {}, bottom: {}, left: {})),\n  toc-title: {},\n  toc-levels: {},\n  running: {},\n  running-from: {},\n  admonition-icons: ({}),\n)",
         if gaps.is_empty() {
             ":".to_owned()
         } else {
@@ -370,7 +373,28 @@ fn doc_dictionary(
             format!("(part: none, chapter: none, section: (2, {}))", section_levels(theme) + 1)
         },
         running_from(theme),
+        admonition_icons(theme),
     );
+}
+
+/// Each admonition kind's icon for `icons=font`: its font, glyph, size and colour, the glyph a
+/// string literal and the rest numbers, as the theme gives them.
+fn admonition_icons(theme: &LoadedTheme) -> String {
+    let mut out = String::new();
+    for kind in icons::KINDS {
+        let icon = icons::admonition_icon(theme, kind);
+        let _ = write!(
+            out,
+            "{kind}: (font: {}, glyph: {}, size: {}, color: {}), ",
+            string(icon.family),
+            string(&icon.glyph.to_string()),
+            typst::points(icon.size),
+            icon.color
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), typst::color),
+        );
+    }
+    out
 }
 
 fn document_metadata(out: &mut String, facts: &Facts<'_>) {

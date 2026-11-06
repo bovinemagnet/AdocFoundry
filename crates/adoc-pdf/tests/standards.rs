@@ -102,6 +102,33 @@ fn pdf_a_2a_export_is_conformant() {
 }
 
 #[test]
+fn admonition_icons_follow_what_each_standard_allows() {
+    // Font Awesome's glyphs are private-use code points, which PDF/A-2a forbids: there the
+    // label stays text. The other standards allow them.
+    let view = common::view_of_text(
+        Path::new("/doc/page.adoc"),
+        "= Page\n:icons: font\n\nNOTE: Read this first.\n",
+    );
+    let document = common::article(view);
+    let theme = common::default_theme();
+    for (standards, label) in [
+        (&[PdfStandard::A2a][..], true),
+        (&[PdfStandard::A2a, PdfStandard::Ua1][..], true),
+        (&[PdfStandard::Ua1][..], false),
+        (&[PdfStandard::A1a][..], false),
+        (&[PdfStandard::A1b][..], false),
+    ] {
+        export(&document, &theme, &options(standards))
+            .unwrap_or_else(|error| panic!("{standards:?}: {error}"));
+        let typst = to_typst(&document, &theme, &options(standards));
+        let text = typeset_pages(&typst, &theme, &options(standards))
+            .unwrap_or_else(|error| panic!("{error}"))[0]
+            .text();
+        assert_eq!(text.contains("NOTE"), label, "{standards:?}: {text:?}");
+    }
+}
+
+#[test]
 fn pdf_a_1_export_is_conformant() {
     let path = common::fixtures().join("pdf/reference/article.adoc");
     let document = common::article(common::view_of(&path));

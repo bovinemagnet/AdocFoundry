@@ -46,10 +46,10 @@ admonition_font_family | ignored | The content keeps the base font.
 admonition_font_kerning | ignored | Typst always kerns.
 admonition_font_size | ignored | The content keeps the base font.
 admonition_font_style | ignored | The content keeps the base font.
-admonition_icon_<name>_image | ignored | Admonitions show their label as text; icons are not drawn.
-admonition_icon_<name>_name | ignored | Admonitions show their label as text; icons are not drawn.
-admonition_icon_<name>_size | ignored | Admonitions show their label as text; icons are not drawn.
-admonition_icon_<name>_stroke_color | ignored | Admonitions show their label as text; icons are not drawn.
+admonition_icon_<name>_image | ignored | Icon images are not drawn: with `icons=font` the kind's glyph is drawn, otherwise the label as text.
+admonition_icon_<name>_name | approximated | With `icons=font`, from a bundled subset of Font Awesome Free 5: the five defaults and common alternatives (`fas-`, `far-` and Font Awesome 4 names); a glyph outside it falls back to the kind's default.
+admonition_icon_<name>_size | supported
+admonition_icon_<name>_stroke_color | supported
 admonition_label_<name>_font_color | supported
 admonition_label_<name>_font_family | supported
 admonition_label_<name>_font_kerning | ignored | Typst always kerns.
@@ -61,7 +61,7 @@ admonition_label_font_family | supported
 admonition_label_font_kerning | ignored | Typst always kerns.
 admonition_label_font_size | supported
 admonition_label_font_style | supported
-admonition_label_min_width | ignored | The label column is as wide as the label.
+admonition_label_min_width | supported
 admonition_label_padding | supported
 admonition_label_text_align | supported
 admonition_label_text_transform | approximated | `uppercase` and `lowercase`; `capitalize` and `smallcaps` leave the text as it is.

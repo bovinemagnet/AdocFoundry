@@ -83,6 +83,32 @@ const CORE_FONTS: &[(&str, &str)] = &[
     ("Courier", "mplus1mn"),
 ];
 
+/// The admonition icons' fonts (OFL-1.1, `fonts/LICENSE-fontawesome`), each registered under
+/// a family of its own, as the template asks for them.
+const ICONS: &[(&str, &[u8])] = &[
+    (
+        crate::icons::SOLID_FAMILY,
+        include_bytes!("../fonts/fontawesome-solid-subset.ttf"),
+    ),
+    (
+        crate::icons::REGULAR_FAMILY,
+        include_bytes!("../fonts/fontawesome-regular-subset.ttf"),
+    ),
+];
+
+/// The icon fonts, parsed once per process.
+fn icons() -> &'static [(&'static str, Font)] {
+    static FONTS: OnceLock<Vec<(&'static str, Font)>> = OnceLock::new();
+    FONTS.get_or_init(|| {
+        ICONS
+            .iter()
+            .filter_map(|(family, data)| {
+                Font::new(Bytes::new(*data), 0).map(|font| (*family, font))
+            })
+            .collect()
+    })
+}
+
 /// One bundled font, parsed once per process.
 fn bundled(name: &str) -> Option<Font> {
     static FONTS: OnceLock<Vec<(&'static str, Font)>> = OnceLock::new();
@@ -238,6 +264,16 @@ pub(crate) fn font_set(
                 set.push(family, style, font);
             }
         }
+    }
+    for (family, font) in icons() {
+        set.push(
+            family,
+            Style {
+                bold: false,
+                italic: false,
+            },
+            font.clone(),
+        );
     }
     // Every bundled font under its own name, last, for glyphs nothing else has.
     for (name, _) in BUNDLED {

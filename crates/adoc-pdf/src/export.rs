@@ -176,6 +176,10 @@ pub struct TextRun {
     pub x: f64,
     pub y: f64,
     pub text: String,
+    /// The family of the run's font, as the font file names it.
+    pub font: String,
+    /// In points.
+    pub size: f64,
 }
 
 impl TypesetPage {
@@ -212,6 +216,8 @@ pub fn typeset_pages(
                     x: px,
                     y: py,
                     text: text.text.to_string(),
+                    font: text.font.info().family.clone(),
+                    size: text.size.to_pt(),
                 }),
                 _ => {}
             }
