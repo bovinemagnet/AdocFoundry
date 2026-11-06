@@ -619,10 +619,7 @@ fn a_link_with_empty_text_leaves_the_caret_after_it() {
     // Found by the `model_roundtrip` fuzz target: inside a mark, the start of the selection
     // went after the mark's closing delimiter and its end before it.
     let model = build("Some **strong text** here.\n");
-    let range = SourceRange::new(
-        offset(&model.source, "rong"),
-        offset(&model.source, "ere"),
-    );
+    let range = SourceRange::new(offset(&model.source, "rong"), offset(&model.source, "ere"));
     let result = model
         .apply(&Step::SetLink {
             range,
@@ -650,5 +647,38 @@ fn a_line_ending_in_a_space_leaves_later_blocks_where_they_are() {
             .map(|(_, _, text)| &model.source[text.range.start..text.range.end])
             .collect();
         assert_eq!(shown, blocks, "{source:?}");
+    }
+}
+
+#[test]
+fn typing_updates_the_block_typed_into_beside_an_empty_one() {
+    // Found by the `model_roundtrip` fuzz target. The model ends the header at the first blank
+    // line and acdc-parser after the author line, so the paragraph between them is an empty
+    // read-only node where the next block starts. Typing at that start updated the empty
+    // node's text instead, and the model after the step panicked when serialised.
+    for (text, typed) in [
+        ("= A\nx\nb\n\nx", "= A\nx\nb\n\n<x"),
+        (
+            "= A\n\u{fffd}\n]\n\n\u{fffd}",
+            "= A\n\u{fffd}\n]\n\n<\u{fffd}",
+        ),
+    ] {
+        let model = build(text);
+        let result = model
+            .apply(&Step::InsertText {
+                at: offset(text, "\n\n") + 2,
+                text: "<".to_owned(),
+                marks: MarkSet::EMPTY,
+            })
+            .unwrap();
+        let after = apply_edits(&model.source, &result.edits);
+        assert_eq!(after, typed);
+        let local = result.model.expect("typing changes no structure");
+        assert_eq!(local.serialise(), after);
+        let shown: Vec<&str> = local
+            .text_blocks()
+            .map(|(_, _, text)| text.display.as_str())
+            .collect();
+        assert_eq!(shown.last(), typed.rsplit('\n').next().as_ref());
     }
 }
