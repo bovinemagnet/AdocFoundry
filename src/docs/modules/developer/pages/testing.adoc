@@ -73,8 +73,8 @@ CI's `bench` job runs it on Ubuntu.
 | 100 µs at 20,000 lines; recorded at the other sizes
 
 | `settle_index`
-| The `pump` at `INDEX_SETTLE` after a keystroke on a 20,000-line page
-| Recorded: parsing and diagnosing the page run on the engine thread, about 14 ms on a CI runner, and moving them off the thread is issue #238
+| The two `pump`s that settle a keystroke on a 20,000-line page: the one at `INDEX_SETTLE` that hands the page to a worker, and the one that files the worker's answer and diagnoses (not the worker's time between them)
+| 1 ms (the parse and the index entry are prepared on a worker, #238)
 
 | `settle_git`
 | The `pump` at `GIT_SETTLE` in a repository, the index flushed first
