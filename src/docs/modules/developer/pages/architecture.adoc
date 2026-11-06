@@ -30,7 +30,7 @@ include::example$crate-layers.mmd[]
 
 |L1
 |`adoc-dom`
-|The full AST behind the `DocumentParser` trait, with `acdc-parser` as the parser and `asciidoc-parser` as a second implementation for comparison. It is the only crate that names a parser crate, so the parser stays swappable, and it applies typographic replacements to plain text.
+|The full AST behind the `DocumentParser` trait, with `acdc-parser` as the parser and `asciidoc-parser` as a second implementation for comparison, behind the crate's `comparison` feature. Only `adocfoundry-cli` enables it, for `render --parser asciidoc-parser`, so the app, `adoc-ls` and `adoc-mcp` do not compile it, and the `second_parser` test needs the feature (`required-features`). It is the only crate that names a parser crate, so the parser stays swappable, and it applies typographic replacements to plain text.
 acdc reads line ends as `\n`, so a page or include written with CRLF is given to it without its `\r` characters, and acdc's offsets are mapped back to the file's; spans in a Windows file cover the same text as in a Unix one.
 
 |L1

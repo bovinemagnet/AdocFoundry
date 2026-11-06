@@ -118,7 +118,7 @@ Every release up to 0.2.1 is ad hoc signed on macOS and unsigned on Windows.
 
 == Build from source
 
-You need Rust (stable, installed with `rustup`).
+You need Rust installed with `rustup`, which installs the release that `rust-toolchain.toml` pins on the first build.
 On Linux you also need the libraries GPUI uses.
 
 [source,sh]

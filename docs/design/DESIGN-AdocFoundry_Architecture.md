@@ -275,7 +275,7 @@ The five existing crates moved into this workspace with their history in Phase 1
 | File watching | `notify` crate with debouncing; Antora descriptors re-read on change (gap in adoc-ls today) |
 | External tools | `dot`, `plantuml`, `mmdc` found via PATH and a settings override; never required |
 | Packaging | macOS DMG (signed and notarised when the secrets are set), Windows MSI and zip, Linux AppImage, deb and rpm, with a Flatpak manifest; built by `release.yml` with `packaging/macos/bundle.sh`, `cargo-wix`, `cargo-deb`, `cargo-generate-rpm` and `linuxdeploy`, then smoke-tested (`packaging/smoke-test.py`) |
-| Binary size budget | Under 40 MB; Typst and its fonts are the largest contributors. Not yet measured in CI (#196) |
+| Binary size budget | Under 40 MB; Typst and its fonts are the largest contributors. Each release job reports its executables' sizes against it (`packaging/binary-sizes.py`). With thin LTO and stripped symbols (#196) the macOS arm64 app is 116.8 MB and `adoc-ls` 85.8 MB, down from 142.5 MB and 104.1 MB in 0.7.0: still well over |
 
 ## Phase 1 — AsciiDoc editor with Antora support and link following
 

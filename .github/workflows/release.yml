@@ -63,6 +63,10 @@ jobs:
             lipo -create -output "dist/$bin" \
               "target/aarch64-apple-darwin/release/$bin" "target/x86_64-apple-darwin/release/$bin"
           done
+      # Each architecture's executables against the design's 40 MB budget, in the job's summary.
+      - name: Sizes
+        run: |
+          python3 packaging/binary-sizes.py 40 target/{aarch64,x86_64}-apple-darwin/release/{adocfoundry,adocfoundry-cli,adoc-ls,adoc-mcp}
       # The third-party notices every package ships, as Help › About shows them.
       - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
       - name: Import the Developer ID certificate
@@ -169,6 +173,10 @@ jobs:
       # Pinned versions, their dependencies locked and checked against the registry's checksums.
       - run: cargo install cargo-wix --version 0.3.9 --locked
       - run: cargo build --release --target ${{ matrix.target }} -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      - name: Sizes
+        shell: bash
+        run: |
+          python3 packaging/binary-sizes.py 40 target/${{ matrix.target }}/release/{adocfoundry,adocfoundry-cli,adoc-ls,adoc-mcp}.exe
       # The third-party notices, for the MSI and the zips.
       - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
       # The executables are signed before the MSI and the zips take them.
@@ -269,6 +277,8 @@ jobs:
       - run: cargo install cargo-deb --version 3.8.0 --locked
       - run: cargo install cargo-generate-rpm --version 0.21.1 --locked
       - run: cargo build --release -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      - name: Sizes
+        run: python3 packaging/binary-sizes.py 40 target/release/{adocfoundry,adocfoundry-cli,adoc-ls,adoc-mcp}
       # The third-party notices, which the deb and rpm take from here.
       - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
       - name: deb and rpm

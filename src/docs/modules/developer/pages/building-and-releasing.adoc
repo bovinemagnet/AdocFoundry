@@ -54,6 +54,22 @@ A hung test now fails its job instead of holding a runner for GitHub's six-hour 
 Toolchain: each job installs the toolchain `rust-toolchain.toml` names, components included, with `rustup toolchain install` and no name.
 The release jobs add their targets with `rustup target add`.
 So the file is the one place the Rust version is set.
+It pins Rust 1.99.1, with the `minimal` profile and the `clippy` and `rustfmt` components, and `rust-version = "1.99"` in `[workspace.package]` names the same release.
+`packaging/test_toolchain.py` checks that they agree and that every crate takes the workspace's `rust-version`.
+Move both together.
+There is no separate MSRV job, because the pinned release is the only one the workspace is built and tested with.
+
+Dependencies: `deny.toml` warns on a second version of a crate (`multiple-versions = "warn"`), skipping the trees of `gpui-pre`, `gpui-component`, `gpui-pre-platform`, `typst`, `merman` and `gix`, whose duplicates no choice in this workspace can remove.
+With those skipped there are no warnings, so a new one is a duplicate that a change in this workspace brought in.
+`renovate.json` configures Renovate:
+
+* It runs weekly, on Monday before 6 am Sydney time, with at most four pull requests open.
+* It groups the Rust dependencies' minor and patch updates, the GPUI crates, the Typst crates and GitHub Actions, and it updates the toolchain pin in `rust-toolchain.toml` through a custom regex manager and the grammar submodule.
+* It bumps exact `=` pins.
+* It ignores `vendor/`, `grammars/` and `fuzz/`.
+
+It takes effect only once the Renovate GitHub app is installed on the repository.
+A Typst update must keep `vendor/comemo` at Typst's comemo version (see `vendor/README.md`), and Renovate's toolchain pull request must also move `rust-version`.
 
 Pinning: every third-party action is pinned to a commit, with its version in a comment, and every checkout sets `persist-credentials: false`, since no step pushes with git.
 Tools are built with `cargo install <tool> --version <x.y.z> --locked` (`tree-sitter-cli` 0.27.1 in CI; `cargo-wix` 0.3.9, `cargo-deb` 3.8.0 and `cargo-generate-rpm` 0.21.1 in the release), so the tool and its dependencies are fixed and Cargo checks each crate against the registry's checksums.
@@ -144,6 +160,41 @@ It also checks the Flatpak manifest (see below).
 It takes the changelog's section for the version, without its heading, with `python3 packaging/release-version.py notes <version> <file>`, and uses it as the release's body (`body_path`).
 It attaches the artefacts and `SHA256SUMS` to a GitHub release, and GitHub's generated list of pull requests (`generate_release_notes: true`) is still appended after the changelog section.
 |===
+
+=== Release profile and sizes
+
+`[profile.release]` in the root `Cargo.toml` sets `lto = "thin"` and `strip = "symbols"`.
+It keeps `panic = "unwind"`, which the DOM parsers' and the engine workers' panic guards need.
+`codegen-units = 1` is left out to keep release builds quicker (issue #391).
+
+Each release job's `Sizes` step runs `packaging/binary-sizes.py`, which writes a table of the four executables' sizes to the job summary.
+It adds a warning annotation for each one over the design's 40 MB budget.
+The budget is soft, so an executable over it does not fail the job.
+
+Measured on macOS arm64 executables, 0.7.0's default profile against the new one:
+
+[cols="2,1,1"]
+|===
+|Executable |0.7.0 |New profile
+
+|`adocfoundry`
+|142.5 MB
+|116.8 MB
+
+|`adoc-ls`
+|104.1 MB
+|85.8 MB
+
+|`adoc-mcp`
+|110.5 MB
+|90.7 MB
+
+|`adocfoundry-cli`
+|105.0 MB
+|86.8 MB
+|===
+
+That is about 18% smaller, and still well over the budget.
 
 === Signing
 
