@@ -246,11 +246,14 @@ fn choose(model: &Model, u: &mut Unstructured<'_>) -> Result<Choice> {
             .min(offset)
     };
     let node_lines = SourceRange::new(line_start(node.range.start), node.range.end);
+    // Changing a list's kind changes every item of the list. `roundtrip.rs` bounds it by the
+    // list's range; from the start of its line here, as a marker's indentation goes with it.
     let list = path
         .split_last()
         .and_then(|(_, parent)| model.node(parent))
         .filter(|parent| matches!(parent.kind, NodeKind::List { .. }))
         .map_or(node.range, |list| list.range);
+    let list = SourceRange::new(line_start(list.start), list.end);
     let at = text.range.start;
 
     Ok(Some(match u.int_in_range(0..=17)? {
