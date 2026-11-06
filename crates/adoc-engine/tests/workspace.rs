@@ -762,3 +762,148 @@ fn the_workspace_revision_grows_with_every_change_and_only_then() {
     assert!(reindexed > edited);
     assert_eq!(engine.workspace_revision(), reindexed);
 }
+
+/// A component whose start page links to pages and an image of module `guide`, one of which,
+/// `old.adoc`, exists. Opened and settled, so the watcher has applied the setup.
+fn linked_component() -> (
+    tempfile::TempDir,
+    Engine,
+    std::sync::mpsc::Receiver<EngineEvent>,
+    PathBuf,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir_all(root.join("modules/ROOT/pages")).unwrap();
+    fs::create_dir_all(root.join("modules/guide/pages")).unwrap();
+    fs::create_dir_all(root.join("modules/guide/images")).unwrap();
+    fs::write(root.join("antora.yml"), "name: demo\nversion: '1.0'\n").unwrap();
+    let index = root.join("modules/ROOT/pages/index.adoc");
+    fs::write(
+        &index,
+        "= Index\n\nxref:guide:new.adoc[] xref:guide:old.adoc[] xref:guide:former.adoc[]\n\n\
+         image::guide:diagram.png[]\n",
+    )
+    .unwrap();
+    fs::write(root.join("modules/guide/pages/old.adoc"), "= Old\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    let events = engine.subscribe();
+    engine.open_workspace(vec![root.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    settle(&mut engine);
+    let _ = events.try_iter().count();
+    (directory, engine, events, index)
+}
+
+/// The unresolved targets the index page reports, in its order.
+fn unresolved(engine: &Engine, index: &Path) -> Vec<String> {
+    adoc_lang::diagnostics(engine.workspace(), index)
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
+}
+
+fn catalogued(engine: &Engine, path: &Path) -> bool {
+    engine
+        .workspace()
+        .antora
+        .resource_for_path(&adoc_index::normalize_path(path))
+        .is_some()
+}
+
+/// Nothing indexed the whole workspace again, which would have caught up the catalog anyway.
+fn no_whole_index(events: &std::sync::mpsc::Receiver<EngineEvent>) -> Vec<EngineEvent> {
+    let events: Vec<EngineEvent> = events.try_iter().collect();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::WorkspaceIndexed { .. })),
+        "the workspace was indexed again"
+    );
+    events
+}
+
+#[test]
+fn a_page_created_on_disk_is_catalogued() {
+    let (directory, mut engine, events, index) = linked_component();
+    let new = directory.path().join("modules/guide/pages/new.adoc");
+    assert_eq!(
+        unresolved(&engine, &index).len(),
+        3,
+        "new, former and diagram"
+    );
+
+    fs::write(&new, "= New\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| catalogued(engine, &new)));
+    let remaining = unresolved(&engine, &index);
+    assert_eq!(remaining.len(), 2, "{remaining:?}");
+    assert!(remaining
+        .iter()
+        .all(|message| !message.contains("new.adoc")));
+    let events = no_whole_index(&events);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, EngineEvent::CatalogChanged { .. })));
+}
+
+#[test]
+fn a_page_deleted_on_disk_leaves_the_catalog() {
+    let (directory, mut engine, events, index) = linked_component();
+    let old = directory.path().join("modules/guide/pages/old.adoc");
+    assert!(catalogued(&engine, &old));
+
+    fs::remove_file(&old).unwrap();
+    assert!(pump_until(&mut engine, |engine| !catalogued(engine, &old)));
+    assert!(unresolved(&engine, &index)
+        .iter()
+        .any(|message| message.contains("guide:old.adoc")));
+    no_whole_index(&events);
+}
+
+#[test]
+fn a_page_renamed_on_disk_moves_in_the_catalog() {
+    let (directory, mut engine, events, index) = linked_component();
+    let old = directory.path().join("modules/guide/pages/old.adoc");
+    let former = directory.path().join("modules/guide/pages/former.adoc");
+
+    fs::rename(&old, &former).unwrap();
+    assert!(pump_until(&mut engine, |engine| catalogued(
+        engine, &former
+    ) && !catalogued(
+        engine, &old
+    )));
+    let remaining = unresolved(&engine, &index);
+    assert!(remaining
+        .iter()
+        .any(|message| message.contains("guide:old.adoc")));
+    assert!(remaining
+        .iter()
+        .all(|message| !message.contains("former.adoc")));
+    no_whole_index(&events);
+}
+
+#[test]
+fn an_image_added_on_disk_is_catalogued() {
+    let (directory, mut engine, events, _) = linked_component();
+    let image = directory.path().join("modules/guide/images/diagram.png");
+
+    fs::write(&image, b"\x89PNG\r\n\x1a\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| catalogued(engine, &image)));
+    no_whole_index(&events);
+}
+
+#[test]
+fn page_aliases_changed_on_disk_reach_the_catalog() {
+    let (directory, mut engine, events, index) = linked_component();
+    let old = directory.path().join("modules/guide/pages/old.adoc");
+
+    fs::write(&old, "= Old\n:page-aliases: former.adoc\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| unresolved(engine, &index)
+        .iter()
+        .all(|message| !message.contains("former.adoc"))));
+
+    fs::write(&old, "= Old\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| unresolved(engine, &index)
+        .iter()
+        .any(|message| message.contains("former.adoc"))));
+    no_whole_index(&events);
+}
