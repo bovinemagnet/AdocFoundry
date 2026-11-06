@@ -21,6 +21,7 @@ lsp-types.workspace = true
 resvg.workspace = true
 ropey.workspace = true
 serde_json.workspace = true
+smol.workspace = true
 tree-sitter-asciidoc.workspace = true
 tree-sitter-asciidoc-inline.workspace = true
 

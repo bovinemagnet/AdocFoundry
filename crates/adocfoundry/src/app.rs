@@ -1,6 +1,11 @@
 //! Application state: the engine, its event pump, and window creation.
 
-use std::{path::PathBuf, sync::mpsc::Receiver, time::Duration};
+use std::{
+    ops::{Deref, DerefMut},
+    path::PathBuf,
+    sync::mpsc::Receiver,
+    time::{Duration, Instant},
+};
 
 use adoc_engine::{
     CommandArgs, CommandId, CommandOutcome, Engine, EngineError, EngineEvent, WindowPlacement,
@@ -18,18 +23,50 @@ use crate::{
     workspace_view::WorkspaceView,
 };
 
-/// How often the engine is pumped while work is pending, and while idle.
-const BUSY_TICK: Duration = Duration::from_millis(16);
-const IDLE_TICK: Duration = Duration::from_millis(100);
+/// The engine is pumped no more often than this, however often something wakes the pump.
+const MIN_TICK: Duration = Duration::from_millis(16);
+/// With nothing due, the pump sleeps until something wakes it, or this long. Nothing is known to
+/// need the timeout: it bounds how long a wake-up missed by mistake could hold work up.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The id Linux desktops match a window to its desktop entry by, and so find its icon: the
 /// Wayland app id and the X11 `WM_CLASS`. It is the desktop entry's name and the Flatpak id.
 const APP_ID: &str = "io.github.bovinemagnet.AdocFoundry";
 
+/// The app's engine, which wakes the pump whenever it is reached mutably. Only a mutable call can
+/// schedule work, and every one comes through here, so the sleeping pump hears of them all
+/// without each call having to remember to wake it (#222).
+pub struct PumpedEngine {
+    engine: Engine,
+    wake: smol::channel::Sender<()>,
+}
+
+impl PumpedEngine {
+    /// Tells the pump to look at the engine again. A pump already told is told once.
+    fn wake(&self) {
+        let _ = self.wake.try_send(());
+    }
+}
+
+impl Deref for PumpedEngine {
+    type Target = Engine;
+
+    fn deref(&self) -> &Engine {
+        &self.engine
+    }
+}
+
+impl DerefMut for PumpedEngine {
+    fn deref_mut(&mut self) -> &mut Engine {
+        self.wake();
+        &mut self.engine
+    }
+}
+
 /// The single owner of the engine. Views hold an `Entity<AppState>`, invoke commands through it,
 /// and subscribe to the engine events it re-emits.
 pub struct AppState {
-    pub engine: Engine,
+    pub engine: PumpedEngine,
     /// How the releases feed is read: the system's `curl`, or a stand-in in tests.
     pub fetch: crate::updates::Fetch,
     events: Receiver<EngineEvent>,
@@ -37,6 +74,9 @@ pub struct AppState {
     _quit: gpui::Subscription,
     /// The workspace window and its view, which Quit asks about unsaved pages.
     pub(crate) main: Option<(gpui::AnyWindowHandle, gpui::WeakEntity<WorkspaceView>)>,
+    /// How many times the pump task has run.
+    #[cfg(test)]
+    pub(crate) pumps: usize,
 }
 
 impl EventEmitter<EngineEvent> for AppState {}
@@ -58,32 +98,54 @@ impl AppState {
         // The workspace's problems, for the Problems panel, kept by the engine off the render.
         engine.enable_problems();
         let events = engine.subscribe();
+        let (wake, woken) = smol::channel::bounded(1);
+        // Sleeps until the engine's next deadline or until something wakes it, so an idle app
+        // takes no wake-ups of its own.
         let pump = cx.spawn(async move |this, cx| loop {
-            let busy = this
-                .update(cx, |this, cx| {
-                    this.drain(cx);
-                    this.engine.has_pending()
-                })
-                .unwrap_or(false);
-            let tick = if busy { BUSY_TICK } else { IDLE_TICK };
-            cx.background_executor().timer(tick).await;
-            if this.upgrade().is_none() {
+            // Whatever wakes it from here on is seen by the pump below or wakes it again.
+            let _ = woken.try_recv();
+            let Ok(due) = this.update(cx, |this, cx| this.pump_tick(cx)) else {
                 break;
-            }
+            };
+            cx.background_executor().timer(MIN_TICK).await;
+            let wait = due.map_or(IDLE_TIMEOUT, |due| {
+                due.saturating_duration_since(Instant::now())
+            });
+            let timer = cx.background_executor().timer(wait);
+            smol::future::or(timer, async {
+                let _ = woken.recv().await;
+            })
+            .await;
         });
         // Edits made in the last moments before quitting are kept too.
         let quit = cx.on_app_quit(|this, _| {
             this.engine.write_recovery_now();
             async {}
         });
-        Self {
-            engine,
+        #[cfg_attr(test, allow(unused_mut))]
+        let mut state = Self {
+            engine: PumpedEngine { engine, wake },
             fetch: crate::updates::system_fetch(),
             events,
             _pump: pump,
             _quit: quit,
             main: None,
-        }
+            #[cfg(test)]
+            pumps: 0,
+        };
+        #[cfg(not(test))]
+        state.wake_from_other_threads();
+        state
+    }
+
+    /// Has worker results and changes on disk wake the pump. GPUI's test scheduler fails a test
+    /// when another thread wakes a task, so an app test asks for this itself, having allowed it
+    /// with `allow_parking`.
+    pub(crate) fn wake_from_other_threads(&mut self) {
+        let wake = self.engine.wake.clone();
+        self.engine.engine.set_waker(move || {
+            let _ = wake.try_send(());
+        });
     }
 
     /// Applies pending worker and watcher results and re-emits the engine's events. Each view
@@ -94,9 +156,26 @@ impl AppState {
     }
 
     /// Drains as [`AppState::drain`] does, leaving out the failure of `answered`, which its
-    /// caller answers itself.
+    /// caller answers itself. A pump can schedule work, so the pump task is told.
     fn drain_answered(&mut self, answered: Option<CommandId>, cx: &mut Context<Self>) {
         self.engine.pump();
+        self.publish(answered, cx);
+    }
+
+    /// The pump task's own drain, which does not wake it: it reads the next deadline here.
+    /// Returns when the engine next has something to do.
+    fn pump_tick(&mut self, cx: &mut Context<Self>) -> Option<Instant> {
+        #[cfg(test)]
+        {
+            self.pumps += 1;
+        }
+        self.engine.engine.pump();
+        self.publish(None, cx);
+        self.engine.next_due()
+    }
+
+    /// Re-emits the engine's events.
+    fn publish(&mut self, answered: Option<CommandId>, cx: &mut Context<Self>) {
         let mut events: Vec<EngineEvent> = Vec::new();
         for event in self.events.try_iter() {
             if matches!(&event, EngineEvent::CommandFailed { command, .. } if Some(*command) == answered)
