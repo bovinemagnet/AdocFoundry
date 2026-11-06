@@ -419,7 +419,7 @@ impl Engine {
     }
 
     /// The resource a file at `path` would be, for a file not yet in the catalog.
-    fn resource_at(&self, path: &Path) -> Option<AntoraResource> {
+    pub(crate) fn resource_at(&self, path: &Path) -> Option<AntoraResource> {
         ResourceFamily::ALL.into_iter().find_map(|family| {
             self.coordinate_in(path, family)
                 .map(|coordinate| AntoraResource {

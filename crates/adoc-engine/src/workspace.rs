@@ -845,6 +845,8 @@ impl Engine {
         let burst = closed_pages > FILE_BURST;
         // Pages not open were indexed again: their dependants are diagnosed once, after all.
         let mut indexed = false;
+        // The descriptors of the components whose resources came, went or changed aliases.
+        let mut catalogued = BTreeSet::new();
         for (path, change) in &ready {
             if *change == Change::Directory {
                 reindex = true;
@@ -862,12 +864,23 @@ impl Engine {
                 if burst && self.document_for_path(path).is_none() {
                     reindex = true;
                 } else {
-                    indexed |= self.file_changed_on_disk(path);
+                    indexed |= self.file_changed_on_disk(path, &mut catalogued);
                 }
+            } else if *change == Change::File {
+                catalogued.extend(self.catalog_file_changed(path, None));
             }
         }
         if settings {
             self.settings_files_changed();
+        }
+        if !catalogued.is_empty() && !reindex {
+            // References to what came or went resolve differently, wherever they are.
+            indexed = true;
+            for descriptor in catalogued {
+                self.emit(EngineEvent::CatalogChanged { descriptor });
+            }
+            self.preview_workspace_changed();
+            self.visual_workspace_changed();
         }
         // Indexing everything again diagnoses the open pages when it finishes.
         if indexed && !reindex {
@@ -923,9 +936,10 @@ impl Engine {
     }
 
     /// Applies one file's change on disk: an open page follows it, or tells that it changed
-    /// under unsaved edits; any other page is indexed again. Returns whether the index
+    /// under unsaved edits; any other page is indexed again and catalogued, its component's
+    /// descriptor added to `catalogued` when the catalog changed. Returns whether the index
     /// changed, so the open pages are to be diagnosed again.
-    fn file_changed_on_disk(&mut self, path: &Path) -> bool {
+    fn file_changed_on_disk(&mut self, path: &Path, catalogued: &mut BTreeSet<PathBuf>) -> bool {
         let on_disk = fs::read_to_string(path).ok();
         if let Some(id) = self.document_for_path(path) {
             if self.writer.is_saving(id) {
@@ -969,12 +983,13 @@ impl Engine {
             }
             return false;
         }
-        match on_disk {
+        match &on_disk {
             Some(text) => {
-                self.workspace.index.index_file(path, &text);
+                self.workspace.index.index_file(path, text);
             }
             None => self.workspace.remove_document(path),
         }
+        catalogued.extend(self.catalog_file_changed(path, on_disk.as_deref()));
         self.graph_file_changed(path);
         self.preview_source_changed(path);
         self.visual_source_changed(path);
@@ -982,6 +997,44 @@ impl Engine {
             path: path.to_path_buf(),
         });
         true
+    }
+}
+
+impl Engine {
+    /// Keeps the catalog in step with a file changed on disk (#402), as discovery would find
+    /// it, without reading its component again: a file in one of a module's family folders is
+    /// catalogued, a page with the aliases its header in `text` lists, and a file gone is
+    /// forgotten. Returns the descriptor of the component whose catalog changed.
+    fn catalog_file_changed(&mut self, path: &Path, text: Option<&str>) -> Option<PathBuf> {
+        let path = normalize_path(path);
+        let known = self.workspace.antora.resource_for_path(&path).cloned();
+        let found = path
+            .is_file()
+            .then(|| self.resource_at(&path))
+            .flatten()
+            .map(|mut resource| {
+                if resource.coordinate.family == adoc_antora::ResourceFamily::Page {
+                    resource.aliases = text
+                        .map(|text| adoc_antora::page_aliases(text, &resource.coordinate))
+                        .unwrap_or_default();
+                }
+                resource
+            });
+        if found == known {
+            return None;
+        }
+        let coordinate = found.as_ref().or(known.as_ref())?.coordinate.clone();
+        if known.is_some() {
+            self.workspace.antora.remove_source(&path);
+        }
+        if let Some(resource) = found {
+            self.workspace.antora.insert(resource);
+        }
+        let component = self
+            .workspace
+            .antora
+            .component(&coordinate.component, coordinate.version.as_deref())?;
+        Some(component.root.join("antora.yml"))
     }
 }
 

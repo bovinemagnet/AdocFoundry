@@ -711,6 +711,11 @@ A result from a superseded job is discarded and changes no watches.
 The changes ready in one pump are applied together (`apply_file_changes`).
 An open page follows its file, or is marked changed under unsaved edits, one by one.
 Each changed page that is not open is indexed again (`file_changed_on_disk`).
+That page, and any other file in one of a module's family folders (`pages`, `partials`, `examples`, `images` or `assets/images`, `attachments` or `assets/attachments`), is also catalogued or forgotten (`catalog_file_changed`), without reading the component again.
+A new file is catalogued, a page with the aliases its `:page-aliases:` header attribute lists; a removed file is forgotten together with the aliases it declared; a page whose `page-aliases` changed is catalogued again with the new ones.
+A rename is a removal and a creation.
+When the catalog changed, the engine emits `CatalogChanged` with the component's `antora.yml` path, which rebuilds the Modules panel, and it re-renders the previews, marks the visual models stale and diagnoses the open pages again.
+An open page keeps its index entry and catalog entry while its buffer is open.
 The open pages are diagnosed again once, after all of them, not once per file.
 
 When more than `FILE_BURST` (50) pages that are not open change at once, as on a branch switch or a pull, they are not read one by one.
@@ -719,7 +724,8 @@ The watcher never follows symbolic links, as the index never did.
 If a watch cannot be added, for example at Linux's `fs.inotify.max_user_watches` limit, the engine reports it once as `CommandFailed` for `workspace.open_folder` ("file watching is incomplete: …") and keeps working.
 
 
-* A created, modified or removed AsciiDoc file is re-indexed.
+* A created, modified or removed AsciiDoc file is re-indexed, and catalogued or forgotten in the Antora catalog.
+* A page whose `page-aliases` changed on disk is catalogued again with its new aliases; a removed page's aliases are dropped with it.
 * A document with unsaved edits is never overwritten; the engine emits `DocumentChangedOnDisk` instead.
 * A modified `antora.yml` reloads that component version, and diagnostics are re-run for affected files.
 * A directory created or removed under a module re-indexes the root.

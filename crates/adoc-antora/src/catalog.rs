@@ -483,11 +483,16 @@ impl AntoraCatalog {
             })
     }
 
+    /// Removes the resources read from `source_path`, with the aliases they declared.
     pub fn remove_source(&mut self, source_path: &Path) {
         self.revision += 1;
         let source_path = normalize_path(source_path);
-        for coordinate in self.by_path.remove(&source_path).unwrap_or_default() {
-            self.resources.remove(&coordinate);
+        let removed = self.by_path.remove(&source_path).unwrap_or_default();
+        for coordinate in &removed {
+            self.resources.remove(coordinate);
+        }
+        if !removed.is_empty() {
+            self.aliases.retain(|_, target| !removed.contains(target));
         }
     }
 
@@ -882,6 +887,26 @@ mod tests {
             .resource_for_path(std::path::Path::new("/docs/modules/ROOT/pages/p7.adoc"))
             .is_none());
         assert_eq!(catalog.len(), 999);
+    }
+
+    /// A page's aliases go with it, so a page read again without one no longer answers to it.
+    #[test]
+    fn removing_a_page_forgets_its_aliases() {
+        let mut catalog = AntoraCatalog::new();
+        let alias = AntoraCoordinate {
+            relative_path: PathBuf::from("old.adoc"),
+            ..page("demo", "new.adoc", "/docs/new.adoc").coordinate
+        };
+        let aliased = AntoraResource {
+            aliases: vec![crate::parse_resource_id("demo:ROOT:old.adoc").unwrap()],
+            ..page("demo", "new.adoc", "/docs/new.adoc")
+        };
+        catalog.insert(aliased);
+        assert!(catalog.resolve(&alias).is_some());
+
+        catalog.remove_source(std::path::Path::new("/docs/new.adoc"));
+        catalog.insert(page("demo", "new.adoc", "/docs/new.adoc"));
+        assert!(catalog.resolve(&alias).is_none());
     }
 
     #[test]

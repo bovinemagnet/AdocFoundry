@@ -19,7 +19,7 @@ pub use descriptor::{
 };
 pub use discovery::{
     discover_antora_files, discover_antora_workspace, discover_antora_workspace_ignoring,
-    DiscoveryResult,
+    page_aliases, DiscoveryResult,
 };
 pub use module::Module;
 pub use nav::{parse_nav, NavEntry};
