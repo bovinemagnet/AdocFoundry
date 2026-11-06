@@ -630,6 +630,68 @@ It is not evidence that a real input method works.
 Never add a test to `crates/adocfoundry` that needs a display when the behaviour can be tested in `adoc-engine`.
 In CI the application crate is built, and its tests are run only where the platform allows.
 
+[[fuzzing]]
+== Fuzzing
+
+`fuzz/` is a cargo-fuzz project with its own workspace, excluded from the main one (`exclude` in the root `Cargo.toml`).
+It is built with nightly Rust and cargo-fuzz 0.13.2.
+It repeats the main workspace's `[patch.crates-io]` entries (`vendor/evalexpr` and `vendor/comemo`), since patches apply only to the workspace that names them.
+Nothing in it is needed to build or test the app.
+
+[source,sh]
+----
+rustup toolchain install nightly --profile minimal
+cargo install cargo-fuzz --version 0.13.2 --locked
+----
+
+`python3 fuzz/seed.py` fills `fuzz/corpus/<target>/` from the `.adoc` pages under `tests/fixtures`.
+For the resource id and STEM targets it also uses the xref, include and image targets and the formulas found in those pages, and the formulas in `tests/fixtures/stem`.
+The corpus is not committed.
+
+`parse_source`::
+`adoc_parser::parse` returns for any text, and every range it reports (title, sections, attributes, anchors, references, includes, images and diagnostics) is a range of the text on character boundaries.
+
+`parse_dom`::
+`AcdcParser` returns for any text on a thread with the 2 MiB stack of the engine's workers, and every block span in the page lies in the text on character boundaries.
+`catch_unwind` in `adoc-dom` does not catch a stack overflow or an abort, which is what this target looks for.
+libFuzzer's panic hook aborts on any panic, so a panic the guard would catch is reported too.
+Run it with `-rss_limit_mb=4096`.
+
+`model_roundtrip`::
+The visual editor's model under arbitrary pages and steps holds to the write-back rules of `crates/adoc-model/tests/roundtrip.rs` (see xref:#round-trip-tests[]).
+The model serialises to its page, step edits are sorted and on character boundaries, and steps made at caret stops edit only inside the block they touch.
+The returned or rebuilt model describes the text after the step, and inverting the edits gives the page back.
+The input is the page, optionally followed by a NUL byte and the bytes the steps are chosen from.
+
+`antora_resource_id`::
+`parse_resource_id` returns for any text, an accepted id keeps Antora's rules, and writing it out with `resource_id_string` and parsing again gives the same id.
+
+`math_is_safe`::
+Whatever `adoc_math::is_safe` accepts, or `to_typst` returns, is checked by an independent walk of the Typst syntax tree: no errors, no code construct, `#` only inside strings, comments and escapes, and every name of more than one letter in Typst's maths scope or `HELPERS`.
+The first byte of an input chooses Typst markup, AsciiMath or LaTeX.
+
+`pdf_literal`::
+`adoc-pdf`'s Typst string literal writer, exposed only under its `fuzzing` feature, parses back as exactly one string holding the text, in code and behind `#` in markup, and two in a row stay two strings.
+
+Run one target from the repository root.
+
+[source,sh]
+----
+python3 fuzz/seed.py
+cargo +nightly fuzz run parse_dom -- -max_total_time=120 -rss_limit_mb=4096
+cargo +nightly fuzz build
+----
+
+A failing input is written to `fuzz/artifacts/<target>/`, in a file whose name begins `crash-`, `oom-`, `timeout-` or `slow-unit-`.
+Reproduce it with `cargo +nightly fuzz run <target> fuzz/artifacts/<target>/<file>`, and shrink it with `cargo +nightly fuzz tmin <target> <file>`.
+
+Every crash in the project's own code becomes a regression test in the crate that owns the code, and is then fixed, as with any panic.
+A crash inside an external crate, such as acdc-parser, is reported upstream, and its minimised input is kept under `fuzz/regressions/<target>/` so it can be run again once fixed.
+
+`.github/workflows/fuzz.yml` is separate from CI so that CI stays quick.
+Every week, and when run by hand, each target runs for five minutes (`-max_total_time=300`), and crash files are uploaded as an artefact.
+A pull request or push that changes `fuzz/` or the workflow only builds the targets and checks their formatting.
+
 == Performance probe
 
 The engine's work per keystroke is measured by a release-mode probe on a synthetic 5,008-line document.
