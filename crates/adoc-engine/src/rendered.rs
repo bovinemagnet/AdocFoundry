@@ -104,8 +104,9 @@ pub(crate) struct PreviewState {
 pub const DIAGRAM_WORKERS: usize = 4;
 
 impl PreviewState {
-    pub(crate) fn has_scheduled(&self) -> bool {
-        !self.scheduled.is_empty()
+    /// When the next scheduled preview is to start.
+    pub(crate) fn next_scheduled(&self) -> Option<std::time::Instant> {
+        self.scheduled.values().min().copied()
     }
 }
 

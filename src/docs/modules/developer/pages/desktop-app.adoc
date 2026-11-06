@@ -18,7 +18,15 @@ The choice was confirmed by a spike, recorded in `docs/qa/spike-gpui.md` and sum
 `AppState` is the single owner of the `Engine`.
 Views hold an `Entity<AppState>`, invoke commands through it and subscribe to the engine events it re-emits.
 
-A background task pumps the engine every 16 ms while work is pending, such as indexing or a search, and every 100 ms when idle.
+A background task pumps the engine, asks `Engine::next_due` when `pump` next has work of its own accord, and then sleeps until that deadline or until it is woken.
+While the app is idle `next_due` is `None`, and the task sleeps until a worker, the writer or the file watcher sends the engine something.
+The app gives the engine a waker (`Engine::set_waker`) that wakes the task from whichever thread sent the message.
+`AppState::engine` is a `PumpedEngine`, which dereferences to `Engine` and wakes the pump on every mutable access, so a call that schedules work needs no wake-up of its own; only mutable calls can schedule work.
+The task never pumps more often than `MIN_TICK` (16 ms), and sleeps for at most `IDLE_TIMEOUT` (5 s), which only bounds how long a wake-up missed by mistake could hold work up.
+
+GPUI's test scheduler fails a test when another thread wakes a task, so under test `AppState::new` does not connect the waker.
+A test that wants it calls `cx.executor().allow_parking()` and then `AppState::wake_from_other_threads()`.
+
 Each pump applies worker and watcher results and then re-emits every engine event to the views.
 `AppState::invoke` also drains events before it returns, so the effect of a command is visible immediately.
 

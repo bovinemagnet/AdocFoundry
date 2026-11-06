@@ -142,8 +142,9 @@ impl GitState {
         self.hunks.get(&id).map_or(&[], Vec::as_slice)
     }
 
-    pub(crate) fn has_pending(&self) -> bool {
-        !self.pending_hunks.is_empty()
+    /// When the next page's hunks are to be computed.
+    pub(crate) fn next_due(&self) -> Option<std::time::Instant> {
+        self.pending_hunks.values().min().copied()
     }
 
     pub(crate) fn is_metadata_path(&self, path: &Path) -> bool {

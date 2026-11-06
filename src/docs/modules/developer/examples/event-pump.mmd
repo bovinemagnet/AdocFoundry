@@ -8,7 +8,9 @@ flowchart LR
     idx --> chan
     srch --> chan
     watch --> chan
-    timer["AppState timer task<br/>16 ms while busy, 100 ms idle"] -->|calls| pump["Engine::pump"]
+    chan -.->|set_waker wakes| task
+    task["AppState pump task<br/>sleeps until next_due or woken"] -->|calls| pump["Engine::pump"]
+    pump -.->|next_due| task
     chan --> pump
     pump -->|publishes EngineEvent<br/>over std::mpsc| app["AppState"]
     app -->|re-emits as GPUI events| wv["WorkspaceView"]

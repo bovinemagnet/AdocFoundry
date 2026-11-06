@@ -9011,3 +9011,143 @@ fn theme_reloads_without_busy_loop(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_ne!(shown_theme(&mut cx), "Paper");
 }
+
+/// An app with one page open, its pump asleep: whatever opening the page woke it for is done.
+fn sleeping_app(
+    cx: &mut TestAppContext,
+) -> (tempfile::TempDir, Entity<AppState>, std::path::PathBuf) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let settings = Settings::load(None, None).unwrap().with_git_opt_in();
+    let app = app_with(Engine::new(settings), cx);
+    app.update(cx, |app, _| {
+        let id = app.engine.open(&page).unwrap();
+        app.engine.set_active(id);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.update(cx, |app, cx| {
+        app.drain(cx);
+        app.engine.has_pending()
+    }) && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(50));
+    cx.run_until_parked();
+    (directory, app, page)
+}
+
+#[gpui::test]
+fn an_idle_app_does_not_pump(cx: &mut TestAppContext) {
+    let (_directory, app, _) = sleeping_app(cx);
+    let before = app.read_with(cx, |app, _| app.pumps);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(10));
+    cx.run_until_parked();
+    let pumps = app.read_with(cx, |app, _| app.pumps) - before;
+    assert!(pumps <= 3, "{pumps} pumps in ten idle seconds");
+}
+
+#[gpui::test]
+fn a_call_into_the_engine_wakes_the_pump(cx: &mut TestAppContext) {
+    let (_directory, app, _) = sleeping_app(cx);
+    let before = app.read_with(cx, |app, _| app.pumps);
+    app.update(cx, |app, _| {
+        let id = app.engine.active().unwrap();
+        app.engine.set_active(id);
+    });
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(20));
+    cx.run_until_parked();
+    assert!(app.read_with(cx, |app, _| app.pumps) > before);
+}
+
+/// The pump wakes for the settle's deadline, and what follows it, with no other drain.
+#[gpui::test]
+fn a_pause_in_typing_is_indexed_by_the_sleeping_pump(cx: &mut TestAppContext) {
+    let (_directory, app, page) = sleeping_app(cx);
+    app.update(cx, |app, cx| {
+        let id = app.engine.active().unwrap();
+        app.invoke(
+            adoc_engine::commands::ids::EDIT_INSERT_TEXT,
+            adoc_engine::CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(7, 7),
+                text: "x".to_owned(),
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    let indexed = |app: &AppState| {
+        app.engine
+            .workspace()
+            .index
+            .file(&adoc_engine::normalize_path(&page))
+            .is_some_and(|file| file.document.text.contains('x'))
+    };
+    for _ in 0..200 {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(20));
+        cx.run_until_parked();
+        if app.read_with(cx, |app, _| indexed(app)) {
+            return;
+        }
+    }
+    panic!("the pause was not indexed");
+}
+
+/// A change on disk reaches a pump asleep with nothing due: only the file watcher can wake it,
+/// through the engine's waker, well before the idle timeout.
+#[gpui::test]
+fn a_change_on_disk_wakes_the_sleeping_pump(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let settings = Settings::load(None, None).unwrap().with_git_opt_in();
+    let mut engine = Engine::new(settings);
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    cx.executor().allow_parking();
+    app.update(cx, |app, _| app.wake_from_other_threads());
+    // What the watcher saw of the setup, which FSEvents can report late, is applied first.
+    let mut quiet = std::time::Instant::now();
+    let deadline = quiet + std::time::Duration::from_secs(10);
+    while quiet.elapsed() < std::time::Duration::from_millis(400)
+        && std::time::Instant::now() < deadline
+    {
+        let pending = app.update(cx, |app, cx| {
+            app.drain(cx);
+            app.engine.has_pending()
+        });
+        if pending {
+            quiet = std::time::Instant::now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(50));
+    cx.run_until_parked();
+
+    let before = app.read_with(cx, |app, _| app.pumps);
+    std::fs::write(&page, "= Page, changed\n").unwrap();
+    // At most 3.75 s by the test's clock, short of the idle timeout, and 5 s by the system's.
+    for _ in 0..250 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(15));
+        cx.run_until_parked();
+        if app.read_with(cx, |app, _| app.pumps) > before {
+            return;
+        }
+    }
+    panic!("nothing woke the pump");
+}

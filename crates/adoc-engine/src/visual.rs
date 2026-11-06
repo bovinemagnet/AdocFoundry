@@ -117,9 +117,18 @@ pub(crate) struct VisualState {
 impl VisualState {
     /// Whether a model waits for its settle time, or `active` is shown visually and its model
     /// was never built.
-    pub(crate) fn has_due(&self, active: Option<DocumentId>) -> bool {
-        self.sessions.values().any(|session| session.due.is_some())
-            || active.is_some_and(|id| self.unbuilt(id))
+    /// When the next model is to be rebuilt: `now` for the active page's, never built.
+    pub(crate) fn next_due(
+        &self,
+        active: Option<DocumentId>,
+        now: std::time::Instant,
+    ) -> Option<std::time::Instant> {
+        let unbuilt = active.filter(|id| self.unbuilt(*id)).map(|_| now);
+        self.sessions
+            .values()
+            .filter_map(|session| session.due)
+            .chain(unbuilt)
+            .min()
     }
 
     /// Whether `id` is shown visually but its model was never built, as after a restored session.

@@ -308,11 +308,16 @@ pub(crate) struct FileWatcher {
 impl FileWatcher {
     /// A watcher watching nothing yet: the index worker places the watches as it walks, so
     /// nothing here walks the roots. Links are never followed.
-    fn start(roots: &[PathBuf], mode: WatchMode) -> notify::Result<Self> {
+    fn start(
+        roots: &[PathBuf],
+        mode: WatchMode,
+        waker: crate::worker::SharedWaker,
+    ) -> notify::Result<Self> {
         let (sender, events) = mpsc::channel();
         let watcher = notify::RecommendedWatcher::new(
             move |event| {
                 let _ = sender.send(event);
+                crate::worker::wake(&waker);
             },
             notify::Config::default().with_follow_symlinks(false),
         )?;
@@ -387,17 +392,18 @@ impl Engine {
         self.reload_settings()?;
         self.open_expansion();
         self.files.clear();
-        self.watcher = match FileWatcher::start(&self.roots, self.watch_mode) {
-            Ok(watcher) => Some(watcher),
-            Err(error) => {
-                // Watching is a convenience; the workspace still works without it.
-                self.emit(EngineEvent::CommandFailed {
-                    command: crate::commands::ids::WORKSPACE_OPEN_FOLDER,
-                    error: format!("file watching unavailable: {error}"),
-                });
-                None
-            }
-        };
+        self.watcher =
+            match FileWatcher::start(&self.roots, self.watch_mode, Arc::clone(&self.waker)) {
+                Ok(watcher) => Some(watcher),
+                Err(error) => {
+                    // Watching is a convenience; the workspace still works without it.
+                    self.emit(EngineEvent::CommandFailed {
+                        command: crate::commands::ids::WORKSPACE_OPEN_FOLDER,
+                        error: format!("file watching unavailable: {error}"),
+                    });
+                    None
+                }
+            };
         if let (Some(watcher), Some(user_file)) = (self.watcher.as_mut(), self.settings.user_file())
         {
             watcher.watch_settings_folder(user_file);
@@ -471,23 +477,47 @@ impl Engine {
     /// True while indexing runs or file-system changes wait to be applied.
     #[must_use]
     pub fn has_pending(&self) -> bool {
-        self.workers_running > 0
-            || !self.pending_index.is_empty()
-            || self.rendered.has_scheduled()
-            || self.visual.has_due(self.active)
-            || self.git.has_pending()
-            || self.has_due_word_count()
-            || self.has_due_spelling()
-            || self.has_due_auto_save()
-            || self.has_due_recovery()
-            || self.has_due_html_export()
-            || self.has_due_problems()
-            || self.has_due_audit()
-            || self.has_due_graph()
-            || self
-                .watcher
-                .as_ref()
-                .is_some_and(|watcher| !watcher.pending.is_empty())
+        self.workers_running > 0 || self.next_due().is_some()
+    }
+
+    /// When [`Engine::pump`] next has something to do of its own accord: the earliest deadline of
+    /// every settle the engine keeps, at or before now for work that waits only for the next
+    /// pump. `None` means nothing will happen until a worker or the file watcher sends something,
+    /// which calls the waker ([`Engine::set_waker`]), or until the engine is called; work a
+    /// running worker holds up has no deadline, since its result wakes the front end. A change on
+    /// disk's deadline is by the system's time, whatever clock the engine was given.
+    #[must_use]
+    pub fn next_due(&self) -> Option<Instant> {
+        [
+            self.pending_index.values().min().copied(),
+            self.watcher.as_ref().and_then(|watcher| {
+                let seen = watcher.pending.values().map(|(seen, _)| *seen).min()?;
+                Some(seen + WATCH_DEBOUNCE)
+            }),
+            self.rendered.next_scheduled(),
+            self.visual.next_due(self.active, self.clock.now()),
+            self.git.next_due(),
+            self.due_expansion(),
+            self.due_word_count(),
+            self.due_spelling(),
+            self.due_auto_save(),
+            self.due_recovery(),
+            self.due_html_export(),
+            self.due_problems(),
+            self.due_audit(),
+            self.due_graph(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
+    /// Gives the engine a function to call, from any thread, whenever a worker, the writer or the
+    /// file watcher sends it something [`Engine::pump`] would apply, so a front end can sleep
+    /// until [`Engine::next_due`] rather than pump on a timer. An engine has one front end: only
+    /// the first waker given is kept. It may be called often, and should only wake the front end.
+    pub fn set_waker(&mut self, waker: impl Fn() + Send + Sync + 'static) {
+        let _ = self.waker.set(Arc::new(waker));
     }
 
     /// True while the workspace is being indexed: a whole-workspace index is running, or
@@ -510,7 +540,8 @@ impl Engine {
     }
 
     /// Applies results from worker threads and debounced file-system changes. Returns the number
-    /// applied. Front ends call this on a timer while [`Engine::has_pending`] is true.
+    /// applied. A front end calls this at [`Engine::next_due`] and when its waker is called
+    /// ([`Engine::set_waker`]), or on a timer while [`Engine::has_pending`] is true.
     pub fn pump(&mut self) -> usize {
         let mut applied = 0;
         while let Ok(message) = self.worker_receiver.try_recv() {

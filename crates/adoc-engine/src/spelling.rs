@@ -139,9 +139,17 @@ impl Engine {
             })
     }
 
-    /// True while a page waits to be checked.
-    pub(crate) fn has_due_spelling(&self) -> bool {
-        self.unchecked().next().is_some()
+    /// When the next page waiting to be checked will have gone unchanged for
+    /// [`SPELLING_SETTLE`]. Pages wait while another is being checked, whose result comes first.
+    pub(crate) fn due_spelling(&self) -> Option<Instant> {
+        self.unchecked()
+            .map(|(id, _)| {
+                self.spelling
+                    .changed
+                    .get(&id)
+                    .map_or_else(|| self.clock.now(), |changed| *changed + SPELLING_SETTLE)
+            })
+            .min()
     }
 
     /// Starts checking the first page that has gone unchanged for [`SPELLING_SETTLE`]. Returns

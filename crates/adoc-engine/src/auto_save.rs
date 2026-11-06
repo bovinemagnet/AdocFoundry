@@ -54,8 +54,13 @@ impl Engine {
     }
 
     /// True while an edited page waits for `after_delay`.
-    pub(crate) fn has_due_auto_save(&self) -> bool {
-        !self.auto_saves.edited.is_empty()
+    /// When the next page will have gone unedited for [`AUTO_SAVE_DELAY`].
+    pub(crate) fn due_auto_save(&self) -> Option<std::time::Instant> {
+        self.auto_saves
+            .edited
+            .values()
+            .min()
+            .map(|edited| *edited + AUTO_SAVE_DELAY)
     }
 
     /// Saves every page left unedited for [`AUTO_SAVE_DELAY`]. Returns the number saved or

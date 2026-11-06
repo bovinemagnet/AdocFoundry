@@ -244,11 +244,12 @@ impl Engine {
         changed
     }
 
-    pub(crate) fn has_due_problems(&self) -> bool {
-        self.problems.enabled
-            && (self.problems.full_due
-                || self.problems.running.is_some()
-                || !self.problems.dirty.is_empty())
+    /// Now, when problems are to be diagnosed again and none are being, whose result comes first.
+    pub(crate) fn due_problems(&self) -> Option<std::time::Instant> {
+        (self.problems.enabled
+            && self.problems.running.is_none()
+            && (self.problems.full_due || !self.problems.dirty.is_empty()))
+        .then(|| self.clock.now())
     }
 
     /// The whole workspace is to be diagnosed again.

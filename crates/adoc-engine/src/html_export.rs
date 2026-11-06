@@ -79,11 +79,13 @@ impl Engine {
         started
     }
 
-    pub(crate) fn has_due_html_export(&self) -> bool {
+    /// Now, when a waiting export's preview has finished.
+    pub(crate) fn due_html_export(&self) -> Option<std::time::Instant> {
         self.html_exports
             .waiting
             .iter()
             .any(|(id, _)| self.finished_preview(*id).is_some())
+            .then(|| self.clock.now())
     }
 
     fn write_html(&mut self, preview: Arc<RenderedPreview>, output: PathBuf) {
