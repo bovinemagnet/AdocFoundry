@@ -89,6 +89,8 @@ pub(crate) enum WorkerMessage {
         dom: Arc<adoc_dom::Dom>,
         sources: std::collections::BTreeSet<PathBuf>,
     },
+    /// A page parsed and prepared for the index after a pause in typing (`index_settle.rs`).
+    IndexPrepared(Box<crate::index_settle::Prepared>),
     /// The active page parsed for its consumers to share (`parses.rs`).
     Parsed {
         id: crate::DocumentId,
@@ -517,7 +519,7 @@ impl Engine {
         }
         let due = self.clock.now();
         applied
-            + self.index_pending(Some(due))
+            + self.index_pending(due)
             + self.apply_file_changes(Instant::now())
             + self.start_due_previews()
             + self.rebuild_due_visuals()
@@ -745,6 +747,7 @@ impl Engine {
             }
             WorkerMessage::GraphBuilt { generation, built } => self.graph_built(generation, *built),
             WorkerMessage::Crashed { job, error } => self.worker_crashed(job, error),
+            WorkerMessage::IndexPrepared(prepared) => self.settle_arrived(prepared),
             WorkerMessage::IndexFailed { generation, error } => {
                 self.indexing = self.indexing.saturating_sub(1);
                 if generation != self.index_generation {

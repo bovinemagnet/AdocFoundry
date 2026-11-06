@@ -86,6 +86,7 @@ impl FileEntry {
 }
 
 /// A parse, and the length and hash of its text, which it may or may not keep.
+#[derive(Debug)]
 struct Parsed {
     document: Document,
     text_len: usize,
@@ -109,6 +110,103 @@ impl Parsed {
             document,
         }
     }
+}
+
+impl FileEntry {
+    fn of(path: PathBuf, parsed: Parsed) -> Self {
+        Self {
+            uri: parsed.document.uri.clone(),
+            path,
+            document: parsed.document,
+            text_len: parsed.text_len,
+            text_hash: parsed.text_hash,
+        }
+    }
+}
+
+/// An open page's entry, made ready away from the index (on a worker, say) for
+/// [`WorkspaceIndex::insert_prepared`]: everything in it that needs no other file, the parse,
+/// its anchors and generated section ids, its symbols and their words, and its includes'
+/// targets, so the index itself only files it.
+#[derive(Debug)]
+pub struct PreparedFile {
+    path: PathBuf,
+    shared: Arc<Path>,
+    parsed: Parsed,
+    anchors: BTreeMap<String, SourceRange>,
+    include_targets: Vec<PathBuf>,
+    symbols: Vec<WorkspaceSymbol>,
+    words: BTreeSet<String>,
+}
+
+impl PreparedFile {
+    /// Prepares `document`, the parse of an open page, keeping its text as
+    /// [`WorkspaceIndex::replace`] does. `shared` is the path the index shares for the file
+    /// ([`WorkspaceIndex::shared_path`]): with it, inserting visits only what changed.
+    #[must_use]
+    pub fn new(path: &Path, shared: Option<Arc<Path>>, document: Document) -> Self {
+        Self::from_parsed(normalize_path(path), shared, Parsed::keeping_text(document))
+    }
+
+    /// The parse.
+    #[must_use]
+    pub fn document(&self) -> &Document {
+        &self.parsed.document
+    }
+
+    fn from_parsed(path: PathBuf, shared: Option<Arc<Path>>, parsed: Parsed) -> Self {
+        let shared = shared
+            .filter(|shared| **shared == *path)
+            .unwrap_or_else(|| Arc::from(path.as_path()));
+        let document = &parsed.document;
+        let mut anchors = BTreeMap::new();
+        let mut anchor = |id: String, range: SourceRange| {
+            anchors.entry(id).or_insert(range);
+        };
+        for declared in &document.anchors {
+            anchor(declared.id.clone(), declared.range);
+        }
+        // Sections are reachable without an explicit anchor, so register the ids Asciidoctor
+        // generates for them. They are deliberately not added to `document.anchors`, which
+        // stays the record of explicitly declared anchors for duplicate detection.
+        for section in &document.sections {
+            for id in section.implicit_ids() {
+                anchor(id, section.selection_range);
+            }
+        }
+        // A generated id already in use is numbered (`_parameters_2`, `parameters-2`).
+        for style in [IdStyle::Antora, IdStyle::Asciidoctor] {
+            let ids = section_ids(&document.sections, &document.anchors, style);
+            for (section, id) in document.sections.iter().zip(ids) {
+                if section.id.is_none() {
+                    anchor(id, section.selection_range);
+                }
+            }
+        }
+        let include_targets = include_targets_of(&path, document);
+        let symbols = document_symbols(&shared, document);
+        let words = symbol_words(&symbols);
+        Self {
+            path,
+            shared,
+            parsed,
+            anchors,
+            include_targets,
+            symbols,
+            words,
+        }
+    }
+}
+
+/// What [`WorkspaceIndex::insert_prepared`] took out of the index. A large page's entry is
+/// thousands of small allocations, slow to free: drop it where that costs nothing, on a worker.
+#[derive(Debug, Default)]
+#[allow(dead_code)] // Held only to be dropped.
+pub struct Retired {
+    entry: Option<FileEntry>,
+    anchors: Option<BTreeMap<String, SourceRange>>,
+    symbols: Vec<WorkspaceSymbol>,
+    words: BTreeSet<String>,
 }
 
 /// A reference by the file it is in and its place among that file's references.
@@ -184,42 +282,151 @@ impl WorkspaceIndex {
         self.insert(path, Parsed::without_text(document))
     }
 
+    /// The path the index shares between the tables of the file at `path`, to prepare its next
+    /// entry with ([`PreparedFile::new`]).
+    #[must_use]
+    pub fn shared_path(&self, path: &Path) -> Option<Arc<Path>> {
+        self.files
+            .get_key_value(normalize_path(path).as_path())
+            .map(|(shared, _)| shared.clone())
+    }
+
+    /// Replaces a file's entry with one prepared elsewhere, as [`WorkspaceIndex::replace`]
+    /// would. Prepared against the path the index still shares for the file, only the parts of
+    /// the tables whose keys changed are visited: typing in prose moves every range after it but
+    /// changes no target, word or include. Returns what it took out, to be dropped elsewhere.
+    pub fn insert_prepared(&mut self, prepared: PreparedFile) -> Retired {
+        let current = self
+            .files
+            .get_key_value(prepared.path.as_path())
+            .is_some_and(|(shared, _)| Arc::ptr_eq(shared, &prepared.shared));
+        if current {
+            self.update(prepared)
+        } else {
+            let entry = self.remove(&prepared.path);
+            self.add(prepared);
+            Retired {
+                entry,
+                ..Retired::default()
+            }
+        }
+    }
+
     fn insert(&mut self, path: PathBuf, parsed: Parsed) -> &FileEntry {
-        let Parsed {
-            document,
-            text_len,
-            text_hash,
-        } = parsed;
         let path = normalize_path(&path);
         self.remove(&path);
-        let shared: Arc<Path> = Arc::from(path.as_path());
+        self.add(PreparedFile::from_parsed(path, None, parsed))
+    }
 
-        let anchors = self.anchors.entry(shared.clone()).or_default();
-        let mut anchor = |id: String, range: SourceRange| {
-            anchors.entry(id).or_insert(range);
-        };
-        for declared in &document.anchors {
-            anchor(declared.id.clone(), declared.range);
-        }
-        // Sections are reachable without an explicit anchor, so register the ids Asciidoctor
-        // generates for them. They are deliberately not added to `document.anchors`, which
-        // stays the record of explicitly declared anchors for duplicate detection.
-        for section in &document.sections {
-            for id in section.implicit_ids() {
-                anchor(id, section.selection_range);
-            }
-        }
-        // A generated id already in use is numbered (`_parameters_2`, `parameters-2`).
-        for style in [IdStyle::Antora, IdStyle::Asciidoctor] {
-            let ids = section_ids(&document.sections, &document.anchors, style);
-            for (section, id) in document.sections.iter().zip(ids) {
-                if section.id.is_none() {
-                    anchor(id, section.selection_range);
+    /// Adds a file the index does not hold.
+    fn add(&mut self, prepared: PreparedFile) -> &FileEntry {
+        let PreparedFile {
+            path,
+            shared,
+            parsed,
+            anchors,
+            include_targets,
+            symbols,
+            words,
+        } = prepared;
+        let document = &parsed.document;
+        self.anchors.insert(shared.clone(), anchors);
+        self.file_references(&shared, &document.references);
+        self.file_includes(&shared, &document.includes);
+        self.file_includers(&shared, include_targets);
+        self.file_words(&shared, words);
+        self.symbols.insert(shared.clone(), symbols);
+        self.files
+            .entry(shared)
+            .or_insert(FileEntry::of(path, parsed))
+    }
+
+    /// Replaces the entry of a file whose tables share `prepared.shared`, visiting only the keys
+    /// that changed.
+    fn update(&mut self, prepared: PreparedFile) -> Retired {
+        self.revision += 1;
+        let PreparedFile {
+            path,
+            shared,
+            parsed,
+            anchors,
+            include_targets,
+            symbols,
+            words,
+        } = prepared;
+        let old = self
+            .files
+            .remove(path.as_path())
+            .expect("an entry prepared against its shared path");
+        let document = &parsed.document;
+        let old_anchors = self.anchors.insert(shared.clone(), anchors);
+
+        let (before, after) = (&old.document.references, &document.references);
+        if before.len() == after.len() {
+            // Each reference keeps its place, so only the keys of those whose target changed
+            // need their lists rebuilt.
+            let mut names = BTreeSet::new();
+            let mut fragments = BTreeSet::new();
+            for (was, now) in before.iter().zip(after) {
+                if was.kind != now.kind || was.target != now.target {
+                    names.extend(
+                        target_file_name(was)
+                            .into_iter()
+                            .chain(target_file_name(now)),
+                    );
+                    fragments.extend(target_fragment(was).into_iter().chain(target_fragment(now)));
                 }
             }
+            refile(
+                &mut self.xrefs_by_name,
+                &shared,
+                &names,
+                after,
+                target_file_name,
+            );
+            refile(
+                &mut self.by_fragment,
+                &shared,
+                &fragments,
+                after,
+                target_fragment,
+            );
+        } else {
+            self.unfile_references(&shared, before);
+            self.file_references(&shared, after);
         }
 
-        for (position, reference) in document.references.iter().enumerate() {
+        // A page has few includes, and their places are kept with them: always filed again.
+        self.unfile_includes(&shared, &old.document.includes);
+        self.file_includes(&shared, &document.includes);
+        self.unfile_includers(&shared, include_targets_of(&path, &old.document));
+        self.file_includers(&shared, include_targets);
+
+        let old_symbols = self.symbols.remove(path.as_path()).unwrap_or_default();
+        let same_names = old_symbols.len() == symbols.len()
+            && old_symbols
+                .iter()
+                .zip(&symbols)
+                .all(|(was, now)| was.name == now.name);
+        let words = if same_names {
+            words
+        } else {
+            self.unfile_words(&shared, symbol_words(&old_symbols));
+            self.file_words(&shared, words);
+            BTreeSet::new()
+        };
+        self.symbols.insert(shared.clone(), symbols);
+        self.files.insert(shared, FileEntry::of(path, parsed));
+        Retired {
+            entry: Some(old),
+            anchors: old_anchors,
+            symbols: old_symbols,
+            words,
+        }
+    }
+
+    fn file_references(&mut self, shared: &Arc<Path>, references: &[Reference]) {
+        for (position, reference) in references.iter().enumerate() {
             if let Some(name) = target_file_name(reference) {
                 self.xrefs_by_name
                     .entry(name.to_owned())
@@ -233,8 +440,23 @@ impl WorkspaceIndex {
                     .push((shared.clone(), position));
             }
         }
+    }
 
-        for include in &document.includes {
+    fn unfile_references(&mut self, shared: &Arc<Path>, references: &[Reference]) {
+        for reference in references {
+            for (key, map) in [
+                (target_file_name(reference), &mut self.xrefs_by_name),
+                (target_fragment(reference), &mut self.by_fragment),
+            ] {
+                if let Some(key) = key {
+                    unlist(map, key, |(file, _)| Arc::ptr_eq(file, shared));
+                }
+            }
+        }
+    }
+
+    fn file_includes(&mut self, shared: &Arc<Path>, includes: &[IncludeDirective]) {
+        for include in includes {
             if let Some(name) = file_name(&include.target) {
                 self.includes_by_name
                     .entry(name.to_owned())
@@ -245,87 +467,69 @@ impl WorkspaceIndex {
                     });
             }
         }
+    }
 
-        for target in include_targets(&path, &document) {
+    fn unfile_includes(&mut self, shared: &Arc<Path>, includes: &[IncludeDirective]) {
+        for include in includes {
+            if let Some(name) = file_name(&include.target) {
+                unlist(&mut self.includes_by_name, name, |location| {
+                    Arc::ptr_eq(&location.path, shared)
+                });
+            }
+        }
+    }
+
+    fn file_includers(&mut self, shared: &Arc<Path>, targets: impl IntoIterator<Item = PathBuf>) {
+        for target in targets {
             self.includers
                 .entry(target)
                 .or_default()
                 .insert(shared.clone());
         }
-
-        let symbols = document_symbols(&shared, &document);
-        for word in symbol_words(&symbols) {
-            self.symbol_words
-                .entry(word)
-                .or_default()
-                .push(shared.clone());
-        }
-        self.symbols.insert(shared.clone(), symbols);
-
-        let uri = document.uri.clone();
-        self.files.entry(shared).or_insert(FileEntry {
-            path,
-            uri,
-            document,
-            text_len,
-            text_hash,
-        })
     }
 
-    pub fn remove(&mut self, path: &Path) -> Option<FileEntry> {
-        self.revision += 1;
-        let path = normalize_path(path);
-        let path = path.as_path();
-        self.anchors.remove(path);
-        if let Some((file, symbols)) = self.symbols.remove_entry(path) {
-            for word in symbol_words(&symbols) {
-                if let Some(files) = self.symbol_words.get_mut(&word) {
-                    // Every table shares the file's one path, so it is told apart by address.
-                    files.retain(|listed| !Arc::ptr_eq(listed, &file));
-                    if files.is_empty() {
-                        self.symbol_words.remove(&word);
-                    }
-                }
-            }
-        }
-        let removed = self.files.remove(path)?;
-        for reference in &removed.document.references {
-            for (key, map) in [
-                (target_file_name(reference), &mut self.xrefs_by_name),
-                (target_fragment(reference), &mut self.by_fragment),
-            ] {
-                let Some(key) = key else {
-                    continue;
-                };
-                if let Some(locations) = map.get_mut(key) {
-                    locations.retain(|(file, _)| **file != *path);
-                    if locations.is_empty() {
-                        map.remove(key);
-                    }
-                }
-            }
-        }
-        for include in &removed.document.includes {
-            let Some(name) = file_name(&include.target) else {
-                continue;
-            };
-            if let Some(locations) = self.includes_by_name.get_mut(name) {
-                locations.retain(|location| *location.path != *path);
-                if locations.is_empty() {
-                    self.includes_by_name.remove(name);
-                }
-            }
-        }
-        // Resolution is a pure function of the text and path, so this yields exactly the
-        // targets `replace` recorded.
-        for target in include_targets(path, &removed.document) {
+    fn unfile_includers(&mut self, shared: &Path, targets: impl IntoIterator<Item = PathBuf>) {
+        for target in targets {
             if let Some(includers) = self.includers.get_mut(&target) {
-                includers.remove(path);
+                includers.remove(shared);
                 if includers.is_empty() {
                     self.includers.remove(&target);
                 }
             }
         }
+    }
+
+    fn file_words(&mut self, shared: &Arc<Path>, words: BTreeSet<String>) {
+        for word in words {
+            self.symbol_words
+                .entry(word)
+                .or_default()
+                .push(shared.clone());
+        }
+    }
+
+    fn unfile_words(&mut self, shared: &Arc<Path>, words: BTreeSet<String>) {
+        for word in words {
+            // Every table shares the file's one path, so it is told apart by address.
+            unlist(&mut self.symbol_words, &word, |listed| {
+                Arc::ptr_eq(listed, shared)
+            });
+        }
+    }
+
+    pub fn remove(&mut self, path: &Path) -> Option<FileEntry> {
+        self.revision += 1;
+        let path = normalize_path(path);
+        let (shared, removed) = self.files.remove_entry(path.as_path())?;
+        self.anchors.remove(path.as_path());
+        if let Some(symbols) = self.symbols.remove(path.as_path()) {
+            self.unfile_words(&shared, symbol_words(&symbols));
+        }
+        self.unfile_references(&shared, &removed.document.references);
+        self.unfile_includes(&shared, &removed.document.includes);
+        // Resolution is a pure function of the text and path, so this yields exactly the
+        // targets `replace` recorded.
+        self.unfile_includers(&shared, include_targets_of(&path, &removed.document));
         Some(removed)
     }
 
@@ -493,13 +697,34 @@ impl WorkspaceIndex {
 
     #[must_use]
     pub fn resolve_anchor(&self, path: &Path, id: &str) -> Option<AnchorLocation<'_>> {
-        let (path, anchors) = self.anchors.get_key_value(normalize_path(path).as_path())?;
+        self.anchors_in(&normalize_path(path))?.resolve(id)
+    }
+
+    /// The anchors of the indexed file at `path`, already normalised, to resolve many ids in.
+    /// `None` when the file is not indexed.
+    pub(crate) fn anchors_in(&self, path: &Path) -> Option<Anchors<'_>> {
+        let (path, anchors) = self.anchors.get_key_value(path)?;
+        Some(Anchors { path, anchors })
+    }
+}
+
+/// One indexed file's anchors, borrowed from the index.
+#[derive(Clone, Copy)]
+pub(crate) struct Anchors<'a> {
+    path: &'a Path,
+    anchors: &'a BTreeMap<String, SourceRange>,
+}
+
+impl<'a> Anchors<'a> {
+    /// Where `id` is declared, as [`WorkspaceIndex::resolve_anchor`] finds it.
+    pub(crate) fn resolve(self, id: &str) -> Option<AnchorLocation<'a>> {
+        let anchors = self.anchors;
         let range = anchors
             .get(id)
             .or_else(|| anchors.get(&canonical_id(id)))
             .or_else(|| anchors.get(&alphanumeric_id(id)))?;
         Some(AnchorLocation {
-            path,
+            path: self.path,
             range: *range,
         })
     }
@@ -513,14 +738,52 @@ fn symbol_words(symbols: &[WorkspaceSymbol]) -> BTreeSet<String> {
         .collect()
 }
 
-fn include_targets<'a>(
-    path: &'a Path,
-    document: &'a Document,
-) -> impl Iterator<Item = PathBuf> + 'a {
+fn include_targets_of(path: &Path, document: &Document) -> Vec<PathBuf> {
     document
         .includes
         .iter()
-        .filter_map(move |include| resolve_include_target(document, path, &include.target))
+        .filter_map(|include| resolve_include_target(document, path, &include.target))
+        .collect()
+}
+
+/// Takes the items `of_file` picks out of the list at `key`, and the list once empty.
+fn unlist<T>(map: &mut BTreeMap<String, Vec<T>>, key: &str, of_file: impl Fn(&T) -> bool) {
+    if let Some(list) = map.get_mut(key) {
+        list.retain(|item| !of_file(item));
+        if list.is_empty() {
+            map.remove(key);
+        }
+    }
+}
+
+/// Lists again, for each of `keys`, the references of `file` that `key_of` files under it, in
+/// their order, after the other files' references.
+fn refile(
+    map: &mut BTreeMap<String, Vec<ReferenceAt>>,
+    file: &Arc<Path>,
+    keys: &BTreeSet<&str>,
+    references: &[Reference],
+    key_of: fn(&Reference) -> Option<&str>,
+) {
+    if keys.is_empty() {
+        return;
+    }
+    let mut places: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (position, reference) in references.iter().enumerate() {
+        if let Some(key) = key_of(reference).filter(|key| keys.contains(key)) {
+            places.entry(key).or_default().push(position);
+        }
+    }
+    for key in keys {
+        unlist(map, key, |(listed, _)| Arc::ptr_eq(listed, file));
+        if let Some(positions) = places.remove(key) {
+            map.entry((*key).to_owned()).or_default().extend(
+                positions
+                    .into_iter()
+                    .map(|position| (file.clone(), position)),
+            );
+        }
+    }
 }
 
 /// The file name an xref's target ends with: `setup.adoc` for `sub/setup.adoc#ports` or
@@ -565,9 +828,12 @@ fn path_to_uri(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::{
+        collections::BTreeMap,
+        path::{Path, PathBuf},
+    };
 
-    use super::WorkspaceIndex;
+    use super::{PreparedFile, WorkspaceIndex};
 
     #[test]
     fn replacing_a_document_removes_stale_contributions() {
@@ -914,6 +1180,92 @@ mod tests {
             Some(std::borrow::Cow::Borrowed("= Open\n"))
         ));
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    /// The index's tables as text, each list in file order, so two indexes holding the same
+    /// entries compare equal whatever order the files were replaced in.
+    fn tables(index: &WorkspaceIndex) -> String {
+        fn by_file<T: std::fmt::Debug>(
+            lists: &BTreeMap<String, Vec<T>>,
+            path: impl Fn(&T) -> &Path,
+        ) -> String {
+            let lists: BTreeMap<_, _> = lists
+                .iter()
+                .map(|(key, list)| {
+                    let mut list: Vec<_> = list.iter().collect();
+                    list.sort_by_key(|item| path(item).to_path_buf());
+                    (key, list)
+                })
+                .collect();
+            format!("{lists:?}")
+        }
+        format!(
+            "files {:?}\nanchors {:?}\nxrefs {}\nfragments {}\nincludes {}\nincluders {:?}\nsymbols {:?}\nwords {}",
+            index.files,
+            index.anchors,
+            by_file(&index.xrefs_by_name, |(path, _)| path),
+            by_file(&index.by_fragment, |(path, _)| path),
+            by_file(&index.includes_by_name, |location| &location.path),
+            index.includers,
+            index.symbols,
+            by_file(&index.symbol_words, |path| path),
+        )
+    }
+
+    #[test]
+    fn a_file_prepared_elsewhere_indexes_as_replacing_it_does() {
+        let page = PathBuf::from("docs/page.adoc");
+        let other = PathBuf::from("docs/other.adoc");
+        let other_text =
+            "= Other\n\n[[shared]]\n== Shared\n\nSee xref:page.adoc#intro[] and <<shared>>.\n";
+        let texts = [
+            // The first, then prose typed: every range after it moves, no target changes.
+            "= Page\n:part: part.adoc\n\n[[intro]]\n== Intro\n\nSee xref:other.adoc#shared[], <<intro>> and xref:other.adoc[].\n\ninclude::{part}[]\n\n== Usage\n\nimage::shot.png[]\n",
+            "= Page\n:part: part.adoc\n\n[[intro]]\n== Intro\n\nTyped. See xref:other.adoc#shared[], <<intro>> and xref:other.adoc[].\n\ninclude::{part}[]\n\n== Usage\n\nimage::shot.png[]\n",
+            // One target changed, the count of references kept.
+            "= Page\n:part: part.adoc\n\n[[intro]]\n== Intro\n\nTyped. See xref:other.adoc#gone[], <<intro>> and xref:other.adoc[].\n\ninclude::{part}[]\n\n== Usage\n\nimage::shot.png[]\n",
+            // Another file named, the count of references kept.
+            "= Page\n:part: part.adoc\n\n[[intro]]\n== Intro\n\nTyped. See xref:other.adoc#gone[], <<intro>> and xref:another.adoc[].\n\ninclude::{part}[]\n\n== Usage\n\nimage::shot.png[]\n",
+            // A reference added, so every later one moves along.
+            "= Page\n:part: part.adoc\n\n[[intro]]\n== Intro\n\n<<usage>> first. See xref:other.adoc#gone[], <<intro>> and xref:other.adoc[].\n\ninclude::{part}[]\n\n== Usage\n\nimage::shot.png[]\n",
+            // A heading renamed, so its symbol's words and generated ids change.
+            "= Page\n:part: part.adoc\n\n[[intro]]\n== Introduction\n\n<<usage>> first. See xref:other.adoc#gone[], <<intro>> and xref:other.adoc[].\n\ninclude::{part}[]\n\n== Usage\n\nimage::shot.png[]\n",
+            // The include and the attribute it names changed.
+            "= Page\n:part: other-part.adoc\n\n[[intro]]\n== Introduction\n\n<<usage>> first. See xref:other.adoc#gone[], <<intro>> and xref:other.adoc[].\n\ninclude::{part}[]\ninclude::partial$extra.adoc[]\n\n== Usage\n\nimage::shot.png[]\n",
+            // Everything gone.
+            "",
+        ];
+        let parse = |text: &str| adoc_parser::parse("file:///docs/page.adoc", text).document;
+
+        let mut replaced = WorkspaceIndex::new();
+        let mut prepared = WorkspaceIndex::new();
+        for index in [&mut replaced, &mut prepared] {
+            index.index_source(&other, other_text);
+        }
+        for text in texts {
+            replaced.replace(page.clone(), parse(text));
+            let revision = prepared.revision();
+            let file = PreparedFile::new(&page, prepared.shared_path(&page), parse(text));
+            prepared.insert_prepared(file);
+            assert!(prepared.revision() > revision);
+            assert_eq!(tables(&prepared), tables(&replaced), "after {text:?}");
+        }
+
+        // Prepared against a path the index has since dropped: indexed whole, as replacing is.
+        let stale = prepared.shared_path(&page);
+        for index in [&mut replaced, &mut prepared] {
+            index.remove(&page);
+            index.index_source(&page, texts[0]);
+        }
+        replaced.replace(page.clone(), parse(texts[1]));
+        prepared.insert_prepared(PreparedFile::new(&page, stale, parse(texts[1])));
+        assert_eq!(tables(&prepared), tables(&replaced));
+
+        for index in [&mut replaced, &mut prepared] {
+            index.remove(&page);
+            index.remove(&other);
+        }
+        assert_eq!(tables(&prepared), tables(&WorkspaceIndex::new()));
     }
 
     #[test]

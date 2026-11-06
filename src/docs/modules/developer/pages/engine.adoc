@@ -39,11 +39,19 @@ It then publishes `DocumentChanged` and `DiagnosticsUpdated`.
 
 The parse is lazy.
 `OpenDocument::parsed()` holds it in a `OnceCell`, and the first read after an edit runs `adoc-parser` on the text again, so the outline is always exact when it is read.
-A typed character therefore parses nothing: the index parses it once when typing pauses, or a language feature does when it asks.
+A typed character therefore parses nothing: the index's worker parses it once when typing pauses, off the engine thread, or a language feature does on the engine thread when it asks before then.
+The worker's parse becomes the page's `parsed()`, so nothing parses it again.
 Edits that are indexed at once parse at once.
 Whether a page is unsaved is decided without hashing it: `DocumentState` keeps `saved_len` beside `saved_hash` (`mark_saved`, `is_saved`), text of another length is unsaved, and only text of the saved length is hashed.
 Re-indexing the document and refreshing diagnostics are different for the typing commands: `edit.insert_text`, `edit.replace_range`, `visual.insert_text`, `visual.delete_backward` and `visual.delete_forward` (`TYPING_COMMANDS` in `engine.rs`).
-A small edit made by one of them, one replacement of at most four bytes by at most one character (`is_small`), waits until typing pauses for `INDEX_SETTLE` (150 ms), when `pump` applies it.
+A small edit made by one of them, one replacement of at most four bytes by at most one character (`is_small`), waits until typing pauses for `INDEX_SETTLE` (150 ms).
+Then `pump` hands the page to a worker (`index_settle.rs`) instead of parsing it on the engine thread.
+The worker parses a copy of the text and prepares the page's index entry, an `adoc_index::PreparedFile` holding the parse, its anchors and generated section ids, its symbols and their words, and its includes' targets.
+A later `pump` files the entry with `WorkspaceIndex::insert_prepared` and re-diagnoses, but only if the page is still at the version and path the worker parsed; otherwise the answer is dropped.
+When the entry was prepared against the path the index still shares for the file (`WorkspaceIndex::shared_path`), `insert_prepared` visits only the table keys whose xref targets, symbol names or includes changed, so typing in prose, which moves every range after it but changes none of those, touches almost nothing.
+Otherwise it replaces the entry whole, as `replace` does.
+A command that reads the index while the worker runs indexes the page at once on the engine thread, and the worker's answer is dropped when it arrives.
+What `insert_prepared` takes out of the index (`adoc_index::Retired`), and any answer dropped, is freed by the next settle's worker, because a large page's parse takes a while to free.
 Larger edits, such as a paste, and edits made by any other command (Rename, Replace, undo, a reload) are indexed at once.
 On a 5,000-line document that work takes several milliseconds, too long to repeat on every keystroke.
 The typing commands do not flush what earlier typing left pending.
@@ -53,6 +61,7 @@ When a document is indexed, only the open documents its change can affect are re
 `Engine::refresh_diagnosed_with` re-diagnoses the open documents in `adoc_lang::diagnosed_with(ws, path)`, taken before and after the change.
 That set is the file itself, the files whose xrefs name its file name (`WorkspaceIndex::xrefs_naming`), the files whose includes name it (`includes_naming`), those including them in turn up to the include depth, and the files it composes (`includes::composed_files`).
 Name matches stand in for resolution, so the set is generous but never misses a file.
+Diagnosing a page (`adoc_index::workspace_diagnostics`) resolves each file its xrefs name once and looks each path up on disk at most once, because a page may name the same missing file many times and each look is a system call on the engine thread.
 Workspace-level changes (indexing, a descriptor, files changed on disk) still re-diagnose every open document.
 
 On a 5,000-line page in a 500-page workspace with 20 tabs open (release build), Backspace fell from a median of 3.8 ms to 0.7 ms per key and visual typing from 4.6 ms to 1.5 ms.

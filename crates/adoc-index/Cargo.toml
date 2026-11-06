@@ -10,5 +10,8 @@ repository.workspace = true
 adoc-core.workspace = true
 adoc-parser.workspace = true
 
+[dev-dependencies]
+adoc-core = { workspace = true, features = ["probe"] }
+
 [lints]
 workspace = true

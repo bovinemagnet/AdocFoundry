@@ -48,9 +48,11 @@ pub enum Probe {
     FontRead,
     /// A PDF theme loaded from its files, `adoc_pdf::KeptTheme::load`.
     ThemeLoad,
+    /// A file looked for on disk while diagnosing a page.
+    FileExists,
 }
 
-const PROBES: usize = 20;
+const PROBES: usize = 21;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -92,4 +94,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::ThemeLoad as usize == PROBES - 1);
+const _: () = assert!(Probe::FileExists as usize == PROBES - 1);

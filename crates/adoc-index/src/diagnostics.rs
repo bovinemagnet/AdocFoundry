@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -7,7 +7,7 @@ use adoc_core::{
     Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, ReferenceKind, SourceRange,
 };
 
-use crate::{workspace::normalize_path, WorkspaceIndex};
+use crate::{index::Anchors, workspace::normalize_path, WorkspaceIndex};
 
 #[must_use]
 pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnostic> {
@@ -20,6 +20,7 @@ pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnos
         .iter()
         .map(|diagnostic| (diagnostic.code, diagnostic.range))
         .collect::<BTreeSet<_>>();
+    let mut lookups = Lookups::new(index, path);
 
     for reference in &document.references {
         if is_dynamic_target(&reference.target) {
@@ -28,7 +29,8 @@ pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnos
 
         match reference.kind {
             ReferenceKind::LocalAnchor => {
-                if index.resolve_anchor(path, &reference.target).is_none() {
+                let own = lookups.own_anchors;
+                if own.and_then(|own| own.resolve(&reference.target)).is_none() {
                     push_unique(
                         &mut diagnostics,
                         &mut seen,
@@ -41,9 +43,9 @@ pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnos
             ReferenceKind::Xref => {
                 diagnose_xref(
                     index,
-                    path,
                     &reference.target,
                     reference.range,
+                    &mut lookups,
                     &mut diagnostics,
                     &mut seen,
                 );
@@ -61,7 +63,7 @@ pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnos
         let Some(target_path) = resolve_include_target(document, path, &include.target) else {
             continue;
         };
-        if !target_path.exists() && index.file(&target_path).is_none() {
+        if index.file(&target_path).is_none() && !lookups.exists(&target_path) {
             push_unique(
                 &mut diagnostics,
                 &mut seen,
@@ -79,7 +81,7 @@ pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnos
             let Some(target_path) = resolve_image_target(document, path, &image.target) else {
                 continue;
             };
-            if !target_path.exists() && index.file(&target_path).is_none() {
+            if index.file(&target_path).is_none() && !lookups.exists(&target_path) {
                 push_unique(
                     &mut diagnostics,
                     &mut seen,
@@ -93,6 +95,66 @@ pub fn workspace_diagnostics(index: &WorkspaceIndex, path: &Path) -> Vec<Diagnos
 
     diagnostics.sort_by_key(|diagnostic| (diagnostic.range, diagnostic.code));
     diagnostics
+}
+
+/// What diagnosing one page has learnt about the files it names, so a file named many times is
+/// resolved and looked for once: whether a path exists on disk (each look a system call on the
+/// thread diagnosing), and the file each xref's file part names.
+struct Lookups<'a> {
+    /// The page's path, normalised.
+    own: PathBuf,
+    own_anchors: Option<Anchors<'a>>,
+    on_disk: HashMap<PathBuf, bool>,
+    xref_files: HashMap<&'a str, XrefFile<'a>>,
+}
+
+/// The file an xref's file part names.
+enum XrefFile<'a> {
+    Indexed(Anchors<'a>),
+    /// On disk but not indexed, so its anchors are not judged.
+    Unindexed,
+    /// Neither: the message each xref to it is reported with.
+    Missing(String),
+}
+
+impl<'a> Lookups<'a> {
+    fn new(index: &'a WorkspaceIndex, path: &Path) -> Self {
+        let own = normalize_path(path);
+        Self {
+            own_anchors: index.anchors_in(&own),
+            own,
+            on_disk: HashMap::new(),
+            xref_files: HashMap::new(),
+        }
+    }
+
+    fn exists(&mut self, path: &Path) -> bool {
+        if let Some(&exists) = self.on_disk.get(path) {
+            return exists;
+        }
+        adoc_core::probe::hit(adoc_core::probe::Probe::FileExists);
+        let exists = path.exists();
+        self.on_disk.insert(path.to_path_buf(), exists);
+        exists
+    }
+
+    /// The file `file_target`, not empty, names from the page.
+    fn xref_file(&mut self, index: &'a WorkspaceIndex, file_target: &'a str) -> &XrefFile<'a> {
+        if !self.xref_files.contains_key(file_target) {
+            let parent = self.own.parent().unwrap_or_else(|| Path::new(""));
+            let path = normalize_path(&parent.join(file_target));
+            // Every indexed file has its anchors, if none.
+            let file = match index.anchors_in(&path) {
+                Some(anchors) => XrefFile::Indexed(anchors),
+                None if self.exists(&path) => XrefFile::Unindexed,
+                None => {
+                    XrefFile::Missing(format!("Unresolved AsciiDoc xref target: {file_target}"))
+                }
+            };
+            self.xref_files.insert(file_target, file);
+        }
+        &self.xref_files[file_target]
+    }
 }
 
 #[must_use]
@@ -146,11 +208,11 @@ pub fn resolve_image_target(
     Some(normalize_path(&base.join(target)))
 }
 
-fn diagnose_xref(
-    index: &WorkspaceIndex,
-    current_path: &Path,
-    target: &str,
+fn diagnose_xref<'a>(
+    index: &'a WorkspaceIndex,
+    target: &'a str,
     range: SourceRange,
+    lookups: &mut Lookups<'a>,
     diagnostics: &mut Vec<Diagnostic>,
     seen: &mut BTreeSet<(DiagnosticCode, SourceRange)>,
 ) {
@@ -161,28 +223,30 @@ fn diagnose_xref(
     let (file_target, anchor) = target
         .split_once('#')
         .map_or((target, None), |(file, anchor)| (file, Some(anchor)));
-    let target_path = if file_target.is_empty() {
-        normalize_path(current_path)
+    let anchors = if file_target.is_empty() {
+        lookups.own_anchors
     } else {
-        let parent = current_path.parent().unwrap_or_else(|| Path::new(""));
-        normalize_path(&parent.join(file_target))
+        match lookups.xref_file(index, file_target) {
+            XrefFile::Indexed(anchors) => Some(*anchors),
+            XrefFile::Unindexed => return,
+            XrefFile::Missing(message) => {
+                push_unique(
+                    diagnostics,
+                    seen,
+                    DiagnosticCode::UnresolvedXrefFile,
+                    message.clone(),
+                    range,
+                );
+                return;
+            }
+        }
     };
 
-    if !file_target.is_empty() && index.file(&target_path).is_none() {
-        if !target_path.exists() {
-            push_unique(
-                diagnostics,
-                seen,
-                DiagnosticCode::UnresolvedXrefFile,
-                format!("Unresolved AsciiDoc xref target: {file_target}"),
-                range,
-            );
-        }
-        return;
-    }
-
     if let Some(anchor) = anchor.filter(|anchor| !anchor.is_empty()) {
-        if index.resolve_anchor(&target_path, anchor).is_none() {
+        if anchors
+            .and_then(|anchors| anchors.resolve(anchor))
+            .is_none()
+        {
             push_unique(
                 diagnostics,
                 seen,
@@ -277,6 +341,35 @@ mod tests {
         assert!(codes.contains(&DiagnosticCode::UnresolvedAnchor));
         assert!(codes.contains(&DiagnosticCode::UnresolvedXrefFile));
         assert!(codes.contains(&DiagnosticCode::UnresolvedInclude));
+    }
+
+    #[test]
+    fn a_missing_file_named_many_times_is_looked_for_once() {
+        use adoc_core::probe::{self, Probe};
+
+        let path = Path::new("/adocfoundry-missing-238/docs/index.adoc");
+        let mut text = String::from("= Guide\n\n");
+        for section in 0..50 {
+            text.push_str(&format!(
+                "See xref:other.adoc#part-{section}[] and xref:other.adoc[].\n\n"
+            ));
+        }
+        text.push_str("include::other.adoc[]\n");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, &text);
+
+        probe::reset();
+        let diagnostics = workspace_diagnostics(&index, path);
+
+        assert_eq!(probe::count(Probe::FileExists), 1);
+        let count = |code| {
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == code)
+                .count()
+        };
+        assert_eq!(count(DiagnosticCode::UnresolvedXrefFile), 100);
+        assert_eq!(count(DiagnosticCode::UnresolvedInclude), 1);
     }
 
     #[test]

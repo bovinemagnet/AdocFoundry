@@ -274,22 +274,26 @@ fn settles(report: &mut Report) {
     let (mut engine, clock, id) = page_engine(dir.path(), &text, settings());
     let at = text.len() / 2;
     let at = at + text[at..].find("The ").unwrap();
-    // Parsing and diagnosing the page run on the engine thread, about 7 ms here: recorded until
-    // they move to a worker.
-    report.time(
-        "settle_index",
-        size.clone(),
-        30,
-        text.len(),
-        Budget::None,
-        || {
-            insert(&mut engine, id, at, "x");
-            clock.advance(INDEX_SETTLE);
+    // The pause hands the page to a worker, which parses and prepares its index entry; a later
+    // pump files the entry and diagnoses (#238). Both pumps hold the engine thread: their sum is
+    // timed, not the worker's time between them.
+    report.time("settle_index", size.clone(), 30, text.len(), budget, || {
+        insert(&mut engine, id, at, "x");
+        clock.advance(INDEX_SETTLE);
+        let started = Instant::now();
+        engine.pump();
+        let mut held = started.elapsed();
+        loop {
+            std::thread::sleep(Duration::from_millis(10));
             let started = Instant::now();
-            engine.pump();
-            started.elapsed()
-        },
-    );
+            let applied = engine.pump();
+            if applied > 0 {
+                held += started.elapsed();
+                break;
+            }
+        }
+        held
+    });
 
     let dir = tempfile::tempdir().unwrap();
     let repo = adoc_git::testing::TestRepo::init(dir.path());
