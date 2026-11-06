@@ -299,9 +299,28 @@ The `lint` job runs them with `python3 -m unittest discover -s packaging -p 'tes
 
 === The Flatpak manifest
 
-A Flatpak manifest is kept in `packaging/flatpak/`.
-The workflow does not build it, but the Linux job checks that the manifest installs the four binaries and builds `adoc-ls` with its features.
-It also checks that the manifest installs the dictionaries' licence as `/app/share/doc/adocfoundry/SCOWL.txt`, and the notices beside it.
+The manifest in `packaging/flatpak/` builds the git source at the release's tag (`tag: v<version>`), which `cargo xtask bump` writes and `packaging/release-version.py check` checks.
+It sets `CARGO_NET_OFFLINE`, so every cargo command in the sandbox, `cargo metadata` inside `xtask notices` included, reads only the vendored sources.
+It installs the AppStream metadata to `/app/share/metainfo`.
+
+The release workflow's `flatpak` job builds it from the checked-out commit rather than the tag, on any `v*` tag or a run on demand.
+It runs in the `flathub-infra/flatpak-github-actions` freedesktop-24.08 image, pinned to its digest.
+It writes `cargo-sources.json` with `flatpak-cargo-generator.py` from flatpak-builder-tools at a pinned commit, checked against its SHA-256, with `aiohttp` and `tomlkit` at pinned versions.
+It then builds with `flatpak/flatpak-github-actions/flatpak-builder` v6.8 and keeps `AdocFoundry.flatpak` with the run.
+The bundle is not published, and `publish` does not wait for that job.
+
+The Linux job checks that the manifest installs the four binaries and builds `adoc-ls` with its features.
+It also checks that the manifest installs the dictionaries' licence as `/app/share/doc/adocfoundry/SCOWL.txt`, and the notices beside it, and that it installs the metainfo.
+
+=== AppStream metadata
+
+`packaging/linux/io.github.bovinemagnet.AdocFoundry.metainfo.xml` describes the app for GNOME Software, KDE Discover and Flathub.
+The deb and rpm install it to `/usr/share/metainfo/`, the AppImage to `usr/share/metainfo/` in its AppDir, and the Flatpak to `/app/share/metainfo`.
+CI's `lint` job validates it with `appstreamcli validate --pedantic --no-net`, and the desktop file with `desktop-file-validate`.
+Its `<releases>` were taken from the changelog's headings, and `cargo xtask bump` adds each new release, dated, at the top.
+The one pedantic note is that the ID contains capitals.
+It is the app ID the desktop file and Flatpak already use, so it stays.
+There are no screenshots yet; Flathub wants them before a submission.
 
 The packages for macOS and Windows have not been installed and run by hand yet; see xref:testing.adoc#platform-status[platform status].
 
@@ -316,11 +335,13 @@ The installers themselves come from the release workflow.
 == cargo xtask bump
 
 `xtask/src/bump.rs` sets the version for a release.
-`cargo xtask bump <version>` writes it into the three files that the release workflow checks:
+`cargo xtask bump <version>` writes it into the five files that the release workflow checks:
 
 * `version` under `[workspace.package]` in the root `Cargo.toml`
 * `display_version` in `src/docs/antora.yml`
 * `CHANGELOG.md`, whose `## Unreleased` heading becomes `## <version> — <date>`, with today's date in UTC
+* the source `tag` (`v<version>`) in the Flatpak manifest
+* the newest `<release version date>` in the AppStream metadata
 
 It then runs `cargo update --workspace --offline`, so that `Cargo.lock` matches.
 

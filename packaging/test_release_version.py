@@ -53,12 +53,31 @@ CHANGELOG = """# Changelog
 - Older.
 """
 
+FLATPAK = """modules:
+  - name: adocfoundry
+    sources:
+      - type: git
+        url: https://github.com/bovinemagnet/AdocFoundry.git
+        tag: v0.5.0
+      - cargo-sources.json
+"""
 
-def repository(cargo=CARGO, antora=ANTORA, changelog=CHANGELOG):
+METAINFO = """<component type="desktop-application">
+  <releases>
+    <release version="0.5.0" date="2026-11-02"/>
+    <release version="0.4.0" date="2026-10-27"/>
+  </releases>
+</component>
+"""
+
+
+def repository(cargo=CARGO, antora=ANTORA, changelog=CHANGELOG, flatpak=FLATPAK, metainfo=METAINFO):
     root = tempfile.mkdtemp()
-    os.makedirs(os.path.join(root, "src", "docs"))
+    for folder in [("src", "docs"), ("packaging", "flatpak"), ("packaging", "linux")]:
+        os.makedirs(os.path.join(root, *folder))
     for path, text in [("Cargo.toml", cargo), (os.path.join("src", "docs", "antora.yml"), antora),
-                       ("CHANGELOG.md", changelog)]:
+                       ("CHANGELOG.md", changelog),
+                       (release_version.FLATPAK, flatpak), (release_version.METAINFO, metainfo)]:
         with open(os.path.join(root, path), "w", encoding="utf-8") as file:
             file.write(text)
     return root
@@ -80,6 +99,16 @@ class VersionCheck(unittest.TestCase):
         self.assertTrue(any("antora.yml" in problem for problem in found))
         self.assertTrue(any("CHANGELOG.md" in problem for problem in found))
 
+    def test_the_flatpak_and_the_metainfo_must_name_the_release(self):
+        root = repository(
+            flatpak=FLATPAK.replace("tag: v0.5.0", "tag: v0.4.0"),
+            metainfo=METAINFO.replace('    <release version="0.5.0" date="2026-11-02"/>\n', ""),
+        )
+        found = release_version.problems(root, "0.5.0")
+        self.assertEqual(len(found), 2, found)
+        self.assertTrue(any("flatpak" in problem and "v0.4.0" in problem for problem in found))
+        self.assertTrue(any("metainfo" in problem and "0.4.0" in problem for problem in found))
+
     def test_only_the_workspace_package_version_counts(self):
         # A dependency's version, or another table's, is not the release's.
         cargo = CARGO.replace('[workspace.package]\nversion = "0.5.0"', '[workspace.package]')
@@ -88,7 +117,7 @@ class VersionCheck(unittest.TestCase):
         self.assertEqual(len(found), 1, found)
 
     def test_a_version_that_only_starts_the_same_does_not_match(self):
-        self.assertEqual(len(release_version.problems(repository(), "0.5")), 3)
+        self.assertEqual(len(release_version.problems(repository(), "0.5")), 5)
 
 
 class ReleaseNotes(unittest.TestCase):

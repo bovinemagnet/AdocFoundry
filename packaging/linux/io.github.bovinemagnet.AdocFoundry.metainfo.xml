@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata, for software centres (GNOME Software, KDE Discover) and Flathub.
+     `cargo xtask bump <version>` adds each release; validate with
+     `appstreamcli validate` with its pedantic checks. -->
+<component type="desktop-application">
+  <id>io.github.bovinemagnet.AdocFoundry</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>AdocFoundry</name>
+  <summary>Edit AsciiDoc documentation laid out the Antora way</summary>
+  <developer id="io.github.bovinemagnet">
+    <name>Paul Snow</name>
+  </developer>
+  <description>
+    <p>
+      AdocFoundry is a native editor for AsciiDoc documentation, built for Antora sites of many
+      components, versions and modules.
+    </p>
+    <ul>
+      <li>Follows cross-references, includes and images across components and versions, and reports the ones that do not resolve</li>
+      <li>Shows a rendered preview beside the source, kept in step as you type and scroll</li>
+      <li>Edits pages visually, writing back only the AsciiDoc that changed</li>
+      <li>Exports pages and whole components to PDF with asciidoctor-pdf themes</li>
+      <li>Draws the links between pages as a graph, and audits the documentation's quality</li>
+    </ul>
+    <p>
+      The same engine runs a command-line checker, a language server for other editors and an
+      MCP server for agents.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.bovinemagnet.AdocFoundry.desktop</launchable>
+  <url type="homepage">https://github.com/bovinemagnet/AdocFoundry</url>
+  <url type="bugtracker">https://github.com/bovinemagnet/AdocFoundry/issues</url>
+  <url type="vcs-browser">https://github.com/bovinemagnet/AdocFoundry</url>
+  <categories>
+    <category>Development</category>
+    <category>TextEditor</category>
+  </categories>
+  <keywords>
+    <keyword>AsciiDoc</keyword>
+    <keyword>Antora</keyword>
+    <keyword>documentation</keyword>
+    <keyword>editor</keyword>
+  </keywords>
+  <provides>
+    <binary>adocfoundry</binary>
+    <binary>adocfoundry-cli</binary>
+    <binary>adoc-ls</binary>
+    <binary>adoc-mcp</binary>
+    <mediatype>text/asciidoc</mediatype>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.7.0" date="2026-11-05"/>
+    <release version="0.6.0" date="2026-11-03"/>
+    <release version="0.5.0" date="2026-11-01"/>
+    <release version="0.4.0" date="2026-10-27"/>
+    <release version="0.3.0" date="2026-10-25"/>
+    <release version="0.2.1" date="2026-10-25"/>
+    <release version="0.2.0" date="2026-10-25"/>
+    <release version="0.1.0" date="2026-10-24"/>
+  </releases>
+</component>

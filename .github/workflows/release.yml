@@ -302,6 +302,7 @@ jobs:
           # third-party notices, as the deb has them.
           install -Dm644 crates/adoc-spell/dictionaries/README.md AppDir/usr/share/doc/adocfoundry/SCOWL.txt
           install -Dm644 target/THIRD-PARTY-NOTICES.txt -t AppDir/usr/share/doc/adocfoundry
+          install -Dm644 packaging/linux/io.github.bovinemagnet.AdocFoundry.metainfo.xml -t AppDir/usr/share/metainfo
           # Update information for AppImageUpdate, and the .zsync it reads, published with the
           # release.
           update="gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-${{ matrix.arch }}.AppImage.zsync"
@@ -325,6 +326,7 @@ jobs:
           grep -q -- "--features adoc-ls/typst,adoc-ls/git" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
           grep -q "crates/adoc-spell/dictionaries/README.md /app/share/doc/adocfoundry/SCOWL.txt" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
           grep -q "target/THIRD-PARTY-NOTICES.txt -t /app/share/doc/adocfoundry" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
+          grep -q "packaging/linux/io.github.bovinemagnet.AdocFoundry.metainfo.xml -t /app/share/metainfo" packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml
       - name: Command-line tools
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -345,6 +347,49 @@ jobs:
 
   # Each platform's artefacts, downloaded as a user would get them: every binary's --version, a
   # PDF export, the language and MCP servers' initialise and shutdown, and the app staying up.
+  # The Flatpak, built from this checkout as Flathub would build the tag, with the sources
+  # vendored for the offline sandbox. A bundle is kept with the run for trying by hand; it is not
+  # published, and publish does not wait for it.
+  flatpak:
+    needs: version
+    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    container:
+      # freedesktop-24.08, pinned to its digest.
+      image: ghcr.io/flathub-infra/flatpak-github-actions@sha256:66eb59fd5d923833e8e4142f60e542156aad4b8b1d5db38149d814c659e274bc
+      options: --privileged
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Vendored cargo sources
+        run: |
+          generator=https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/41c20aa10819cdb2a4f3ca171758a96d1955c018/cargo/flatpak-cargo-generator.py
+          curl -fsSL -o "$RUNNER_TEMP/flatpak-cargo-generator.py" "$generator"
+          echo "0a2db6be87d75910facef28ab46d4d6460802e8419ab850d0caa6a364d26b380  $RUNNER_TEMP/flatpak-cargo-generator.py" | sha256sum -c
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install aiohttp==3.14.5 tomlkit==0.15.2
+          "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP/flatpak-cargo-generator.py" Cargo.lock -o packaging/flatpak/cargo-sources.json
+      # The manifest builds the release's tag; this builds the commit checked out.
+      - name: Build this checkout
+        run: |
+          python3 - <<'EOF'
+          path = "packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml"
+          text = open(path).read()
+          start = text.index("      - type: git\n")
+          end = text.index("      - cargo-sources.json\n")
+          # Not the builder's own folders, Git's or a local build's.
+          skip = "".join(f"          - {name}\n" for name in [".flatpak-builder", "flatpak_app", "repo", ".git", "target"])
+          text = text[:start] + "      - type: dir\n        path: ../..\n        skip:\n" + skip + text[end:]
+          open("packaging/flatpak/checkout.yml", "w").write(text)
+          EOF
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6.8
+        with:
+          manifest-path: packaging/flatpak/checkout.yml
+          bundle: AdocFoundry.flatpak
+          cache: false
+
   smoke:
     needs: [macos, windows, linux]
     strategy:

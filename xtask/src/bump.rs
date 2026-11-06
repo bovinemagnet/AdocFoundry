@@ -1,7 +1,8 @@
 //! `cargo xtask bump <version>`: the version written into every file the release checks
 //! (`packaging/release-version.py check`): `Cargo.toml`'s `[workspace.package]`, the
-//! documentation's `display_version`, and the changelog's `## Unreleased`, which becomes
-//! `## <version> — <date>`. `Cargo.lock` is then brought up to date.
+//! documentation's `display_version`, the changelog's `## Unreleased`, which becomes
+//! `## <version> — <date>`, the tag the Flatpak manifest builds and the AppStream metadata's
+//! newest release. `Cargo.lock` is then brought up to date.
 
 use std::{
     fs,
@@ -9,6 +10,9 @@ use std::{
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+const FLATPAK: &str = "packaging/flatpak/io.github.bovinemagnet.AdocFoundry.yml";
+const METAINFO: &str = "packaging/linux/io.github.bovinemagnet.AdocFoundry.metainfo.xml";
 
 /// Writes `version` into the release's files under `root`, dated today (UTC).
 pub fn run(root: &Path, version: &str) -> Result<(), String> {
@@ -29,6 +33,8 @@ pub fn run(root: &Path, version: &str) -> Result<(), String> {
         edited("Cargo.toml", &|text| cargo(text, version))?,
         edited("src/docs/antora.yml", &|text| antora(text, version))?,
         edited("CHANGELOG.md", &|text| changelog(text, version, &date))?,
+        edited(FLATPAK, &|text| flatpak(text, version))?,
+        edited(METAINFO, &|text| metainfo(text, version, &date))?,
     ];
     for (path, text) in written {
         fs::write(&path, text).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -142,6 +148,50 @@ fn changelog(text: &str, version: &str, date: &str) -> Result<String, String> {
     }
 }
 
+/// The Flatpak manifest with its git source's `tag` set to `v<version>`.
+fn flatpak(text: &str, version: &str) -> Result<String, String> {
+    let mut done = false;
+    let out: String = text
+        .split_inclusive('\n')
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if !done && trimmed.starts_with("tag:") {
+                done = true;
+                let indent = &line[..line.len() - trimmed.len()];
+                let ending = &line[line.trim_end().len()..];
+                format!("{indent}tag: v{version}{ending}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    if done {
+        Ok(out)
+    } else {
+        Err("no `tag:` in the git source".to_owned())
+    }
+}
+
+/// The AppStream metadata with `<release version date/>` first in `<releases>`.
+fn metainfo(text: &str, version: &str, date: &str) -> Result<String, String> {
+    if text.contains(&format!("<release version=\"{version}\"")) {
+        return Err(format!("release {version} is listed already"));
+    }
+    let Some(start) = text.find("<releases>") else {
+        return Err("no `<releases>`".to_owned());
+    };
+    let after = start + "<releases>".len();
+    let line_start = text[..start].rfind('\n').map_or(0, |index| index + 1);
+    let indent = &text[line_start..start];
+    let mut out = String::with_capacity(text.len() + 64);
+    out.push_str(&text[..after]);
+    out.push_str(&format!(
+        "\n{indent}  <release version=\"{version}\" date=\"{date}\"/>"
+    ));
+    out.push_str(&text[after..]);
+    Ok(out)
+}
+
 /// Today's date in UTC, `YYYY-MM-DD`.
 fn today() -> String {
     let seconds = SystemTime::now()
@@ -207,6 +257,35 @@ mod tests {
             "released already"
         );
         assert!(changelog("# Changelog\n", "0.5.0", "2026-11-02").is_err());
+    }
+
+    #[test]
+    fn the_flatpak_builds_the_release_tag() {
+        let text = "    sources:\n      - type: git\n        url: https://example.org/x.git\n        tag: v0.4.0\n      - cargo-sources.json\n";
+        assert_eq!(
+            flatpak(text, "0.5.0").unwrap(),
+            text.replace("tag: v0.4.0", "tag: v0.5.0")
+        );
+        assert!(flatpak(
+            "    sources:\n      - type: git\n        branch: main\n",
+            "0.5.0"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn the_metainfo_lists_the_release_first() {
+        let text =
+            "  <releases>\n    <release version=\"0.4.0\" date=\"2026-10-27\"/>\n  </releases>\n";
+        assert_eq!(
+            metainfo(text, "0.5.0", "2026-11-02").unwrap(),
+            "  <releases>\n    <release version=\"0.5.0\" date=\"2026-11-02\"/>\n    <release version=\"0.4.0\" date=\"2026-10-27\"/>\n  </releases>\n"
+        );
+        assert!(
+            metainfo(text, "0.4.0", "2026-11-02").is_err(),
+            "released already"
+        );
+        assert!(metainfo("<component/>\n", "0.5.0", "2026-11-02").is_err());
     }
 
     #[test]
