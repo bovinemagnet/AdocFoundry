@@ -87,9 +87,16 @@ impl Engine {
         (!known(counted) && !known(self.words.counting)).then_some((id, version))
     }
 
-    /// True while the active page waits to be counted.
-    pub(crate) fn has_due_word_count(&self) -> bool {
-        self.uncounted().is_some()
+    /// When the active page, waiting to be counted, will have gone unchanged for
+    /// [`WORD_COUNT_SETTLE`].
+    pub(crate) fn due_word_count(&self) -> Option<Instant> {
+        let (id, _) = self.uncounted()?;
+        Some(
+            self.words
+                .changed
+                .get(&id)
+                .map_or_else(|| self.clock.now(), |changed| *changed + WORD_COUNT_SETTLE),
+        )
     }
 
     /// Notes that document `id` changed, so it is counted only once it settles.

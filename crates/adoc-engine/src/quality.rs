@@ -204,6 +204,11 @@ impl Engine {
                 || (quality.built && quality.catalog != self.workspace.antora.revision()))
     }
 
+    /// Now, when the audit has changes to take in and is not running, whose result comes first.
+    pub(crate) fn due_audit(&self) -> Option<std::time::Instant> {
+        (self.has_due_audit() && self.quality.running.is_none()).then(|| self.clock.now())
+    }
+
     /// The whole workspace is to be audited again.
     pub(crate) fn audit_changed_everywhere(&mut self) {
         if self.audit_kept() && self.quality.started {
@@ -247,6 +252,7 @@ impl Engine {
                 .collect()
         };
         if dirty.is_empty() && versions.is_empty() {
+            self.quality.catalog = catalog; // No version to audit: nothing is left due.
             return 0;
         }
         let read = self.audit_reader();

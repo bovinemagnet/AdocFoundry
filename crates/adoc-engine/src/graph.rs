@@ -792,9 +792,13 @@ impl Engine {
         }
     }
 
-    pub(crate) fn has_due_graph(&self) -> bool {
-        self.graph.built
-            && (self.graph.full_due || !self.graph.dirty.is_empty() || self.graph.unannounced)
+    /// Now, when the graph has changes to take in and no full build is running, whose result
+    /// comes first.
+    pub(crate) fn due_graph(&self) -> Option<std::time::Instant> {
+        (self.graph.built
+            && self.graph.building.is_none()
+            && (self.graph.full_due || !self.graph.dirty.is_empty() || self.graph.unannounced))
+            .then(|| self.clock.now())
     }
 
     /// Starts a full build that is due, or resolves the files that changed; then announces a

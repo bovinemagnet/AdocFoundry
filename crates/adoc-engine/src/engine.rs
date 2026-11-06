@@ -46,7 +46,9 @@ pub struct Engine {
     /// Which files the engine reads on the front end's behalf; see [`Engine::set_file_access`].
     pub(crate) file_access: FileAccess,
     pub(crate) workspace: WorkspaceState,
-    pub(crate) worker_sender: Sender<WorkerMessage>,
+    pub(crate) worker_sender: crate::worker::WorkerSender,
+    /// The front end's waker, shared by the worker sender and the file watcher.
+    pub(crate) waker: crate::worker::SharedWaker,
     pub(crate) worker_receiver: Receiver<WorkerMessage>,
     pub(crate) workers_running: usize,
     /// Whole-workspace index jobs in flight, a subset of `workers_running`.
@@ -179,6 +181,8 @@ impl Engine {
         let mut registry = CommandRegistry::new();
         commands::register_builtin(&mut registry);
         let (worker_sender, worker_receiver) = mpsc::channel();
+        let waker = crate::worker::SharedWaker::default();
+        let worker_sender = crate::worker::WorkerSender::new(worker_sender, Arc::clone(&waker));
         Self {
             settings,
             clock,
@@ -195,6 +199,7 @@ impl Engine {
             file_access: FileAccess::Any,
             workspace: WorkspaceState::new(),
             worker_sender,
+            waker,
             worker_receiver,
             workers_running: 0,
             indexing: 0,

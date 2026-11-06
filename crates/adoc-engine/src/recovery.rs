@@ -221,8 +221,9 @@ impl Engine {
         }
     }
 
-    pub(crate) fn has_due_recovery(&self) -> bool {
-        !self.recovery.due.is_empty()
+    /// When the next page's record is to be written.
+    pub(crate) fn due_recovery(&self) -> Option<Instant> {
+        self.recovery.due.values().min().copied()
     }
 
     /// Writes the records of pages left unedited for [`RECOVERY_SETTLE`]; called from `pump`.

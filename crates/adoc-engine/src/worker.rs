@@ -5,11 +5,48 @@
 use std::{
     any::Any,
     panic::{self, AssertUnwindSafe},
-    sync::mpsc::Sender,
+    sync::{mpsc::Sender, Arc, OnceLock},
     thread,
 };
 
 use crate::{commands::ids, workspace::WorkerMessage, DocumentId, Engine, EngineEvent};
+
+/// What a front end gives [`Engine::set_waker`] to be called when the engine has something new.
+pub(crate) type Waker = Arc<dyn Fn() + Send + Sync>;
+
+/// The front end's waker, once it gives one: shared by every sender, so a sender made before
+/// it was given calls it too.
+pub(crate) type SharedWaker = Arc<OnceLock<Waker>>;
+
+/// Calls the front end's waker, if it gave one.
+pub(crate) fn wake(waker: &SharedWaker) {
+    if let Some(waker) = waker.get() {
+        waker();
+    }
+}
+
+/// The engine a worker was sending to has been dropped.
+#[derive(Debug)]
+pub(crate) struct EngineGone;
+
+/// Sends a worker's messages to the engine and wakes the front end, which pumps them (#222).
+#[derive(Clone)]
+pub(crate) struct WorkerSender {
+    sender: Sender<WorkerMessage>,
+    waker: SharedWaker,
+}
+
+impl WorkerSender {
+    pub(crate) fn new(sender: Sender<WorkerMessage>, waker: SharedWaker) -> Self {
+        Self { sender, waker }
+    }
+
+    pub(crate) fn send(&self, message: WorkerMessage) -> Result<(), EngineGone> {
+        let sent = self.sender.send(message).map_err(|_| EngineGone);
+        wake(&self.waker);
+        sent
+    }
+}
 
 /// A job with no failure of its own to report, named by what to settle when its worker panics.
 pub(crate) enum Crashed {
@@ -105,9 +142,9 @@ impl Engine {
 
 /// Runs `body` on a new thread; it sends its own result through the sender it is given. If it
 /// panics, the message `crashed` builds from what the panic said is sent instead.
-pub(crate) fn spawn<B, C>(sender: Sender<WorkerMessage>, crashed: C, body: B)
+pub(crate) fn spawn<B, C>(sender: WorkerSender, crashed: C, body: B)
 where
-    B: FnOnce(&Sender<WorkerMessage>) + Send + 'static,
+    B: FnOnce(&WorkerSender) + Send + 'static,
     C: FnOnce(String) -> WorkerMessage + Send + 'static,
 {
     thread::spawn(move || {
@@ -147,7 +184,7 @@ mod tests {
     fn a_worker_that_panics_sends_its_failure() {
         let (sender, receiver) = std::sync::mpsc::channel();
         spawn(
-            sender,
+            WorkerSender::new(sender, SharedWaker::default()),
             |error| WorkerMessage::HtmlExported {
                 output: "page.html".into(),
                 result: Err(error),

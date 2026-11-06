@@ -28,8 +28,8 @@ pub(crate) fn init_repository(_: &Path) -> Result<(), String> {
 pub(crate) struct GitState {}
 
 impl GitState {
-    pub(crate) fn has_pending(&self) -> bool {
-        false
+    pub(crate) fn next_due(&self) -> Option<std::time::Instant> {
+        None
     }
 
     pub(crate) fn is_metadata_path(&self, _: &Path) -> bool {

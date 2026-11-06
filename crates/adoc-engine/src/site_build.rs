@@ -17,7 +17,6 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc::Sender,
         Arc,
     },
     thread,
@@ -273,7 +272,7 @@ fn run_build(
     playbook: &Path,
     folder: &Path,
     timeout: Duration,
-    sender: &Sender<WorkerMessage>,
+    sender: &crate::worker::WorkerSender,
     generation: u64,
 ) -> Result<Option<PathBuf>, String> {
     let deadline = Instant::now() + timeout;
@@ -342,7 +341,7 @@ fn run_step(
     path: Option<&OsString>,
     (deadline, timeout): (Instant, Duration),
     written: &Arc<AtomicUsize>,
-    sender: &Sender<WorkerMessage>,
+    sender: &crate::worker::WorkerSender,
     generation: u64,
 ) -> Result<(), String> {
     let shown = step.shown();
@@ -423,7 +422,7 @@ fn run_step(
 /// when `overflow` is set.
 fn read_lines(
     pipe: Option<Box<dyn Read + Send>>,
-    sender: &Sender<WorkerMessage>,
+    sender: &crate::worker::WorkerSender,
     generation: u64,
     written: &AtomicUsize,
     overflow: &AtomicBool,

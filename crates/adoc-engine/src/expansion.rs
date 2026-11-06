@@ -277,6 +277,11 @@ impl Engine {
     }
 
     /// Writes the remembered branches once changes have paused; called from `pump`.
+    /// When the chosen branches are to be written.
+    pub(crate) fn due_expansion(&self) -> Option<Instant> {
+        self.expansion.save_due
+    }
+
     pub(crate) fn save_due_expansion(&mut self) -> usize {
         match self.expansion.save_due {
             Some(due) if self.clock.now() >= due => {
