@@ -166,5 +166,23 @@ class WorkflowsAreReproducible(unittest.TestCase):
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
 
 
+class FuzzWorkflow(unittest.TestCase):
+    """fuzz.yml beyond what WorkflowsAreReproducible checks of every workflow."""
+
+    def test_it_reads_only(self):
+        fuzz = read("fuzz.yml")
+        self.assertRegex(fuzz.split("\njobs:\n", 1)[0], r"(?m)^permissions:\n  contents: read$")
+
+    def test_fuzzing_runs_only_on_schedule_or_by_hand(self):
+        fuzz = jobs(read("fuzz.yml"))
+        run = "\n".join(fuzz["fuzz"])
+        self.assertIn("-max_total_time=300", run)
+        self.assertIn("github.event_name == 'schedule'", run)
+        self.assertIn("if: failure()", run, "crashes are uploaded")
+        build = "\n".join(fuzz["build"])
+        self.assertIn("cargo +nightly fuzz build", build)
+        self.assertNotIn("fuzz run", build)
+
+
 if __name__ == "__main__":
     unittest.main()
