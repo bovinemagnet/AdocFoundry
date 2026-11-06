@@ -9,6 +9,37 @@ It needs no Ruby, Node.js, Java or network access.
 
 Block attributes and options are honoured: a list's numbering style, `start` and `%reversed`; a table's `frame`, `grid`, `stripes`, `width` and `%autowidth`; vertical cell alignment; an image's `align`, `float`, `link` and `pdfwidth`; and `%collapsible` blocks.
 
+A block image is sized as asciidoctor-pdf sizes it.
+Its width is the first of these that is set.
+
+. The `pdfwidth` attribute.
+. The `scaledwidth` attribute.
+. The theme's `image_width`, as a length or a percentage of the column. A `vw` value is ignored.
+. The image's `width` attribute.
+. The image's own size.
+
+A percentage is a share of the column.
+A width in pixels or in another length is held to the column, so an image is never wider than the text.
+An image with no width is set at 0.75pt to the pixel (96 dpi), whatever resolution the file records, so a 400 px screenshot is 300pt wide.
+`height` alone does not size a block image.
+A PDF used as a block image keeps the size Typst gives it.
+
+An SVG is sized from its root element, as asciidoctor-pdf does.
+A `width` without a unit, or in `pt`, is in points, and one in `px` is 0.75pt to the pixel.
+The units `in`, `mm`, `cm`, `pc`, `em` and `ex` are converted.
+An SVG with only a `viewBox` fills the column.
+
+Captions are labelled from the document's attributes, in the preview and HTML as well as the PDF.
+`figure-caption`, `table-caption` and `example-caption` default to Figure, Table and Example.
+`listing-caption` has no default, so listings, source listings included, are numbered "Listing 1." only when it is set.
+Unsetting one, as in `:figure-caption!:`, removes both the label and the number, and the blocks of that kind are not counted.
+Setting one localises the label: `:figure-caption: Abbildung` gives "Abbildung 1.".
+
+`sectnumlevels`, 3 unless set, limits which section levels show a number under `sectnums`.
+Deeper sections are counted but show none, and the table of contents agrees.
+An appendix's own caption ("Appendix A:") always shows.
+`:appendix-caption!:` leaves just the letter ("A.").
+
 == Exporting a page
 
 Export Page to PDF… (`export.pdf_page`) exports the active page as an article.
@@ -207,7 +238,7 @@ A font that cannot be read is a warning.
 
 === What a theme controls
 
-* The page: size, layout, margins and background colour.
+* The page: size, layout, margins and background colour. The document's attributes override the first three, as described in <<page-geometry>>.
 * The base text, and headings `h1` to `h6`.
 * The title page: logo, title, subtitle, authors and revision.
 * The table of contents: dot leaders, the levels shown (up to `toclevels`) and the indent.
@@ -283,6 +314,66 @@ Inline `icon:name[]` macros are not drawn as icons in the PDF; they remain text,
 PDF/A-2a forbids characters from Unicode's private use area, which Font Awesome's glyphs are, so with `pdf-a-2a` admonitions keep their text labels.
 PDF/A-1a, PDF/A-1b and PDF/UA-1 show the icons.
 
+[[page-geometry]]
+=== Page size, layout and margins from attributes
+
+These attributes are read before the theme's `page_size`, `page_layout` and `page_margin`.
+
+`pdf-page-size`::
+A name (`A4`, `Letter`, `Legal` or `Executive`, in any case), `[8.5in, 11in]` or `8.5in x 11in`.
+The units are `in`, `mm`, `cm`, `pt`, `px` and `pc`.
+The names known are A0 to A8, B4, B5, Executive, Folio, Legal, Letter and Tabloid; any other gives A4, as an unknown name does in asciidoctor-pdf.
+
+`pdf-page-layout`::
+`portrait` or `landscape`.
+
+`pdf-page-margin`::
+One length, or up to four in brackets, such as `[0.5in, 0.67in]`, in CSS order: top, right, bottom, left.
+
+A book, or a profile, can therefore set them for one document.
+For a book, set them in the component's or playbook's `asciidoc.attributes`, or in a profile's `attributes`.
+
+[[covers]]
+=== Covers
+
+A front and a back cover come from the `front-cover-image` and `back-cover-image` attributes, else from the theme's `cover_front_image` and `cover_back_image` (`cover: front: image:` in YAML), as asciidoctor-pdf reads them.
+
+The value is either an image macro or a path.
+An image macro, such as `+image:cover.png[]+`, is found in `imagesdir`, and in an Antora component as an image resource through the page.
+A path is found beside the page.
+A theme's value is found beside the theme file.
+A PDF works too: `+image:cover.pdf[]+` uses its first page, and `page=2` in the macro chooses another.
+
+The `fit` option says how the image fills the page.
+
+[cols="1,4"]
+|===
+|Value |Meaning
+
+|`contain`
+|The image fits inside the page. This is the default.
+
+|`cover`
+|The image covers the whole page.
+
+|`fill`
+|The image is stretched to the page.
+
+|`none` and `scale-down`
+|The image keeps its own size, and is no larger than the page.
+|===
+
+An empty value, as in `:back-cover-image:`, gives a blank page.
+The value `none`, or `~`, gives no cover, and overrides the theme's.
+
+The front cover is the first page, before the title page, and is labelled as front matter (i).
+The back cover is the last page, after the body.
+Neither has margins, a background or running content.
+The body is still numbered from 1.
+
+A book takes its covers from its attributes (`antora.yml` or the playbook), and finds the images as it finds those of its first page.
+A cover image outside the workspace roots, or one that is missing or unreadable, is left out and reported as other images are: the export warns and does not fail.
+
 == Source highlighting
 
 Source blocks are highlighted only when the page sets the `source-highlighter` attribute, to any value, which is how asciidoctor-pdf behaves.
@@ -300,10 +391,22 @@ Code that is not in a token keeps the theme's `code_font_color`, and callout num
 
 The `header` and `footer` keys of a theme define the running content: a three-column grid on each side of the page, with separate recto and verso columns when the theme has them.
 Running content and page numbers start on the first page of the body, numbered 1: after the title page and the table of contents in a book, or in an article with a title page. A number in `running_content_start_at` starts the running content on that page of the body instead.
+The theme's `running_content_start_at` may also be one of these names.
+
+* `title` starts it on the title page.
+* `toc` starts it on the first page of the table of contents.
+* `after-toc` starts it on the page after the table of contents.
+
+Each means the first page of the body where the document has no such page.
+The names apply only where the title is a page of its own: in a book, or in an article with `title-page`.
+`page_numbering_start_at` is still ignored, and page numbers start at the body.
 
 The page numbers a PDF viewer shows follow the same scheme.
 The front matter (a title page, and a table of contents on its own pages) is labelled with roman numerals i, ii, and so on, and the body from 1, matching the printed footer numbers and asciidoctor-pdf.
 A document without front matter is labelled 1, 2, and so on.
+A front matter page that has running content prints `+{page-number}+` in roman numerals counted from the first page of the PDF, a cover included, which matches the page labels.
+On the table of contents' pages, `+{chapter-title}+` (in a book) or `+{section-title}+` (in an article) is the table of contents' title.
+On a book's title page, `+{chapter-title}+` is the document title.
 
 Text in a header or footer may use these references.
 
@@ -415,7 +518,8 @@ A page the parser cannot read is shown in the PDF as its source, and the export 
 
 * PDF/UA-2 is not available, because Typst 0.15.1 writes only PDF/UA-1.
 * asciidoctor-pdf's Ruby converter extensions are not run.
-* A front cover image is not supported beyond what the title page shows.
+* A PDF used as a cover is drawn on a page of the document's size.
+* `+{page-layout}+` in a cover path is not replaced.
 * The `*-with-font-fallbacks` themes load without their fallback fonts.
 
 Output follows asciidoctor-pdf closely but is not a copy of it.

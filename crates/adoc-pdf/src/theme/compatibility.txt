@@ -152,8 +152,8 @@ conum_font_size | ignored | Callout numbers use the conum font family and colour
 conum_font_style | ignored | Callout numbers use the conum font family and colour, at the code's size.
 conum_glyphs | ignored | Callout numbers are always circled digits.
 conum_line_height | ignored | Callout numbers use the conum font family and colour, at the code's size.
-cover_back_image | approximated | Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and `{page-layout}` in the path is not replaced.
-cover_front_image | approximated | Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and `{page-layout}` in the path is not replaced.
+cover_back_image | approximated | Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and a `page-layout` attribute reference in the path is not replaced.
+cover_front_image | approximated | Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and a `page-layout` attribute reference in the path is not replaced.
 description_list_description_indent | supported
 description_list_term_font_color | supported
 description_list_term_font_family | supported

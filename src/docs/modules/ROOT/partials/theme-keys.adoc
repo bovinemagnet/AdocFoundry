@@ -660,11 +660,11 @@ Of the 567 keys in asciidoctor-pdf 2.3's Theme Keys Reference, 266 are supported
 
 |`cover_back_image`
 |approximated
-|Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and `{page-layout}` in the path is not replaced.
+|Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and a `page-layout` attribute reference in the path is not replaced.
 
 |`cover_front_image`
 |approximated
-|Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and `{page-layout}` in the path is not replaced.
+|Drawn on a page of the document's size, a PDF's page too; `fit=none` and `scale-down` keep an image no larger than the page, and a `page-layout` attribute reference in the path is not replaced.
 |===
 
 [#key-description-list]
