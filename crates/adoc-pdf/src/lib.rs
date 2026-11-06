@@ -21,6 +21,23 @@ pub use export::{
 };
 pub use fonts::missing_fonts;
 
+/// The Typst literal writers, for the fuzz targets in `fuzz/`: not part of the API.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// `text` as a Typst string literal.
+    #[must_use]
+    pub fn string(text: &str) -> String {
+        crate::typst::string(text)
+    }
+
+    /// `text` in markup: a string literal behind `#`.
+    #[must_use]
+    pub fn text(text: &str) -> String {
+        crate::typst::text(text)
+    }
+}
+
 pub use theme::{
     load_theme, load_theme_within, Color, FontCatalog, FontFaces, FontFile, KeptTheme, LoadedTheme,
     ThemeError, ThemeKeys, ThemeSource, ThemeValue, ThemeWarning,

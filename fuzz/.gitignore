@@ -1,0 +1,5 @@
+# Built and found by cargo fuzz; seed.py fills the corpus again.
+/target
+/corpus
+/artifacts
+/coverage

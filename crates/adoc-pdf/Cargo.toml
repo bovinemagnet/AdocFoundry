@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# The Typst literal writers, for the fuzz targets in `fuzz/`; not an API.
+fuzzing = []
+
 [dependencies]
 adoc-core.workspace = true
 adoc-math.workspace = true
