@@ -43,7 +43,18 @@ allow = [
 ignore = true
 
 [bans]
-multiple-versions = "allow"
+# A second version of a crate is a warning, so one a change here brings in shows in the log. The
+# UI framework's, Typst's, Mermaid's and Git's own trees carry their own duplicates, which no
+# choice in this workspace can remove; they are skipped.
+multiple-versions = "warn"
+skip-tree = [
+    { crate = "gpui-pre", reason = "the UI framework's tree" },
+    { crate = "gpui-component", reason = "the UI framework's tree" },
+    { crate = "gpui-pre-platform", reason = "the UI framework's tree" },
+    { crate = "typst", reason = "Typst's tree" },
+    { crate = "merman", reason = "the Mermaid renderer's tree" },
+    { crate = "gix", reason = "Git's tree" },
+]
 wildcards = "allow"
 deny = [
     # Zed's GPL-3.0 editor crates must never enter the tree.

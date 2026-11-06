@@ -1,0 +1,56 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": "Weekly, grouped, so each week's updates cost a few CI runs rather than one per crate.",
+  "schedule": ["before 6am on monday"],
+  "timezone": "Australia/Sydney",
+  "prConcurrentLimit": 4,
+  "ignorePaths": ["**/vendor/**", "grammars/**", "fuzz/**"],
+  "git-submodules": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "Dependencies are pinned exactly (`=x.y.z`); move the pin.",
+      "matchManagers": ["cargo"],
+      "rangeStrategy": "bump"
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Rust dependencies"
+    },
+    {
+      "description": "The UI framework's crates move together.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["gpui-*", "gpui-component", "gpui-kit-assets"],
+      "groupName": "GPUI"
+    },
+    {
+      "description": "Typst's crates move together, and vendor/comemo must follow Typst's comemo (vendor/README.md).",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["typst", "typst-*"],
+      "groupName": "Typst"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "rust-version in Cargo.toml must follow; packaging/test_toolchain.py checks they agree.",
+      "matchDepNames": ["rust"],
+      "groupName": "Rust toolchain"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The pinned toolchain.",
+      "managerFilePatterns": ["/^rust-toolchain\\.toml$/"],
+      "matchStrings": ["channel = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""],
+      "depNameTemplate": "rust",
+      "packageNameTemplate": "rust-lang/rust",
+      "datasourceTemplate": "github-releases"
+    }
+  ]
+}

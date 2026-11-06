@@ -1,3 +1,7 @@
 [toolchain]
-channel = "stable"
+# Pinned, so every build, CI's and a release's included, uses the same compiler, and a new
+# release's lints arrive in the change that moves this, not in an unrelated pull request.
+# Keep `rust-version` in Cargo.toml the same.
+channel = "1.99.1"
+profile = "minimal"
 components = ["clippy", "rustfmt"]

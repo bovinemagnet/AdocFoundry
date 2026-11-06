@@ -6,6 +6,7 @@
 //! so the parser behind the trait can change without touching anything above it.
 
 mod acdc;
+#[cfg(feature = "comparison")]
 mod asciidoc;
 mod model;
 mod replacements;
@@ -16,6 +17,7 @@ use std::{
 };
 
 pub use acdc::AcdcParser;
+#[cfg(feature = "comparison")]
 pub use asciidoc::AsciidocParser;
 pub use model::*;
 pub use replacements::{replacement_spans, Replacement};

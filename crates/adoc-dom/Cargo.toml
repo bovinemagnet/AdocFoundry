@@ -2,13 +2,23 @@
 name = "adoc-dom"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
 acdc-parser.workspace = true
-asciidoc-parser.workspace = true
+asciidoc-parser = { workspace = true, optional = true }
 adoc-core.workspace = true
+
+[features]
+# `AsciidocParser`, the second parser, kept to compare with acdc's: only the command line's
+# `render --parser asciidoc-parser` and the `second_parser` test use it.
+comparison = ["dep:asciidoc-parser"]
+
+[[test]]
+name = "second_parser"
+required-features = ["comparison"]
 
 [dev-dependencies]
 tempfile.workspace = true

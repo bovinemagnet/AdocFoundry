@@ -2,12 +2,13 @@
 name = "adocfoundry-cli"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
 adoc-core.workspace = true
-adoc-dom.workspace = true
+adoc-dom = { workspace = true, features = ["comparison"] }
 adoc-engine = { workspace = true, features = ["typst", "git"] }
 adoc-index.workspace = true
 adoc-render.workspace = true
