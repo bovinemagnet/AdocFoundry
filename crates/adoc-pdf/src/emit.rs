@@ -848,6 +848,50 @@ impl<'a> Emitter<'a> {
         let _ = writeln!(self.out, "#adoc-image({shown}{align}{natural})\n");
     }
 
+    /// A cover page showing `image`, fitted as `fit` says; nothing, reported as other images
+    /// are, when the image cannot be shown.
+    pub(crate) fn cover(
+        &mut self,
+        image: &ViewImage,
+        span: &SourceSpan,
+        fit: crate::document::CoverFit,
+        page: u32,
+        face: crate::document::Face,
+    ) {
+        use crate::document::CoverFit;
+        let Some((path, _)) = self.usable_image(image, span) else {
+            return;
+        };
+        let path = self.file(path);
+        let fit = match fit {
+            CoverFit::Contain => ", width: 100%, height: 100%, fit: \"contain\"",
+            CoverFit::Cover => ", width: 100%, height: 100%, fit: \"cover\"",
+            CoverFit::Fill => ", width: 100%, height: 100%, fit: \"stretch\"",
+            CoverFit::Natural => "",
+        };
+        let page = if page > 1 {
+            format!(", page: {page}")
+        } else {
+            String::new()
+        };
+        let _ = writeln!(
+            self.out,
+            "#adoc-cover(image({}, alt: {}{page}{fit}), front: {})\n",
+            string(&path),
+            string(&alt_text(image)),
+            face == crate::document::Face::Front
+        );
+    }
+
+    /// A blank cover page.
+    pub(crate) fn blank_cover(&mut self, face: crate::document::Face) {
+        let _ = writeln!(
+            self.out,
+            "#adoc-cover(none, front: {})\n",
+            face == crate::document::Face::Front
+        );
+    }
+
     fn table(&mut self, block: &ViewBlock, table: &ViewTable) {
         let autowidth = block.options.contains("autowidth");
         let columns: Vec<String> = table

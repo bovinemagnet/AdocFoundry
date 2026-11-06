@@ -740,7 +740,9 @@ fn special_sections_are_numbered_as_asciidoctor_numbers_them() {
 
 #[test]
 fn captions_follow_the_document_attributes() {
-    fn walk(view: &ViewTree) -> (Vec<(Option<String>, String)>, Vec<(Option<String>, String)>) {
+    /// Numbers or captions, each with its title.
+    type Numbered = Vec<(Option<String>, String)>;
+    fn walk(view: &ViewTree) -> (Numbered, Numbered) {
         let (mut sections, mut captions) = (Vec::new(), Vec::new());
         let mut stack: Vec<&adoc_render::ViewBlock> = view.blocks.iter().rev().collect();
         while let Some(block) = stack.pop() {
@@ -757,7 +759,7 @@ fn captions_follow_the_document_attributes() {
         }
         (sections, captions)
     }
-    fn owned(pairs: &[(Option<&str>, &str)]) -> Vec<(Option<String>, String)> {
+    fn owned(pairs: &[(Option<&str>, &str)]) -> Numbered {
         pairs
             .iter()
             .map(|(number, title)| (number.map(str::to_owned), (*title).to_owned()))
@@ -822,5 +824,38 @@ fn captions_follow_the_document_attributes() {
     assert_eq!(
         sections,
         owned(&[(Some("1."), "Body"), (Some("A."), "Extra")])
+    );
+}
+
+#[test]
+fn cover_images_are_found_as_the_page_images_are() {
+    // As asciidoctor-pdf finds them: an `image:` macro in `imagesdir`, a path beside the page.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("images")).unwrap();
+    std::fs::write(dir.path().join("images/front.png"), b"png").unwrap();
+    std::fs::write(dir.path().join("back.png"), b"png").unwrap();
+    let page = dir.path().join("page.adoc");
+    let text = "= Page\n:imagesdir: images\n:front-cover-image: image:front.png[fit=cover]\n:back-cover-image: back.png\n\nText.\n";
+    let view = view_of(&page, text, &LocalResolver);
+    let path = |name: &str| view.attribute_images[name].path.clone();
+    assert_eq!(
+        path("front-cover-image"),
+        Some(dir.path().join("images/front.png"))
+    );
+    assert_eq!(path("back-cover-image"), Some(dir.path().join("back.png")));
+
+    // No image for `none`, `~` or an empty value.
+    for value in ["none", "~", ""] {
+        let text = format!("= Page\n:front-cover-image: {value}\n\nText.\n");
+        let view = view_of(&page, &text, &LocalResolver);
+        assert!(view.attribute_images.is_empty(), "{value:?}");
+    }
+    assert_eq!(
+        adoc_render::attribute_image("image::cover.pdf[page=2]"),
+        Some(adoc_render::AttributeImage {
+            target: "cover.pdf",
+            attributes: "page=2",
+            macro_form: true,
+        })
     );
 }

@@ -22,6 +22,50 @@ pub struct ViewTree {
     pub toc: Vec<TocEntry>,
     pub footnotes: Vec<ViewFootnote>,
     pub attributes: BTreeMap<String, String>,
+    /// The images that [`IMAGE_ATTRIBUTES`] name, by attribute, resolved as the page's own
+    /// images are.
+    pub attribute_images: BTreeMap<String, ViewImage>,
+}
+
+/// The document attributes that name an image file: asciidoctor-pdf's covers.
+pub const IMAGE_ATTRIBUTES: [&str; 2] = ["front-cover-image", "back-cover-image"];
+
+/// An image an attribute names, as asciidoctor-pdf reads one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AttributeImage<'a> {
+    pub target: &'a str,
+    /// The macro's attribute list, empty for a path.
+    pub attributes: &'a str,
+    /// Written as an `image:` macro, so found in `imagesdir`; a path is found beside the page.
+    pub macro_form: bool,
+}
+
+/// The image an attribute value names: `image:target[attributes]` (with one colon or two) or
+/// a path. `None` for a value that names none: empty, `~` or `none`.
+#[must_use]
+pub fn attribute_image(value: &str) -> Option<AttributeImage<'_>> {
+    let value = value.trim();
+    if value.is_empty() || value == "~" || value == "none" {
+        return None;
+    }
+    let macro_text = value
+        .strip_prefix("image:")
+        .map(|rest| rest.strip_prefix(':').unwrap_or(rest))
+        .and_then(|rest| rest.strip_suffix(']'))
+        .and_then(|rest| rest.split_once('['));
+    Some(match macro_text {
+        Some((target, attributes)) => AttributeImage {
+            target: target.trim(),
+            attributes,
+            macro_form: true,
+        },
+        None => AttributeImage {
+            target: value,
+            attributes: "",
+            macro_form: false,
+        },
+    })
+    .filter(|image| !image.target.is_empty())
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -422,6 +466,19 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
     } else {
         Vec::new()
     };
+    let attribute_images = IMAGE_ATTRIBUTES
+        .iter()
+        .filter_map(|name| {
+            let image = attribute_image(dom.attributes.get(*name)?)?;
+            let imagesdir = if image.macro_form {
+                builder.imagesdir.as_deref()
+            } else {
+                None
+            };
+            let image = builder.image_in(image.target, "", None, None, imagesdir);
+            Some(((*name).to_owned(), image))
+        })
+        .collect();
     ViewTree {
         source: source.to_path_buf(),
         title,
@@ -429,6 +486,7 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
         toc,
         footnotes: builder.footnotes,
         attributes: dom.attributes.clone(),
+        attribute_images,
     }
 }
 
@@ -837,14 +895,23 @@ impl Builder<'_> {
         width: Option<String>,
         height: Option<String>,
     ) -> ViewImage {
+        self.image_in(target, alt, width, height, self.imagesdir.as_deref())
+    }
+
+    /// An image found in `imagesdir`, or beside the page without one.
+    fn image_in(
+        &self,
+        target: &str,
+        alt: &str,
+        width: Option<String>,
+        height: Option<String>,
+        imagesdir: Option<&str>,
+    ) -> ViewImage {
         let remote = target.contains("://") || target.starts_with("data:");
         ViewImage {
             target: target.to_owned(),
             path: (!remote)
-                .then(|| {
-                    self.resolver
-                        .image(&self.source, target, self.imagesdir.as_deref())
-                })
+                .then(|| self.resolver.image(&self.source, target, imagesdir))
                 .flatten(),
             url: remote.then(|| target.to_owned()),
             alt: if alt.is_empty() {
