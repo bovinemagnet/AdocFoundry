@@ -1,0 +1,9 @@
+fontawesome-solid-subset.ttf and fontawesome-regular-subset.ttf are subsets of Font Awesome
+Free 5.15.1's solid and regular fonts (fa-solid.ttf, fa-regular.ttf) as prawn-icon 3.0.0 ships
+them, the fonts asciidoctor-pdf 2.3 draws admonition icons with. They are licensed under the SIL
+Open Font License 1.1 (LICENSE-fontawesome).
+
+fontawesome-subset.py made them with fontTools 4.55.3's subsetter, keeping only the glyphs it
+lists (the five admonition defaults and a few common alternatives, 26 solid and 13 regular) at
+their own code points, with all name records and without hinting or layout tables. The glyph
+outlines are unchanged.
