@@ -169,6 +169,17 @@ pub struct TypesetPage {
     pub width: f64,
     pub height: f64,
     pub runs: Vec<TextRun>,
+    /// The images on the page, in the order they were laid out.
+    pub images: Vec<PlacedImage>,
+}
+
+/// An image as Typst placed it: its top left corner and size, in points.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacedImage {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -202,7 +213,13 @@ pub fn typeset_pages(
     theme: &LoadedTheme,
     options: &PdfOptions,
 ) -> Result<Vec<TypesetPage>, PdfError> {
-    fn collect(frame: &typst::layout::Frame, x: f64, y: f64, out: &mut Vec<TextRun>) {
+    fn collect(
+        frame: &typst::layout::Frame,
+        x: f64,
+        y: f64,
+        out: &mut Vec<TextRun>,
+        images: &mut Vec<PlacedImage>,
+    ) {
         for (point, item) in frame.items() {
             let (px, py) = (x + point.x.to_pt(), y + point.y.to_pt());
             match item {
@@ -211,6 +228,7 @@ pub fn typeset_pages(
                     px + group.transform.tx.to_pt(),
                     py + group.transform.ty.to_pt(),
                     out,
+                    images,
                 ),
                 typst::layout::FrameItem::Text(text) => out.push(TextRun {
                     x: px,
@@ -218,6 +236,12 @@ pub fn typeset_pages(
                     text: text.text.to_string(),
                     font: text.font.info().family.clone(),
                     size: text.size.to_pt(),
+                }),
+                typst::layout::FrameItem::Image(_, size, _) => images.push(PlacedImage {
+                    x: px,
+                    y: py,
+                    width: size.x.to_pt(),
+                    height: size.y.to_pt(),
                 }),
                 _ => {}
             }
@@ -228,12 +252,13 @@ pub fn typeset_pages(
         .pages()
         .iter()
         .map(|page| {
-            let mut runs = Vec::new();
-            collect(&page.frame, 0.0, 0.0, &mut runs);
+            let (mut runs, mut images) = (Vec::new(), Vec::new());
+            collect(&page.frame, 0.0, 0.0, &mut runs, &mut images);
             TypesetPage {
                 width: page.frame.width().to_pt(),
                 height: page.frame.height().to_pt(),
                 runs,
+                images,
             }
         })
         .collect())

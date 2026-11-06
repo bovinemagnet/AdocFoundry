@@ -135,6 +135,11 @@ An example block frames its content with a border.
 
 == Images
 
+An image with no width is set at 0.75pt to the pixel, held to the column.
+
+.A screenshot without a width
+image::wide.png[Screenshot]
+
 .The export pipeline
 image::pipeline.svg[Pipeline,width=60%]
 

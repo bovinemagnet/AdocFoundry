@@ -295,7 +295,7 @@ image_caption_end | ignored | Captions follow the `caption` keys: above tables, 
 image_caption_max_width | ignored | A caption is as wide as the content area.
 image_caption_text_align | ignored | Captions follow the `caption` keys: above tables, below images.
 image_float_gap | ignored | Floated images are not supported.
-image_width | ignored | An image's width comes from its attributes.
+image_width | approximated | Lengths and percentages of the column; a `vw` width is ignored.
 index_column_gap | supported
 index_columns | supported
 kbd_background_color | supported

@@ -774,9 +774,13 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    /// The image's file, when it can be shown: a missing or unreadable image is recorded, to be
-    /// shown as its alt text, as asciidoctor-pdf does.
-    fn usable_image<'i>(&mut self, image: &'i ViewImage, span: &SourceSpan) -> Option<&'i Path> {
+    /// The image's file and its width when nothing sizes it, when it can be shown: a missing or
+    /// unreadable image is recorded, to be shown as its alt text, as asciidoctor-pdf does.
+    fn usable_image<'i>(
+        &mut self,
+        image: &'i ViewImage,
+        span: &SourceSpan,
+    ) -> Option<(&'i Path, Natural)> {
         let Some(path) = &image.path else {
             self.missing
                 .push((format!("image not found: {}", image.target), span.clone()));
@@ -789,30 +793,42 @@ impl<'a> Emitter<'a> {
             ));
             return None;
         }
-        if let Some(problem) = image_problem(path) {
-            self.missing.push((
-                format!("image could not be read: {} ({problem})", image.target),
-                span.clone(),
-            ));
-            return None;
+        match image_natural_width(path) {
+            Ok(natural) => Some((path, natural)),
+            Err(problem) => {
+                self.missing.push((
+                    format!("image could not be read: {} ({problem})", image.target),
+                    span.clone(),
+                ));
+                None
+            }
         }
-        Some(path)
     }
 
     fn block_image(&mut self, block: &ViewBlock, image: &ViewImage) {
-        let Some(path) = self.usable_image(image, &block.span) else {
+        let Some((path, natural)) = self.usable_image(image, &block.span) else {
             let _ = writeln!(self.out, "#adoc-missing-image({})\n", string(&image.alt));
             return;
         };
         let path = self.file(path);
-        // As asciidoctor-pdf sizes it: `pdfwidth`, else `scaledwidth`, else `width`.
-        let width = ["pdfwidth", "scaledwidth"]
+        // As asciidoctor-pdf sizes it: `pdfwidth`, else `scaledwidth`, else the theme's
+        // `image_width`, which the template applies, else `width`, else the image's own size;
+        // `width` and the image's own size are held to the column.
+        let explicit = ["pdfwidth", "scaledwidth"]
             .iter()
             .find_map(|name| block.attributes.get(*name).map(String::as_str))
-            .or(image.width.as_deref())
-            .and_then(image_size)
-            .map(|width| format!(", width: {width}"))
-            .unwrap_or_default();
+            .and_then(image_size);
+        let (width, natural) = match explicit {
+            Some(width) => (format!(", width: {width}"), String::new()),
+            None => {
+                let natural = image
+                    .width
+                    .as_deref()
+                    .and_then(image_extent)
+                    .unwrap_or(natural);
+                (String::new(), format!(", natural: {}", natural.typst()))
+            }
+        };
         // A float places it as an alignment does.
         let align = ["float", "align"]
             .iter()
@@ -829,7 +845,7 @@ impl<'a> Emitter<'a> {
             Some(link) => format!("link({}, {shown})", string(link)),
             None => shown,
         };
-        let _ = writeln!(self.out, "#adoc-image({shown}{align})\n");
+        let _ = writeln!(self.out, "#adoc-image({shown}{align}{natural})\n");
     }
 
     fn table(&mut self, block: &ViewBlock, table: &ViewTable) {
@@ -1050,7 +1066,7 @@ impl<'a> Emitter<'a> {
                 let _ = write!(out, "#metadata(none)#{}", self.label(id));
             }
             ViewInline::Image(image) => match self.usable_image(image, &self.span.clone()) {
-                Some(path) => {
+                Some((path, _)) => {
                     let path = self.file(path);
                     let size = image
                         .width
@@ -1248,35 +1264,124 @@ fn collect_labels(key: &str, blocks: &[ViewBlock], labels: &mut HashSet<String>)
     }
 }
 
-/// An image's alt text, or, as Asciidoctor defaults it, its file name without the extension
-/// and with `-` and `_` as spaces, so every image carries a text alternative.
-/// Why the image at `path` cannot be shown, if it cannot: decoded as Typst decodes it when it
-/// lays the page out (memoised, so the work is not repeated), where a failure would fail the
-/// whole document.
-fn image_problem(path: &Path) -> Option<String> {
+/// How wide an image is when nothing gives it a width, as asciidoctor-pdf sizes it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Natural {
+    /// This many points, or the column's width if that is less.
+    Points(f64),
+    /// This share of the column, at most all of it.
+    Percent(f64),
+    /// As Typst sizes it: a PDF page, which asciidoctor-pdf imports as a page of its own.
+    Typst,
+}
+
+impl Natural {
+    /// The template's `natural` argument: only numbers are written.
+    fn typst(self) -> String {
+        match self {
+            Self::Points(points) => typst::points(points),
+            Self::Percent(percent) => format!("{}%", typst::number(percent.clamp(0.0, 100.0))),
+            Self::Typst => "auto".to_owned(),
+        }
+    }
+}
+
+/// The width of the image at `path` when nothing sizes it, or why it cannot be shown: decoded
+/// as Typst decodes it when it lays the page out (memoised, so the work is not repeated), where
+/// a failure would fail the whole document.
+///
+/// asciidoctor-pdf gives a raster image 0.75pt to the pixel (96 dpi), whatever resolution the
+/// file records, where Typst would use that resolution or 72 dpi. An SVG is sized as prawn-svg
+/// sizes it: its `width` in points when it has no unit, at 0.75pt to the pixel in `px`, and the
+/// column's width when it has only a view box.
+fn image_natural_width(path: &Path) -> Result<Natural, String> {
     // `::typst`, the crate, not this crate's `typst` module.
     use ::typst::{
         foundations::Bytes,
         visualize::{ImageFormat, RasterImage, SvgImage, VectorFormat},
     };
-    let data = match std::fs::read(path) {
-        Ok(data) => data,
-        Err(error) => return Some(error.to_string()),
-    };
+    let data = std::fs::read(path).map_err(|error| error.to_string())?;
     let format = ImageFormat::detect(&data);
-    let data = Bytes::new(data);
+    let natural = match format {
+        Some(ImageFormat::Vector(VectorFormat::Svg)) => svg_natural_width(&data),
+        _ => Natural::Typst,
+    };
+    let bytes = Bytes::new(data);
     match format {
-        Some(ImageFormat::Raster(format)) => RasterImage::plain(data, format)
-            .err()
-            .map(|error| error.to_string()),
-        Some(ImageFormat::Vector(VectorFormat::Svg)) => {
-            SvgImage::new(data).err().map(|error| format!("{error:?}"))
-        }
-        Some(ImageFormat::Vector(VectorFormat::Pdf)) => None,
-        None => Some("an unrecognised image format".to_owned()),
+        Some(ImageFormat::Raster(format)) => RasterImage::plain(bytes, format)
+            .map(|image| Natural::Points(f64::from(image.width()) * 0.75))
+            .map_err(|error| error.to_string()),
+        Some(ImageFormat::Vector(VectorFormat::Svg)) => SvgImage::new(bytes)
+            .map(|_| natural)
+            .map_err(|error| format!("{error:?}")),
+        Some(ImageFormat::Vector(VectorFormat::Pdf)) => Ok(Natural::Typst),
+        None => Err("an unrecognised image format".to_owned()),
     }
 }
 
+/// An SVG's width as prawn-svg reads its root element; Typst's own when the text cannot be
+/// read (a compressed SVG).
+fn svg_natural_width(data: &[u8]) -> Natural {
+    let Some(text) = std::str::from_utf8(data).ok() else {
+        return Natural::Typst;
+    };
+    let options = roxmltree::ParsingOptions {
+        allow_dtd: true,
+        ..roxmltree::ParsingOptions::default()
+    };
+    let Ok(document) = roxmltree::Document::parse_with_options(text, options) else {
+        return Natural::Typst;
+    };
+    let root = document.root_element();
+    let length = |name: &str| root.attribute(name).and_then(svg_length);
+    match (length("width"), length("height")) {
+        (Some(width), _) => width,
+        // With only a height, the view box gives the width.
+        (None, Some(Natural::Points(height))) => {
+            let view_box: Vec<f64> = root
+                .attribute("viewBox")
+                .unwrap_or("")
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter_map(|part| part.parse().ok())
+                .collect();
+            match view_box.as_slice() {
+                [_, _, width, box_height] if *width > 0.0 && *box_height > 0.0 => {
+                    Natural::Points(height * width / box_height)
+                }
+                _ => Natural::Percent(100.0),
+            }
+        }
+        _ => Natural::Percent(100.0),
+    }
+}
+
+/// A length on an SVG's root element as prawn-svg reads it, with asciidoctor-pdf's reading of
+/// `px` as 0.75pt: a number without a unit, or in `pt`, is points.
+fn svg_length(value: &str) -> Option<Natural> {
+    let value = value.trim();
+    if let Some(percent) = value.strip_suffix('%') {
+        return percent.trim().parse().ok().map(Natural::Percent);
+    }
+    let split = value
+        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+')))
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split);
+    let number: f64 = number.parse().ok()?;
+    let points = match unit.trim() {
+        "px" => number * 0.75,
+        "em" => number * 16.0,
+        "ex" => number * 8.0,
+        "pc" => number * 15.0,
+        "in" => number * 72.0,
+        "cm" => number * (720.0 / 25.4),
+        "mm" => number * (72.0 / 25.4),
+        _ => number,
+    };
+    (points.is_finite() && points > 0.0).then_some(Natural::Points(points))
+}
+
+/// An image's alt text, or, as Asciidoctor defaults it, its file name without the extension
+/// and with `-` and `_` as spaces, so every image carries a text alternative.
 fn alt_text(image: &ViewImage) -> String {
     if !image.alt.trim().is_empty() {
         return image.alt.clone();
@@ -1599,21 +1704,27 @@ fn circled(number: usize) -> char {
 
 /// An image size attribute as a Typst length: a percentage, or pixels at 96 dpi.
 fn image_size(value: &str) -> Option<String> {
+    image_extent(value).map(|extent| match extent {
+        Natural::Percent(percent) => {
+            format!("{}%", typst::number(percent).trim_end_matches(".0"))
+        }
+        Natural::Points(points) => typst::points(points),
+        Natural::Typst => "auto".to_owned(),
+    })
+}
+
+/// An image size attribute: a percentage, or a length, pixels at 96 dpi when it has no unit.
+fn image_extent(value: &str) -> Option<Natural> {
     let value = value.trim();
     if let Some(percent) = value.strip_suffix('%') {
-        let percent: f64 = percent.trim().parse().ok()?;
-        return Some(format!(
-            "{}%",
-            typst::number(percent).trim_end_matches(".0")
-        ));
+        return percent.trim().parse().ok().map(Natural::Percent);
     }
     let (number, unit) = match value.find(|c: char| !(c.is_ascii_digit() || c == '.')) {
         Some(split) => value.split_at(split),
         None => (value, "px"),
     };
     let number: f64 = number.parse().ok()?;
-    let points = crate::theme::to_pt(number, unit.trim())?;
-    Some(typst::points(points))
+    crate::theme::to_pt(number, unit.trim()).map(Natural::Points)
 }
 
 /// A hash of `path` that is the same in every process, for stable virtual paths.

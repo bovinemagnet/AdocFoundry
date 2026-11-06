@@ -502,10 +502,28 @@
 
 // A block image; the body passes the `image` itself, so an error loading it points at the
 // AsciiDoc that named it.
-#let adoc-image(image, align-to: none) = block(
-  width: 100%,
-  align(alignment(if align-to != none { align-to } else { pick("image_align", default: "left") }), image),
-)
+// A block image. `natural` is its width when the document gives it none (`pdfwidth` or
+// `scaledwidth` set the image's own width, and `natural` is `none`): the theme's `image_width`
+// when it sets one, else this length held to the column, or this share of it; `auto` leaves the
+// size to Typst.
+#let adoc-image(body, align-to: none, natural: none) = block(width: 100%, {
+  let placed = align(alignment(if align-to != none { align-to } else { pick("image_align", default: "left") }), body)
+  let themed = pick("image_width")
+  if natural == none or natural == auto and type(themed) not in (length, ratio) {
+    placed
+  } else if type(themed) in (length, ratio) {
+    set image(width: themed)
+    placed
+  } else if type(natural) == ratio {
+    set image(width: natural)
+    placed
+  } else {
+    layout(size => {
+      set image(width: calc.min(natural, size.width))
+      placed
+    })
+  }
+})
 
 #let adoc-missing-image(alt) = block(text(fill: base-color.lighten(40%), [\[#alt\]]))
 
