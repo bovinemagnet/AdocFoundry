@@ -164,6 +164,12 @@ impl Converter<'_> {
             "toclevels",
             "experimental",
             "toc-title",
+            "sectnumlevels",
+            "appendix-caption",
+            "example-caption",
+            "figure-caption",
+            "listing-caption",
+            "table-caption",
         ] {
             if let Some(value) = attribute_text(self.document, name) {
                 attributes.insert(name.to_owned(), value);

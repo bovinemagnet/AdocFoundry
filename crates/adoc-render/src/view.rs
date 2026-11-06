@@ -392,11 +392,16 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
         numbering: Numbering::Numbered,
         saved_counters: None,
         appendices: 0,
-        appendix_caption: dom
+        appendix_caption: dom.attributes.get("appendix-caption").cloned(),
+        figure_caption: dom.attributes.get("figure-caption").cloned(),
+        table_caption: dom.attributes.get("table-caption").cloned(),
+        example_caption: dom.attributes.get("example-caption").cloned(),
+        listing_caption: dom.attributes.get("listing-caption").cloned(),
+        sectnum_levels: dom
             .attributes
-            .get("appendix-caption")
-            .cloned()
-            .unwrap_or_else(|| "Appendix".to_owned()),
+            .get("sectnumlevels")
+            .and_then(|levels| levels.trim().parse().ok())
+            .unwrap_or(3),
         figures: 0,
         tables: 0,
         examples: 0,
@@ -473,8 +478,17 @@ struct Builder<'r> {
     /// The other sections' count while an appendix counts its own.
     saved_counters: Option<Vec<u32>>,
     appendices: u32,
-    /// `appendix-caption`: `Appendix` unless the page sets another.
-    appendix_caption: String,
+    /// `appendix-caption`: `Appendix` unless the page sets another or unsets it.
+    appendix_caption: Option<String>,
+    /// The labels of numbered captions, as the document's attributes give them; a caption whose
+    /// attribute is unset has neither label nor number. The parser supplies Asciidoctor's
+    /// defaults, `Figure`, `Table` and `Example`, and no label for listings.
+    figure_caption: Option<String>,
+    table_caption: Option<String>,
+    example_caption: Option<String>,
+    listing_caption: Option<String>,
+    /// `sectnumlevels`: sections deeper than this show no number, 3 by default.
+    sectnum_levels: u8,
     figures: u32,
     tables: u32,
     examples: u32,
@@ -536,26 +550,27 @@ impl Builder<'_> {
             return (!caption.is_empty()).then(|| caption.to_owned());
         }
         let (counter, label) = match &block.kind {
-            BlockKind::Image { .. } => (&mut self.figures, "Figure"),
-            BlockKind::Table { .. } => (&mut self.tables, "Table"),
+            BlockKind::Image { .. } => (&mut self.figures, &self.figure_caption),
+            BlockKind::Table { .. } => (&mut self.tables, &self.table_caption),
             // A collapsible block is titled by its summary, as Asciidoctor counts it: unnumbered.
             BlockKind::Example { .. } if block.meta.options.contains("collapsible") => {
                 return None;
             }
-            BlockKind::Example { .. } => (&mut self.examples, "Example"),
-            BlockKind::Listing { .. } if block.meta.style.as_deref() == Some("source") => {
-                return None;
-            }
+            BlockKind::Example { .. } => (&mut self.examples, &self.example_caption),
+            BlockKind::Listing { .. } => (&mut self.listings, &self.listing_caption),
             _ => return None,
         };
+        // Without a label there is no caption, and the block is not counted.
+        let label = label.as_ref()?;
         *counter += 1;
-        Some(format!("{label} {counter}."))
+        Some(format!("{label} {counter}.").trim_start().to_owned())
     }
 
     /// The number of a section at `level` with block style `style`, and how the sections inside
     /// it are numbered, as Asciidoctor numbers them: special sections (a preface, glossary,
     /// bibliography and the like) and what they hold are not numbered, and an appendix is
-    /// lettered (`Appendix A:`, then `A.1.`) outside the count of the other sections.
+    /// lettered (`Appendix A:`, then `A.1.`) outside the count of the other sections. Past
+    /// `sectnumlevels` a section is counted but shows no number.
     fn section_number(&mut self, level: u8, style: Option<&str>) -> (Option<String>, Numbering) {
         if !self.numbered || level == 0 {
             return (None, self.numbering);
@@ -567,10 +582,8 @@ impl Builder<'_> {
                 self.counters.resize(depth.max(1), 0);
                 self.counters[depth.max(1) - 1] += 1;
                 let parts: Vec<String> = self.counters.iter().map(ToString::to_string).collect();
-                return (
-                    Some(format!("{letter}.{}.", parts.join("."))),
-                    self.numbering,
-                );
+                let number = format!("{letter}.{}.", parts.join("."));
+                return (self.shown(level, number), self.numbering);
             }
             Numbering::Numbered => {}
         }
@@ -581,10 +594,9 @@ impl Builder<'_> {
                 // The appendix's sections count from zero; the chapters' count resumes after.
                 let saved = std::mem::take(&mut self.counters);
                 self.saved_counters = Some(saved);
-                let number = if self.appendix_caption.is_empty() {
-                    format!("{letter}.")
-                } else {
-                    format!("{} {letter}:", self.appendix_caption)
+                let number = match self.appendix_caption.as_deref() {
+                    Some(caption) if !caption.is_empty() => format!("{caption} {letter}:"),
+                    _ => format!("{letter}."),
                 };
                 (Some(number), Numbering::Appendix { letter, level })
             }
@@ -600,9 +612,15 @@ impl Builder<'_> {
                     .collect::<Vec<_>>()
                     .join(".")
                     + ".";
-                (Some(number), Numbering::Numbered)
+                (self.shown(level, number), Numbering::Numbered)
             }
         }
+    }
+
+    /// A section's number, unless the section is deeper than `sectnumlevels`, where it is
+    /// counted but shows none. An appendix's own caption shows at any level.
+    fn shown(&self, level: u8, number: String) -> Option<String> {
+        (level <= self.sectnum_levels).then_some(number)
     }
 
     fn block(&mut self, block: &Block) -> ViewBlock {
@@ -692,16 +710,11 @@ impl Builder<'_> {
                 language,
                 text,
                 callouts,
-            } => {
-                if !block.meta.title.is_empty() {
-                    self.listings += 1;
-                }
-                ViewKind::Code {
-                    language: language.clone(),
-                    text: text.clone(),
-                    callouts: callouts.clone(),
-                }
-            }
+            } => ViewKind::Code {
+                language: language.clone(),
+                text: text.clone(),
+                callouts: callouts.clone(),
+            },
             BlockKind::Literal { text } => ViewKind::Literal(text.clone()),
             BlockKind::Quote {
                 attribution,

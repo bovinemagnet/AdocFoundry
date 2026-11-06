@@ -1,0 +1,51 @@
+= Captions
+:toc:
+:toclevels: 3
+:sectnums:
+:sectnumlevels: 1
+:figure-caption: Abbildung
+:table-caption!:
+:listing-caption: Listing
+
+== Numbered
+
+.A figure
+image::missing.png[A figure]
+
+.A table
+|===
+|a
+|===
+
+.Another table
+|===
+|b
+|===
+
+.A listing
+----
+text
+----
+
+.A source listing
+[source,rust]
+----
+fn main() {}
+----
+
+.An example
+====
+Inside.
+====
+
+=== Not numbered
+
+Text.
+
+==== Deep
+
+More text.
+
+== Numbered again
+
+Last.

@@ -737,3 +737,90 @@ fn special_sections_are_numbered_as_asciidoctor_numbers_them() {
     };
     assert_eq!(number.as_deref(), Some("Annex A:"));
 }
+
+#[test]
+fn captions_follow_the_document_attributes() {
+    fn walk(view: &ViewTree) -> (Vec<(Option<String>, String)>, Vec<(Option<String>, String)>) {
+        let (mut sections, mut captions) = (Vec::new(), Vec::new());
+        let mut stack: Vec<&adoc_render::ViewBlock> = view.blocks.iter().rev().collect();
+        while let Some(block) = stack.pop() {
+            match &block.kind {
+                ViewKind::Section { number, title, .. } => {
+                    sections.push((number.clone(), ViewInline::plain_text(title)));
+                }
+                _ if !block.title.is_empty() => {
+                    captions.push((block.caption.clone(), ViewInline::plain_text(&block.title)));
+                }
+                _ => {}
+            }
+            stack.extend(block.child_refs().into_iter().rev());
+        }
+        (sections, captions)
+    }
+    fn owned(pairs: &[(Option<&str>, &str)]) -> Vec<(Option<String>, String)> {
+        pairs
+            .iter()
+            .map(|(number, title)| (number.map(str::to_owned), (*title).to_owned()))
+            .collect()
+    }
+
+    let path = fixtures().join("render/captions.adoc");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let view = view_of(&path, &text, &LocalResolver);
+    let (sections, captions) = walk(&view);
+    // `figure-caption` relabels figures; `table-caption!` drops the label and the number;
+    // `listing-caption` numbers listings, source listings too.
+    assert_eq!(
+        captions,
+        owned(&[
+            (Some("Abbildung 1."), "A figure"),
+            (None, "A table"),
+            (None, "Another table"),
+            (Some("Listing 1."), "A listing"),
+            (Some("Listing 2."), "A source listing"),
+            (Some("Example 1."), "An example"),
+        ])
+    );
+    // `sectnumlevels: 1` numbers only the top sections.
+    let expected = owned(&[
+        (Some("1."), "Numbered"),
+        (None, "Not numbered"),
+        (None, "Deep"),
+        (Some("2."), "Numbered again"),
+    ]);
+    assert_eq!(sections, expected);
+    let toc: Vec<_> = view
+        .toc
+        .iter()
+        .map(|entry| (entry.number.clone(), entry.title.clone()))
+        .collect();
+    assert_eq!(toc, expected, "the table of contents agrees");
+
+    // Without the attributes, Asciidoctor's defaults: listings uncaptioned, three levels
+    // numbered.
+    let text = "= Defaults\n:sectnums:\n\n== One\n\n=== Two\n\n==== Three\n\n===== Four\n\n.A listing\n----\ntext\n----\n\n.A figure\nimage::a.png[]\n";
+    let view = view_of(Path::new("/docs/defaults.adoc"), text, &LocalResolver);
+    let (sections, captions) = walk(&view);
+    assert_eq!(
+        sections,
+        owned(&[
+            (Some("1."), "One"),
+            (Some("1.1."), "Two"),
+            (Some("1.1.1."), "Three"),
+            (None, "Four"),
+        ])
+    );
+    assert_eq!(
+        captions,
+        owned(&[(None, "A listing"), (Some("Figure 1."), "A figure")])
+    );
+
+    // An unset appendix caption leaves the letter alone, as Asciidoctor does.
+    let text = "= Article\n:sectnums:\n:appendix-caption!:\n\n== Body\n\n[appendix]\n== Extra\n";
+    let view = view_of(Path::new("/docs/article.adoc"), text, &LocalResolver);
+    let (sections, _) = walk(&view);
+    assert_eq!(
+        sections,
+        owned(&[(Some("1."), "Body"), (Some("A."), "Extra")])
+    );
+}
