@@ -766,6 +766,7 @@ Copied files that are not all images paste as their paths.
 The image goes in as Insert Image does, and the selected text stays.
 
 An image larger than 64 MiB is refused, as is a file that is not an image by its extension.
+A link to a file is refused too, so that dropping one cannot copy whatever it points at into the workspace.
 A page outside the workspace folders is refused, and so is an images folder that is a link.
 A dropped file that is not an image is reported and left out.
 An existing file whose name a macro cannot write (a space, a bracket or a brace in it) is refused, and the message says to rename it first.

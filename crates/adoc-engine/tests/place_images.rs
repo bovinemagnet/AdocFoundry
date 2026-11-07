@@ -675,6 +675,19 @@ fn a_pipe_named_like_an_image_is_refused_rather_than_read_for_ever() {
     assert_eq!(workspace.text(), "= Page\n");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_link_named_like_an_image_is_refused_rather_than_copying_what_it_points_at() {
+    let mut workspace = Workspace::antora("= Page\n");
+    let (_keep, secret) = workspace.outside("private-key", b"secret");
+    let link = secret.with_file_name("photo.png");
+    std::os::unix::fs::symlink(&secret, &link).unwrap();
+    let end = workspace.text().len();
+    assert!(workspace.place(end, vec![ImageSource::File(link)]).is_err());
+    assert_eq!(workspace.text(), "= Page\n");
+    assert!(!workspace.module_images().exists());
+}
+
 #[test]
 fn a_text_file_in_a_module_takes_no_image() {
     // In a module the page's folder is known, so only its kind stands in the way.

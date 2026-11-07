@@ -442,13 +442,14 @@ fn check_size(size: u64, what: impl std::fmt::Display) -> Result<(), EngineError
     Ok(())
 }
 
-/// The contents of the image file at `path`, which must be a file of no more than
-/// [`MAX_PLACED_IMAGE`] bytes: a pipe or device would never finish reading.
+/// The contents of the image file at `path`, which must be a file itself, of no more than
+/// [`MAX_PLACED_IMAGE`] bytes. A pipe or device would never finish reading, and a link could
+/// copy whatever it points at, under an image's name, into the workspace.
 fn read_image(path: &Path) -> Result<Arc<[u8]>, EngineError> {
-    let metadata = fs::metadata(path).map_err(|error| EngineError::io(path, error))?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| EngineError::io(path, error))?;
     if !metadata.is_file() {
         return Err(EngineError::Refused(format!(
-            "{} is not a file",
+            "{} is not a regular file, so it was not copied",
             path.display()
         )));
     }
