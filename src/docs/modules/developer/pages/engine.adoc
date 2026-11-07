@@ -822,6 +822,10 @@ Staging, unstaging and committing go through `adoc-git` and `gix` in process.
 `Repository::stage`, `unstage` and `commit` change the index and `HEAD`, and `identity` and `signs_commits` read the configuration.
 `unpushed(remote, branch)` counts the commits ahead of the remote-tracking branch, `has_upstream(branch)` says whether the branch has one, and `head_commit_id` gives the new commit.
 `GitError::NoIdentity` and `GitError::NothingToCommit` are the two refusals.
+`Repository::stage` stages as `git add` does: it takes `gix`'s to-Git filter pipeline (line endings, `ident`, `working-tree-encoding`) with its drivers removed, so no command the configuration names can run.
+It reads the `filter` attribute first and refuses a file with a named filter, such as Git LFS, with `GitError::FilterNotRun`; if any path in a request is refused, nothing in it is staged, and a commit stages its paths the same way.
+A link is stored as its target, and `staged_mode` keeps the index's mode where the file system cannot show a link or an executable file (`core.symlinks=false`, `core.filemode=false`).
+`crates/adoc-git/tests/git_add.rs` checks conformance with the `git` executable by building the same repository twice and comparing `git ls-files --stage` and `git status --porcelain`.
 `discover_isolated` opens a repository reading only its own configuration, so that a test can show the no-identity refusal whatever the developer's global identity is.
 
 A commit made with `commit.gpgsign` set, and every push, runs the `git` executable from `[tools] git`, else `git` on `PATH`.
