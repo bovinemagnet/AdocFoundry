@@ -345,28 +345,33 @@ impl Repository {
     }
 
     /// Stages `paths` (absolute, or relative to the working tree) as they are in the working
-    /// tree, as `git add` would: new and changed files are added and missing ones removed.
+    /// tree, as `git add` would: new and changed files are added and missing ones removed, line
+    /// endings, `ident` and `working-tree-encoding` applied by the repository's attributes and
+    /// configuration, and a link staged as a link. A file under a named `filter` (Git LFS, say)
+    /// is refused, since that would mean running a command the repository's configuration names.
+    /// Nothing is staged unless every path can be.
     pub fn stage(&self, paths: &[&Path]) -> Result<(), GitError> {
         let mut index = self.index_file()?;
+        let capabilities = self.repo.filesystem_options().map_err(GitError::git)?;
+        let (mut pipeline, mut attributes) = self.to_git_pipeline()?;
         for path in paths {
             let relative = self.relative(path)?;
             let name = unix_path(&relative);
-            index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
             let file = self.workdir.join(&relative);
             let Ok(metadata) = gix::index::fs::Metadata::from_path_no_follow(&file) else {
+                index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
                 continue; // Gone: staged as deleted.
             };
-            let bytes = fs::read(&file).map_err(|source| GitError::Io {
-                path: file.clone(),
-                source,
-            })?;
+            let in_index = index.entry_by_path(name.as_ref()).map(|entry| entry.mode);
+            let bytes = if metadata.is_symlink() {
+                link_target(&file)?
+            } else {
+                self.file_to_git(&file, &relative, &mut pipeline, &mut attributes, &index)?
+            };
             let id = self.repo.write_blob(bytes).map_err(GitError::git)?.detach();
             let stat = gix::index::entry::Stat::from_fs(&metadata).unwrap_or_default();
-            let mode = if metadata.is_executable() {
-                gix::index::entry::Mode::FILE_EXECUTABLE
-            } else {
-                gix::index::entry::Mode::FILE
-            };
+            let mode = staged_mode(&metadata, in_index, capabilities);
+            index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
             index.dangerously_push_entry(
                 stat,
                 id,
@@ -377,6 +382,76 @@ impl Repository {
         }
         index.sort_entries();
         index.write(Default::default()).map_err(GitError::git)
+    }
+
+    /// The conversions `git add` applies, with the attributes they read. Its drivers are dropped:
+    /// `file_to_git` refuses a file that names one, and this makes sure none can ever run.
+    fn to_git_pipeline(
+        &self,
+    ) -> Result<(gix::filter::plumbing::Pipeline, gix::worktree::Stack), GitError> {
+        let (pipeline, _) = self.repo.filter_pipeline(None).map_err(GitError::git)?;
+        let (mut pipeline, attributes) = pipeline.into_parts();
+        pipeline.options_mut().drivers.clear();
+        Ok((pipeline, attributes))
+    }
+
+    /// What `git add` stores for the regular file `file`, at `relative` in the working tree.
+    fn file_to_git(
+        &self,
+        file: &Path,
+        relative: &Path,
+        pipeline: &mut gix::filter::plumbing::Pipeline,
+        attributes: &mut gix::worktree::Stack,
+        index: &gix::index::State,
+    ) -> Result<Vec<u8>, GitError> {
+        use gix::objs::Find as _;
+        use std::io::Read as _;
+
+        let mut selected = attributes.selected_attribute_matches(["filter"]);
+        let entry = attributes
+            .at_path(relative, None, &self.repo.objects)
+            .map_err(GitError::git)?;
+        entry.matching_attributes(&mut selected);
+        for attribute in selected.iter_selected() {
+            if let gix::attrs::StateRef::Value(filter) = attribute.assignment.state {
+                return Err(GitError::FilterNotRun {
+                    path: relative.to_path_buf(),
+                    filter: filter.as_bstr().to_string(),
+                });
+            }
+        }
+
+        let bytes = fs::read(file).map_err(|source| GitError::Io {
+            path: file.to_path_buf(),
+            source,
+        })?;
+        let name = unix_path(relative);
+        let mut converted = Vec::new();
+        pipeline
+            .convert_to_git(
+                bytes.as_slice(),
+                relative,
+                &mut |_, attributes| {
+                    entry.matching_attributes(attributes);
+                },
+                // Git leaves a file alone when the index already holds it with carriage returns.
+                &mut |buffer| {
+                    let Some(staged) = index.entry_by_path(name.as_ref()) else {
+                        return Ok(None);
+                    };
+                    let object = self.repo.objects.try_find(&staged.id, buffer)?;
+                    Ok(object
+                        .filter(|object| object.kind == gix::objs::Kind::Blob)
+                        .map(|_| ()))
+                },
+            )
+            .map_err(GitError::git)?
+            .read_to_end(&mut converted)
+            .map_err(|source| GitError::Io {
+                path: file.to_path_buf(),
+                source,
+            })?;
+        Ok(converted)
     }
 
     /// Puts `paths` back in the index as they are in `HEAD`, leaving the working tree alone, as
@@ -587,6 +662,45 @@ fn unix_path(path: &Path) -> gix::bstr::BString {
         .collect::<Vec<_>>()
         .join("/")
         .into()
+}
+
+/// What a link stores: its target as written, with `/` between its parts.
+fn link_target(file: &Path) -> Result<Vec<u8>, GitError> {
+    let target = fs::read_link(file).map_err(|source| GitError::Io {
+        path: file.to_path_buf(),
+        source,
+    })?;
+    let target = gix::path::into_bstr(target).map_err(GitError::git)?;
+    Ok(gix::path::to_unix_separators_on_windows(target)
+        .into_owned()
+        .into())
+}
+
+/// The mode `git add` gives a file, given the entry's in the index: where the file system cannot
+/// show a link or an executable file (`core.symlinks`, `core.filemode`), the index knows better.
+fn staged_mode(
+    metadata: &gix::index::fs::Metadata,
+    in_index: Option<gix::index::entry::Mode>,
+    capabilities: gix::fs::Capabilities,
+) -> gix::index::entry::Mode {
+    use gix::index::entry::Mode;
+    if metadata.is_symlink() {
+        return Mode::SYMLINK;
+    }
+    if !capabilities.symlink && in_index == Some(Mode::SYMLINK) {
+        return Mode::SYMLINK;
+    }
+    if !capabilities.executable_bit {
+        return match in_index {
+            Some(Mode::FILE_EXECUTABLE) => Mode::FILE_EXECUTABLE,
+            _ => Mode::FILE,
+        };
+    }
+    if metadata.is_executable() {
+        Mode::FILE_EXECUTABLE
+    } else {
+        Mode::FILE
+    }
 }
 
 /// A repository-relative path (`/`-separated) as a platform path.

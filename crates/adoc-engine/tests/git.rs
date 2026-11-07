@@ -713,6 +713,34 @@ fn save_and_commit_prefills_message() {
 }
 
 #[test]
+fn staging_and_committing_a_file_under_a_filter_say_why_they_refuse() {
+    let dir = tempfile::tempdir().unwrap();
+    let (test, mut engine, _) = committing_repository(dir.path());
+    test.write(".gitattributes", "*.png filter=lfs\n");
+    test.write("docs/modules/ROOT/images/picture.png", "picture\n");
+    let image = dir.path().join("docs/modules/ROOT/images/picture.png");
+
+    let error = engine
+        .invoke(ids::GIT_STAGE, CommandArgs::Path(image.clone()))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("picture.png"), "{error}");
+    assert!(error.contains("`lfs` filter"), "{error}");
+
+    let error = engine
+        .invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({
+                "message": "docs: add a picture",
+                "paths": [image.to_str().unwrap()],
+            })),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("`lfs` filter"), "{error}");
+}
+
+#[test]
 fn stage_all_stages_the_changed_writer_files() {
     let dir = tempfile::tempdir().unwrap();
     let (test, mut engine, _) = committing_repository(dir.path());

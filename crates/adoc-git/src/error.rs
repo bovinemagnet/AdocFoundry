@@ -14,6 +14,11 @@ pub enum GitError {
     NoIdentity,
     /// The index holds nothing that `HEAD` does not.
     NothingToCommit,
+    /// `path` is under the named `filter`, which staging does not run.
+    FilterNotRun {
+        path: PathBuf,
+        filter: String,
+    },
     /// `spec` names no commit in the repository.
     UnknownRevision {
         spec: String,
@@ -42,6 +47,11 @@ impl fmt::Display for GitError {
                  (git config --global user.name \"Your Name\"; git config --global user.email you@example.com)",
             ),
             Self::NothingToCommit => formatter.write_str("nothing is staged to commit"),
+            Self::FilterNotRun { path, filter } => write!(
+                formatter,
+                "{} uses Git's `{filter}` filter, which AdocFoundry does not run: stage it with git add",
+                path.display()
+            ),
             Self::UnknownRevision { spec, message } => {
                 write!(formatter, "`{spec}` names no commit here: {message}")
             }
