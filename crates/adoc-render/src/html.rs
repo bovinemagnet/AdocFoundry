@@ -358,7 +358,17 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes("quoteblock", block));
             block_title(out, view, block);
             out.push_str("<blockquote>\n");
-            render_blocks(out, view, blocks);
+            match blocks.as_slice() {
+                // A `[quote]` paragraph, which is its quote's only text and shares its place.
+                [only] if only.span == block.span => {
+                    if let ViewKind::Paragraph(content) = &only.kind {
+                        let _ = writeln!(out, "{}", page_inlines(view, content));
+                    } else {
+                        render_block(out, view, only);
+                    }
+                }
+                _ => render_blocks(out, view, blocks),
+            }
             out.push_str("</blockquote>\n");
             attribution_html(out, attribution.as_deref(), citation.as_deref());
             out.push_str("</div>\n");
@@ -476,8 +486,9 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
                         out,
                         "<{tag} class=\"tableblock halign-{align} valign-{valign}\"{span}>"
                     );
-                    if cell.style == CellStyle::AsciiDoc {
-                        // An AsciiDoc cell is a nested document: its blocks render as blocks.
+                    // An AsciiDoc cell is a nested document: its blocks render as blocks. A header
+                    // row's cells are plain, whatever their column's style.
+                    if cell.style == CellStyle::AsciiDoc && !header {
                         out.push_str("<div class=\"content\">");
                         for block in &cell.blocks {
                             render_block(out, view, block);
@@ -854,10 +865,24 @@ fn inline_html(out: &mut String, inline: &ViewInline, font_icons: bool) {
         ViewInline::Icon(name) => {
             let _ = write!(out, "<span class=\"icon\">[{}]</span>", escape(name));
         }
-        ViewInline::FootnoteRef(number) => {
+        ViewInline::FootnoteRef {
+            number,
+            repeat: true,
+            ..
+        } => {
             let _ = write!(
                 out,
-                "<sup class=\"footnote\">[<a id=\"_footnoteref_{number}\" class=\"footnote\" href=\"#_footnotedef_{number}\">{number}</a>]</sup>"
+                "<sup class=\"footnoteref\">[<a class=\"footnote\" href=\"#_footnotedef_{number}\">{number}</a>]</sup>"
+            );
+        }
+        ViewInline::FootnoteRef { number, name, .. } => {
+            let id = name
+                .as_deref()
+                .map(|name| format!(" id=\"_footnote_{}\"", escape(name)))
+                .unwrap_or_default();
+            let _ = write!(
+                out,
+                "<sup class=\"footnote\"{id}>[<a id=\"_footnoteref_{number}\" class=\"footnote\" href=\"#_footnotedef_{number}\">{number}</a>]</sup>"
             );
         }
         ViewInline::LineBreak => out.push_str("<br>\n"),

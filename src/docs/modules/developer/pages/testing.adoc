@@ -246,13 +246,18 @@ The render corpus is `tests/fixtures/render/`: `blocks.adoc`, `block-options.ado
 `crates/adoc-engine/tests/preview.rs` drives the preview service headlessly: the settle time, included-file changes, stale results, diagram completion, following and pinning, history for `navigate.go_to` and `navigate.reveal`, and `render_blocking`.
 
 The fidelity harness, `crates/adocfoundry-cli/tests/fidelity.rs`, renders every corpus page with `adocfoundry-cli render` and with `asciidoctor`.
-It normalises both to their block structure and paragraph text.
-Block structure must match, and text differences are reported.
-The harness is skipped, with a message, when `asciidoctor --version` does not succeed, because a broken installation is as unusable as a missing one.
+It runs Asciidoctor with `-s -a showtitle`, so the document title is compared, and normalises both renderings.
+It compares block structure, presentation, paragraph text, headings and block titles, table cell text, preformatted text exactly, footnotes, link destinations with their text, and anchors.
+The page wrappers `header`, `content` and `preamble` are not compared as anchors.
+Any difference fails the test.
+Differences that are meant are listed in the test's `ALLOWED` table, each by page, kind, the two values and the reason.
+An allowance that no longer applies fails the test too, so the table always lists every difference that remains.
+`semantics.adoc` in the corpus exercises links, anchors, footnotes and table text.
+`a_changed_word_or_a_lost_item_is_a_difference` checks the comparison itself and runs without Asciidoctor.
+The comparison against Asciidoctor is skipped, with a message, when `asciidoctor --version` does not succeed, because a broken installation is as unusable as a missing one.
 It treats a rendered diagram as the listing block Asciidoctor writes without its diagram extension.
 
-It also compares a third normalisation, `presentation`, and fails on a difference.
-That covers each ordered list's classes and `type`, `start` and `reversed`, each table's classes and width style, each cell's alignment classes, each image block's classes and link, and each `<details>` and `<summary>`.
+The `presentation` normalisation covers each ordered list's classes and `type`, `start` and `reversed`, each table's classes and width style, each cell's alignment classes, each image block's classes and link, and each `<details>` and `<summary>`.
 Rendered diagrams are skipped there too.
 `block-options.adoc` holds the lists, tables, images and a collapsible block that this exercises.
 It is a file of its own because the snapshot, round-trip and word-count tests of other crates read `blocks.adoc` and `tables.adoc`.

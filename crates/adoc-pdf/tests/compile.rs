@@ -257,3 +257,20 @@ fn a_listing_kept_whole_is_never_cut_off_by_a_small_page() {
         assert!(shown, "{line} is not on any page");
     }
 }
+
+/// A page's anchors, repeated ones among them, which Typst refuses to link to unless each label
+/// occurs once.
+#[test]
+fn a_page_repeating_an_id_still_exports_and_links_to_the_first() {
+    let text = "= Page\n\n[[x]]\nOne.\n\n[[x]]\nTwo.\n\n[[y]]\n* item\n\n[#z]\n----\ncode\n----\n\n\
+                See <<x>>, <<y>> and <<z>>.\n\n[discrete]\n== Same\n\n[discrete]\n== Same\n\n\
+                == Twice\n\n[[again]]\n== Again\n\n[[again]]\n== Again\n\nSee <<again>> and <<_same_2>>.\n";
+    let view = common::view_of_text(Path::new("page.adoc"), text);
+    let output = export(
+        &common::article(view),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    )
+    .unwrap_or_else(|error| panic!("{error:?}"));
+    assert!(output.bytes.starts_with(b"%PDF-"));
+}

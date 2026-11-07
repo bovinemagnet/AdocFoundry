@@ -141,6 +141,9 @@ pub(crate) struct Emitter<'a> {
     span: SourceSpan,
     /// Every label the document defines, so a reference to anything else is left as text.
     labels: HashSet<String>,
+    /// The blocks' labels written so far: Typst refuses a link to a label that occurs twice, so a
+    /// page that repeats an id links to its first place, as a browser does.
+    placed: HashSet<String>,
     /// Page file to page key, for references between the pages of a book.
     pages: HashMap<PathBuf, String>,
     key: String,
@@ -191,6 +194,7 @@ impl<'a> Emitter<'a> {
             unconverted: Vec::new(),
             span: SourceSpan::default(),
             labels,
+            placed: HashSet::new(),
             pages: pages
                 .iter()
                 .map(|page| (page.view.source.clone(), page.key.clone()))
@@ -252,10 +256,17 @@ impl<'a> Emitter<'a> {
         format!("label({})", string(&label_name(&self.key, id)))
     }
 
-    /// An anchor other content can link to.
+    /// An anchor other content can link to, unless the page already has one of that id.
     pub(crate) fn anchor(&mut self, id: &str) {
-        let label = self.label(id);
-        let _ = write!(self.out, "#metadata(none)#{label}");
+        if self.first_place(id) {
+            let label = self.label(id);
+            let _ = write!(self.out, "#metadata(none)#{label}");
+        }
+    }
+
+    /// Whether a block's label for `id` is the first on the page, which it now is.
+    fn first_place(&mut self, id: &str) -> bool {
+        self.placed.insert(label_name(&self.key, id))
     }
 
     /// The page's blocks, with the first paragraph of an article's preamble as the lead.
@@ -474,6 +485,7 @@ impl<'a> Emitter<'a> {
                 let label = block
                     .id
                     .as_deref()
+                    .filter(|id| self.first_place(id))
                     .map(|id| format!("#{}", self.label(id)))
                     .unwrap_or_default();
                 let _ = writeln!(
@@ -1135,7 +1147,7 @@ impl<'a> Emitter<'a> {
                 None => out.push_str(&text(&format!("[{}]", image.alt))),
             },
             ViewInline::Icon(name) => out.push_str(&text(&format!("[{name}]"))),
-            ViewInline::FootnoteRef(number) => {
+            ViewInline::FootnoteRef { number, .. } => {
                 let label = self.label(&footnote_id(*number));
                 let _ = write!(out, "#adoc-footnote-ref({number}, {label})");
             }

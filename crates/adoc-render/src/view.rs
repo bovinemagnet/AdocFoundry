@@ -286,7 +286,13 @@ pub enum ViewInline {
     Anchor(String),
     Image(ViewImage),
     Icon(String),
-    FootnoteRef(u32),
+    FootnoteRef {
+        number: u32,
+        /// A later reference to a footnote already shown, which only links to it.
+        repeat: bool,
+        /// The name it was given (`footnote:name[...]`), on the reference that defines it.
+        name: Option<String>,
+    },
     LineBreak,
     Keyboard(Vec<String>),
     Button(String),
@@ -336,7 +342,7 @@ impl ViewInline {
                 }
             }
             Self::Image(image) => out.push_str(&image.alt),
-            Self::FootnoteRef(number) => out.push_str(&format!("[{number}]")),
+            Self::FootnoteRef { number, .. } => out.push_str(&format!("[{number}]")),
             Self::LineBreak => out.push('\n'),
             Self::Keyboard(keys) => out.push_str(&keys.join("+")),
             Self::Menu(items) => out.push_str(&items.join(" › ")),
@@ -955,6 +961,9 @@ impl Builder<'_> {
                     let title = link.title.clone().unwrap_or_else(|| {
                         if link.unresolved {
                             target.clone()
+                        } else if !target.contains(['/', ':', '$', '#']) {
+                            // An anchor with no title or reference text, as Asciidoctor shows it.
+                            format!("[{target}]")
                         } else {
                             target
                                 .rsplit(['/', ':', '$', '#'])
@@ -979,16 +988,23 @@ impl Builder<'_> {
             Inline::Image { target, alt } => ViewInline::Image(self.image(target, alt, None, None)),
             Inline::Icon { name } => ViewInline::Icon(name.clone()),
             Inline::Footnote {
-                number, content, ..
+                id,
+                number,
+                content,
             } => {
-                if !self.footnotes.iter().any(|note| note.number == *number) {
+                let repeat = self.footnotes.iter().any(|note| note.number == *number);
+                if !repeat {
                     let content = self.inlines(content);
                     self.footnotes.push(ViewFootnote {
                         number: *number,
                         content,
                     });
                 }
-                ViewInline::FootnoteRef(*number)
+                ViewInline::FootnoteRef {
+                    number: *number,
+                    repeat,
+                    name: id.clone().filter(|_| !repeat),
+                }
             }
             Inline::LineBreak => ViewInline::LineBreak,
             Inline::Keyboard(keys) => ViewInline::Keyboard(keys.clone()),

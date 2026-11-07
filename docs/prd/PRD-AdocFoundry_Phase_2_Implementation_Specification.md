@@ -196,7 +196,7 @@ App tests (test platform): `preview_renders_the_active_document`, `clicking_a_bl
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 ```
 
-The fidelity harness renders every file in `tests/fixtures/render/` with `adocfoundry-cli render` and with `asciidoctor` (when on `PATH`), normalises both (block structure and text content; class names, whitespace and attribute order ignored) and reports the differences. A test asserts that every fixture's block structure matches; it is skipped, with a message, when no `asciidoctor` is found.
+The fidelity harness renders every file in `tests/fixtures/render/` with `adocfoundry-cli render` and with `asciidoctor` (when on `PATH`), normalises both (block structure and text content; class names, whitespace and attribute order ignored) and reports the differences. A test asserts that every fixture's block structure and text match, along with its links, anchors, table cells and footnotes, but for the differences listed in the test with their reasons (#92); it is skipped, with a message, when no `asciidoctor` is found.
 
 Acceptance tests: `render_writes_html`, `fidelity_block_structure_matches_asciidoctor`.
 

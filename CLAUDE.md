@@ -40,7 +40,7 @@ cargo test -p adoc-engine                          # one crate
 cargo test -p adoc-antora resolves_cross_component # single test by name substring
 cargo test -p adocfoundry-cli --test cli           # one integration test file
 cargo test -p adoc-model --test roundtrip          # the visual editor's round-trip properties
-cargo test -p adocfoundry-cli --test fidelity      # render vs Asciidoctor; skips itself without asciidoctor
+cargo test -p adocfoundry-cli --test fidelity      # render vs Asciidoctor (allowed differences in its ALLOWED table); skips itself without asciidoctor
 cargo test --release -p adoc-engine --test perf -- --ignored --nocapture   # timing probe (ignored by default)
 cargo bench -p adoc-engine                         # benchmarks held to budgets (BENCH_RECORD=1 to only record)
 cargo test -p adoc-pdf --test themes               # theme loader against asciidoctor-pdf's key maps
