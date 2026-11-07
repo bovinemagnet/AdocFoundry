@@ -788,3 +788,97 @@ fn a_new_block_before_is_refused_where_it_cannot_go() {
     assert!(insert_before("|===\n|A\n|===\n", "A", paragraph("n")).is_err());
     assert!(insert_before("* one\n+\nAttached.\n", "Attached", paragraph("n")).is_err());
 }
+
+// --- text pasted into a new block -------------------------------------------------------------
+
+/// What each block of `text` is, and shows.
+fn blocks_of(text: &str) -> Vec<(String, String)> {
+    build(text)
+        .text_blocks()
+        .map(|(_, node, block)| {
+            let kind = format!("{:?}", node.kind);
+            let kind = kind.split([' ', '{']).next().unwrap_or("").to_owned();
+            (kind, block.display.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn a_pasted_list_item_stays_one_item() {
+    let pasted = "n\n\nleft the list\n\n== A heading";
+    let text = "* one\n* two\n";
+    for step in [
+        Step::InsertBlockBefore {
+            at: offset(text, "two"),
+            block: NewBlock::ListItem {
+                text: pasted.to_owned(),
+            },
+        },
+        Step::InsertBlock {
+            at: offset(text, "two"),
+            block: NewBlock::ListItem {
+                text: pasted.to_owned(),
+            },
+        },
+    ] {
+        let (after, _) = apply(text, step);
+        let blocks = blocks_of(&after);
+        assert_eq!(blocks.len(), 3, "{after}");
+        assert!(blocks.iter().all(|(kind, _)| kind == "ListItem"), "{after}");
+    }
+}
+
+#[test]
+fn a_pasted_paragraph_stays_one_paragraph() {
+    for pasted in [
+        "n\n\nleft the paragraph",
+        "n\n== A heading",
+        "n\n----\nleft in a listing",
+        "n\ninclude::other.adoc[]",
+        "\n\nn\n\n",
+    ] {
+        let text = "One.\n\nTwo.\n";
+        for step in [
+            Step::InsertBlockBefore {
+                at: offset(text, "Two"),
+                block: NewBlock::Paragraph {
+                    text: pasted.to_owned(),
+                },
+            },
+            Step::InsertBlock {
+                at: offset(text, "One"),
+                block: NewBlock::Paragraph {
+                    text: pasted.to_owned(),
+                },
+            },
+        ] {
+            let (after, caret) = apply(text, step);
+            let blocks = blocks_of(&after);
+            assert_eq!(blocks.len(), 3, "{pasted:?} wrote {after:?}");
+            assert!(
+                blocks.iter().all(|(kind, _)| kind == "Paragraph"),
+                "{pasted:?} wrote {after:?}"
+            );
+            assert!(after.is_char_boundary(caret));
+        }
+    }
+}
+
+#[test]
+fn a_new_block_of_nothing_but_line_breaks_is_refused() {
+    let text = "One.\n\n* an item\n";
+    let paragraph = Step::InsertBlockBefore {
+        at: offset(text, "One"),
+        block: NewBlock::Paragraph {
+            text: "\n\n".to_owned(),
+        },
+    };
+    assert!(build(text).apply(&paragraph).is_err());
+    let item = Step::InsertBlock {
+        at: offset(text, "an item"),
+        block: NewBlock::ListItem {
+            text: " \n ".to_owned(),
+        },
+    };
+    assert!(build(text).apply(&item).is_err());
+}

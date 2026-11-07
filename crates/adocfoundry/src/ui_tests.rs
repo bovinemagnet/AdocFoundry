@@ -2355,6 +2355,27 @@ fn enter_at_the_start_of_a_list_item_begins_one_before_it(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+fn pasting_into_a_new_block_stays_in_it(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst\n\nSecond\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("Second").unwrap(), &mut cx);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+            "pasted\n\n== Not a heading".to_owned(),
+        ));
+    });
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nFirst\n\npasted\n{empty}== Not a heading\n\nSecond\n"
+    );
+    assert_eq!(shown_blocks(&visual, &mut cx).len(), 4);
+}
+
+#[gpui::test]
 fn a_caret_move_abandons_a_block_before(cx: &mut TestAppContext) {
     let text = "= Page\n\nFirst\n\nSecond\n";
     let (app, _, visual, id, mut cx) = visual_workspace(text, cx);

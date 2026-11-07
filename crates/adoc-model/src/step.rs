@@ -851,7 +851,7 @@ fn text_block_mut(nodes: &mut [Node], range: SourceRange) -> Option<&mut TextBlo
 }
 
 /// Text as it may be typed into a block of `context`.
-fn sanitise(text: &str, context: TextContext) -> String {
+pub(crate) fn sanitise(text: &str, context: TextContext) -> String {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     match context {
         TextContext::Verbatim => text,

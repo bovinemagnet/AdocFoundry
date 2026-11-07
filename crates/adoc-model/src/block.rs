@@ -10,7 +10,7 @@ use crate::{
     build::list_marker,
     inline::{flatten, starts_block, write, Caret, Unit, UnitKind},
     mapping::{minimal_edit, Assoc, Mapping},
-    step::{split_display, StepError, StepResult},
+    step::{sanitise, split_display, StepError, StepResult},
     tree::{BlockPath, Model, Node, NodeKind, TextBlock, TextContext},
     SourceEdit,
 };
@@ -60,17 +60,45 @@ fn unsupported(why: &'static str) -> StepError {
 /// The source of a new block, and the part of it selected once it is inserted (the caret where
 /// typing goes next, or a placeholder to type over). The visual editor's new blocks and the
 /// source editor's insert commands share it, so both write the same source.
+/// `text`, which may be pasted, as one paragraph can hold it: no blank line to end it, and no line
+/// that would start another block.
+fn paragraph_text(text: &str) -> Result<String, StepError> {
+    let text = sanitise(text, TextContext::Flow);
+    let text = text.trim_matches('\n');
+    if text.is_empty() {
+        return Err(unsupported("a new block needs text"));
+    }
+    let lines: Vec<String> = text
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            let guard = if starts_block(line, index == 0) {
+                "{empty}"
+            } else {
+                ""
+            };
+            format!("{guard}{line}")
+        })
+        .collect();
+    Ok(lines.join("\n"))
+}
+
+/// `text`, which may be pasted, as the one line of a new list item.
+fn list_item_text(text: &str) -> Result<String, StepError> {
+    let text = sanitise(text, TextContext::Line);
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(unsupported("a new block needs text"));
+    }
+    Ok(text.to_owned())
+}
+
 pub(crate) fn new_block_body(
     new: &NewBlock,
 ) -> Result<(String, std::ops::Range<usize>), StepError> {
     Ok(match new {
         NewBlock::Paragraph { text } => {
-            let guard = if starts_block(text.lines().next().unwrap_or(""), true) {
-                "{empty}"
-            } else {
-                ""
-            };
-            let body = format!("{guard}{text}");
+            let body = paragraph_text(text)?;
             let length = body.len();
             (body, length..length)
         }
@@ -251,6 +279,7 @@ impl Model {
                     .take_while(|c| *c == ' ' || *c == '\t')
                     .collect();
                 let checkbox = if checked.is_some() { " [ ]" } else { "" };
+                let text = list_item_text(text)?;
                 let inserted = format!("\n{indent}{marker}{checkbox} {text}");
                 let caret = node.range.end + inserted.len();
                 self.structural(vec![SourceEdit::insert(node.range.end, inserted)], caret)
@@ -312,7 +341,7 @@ impl Model {
     /// Whether a list item, or else a paragraph, can go before the block starting at `at`.
     #[must_use]
     pub fn takes_block_before(&self, at: usize, list_item: bool) -> bool {
-        let text = String::new();
+        let text = "x".to_owned();
         let new = if list_item {
             NewBlock::ListItem { text }
         } else {
@@ -343,6 +372,7 @@ impl Model {
                     .take_while(|c| *c == ' ' || *c == '\t')
                     .collect();
                 let checkbox = if checked.is_some() { " [ ]" } else { "" };
+                let text = list_item_text(text)?;
                 let item = format!("{indent}{marker}{checkbox} {text}");
                 let caret = line + item.len();
                 self.structural(vec![SourceEdit::insert(line, format!("{item}\n"))], caret)
