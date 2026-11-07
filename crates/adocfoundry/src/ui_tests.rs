@@ -984,6 +984,60 @@ fn draw_preview(workspace: &Entity<WorkspaceView>, cx: &mut VisualTestContext) {
     });
 }
 
+/// How much taller a code block of one very wide line is drawn than one of a short line, in
+/// the view `keys` opens, with its frame found by `selector`.
+fn wide_code_height_ratio(
+    fence: &str,
+    selector: &'static str,
+    keys: &str,
+    cx: &mut TestAppContext,
+) -> f32 {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let measure = |line: &str, cx: &mut TestAppContext| {
+        let page = directory.path().join("page.adoc");
+        std::fs::write(
+            &page,
+            format!("= Page\n\n[source,sql]\n{fence}\n{line}\n{fence}\n"),
+        )
+        .unwrap();
+        let app = app_with(Engine::new(Settings::default()), cx);
+        let (_, mut cx) = workspace_window(&app, vec![page], cx);
+        cx.simulate_keystrokes(keys);
+        settle_engine(&app, &mut cx);
+        assert!(
+            drain_until(&app, &mut cx, |cx| {
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+                cx.debug_bounds(selector).is_some()
+            }),
+            "the code block is drawn"
+        );
+        cx.debug_bounds(selector).unwrap().size.height
+    };
+    let short = measure("-- short", cx);
+    let wide = measure(&format!("-- {}", "=".repeat(400)), cx);
+    wide / short
+}
+
+#[gpui::test]
+fn a_wide_line_of_code_stays_in_the_preview_s_frame(cx: &mut TestAppContext) {
+    let ratio = wide_code_height_ratio("----", "code-frame", "secondary-k v", cx);
+    assert!(ratio > 1.5, "the frame grew by only {ratio}");
+}
+
+#[gpui::test]
+fn a_wide_line_of_code_stays_in_the_visual_editor_s_frame(cx: &mut TestAppContext) {
+    let ratio = wide_code_height_ratio("----", "visual-code-frame", "secondary-k w", cx);
+    assert!(ratio > 1.5, "the frame grew by only {ratio}");
+}
+
+#[gpui::test]
+fn a_wide_line_of_read_only_code_stays_in_the_visual_editor_s_frame(cx: &mut TestAppContext) {
+    // A fenced block is kept as source, and the visual editor draws it as the preview does.
+    let ratio = wide_code_height_ratio("```", "code-frame", "secondary-k w", cx);
+    assert!(ratio > 1.5, "the frame grew by only {ratio}");
+}
+
 #[gpui::test]
 fn preview_lays_out_only_visible_blocks(cx: &mut TestAppContext) {
     let (_directory, _, _, _, workspace, mut cx) = previewing_paragraphs(2_000, cx);

@@ -378,6 +378,7 @@ impl VisualView {
                     .into_any_element()
             }
             NodeKind::Code { .. } | NodeKind::Literal => div()
+                .debug_selector(|| "visual-code-frame".to_owned())
                 .p_2()
                 .bg(palette.surface)
                 .border_1()
