@@ -17,7 +17,7 @@ use std::{
 use adoc_core::SourceRange;
 use adoc_engine::{
     commands::ids, CommandArgs, DocumentId, Engine, GraphFilter, GraphScope, ManualClock, Settings,
-    GIT_SETTLE, INDEX_SETTLE, QUICK_OPEN_LIMIT, RECOVERY_SETTLE,
+    GIT_SETTLE, INDEX_SETTLE, PREVIEW_SETTLE, QUICK_OPEN_LIMIT, RECOVERY_SETTLE,
 };
 
 /// What a bench must stay within.
@@ -294,6 +294,49 @@ fn settles(report: &mut Report) {
         }
         held
     });
+
+    // With the preview shown, its settle comes first: it starts the page's one parse on a worker,
+    // and the input of the preview's own parse is built when that arrives (#401). Both pumps hold
+    // the engine thread; the view tree built from the preview's parse is not this settle's.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, clock, id) = page_engine(dir.path(), &text, settings());
+    let path = adoc_engine::normalize_path(&dir.path().join("page.adoc"));
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(Duration::from_secs(60)));
+    report.time(
+        "settle_preview",
+        size.clone(),
+        30,
+        text.len(),
+        budget,
+        || {
+            insert(&mut engine, id, at, "x");
+            let typed = engine.document(id).unwrap().text_string().len();
+            clock.advance(PREVIEW_SETTLE);
+            let started = Instant::now();
+            engine.pump();
+            let mut held = started.elapsed();
+            // The arrival files the parse in the index, then starts the preview's.
+            while engine
+                .workspace()
+                .index
+                .file(&path)
+                .unwrap()
+                .document
+                .text
+                .len()
+                != typed
+            {
+                std::thread::sleep(Duration::from_millis(1));
+                let started = Instant::now();
+                engine.pump();
+                held += started.elapsed();
+            }
+            assert!(engine.wait_for_workers(Duration::from_secs(60)));
+            held
+        },
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let repo = adoc_git::testing::TestRepo::init(dir.path());

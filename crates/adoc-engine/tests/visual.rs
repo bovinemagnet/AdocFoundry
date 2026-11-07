@@ -1257,3 +1257,48 @@ fn a_block_before_the_caret_s_is_one_undo_step() {
     assert!(engine.undo(id));
     assert_eq!(text(&engine, id), TWO_PARAGRAPHS);
 }
+
+#[test]
+fn a_pause_with_the_page_shown_visually_parses_nothing_on_this_thread() {
+    use adoc_core::probe::{self, Probe};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = adoc_index_path(&page(directory.path(), "page.adoc", "= Page\n\nWords.\n"));
+    let (mut engine, clock) = engine_with_clock();
+    engine
+        .open_workspace(vec![adoc_index_path(directory.path())])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&path).unwrap();
+    show_visual(&mut engine, id);
+    // One keystroke at a time: only an edit of a single character waits for the pause.
+    for character in "\nTyped.\n".chars() {
+        let end = text(&engine, id).len();
+        engine
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(end, end),
+                    text: character.to_string(),
+                },
+            )
+            .unwrap();
+    }
+    probe::reset();
+    clock.advance(MODEL_SETTLE);
+    engine.pump();
+    assert_eq!(probe::count(Probe::Parse), 0, "the pump parsed the page");
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    engine.pump();
+    assert_eq!(shown(&engine, id), ["Page", "Words.", "Typed."]);
+    assert_eq!(
+        probe::count(Probe::Parse),
+        0,
+        "nothing parsed on this thread"
+    );
+}
+
+fn adoc_index_path(path: &Path) -> std::path::PathBuf {
+    adoc_engine::normalize_path(path)
+}

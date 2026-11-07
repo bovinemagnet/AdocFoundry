@@ -815,3 +815,253 @@ fn diagrams_are_rendered_for_their_page_s_folder() {
         [Some(adoc_index::normalize_path(&folder))]
     );
 }
+
+// --- the pause in typing (#401) ------------------------------------------------------------------
+
+/// A page shown in the preview, its preview up to date, with "Typed." just typed at its end.
+fn typed_in_preview(
+    text: &str,
+    also: &[(&str, &str)],
+) -> (tempfile::TempDir, Engine, ManualClock, DocumentId) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(directory.path());
+    std::fs::write(root.join("page.adoc"), text).unwrap();
+    for (name, contents) in also {
+        std::fs::write(root.join(name), contents).unwrap();
+    }
+    let (mut engine, clock) = engine_with_clock();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let id = engine.open(&root.join("page.adoc")).unwrap();
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    type_at_end(&mut engine, id, "\nTyped.\n");
+    (directory, engine, clock, id)
+}
+
+/// One keystroke at a time: only an edit of a single character waits for the pause.
+fn type_at_end(engine: &mut Engine, id: DocumentId, typed: &str) {
+    for character in typed.chars() {
+        let end = engine.document(id).unwrap().text_string().len();
+        engine
+            .invoke(
+                ids::EDIT_INSERT_TEXT,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(end, end),
+                    text: character.to_string(),
+                },
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn a_pause_with_the_preview_shown_parses_the_page_once_off_this_thread() {
+    use adoc_core::probe::{self, Probe};
+
+    let (directory, mut engine, clock, id) = typed_in_preview("= Page\n\nWords.\n", &[]);
+    probe::reset();
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    assert_eq!(probe::count(Probe::Parse), 0, "the pump parsed the page");
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert_eq!(paragraphs(&engine, id), ["Words.", "Typed."]);
+
+    // That parse was the index's too: its settle has nothing left to do.
+    let page = adoc_engine::normalize_path(&directory.path().join("page.adoc"));
+    let indexed = engine.workspace().index.file(&page).unwrap();
+    assert!(indexed.document.text.contains("Typed."));
+    assert_eq!(engine.next_due(), None);
+    clock.advance(adoc_engine::INDEX_SETTLE);
+    assert_eq!(engine.pump(), 0, "nothing is parsed again");
+    assert!(!engine.has_pending());
+    assert_eq!(
+        probe::count(Probe::Parse),
+        0,
+        "nothing parsed on this thread"
+    );
+}
+
+#[test]
+fn the_preview_and_the_visual_editor_share_the_pause_with_no_parse_here() {
+    use adoc_core::probe::{self, Probe};
+
+    let (_directory, mut engine, clock, id) = typed_in_preview("= Page\n\nWords.\n", &[]);
+    engine
+        .invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(id))
+        .unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    // Showing it indexed the page, so type again for a pause both are waiting for.
+    type_at_end(&mut engine, id, "\nAgain.\n");
+    probe::reset();
+    clock.advance(PREVIEW_SETTLE);
+    // The preview starts the parse; the visual model, due in the same pump, finds it running.
+    engine.pump();
+    assert_eq!(probe::count(Probe::Parse), 0, "the pump parsed the page");
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert_eq!(paragraphs(&engine, id), ["Words.", "Typed.", "Again."]);
+    let model = engine.visual(id).expect("a visual model");
+    let shown: Vec<String> = model
+        .model
+        .text_blocks()
+        .map(|(_, _, text)| text.display.clone())
+        .collect();
+    assert_eq!(shown, ["Page", "Words.", "Typed.", "Again."]);
+    assert_eq!(
+        probe::count(Probe::Parse),
+        0,
+        "nothing parsed on this thread"
+    );
+}
+
+#[test]
+fn a_page_parsed_already_during_the_pause_does_not_wait_for_another_parse() {
+    let (directory, mut engine, clock, id) = typed_in_preview("= Page\n\nWords.\n", &[]);
+    let page = adoc_engine::normalize_path(&directory.path().join("page.adoc"));
+    // As a hover or a completion reads it, on this thread.
+    let _ = engine.document(id).unwrap().parsed();
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert_eq!(paragraphs(&engine, id), ["Words.", "Typed."]);
+    // Nothing started the index's settle early: it comes at its own deadline.
+    let indexed = |engine: &Engine| {
+        let file = engine.workspace().index.file(&page).unwrap();
+        file.document.text.contains("Typed.")
+    };
+    assert!(!indexed(&engine), "indexed before its deadline");
+    clock.advance(adoc_engine::INDEX_SETTLE);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    assert!(indexed(&engine));
+}
+
+#[test]
+fn an_include_typed_before_the_pause_is_in_the_preview_after_it() {
+    use adoc_core::probe::{self, Probe};
+
+    let (directory, mut engine, clock, id) =
+        typed_in_preview("= Page\n\nWords.\n", &[("part.adoc", "From the file.\n")]);
+    // Open with unsaved text: the include map finds the buffer through the page's new include.
+    let part = adoc_engine::normalize_path(&directory.path().join("part.adoc"));
+    let buffer = engine.open(&part).unwrap();
+    type_at_end(&mut engine, buffer, "\nUnsaved in the buffer.\n");
+    engine.set_active(id);
+    type_at_end(&mut engine, id, "\ninclude::part.adoc[]\n");
+    probe::reset();
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert_eq!(
+        paragraphs(&engine, id),
+        [
+            "Words.",
+            "Typed.",
+            "From the file.",
+            "Unsaved in the buffer."
+        ]
+    );
+    assert_eq!(
+        probe::count(Probe::Parse),
+        0,
+        "nothing parsed on this thread"
+    );
+}
+
+#[test]
+fn typing_on_while_the_pause_is_parsed_gets_the_latest_text_with_no_parse_here() {
+    use adoc_core::probe::{self, Probe};
+
+    let (_directory, mut engine, clock, id) = typed_in_preview("= Page\n\nWords.\n", &[]);
+    probe::reset();
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    // The worker's answer is for a version the page has left.
+    type_at_end(&mut engine, id, "\nAnd more.\n");
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert_eq!(paragraphs(&engine, id), ["Words.", "Typed.", "And more."]);
+    assert_eq!(
+        probe::count(Probe::Parse),
+        0,
+        "nothing parsed on this thread"
+    );
+}
+
+#[test]
+fn a_command_reading_the_index_during_the_pause_leaves_the_preview_to_finish() {
+    let (_directory, mut engine, clock, id) = typed_in_preview("= Page\n\nWords.\n", &[]);
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    // Indexes the page at once, here, and drops the worker's answer when it comes.
+    engine
+        .invoke(
+            ids::WORKSPACE_QUICK_OPEN,
+            CommandArgs::Query {
+                query: String::new(),
+                document: None,
+            },
+        )
+        .unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert_eq!(paragraphs(&engine, id), ["Words.", "Typed."]);
+    assert_eq!(engine.next_due(), None);
+}
+
+#[test]
+fn closing_the_page_during_the_pause_leaves_nothing_waiting() {
+    let (_directory, mut engine, clock, id) = typed_in_preview("= Page\n\nWords.\n", &[]);
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    engine.close(id).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert!(!engine.has_pending(), "next due: {:?}", engine.next_due());
+}
+
+#[test]
+fn a_change_to_an_included_file_alone_parses_nothing_for_the_page() {
+    use adoc_core::probe::{self, Probe};
+
+    let (directory, mut engine, clock, id) = typed_in_preview(
+        "= Page\n\ninclude::part.adoc[]\n",
+        &[("part.adoc", "From the file.\n")],
+    );
+    // The page's own pause first, so that it has its parse.
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+
+    let part = adoc_engine::normalize_path(&directory.path().join("part.adoc"));
+    let buffer = engine.open(&part).unwrap();
+    engine.set_active(id);
+    type_at_end(&mut engine, buffer, "\nChanged.\n");
+    probe::reset();
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    assert!(paragraphs(&engine, id).contains(&"Changed.".to_owned()));
+    assert_eq!(
+        probe::count(Probe::Parse),
+        0,
+        "nothing parsed on this thread"
+    );
+}

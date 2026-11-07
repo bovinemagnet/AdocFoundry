@@ -408,6 +408,10 @@ impl Engine {
                 }
                 // Its parse crashed: the preview keeps the view it had until the page changes.
                 Lookup::Failed => {}
+                // Its input reads the page's line parse, which is on its way from a worker.
+                Lookup::Missing if !self.line_parse_ready(*id) => {
+                    self.rendered.scheduled.insert(*id, now);
+                }
                 Lookup::Missing => {
                     if let Some(snapshot) = self.preview_snapshot(*id) {
                         self.spawn_preview(snapshot);
