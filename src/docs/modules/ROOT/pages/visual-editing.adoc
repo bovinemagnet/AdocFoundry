@@ -167,7 +167,39 @@ Its first character writes it to the source.
 * A second Enter on a new, empty list item leaves the list.
 * In a code block, Enter inserts a new line.
 A code block with a language, such as `[source,rust]`, is syntax-highlighted as you type, as the preview highlights it.
-* At the start of a block, Enter does nothing.
+* At the start of a paragraph, heading or list item, Enter begins a new block before it.
+Like the block begun at the end of a block, it exists only on screen until you type its first character.
+Before a list item it is another list item, and a second Enter does nothing.
+Before a paragraph or heading it is a paragraph.
+It goes before the block's attributes, and before an admonition paragraph it goes before the whole admonition.
+Moving the caret abandons it.
+* Enter does nothing at the start of the document title, a table cell, a description list term or description, or a paragraph attached to a list item.
+* Enter on a selection that spans blocks deletes the selection, then splits where the two blocks joined; see <<delete-across-blocks>>.
+If the join leaves the caret at the edge of the block, the deletion is all that happens.
+
+[#delete-across-blocks]
+=== Deleting across blocks
+
+A selection may span blocks.
+Backspace, Delete, typing over it, and Enter on it all work.
+
+What is left of the first and last blocks joins in the first block, which keeps its kind, and the blocks between them are removed.
+Selecting from the middle of one paragraph to the middle of the next and pressing Backspace leaves one paragraph.
+Formatting that the selection cuts stays closed.
+When the first block is a heading, the text taken into it goes on one line.
+
+If every character of the blocks is selected, the blocks go with their attributes, and the caret moves to the next text.
+
+Undo restores everything in one step, including when you typed over the selection.
+
+The deletion is refused, and nothing changes, when:
+
+* anything between the ends can only be edited in the source: an include, an attribute entry, a conditional, a comment, or any other read-only block;
+* the selection crosses the edge of a delimited block, such as an example, sidebar, quote, open block, delimited admonition, table or description list;
+* either end is in code or literal text, a table cell, a description list term or description, or the document title; or
+* a list item with a `+` continuation attached would leave its attached blocks behind.
+
+Do these in the source editor.
 
 === Backspace at the start of a block
 
@@ -327,12 +359,11 @@ Clicking read-only text shows a message saying the same.
 
 == Current limits
 
-* A selection cannot be deleted across blocks, and typing over such a selection or pressing Enter on one is refused.
+* A selection cannot be deleted across blocks in the cases listed under <<delete-across-blocks>>, and typing over such a selection or pressing Enter on one is refused likewise.
 Do those in the source editor.
 Marks can be applied across blocks.
 * Included content cannot be edited in place.
 Use Edit partial.
-* Enter at the start of a block does nothing.
 * Bold text and headings may show at regular weight on Linux when the system's IBM Plex Sans is installed as a variable font.
 This is a font loading limit that affects the preview in the same way.
 The source is unaffected.

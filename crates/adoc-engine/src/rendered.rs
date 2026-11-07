@@ -457,6 +457,13 @@ impl Engine {
         ))
     }
 
+    /// The parse input of document `id` as it would be if it held `text`.
+    pub(crate) fn parse_input_of_text(&self, id: DocumentId, text: &str) -> Option<OwnedInput> {
+        let document = self.documents.get(&id)?;
+        let parsed = adoc_parser::parse(&crate::document::uri_for(&document.path), text).document;
+        Some(self.owned_input(&document.path, text.into(), document.version, &parsed))
+    }
+
     /// The parse input of the page at `path`: its open buffer when it is open, else the file.
     #[cfg(feature = "typst")]
     pub(crate) fn parse_input_for_path(&self, path: &Path) -> Option<OwnedInput> {

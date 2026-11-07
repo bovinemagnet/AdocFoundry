@@ -1068,3 +1068,192 @@ fn a_shared_parse_that_crashes_is_not_tried_again() {
         .count();
     assert_eq!(failed, 1, "the preview says once that it crashed");
 }
+
+/// A page shown in the visual editor, with the offsets of `from` (after it) and `to` (before it).
+fn across_blocks(
+    directory: &Path,
+    text: &str,
+    from: &str,
+    to: &str,
+) -> (Engine, DocumentId, SourceRange) {
+    let (mut engine, _) = engine_with_clock();
+    let id = engine.open(&page(directory, "page.adoc", text)).unwrap();
+    show_visual(&mut engine, id);
+    let selection = SourceRange::new(
+        text.find(from).unwrap() + from.len(),
+        text.rfind(to).unwrap(),
+    );
+    (engine, id, selection)
+}
+
+const TWO_PARAGRAPHS: &str = "= Page\n\nFirst para\n\nSecond para\n";
+
+#[test]
+fn backspace_over_a_selection_across_blocks_leaves_one_block() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id, selection) =
+        across_blocks(directory.path(), TWO_PARAGRAPHS, "First ", "para\n");
+    let after = visual(
+        &mut engine,
+        ids::VISUAL_DELETE_BACKWARD,
+        id,
+        selection,
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nFirst para\n");
+    assert_eq!(after.start, selection.start);
+    assert_eq!(shown(&engine, id), ["Page", "First para"]);
+    engine
+        .invoke(ids::EDIT_UNDO, CommandArgs::Document(id))
+        .unwrap();
+    assert_eq!(text(&engine, id), TWO_PARAGRAPHS);
+    assert_eq!(shown(&engine, id), ["Page", "First para", "Second para"]);
+}
+
+#[test]
+fn a_selection_made_backwards_deletes_the_same() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id, selection) =
+        across_blocks(directory.path(), TWO_PARAGRAPHS, "First ", "para\n");
+    visual(
+        &mut engine,
+        ids::VISUAL_DELETE_FORWARD,
+        id,
+        SourceRange::new(selection.end, selection.start),
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nFirst para\n");
+}
+
+#[test]
+fn typing_over_a_selection_across_blocks_is_one_undo_step() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id, selection) =
+        across_blocks(directory.path(), TWO_PARAGRAPHS, "First ", "para\n");
+    let after = visual(
+        &mut engine,
+        ids::VISUAL_INSERT_TEXT,
+        id,
+        selection,
+        VisualValue::Text("new ".to_owned()),
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nFirst new para\n");
+    assert_eq!(after.start, "= Page\n\nFirst new ".len());
+    assert_eq!(shown(&engine, id), ["Page", "First new para"]);
+    // A later character goes on where the caret was left.
+    let selection = SourceRange::new(after.start, after.start);
+    visual(
+        &mut engine,
+        ids::VISUAL_INSERT_TEXT,
+        id,
+        selection,
+        VisualValue::Text("x".to_owned()),
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nFirst new xpara\n");
+    assert!(engine.undo(id));
+    assert!(engine.undo(id));
+    assert_eq!(text(&engine, id), TWO_PARAGRAPHS);
+}
+
+#[test]
+fn what_cannot_be_typed_over_a_selection_across_blocks_leaves_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let page_text = "= Page\n\nFirst para\n\n----\ncode\n----\n";
+    let (mut engine, id, _) = across_blocks(directory.path(), page_text, "First ", "para\n");
+    let start = page_text.find("para").unwrap();
+    let end = page_text.find("ode").unwrap();
+    assert!(visual(
+        &mut engine,
+        ids::VISUAL_INSERT_TEXT,
+        id,
+        SourceRange::new(start, end),
+        VisualValue::Text("x".to_owned()),
+    )
+    .is_err());
+    assert_eq!(text(&engine, id), page_text);
+    assert!(!engine.undo(id), "nothing was recorded");
+}
+
+#[test]
+fn enter_over_a_selection_across_blocks_splits_where_they_joined() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id, selection) =
+        across_blocks(directory.path(), TWO_PARAGRAPHS, "First ", "para\n");
+    let after = visual(
+        &mut engine,
+        ids::VISUAL_SPLIT_BLOCK,
+        id,
+        selection,
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nFirst\n\npara\n");
+    assert_eq!(after.start, "= Page\n\nFirst\n\n".len());
+    assert!(engine.undo(id));
+    assert_eq!(text(&engine, id), TWO_PARAGRAPHS);
+}
+
+#[test]
+fn enter_over_a_selection_ending_a_block_only_deletes_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let text_before = "= Page\n\nFirst para\n\nSecond para\n\nThird\n";
+    let (mut engine, id, _) = across_blocks(directory.path(), text_before, "First ", "para\n");
+    let start = text_before.find("First ").unwrap() + "First ".len();
+    let end = text_before.find("\n\nThird").unwrap();
+    visual(
+        &mut engine,
+        ids::VISUAL_SPLIT_BLOCK,
+        id,
+        SourceRange::new(start, end),
+        VisualValue::None,
+    )
+    .unwrap();
+    assert_eq!(text(&engine, id), "= Page\n\nFirst\n\nThird\n");
+}
+
+#[test]
+fn a_refused_selection_across_blocks_changes_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let page_text = "= Page\n\nFirst para\n\n// a comment\n\nSecond para\n";
+    let (mut engine, id, selection) =
+        across_blocks(directory.path(), page_text, "First ", "para\n");
+    for (command, value) in [
+        (ids::VISUAL_DELETE_BACKWARD, VisualValue::None),
+        (ids::VISUAL_INSERT_TEXT, VisualValue::Text("x".to_owned())),
+        (ids::VISUAL_SPLIT_BLOCK, VisualValue::None),
+    ] {
+        assert!(matches!(
+            visual(&mut engine, command, id, selection, value),
+            Err(EngineError::Refused(_))
+        ));
+        assert_eq!(text(&engine, id), page_text);
+    }
+}
+
+#[test]
+fn a_block_before_the_caret_s_is_one_undo_step() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut engine, id, _) = across_blocks(directory.path(), TWO_PARAGRAPHS, "First", "para\n");
+    let at = TWO_PARAGRAPHS.find("Second").unwrap();
+    let after = visual(
+        &mut engine,
+        ids::VISUAL_INSERT_BLOCK,
+        id,
+        SourceRange::new(at, at),
+        VisualValue::NewBlockBefore(adoc_engine::NewBlock::Paragraph {
+            text: "n".to_owned(),
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        text(&engine, id),
+        "= Page\n\nFirst para\n\nn\n\nSecond para\n"
+    );
+    assert_eq!(after.start, at + 1);
+    assert!(engine.undo(id));
+    assert_eq!(text(&engine, id), TWO_PARAGRAPHS);
+}

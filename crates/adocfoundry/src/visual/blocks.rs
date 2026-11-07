@@ -846,10 +846,14 @@ impl VisualView {
                     .border_color(draw.context.palette.border)
                     .pl_1()
             })
-            .child(element)
-            .when_some(pending, |text, pending| {
+            .when_some(pending.filter(|pending| pending.before), |text, pending| {
                 text.child(pending_block(pending, draw))
             })
+            .child(element)
+            .when_some(
+                pending.filter(|pending| !pending.before),
+                |text, pending| text.child(pending_block(pending, draw)),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
@@ -886,7 +890,9 @@ impl VisualView {
 fn pending_block(pending: super::Pending, draw: &Draw<'_>) -> AnyElement {
     let caret = div().w(px(2.)).h(px(18.)).bg(draw.caret);
     h_flex()
-        .pt_3()
+        .debug_selector(|| "visual-pending-block".to_owned())
+        .when(pending.before, |line| line.pb_3())
+        .when(!pending.before, |line| line.pt_3())
         .gap_2()
         .when(pending.list_item, |line| {
             line.child(div().min_w(px(18.)).child("•"))

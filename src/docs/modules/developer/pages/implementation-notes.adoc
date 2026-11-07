@@ -303,8 +303,8 @@ It was not adopted, and its design (steps with inverses, step maps, marks on tex
 
 |Deleting across blocks
 |`Delete` across blocks joins the first and last text blocks
-|Refused. Typing over, or pressing Enter on, a selection that spans blocks is refused too.
-|The effect of a join on everything between the blocks is easier to judge in the source. Deferred.
+|`Model::delete_across` joins what is left of the two blocks in the first block's context, keeping its kind, and removes the blocks between; typing over, or pressing Enter on, the selection does the same first, as one undo step. Still refused when a block between the ends is read-only, when the selection crosses the edge of a delimited block, when an end is in code, a table cell, a term or description or the title, or when a continuation's attached blocks would be left behind.
+|Delimited block fences and read-only content are easier to judge in the source.
 
 |Joining
 |Backspace joins with the previous paragraph
@@ -313,7 +313,7 @@ It was not adopted, and its design (steps with inverses, step maps, marks on tex
 
 |Enter at the end of a block
 |`SplitBlock`
-|The new paragraph or list item exists only in the view until its first character, which `visual.insert_block` writes. Enter on a pending list item leaves the list. Enter at the start of a block does nothing.
+|The new paragraph or list item exists only in the view until its first character, which `visual.insert_block` writes. Enter on a pending list item leaves the list. Enter at the start of a paragraph, heading or list item begins a new block before it (`InsertBlockBefore`), which exists only in the view in the same way.
 |AsciiDoc has no empty paragraph or empty list item.
 
 |Split

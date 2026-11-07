@@ -73,11 +73,13 @@ impl Selection {
     }
 }
 
-/// A new block waiting for its first character, after the caret's block.
+/// A new block waiting for its first character, beside the caret's block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Pending {
     /// Another item of the caret's list, rather than a paragraph.
     pub list_item: bool,
+    /// Before the caret's block, from Enter at its start, rather than after it.
+    pub before: bool,
 }
 
 /// What the visual editor tells the window around it.
@@ -439,12 +441,12 @@ impl VisualView {
                     text: text.to_owned(),
                 }
             };
-            self.run(
-                ids::VISUAL_INSERT_BLOCK,
-                VisualValue::NewBlock(block),
-                window,
-                cx,
-            );
+            let value = if pending.before {
+                VisualValue::NewBlockBefore(block)
+            } else {
+                VisualValue::NewBlock(block)
+            };
+            self.run(ids::VISUAL_INSERT_BLOCK, value, window, cx);
             return;
         }
         self.run(
@@ -455,12 +457,14 @@ impl VisualView {
         );
     }
 
-    /// Enter: a new line in code, a split in the middle of a block, and at the end of one a
-    /// pending block (a second Enter on a pending list item leaves the list).
+    /// Enter: a new line in code, a split in the middle of a block, and at either end of one a
+    /// pending block (a second Enter on a pending list item after the caret's leaves the list).
     fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(pending) = &mut self.pending {
-            pending.list_item = false;
-            cx.notify();
+            if !pending.before {
+                pending.list_item = false;
+                cx.notify();
+            }
             return;
         }
         let Some((path, block)) = self.block_at(self.selection.head) else {
@@ -482,12 +486,29 @@ impl VisualView {
                 kind,
                 Some(adoc_engine::NodeKind::Cell | adoc_engine::NodeKind::Term)
             ) {
-                self.pending = Some(Pending { list_item });
+                self.pending = Some(Pending {
+                    list_item,
+                    before: false,
+                });
                 cx.notify();
             }
             return;
         }
         if self.selection.is_empty() && display == 0 {
+            let list_item = matches!(kind, Some(adoc_engine::NodeKind::ListItem { .. }));
+            // A block is never begun that its first character could not write.
+            let takes_one = self.shown.as_ref().is_some_and(|shown| {
+                shown
+                    .model
+                    .takes_block_before(self.selection.head, list_item)
+            });
+            if takes_one {
+                self.pending = Some(Pending {
+                    list_item,
+                    before: true,
+                });
+                cx.notify();
+            }
             return;
         }
         self.run(ids::VISUAL_SPLIT_BLOCK, VisualValue::None, window, cx);
