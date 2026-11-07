@@ -50,6 +50,7 @@ mod page_age;
 mod parses;
 #[cfg(feature = "typst")]
 mod pdf_preview;
+mod place_images;
 mod preview;
 mod problems;
 mod profiles;
@@ -122,6 +123,7 @@ pub use new_page::{NewPage, PageModule};
 pub use new_project::{NewProject, NewProjectField, NewProjectProblem, Welcome};
 #[cfg(feature = "typst")]
 pub use pdf_preview::PdfPreview;
+pub use place_images::{ImageSource, MAX_PLACED_IMAGE};
 pub use preview::{
     EditPreview, FileEdits, FileMove, PreviewId, SearchId, SearchMatch, SearchRequest,
 };

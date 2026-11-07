@@ -21,7 +21,8 @@ use std::{
 use adoc_core::SourceRange;
 use adoc_engine::{
     commands::ids, Assoc, BlockPath, CommandArgs, CommandId, CommandOutcome, DocumentId,
-    EngineEvent, Mapping, MarkSet, SourceEdit, TextBlock, VisualArgs, VisualDocument, VisualValue,
+    EngineEvent, ImageSource, Mapping, MarkSet, SourceEdit, TextBlock, VisualArgs, VisualDocument,
+    VisualValue,
 };
 use gpui::{
     canvas, div, prelude::FluentBuilder as _, px, App, Context, ElementInputHandler, Entity,
@@ -894,6 +895,86 @@ impl VisualView {
         }
     }
 
+    /// Copies `images` where the page can name them and writes them after the caret's block.
+    fn place_images(
+        &mut self,
+        images: Vec<ImageSource>,
+        alt: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        window.focus(&self.focus, cx);
+        self.run(
+            ids::EDIT_PLACE_IMAGES,
+            VisualValue::Images { images, alt },
+            window,
+            cx,
+        )
+    }
+
+    /// Places files, as dropped or copied. There is no text to type a macro's alt text into
+    /// here, so one image asks for it straight away.
+    fn place_files(
+        &mut self,
+        images: Vec<ImageSource>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let single = images.len() == 1;
+        if self.place_images(images, String::new(), window, cx) && single {
+            self.alt_dialog(self.selection.head, window, cx);
+        }
+    }
+
+    /// Image files dropped on the text block at `path` go in after it; dropped anywhere else
+    /// (`None`), after the caret's.
+    pub(crate) fn drop_files(
+        &mut self,
+        path: Option<&[usize]>,
+        paths: &gpui::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let images = crate::image_paste::dropped_images(paths, window, cx);
+        if images.is_empty() {
+            return;
+        }
+        if let Some(offset) = path.and_then(|path| self.offset_at(path, window.mouse_position())) {
+            self.set_selection(Selection::caret(offset), cx);
+        }
+        self.place_files(images, window, cx);
+    }
+
+    /// Takes a paste holding an image, returning whether it did.
+    pub(crate) fn paste_image(
+        &mut self,
+        item: &gpui::ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use crate::image_paste::{ask_name, pasted_image, PastedImage};
+        match pasted_image(item) {
+            None => false,
+            Some(PastedImage::Files(paths)) => {
+                let images = paths.into_iter().map(ImageSource::File).collect();
+                self.place_files(images, window, cx);
+                true
+            }
+            Some(PastedImage::Picture(picture)) => {
+                let view = cx.weak_entity();
+                let place = move |image, alt, window: &mut Window, cx: &mut gpui::App| {
+                    let _ = view.update(cx, |view, cx| {
+                        view.place_images(vec![image], alt, window, cx);
+                    });
+                };
+                let app = self.app.clone();
+                let document = self.document;
+                ask_name(&app, document, picture, true, place, window, cx);
+                true
+            }
+        }
+    }
+
     // --- reading the selection ---------------------------------------------------------------
 
     /// The text the selection shows, blocks separated by blank lines.
@@ -1057,6 +1138,11 @@ impl Render for VisualView {
             .on_mouse_up_out(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, _| this.dragging = false),
+            )
+            .on_drop(
+                cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                    this.drop_files(None, paths, window, cx);
+                }),
             )
             .map(|view| input::actions(view, cx))
             .map(|view| toolbar::actions(view, cx))

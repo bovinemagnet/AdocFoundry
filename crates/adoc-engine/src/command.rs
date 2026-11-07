@@ -96,6 +96,13 @@ pub enum CommandArgs {
         id: DocumentId,
         new_path: PathBuf,
     },
+    /// Images to copy where a page can name them and write into it at the caret of `range`:
+    /// `edit.place_images` in the source editor.
+    Images {
+        id: DocumentId,
+        range: SourceRange,
+        images: Vec<crate::ImageSource>,
+    },
     /// A visual editor command: a selection in a document's visual model.
     Visual(crate::VisualArgs),
     /// A PDF export: what to export and where to write it.

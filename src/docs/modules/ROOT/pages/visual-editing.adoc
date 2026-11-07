@@ -302,12 +302,21 @@ Column widths follow `cols`.
 A cell spanning columns (`2+|`) takes the width of the columns it spans.
 A cell spanning rows (`.2+|`) is drawn in the row where it starts only, as in the preview, so the cells below it start at the left.
 
+[[images]]
 == Images
 
 Insert menu, then Image… asks for a target and alt text and adds a block image after the block at the caret.
 Click an image to open the same dialog and change its target and alt text.
 Only those two parts are rewritten, and any other attributes on the image macro are kept.
 Images are drawn from the file their target resolves to, through the Antora catalog; a missing image shows "Missing image: " and its target.
+
+Pasting a picture, or dropping image files, works here as in the source editor, and is described in xref:using-the-editor.adoc#paste-images[Adding images to a page].
+What differs is where the image goes and how alt text is asked for.
+
+* The image goes after the block at the caret, or after the block under the pointer for a drop on a text block.
+* There is no text to type alt text into, so the Paste Image dialog also has an *Alt text* field.
+* A single dropped file opens the image dialog, ready for its alt text.
+* Several dropped files ask nothing, and start with empty alt text.
 
 == The toolbar
 

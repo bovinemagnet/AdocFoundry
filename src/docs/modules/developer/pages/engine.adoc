@@ -244,6 +244,29 @@ While an image is active, `Engine::active()` is `None`, so document commands are
 Following an image link opens it as a preview and is recorded in back history, and going back or forward to an image reopens it.
 Images are never indexed, diagnosed or previewed.
 
+[[place-images]]
+== Placing images
+
+`edit.place_images`, in `place_images.rs`, adds pasted or dropped pictures to a page.
+The source editor invokes it with `CommandArgs::Images { id, range, images }`.
+The visual editor sends `VisualValue::Images { images, alt }` through `CommandArgs::Visual`.
+An `ImageSource` is `File(path)` or `Pasted { name, extension, bytes }`, and `MAX_PLACED_IMAGE` is the size limit.
+
+* `plan_images` works out the targets and the files to write, and writes nothing.
+* The edit is worked out next, as `Step::InsertBlock` with `NewBlock::Images` or through `insert_block_in_source`, so anything refused leaves nothing behind.
+* Only then does `with_files_of` write the files, in the undo group that also holds the edit.
+It records them in `group_created`, so `replay_creations` takes them back on undo and makes them again on redo.
+* `resources_changed`, in `workspace.rs`, updates the catalog and what reads it straight away.
+The preview shows the image without waiting for the watcher, whose later report then finds nothing to do.
+* `suggested_image_name` and `pasted_image_path` serve the name dialog.
+
+The copy happens on the caller's thread, which is why the size is limited.
+Undo keeps the bytes in memory to write them again.
+
+In the app, `image_paste.rs` reads the clipboard and drops.
+`drags_from_outside_use_the_mouse`, mounted at the workspace root, exists because GPUI turns a file drag from another program into mouse events without ending its keyboard mode.
+In that mode no element counts as hovered, and `on_drop` never fires.
+
 == Commands
 
 A `Command` has a `CommandSpec` and a `run` function.

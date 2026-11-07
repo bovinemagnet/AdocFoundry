@@ -538,6 +538,7 @@ mod tests {
             ids::WORKSPACE_APPLY_PREVIEW,
             ids::VISUAL_INSERT_TEXT,
             ids::VISUAL_INSERT_BLOCK,
+            ids::EDIT_PLACE_IMAGES,
             ids::VISUAL_DELETE_BACKWARD,
             ids::VISUAL_DELETE_FORWARD,
             ids::EDIT_SET_BLOCK_TYPE,

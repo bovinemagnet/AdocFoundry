@@ -91,6 +91,12 @@ pub enum VisualValue {
         target: String,
         alt: String,
     },
+    /// Images for `edit.place_images` to copy where the page can name them. `alt` is the alt
+    /// text of a single image; several begin without.
+    Images {
+        images: Vec<crate::ImageSource>,
+        alt: String,
+    },
 }
 
 struct Session {
@@ -377,7 +383,10 @@ impl Engine {
 
     /// The current model of `args.id`, rebuilt first if a change from elsewhere left it stale;
     /// refused when the selection belongs to an older version of the document.
-    fn visual_for(&mut self, args: &VisualArgs) -> Result<Arc<VisualDocument>, EngineError> {
+    pub(crate) fn visual_for(
+        &mut self,
+        args: &VisualArgs,
+    ) -> Result<Arc<VisualDocument>, EngineError> {
         let version = self
             .document(args.id)
             .ok_or(EngineError::UnknownDocument(args.id))?
@@ -394,7 +403,7 @@ impl Engine {
     }
 
     /// Applies a step's result to document `id`.
-    fn apply_visual(
+    pub(crate) fn apply_visual(
         &mut self,
         id: DocumentId,
         before: &str,
@@ -861,7 +870,7 @@ fn visual_args(command: crate::CommandId, args: CommandArgs) -> Result<VisualArg
     }
 }
 
-fn refused(error: adoc_model::StepError) -> EngineError {
+pub(crate) fn refused(error: adoc_model::StepError) -> EngineError {
     EngineError::Refused(error.to_string())
 }
 

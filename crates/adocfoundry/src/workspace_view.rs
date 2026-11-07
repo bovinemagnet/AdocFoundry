@@ -5143,6 +5143,7 @@ impl Render for WorkspaceView {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
+            .child(crate::image_paste::drags_from_outside_use_the_mouse())
             .on_action(cx.listener(Self::on_open_folder))
             .on_action(cx.listener(Self::on_open_file))
             .on_action(cx.listener(Self::on_quick_open))

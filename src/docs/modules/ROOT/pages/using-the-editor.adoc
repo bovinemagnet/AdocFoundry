@@ -731,6 +731,46 @@ The visual editor asks for the target and alt text in a dialog instead.
 With nothing selected it inserts `+link:[]+`.
 The visual editor opens a dialog asking for the target and text instead.
 
+[[paste-images]]
+=== Adding images to a page
+
+Paste a picture from the clipboard, such as a screenshot, with `Cmd-V` or `Ctrl-V`.
+A Paste Image dialog asks for a file name.
+The field offers a free name made from the page's own, such as `guide-1`, which is used if you type nothing.
+The extension comes from the picture's format, so it need not be typed.
+The dialog shows the path the picture will be saved to, and refuses a name already in use as you type it.
+
+You can also drop image files onto the source or visual editor from a file manager, or copy them there and paste.
+No name is asked.
+Each file keeps its own name, made fit for a macro: letters, digits, `_` and `.` stay, and a hyphen replaces each run of anything else.
+If another picture has that name, the copy is numbered (`flow-2.png`).
+If the same picture is already there, it is used again rather than copied.
+
+A file the page can already name is not copied.
+An image in the page's module is written as its path in the module's images (`shots/one.png`), and one in another module by its resource ID (`other:shared.png`).
+Outside Antora, the same goes for a file under the folder the page's image targets start from.
+
+Copies go to the `images` family of the page's module, which is made if it is missing.
+Outside Antora they go to the page's `imagesdir` if it declares one, otherwise to an `images` folder beside the page.
+
+In the source editor, the block macro goes in at the caret, or at the pointer for a drop.
+It is on a block of its own with blank lines around it, as Insert Image does.
+The caret is left in the empty alt text between the brackets, ready to type.
+
+* Several files dropped together are one undo step.
+Undo takes back the macro and any file it copied, unless the file has changed since.
+Redo makes them again.
+* Text on the clipboard is pasted as text even when a picture comes with it, as office programs often copy both.
+Copied files that are not all images paste as their paths.
+* A selection is not replaced.
+The image goes in as Insert Image does, and the selected text stays.
+
+An image larger than 64 MiB is refused, as is a file that is not an image by its extension.
+A page outside the workspace folders is refused, and so is an images folder that is a link.
+A dropped file that is not an image is reported and left out.
+An existing file whose name a macro cannot write (a space, a bracket or a brace in it) is refused, and the message says to rename it first.
+The visual editor's version of this is described in xref:visual-editing.adoc#images[Images].
+
 [[format-table]]
 == Formatting a table in the source editor
 
