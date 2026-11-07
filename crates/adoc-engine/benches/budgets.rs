@@ -269,6 +269,10 @@ fn settles(report: &mut Report) {
     let text = synthetic_document(20_000);
     let size = "20000 lines".to_owned();
     let budget = Budget::Median(Duration::from_millis(1));
+    // A CI runner's median for the same code varies nearly threefold between runs here, reaching
+    // 1.01 ms for `settle_index`. Parsing on the engine thread takes over 5 ms there, so this
+    // still catches that.
+    let filing_budget = Budget::Median(Duration::from_millis(2));
 
     let dir = tempfile::tempdir().unwrap();
     let (mut engine, clock, id) = page_engine(dir.path(), &text, settings());
@@ -277,23 +281,30 @@ fn settles(report: &mut Report) {
     // The pause hands the page to a worker, which parses and prepares its index entry; a later
     // pump files the entry and diagnoses (#238). Both pumps hold the engine thread: their sum is
     // timed, not the worker's time between them.
-    report.time("settle_index", size.clone(), 30, text.len(), budget, || {
-        insert(&mut engine, id, at, "x");
-        clock.advance(INDEX_SETTLE);
-        let started = Instant::now();
-        engine.pump();
-        let mut held = started.elapsed();
-        loop {
-            std::thread::sleep(Duration::from_millis(10));
+    report.time(
+        "settle_index",
+        size.clone(),
+        30,
+        text.len(),
+        filing_budget,
+        || {
+            insert(&mut engine, id, at, "x");
+            clock.advance(INDEX_SETTLE);
             let started = Instant::now();
-            let applied = engine.pump();
-            if applied > 0 {
-                held += started.elapsed();
-                break;
+            engine.pump();
+            let mut held = started.elapsed();
+            loop {
+                std::thread::sleep(Duration::from_millis(10));
+                let started = Instant::now();
+                let applied = engine.pump();
+                if applied > 0 {
+                    held += started.elapsed();
+                    break;
+                }
             }
-        }
-        held
-    });
+            held
+        },
+    );
 
     // With the preview shown, its settle comes first: it starts the page's one parse on a worker,
     // and the input of the preview's own parse is built when that arrives (#401). Both pumps hold
@@ -309,7 +320,7 @@ fn settles(report: &mut Report) {
         size.clone(),
         30,
         text.len(),
-        budget,
+        filing_budget,
         || {
             insert(&mut engine, id, at, "x");
             let typed = engine.document(id).unwrap().text_string().len();
