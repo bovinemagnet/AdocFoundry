@@ -219,9 +219,11 @@ fn each_settle_is_due_at_its_own_deadline() {
         deadlines_after_typing(plain(), |engine, _| engine.enable_spelling()),
         [INDEX_SETTLE, SPELLING_SETTLE]
     );
+    // The first to settle starts the page's one parse, which is the index's too (#401), so the
+    // index has no deadline of its own left.
     assert_eq!(
         deadlines_after_typing(plain(), |engine, id| engine.request_preview(id)),
-        [PREVIEW_SETTLE, INDEX_SETTLE]
+        [PREVIEW_SETTLE]
     );
     assert_eq!(
         deadlines_after_typing(plain(), |engine, id| {
@@ -229,7 +231,7 @@ fn each_settle_is_due_at_its_own_deadline() {
                 .invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(id))
                 .unwrap();
         }),
-        [MODEL_SETTLE, INDEX_SETTLE]
+        [MODEL_SETTLE]
     );
     let mut saving = plain();
     saving.editor.auto_save = AutoSave::AfterDelay;

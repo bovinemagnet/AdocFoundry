@@ -46,6 +46,10 @@ Whether a page is unsaved is decided without hashing it: `DocumentState` keeps `
 Re-indexing the document and refreshing diagnostics are different for the typing commands: `edit.insert_text`, `edit.replace_range`, `visual.insert_text`, `visual.delete_backward` and `visual.delete_forward` (`TYPING_COMMANDS` in `engine.rs`).
 A small edit made by one of them, one replacement of at most four bytes by at most one character (`is_small`), waits until typing pauses for `INDEX_SETTLE` (150 ms).
 Then `pump` hands the page to a worker (`index_settle.rs`) instead of parsing it on the engine thread.
+The preview and the visual model settle sooner than the index, and the input of their parse reads the page's includes from that same line parse.
+So whichever comes first starts the settle early (`line_parse_ready`) and waits for its answer, which resumes them (`resume_due_parses`).
+A pause in typing therefore parses the page once with `adoc-parser`, on a worker, and the index's own deadline has nothing left to do.
+A page already parsed during the pause, by a hover say, does not wait: its settle comes at its own deadline.
 The worker parses a copy of the text and prepares the page's index entry, an `adoc_index::PreparedFile` holding the parse, its anchors and generated section ids, its symbols and their words, and its includes' targets.
 A later `pump` files the entry with `WorkspaceIndex::insert_prepared` and re-diagnoses, but only if the page is still at the version and path the worker parsed; otherwise the answer is dropped.
 When the entry was prepared against the path the index still shares for the file (`WorkspaceIndex::shared_path`), `insert_prepared` visits only the table keys whose xref targets, symbol names or includes changed, so typing in prose, which moves every range after it but changes none of those, touches almost nothing.

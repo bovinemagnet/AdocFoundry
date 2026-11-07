@@ -3,6 +3,11 @@
 //! and include targets), so the engine thread only files it and diagnoses. The answer is kept
 //! only while the page is still at the version and path parsed; a command that reads the index
 //! while the worker runs indexes the page at once instead, and the answer is dropped.
+//!
+//! The preview and the visual model settle sooner, and the input of their parse reads the page's
+//! includes from this parse. So whichever comes first starts the settle early and waits for its
+//! answer (#401): a pause in typing parses the page once, on a worker, and the index's own
+//! deadline then has nothing left to do.
 
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -82,6 +87,25 @@ impl Engine {
         });
     }
 
+    /// Whether `id`'s line parse is there for a parse's input to read, without parsing it on this
+    /// thread. While typing's pause has yet to reach the index, this starts its settle early; the
+    /// caller waits, and is resumed when the answer arrives. A page no settle will answer for
+    /// reads as ready, and is parsed where it is read.
+    pub(crate) fn line_parse_ready(&mut self, id: DocumentId) -> bool {
+        if self
+            .documents
+            .get(&id)
+            .is_none_or(|document| document.parsed.get().is_some())
+        {
+            return true;
+        }
+        if self.pending_index.remove(&id).is_some() {
+            self.start_settle(id);
+            return false;
+        }
+        !self.settling.running.contains_key(&id)
+    }
+
     /// Files a page a worker prepared, if it is still the page as it stands.
     pub(crate) fn settle_arrived(&mut self, prepared: Box<Prepared>) {
         let (id, version, ticket) = (prepared.id, prepared.version, prepared.ticket);
@@ -114,9 +138,11 @@ impl Engine {
         self.settling.garbage.push(Box::new(retired));
         self.graph_file_changed(&path);
         self.refresh_diagnosed_with(&path, before);
+        self.resume_due_parses();
     }
 
     /// A settle's worker panicked: the index keeps the page as it was until it is next edited.
+    /// Anything waiting for its parse is still due, and at the next pump parses where it reads.
     pub(crate) fn settle_crashed(&mut self, id: DocumentId, ticket: u64) {
         if self.settling.running.get(&id) == Some(&ticket) {
             self.settling.running.remove(&id);

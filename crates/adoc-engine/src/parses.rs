@@ -94,6 +94,10 @@ impl Engine {
 
     /// Parses the active page `id` on a worker, for whichever of its consumers wants it next.
     pub(crate) fn start_shared_parse(&mut self, id: DocumentId) -> bool {
+        // Whoever asked comes back when the page's line parse arrives.
+        if !self.line_parse_ready(id) {
+            return true;
+        }
         let Some(input) = self.parse_input(id) else {
             return false;
         };
@@ -139,7 +143,11 @@ impl Engine {
         }
         parses.running = None;
         parses.current = Some(Arc::new(parse));
-        // Those already due were waiting for it.
+        self.resume_due_parses();
+    }
+
+    /// Those already due were waiting for what has just arrived.
+    pub(crate) fn resume_due_parses(&mut self) {
         self.start_due_previews();
         self.rebuild_due_visuals();
         self.start_due_word_count();
