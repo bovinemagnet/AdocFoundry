@@ -118,6 +118,7 @@ pub mod ids {
     pub const EDIT_FORMAT_TABLE: CommandId = CommandId::new("edit.format_table");
     pub const EDIT_INSERT_IMAGE: CommandId = CommandId::new("edit.insert_image");
     pub const EDIT_EDIT_IMAGE: CommandId = CommandId::new("edit.edit_image");
+    pub const EDIT_PLACE_IMAGES: CommandId = CommandId::new("edit.place_images");
     pub const GIT_REFRESH: CommandId = CommandId::new("git.refresh");
     pub const GIT_REVERT_HUNK: CommandId = CommandId::new("git.revert_hunk");
     pub const GIT_NEXT_CHANGE: CommandId = CommandId::new("git.next_change");
@@ -560,6 +561,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     crate::visual::register_visual(registry);
     crate::tabs::register_tabs(registry);
     crate::images::register_images(registry);
+    crate::place_images::register_place_images(registry);
     crate::doctor::register_doctor(registry);
     crate::about::register_about(registry);
     crate::format_table::register_format_table(registry);

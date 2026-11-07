@@ -1032,6 +1032,27 @@ impl Engine {
 }
 
 impl Engine {
+    /// Files the engine made or took away itself that are not pages: the catalog and whatever
+    /// reads it follow at once, as they would on the watcher's report, which then finds nothing
+    /// left to do.
+    pub(crate) fn resources_changed(&mut self, paths: &[PathBuf]) {
+        let catalogued: BTreeSet<PathBuf> = paths
+            .iter()
+            .filter_map(|path| self.catalog_file_changed(path, None))
+            .collect();
+        self.directories_changed(paths);
+        if catalogued.is_empty() {
+            return;
+        }
+        for descriptor in catalogued {
+            self.emit(EngineEvent::CatalogChanged { descriptor });
+        }
+        self.preview_workspace_changed();
+        self.visual_workspace_changed();
+        self.refresh_open_diagnostics(None);
+        self.audit_changed_everywhere();
+    }
+
     /// Keeps the catalog in step with a file changed on disk (#402), as discovery would find
     /// it, without reading its component again: a file in one of a module's family folders is
     /// catalogued, a page with the aliases its header in `text` lists, and a file gone is

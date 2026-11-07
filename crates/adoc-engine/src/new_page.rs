@@ -10,6 +10,7 @@ use std::{
     fs,
     io::Write as _,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use adoc_antora::{AntoraCoordinate, NavItem, ResourceFamily};
@@ -48,16 +49,20 @@ pub struct PageModule {
     pub active: bool,
 }
 
-/// A file a group made, with the text it was made with.
+/// A file a group made, with what it was made with.
 #[derive(Clone, Debug)]
 pub(crate) struct CreatedFile {
     path: PathBuf,
-    text: String,
+    content: Arc<[u8]>,
 }
 
 impl CreatedFile {
     pub(crate) fn new(path: PathBuf, text: String) -> Self {
-        Self { path, text }
+        Self::binary(path, text.into_bytes().into())
+    }
+
+    pub(crate) fn binary(path: PathBuf, content: Arc<[u8]>) -> Self {
+        Self { path, content }
     }
 }
 
@@ -220,7 +225,7 @@ impl Engine {
         }
         self.group_documents.insert(group, documents);
         self.group_created
-            .insert(group, vec![CreatedFile { path, text }]);
+            .insert(group, vec![CreatedFile::new(path, text)]);
         self.set_active(page);
         Ok(page)
     }
@@ -323,13 +328,8 @@ impl Engine {
         }
         let (partial, group) = self.create_and_open(&path, "")?;
         self.group_documents.insert(group, vec![partial]);
-        self.group_created.insert(
-            group,
-            vec![CreatedFile {
-                path,
-                text: String::new(),
-            }],
-        );
+        self.group_created
+            .insert(group, vec![CreatedFile::new(path, String::new())]);
         self.set_active(partial);
         Ok(partial)
     }
@@ -354,13 +354,8 @@ impl Engine {
         }
         let (file, group) = self.create_and_open(&path, "")?;
         self.group_documents.insert(group, vec![file]);
-        self.group_created.insert(
-            group,
-            vec![CreatedFile {
-                path: path.clone(),
-                text: String::new(),
-            }],
-        );
+        self.group_created
+            .insert(group, vec![CreatedFile::new(path.clone(), String::new())]);
         self.set_active(file);
         self.directories_changed(&[path]);
         Ok(file)
@@ -515,7 +510,7 @@ impl Engine {
                 let edited = open
                     .and_then(|id| self.document(id))
                     .is_some_and(|document| document.dirty);
-                let unchanged = fs::read_to_string(&file.path).is_ok_and(|text| text == file.text);
+                let unchanged = fs::read(&file.path).is_ok_and(|bytes| *bytes == *file.content);
                 if edited || !unchanged || fs::remove_file(&file.path).is_err() {
                     continue;
                 }
@@ -525,7 +520,7 @@ impl Engine {
                 self.workspace.remove_document(&file.path);
                 self.graph_file_changed(&file.path);
                 self.catalog_changed_at(&file.path);
-            } else if !file.path.exists() && create_file(&file.path, &file.text).is_ok() {
+            } else if !file.path.exists() && create_file(&file.path, &file.content).is_ok() {
                 self.catalog_changed_at(&file.path);
                 let active = self.active_item();
                 // A module's `.gitkeep` is made again, not opened.
@@ -553,8 +548,8 @@ impl Engine {
     }
 }
 
-/// Writes `text` to a new file at `path`, refusing one that exists.
-pub(crate) fn create_file(path: &Path, text: &str) -> Result<(), EngineError> {
+/// Writes `content` to a new file at `path`, refusing one that exists.
+pub(crate) fn create_file(path: &Path, content: impl AsRef<[u8]>) -> Result<(), EngineError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
     }
@@ -562,7 +557,7 @@ pub(crate) fn create_file(path: &Path, text: &str) -> Result<(), EngineError> {
         .write(true)
         .create_new(true)
         .open(path)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .and_then(|mut file| file.write_all(content.as_ref()))
         .map_err(|error| EngineError::io(path, error))
 }
 

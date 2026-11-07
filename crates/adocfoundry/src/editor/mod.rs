@@ -15,7 +15,9 @@ pub mod sync;
 use std::{cell::RefCell, rc::Rc};
 
 use adoc_core::{DiagnosticSeverity, SourceRange};
-use adoc_engine::{commands::ids, CommandArgs, CommandId, CommandOutcome, DocumentId, EngineEvent};
+use adoc_engine::{
+    commands::ids, CommandArgs, CommandId, CommandOutcome, DocumentId, EngineEvent, ImageSource,
+};
 use gpui::{
     div, prelude::FluentBuilder as _, relative, AppContext as _, Context, Entity, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
@@ -421,6 +423,99 @@ impl SourceEditorView {
             state.set_selected_range(caret..caret, cx);
             state.focus(window, cx);
         });
+    }
+
+    /// Copies `images` where the page can name them and writes them at `at`, with the caret
+    /// where the alt text goes.
+    fn place_images(
+        &mut self,
+        images: Vec<ImageSource>,
+        at: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let document = self.document;
+        let outcome = self.app.update(cx, |app, cx| {
+            app.invoke(
+                ids::EDIT_PLACE_IMAGES,
+                CommandArgs::Images {
+                    id: document,
+                    range: SourceRange::new(at, at),
+                    images,
+                },
+                cx,
+            )
+        });
+        // A failure is reported by the window.
+        if let Ok(CommandOutcome::Selection(selection)) = outcome {
+            self.reconcile(window, cx);
+            self.state.update(cx, |state, cx| {
+                state.set_selected_range(selection.start..selection.end, cx);
+                state.focus(window, cx);
+            });
+        }
+    }
+
+    /// Image files dropped on the editor go in at the text under the pointer, or at the caret
+    /// when there is none.
+    fn drop_files(
+        &mut self,
+        paths: &gpui::ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.readonly {
+            return;
+        }
+        let images = crate::image_paste::dropped_images(paths, window, cx);
+        if images.is_empty() {
+            return;
+        }
+        let at = offset_at(self.state.read(cx), window.mouse_position())
+            .unwrap_or_else(|| self.cursor(cx));
+        self.place_images(images, at, window, cx);
+    }
+
+    /// Takes a paste holding an image, returning whether it did; anything else is left to the
+    /// widget to paste as text.
+    fn paste_image(
+        &mut self,
+        item: &gpui::ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use crate::image_paste::{ask_name, pasted_image, PastedImage};
+        let asciidoc = self
+            .app
+            .read(cx)
+            .engine
+            .document(self.document)
+            .is_some_and(|document| document.asciidoc);
+        if self.readonly || !asciidoc {
+            return false;
+        }
+        let at = self.cursor(cx);
+        match pasted_image(item) {
+            None => false,
+            Some(PastedImage::Files(paths)) => {
+                let images = paths.into_iter().map(ImageSource::File).collect();
+                self.place_images(images, at, window, cx);
+                true
+            }
+            Some(PastedImage::Picture(picture)) => {
+                let view = cx.weak_entity();
+                let place = move |image, _alt, window: &mut Window, cx: &mut gpui::App| {
+                    // The caret stays where it was while the dialog is up.
+                    let _ = view.update(cx, |view, cx| {
+                        view.place_images(vec![image], at, window, cx);
+                    });
+                };
+                let app = self.app.clone();
+                let document = self.document;
+                ask_name(&app, document, picture, false, place, window, cx);
+                true
+            }
+        }
     }
 
     /// Places the caret at `range` and focuses the editor.
@@ -872,6 +967,13 @@ impl Render for SourceEditorView {
                         let document = self.document;
                         let readonly = self.readonly;
                         move |menu, _, cx| context_menu(menu, &app, &state, document, readonly, cx)
+                    })
+                    .on_paste({
+                        let view = cx.weak_entity();
+                        move |item, window, cx| {
+                            view.update(cx, |view, cx| view.paste_image(item, window, cx))
+                                .unwrap_or(false)
+                        }
                     }),
             )
             .child(changes::overlay(
@@ -887,6 +989,11 @@ impl Render for SourceEditorView {
             .on_drop(cx.listener(|this, link: &DraggedLink, window, cx| {
                 this.drop_link(link, window, cx);
             }))
+            .on_drop(
+                cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
+                    this.drop_files(paths, window, cx);
+                }),
+            )
             .when_some(blame, |editor, blame| {
                 // Painted after the editor, into the space kept for it on the left.
                 editor.child(blame::column(

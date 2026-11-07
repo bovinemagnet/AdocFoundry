@@ -296,7 +296,13 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
         }
     }))
     .on_action(cx.listener(|this, _: &Paste, window, cx| {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        if this.paste_image(&item, window, cx) {
+            return;
+        }
+        if let Some(text) = item.text() {
             this.type_text(&text, window, cx);
         }
     }))

@@ -837,6 +837,7 @@ impl VisualView {
         let down_path = path.to_vec();
         let move_path = path.to_vec();
         let drop_path = path.to_vec();
+        let files_path = path.to_vec();
         let menu_path = path.to_vec();
         div()
             .w_full()
@@ -881,6 +882,11 @@ impl VisualView {
             .on_drop(cx.listener(move |this, link: &DraggedLink, window, cx| {
                 this.drop_link(&drop_path, link, window, cx);
             }))
+            .on_drop(
+                cx.listener(move |this, paths: &gpui::ExternalPaths, window, cx| {
+                    this.drop_files(Some(&files_path), paths, window, cx);
+                }),
+            )
             .into_any_element()
     }
 }

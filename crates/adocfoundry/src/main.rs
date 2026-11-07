@@ -12,6 +12,7 @@ mod fonts;
 mod graph_view;
 mod history_view;
 mod image_decode;
+mod image_paste;
 mod image_view;
 mod menus;
 mod mirror_view;

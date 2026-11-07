@@ -164,6 +164,27 @@ mod tests {
     }
 
     #[test]
+    fn images_leave_the_caret_in_the_last_one_s_alt_text() {
+        let one = NewBlock::Images(vec!["a.png".to_owned()]);
+        let done = insert_block_in_source("", SourceRange::new(0, 0), &one).unwrap();
+        assert_eq!(apply_edits("", &done.edits), "image::a.png[]\n");
+        assert_eq!(done.selection, SourceRange::new(13, 13));
+
+        let two = NewBlock::Images(vec!["a.png".to_owned(), "b.png".to_owned()]);
+        let done = insert_block_in_source("Text.\n", SourceRange::new(6, 6), &two).unwrap();
+        let after = apply_edits("Text.\n", &done.edits);
+        assert_eq!(after, "Text.\n\nimage::a.png[]\n\nimage::b.png[]\n");
+        let last = after.rfind("[]").unwrap() + 1;
+        assert_eq!(done.selection, SourceRange::new(last, last));
+
+        for bad in [Vec::new(), vec!["a b.png".to_owned()], vec![String::new()]] {
+            assert!(
+                insert_block_in_source("", SourceRange::new(0, 0), &NewBlock::Images(bad)).is_err()
+            );
+        }
+    }
+
+    #[test]
     fn an_image_without_a_target_leaves_the_caret_at_the_target() {
         let image = NewBlock::Image {
             target: String::new(),

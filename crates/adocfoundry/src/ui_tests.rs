@@ -9379,3 +9379,351 @@ fn a_change_on_disk_wakes_the_sleeping_pump(cx: &mut TestAppContext) {
     }
     panic!("nothing woke the pump");
 }
+
+// --- pasting and dropping images (#73) -----------------------------------------------------------
+
+const SCREENSHOT: &[u8] = b"\x89PNG screenshot";
+
+/// The clipboard holding a screenshot, as a screen-capture tool leaves it.
+fn copy_screenshot(cx: &mut VisualTestContext) {
+    let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, SCREENSHOT.to_vec());
+    cx.update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_image(&image)));
+}
+
+/// Drops `paths` from outside the app at `position`, with no mouse event from the platform
+/// before it: a file dragged in from another program brings none.
+fn drop_files(paths: &[PathBuf], position: gpui::Point<gpui::Pixels>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_event(gpui::FileDropEvent::Entered {
+        position,
+        paths: gpui::ExternalPaths(paths.iter().cloned().collect()),
+    });
+    cx.simulate_event(gpui::FileDropEvent::Submit { position });
+    cx.simulate_event(gpui::FileDropEvent::Ended);
+    cx.run_until_parked();
+}
+
+/// A file outside the workspace.
+fn file_elsewhere(name: &str, cx: &mut VisualTestContext) -> PathBuf {
+    cx.update(|_, _| ());
+    let path = tempfile::tempdir().unwrap().keep().join(name);
+    std::fs::write(&path, SCREENSHOT).unwrap();
+    adoc_index::normalize_path(&path)
+}
+
+/// `drag_workspace`, its active page shown visually, with the view and the page.
+fn visual_antora(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    Entity<AppState>,
+    Entity<crate::visual::VisualView>,
+    adoc_engine::DocumentId,
+    VisualTestContext,
+) {
+    let (directory, app, workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    cx.simulate_keystrokes("secondary-k w");
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    (directory, app, visual, id, cx)
+}
+
+fn module_images(directory: &tempfile::TempDir) -> PathBuf {
+    adoc_index::normalize_path(directory.path()).join("alpha/modules/ROOT/images")
+}
+
+#[gpui::test]
+fn a_screenshot_pasted_in_the_source_editor_is_named_saved_and_written(cx: &mut TestAppContext) {
+    let (directory, app, _workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let before = text_of(&app, id, &mut cx);
+    copy_screenshot(&mut cx);
+
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(cx.debug_bounds("paste-image-path").is_some());
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        before,
+        "nothing until it is named"
+    );
+
+    cx.simulate_input("flow");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(
+        std::fs::read(module_images(&directory).join("flow.png")).unwrap(),
+        SCREENSHOT
+    );
+    let after = text_of(&app, id, &mut cx);
+    assert!(after.contains("image::flow.png[]"), "{after}");
+
+    // Typing goes on in the empty alt text.
+    cx.simulate_input("The flow");
+    cx.run_until_parked();
+    assert!(text_of(&app, id, &mut cx).contains("image::flow.png[The flow]"));
+}
+
+#[gpui::test]
+fn the_name_offered_for_a_pasted_image_is_kept_when_nothing_is_typed(cx: &mut TestAppContext) {
+    let (directory, app, _workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    copy_screenshot(&mut cx);
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(module_images(&directory).join("guide-1.png").is_file());
+    assert!(text_of(&app, id, &mut cx).contains("image::guide-1.png[]"));
+}
+
+#[gpui::test]
+fn a_name_in_use_is_refused_as_it_is_typed(cx: &mut TestAppContext) {
+    let (directory, app, _workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let before = text_of(&app, id, &mut cx);
+    let images = module_images(&directory);
+    std::fs::create_dir_all(&images).unwrap();
+    std::fs::write(images.join("taken.png"), b"already here").unwrap();
+    copy_screenshot(&mut cx);
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+
+    cx.simulate_input("taken");
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("paste-image-problem").is_some());
+    assert!(cx.debug_bounds("paste-image-path").is_none());
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(
+        cx.update(gpui_component::WindowExt::has_active_dialog),
+        "refused, the dialog stays open"
+    );
+    assert_eq!(
+        std::fs::read(images.join("taken.png")).unwrap(),
+        b"already here"
+    );
+    assert_eq!(text_of(&app, id, &mut cx), before);
+}
+
+#[gpui::test]
+fn cancelling_the_name_leaves_everything_as_it_was(cx: &mut TestAppContext) {
+    let (directory, app, _workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let before = text_of(&app, id, &mut cx);
+    copy_screenshot(&mut cx);
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(text_of(&app, id, &mut cx), before);
+    assert!(!module_images(&directory).exists());
+}
+
+#[gpui::test]
+fn pasting_text_in_the_source_editor_is_still_pasting_text(cx: &mut TestAppContext) {
+    let (directory, app, _workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    cx.update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string("pasted".to_owned())));
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(text_of(&app, id, &mut cx).contains("pasted"));
+    assert!(!module_images(&directory).exists());
+}
+
+#[gpui::test]
+fn pasting_a_picture_into_a_file_that_is_not_asciidoc_asks_nothing(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap().keep();
+    let file = adoc_index::normalize_path(&directory.join("notes.txt"));
+    std::fs::write(&file, "words\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![file], cx);
+    cx.run_until_parked();
+    copy_screenshot(&mut cx);
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(document_text(&app, &mut cx), "words\n");
+}
+
+#[gpui::test]
+fn image_files_copied_in_a_file_manager_paste_without_asking(cx: &mut TestAppContext) {
+    let (directory, app, _workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let file = file_elsewhere("copied.png", &mut cx);
+    let item = gpui::ClipboardItem {
+        entries: vec![
+            gpui::ClipboardEntry::ExternalPaths(gpui::ExternalPaths([file].into_iter().collect())),
+            gpui::ClipboardEntry::String(gpui::ClipboardString::new("copied.png".to_owned())),
+        ],
+    };
+    cx.update(|_, cx| cx.write_to_clipboard(item));
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(module_images(&directory).join("copied.png").is_file());
+    assert!(text_of(&app, id, &mut cx).contains("image::copied.png[]"));
+}
+
+#[gpui::test]
+fn an_image_file_dropped_on_the_source_editor_goes_in_under_the_pointer(cx: &mut TestAppContext) {
+    let (directory, app, workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let text = text_of(&app, id, &mut cx);
+    let at = text.find('\n').unwrap();
+    let to = source_point(&workspace, at, &mut cx);
+    let file = file_elsewhere("dropped.png", &mut cx);
+    // Typing just before: no hitbox counts as hovered until the mouse is used again.
+    cx.simulate_keystrokes("right");
+    cx.run_until_parked();
+    assert!(cx.update(|window, _| window.last_input_was_keyboard()));
+
+    drop_files(&[file], to, &mut cx);
+
+    assert!(module_images(&directory).join("dropped.png").is_file());
+    let after = text_of(&app, id, &mut cx);
+    let macro_at = after.find("image::dropped.png[]").expect("the macro");
+    assert_eq!(&after[..at], &text[..at], "the text before it is untouched");
+    assert!(macro_at <= at + 2, "at the line dropped on: {after}");
+
+    cx.simulate_input("Dropped");
+    cx.run_until_parked();
+    assert!(text_of(&app, id, &mut cx).contains("image::dropped.png[Dropped]"));
+}
+
+#[gpui::test]
+fn undo_after_a_drop_takes_the_macro_and_the_file_back(cx: &mut TestAppContext) {
+    let (directory, app, workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let text = text_of(&app, id, &mut cx);
+    let to = source_point(&workspace, text.find('\n').unwrap(), &mut cx);
+    let file = file_elsewhere("dropped.png", &mut cx);
+    drop_files(&[file], to, &mut cx);
+    assert!(module_images(&directory).join("dropped.png").is_file());
+
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), text);
+    assert!(!module_images(&directory).join("dropped.png").exists());
+}
+
+#[gpui::test]
+fn a_dropped_file_that_is_not_an_image_says_so_and_changes_nothing(cx: &mut TestAppContext) {
+    let (directory, app, workspace, mut cx) = drag_workspace("guide.adoc", cx);
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let text = text_of(&app, id, &mut cx);
+    let to = source_point(&workspace, text.find('\n').unwrap(), &mut cx);
+    let file = file_elsewhere("notes.txt", &mut cx);
+    drop_files(&[file], to, &mut cx);
+    assert_eq!(
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len()),
+        1
+    );
+    assert_eq!(text_of(&app, id, &mut cx), text);
+    assert!(!module_images(&directory).exists());
+}
+
+#[gpui::test]
+fn a_screenshot_pasted_in_the_visual_editor_asks_its_name_and_alt_text(cx: &mut TestAppContext) {
+    let (directory, app, visual, id, mut cx) = visual_antora(cx);
+    let text = text_of(&app, id, &mut cx);
+    place_caret(&visual, text.find("Set it up").unwrap(), &mut cx);
+    copy_screenshot(&mut cx);
+
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    cx.simulate_input("flow");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("The flow");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(module_images(&directory).join("flow.png").is_file());
+    let after = text_of(&app, id, &mut cx);
+    assert!(after.contains("image::flow.png[The flow]\n"), "{after}");
+
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), text);
+    assert!(!module_images(&directory).join("flow.png").exists());
+}
+
+/// Where the text block holding `offset` begins in the visual editor.
+fn visual_point(
+    visual: &Entity<crate::visual::VisualView>,
+    offset: usize,
+    cx: &mut VisualTestContext,
+) -> gpui::Point<gpui::Pixels> {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.update(|_, cx| {
+        let visual = visual.read(cx);
+        let shown = visual.shown().expect("a model");
+        let (path, _, _) = shown.model.text_block_at(offset).expect("a text block");
+        let layouts = visual.layouts().borrow();
+        layouts
+            .get(&path)
+            .expect("the block is laid out")
+            .position_for_index(0)
+            .expect("its start is laid out")
+            + gpui::point(px(1.), px(2.))
+    })
+}
+
+#[gpui::test]
+fn an_image_file_dropped_on_a_visual_block_goes_after_it_and_asks_for_its_alt_text(
+    cx: &mut TestAppContext,
+) {
+    let (directory, app, visual, id, mut cx) = visual_antora(cx);
+    let text = text_of(&app, id, &mut cx);
+    // The caret in the later paragraph, the drop on the earlier.
+    place_caret(&visual, text.find("Built by").unwrap(), &mut cx);
+    let to = visual_point(&visual, text.find("Set it up").unwrap(), &mut cx);
+    let file = file_elsewhere("dropped.png", &mut cx);
+
+    drop_files(&[file], to, &mut cx);
+
+    assert!(module_images(&directory).join("dropped.png").is_file());
+    assert!(text_of(&app, id, &mut cx).contains("Set it up.\n\nimage::dropped.png[]\n\nBuilt by"));
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    cx.simulate_input("Dropped");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(text_of(&app, id, &mut cx).contains("image::dropped.png[Dropped]"));
+}
+
+#[gpui::test]
+fn files_dropped_beside_the_visual_blocks_go_after_the_caret_s_and_several_ask_for_nothing(
+    cx: &mut TestAppContext,
+) {
+    let (directory, app, visual, id, mut cx) = visual_antora(cx);
+    let text = text_of(&app, id, &mut cx);
+    let at = text.find("Set it up").unwrap();
+    place_caret(&visual, at, &mut cx);
+    let files = [
+        file_elsewhere("one.png", &mut cx),
+        file_elsewhere("two.png", &mut cx),
+    ];
+    // Below the page's text, still in the editor.
+    let beside = gpui::point(visual_point(&visual, at, &mut cx).x, px(780.));
+
+    drop_files(&files, beside, &mut cx);
+
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(module_images(&directory).join("two.png").is_file());
+    assert!(text_of(&app, id, &mut cx)
+        .contains("Set it up.\n\nimage::one.png[]\n\nimage::two.png[]\n\nBuilt by"));
+}

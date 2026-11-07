@@ -51,6 +51,8 @@ pub enum NewBlock {
         target: String,
         alt: String,
     },
+    /// One or more images with no alt text yet, the caret in the last one's.
+    Images(Vec<String>),
 }
 
 fn unsupported(why: &'static str) -> StepError {
@@ -133,6 +135,21 @@ pub(crate) fn new_block_body(
             let body = format!("image::{target}[{}]", alt.replace(']', "\\]"));
             let length = body.len();
             (body, length..length)
+        }
+        NewBlock::Images(targets) => {
+            let mut lines = Vec::with_capacity(targets.len());
+            for target in targets {
+                if target.is_empty() || target.contains(char::is_whitespace) {
+                    return Err(unsupported("an image target has no spaces"));
+                }
+                lines.push(format!("image::{target}[]"));
+            }
+            if lines.is_empty() {
+                return Err(unsupported("there is no image to insert"));
+            }
+            let body = lines.join("\n\n");
+            let alt = body.len() - 1;
+            (body, alt..alt)
         }
         NewBlock::ListItem { .. } => return Err(unsupported("a list item follows a list item")),
     })
@@ -288,7 +305,8 @@ impl Model {
             | NewBlock::Code
             | NewBlock::Admonition(_)
             | NewBlock::Table { .. }
-            | NewBlock::Image { .. } => {
+            | NewBlock::Image { .. }
+            | NewBlock::Images(_) => {
                 let (body, select) = new_block_body(new)?;
                 if node.kind == NodeKind::Title {
                     // After the header: before the first block of the body.

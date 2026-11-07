@@ -114,6 +114,21 @@ impl VisualView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.image_fields(existing, false, window, cx);
+    }
+
+    /// The dialog for the image at `at`, ready to type its alt text.
+    pub(crate) fn alt_dialog(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.image_fields(Some(at), true, window, cx);
+    }
+
+    fn image_fields(
+        &mut self,
+        existing: Option<usize>,
+        alt_first: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let current = existing.and_then(|at| {
             self.shown.as_ref().and_then(|shown| {
                 shown
@@ -138,7 +153,11 @@ impl VisualView {
         });
         let alt_input = cx.new(|cx| InputState::new(window, cx).default_value(alt));
         let view = cx.weak_entity();
-        let first = target_input.clone();
+        let first = if alt_first {
+            alt_input.clone()
+        } else {
+            target_input.clone()
+        };
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let (target_input, alt_input, view) =
                 (target_input.clone(), alt_input.clone(), view.clone());
@@ -182,7 +201,7 @@ impl VisualView {
                     true
                 })
         });
-        // Typing goes to the target straight away.
+        // Typing goes there straight away.
         first.update(cx, |input, cx| input.focus(window, cx));
     }
 }
