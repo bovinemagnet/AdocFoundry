@@ -404,7 +404,7 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 ## Not implemented yet
 
 - In PDF export: PDF/UA-2 (Typst writes only PDF/UA-1), and asciidoctor-pdf's Ruby extensions.
-- In the visual editor: selections and deletions across blocks, Enter at the start of a block, and editing included content in place (Edit partial opens the partial).
+- In the visual editor: deleting across the edge of a delimited block or table, or across content only the source can edit, and editing included content in place (Edit partial opens the partial).
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
 - XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.

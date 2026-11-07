@@ -416,3 +416,157 @@ fn the_session_model_matches_a_rebuild() {
         "{same} of {steps} local models matched a rebuild"
     );
 }
+
+/// What each text block of `model` shows.
+fn displays(model: &Model) -> Vec<String> {
+    model
+        .text_blocks()
+        .map(|(_, _, text)| text.display.clone())
+        .collect()
+}
+
+/// A position in the middle of `text`'s display, at a character boundary, as a source offset.
+fn middle_of(text: &adoc_model::TextBlock, random: &mut Random) -> Option<(usize, usize)> {
+    let stops: Vec<usize> = text.display.char_indices().map(|(at, _)| at).collect();
+    let display = *stops.get(random.below(stops.len()))?;
+    let at = text.source_offset(display, text.marks_at(display))?;
+    Some((display, at))
+}
+
+/// Deleting across blocks: the page around the two ends is untouched, the inverse restores it, and
+/// a rebuild shows the blocks before and after as they were, with the two ends joined.
+#[test]
+fn deleting_across_blocks_leaves_everything_around_it() {
+    let mut random = Random(23);
+    let (mut applied, mut matched) = (0, 0);
+    for path in corpus() {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let model = build(&path, &text);
+        let before = displays(&model);
+        let blocks: Vec<_> = model.text_blocks().collect();
+        if blocks.len() < 2 {
+            continue;
+        }
+        for _ in 0..12 {
+            let first = random.below(blocks.len() - 1);
+            let last = (first + 1 + random.below(4)).min(blocks.len() - 1);
+            let (_, _, from) = blocks[first];
+            let (_, _, to) = blocks[last];
+            let (Some((head, start)), Some((tail, end))) =
+                (middle_of(from, &mut random), middle_of(to, &mut random))
+            else {
+                continue;
+            };
+            let step = Step::Delete {
+                range: SourceRange::new(start, end),
+            };
+            let Ok(result) = model.apply(&step) else {
+                continue;
+            };
+            applied += 1;
+            let after = apply_edits(&text, &result.edits);
+            for edit in &result.edits {
+                assert!(
+                    from.range.start <= edit.range.start && edit.range.end <= to.range.end,
+                    "{}: {step:?} edited {:?}",
+                    path.display(),
+                    edit.range
+                );
+            }
+            assert_eq!(
+                apply_edits(&after, &adoc_model::invert(&text, &result.edits)),
+                text
+            );
+            assert!(result.selection.start <= after.len());
+            assert!(after.is_char_boundary(result.selection.start));
+
+            let joined = format!("{}{}", &from.display[..head], &to.display[tail..]);
+            let mut expected = before[..first].to_vec();
+            expected.push(joined);
+            expected.extend_from_slice(&before[last + 1..]);
+            let got = displays(&build(&path, &after));
+            let matches = |left: &[String], right: &[String]| {
+                let squeeze = |shown: &[String]| -> String {
+                    shown
+                        .join(" ")
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                squeeze(left) == squeeze(right)
+            };
+            if matches(&got, &expected) {
+                matched += 1;
+            } else {
+                eprintln!(
+                    "{}: {:?} .. {:?}",
+                    path.display(),
+                    &text[from.range.start..start],
+                    &text[end..to.range.end.min(end + 30)],
+                );
+            }
+        }
+    }
+    assert!(applied > 200, "only {applied} deletions applied");
+    // Where the parser reads text far from the edit differently, the view follows it; the rest
+    // must be exact.
+    assert!(
+        matched * 100 >= applied * 95,
+        "{matched} of {applied} rebuilds showed the text expected"
+    );
+}
+
+/// Enter at the start of a block: a rebuild shows one more block, there, and nothing else moves.
+#[test]
+fn a_block_before_changes_nothing_else() {
+    let mut random = Random(29);
+    let (mut applied, mut matched) = (0, 0);
+    for path in corpus() {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let model = build(&path, &text);
+        let before = displays(&model);
+        let blocks: Vec<_> = model.text_blocks().collect();
+        for _ in 0..8 {
+            if blocks.is_empty() {
+                continue;
+            }
+            let index = random.below(blocks.len());
+            let (_, node, block) = blocks[index];
+            let new = if matches!(node.kind, adoc_model::NodeKind::ListItem { .. }) {
+                adoc_model::NewBlock::ListItem {
+                    text: "new block".to_owned(),
+                }
+            } else {
+                adoc_model::NewBlock::Paragraph {
+                    text: "new block".to_owned(),
+                }
+            };
+            let step = Step::InsertBlockBefore {
+                at: block.range.start,
+                block: new,
+            };
+            let Ok(result) = model.apply(&step) else {
+                continue;
+            };
+            applied += 1;
+            let [edit] = result.edits.as_slice() else {
+                panic!("{step:?} made {:?}", result.edits);
+            };
+            assert!(edit.range.is_empty(), "{step:?} replaced text");
+            let after = apply_edits(&text, &result.edits);
+            let got = displays(&build(&path, &after));
+            let mut expected = before.clone();
+            expected.insert(index, "new block".to_owned());
+            if got == expected {
+                matched += 1;
+            } else {
+                eprintln!("{}: before {:?}", path.display(), block.display);
+            }
+        }
+    }
+    assert!(applied > 200, "only {applied} insertions applied");
+    assert!(
+        matched * 100 >= applied * 95,
+        "{matched} of {applied} rebuilds showed the block where expected"
+    );
+}

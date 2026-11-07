@@ -632,13 +632,16 @@ A join that is not possible, such as Backspace at the start of a paragraph after
 |`InsertText`: escapes characters that would become markup and adds missing marks.
 
 |`visual.delete_backward`, `visual.delete_forward`
-|`Delete`, or `JoinBackward` at the start of a block. Deleting across blocks is refused.
+|`Delete`, or `JoinBackward` at the start of a block. A selection that spans blocks is deleted by `Model::delete_across`, which joins what is left of the first and last blocks in the first block's context and removes the blocks between; it is refused when a block between the ends is read-only or the selection crosses a delimited block's edge.
+The result is structural (`model: None`).
+Typing or Enter over such a selection parses the page as it would be after the deletion, off the session and uncommitted (`Engine::model_after_deleting`), so the deletion and what follows are one edit and one undo step.
 
 |`visual.split_block`
 |`SplitBlock`: Enter.
 
 |`visual.insert_block`
 |Writes the block begun with Enter once it has its first character.
+With `VisualValue::NewBlockBefore` it is `InsertBlockBefore`, which writes the block before the one at the caret (`Model::insert_block_before`; the view asks `Model::takes_block_before` whether to begin one).
 
 |`edit.toggle_strong`, `edit.toggle_emphasis`, `edit.toggle_code`, `edit.toggle_highlight`
 |`ToggleMark`.

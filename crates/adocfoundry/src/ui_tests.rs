@@ -2223,6 +2223,180 @@ fn visual_code_blocks_are_highlighted(cx: &mut TestAppContext) {
     assert!(styles.is_some_and(|count| count > 0), "{styles:?}");
 }
 
+fn select_in_visual(
+    visual: &Entity<crate::visual::VisualView>,
+    anchor: usize,
+    head: usize,
+    cx: &mut VisualTestContext,
+) {
+    cx.update(|window, cx| {
+        let focus = gpui::Focusable::focus_handle(visual.read(cx), cx);
+        window.focus(&focus, cx);
+        visual.update(cx, |visual, cx| visual.select(anchor, head, cx));
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn backspace_over_a_selection_across_blocks_leaves_one_paragraph(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst para\n\nSecond para\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("para").unwrap();
+    let end = text.rfind("para").unwrap();
+    select_in_visual(&visual, start, end, &mut cx);
+    cx.simulate_keystrokes("backspace");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nFirst para\n");
+    assert_eq!(shown_blocks(&visual, &mut cx), ["Page", "First para"]);
+    // The caret is where they joined, ready for typing.
+    cx.simulate_keystrokes("x");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nFirst xpara\n");
+}
+
+#[gpui::test]
+fn typing_over_a_selection_across_blocks_replaces_it(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst para\n\nSecond para\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    let start = text.find("para").unwrap();
+    let end = text.rfind("para").unwrap();
+    select_in_visual(&visual, start, end, &mut cx);
+    cx.simulate_keystrokes("n e w");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nFirst newpara\n");
+}
+
+#[gpui::test]
+fn shift_arrows_select_into_the_next_block_and_delete_it(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst\n\nSecond\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("First").unwrap() + 4, &mut cx);
+    cx.simulate_keystrokes("shift-right shift-right shift-right");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("backspace");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nFirsecond\n");
+}
+
+#[gpui::test]
+fn dragging_into_the_next_block_selects_across_them(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst\n\nSecond\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    draw_visual(&visual, &mut cx);
+    let position = |path: &[usize], index: usize, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let layouts = visual.read(cx).layouts().borrow();
+            layouts
+                .get(&path.to_vec())
+                .expect("the block is laid out")
+                .position_for_index(index)
+                .expect("the index is laid out")
+                + gpui::point(px(0.), px(2.))
+        })
+    };
+    let from = position(&[1], 2, &mut cx);
+    let to = position(&[2], 3, &mut cx);
+    let button = gpui::MouseButton::Left;
+    cx.simulate_mouse_down(from, button, gpui::Modifiers::none());
+    cx.simulate_mouse_move(to, Some(button), gpui::Modifiers::none());
+    cx.simulate_mouse_up(to, button, gpui::Modifiers::none());
+    cx.run_until_parked();
+    let selection = cx.update(|_, cx| visual.read(cx).selection());
+    assert_eq!(selection.anchor, text.find("rst").unwrap());
+    assert_eq!(selection.head, text.find("ond").unwrap());
+    cx.simulate_keystrokes("backspace");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nFiond\n");
+}
+
+#[gpui::test]
+fn enter_at_the_start_of_a_block_begins_one_before_it(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst\n\nSecond\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("Second").unwrap(), &mut cx);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        text,
+        "nothing until it is typed"
+    );
+    draw_visual(&visual, &mut cx);
+    let pending = cx
+        .debug_bounds("visual-pending-block")
+        .expect("the new block is drawn");
+    let second = cx.update(|_, cx| {
+        visual.read(cx).layouts().borrow()[&vec![2]]
+            .position_for_index(0)
+            .unwrap()
+    });
+    assert!(pending.origin.y < second.y, "it is above the block");
+
+    cx.simulate_keystrokes("n e w");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nFirst\n\nnew\n\nSecond\n"
+    );
+    assert_eq!(
+        shown_blocks(&visual, &mut cx),
+        ["Page", "First", "new", "Second"]
+    );
+}
+
+#[gpui::test]
+fn enter_at_the_start_of_a_list_item_begins_one_before_it(cx: &mut TestAppContext) {
+    let text = "= Page\n\n* one\n* two\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("two").unwrap(), &mut cx);
+    cx.simulate_keystrokes("enter enter n");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\n* one\n* n\n* two\n");
+}
+
+#[gpui::test]
+fn pasting_into_a_new_block_stays_in_it(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst\n\nSecond\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("Second").unwrap(), &mut cx);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+            "pasted\n\n== Not a heading".to_owned(),
+        ));
+    });
+    cx.simulate_keystrokes("secondary-v");
+    cx.run_until_parked();
+    assert_eq!(
+        text_of(&app, id, &mut cx),
+        "= Page\n\nFirst\n\npasted\n{empty}== Not a heading\n\nSecond\n"
+    );
+    assert_eq!(shown_blocks(&visual, &mut cx).len(), 4);
+}
+
+#[gpui::test]
+fn a_caret_move_abandons_a_block_before(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst\n\nSecond\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("Second").unwrap(), &mut cx);
+    cx.simulate_keystrokes("enter right x");
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), "= Page\n\nFirst\n\nSxecond\n");
+}
+
+#[gpui::test]
+fn enter_at_the_start_of_the_title_does_nothing(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    place_caret(&visual, text.find("Page").unwrap(), &mut cx);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    draw_visual(&visual, &mut cx);
+    assert!(cx.debug_bounds("visual-pending-block").is_none());
+    assert_eq!(text_of(&app, id, &mut cx), text);
+}
+
 /// Draws a frame of the visual editor, rendering it again.
 fn draw_visual(visual: &Entity<crate::visual::VisualView>, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {

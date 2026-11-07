@@ -27,6 +27,8 @@ Automated coverage for reference: the model's tests (`crates/adoc-model/tests/`:
 - [x] Up and Down keep the caret's horizontal position across lines and blocks; Home and End go to the block's start and end.
 - [x] Typing `2 * 3`, `snake_case`, `it's` and `--` writes them as typed; typing `*word*`, a URL or `<<id>>` writes them escaped, and `{name}` is escaped when the attribute is defined (an undefined reference shows as written); all show as typed (Linux).
 - [x] Typing `* ` at the start of a paragraph keeps it a paragraph (`{empty}` is written before it) (Linux).
+- [ ] From the middle of one paragraph to the middle of the next, drag and press Backspace: one paragraph is left, the caret where they joined; Undo restores both. Typing over such a selection and Enter on one do the same in one undo step.
+- [ ] Enter at the start of a paragraph, heading and list item shows an empty line above it with the caret; typing writes the new block there, and moving the caret instead leaves the page unchanged.
 - [ ] IME: Japanese composes in place, underlined, and commits once (macOS, Windows; ibus on Linux). The candidate window sits at the caret.
 - [x] Copy copies the selected text; Paste types the clipboard's text (Linux).
 

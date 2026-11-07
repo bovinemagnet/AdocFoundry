@@ -79,6 +79,8 @@ pub enum VisualValue {
     },
     BlockType(BlockType),
     NewBlock(NewBlock),
+    /// A new block for `visual.insert_block` to put before the caret's rather than after.
+    NewBlockBefore(NewBlock),
     Admonition(AdmonitionKind),
     /// A new table's size.
     Table {
@@ -429,6 +431,25 @@ impl Engine {
             None => self.build_visual(id),
         }
         Ok(CommandOutcome::Selection(result.selection))
+    }
+}
+
+impl Engine {
+    /// The model of document `id` once a deletion across blocks is made, which changes structure
+    /// and so needs a parse, for what follows it to be worked out before anything is applied:
+    /// the two make one edit, and one undo step.
+    fn model_after_deleting(
+        &self,
+        id: DocumentId,
+        source: &str,
+        deleted: &StepResult,
+    ) -> Option<Model> {
+        let text = apply_edits(source, &deleted.edits);
+        let input = self.parse_input_of_text(id, &text)?;
+        let parser = self.document_parser();
+        let parse = input.parse_shared(id, parser.as_ref());
+        let path = &self.documents.get(&id)?.path;
+        Some(Model::build(path, &parse.text, &parse.dom))
     }
 }
 
@@ -868,14 +889,21 @@ fn visual_insert_text(
     let model = &visual.model;
     let range = ordered(args.selection);
     // Typing over a selection deletes it first; the two make one edit.
+    let mut structural = false;
     let (model_after_delete, at) = if range.is_empty() {
         (None, range.start)
     } else {
         let deleted = model.apply(&Step::Delete { range }).map_err(refused)?;
         let at = deleted.selection.start;
-        let rest = deleted.model.ok_or_else(|| {
-            EngineError::Refused("select text inside one block to type over it".to_owned())
-        })?;
+        let rest = match deleted.model {
+            Some(rest) => rest,
+            None => {
+                structural = true;
+                engine
+                    .model_after_deleting(args.id, &model.source, &deleted)
+                    .ok_or(EngineError::UnknownDocument(args.id))?
+            }
+        };
         (Some(rest), at)
     };
     let base = model_after_delete.as_ref().unwrap_or(model);
@@ -907,7 +935,7 @@ fn visual_insert_text(
     let result = StepResult {
         edits,
         selection: inserted.selection,
-        model: inserted.model,
+        model: if structural { None } else { inserted.model },
     };
     engine.apply_visual(args.id, &source, result, mode)
 }
@@ -1116,17 +1144,35 @@ fn split_block(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
     let model = &visual.model;
     let range = ordered(args.selection);
     let deleted;
+    let mut across = None;
     let (base, at) = if range.is_empty() {
         (model, range.start)
     } else {
         let result = model.apply(&Step::Delete { range }).map_err(refused)?;
         let at = result.selection.start;
-        deleted = result.model.ok_or_else(|| {
-            EngineError::Refused("select text inside one block to replace it".to_owned())
-        })?;
+        let rest = match result.model.clone() {
+            Some(rest) => rest,
+            None => {
+                let rest = engine
+                    .model_after_deleting(args.id, &model.source, &result)
+                    .ok_or(EngineError::UnknownDocument(args.id))?;
+                across = Some(result);
+                rest
+            }
+        };
+        deleted = rest;
         (&deleted, at)
     };
-    let split = base.apply(&Step::SplitBlock { at }).map_err(refused)?;
+    let split = match (base.apply(&Step::SplitBlock { at }), across) {
+        (Ok(split), _) => split,
+        // The join left the caret at the edge of a block: the deletion is all there is to do.
+        (Err(StepError::Unsupported(_)), Some(across)) => {
+            let source = model.source.clone();
+            let group = engine.new_group();
+            return engine.apply_visual(args.id, &source, across, UndoMode::Group(group));
+        }
+        (Err(error), _) => return Err(refused(error)),
+    };
     let after = apply_edits(&base.source, &split.edits);
     let edits = crate::edit::minimal(&model.source, &after)
         .map(|edit| vec![adoc_model::SourceEdit::new(edit.range, edit.replacement)])
@@ -1145,14 +1191,18 @@ fn split_block(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
 /// block or admonition.
 fn insert_block(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
     let args = visual_args(ids::VISUAL_INSERT_BLOCK, args)?;
-    let VisualValue::NewBlock(block) = args.value.clone() else {
-        return Err(EngineError::InvalidArguments {
-            command: ids::VISUAL_INSERT_BLOCK,
-            expected: "a new block",
-        });
-    };
     let at = args.selection.end;
-    visual_step(engine, &args, Step::InsertBlock { at, block })
+    let step = match args.value.clone() {
+        VisualValue::NewBlock(block) => Step::InsertBlock { at, block },
+        VisualValue::NewBlockBefore(block) => Step::InsertBlockBefore { at, block },
+        _ => {
+            return Err(EngineError::InvalidArguments {
+                command: ids::VISUAL_INSERT_BLOCK,
+                expected: "a new block",
+            })
+        }
+    };
+    visual_step(engine, &args, step)
 }
 
 fn insert_admonition(

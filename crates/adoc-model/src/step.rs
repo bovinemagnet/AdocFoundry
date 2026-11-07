@@ -21,7 +21,8 @@ pub enum Step {
         text: String,
         marks: MarkSet,
     },
-    /// Deletes the text in `range`; atoms it touches go whole.
+    /// Deletes the text in `range`; atoms it touches go whole. Across blocks, what is left of
+    /// the first and last blocks joins in the first, and the blocks between go.
     Delete {
         range: SourceRange,
     },
@@ -52,6 +53,12 @@ pub enum Step {
     },
     /// Adds a block after the block holding `at`.
     InsertBlock {
+        at: usize,
+        block: crate::NewBlock,
+    },
+    /// Enter at the start of a block: adds a paragraph or list item before the block holding
+    /// `at`.
+    InsertBlockBefore {
         at: usize,
         block: crate::NewBlock,
     },
@@ -164,6 +171,7 @@ impl Model {
             Step::SplitBlock { at } => self.split_block(*at),
             Step::JoinBackward { at } => self.join_backward(*at),
             Step::InsertBlock { at, block } => self.insert_block(*at, block),
+            Step::InsertBlockBefore { at, block } => self.insert_block_before(*at, block),
             Step::SetBlockType { at, kind } => self.set_block_type(*at, *kind),
             Step::ToggleList { at, kind } => self.toggle_list(*at, *kind),
             Step::IndentListItem { at } => self.indent(*at),
@@ -351,7 +359,7 @@ impl Model {
         Ok((path, text))
     }
 
-    fn context<'a>(&'a self, block: &'a TextBlock) -> Context<'a> {
+    pub(crate) fn context<'a>(&'a self, block: &'a TextBlock) -> Context<'a> {
         Context {
             source: &self.source,
             attributes: &self.attributes,
@@ -469,7 +477,7 @@ impl Model {
         self.check_offset(range.end)?;
         let (path, block) = self.editable_at(range.start)?;
         if range.end > block.range.end {
-            return Err(StepError::Unsupported("deleting across blocks"));
+            return self.delete_across(range, &path, block);
         }
         if range.is_empty() {
             return Ok(self.unchanged(range));
@@ -843,7 +851,7 @@ fn text_block_mut(nodes: &mut [Node], range: SourceRange) -> Option<&mut TextBlo
 }
 
 /// Text as it may be typed into a block of `context`.
-fn sanitise(text: &str, context: TextContext) -> String {
+pub(crate) fn sanitise(text: &str, context: TextContext) -> String {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     match context {
         TextContext::Verbatim => text,
