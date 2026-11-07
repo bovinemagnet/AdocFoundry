@@ -412,6 +412,7 @@ fn block_element(
                 .children(title(block, trail, context))
                 .child(
                     v_flex()
+                        .debug_selector(|| "code-frame".to_owned())
                         .p_2()
                         .bg(palette.surface)
                         .border_1()
@@ -934,9 +935,11 @@ fn code_lines(
             } else {
                 StyledText::new(line.to_owned()).with_highlights(line_styles)
             };
+            // Without the shrinkable wrapper a row keeps its text's whole width, so a wide line
+            // would run out of the frame instead of wrapping.
             h_flex()
                 .gap_2()
-                .child(content)
+                .child(div().min_w_0().child(content))
                 .children(
                     callouts
                         .iter()
