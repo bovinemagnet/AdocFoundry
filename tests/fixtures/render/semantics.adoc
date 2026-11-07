@@ -1,0 +1,85 @@
+= Links, Anchors, Tables and Footnotes
+:experimental:
+
+A preamble with a https://example.com/preamble[named link] and a bare one, https://example.com/bare.
+
+== A Section With Punctuation: Yes, and More!
+
+[[named-para]]
+A paragraph with its own anchor, an <<named-para>> cross-reference, one with <<a-later-block,its own words>>, and one to <<_a_section_with_punctuation_yes_and_more>>.
+
+An inline anchor [[inline-anchor]]here, an xref:inline-anchor[macro cross-reference], and mailto:someone@example.com[a mail link, with a subject,and a body].
+
+Some text with a footnote.footnote:[The first footnote, with *bold* in it.] And another, named.footnote:named[A footnote used twice.] The same one again.footnote:named[]
+
+=== A Subsection
+
+[#a-later-block]
+.A titled paragraph
+A later block, with an id.
+
+[discrete]
+==== A Discrete Heading
+
+Text after it, with `code`, _emphasis_, *strong*, #highlight#, ^super^ and ~sub~, and an arrow -> and a dash -- here.
+
+== Same Title
+
+== Same Title
+
+A section whose title repeats, and so whose anchor is numbered.
+
+== Tables
+
+[cols="1,2a"]
+|===
+|Name |Notes
+
+|First
+|Plain words in an AsciiDoc cell.
+
+* A list
+* in a cell
+
+|Second
+|With a https://example.com/in-cell[link in a cell].
+|===
+
+.A captioned table
+[%header%footer,cols="2*"]
+|===
+|Head one |Head two
+
+|*Bold* cell
+|`code` cell
+
+|Foot one
+|Foot two
+|===
+
+== Code And Lists
+
+[source,rust]
+----
+fn main() {
+    println!("kept exactly");
+}
+----
+
+....
+A literal block
+  keeps its spaces.
+....
+
+* An item with https://example.com/in-list[a link]
+** A nested item
+. A numbered item
++
+Attached to it.
+
+Term one:: Its description.
+Term two::
+Another description.
+
+[quote,Someone,A Book]
+A quotation with an attribution.

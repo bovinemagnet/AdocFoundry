@@ -859,3 +859,101 @@ fn cover_images_are_found_as_the_page_images_are() {
         })
     );
 }
+
+/// The HTML of a page holding `text`.
+fn html_of(text: &str) -> String {
+    let view = view_of(Path::new("page.adoc"), text, &LocalResolver);
+    to_html(&view, &HtmlOptions::default())
+}
+
+#[test]
+fn every_block_keeps_the_id_it_was_given() {
+    let html = html_of(
+        "[[by-anchor]]\nFirst.\n\n[#by-shorthand]\nSecond.\n\n[[a-list]]\n* item\n\n\
+         [#a-listing]\n----\ncode\n----\n",
+    );
+    for id in ["by-anchor", "by-shorthand", "a-list", "a-listing"] {
+        assert!(html.contains(&format!(" id=\"{id}\"")), "{id}: {html}");
+    }
+}
+
+#[test]
+fn a_cross_reference_to_a_paragraph_finds_its_anchor() {
+    let view = view_of(
+        Path::new("page.adoc"),
+        "[[target]]\nFirst.\n\nSee <<target>> and <<target,the first>>.\n",
+        &LocalResolver,
+    );
+    let shown: Vec<String> = all_inlines(&view)
+        .iter()
+        .filter_map(|inline| match inline {
+            ViewInline::Xref { link, content, .. } => {
+                assert!(!link.unresolved, "{link:?}");
+                Some(ViewInline::plain_text(content))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shown, ["[target]", "the first"]);
+}
+
+#[test]
+fn a_discrete_heading_has_a_generated_id_or_its_own() {
+    let html = html_of("[discrete]\n== A Heading\n\n[discrete#own]\n== Another\n");
+    assert!(html.contains("<h2 id=\"_a_heading\""), "{html}");
+    assert!(html.contains("<h2 id=\"own\""), "{html}");
+}
+
+#[test]
+fn repeated_discrete_headings_are_numbered() {
+    let html =
+        html_of("== Same\n\n[discrete]\n== Same\n\n[discrete]\n== Same\n\n[discrete]\n== Other\n");
+    assert_eq!(html.matches("id=\"_same\"").count(), 1, "{html}");
+    assert_eq!(html.matches("id=\"_same_2\"").count(), 1, "{html}");
+    assert_eq!(html.matches("id=\"_same_3\"").count(), 1, "{html}");
+    assert_eq!(html.matches("id=\"_other\"").count(), 1, "{html}");
+}
+
+#[test]
+fn a_mail_link_has_one_scheme_and_keeps_its_subject_and_body() {
+    let html = html_of("mailto:a@example.com[Write,Hello there,The body & more]\n");
+    assert!(
+        html.contains(
+            "href=\"mailto:a@example.com?subject=Hello%20there&amp;body=The%20body%20%26%20more\""
+        ),
+        "{html}"
+    );
+    let html = html_of("mailto:a@example.com[Write]\n");
+    assert!(html.contains("href=\"mailto:a@example.com\""), "{html}");
+}
+
+#[test]
+fn a_footnote_used_twice_defines_each_id_once() {
+    let html = html_of("One.footnote:n[A note.] Two.footnote:n[]\n");
+    assert_eq!(html.matches("id=\"_footnoteref_1\"").count(), 1, "{html}");
+    assert_eq!(html.matches("id=\"_footnote_n\"").count(), 1, "{html}");
+    assert_eq!(
+        html.matches("href=\"#_footnotedef_1\"").count(),
+        2,
+        "{html}"
+    );
+}
+
+#[test]
+fn a_header_cell_of_an_asciidoc_column_is_plain() {
+    let html = html_of("[cols=\"1a\",%header]\n|===\n|Head\n\n|Body\n|===\n");
+    assert!(html.contains(">Head</th>"), "{html}");
+    assert!(
+        html.contains("<div class=\"content\">"),
+        "the body cell: {html}"
+    );
+}
+
+#[test]
+fn a_quote_paragraph_has_no_paragraph_inside_but_a_delimited_quote_does() {
+    let html = html_of("[quote]\nSaid.\n");
+    assert!(!html.contains("<p>"), "{html}");
+    assert!(html.contains("Said."), "{html}");
+    let html = html_of("____\nSaid.\n____\n");
+    assert!(html.contains("<p>Said.</p>"), "{html}");
+}

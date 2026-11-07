@@ -270,7 +270,7 @@ impl Builder<'_> {
                     ..state
                 },
             ),
-            ViewInline::FootnoteRef(number) => {
+            ViewInline::FootnoteRef { number, .. } => {
                 self.push(
                     &format!("[{number}]"),
                     State {

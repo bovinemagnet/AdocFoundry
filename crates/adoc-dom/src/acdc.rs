@@ -209,6 +209,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         page_removed,
         resolved,
         verbatim: std::cell::Cell::new(false),
+        heading_ids: std::cell::RefCell::default(),
     };
     converter.document()
 }
@@ -570,6 +571,8 @@ struct Converter<'p> {
     resolved: HashMap<PathBuf, Resolved>,
     /// Set while converting verbatim content, which takes no replacements.
     verbatim: std::cell::Cell<bool>,
+    /// The section and discrete heading ids so far, for a discrete heading's generated id.
+    heading_ids: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl Converter<'_> {
@@ -684,7 +687,10 @@ impl Converter<'_> {
             ..BlockMeta::default()
         };
         if let Some(metadata) = metadata {
-            meta.id = metadata.id.as_ref().map(|anchor| anchor.id.to_owned());
+            // `[#id]` or `[[id]]`: the parser's rule for a block's own id, with no title to
+            // generate one from.
+            let id = acdc::Section::generate_id_string(metadata, &[]);
+            meta.id = (!id.is_empty()).then_some(id);
             meta.roles = metadata
                 .roles
                 .iter()
@@ -743,7 +749,9 @@ impl Converter<'_> {
         Some(match block {
             acdc::Block::Section(section) => {
                 let mut meta = self.meta(&section.location, Some(&section.metadata), &[]);
-                meta.id = Some(section.id().into_owned());
+                let id = section.id().into_owned();
+                self.heading_ids.borrow_mut().insert(id.clone());
+                meta.id = Some(id);
                 Block {
                     meta,
                     kind: BlockKind::Section {
@@ -753,13 +761,17 @@ impl Converter<'_> {
                     },
                 }
             }
-            acdc::Block::DiscreteHeader(heading) => Block {
-                meta: self.meta(&heading.location, Some(&heading.metadata), &[]),
-                kind: BlockKind::Heading {
-                    level: heading.level,
-                    title: self.inlines(&heading.title),
-                },
-            },
+            acdc::Block::DiscreteHeader(heading) => {
+                let mut meta = self.meta(&heading.location, Some(&heading.metadata), &[]);
+                meta.id = Some(self.discrete_heading_id(heading, meta.id.is_some()));
+                Block {
+                    meta,
+                    kind: BlockKind::Heading {
+                        level: heading.level,
+                        title: self.inlines(&heading.title),
+                    },
+                }
+            }
             acdc::Block::Paragraph(paragraph) => self.paragraph(paragraph),
             acdc::Block::Admonition(admonition) => Block {
                 meta: self.meta(
@@ -900,6 +912,24 @@ impl Converter<'_> {
     }
 
     /// A paragraph, or the block its style makes it: `[NOTE]`, `[source]`, `[quote]`, ….
+    /// A discrete heading's id: its own, else one from its title numbered as Asciidoctor numbers
+    /// a repeated one (`_title_2`), which the parser does only for sections.
+    fn discrete_heading_id(&self, heading: &acdc::DiscreteHeader<'_>, explicit: bool) -> String {
+        let id = acdc::Section::generate_id_string(&heading.metadata, &heading.title);
+        let mut ids = self.heading_ids.borrow_mut();
+        if explicit || ids.insert(id.clone()) {
+            return id;
+        }
+        let mut number = 2;
+        loop {
+            let numbered = format!("{id}_{number}");
+            if ids.insert(numbered.clone()) {
+                return numbered;
+            }
+            number += 1;
+        }
+    }
+
     fn paragraph(&self, paragraph: &acdc::Paragraph<'_>) -> Block {
         let meta = self.meta(
             &paragraph.location,
@@ -1298,7 +1328,7 @@ impl Converter<'_> {
                 text: self.inlines(&link.text),
             },
             acdc::InlineMacro::Mailto(mailto) => Inline::Link {
-                target: format!("mailto:{}", mailto.target),
+                target: mailto_target(&mailto.target.to_string(), mailto.subject, mailto.body),
                 text: self.inlines(&mailto.text),
             },
             acdc::InlineMacro::Autolink(autolink) => Inline::Link {
@@ -1558,4 +1588,34 @@ fn cell_style(style: &acdc::ColumnStyle) -> CellStyle {
         acdc::ColumnStyle::Strong => CellStyle::Strong,
         _ => CellStyle::Default,
     }
+}
+
+/// A mail link's destination: the address, which the parser may or may not give with its scheme,
+/// with the macro's subject and body encoded as Asciidoctor encodes them.
+fn mailto_target(address: &str, subject: Option<&str>, body: Option<&str>) -> String {
+    let address = address.strip_prefix("mailto:").unwrap_or(address);
+    let fields: Vec<String> = [("subject", subject), ("body", body)]
+        .into_iter()
+        .filter_map(|(name, value)| {
+            let value = value.filter(|value| !value.trim().is_empty())?;
+            Some(format!("{name}={}", encode_uri_component(value.trim())))
+        })
+        .collect();
+    if fields.is_empty() {
+        format!("mailto:{address}")
+    } else {
+        format!("mailto:{address}?{}", fields.join("&"))
+    }
+}
+
+fn encode_uri_component(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
