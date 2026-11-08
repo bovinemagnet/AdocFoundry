@@ -14,6 +14,12 @@ rust-version = "1.99"
 license = "Apache-2.0"
 repository = "https://github.com/bovinemagnet/AdocFoundry"
 
+# Tests and development runs. Line tables keep file and line numbers in backtraces; the rest of
+# the debug information is left out, as writing and linking it costs build time, most of all on
+# CI's Windows runner (#391). A debugger shows no local variables in these builds.
+[profile.dev]
+debug = "line-tables-only"
+
 # What the release packages ship, and what the updater downloads. `panic` stays `unwind`: the
 # DOM parsers and the engine's workers catch panics, which `abort` would turn into crashes.
 [profile.release]
@@ -142,6 +148,11 @@ tree-sitter-sequel = "=0.3.11"
 tree-sitter-toml-ng = "=0.7.0"
 tree-sitter-typescript = "=0.23.2"
 tree-sitter-yaml = "=0.7.2"
+# Source blocks gpui-component has no grammar for (#66), registered by the app
+# (crates/adocfoundry/src/editor/language.rs) and highlighted by PDF export alike.
+# tree-sitter-containerfile reads Dockerfiles; tree-sitter-dockerfile needs tree-sitter 0.20.
+tree-sitter-containerfile = "=0.9.2"
+tree-sitter-xml = "=0.7.0"
 # PDF export: Typst as a library, without its bundled fonts or packages; see crates/adoc-pdf.
 asciimath-parser = "=0.5.0"
 mitex = "=0.2.4"

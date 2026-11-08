@@ -29,7 +29,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 
 **Editor**
 
-- Syntax highlighting from the AsciiDoc tree-sitter grammars, with the inline grammar injected into paragraphs, titles, table cells and macro targets, and source blocks highlighted for Rust, Java, JavaScript, TypeScript, Python, Go, JSON, YAML, TOML, shell, SQL and HTML.
+- Syntax highlighting from the AsciiDoc tree-sitter grammars, with the inline grammar injected into paragraphs, titles, table cells and macro targets, and source blocks highlighted for Rust, Java, JavaScript, TypeScript, Python, Go, JSON, YAML, TOML, shell, SQL, HTML, XML and Dockerfile.
 - Folding of sections, delimited blocks and lists; line numbers; soft wrap.
 - Diagnostics as you type for unresolved xrefs, anchors, includes and images, duplicate anchors, unknown Antora modules and resources, invalid resource IDs and invalid component descriptors. Inside `antora.yml`, at the line concerned: a missing `name` or `version`, a key Antora does not use, a `nav` file that does not exist, and an attribute value that is a list or mapping. A section is reached by its title or any id the build generates for it, including the numbered id of a repeated heading (`parameters-2`, `_parameters_2`), which completion also offers. Diagnostics are conservative: warnings rather than errors, and nothing for dynamic constructs such as `include::{attr}/x.adoc[]`, for a missing include inside an `ifdef`, `ifndef` or `ifeval` block, or for an anchor repeated in one.
 - Hover and completion for xref, include and image targets, anchors and `{attributes}`.
@@ -408,7 +408,6 @@ With `--http 127.0.0.1:8765` (any other loopback address, or port 0 for a free o
 - In the visual editor: deleting across the edge of a delimited block or table, or across content only the source can edit, and editing included content in place (Edit partial opens the partial).
 - Editing included content in place, plugins.
 - Merging, rebasing, conflicts and history: use a Git client.
-- XML and Dockerfile highlighting inside source blocks: the editor component has no grammar for them yet.
 - Accessible labels for the graph's nodes: GPUI has no accessibility tree yet.
 - Verified IME composition and frame timing on every platform, the packages on macOS and Windows, and the preview and the graph checked by hand on each platform: see [`docs/qa/phase7.md`](docs/qa/phase7.md), [`docs/qa/phase1.md`](docs/qa/phase1.md), [`docs/qa/phase2.md`](docs/qa/phase2.md), [`docs/qa/phase3.md`](docs/qa/phase3.md), [`docs/qa/phase4.md`](docs/qa/phase4.md) and [`docs/qa/spike-gpui.md`](docs/qa/spike-gpui.md).
 

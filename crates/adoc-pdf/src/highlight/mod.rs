@@ -45,6 +45,15 @@ fn grammar(name: &str) -> Option<Grammar> {
             "",
             "",
         ),
+        // The app registers these two itself (crates/adocfoundry/src/editor/language.rs), with
+        // the crates' own queries, as here.
+        "dockerfile" | "docker" => (
+            "dockerfile",
+            tree_sitter_containerfile::LANGUAGE.into(),
+            tree_sitter_containerfile::HIGHLIGHTS_QUERY,
+            tree_sitter_containerfile::INJECTIONS_QUERY,
+            "",
+        ),
         "go" => (
             "go",
             tree_sitter_go::LANGUAGE.into(),
@@ -107,6 +116,13 @@ fn grammar(name: &str) -> Option<Grammar> {
             include_str!("queries/typescript/highlights.scm"),
             include_str!("queries/javascript/injections.scm"),
             tree_sitter_typescript::LOCALS_QUERY,
+        ),
+        "xml" => (
+            "xml",
+            tree_sitter_xml::LANGUAGE_XML.into(),
+            tree_sitter_xml::XML_HIGHLIGHT_QUERY,
+            "",
+            "",
         ),
         "yaml" | "yml" => (
             "yaml",
@@ -470,15 +486,57 @@ mod tests {
     #[test]
     fn languages_are_found_by_the_preview_s_names() {
         for name in [
-            "rust", "rs", "Python", "js", "ts", "yml", "sh", "jsonc", "sql", "toml", "go", "java",
+            "rust",
+            "rs",
+            "Python",
+            "js",
+            "ts",
+            "yml",
+            "sh",
+            "jsonc",
+            "sql",
+            "toml",
+            "go",
+            "java",
             "html",
+            "xml",
+            "XML",
+            "dockerfile",
+            "docker",
         ] {
             assert!(Highlighter::supports(name), "{name}");
             let runs = Highlighter::new().highlight(name, "x").unwrap();
             assert_eq!(runs.last().unwrap().0.end, 1, "{name}");
         }
-        assert!(!Highlighter::supports("xml"));
-        assert!(Highlighter::new().highlight("xml", "<a/>").is_none());
+        assert!(!Highlighter::supports("cobol"));
+        assert!(Highlighter::new().highlight("cobol", "x").is_none());
+    }
+
+    #[test]
+    fn xml_and_dockerfile_take_the_preview_s_light_colours() {
+        let xml = "<?xml version=\"1.0\"?>\n<!-- A comment -->\n<note lang=\"en\">Hi</note>\n";
+        let runs = Highlighter::new().highlight("xml", xml).unwrap();
+        assert_eq!(color_of(&runs, xml, "note"), Some([0x04, 0x33, 0xFF]));
+        assert_eq!(color_of(&runs, xml, "\"en\""), Some([0x03, 0x6A, 0x07]));
+        assert_eq!(color_of(&runs, xml, "<!--"), Some([0x00, 0x7F, 0xFF]));
+
+        let dockerfile = "# Build\nFROM rust:1.99 AS build\nRUN echo \"done\"\n";
+        let runs = Highlighter::new()
+            .highlight("dockerfile", dockerfile)
+            .unwrap();
+        assert_eq!(
+            color_of(&runs, dockerfile, "FROM"),
+            Some([0x04, 0x33, 0xFF])
+        );
+        assert_eq!(
+            color_of(&runs, dockerfile, "# Build"),
+            Some([0x00, 0x7F, 0xFF])
+        );
+        // A RUN line is shell, highlighted by the bash grammar.
+        assert_eq!(
+            color_of(&runs, dockerfile, "\"done\""),
+            Some([0x03, 0x6A, 0x07])
+        );
     }
 
     #[test]

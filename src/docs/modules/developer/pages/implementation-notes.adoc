@@ -67,8 +67,8 @@ This section summarises section 20 of `docs/prd/PRD-AdocFoundry_Phase_1_Implemen
 
 |Injections
 |Rust, Java, JS/TS, Python, Go, JSON, YAML, TOML, shell, SQL, XML/HTML and Dockerfile
-|All except XML and Dockerfile
-|gpui-component 0.9 ships no XML or Dockerfile grammar. HTML is injected.
+|All of them
+|gpui-component 0.9 has no XML or Dockerfile grammar, so the app registers them itself from `tree-sitter-xml` and `tree-sitter-containerfile` (`tree-sitter-dockerfile` 0.2 needs tree-sitter 0.20, which cannot sit beside 0.26), and PDF export uses the same. HTML is injected.
 
 |CLI
 |`follow <file> <byte-offset>`

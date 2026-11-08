@@ -38,15 +38,15 @@ Building the application on Linux needs the system libraries listed in xref:ROOT
 
 == Continuous integration
 
-`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`. It does not run on `v*` tags by itself; `release.yml` calls it (`workflow_call`) on the tagged commit, so a tagged release is tested as well as built.
+`.github/workflows/ci.yml` runs on pull requests and on pushes to `main`. It does not run on `v*` tags by itself; `release.yml` reuses the run that tested the tagged commit on `main`, and calls it (`workflow_call`) only when there is none that passed, so a tagged release is tested as well as built.
 
 A pull request or push that changes only documentation, `.md` and `.adoc` files, runs no CI at all, through `paths` filters on both triggers.
 `.md` and `.adoc` files under `crates/` and `tests/` still run it, because they are the templates the engine builds in and the fixtures the tests read.
 The docs site's pages, `README.md`, `AGENTS.md` and the design document are read by some tests too (the visual editor's round-trip tests over `src/docs`, `theme_keys` over the theme keys partial, and `every_crate_is_documented` in `xtask`), so a change to them alone is checked only by the next run that changes code.
-A tagged release always runs CI, since `workflow_call` has no path filter.
+When a tagged release does call CI, it always runs, since `workflow_call` has no path filter.
 
 Concurrency: a newer push to a pull request cancels the run it supersedes, through a `concurrency` group per event and ref.
-Runs on `main`, and the tag's run through `release.yml`, always finish.
+Runs on `main`, and the tag's run through `release.yml` when it calls CI, always finish.
 
 Time limits: every job in both workflows has `timeout-minutes`, about twice its longest recent run.
 A hung test now fails its job instead of holding a runner for GitHub's six-hour limit, as the v0.6.0 tag's Windows tests did.
@@ -116,15 +116,25 @@ On a `v*` tag it runs `python3 packaging/release-version.py check "${GITHUB_REF_
 * `display_version` in `src/docs/antora.yml`
 * a `## <version> ` section heading in `CHANGELOG.md`
 
-The `ci` job and the macOS, Windows and Linux build jobs all wait for `version`, so a mismatched tag fails before anything is built.
+The `ci-passed` and `ci` jobs and the macOS, Windows and Linux build jobs all wait for `version`, so a mismatched tag fails before anything is built.
 The check matters because the binaries report `Cargo.toml`'s version (`CARGO_PKG_VERSION`), while the packages are named after the tag, and the updater compares the running version with the release's tag.
 A release whose two versions differ would be offered to its own users again and again.
 On a manual (`workflow_dispatch`) run from a branch the check is skipped.
 
-The `ci` job calls `ci.yml` on the tagged commit.
-The packages are still built and smoke-tested alongside it, but the `publish` job needs both `ci` and `smoke`.
+The `ci-passed` job asks whether `ci.yml` already passed on the tagged commit, so a release does not repeat the tests that the push to `main` ran (#391).
+It runs `python3 packaging/ci-result.py "$GITHUB_REPOSITORY" "$GITHUB_SHA"`, which asks the GitHub API (`gh api`, with the job's token) for `ci.yml`'s runs for that commit.
+Only runs for a push to `main` count, since a pull request's run tested its merge with `main`, not the commit.
+If one passed, the job writes `passed=true` to its outputs.
+While one is queued or running, the script waits and asks again every 60 seconds, since the tag is usually pushed while `main`'s run for the release commit is still going.
+Otherwise the job writes `passed=false`: there was no run (a commit that changes only documentation, which CI's `paths` filters skip), or it failed or was cancelled.
+The job has read-only `actions` and `contents` permissions and a limit of 150 minutes.
+
+The `ci` job calls `ci.yml` on the tagged commit, but only when `ci-passed` did not say `passed`, or when the check itself failed or timed out.
+The packages are still built and smoke-tested alongside from the start, and the `publish` job needs `ci-passed`, `ci` and `smoke`.
+It runs on a tag when `smoke` succeeded and either `ci` succeeded or `ci-passed` said `passed`.
 A tag on a commit whose tests fail therefore still builds its artefacts, which can be downloaded from the workflow run, but publishes no release.
-To publish, re-run the failed jobs after a fix, or push a new tag.
+To publish, re-run the failed `ci` or `ci-passed` job or the other failed jobs after a fix, or push a new tag.
+Reusing `main`'s run saves the release about 1.5 runner-hours, and a hang in the release's own Windows tests can no longer hold up publishing.
 
 .The release pipeline
 [mermaid]
@@ -153,6 +163,10 @@ The job checks every signature with `Get-AuthenticodeSignature`.
 |Natively on `ubuntu-22.04` (x86_64) and `ubuntu-22.04-arm` (aarch64): a deb from `cargo deb`, an rpm from `cargo generate-rpm`, an AppImage from `linuxdeploy` (release `1-alpha-20251107-1`, checked against its SHA-256 with `sha256sum -c` before it runs, not the moving `continuous` build; with its update information set, `gh-releases-zsync|bovinemagnet|AdocFoundry|latest|AdocFoundry-*-<arch>.AppImage.zsync`) and its `.zsync` file, and archives of `adoc-ls`, `adocfoundry-cli` and `adoc-mcp`. Each package and archive carries the dictionaries' licence and the third-party notices: the deb, rpm and AppImage install them as `/usr/share/doc/adocfoundry/SCOWL.txt` and `THIRD-PARTY-NOTICES.txt`, and the archives hold `licenses/SCOWL.txt` and `licenses/THIRD-PARTY-NOTICES.txt`.
 It also checks the Flatpak manifest (see below).
 
+|`ci-passed`
+|On a tag, runs `packaging/ci-result.py` to find whether `ci.yml` passed on `main` for the tagged commit, waiting for a run still going, and outputs `passed`.
+The `ci` job runs only when it is not `true`.
+
 |`smoke`
 |Runs `packaging/smoke-test.py` on each platform's downloaded artefacts before `publish` (see below).
 
@@ -161,6 +175,24 @@ It also checks the Flatpak manifest (see below).
 It takes the changelog's section for the version, without its heading, with `python3 packaging/release-version.py notes <version> <file>`, and uses it as the release's body (`body_path`).
 It attaches the artefacts and `SHA256SUMS` to a GitHub release, and GitHub's generated list of pull requests (`generate_release_notes: true`) is still appended after the changelog section.
 |===
+
+=== Development profile
+
+`[profile.dev]` in the root `Cargo.toml` sets `debug = "line-tables-only"`.
+Tests and development runs (`cargo test`, `cargo run` and `cargo xtask run`) build with it.
+Line tables keep file and line numbers in backtraces and panics.
+The rest of the debug information is left out, since writing and linking it costs build time (#391), most of all on CI's Windows runner, where it goes into PDB files at link time.
+Linux links it into each binary, and macOS keeps it in the object files, so a macOS test binary is only about 5% smaller: 440 MB against 461 MB for the app's.
+
+A debugger shows no local variables in these builds.
+To debug with them, build with full debug information through the environment variable Cargo reads, for example:
+
+[source,sh]
+----
+CARGO_PROFILE_DEV_DEBUG=full cargo run -p adocfoundry
+----
+
+`packaging/test_toolchain.py` checks the setting (`test_debug_builds_keep_line_tables_only`).
 
 === Release profile and sizes
 
@@ -294,7 +326,8 @@ It then checks:
 
 Its signature checks, and where it finds the licence, have unit tests in `packaging/test_smoke_test.py`.
 `packaging/test_release_version.py` tests the tag check and the extraction of the changelog's notes.
-`packaging/test_workflows.py` checks that `release.yml` calls `ci.yml` and that `publish` needs both `ci` and `smoke`.
+`packaging/test_ci_result.py` tests the decisions of `packaging/ci-result.py`.
+`packaging/test_workflows.py` checks that `release.yml` calls `ci.yml` only when `main`'s run did not pass (`test_ci_that_passed_on_main_is_not_run_again`) and that `publish` needs `ci-passed`, `ci` and `smoke`.
 It also checks that the `version` job precedes every build (`test_tag_check_precedes_build`), that `publish` uses the changelog section, and that the smoke test is given the tag's version.
 The `lint` job runs them with `python3 -m unittest discover -s packaging -p 'test_*.py'`.
 

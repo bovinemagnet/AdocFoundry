@@ -6,6 +6,7 @@ Run with: python3 -m unittest discover -s packaging -p 'test_*.py'
 import glob
 import os
 import re
+import tomllib
 import unittest
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -43,6 +44,17 @@ class ToolchainIsPinned(unittest.TestCase):
                     r"(?m)^rust-version\.workspace\s*=\s*true$",
                     os.path.relpath(manifest, ROOT),
                 )
+
+
+class TestBuildsAreLean(unittest.TestCase):
+    def test_debug_builds_keep_line_tables_only(self):
+        # Writing and linking full debug information costs build time, most of all on CI's
+        # Windows runner (#391). Backtraces still name files and lines.
+        with open(os.path.join(ROOT, "Cargo.toml"), "rb") as file:
+            profiles = tomllib.load(file)["profile"]
+        self.assertEqual(profiles.get("dev", {}).get("debug"), "line-tables-only")
+        # Tests build with the dev profile, so nothing may set it back for them.
+        self.assertNotIn("debug", profiles.get("test", {}))
 
 
 if __name__ == "__main__":
