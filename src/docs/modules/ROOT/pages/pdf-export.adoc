@@ -380,8 +380,8 @@ Source blocks are highlighted only when the page sets the `source-highlighter` a
 Without it, nothing is highlighted.
 
 The export then uses the same tree-sitter grammars and queries as the preview, in the preview's light theme colours, so a listing looks the same in the PDF as in the preview.
-These languages have a grammar: Bash (`bash`, `sh`), Go, HTML, Java, JavaScript (`javascript`, `js`), JSON (`json`, `jsonc`), Python (`python`, `py`), Rust (`rust`, `rs`), SQL, TOML, TypeScript (`typescript`, `ts`) and YAML (`yaml`, `yml`).
-A language without a grammar, such as XML, is highlighted by Typst's highlighter.
+These languages have a grammar: Bash (`bash`, `sh`), Dockerfile (`dockerfile`, `docker`), Go, HTML, Java, JavaScript (`javascript`, `js`), JSON (`json`, `jsonc`), Python (`python`, `py`), Rust (`rust`, `rs`), SQL, TOML, TypeScript (`typescript`, `ts`), XML and YAML (`yaml`, `yml`).
+A language without a grammar, such as Kotlin or C, is highlighted by Typst's highlighter.
 
 The listing keeps the theme's code font, size, background and border.
 Only the token colours come from the preview.

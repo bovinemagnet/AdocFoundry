@@ -58,6 +58,31 @@ class ReleaseWaitsForCi(unittest.TestCase):
         self.assertIn(callers[0], needs(release["publish"]), "publish waits for CI")
         self.assertIn("smoke", needs(release["publish"]), "publish still waits for the smoke tests")
 
+    def test_ci_that_passed_on_main_is_not_run_again(self):
+        # A tag is pushed on a commit of main, whose own CI run is usually still going: the
+        # release waits for it and reuses it, and runs CI itself only without a passed one.
+        release = jobs(read("release.yml"))
+        check = "\n".join(release["ci-passed"])
+        self.assertIn('packaging/ci-result.py "$GITHUB_REPOSITORY" "$GITHUB_SHA"', check)
+        self.assertRegex(check, r"permissions:\n\s+actions: read\n")
+        self.assertIn("version", needs(release["ci-passed"]))
+        ci = "\n".join(release["ci"])
+        self.assertIn("ci-passed", needs(release["ci"]))
+        # A failed or timed-out check still runs CI.
+        self.assertIn(
+            "if: always() && needs.version.result == 'success' && "
+            "needs.ci-passed.outputs.passed != 'true'",
+            ci,
+        )
+        publish = "\n".join(release["publish"])
+        self.assertIn("ci-passed", needs(release["publish"]))
+        # Published only when the packages' smoke tests passed and CI passed, here or on main.
+        self.assertIn("needs.smoke.result == 'success'", publish)
+        self.assertIn(
+            "(needs.ci.result == 'success' || needs.ci-passed.outputs.passed == 'true')", publish
+        )
+        self.assertIn("startsWith(github.ref, 'refs/tags/')", publish)
+
     def test_tag_check_precedes_build(self):
         release = jobs(read("release.yml"))
         checks = [

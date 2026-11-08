@@ -32,7 +32,40 @@ const SOURCE_LANGUAGES: &[&str] = &[
     "bash",
     "sql",
     "html",
+    "xml",
+    "dockerfile",
+    "docker",
 ];
+
+/// Languages gpui-component has no grammar for, registered here with their crates' own
+/// queries, as PDF export highlights them (`adoc_pdf::highlight`) (#66).
+fn register_source_languages(registry: &LanguageRegistry) {
+    registry.register(
+        "xml",
+        &LanguageConfig::new(
+            "xml",
+            tree_sitter_xml::LANGUAGE_XML.into(),
+            Vec::new(),
+            tree_sitter_xml::XML_HIGHLIGHT_QUERY,
+            "",
+            "",
+        ),
+    );
+    // A RUN line is shell; a heredoc COPY to a .json, .yaml, .toml or .xml file is that language.
+    let dockerfile = LanguageConfig::new(
+        "dockerfile",
+        tree_sitter_containerfile::LANGUAGE.into(),
+        ["bash", "json", "yaml", "toml", "xml"]
+            .into_iter()
+            .map(Into::into)
+            .collect(),
+        tree_sitter_containerfile::HIGHLIGHTS_QUERY,
+        tree_sitter_containerfile::INJECTIONS_QUERY,
+        "",
+    );
+    registry.register("dockerfile", &dockerfile);
+    registry.register("docker", &dockerfile);
+}
 
 /// The highlighting for a document: AsciiDoc for a page, otherwise the grammar gpui-component
 /// knows by the file's extension (`toml`, `yml`, `json`, `sh` and the rest), else plain text.
@@ -52,6 +85,7 @@ pub fn for_document(path: &std::path::Path, asciidoc: bool) -> String {
 
 pub fn register() {
     let registry = LanguageRegistry::singleton();
+    register_source_languages(registry);
     registry.register(
         ASCIIDOC_INLINE,
         &LanguageConfig::new(
@@ -100,6 +134,58 @@ mod tests {
             "inline highlights.scm",
             INLINE_HIGHLIGHTS,
         );
+    }
+
+    #[test]
+    fn every_source_language_has_a_grammar_here_and_in_pdf_export() {
+        register();
+        for name in ["xml", "dockerfile", "docker"] {
+            assert!(SOURCE_LANGUAGES.contains(&name), "{name} is injected");
+        }
+        for name in SOURCE_LANGUAGES {
+            let config = LanguageRegistry::singleton().language(name);
+            assert!(
+                config.is_some_and(|config| config.language.is_some()),
+                "{name} has a grammar in the editor and preview"
+            );
+            assert!(
+                adoc_pdf::highlight::Highlighter::supports(name),
+                "{name} has a grammar in PDF export"
+            );
+        }
+    }
+
+    #[test]
+    fn xml_and_dockerfile_source_blocks_are_highlighted_in_a_page() {
+        use gpui_component::highlighter::{HighlightTheme, SyntaxHighlighter};
+        register();
+        let page = "= Page\n\n[source,xml]\n----\n<note lang=\"en\"/>\n----\n\n\
+                    [source,dockerfile]\n----\nFROM rust:1.99\n----\n";
+        let mut highlighter = SyntaxHighlighter::new(ASCIIDOC);
+        highlighter.update(None, &ropey::Rope::from_str(page), None);
+        let theme = HighlightTheme::default_light();
+        let styles = highlighter.styles(&(0..page.len()), &*theme);
+        let colour = |word: &str| {
+            let at = page.find(word).unwrap();
+            styles
+                .iter()
+                .rev()
+                .find(|(range, _)| range.contains(&at))
+                .and_then(|(_, style)| style.color)
+        };
+        let theme_colour = |name: &str| theme.style(name).and_then(|style| style.color);
+        // Without its grammar, a block's text takes the listing's one colour.
+        assert_eq!(
+            colour("\"en\""),
+            theme_colour("string"),
+            "the XML attribute value"
+        );
+        assert_eq!(
+            colour("FROM"),
+            theme_colour("keyword"),
+            "the Dockerfile instruction"
+        );
+        assert_ne!(theme_colour("string"), theme_colour("keyword"));
     }
 
     #[test]

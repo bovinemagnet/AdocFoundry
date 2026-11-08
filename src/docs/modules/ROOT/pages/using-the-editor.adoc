@@ -439,8 +439,10 @@ It provides:
 
 * Syntax highlighting from the AsciiDoc tree-sitter grammars.
 The inline grammar is injected into paragraphs, titles, table cells and macro targets.
-* Highlighting inside source blocks for Rust, Java, JavaScript, TypeScript, Python, Go, JSON, YAML, TOML, shell, SQL and HTML.
-XML and Dockerfile blocks are not highlighted yet.
+* Highlighting inside source blocks for Rust, Java, JavaScript, TypeScript, Python, Go, JSON, YAML, TOML, shell, SQL, HTML, XML and Dockerfile (#66).
+In a Dockerfile, a `RUN` line is highlighted as shell, and a heredoc `COPY` into a `.json`, `.yaml`, `.toml` or `.xml` file as that language.
+The preview, the visual editor's code blocks and PDF export use the same colours.
+Only source blocks are covered: a file named `Dockerfile` or ending in `.xml` opened in its own tab is plain text.
 * Folding of sections, delimited blocks and lists, line numbers and soft wrap.
 * Diagnostics as you type.
 See xref:diagnostics.adoc[Diagnostics].

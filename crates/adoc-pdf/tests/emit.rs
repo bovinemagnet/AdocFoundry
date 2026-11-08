@@ -365,9 +365,14 @@ fn highlighted_code_is_never_typst() {
 
 #[test]
 fn languages_without_a_grammar_keep_typst_s_highlighter() {
-    let typst = typst_of("= Page\n:source-highlighter: rouge\n\n[source,xml]\n----\n<a/>\n----\n");
+    let typst =
+        typst_of("= Page\n:source-highlighter: rouge\n\n[source,kotlin]\n----\nval a = 1\n----\n");
     assert!(!typst.source.contains("adoc-highlighted((("));
-    assert!(typst.source.contains("lang: \"xml\""), "{}", typst.source);
+    assert!(
+        typst.source.contains("lang: \"kotlin\""),
+        "{}",
+        typst.source
+    );
     // Without `source-highlighter`, nothing is highlighted, as asciidoctor-pdf does.
     let typst = typst_of("= Page\n\n[source,rust]\n----\nfn main() {}\n----\n");
     assert!(

@@ -725,10 +725,20 @@ mod highlight_tests {
         ("toml", "[package]\nname = \"x\"\nversion = 1\nok = true\n"),
         ("sql", "SELECT id, name FROM users WHERE age > 21 ORDER BY name;\n"),
         ("html", "<!DOCTYPE html>\n<p class=\"x\">Hi <b>there</b></p>\n<script>let a = 1;</script>\n"),
+        (
+            "xml",
+            "<?xml version=\"1.0\"?>\n<!-- A comment -->\n<note lang=\"en\"><to>Tove</to>&amp;<![CDATA[x < y]]></note>\n",
+        ),
+        (
+            "dockerfile",
+            "# Build\nFROM rust:1.99 AS build\nARG MODE=release\nENV PATH=/x:$PATH\nCOPY --from=build /app /app\nRUN cargo build --release && echo \"done\"\nCMD [\"/app\"]\n",
+        ),
     ];
 
     /// The colour of each byte as the preview styles it.
     fn preview(language: &str, code: &str) -> Vec<Option<[u8; 3]>> {
+        // XML and Dockerfile are the app's own registrations, not gpui-component's.
+        crate::editor::language::register();
         let mut highlighter = SyntaxHighlighter::new(language);
         highlighter.update(None, &ropey::Rope::from_str(code), None);
         let mut colours = vec![None; code.len()];
