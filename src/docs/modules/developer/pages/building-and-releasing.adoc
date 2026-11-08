@@ -90,7 +90,8 @@ Which jobs to cache is part of the build-time work in issue #391.
 |On Ubuntu: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny` and `cargo xtask layers`.
 
 |`test`
-|On Ubuntu, macOS 15 and Windows: `cargo test --workspace --exclude adocfoundry`, then `cargo build -p adocfoundry`. Building needs no display.
+|On Ubuntu, macOS 15 and Windows: the workspace's tests apart from the app's, then `cargo build -p adocfoundry`. Building needs no display.
+On Ubuntu and macOS the tests run through `cargo test --workspace --exclude adocfoundry --no-fail-fast`. On Windows they run through `cargo nextest run --workspace --exclude adocfoundry --profile ci` (cargo-nextest 0.9.151, installed with `cargo install --locked` and kept in the cache), because `cargo test` there has hung in a different test each time until the job's time limit, naming none of them (#391). The `ci` profile in `.config/nextest.toml` stops any test still running after ten minutes and fails it by name; the slowest test seen on a Windows runner takes about three minutes.
 On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15, so the fidelity test and `pdf_regression` run instead of skipping. These tools are needed only by CI, never at runtime.
 On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
 Each run restores the dependencies' build output with `Swatinem/rust-cache`, keyed by OS, Rust version and `Cargo.lock`; only runs on `main` save it, so pull requests reuse `main`'s cache. Only `test` is cached, to keep to the three caches; see the caching paragraph above (<<ci-caching>>).

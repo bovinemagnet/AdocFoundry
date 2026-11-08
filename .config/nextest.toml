@@ -1,0 +1,9 @@
+# cargo-nextest, which CI's Windows tests run through (#391): there, `cargo test` has hung in a
+# different test each time until the job's time limit, naming none of them.
+
+[profile.ci]
+# Every test runs even when one fails, as `cargo test --no-fail-fast` does.
+fail-fast = false
+# A test is reported as slow after each minute, and stopped, failing and named, after ten. The
+# slowest test seen on a Windows runner took about three minutes.
+slow-timeout = { period = "60s", terminate-after = 10 }

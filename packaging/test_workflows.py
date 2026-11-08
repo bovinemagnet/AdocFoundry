@@ -6,9 +6,11 @@ Run with: python3 -m unittest discover -s packaging -p 'test_*.py'
 
 import os
 import re
+import tomllib
 import unittest
 
 WORKFLOWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".github", "workflows")
+NEXTEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".config", "nextest.toml")
 
 
 def read(name):
@@ -164,6 +166,30 @@ class WorkflowsAreReproducible(unittest.TestCase):
         ci = read("ci.yml").split("\njobs:\n", 1)[0]
         self.assertRegex(ci, r"(?m)^concurrency:")
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", ci)
+
+    def test_a_hung_test_on_windows_is_stopped_and_named(self):
+        # Windows runs have hung in a different test each time (#391). libtest waits for the
+        # job's time limit and names no test; nextest stops one that outlives its own limit.
+        test = "\n".join(jobs(read("ci.yml"))["test"])
+        self.assertRegex(
+            test,
+            r"if: runner\.os == 'Windows'\n\s+run: cargo nextest run --workspace "
+            r"--exclude adocfoundry --profile ci\n",
+        )
+        self.assertRegex(
+            test,
+            r"if: runner\.os != 'Windows'\n\s+run: cargo test --workspace "
+            r"--exclude adocfoundry --no-fail-fast\n",
+        )
+        with open(NEXTEST, "rb") as config:
+            profile = tomllib.load(config)["profile"]["ci"]
+        timeout = profile["slow-timeout"]
+        limit = int(timeout["period"].removesuffix("s")) * timeout["terminate-after"]
+        # Long enough for the slowest test seen on Windows (about three minutes), and far
+        # short of the job's two hours.
+        self.assertGreaterEqual(limit, 6 * 60)
+        self.assertLessEqual(limit, 15 * 60)
+        self.assertIs(profile["fail-fast"], False, "every failure is reported")
 
 
 class FuzzWorkflow(unittest.TestCase):

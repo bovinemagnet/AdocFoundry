@@ -102,7 +102,15 @@ jobs:
         if: runner.os == 'Linux'
         run: gem install --no-document asciidoctor -v 2.0.26 && gem install --no-document asciidoctor-pdf -v 2.3.15
       # Every crate runs even when one fails, so a run reports every failure.
-      - run: cargo test --workspace --exclude adocfoundry --no-fail-fast
+      - if: runner.os != 'Windows'
+        run: cargo test --workspace --exclude adocfoundry --no-fail-fast
+      # On Windows, `cargo test` has hung in a different test each time until the job's time
+      # limit (#391). nextest stops a test after ten minutes and names it (`.config/nextest.toml`).
+      # Installed after the cache is restored, so main's cache keeps it.
+      - if: runner.os == 'Windows'
+        run: cargo install cargo-nextest --version 0.9.151 --locked
+      - if: runner.os == 'Windows'
+        run: cargo nextest run --workspace --exclude adocfoundry --profile ci
       # The app's tests run on GPUI's test platform; on macOS it builds without a display server.
       - name: App tests
         if: runner.os == 'macOS'
