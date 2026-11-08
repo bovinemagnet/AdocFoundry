@@ -74,11 +74,11 @@ CI's `bench` job runs it on Ubuntu.
 
 | `settle_index`
 | The two `pump`s that settle a keystroke on a 20,000-line page: the one at `INDEX_SETTLE` that hands the page to a worker, and the one that files the worker's answer and diagnoses (not the worker's time between them)
-| 1 ms (the parse and the index entry are prepared on a worker, #238)
+| 2 ms (the parse and the index entry are prepared on a worker, #238; a CI runner's median varies nearly threefold between runs)
 
 | `settle_preview`
 | The `pump`s that settle a keystroke on a 20,000-line page with the preview shown: the one at `PREVIEW_SETTLE` that hands the page to a worker, and the one that files the answer and builds the input of the preview's parse (not the view tree built from that parse)
-| 1 ms
+| 2 ms (as `settle_index`)
 
 | `settle_git`
 | The `pump` at `GIT_SETTLE` in a repository, the index flushed first
