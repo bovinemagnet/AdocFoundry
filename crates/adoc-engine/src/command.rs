@@ -75,6 +75,11 @@ pub enum CommandArgs {
     Document(DocumentId),
     /// An open image, for the commands that act on tabs.
     Image(crate::ImageId),
+    /// A tab and the place in the strip to move it to: `document.move_tab`.
+    MoveTab {
+        item: crate::TabItem,
+        to: usize,
+    },
     Offset {
         id: DocumentId,
         offset: usize,

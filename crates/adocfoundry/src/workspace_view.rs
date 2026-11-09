@@ -135,6 +135,28 @@ pub(crate) fn item_args(item: TabItem) -> CommandArgs {
     }
 }
 
+/// A tab being dragged along the strip: dropped on another tab, it takes that tab's place.
+#[derive(Clone)]
+struct DraggedTab {
+    item: TabItem,
+    label: SharedString,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_0p5()
+            .text_sm()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().popover)
+            .text_color(cx.theme().popover_foreground)
+            .child(self.label.clone())
+    }
+}
+
 /// What the user chose when asked about unsaved pages on closing the window or quitting.
 #[derive(Clone, Copy)]
 enum CloseAnswer {
@@ -687,6 +709,8 @@ impl WorkspaceView {
             EngineEvent::PreviewTabReplaced { old, new } => {
                 self.replace_tab(*old, *new, window, cx);
             }
+            // The active tab may have moved out of view.
+            EngineEvent::TabsReordered => self.reveal_active_tab(cx),
             EngineEvent::DocumentClosed(id) => {
                 self.tabs
                     .retain(|tab| tab.item(cx) != TabItem::Document(*id));
@@ -2031,6 +2055,82 @@ impl WorkspaceView {
         if let Some(item) = self.active_item(cx) {
             self.invoke(ids::DOCUMENT_KEEP_OPEN, item_args(item), window, cx);
         }
+    }
+
+    fn on_pin_tab(&mut self, _: &PinTab, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = self.active_item(cx) {
+            self.invoke(ids::DOCUMENT_PIN_TAB, item_args(item), window, cx);
+        }
+    }
+
+    fn on_unpin_tab(&mut self, _: &UnpinTab, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(item) = self.active_item(cx) {
+            self.invoke(ids::DOCUMENT_UNPIN_TAB, item_args(item), window, cx);
+        }
+    }
+
+    /// The file a tab shows, unless it is an untitled page with none.
+    fn tab_path(&self, item: TabItem, cx: &App) -> Option<PathBuf> {
+        let engine = &self.app.read(cx).engine;
+        match item {
+            TabItem::Document(id) => engine
+                .document(id)
+                .filter(|document| !document.untitled)
+                .map(|document| document.path.clone()),
+            TabItem::Image(id) => engine.image(id).map(|image| image.path.clone()),
+        }
+    }
+
+    /// A tab's file relative to the workspace folder that holds it, as the Files panel copies it.
+    fn tab_relative_path(&self, item: TabItem, cx: &App) -> Option<PathBuf> {
+        let path = self.tab_path(item, cx)?;
+        let engine = &self.app.read(cx).engine;
+        engine
+            .roots()
+            .iter()
+            .find_map(|root| path.strip_prefix(root).ok())
+            .map(Path::to_path_buf)
+    }
+
+    /// Copies the file a tab shows to the clipboard, in full or relative to its folder.
+    pub(crate) fn copy_tab_path(&self, item: TabItem, relative: bool, cx: &mut App) {
+        let path = if relative {
+            self.tab_relative_path(item, cx)
+        } else {
+            self.tab_path(item, cx)
+        };
+        if let Some(path) = path {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(path.display().to_string()));
+        }
+    }
+
+    /// Whether the Navigation panel has a row that opens the page a tab shows.
+    pub(crate) fn can_reveal_in_navigation(&self, item: TabItem, cx: &App) -> bool {
+        item.document().is_some()
+            && self
+                .tab_path(item, cx)
+                .is_some_and(|path| sidebar::path_to_file(&self.nav_nodes, &path).is_some())
+    }
+
+    /// Shows the Navigation panel with the row that opens a tab's page selected; false, changing
+    /// nothing, without one.
+    pub(crate) fn reveal_tab_in_navigation(
+        &mut self,
+        item: TabItem,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.can_reveal_in_navigation(item, cx) {
+            return false;
+        }
+        let Some(path) = self.tab_path(item, cx) else {
+            return false;
+        };
+        let found = self.reveal_in_tree(SidebarPanel::Navigation, &path, cx);
+        if found {
+            self.sidebar_tab = SidebarTab::Navigation;
+            cx.notify();
+        }
+        found
     }
 
     fn on_reload_image(&mut self, _: &ReloadImage, window: &mut Window, cx: &mut Context<Self>) {
@@ -4645,12 +4745,22 @@ impl WorkspaceView {
                     .and_then(|image| engine.image(image))
                     .map(|image| SharedString::from(image.path.display().to_string()));
                 let preview = engine.is_preview(id);
+                let pinned = engine.is_pinned(id);
                 let target = target.clone();
                 let aria = match (preview, image_path.is_some()) {
                     (true, true) => format!("{name}, image, preview tab"),
                     (true, false) => format!("{name}, preview tab"),
                     (false, true) => format!("{name}, image"),
                     (false, false) => name.clone(),
+                };
+                let aria = if pinned {
+                    format!("{aria}, pinned")
+                } else {
+                    aria
+                };
+                let dragged = DraggedTab {
+                    item: id,
+                    label: name.clone().into(),
                 };
                 Tab::new()
                     .aria_label(aria)
@@ -4698,7 +4808,34 @@ impl WorkspaceView {
                                 },
                             ))
                     })
-                    .suffix(
+                    // Dropped on another tab, a dragged one takes its place.
+                    .on_drag(dragged, |tab, _, _, cx| cx.new(|_| tab.clone()))
+                    .drag_over::<DraggedTab>(|style, _, _, cx| style.bg(cx.theme().drop_target))
+                    .on_drop(cx.listener(move |this, dragged: &DraggedTab, window, cx| {
+                        this.invoke(
+                            ids::DOCUMENT_MOVE_TAB,
+                            CommandArgs::MoveTab {
+                                item: dragged.item,
+                                to: ix,
+                            },
+                            window,
+                            cx,
+                        );
+                    }))
+                    // A pinned tab has its pin, which unpins it, in place of the X.
+                    .suffix(if pinned {
+                        Button::new(("unpin-tab", ix))
+                            .icon(gpui_kit_assets::IconName::Pin)
+                            .ghost()
+                            .xsmall()
+                            .tab_stop(false)
+                            .debug_selector(move || format!("tab-unpin-{ix}"))
+                            .tooltip("Unpin Tab")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.invoke(ids::DOCUMENT_UNPIN_TAB, item_args(id), window, cx);
+                            }))
+                    } else {
                         Button::new(("close-tab", ix))
                             .icon(IconName::Close)
                             .ghost()
@@ -4710,8 +4847,8 @@ impl WorkspaceView {
                                 // Not also a click on the tab, which would select another.
                                 cx.stop_propagation();
                                 this.close_tabs(ids::DOCUMENT_CLOSE, id, window, cx);
-                            })),
-                    )
+                            }))
+                    })
             })
             .collect();
         let (back, forward) = (engine.can_go_back(), engine.can_go_forward());
@@ -4858,6 +4995,59 @@ impl WorkspaceView {
                                 }),
                         )
                     });
+                let menu = match (target, workspace.upgrade()) {
+                    (Some(target), Some(view)) => {
+                        let view = view.read(cx);
+                        let (path, relative, revealable) = (
+                            view.tab_path(target, cx).is_some(),
+                            view.tab_relative_path(target, cx).is_some(),
+                            view.can_reveal_in_navigation(target, cx),
+                        );
+                        let (label, command, action): (_, _, Box<dyn gpui::Action>) =
+                            if engine.is_pinned(target) {
+                                ("Unpin Tab", ids::DOCUMENT_UNPIN_TAB, Box::new(UnpinTab))
+                            } else {
+                                ("Pin Tab", ids::DOCUMENT_PIN_TAB, Box::new(PinTab))
+                            };
+                        let [pinned_in, copied_in, relative_in, revealed_in] =
+                            [(); 4].map(|()| workspace.clone());
+                        menu.separator()
+                            .item(PopupMenuItem::new(label).action(action).on_click(
+                                move |_, window, cx| {
+                                    let _ = pinned_in.update(cx, |this, cx| {
+                                        this.invoke(command, item_args(target), window, cx);
+                                    });
+                                },
+                            ))
+                            .separator()
+                            .item(PopupMenuItem::new("Copy Path").disabled(!path).on_click(
+                                move |_, _, cx| {
+                                    let _ = copied_in.update(cx, |this, cx| {
+                                        this.copy_tab_path(target, false, cx);
+                                    });
+                                },
+                            ))
+                            .item(
+                                PopupMenuItem::new("Copy Relative Path")
+                                    .disabled(!relative)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = relative_in.update(cx, |this, cx| {
+                                            this.copy_tab_path(target, true, cx);
+                                        });
+                                    }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Reveal in Navigation")
+                                    .disabled(!revealable)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = revealed_in.update(cx, |this, cx| {
+                                            this.reveal_tab_in_navigation(target, cx);
+                                        });
+                                    }),
+                            )
+                    }
+                    _ => menu,
+                };
                 let menu = match page {
                     Some(page) => {
                         let (inspected_in, inspected) = (shown_in.clone(), page.clone());
@@ -5168,6 +5358,8 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_close_clean))
             .on_action(cx.listener(Self::on_close_all))
             .on_action(cx.listener(Self::on_keep_open))
+            .on_action(cx.listener(Self::on_pin_tab))
+            .on_action(cx.listener(Self::on_unpin_tab))
             .on_action(cx.listener(Self::on_reload_image))
             .on_action(cx.listener(|this, _: &ZoomIn, window, cx| {
                 this.zoom_active_image(Box::new(ZoomIn), window, cx);

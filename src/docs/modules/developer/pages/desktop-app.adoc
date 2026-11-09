@@ -120,7 +120,7 @@ An item whose command cannot run is disabled, not hidden.
 A command the build lacks, such as the PDF export commands without the `typst` feature, is left out.
 
 The test `every_command_is_in_a_menu` fails when a command with an action is in no menu and not in the short `NOT_IN_MENUS` list.
-That list holds `document.overwrite` (Save, Overwriting the File on Disk, offered only after a conflict), `visual.split_block` (New Paragraph, bound to kbd:[Enter]), and `document.close_left` and `document.close_right` (Close Left and Close Right, which belong to the tab menu).
+That list holds `document.overwrite` (Save, Overwriting the File on Disk, offered only after a conflict), `visual.split_block` (New Paragraph, bound to kbd:[Enter]), and `document.close_left` and `document.close_right` (Close Left and Close Right, which belong to the tab menu), and `document.pin_tab` and `document.unpin_tab` (Pin Tab and Unpin Tab, which belong to the tab menu too).
 A new command must therefore be added to a menu or to that list.
 
 == Recovery and local history dialogs
@@ -314,10 +314,19 @@ Every text change goes through `edit_document`, which keeps the document open, a
 Replacing the preview tab reads the new file first, so a file that cannot be read leaves the tab as it was.
 The new document takes the old one's place in the tab order, the engine emits `EngineEvent::PreviewTabReplaced { old, new }` and then closes the old one.
 Close Left and Close Right follow the tab order.
+`Tabs` (`src/tabs.rs`) also holds `pinned`, the pinned tabs, which are always the first `pinned.len()` of `tab_order`.
+`Engine::is_pinned`, `pin_tab`, `unpin_tab` and `move_tab` read and change it: pinning moves a tab to the end of the pinned tabs, unpinning to the front of the others, and `move_tab` clamps a tab to its own group.
+The commands are `document.pin_tab`, `document.unpin_tab` and `document.move_tab`, the last taking `CommandArgs::MoveTab { item, to }`, driven by dragging and with no action of its own.
+Each change emits `EngineEvent::TabsReordered`.
+`closed_by` and `closed_by_any` leave pinned tabs out of every closing command but `document.close`.
+`forget_tab` takes a closed tab out of the order, the preview tab and the pinned set.
+The session keeps `SavedTab::pinned`, and restoring pins each tab as it reopens, since pinned tabs are saved first.
 Only a front end that shows tabs calls `Engine::enable_preview_tabs`: the app does in `AppState::new`, so the CLI, the language server and the MCP server keep every document they open.
 In the app, `WorkspaceView::open_at` takes an `OpenDisposition` and returns the opened `TabItem`, and `replace_tab` moves the new tab into the old one's slot.
 The tab strip draws the engine's `tab_order()`, so every tab the engine holds has one, including pages a change opened beside the active one.
 A tab's `TabView` (`Editor` or `Image`) is made when the tab is first shown.
+Each `Tab` in `render_tabs` is draggable with a `DraggedTab` and takes drops, marking the tab under the pointer with `drag_over` and the theme's `drop_target`.
+`WorkspaceView::copy_tab_path`, `can_reveal_in_navigation` and `reveal_tab_in_navigation` serve the tab menu's Copy Path, Copy Relative Path and Reveal in Navigation.
 
 The sidebar's Navigation, Modules and Problems trees and the outline are built from engine state in `sidebar.rs`.
 Every leaf's id encodes where clicking it leads, so one handler serves all of them.

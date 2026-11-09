@@ -32,6 +32,9 @@ pub enum EngineEvent {
     },
     /// The document or image left the preview tab and stays open as an ordinary tab.
     TabKept(TabItem),
+    /// A tab moved in the strip, or was pinned or unpinned; see `Engine::tab_order` and
+    /// `Engine::is_pinned`.
+    TabsReordered,
     ImageOpened(ImageId),
     /// The file behind an open image may have changed: it has a new revision to read.
     ImageChanged(ImageId),

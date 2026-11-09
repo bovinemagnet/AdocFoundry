@@ -346,6 +346,43 @@ fn untitled_pages_are_not_saved_in_the_session() {
 }
 
 #[test]
+fn moved_and_pinned_tabs_come_back_where_they_were() {
+    let setup = Setup::new();
+    {
+        let mut engine = setup.engine();
+        open_workspace(&mut engine, &setup.root());
+        let [one, two, three] = ["one.adoc", "two.adoc", "three.adoc"]
+            .map(|name| open(&mut engine, &setup.path(name), OpenDisposition::Persistent));
+        engine
+            .invoke(
+                ids::DOCUMENT_MOVE_TAB,
+                CommandArgs::MoveTab { item: two, to: 0 },
+            )
+            .unwrap();
+        engine
+            .invoke(
+                ids::DOCUMENT_PIN_TAB,
+                CommandArgs::Document(document(three)),
+            )
+            .unwrap();
+        assert_eq!(engine.tab_order(), [three, two, one]);
+        engine.write_session(&HashMap::new()).unwrap();
+    }
+    let mut engine = setup.engine();
+    engine.restore_session();
+    assert_eq!(
+        tab_paths(&engine),
+        ["three.adoc", "two.adoc", "one.adoc"].map(|name| setup.path(name))
+    );
+    let pinned: Vec<bool> = engine
+        .tab_order()
+        .iter()
+        .map(|item| engine.is_pinned(*item))
+        .collect();
+    assert_eq!(pinned, [true, false, false]);
+}
+
+#[test]
 fn graph_window_placement_survives_a_session() {
     let setup = Setup::new();
     let mut engine = setup.engine();

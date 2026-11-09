@@ -427,12 +427,7 @@ impl Engine {
             .remove(&id)
             .ok_or(EngineError::UnknownDocument(id))?;
         self.states.remove(&id);
-        let item = crate::TabItem::Document(id);
-        let closed_at = self.tabs.order.iter().position(|open| *open == item);
-        self.tabs.order.retain(|open| *open != item);
-        if self.tabs.preview == Some(item) {
-            self.tabs.preview = None;
-        }
+        let closed_at = self.forget_tab(crate::TabItem::Document(id));
         self.pending_index.remove(&id);
         self.forget_preview(id);
         self.forget_visual(id);
@@ -470,8 +465,8 @@ impl Engine {
 
     /// The tabs, in order, that `command` (`document.close` or one of Close Others, Left,
     /// Right, Clean and All) would close if invoked on the tab of `item`, a document or an
-    /// image: none if it is not open. Front ends ask this first, to confirm discarding the
-    /// unsaved ones.
+    /// image: none if it is not open. All but Close leave pinned tabs open. Front ends ask this
+    /// first, to confirm discarding the unsaved ones.
     #[must_use]
     pub fn closed_by(
         &self,
@@ -479,24 +474,35 @@ impl Engine {
         item: impl Into<crate::TabItem>,
     ) -> Vec<crate::TabItem> {
         let item = item.into();
-        let open = self.tabs.order.iter().copied();
         let Some(at) = self.tabs.order.iter().position(|open| *open == item) else {
             return Vec::new();
         };
+        let unpinned = |place: std::ops::Range<usize>| {
+            self.tabs.order[place]
+                .iter()
+                .copied()
+                .filter(|open| *open != item && !self.tabs.pinned.contains(open))
+                .collect()
+        };
         match command {
             ids::DOCUMENT_CLOSE => vec![item],
-            ids::DOCUMENT_CLOSE_OTHERS => open.filter(|other| *other != item).collect(),
-            ids::DOCUMENT_CLOSE_LEFT => open.take(at).collect(),
-            ids::DOCUMENT_CLOSE_RIGHT => open.skip(at + 1).collect(),
+            ids::DOCUMENT_CLOSE_OTHERS => unpinned(0..self.tabs.order.len()),
+            ids::DOCUMENT_CLOSE_LEFT => unpinned(0..at),
+            ids::DOCUMENT_CLOSE_RIGHT => unpinned(at + 1..self.tabs.order.len()),
             _ => self.closed_by_any(command),
         }
     }
 
     /// The tabs, in order, Close Clean or Close All would close, whichever tab they are invoked
-    /// on. An image is always clean.
+    /// on, leaving pinned tabs open. An image is always clean.
     #[must_use]
     pub fn closed_by_any(&self, command: CommandId) -> Vec<crate::TabItem> {
-        let open = self.tabs.order.iter().copied();
+        let open = self
+            .tabs
+            .order
+            .iter()
+            .copied()
+            .filter(|open| !self.tabs.pinned.contains(open));
         let clean = |item: &crate::TabItem| match item {
             crate::TabItem::Document(id) => self.documents.get(id).is_some_and(|d| !d.dirty),
             crate::TabItem::Image(_) => true,
