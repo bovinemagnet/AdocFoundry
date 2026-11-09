@@ -12,6 +12,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - The macOS release builds each architecture on its own runner at the same time (#391), and the `macos` job joins them into universal binaries, signs them and makes the DMG. Built one after the other they took 68 minutes of v0.8.0's 77 from tag to publication.
 - The Flatpak builds on the Freedesktop 26.08 runtime, as 24.08 reached its end of life, and with Rust 1.99.1, `rust-toolchain.toml`'s release, from the Rust project's own archives checked against their SHA-256, rather than the runtime's `rust-stable` extension, which lags it. v0.8.0's Flatpak build failed on the extension's Rust 1.89. The compiler is left out of the finished app.
+- `adoc-mcp` is built on rmcp 3.9.0, for RUSTSEC-2026-0462 (unbounded response bodies in rmcp's Streamable HTTP clients). `adoc-mcp` builds only rmcp's server side, so it was not affected, but `cargo deny` refused 3.8.0.
 
 ### Fixed
 
