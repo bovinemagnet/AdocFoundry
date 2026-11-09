@@ -166,19 +166,28 @@ jobs:
               lines += [f"Paragraph {n} with *bold*, _emphasis_, `code` and xref:other.adoc[a link].", ""]
           open(sys.argv[1], "w").write("\n".join(lines))
           EOF
-          # macOS has no `timeout`; the app quits itself once the benchmark ends.
-          ADOCFOUNDRY_TYPING_BENCH=20 perl -e 'alarm shift; exec @ARGV' 300 \
-            target/release/adocfoundry "$(dirname "$page")" "$page" 2> typing.log || tail -20 typing.log
-          result=$(grep 'typing benchmark:' typing.log || echo 'typing benchmark: no result')
-          echo "$result"
-          printf '### Typing\n\nA character every 35 ms for 20 s into a 1 MB page: %s\n' \
-            "${result#typing benchmark: }" >> "$GITHUB_STEP_SUMMARY"
-          # Each frame over 25 ms, when it came and what the front end's thread did for it (#241).
-          long=$(grep 'typing benchmark long frame:' typing.log | sed 's/^typing benchmark long frame: /- /')
-          if [ -n "$long" ]; then
-            echo "$long"
-            printf '\nFrames over 25 ms:\n\n%s\n' "$long" >> "$GITHUB_STEP_SUMMARY"
-          fi
+          # A control: the same typing into a page of a few lines, so a long frame here is the
+          # runner's, not the page's (#241).
+          short="$RUNNER_TEMP/typing-short/page.adoc"
+          mkdir -p "$(dirname "$short")"
+          printf '= A short page\n\nA paragraph with *bold* and _emphasis_.\n' > "$short"
+          printf '### Typing\n' >> "$GITHUB_STEP_SUMMARY"
+          for run in "1 MB page:$page" "short page (control):$short"; do
+            label="${run%%:*}" file="${run#*:}"
+            # macOS has no `timeout`; the app quits itself once the benchmark ends.
+            ADOCFOUNDRY_TYPING_BENCH=20 perl -e 'alarm shift; exec @ARGV' 300 \
+              target/release/adocfoundry "$(dirname "$file")" "$file" 2> typing.log || tail -20 typing.log
+            result=$(grep 'typing benchmark:' typing.log || echo 'typing benchmark: no result')
+            echo "$label: $result"
+            printf '\nA character every 35 ms for 20 s into a %s: %s\n' \
+              "$label" "${result#typing benchmark: }" >> "$GITHUB_STEP_SUMMARY"
+            # Each frame over 25 ms, when it came and what the front end's thread did for it.
+            long=$(grep 'typing benchmark long frame:' typing.log | sed 's/^typing benchmark long frame: /- /')
+            if [ -n "$long" ]; then
+              echo "$long"
+              printf '\nFrames over 25 ms:\n\n%s\n' "$long" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
 
   pdf-standards:
     # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1,
