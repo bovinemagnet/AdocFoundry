@@ -205,7 +205,7 @@ fn report(frames: &Frames) {
 fn describe(frame: &LongFrame) -> String {
     let ms = |duration: Duration| format!("{:.1} ms", duration.as_secs_f64() * 1000.0);
     let mut parts = frame.parts.clone();
-    parts.sort_by(|a, b| b.1.cmp(&a.1));
+    parts.sort_by_key(|(_, took)| std::cmp::Reverse(*took));
     // Parts nest, so at least the frame less its longest part went untimed.
     let longest = parts.first().map(|(_, took)| *took).unwrap_or_default();
     let listed: Vec<String> = parts
