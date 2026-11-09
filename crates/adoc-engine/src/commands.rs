@@ -18,6 +18,9 @@ pub mod ids {
     pub const DOCUMENT_OPEN: CommandId = CommandId::new("document.open");
     pub const DOCUMENT_BROWSE: CommandId = CommandId::new("document.browse");
     pub const DOCUMENT_KEEP_OPEN: CommandId = CommandId::new("document.keep_open");
+    pub const DOCUMENT_PIN_TAB: CommandId = CommandId::new("document.pin_tab");
+    pub const DOCUMENT_UNPIN_TAB: CommandId = CommandId::new("document.unpin_tab");
+    pub const DOCUMENT_MOVE_TAB: CommandId = CommandId::new("document.move_tab");
     pub const IMAGE_RELOAD: CommandId = CommandId::new("image.reload");
     pub const SIDEBAR_EXPAND_ALL: CommandId = CommandId::new("sidebar.expand_all");
     pub const SIDEBAR_COLLAPSE_ALL: CommandId = CommandId::new("sidebar.collapse_all");
@@ -410,8 +413,8 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
             ),
             document_close,
         ),
-        // Tab order is the order documents were opened in, as the app shows them; the keys are
-        // Zed's, but for Close All, whose `cmd-k w` is Show Visual here.
+        // Tab order is the engine's (`tab_order`), as the app shows it, and these leave pinned
+        // tabs open; the keys are Zed's, but for Close All, whose `cmd-k w` is Show Visual here.
         (
             spec(
                 ids::DOCUMENT_CLOSE_OTHERS,

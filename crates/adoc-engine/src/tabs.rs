@@ -1,9 +1,11 @@
 //! Tab order and preview tabs. Browsing to a page or an image shows it in one reusable preview
 //! tab, which the next one browsed to replaces, until it is edited, saved or kept open. Only a
 //! front end that shows tabs turns preview tabs on ([`Engine::enable_preview_tabs`]), so the CLI,
-//! the language server and the MCP server keep everything they open.
+//! the language server and the MCP server keep everything they open. Tabs can be moved, as
+//! dragging them does, and pinned (#82): pinned tabs sit first, and closing several tabs at
+//! once leaves them open.
 
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use adoc_index::normalize_path;
 
@@ -68,12 +70,15 @@ pub enum OpenDisposition {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Tabs {
-    /// The open documents and images in tab order.
+    /// The open documents and images in tab order, the pinned ones first.
     pub(crate) order: Vec<TabItem>,
     /// What the preview tab shows.
     pub(crate) preview: Option<TabItem>,
     /// Whether the front end shows preview tabs.
     pub(crate) enabled: bool,
+    /// The pinned tabs, which closing several tabs at once leaves open. Not the page pinned in
+    /// the rendered preview, which is `PreviewLayout::pinned`.
+    pub(crate) pinned: HashSet<TabItem>,
 }
 
 impl Engine {
@@ -212,6 +217,87 @@ impl Engine {
         }
     }
 
+    /// Whether `item`'s tab is pinned: it sits with the other pinned tabs at the start of the
+    /// strip, and closing several tabs at once leaves it open.
+    #[must_use]
+    pub fn is_pinned(&self, item: impl Into<TabItem>) -> bool {
+        self.tabs.pinned.contains(&item.into())
+    }
+
+    /// How many tabs are pinned; they are the first so many of [`Engine::tab_order`].
+    fn pinned_count(&self) -> usize {
+        self.tabs.pinned.len()
+    }
+
+    fn open_tab(&self, item: TabItem) -> Result<usize, EngineError> {
+        self.tabs
+            .order
+            .iter()
+            .position(|open| *open == item)
+            .ok_or_else(|| EngineError::NotFound(format!("{item:?} is not open")))
+    }
+
+    /// Pins `item`'s tab, last of the pinned ones; a preview tab is kept open.
+    pub fn pin_tab(&mut self, item: TabItem) -> Result<(), EngineError> {
+        let at = self.open_tab(item)?;
+        if self.is_pinned(item) {
+            return Ok(());
+        }
+        self.keep_open(item);
+        let to = self.pinned_count();
+        self.tabs.order.remove(at);
+        self.tabs.order.insert(to, item);
+        self.tabs.pinned.insert(item);
+        self.emit(EngineEvent::TabsReordered);
+        Ok(())
+    }
+
+    /// Unpins `item`'s tab, which goes first of the tabs that are not pinned.
+    pub fn unpin_tab(&mut self, item: TabItem) -> Result<(), EngineError> {
+        let at = self.open_tab(item)?;
+        if !self.tabs.pinned.remove(&item) {
+            return Ok(());
+        }
+        self.tabs.order.remove(at);
+        let to = self.pinned_count();
+        self.tabs.order.insert(to, item);
+        self.emit(EngineEvent::TabsReordered);
+        Ok(())
+    }
+
+    /// Moves `item`'s tab to place `to` of the strip, as dragging it there does, but only among
+    /// tabs like it: a pinned tab stays among the pinned ones, and any other after them.
+    pub fn move_tab(&mut self, item: TabItem, to: usize) -> Result<(), EngineError> {
+        let at = self.open_tab(item)?;
+        let pinned = self.pinned_count();
+        // `at` is in its own group, so neither range is empty.
+        let (first, last) = if self.is_pinned(item) {
+            (0, pinned - 1)
+        } else {
+            (pinned, self.tabs.order.len() - 1)
+        };
+        let to = to.clamp(first, last);
+        if to == at {
+            return Ok(());
+        }
+        self.tabs.order.remove(at);
+        self.tabs.order.insert(to, item);
+        self.emit(EngineEvent::TabsReordered);
+        Ok(())
+    }
+
+    /// Takes a closed tab out of the strip, the preview tab and the pinned tabs; returns where
+    /// in the strip it was.
+    pub(crate) fn forget_tab(&mut self, item: TabItem) -> Option<usize> {
+        let at = self.tabs.order.iter().position(|open| *open == item);
+        self.tabs.order.retain(|open| *open != item);
+        if self.tabs.preview == Some(item) {
+            self.tabs.preview = None;
+        }
+        self.tabs.pinned.remove(&item);
+        at
+    }
+
     /// Keeps the preview tab open when preview tabs have been turned off.
     pub(crate) fn settle_preview_tab(&mut self) {
         if !self.preview_tabs_on() {
@@ -291,4 +377,64 @@ pub(crate) fn register_tabs(registry: &mut CommandRegistry) {
             Ok(CommandOutcome::Done)
         },
     );
+    register(
+        registry,
+        spec(ids::DOCUMENT_PIN_TAB, "Pin Tab", Document, None, ActiveTab),
+        |engine, args| {
+            let item = tab_of(engine, ids::DOCUMENT_PIN_TAB, args)?;
+            engine.pin_tab(item).map(|()| CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
+        spec(
+            ids::DOCUMENT_UNPIN_TAB,
+            "Unpin Tab",
+            Document,
+            None,
+            ActiveTab,
+        ),
+        |engine, args| {
+            let item = tab_of(engine, ids::DOCUMENT_UNPIN_TAB, args)?;
+            engine.unpin_tab(item).map(|()| CommandOutcome::Done)
+        },
+    );
+    register(
+        registry,
+        spec(
+            ids::DOCUMENT_MOVE_TAB,
+            "Move Tab",
+            Document,
+            None,
+            ActiveTab,
+        ),
+        |engine, args| {
+            let CommandArgs::MoveTab { item, to } = args else {
+                return Err(EngineError::InvalidArguments {
+                    command: ids::DOCUMENT_MOVE_TAB,
+                    expected: "a tab and the place to move it to",
+                });
+            };
+            engine.move_tab(item, to).map(|()| CommandOutcome::Done)
+        },
+    );
+}
+
+/// The tab a command names, else the active one.
+fn tab_of(
+    engine: &Engine,
+    command: crate::CommandId,
+    args: CommandArgs,
+) -> Result<TabItem, EngineError> {
+    match args {
+        CommandArgs::Document(id) => Ok(TabItem::Document(id)),
+        CommandArgs::Image(id) => Ok(TabItem::Image(id)),
+        CommandArgs::None => engine
+            .active_item()
+            .ok_or_else(|| EngineError::NotFound("no tab is open".to_owned())),
+        _ => Err(EngineError::InvalidArguments {
+            command,
+            expected: "a document or image",
+        }),
+    }
 }

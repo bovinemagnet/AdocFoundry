@@ -68,7 +68,7 @@ fn main() {
 }
 
 // The icons the app uses beyond gpui-component's own.
-gpui_kit_assets::icon_assets!(AppIcons, [Image]);
+gpui_kit_assets::icon_assets!(AppIcons, [Image, Pin]);
 
 /// gpui-component's icons, and the app's.
 struct Assets;

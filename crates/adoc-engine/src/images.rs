@@ -161,12 +161,7 @@ impl Engine {
             .open
             .remove(&id)
             .ok_or_else(|| EngineError::NotFound(format!("image {} is not open", id.get())))?;
-        let item = TabItem::Image(id);
-        let closed_at = self.tabs.order.iter().position(|open| *open == item);
-        self.tabs.order.retain(|open| *open != item);
-        if self.tabs.preview == Some(item) {
-            self.tabs.preview = None;
-        }
+        let closed_at = self.forget_tab(TabItem::Image(id));
         if self.images.active == Some(id) {
             self.images.active = None;
             self.activate_neighbour(closed_at.unwrap_or(usize::MAX));

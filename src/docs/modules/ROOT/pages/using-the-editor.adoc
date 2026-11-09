@@ -455,7 +455,9 @@ Tabs follow the active document, so opening a page by any route (the sidebar, li
 With the preview docked, the tab strip scrolls to keep the active page's tab in view, including when a page becomes active by following a link or through the outline.
 
 Each tab has an X button that closes it, asking first if the page has unsaved changes.
-Tabs are in the order the pages were opened, apart from a preview tab, which takes the place of the one it replaces.
+A new tab opens at the end of the strip, apart from a preview tab, which takes the place of the one it replaces.
+Drag a tab along the strip and drop it on another tab to take that tab's place; the tab under the pointer is highlighted while you drag.
+Close Left and Close Right follow the order shown.
 Right-click a tab for a menu that acts on that tab, not necessarily the active one:
 
 * *Close* closes the tab.
@@ -463,6 +465,24 @@ Right-click a tab for a menu that acts on that tab, not necessarily the active o
 * *Close Left* and *Close Right* close the tabs to its left or right.
 * *Close Clean* closes every tab without unsaved changes.
 * *Close All* closes every tab.
+* *Pin Tab* pins the tab, or *Unpin Tab* if it is pinned.
+* *Copy Path* copies the file's full path, and *Copy Relative Path* copies its path relative to the workspace folder that holds it.
+Both are greyed out for an untitled page, and Copy Relative Path for a file outside the workspace folders.
+* *Reveal in Navigation* selects the page's row in the Navigation panel and shows that panel.
+It is greyed out when the Navigation panel has no row for the page.
+A component without a navigation file lists its pages there, so they can be revealed.
+
+The menu also offers Keep Open for a preview tab, and Show in Graph, Inspect Impact and Delete File… for a page.
+
+Pinned tabs sit first in the strip, in the order they were pinned, and show a pin icon in place of the X.
+Click the pin to unpin the tab, which then goes first among the unpinned tabs.
+Pinning a preview tab keeps it open.
+A pinned tab moves only among the pinned tabs when dragged, and any other tab only among the unpinned ones, after the pinned.
+Dropping an unpinned tab on a pinned one puts it first after the pinned tabs and does not pin it.
+Close Others, Close Left, Close Right, Close Clean and Close All leave pinned tabs open.
+*Close* from the menu, or kbd:[Cmd+W] or kbd:[Ctrl+W], still closes a pinned tab.
+Pin Tab and Unpin Tab are in the palette too, and act on the active tab.
+The session keeps which tabs are pinned and the order of the tabs, so they come back at the next launch.
 
 Items that would close nothing are greyed out, such as Close Left on the first tab.
 Right-clicking the empty part of the tab bar offers only Close Clean and Close All.
@@ -580,6 +600,7 @@ Opening an image that is already open activates its tab.
 An image tab shows an image icon.
 Hovering over a kept image tab shows its full path, and the status bar shows the path of the active image.
 Close, Close Others, Close Left, Close Right, Close Clean and Close All work across page and image tabs together.
+Image tabs can be pinned and dragged like page tabs.
 An image is always clean, so Close Clean closes image tabs.
 
 An image is read-only.

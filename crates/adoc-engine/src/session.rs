@@ -72,6 +72,9 @@ struct SavedTab {
     caret: usize,
     /// In the preview tab, to be replaced by the next file browsed to.
     preview: bool,
+    /// A pinned tab; absent from sessions written before tabs could be pinned, which still load.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pinned: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -213,6 +216,7 @@ impl Engine {
                 mode: mode.into(),
                 caret,
                 preview: self.is_preview(item),
+                pinned: self.is_pinned(item),
             });
         }
         let layout = self.preview_layout();
@@ -279,6 +283,10 @@ impl Engine {
                 continue;
             };
             opened.insert(place, item);
+            // Pinned tabs were saved first, so pinning each as it opens keeps their order.
+            if tab.pinned {
+                let _ = self.pin_tab(item);
+            }
             let TabItem::Document(id) = item else {
                 continue;
             };

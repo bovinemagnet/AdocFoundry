@@ -247,13 +247,16 @@ const MENUS: &[(&str, &[Entry])] = &[
 ];
 
 /// Commands with an action that no menu offers: overwriting is offered only when a file changed
-/// on disk, a new paragraph is Enter, and closing to one side acts on a tab, from the tab's menu.
+/// on disk, a new paragraph is Enter, and closing to one side and pinning act on a tab, from the
+/// tab's menu.
 #[cfg(test)]
 const NOT_IN_MENUS: &[CommandId] = &[
     ids::DOCUMENT_OVERWRITE,
     ids::VISUAL_SPLIT_BLOCK,
     ids::DOCUMENT_CLOSE_LEFT,
     ids::DOCUMENT_CLOSE_RIGHT,
+    ids::DOCUMENT_PIN_TAB,
+    ids::DOCUMENT_UNPIN_TAB,
 ];
 
 /// An item of a menu as shown.

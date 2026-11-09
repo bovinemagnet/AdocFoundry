@@ -2,6 +2,12 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Tabs can be dragged into another order, pinned, and copy their path (#82). A tab dropped on another takes its place, and Close Left and Close Right follow the order shown. Pin Tab, in a tab's menu, puts it with the other pinned tabs at the start of the strip, a pin in place of its X, which unpins it; Close Others, Left, Right, Clean and All leave pinned tabs open, and the session keeps them. A pinned tab is dragged only among the pinned ones, and any other only after them. The tab menu also has Copy Path, Copy Relative Path (to the workspace folder holding it) and Reveal in Navigation. `adoc-engine` gains `document.pin_tab`, `document.unpin_tab` and `document.move_tab` (`CommandArgs::MoveTab`), `Engine::is_pinned`, `pin_tab`, `unpin_tab` and `move_tab`, and `EngineEvent::TabsReordered`.
+
 ## 0.8.0 — 2026-11-09
 
 ### Added

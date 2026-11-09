@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use adoc_core::SourceRange;
-use adoc_engine::{commands::ids, CommandArgs, Engine, Settings};
+use adoc_engine::{commands::ids, CommandArgs, Engine, Settings, TabItem};
 use gpui::{px, size, AppContext as _, Entity, TestAppContext, VisualTestContext, WindowHandle};
 use gpui_component::Root;
 
@@ -3739,6 +3739,139 @@ fn tabs_close_from_their_buttons_menu_and_keys(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(tab_documents(&app, &mut cx).is_empty());
     assert_eq!(cx.update(|_, cx| workspace.read(cx).tab_count(cx)), 0);
+}
+
+fn tab_items(app: &Entity<AppState>, cx: &mut VisualTestContext) -> Vec<TabItem> {
+    cx.update(|_, cx| app.read(cx).engine.tab_order().to_vec())
+}
+
+fn activate_document(
+    app: &Entity<AppState>,
+    id: adoc_engine::DocumentId,
+    cx: &mut VisualTestContext,
+) {
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.engine.set_active(id);
+            app.drain(cx);
+        })
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn a_tab_dragged_to_the_front_stays_there(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, _workspace, mut cx, ids) = four_tabs(dir.path(), cx);
+    let [a, b, c, d] = ids[..]
+        .iter()
+        .map(|id| TabItem::Document(*id))
+        .collect::<Vec<_>>()[..]
+    else {
+        unreachable!()
+    };
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let front = cx.debug_bounds("editor-tab-0").expect("a tab").center();
+    drag_to("editor-tab-2", front, &mut cx);
+    assert_eq!(tab_items(&app, &mut cx), [c, a, b, d]);
+    // The strip draws the new order.
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let first = cx.debug_bounds("editor-tab-0").unwrap();
+    let second = cx.debug_bounds("editor-tab-1").unwrap();
+    assert!(first.left() < second.left());
+
+    // Close Left from it closes nothing.
+    activate_document(&app, c.document().unwrap(), &mut cx);
+    cx.simulate_keystrokes("secondary-k e");
+    cx.run_until_parked();
+    assert_eq!(tab_items(&app, &mut cx), [c, a, b, d]);
+}
+
+#[gpui::test]
+fn a_pinned_tab_has_no_close_button_and_survives_close_all(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, _workspace, mut cx, ids) = four_tabs(dir.path(), cx);
+    let c = ids[2];
+    activate_document(&app, c, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::PinTab);
+    cx.run_until_parked();
+    assert_eq!(tab_items(&app, &mut cx)[0], TabItem::Document(c));
+    assert!(cx.update(|_, cx| app.read(cx).engine.is_pinned(c)));
+
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("tab-close-0").is_none(),
+        "a pinned tab has no X"
+    );
+    assert!(cx.debug_bounds("tab-unpin-0").is_some());
+    assert!(cx.debug_bounds("tab-close-1").is_some());
+
+    cx.simulate_keystrokes("secondary-k secondary-w");
+    cx.run_until_parked();
+    assert_eq!(tab_items(&app, &mut cx), [TabItem::Document(c)]);
+
+    // Its pin unpins it, and it closes with everything else.
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    click_selector("tab-unpin-0", gpui::MouseButton::Left, &mut cx);
+    assert!(!cx.update(|_, cx| app.read(cx).engine.is_pinned(c)));
+    cx.simulate_keystrokes("secondary-k secondary-w");
+    cx.run_until_parked();
+    assert!(tab_items(&app, &mut cx).is_empty());
+}
+
+#[gpui::test]
+fn a_tab_copies_its_path_and_reveals_its_page_in_navigation(cx: &mut TestAppContext) {
+    let (directory, app, workspace, mut cx) = drag_workspace("index.adoc", cx);
+    let root = adoc_index::normalize_path(directory.path());
+    let index = root.join("alpha/modules/ROOT/pages/index.adoc");
+    let item = cx.update(|_, cx| app.read(cx).engine.active_item().unwrap());
+    let copied = |relative: bool, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.copy_tab_path(item, relative, cx)
+            })
+        });
+        cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .unwrap()
+    };
+    assert_eq!(copied(false, &mut cx), index.display().to_string());
+    assert_eq!(
+        copied(true, &mut cx),
+        Path::new("alpha/modules/ROOT/pages/index.adoc")
+            .display()
+            .to_string()
+    );
+
+    let revealed = cx.update(|_, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.reveal_tab_in_navigation(item, cx)
+        })
+    });
+    assert!(revealed);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .selected_row_for_test(adoc_engine::SidebarPanel::Navigation, cx)
+        })
+        .as_deref(),
+        Some("Home")
+    );
+
+    // A page its component's navigation does not list has nowhere to be revealed. (Beta has no
+    // navigation file, so the panel lists its pages instead.)
+    let extra = root.join("alpha/modules/ROOT/pages/extra.adoc");
+    std::fs::write(&extra, "= Extra\n").unwrap();
+    let unlisted = cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            app.engine
+                .open_item(&extra, adoc_engine::OpenDisposition::Persistent)
+                .unwrap()
+        })
+    });
+    assert!(!cx.update(|_, cx| workspace.read(cx).can_reveal_in_navigation(unlisted, cx)));
+    assert!(cx.update(|_, cx| workspace.read(cx).can_reveal_in_navigation(item, cx)));
 }
 
 #[gpui::test]
