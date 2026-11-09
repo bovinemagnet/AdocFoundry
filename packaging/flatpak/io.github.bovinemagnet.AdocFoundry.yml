@@ -7,10 +7,8 @@
 # `flatpak` job builds the tagged commit's own checkout instead.
 app-id: io.github.bovinemagnet.AdocFoundry
 runtime: org.freedesktop.Platform
-runtime-version: '24.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
-sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rust-stable
 command: adocfoundry
 finish-args:
   - --share=ipc
@@ -19,13 +17,33 @@ finish-args:
   - --device=dri
   - --filesystem=home
 build-options:
-  append-path: /usr/lib/sdk/rust-stable/bin
+  append-path: /app/rust/bin
   env:
     CARGO_HOME: /run/build/adocfoundry/cargo
     # The sandbox has no network: every cargo command, `cargo metadata` inside
     # `xtask notices` too, reads only the vendored sources.
     CARGO_NET_OFFLINE: 'true'
 modules:
+  # rust-toolchain.toml's release, the compiler every other build uses, from the Rust project's
+  # own archives, checked against their SHA-256: the runtime's rust-stable extension lags it.
+  # Built into /app/rust and removed from the app once it is built. A new toolchain needs both
+  # URLs and checksums from https://static.rust-lang.org/dist/ (checked by
+  # packaging/test_toolchain.py).
+  - name: rust
+    buildsystem: simple
+    build-commands:
+      - ./install.sh --prefix=/app/rust --disable-ldconfig --components=rustc,cargo,rust-std-${FLATPAK_ARCH}-unknown-linux-gnu
+    cleanup:
+      - /rust
+    sources:
+      - type: archive
+        only-arches: [x86_64]
+        url: https://static.rust-lang.org/dist/rust-1.99.1-x86_64-unknown-linux-gnu.tar.xz
+        sha256: 231fcae47ee950621374725b5fc3b5441d2fbda2955ac45dd7dc816d8876cfe7
+      - type: archive
+        only-arches: [aarch64]
+        url: https://static.rust-lang.org/dist/rust-1.99.1-aarch64-unknown-linux-gnu.tar.xz
+        sha256: a48fb1e853be56ce9b8e2751f5464dbd5e16440cd81e237920f3a5e7e806333e
   - name: adocfoundry
     buildsystem: simple
     build-commands:

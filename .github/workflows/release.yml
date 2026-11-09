@@ -58,9 +58,45 @@ jobs:
     if: always() && needs.version.result == 'success' && needs.ci-passed.outputs.passed != 'true'
     uses: ./.github/workflows/ci.yml
 
-  macos:
+  # Each macOS architecture builds on its own runner, at the same time: one after the other
+  # they were most of a release's time (#391). `macos` joins them.
+  macos-build:
     needs: version
-    timeout-minutes: 90
+    timeout-minutes: 75
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    runs-on: macos-15
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - run: rustup toolchain install
+      - run: rustup target add "$TARGET"
+      - name: Build
+        run: cargo build --release --target "$TARGET" -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
+      # The executables against the design's 40 MB budget, in the job's summary.
+      - name: Sizes
+        run: python3 packaging/binary-sizes.py 40 "target/$TARGET/release/"{adocfoundry,adocfoundry-cli,adoc-ls,adoc-mcp}
+      - name: Binaries
+        run: |
+          mkdir -p out
+          cp "target/$TARGET/release/"{adocfoundry,adocfoundry-cli,adoc-ls,adoc-mcp} out/
+      # The third-party notices every package ships, as Help › About shows them: once.
+      - if: matrix.target == 'aarch64-apple-darwin'
+        run: cargo xtask notices out/THIRD-PARTY-NOTICES.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-binaries-${{ matrix.target }}
+          path: out/
+          retention-days: 1
+
+  macos:
+    needs: [version, macos-build]
+    timeout-minutes: 45
     runs-on: macos-15
     env:
       # Signing and notarisation need the Developer ID secrets; without them the app is signed
@@ -70,27 +106,21 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-          submodules: recursive
-      - run: rustup toolchain install
-      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-      - name: Build both architectures
-        run: |
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --target "$target" -p adocfoundry -p adocfoundry-cli -p adoc-ls -p adoc-mcp --features adoc-ls/typst,adoc-ls/git
-          done
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: macos-binaries-*
+          path: binaries
       - name: Universal binaries
         run: |
-          mkdir -p dist
+          mkdir -p dist target
           for bin in adocfoundry adocfoundry-cli adoc-ls adoc-mcp; do
             lipo -create -output "dist/$bin" \
-              "target/aarch64-apple-darwin/release/$bin" "target/x86_64-apple-darwin/release/$bin"
+              "binaries/macos-binaries-aarch64-apple-darwin/$bin" \
+              "binaries/macos-binaries-x86_64-apple-darwin/$bin"
+            # Artifacts do not keep the executable bit.
+            chmod +x "dist/$bin"
           done
-      # Each architecture's executables against the design's 40 MB budget, in the job's summary.
-      - name: Sizes
-        run: |
-          python3 packaging/binary-sizes.py 40 target/{aarch64,x86_64}-apple-darwin/release/{adocfoundry,adocfoundry-cli,adoc-ls,adoc-mcp}
-      # The third-party notices every package ships, as Help › About shows them.
-      - run: cargo xtask notices target/THIRD-PARTY-NOTICES.txt
+          cp binaries/macos-binaries-aarch64-apple-darwin/THIRD-PARTY-NOTICES.txt target/
       - name: Import the Developer ID certificate
         if: env.SIGNED == 'true'
         env:
@@ -377,8 +407,8 @@ jobs:
     timeout-minutes: 120
     runs-on: ubuntu-24.04
     container:
-      # freedesktop-24.08, pinned to its digest.
-      image: ghcr.io/flathub-infra/flatpak-github-actions@sha256:66eb59fd5d923833e8e4142f60e542156aad4b8b1d5db38149d814c659e274bc
+      # freedesktop-26.08, pinned to its digest.
+      image: ghcr.io/flathub-infra/flatpak-github-actions@sha256:6ed6921bb5a9e1a916989971844f159b854b7b225880c381fa34f7a158863039
       options: --privileged
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -495,8 +525,20 @@ jobs:
       # The changelog's section for the version, ahead of GitHub's list of pull requests.
       - name: Release notes
         run: python3 packaging/release-version.py notes "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/release-notes.md"
+      # Each platform's packages, by name: not the macOS jobs' binaries, nor the Flatpak bundle,
+      # which stays with the run, whichever has finished by now.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          name: macos
+          path: artefacts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: windows-*
+          path: artefacts
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: linux-*
           path: artefacts
           merge-multiple: true
       # The app checks a package against this before it installs it.
