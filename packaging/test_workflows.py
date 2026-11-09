@@ -95,8 +95,34 @@ class ReleaseWaitsForCi(unittest.TestCase):
         self.assertIn('"${GITHUB_REF_NAME#v}"', check, "the tag's version is the one checked")
         self.assertIn("startsWith(github.ref, 'refs/tags/')", check, "only a tag is checked")
         # Nothing is built, tested or published until the tag has been checked.
-        for name in ["ci", "macos", "windows", "linux"]:
+        for name in ["ci", "macos-build", "macos", "windows", "linux", "flatpak"]:
             self.assertIn("version", needs(release[name]), f"{name} waits for the version check")
+
+    def test_the_macos_architectures_build_at_once(self):
+        # Built one after the other they were most of a release's time (#391): each now builds
+        # on its own runner, and `macos` joins them into universal binaries.
+        release = jobs(read("release.yml"))
+        build = "\n".join(release["macos-build"])
+        self.assertRegex(build, r"target: \[aarch64-apple-darwin, x86_64-apple-darwin\]")
+        self.assertIn('cargo build --release --target "$TARGET"', build)
+        self.assertIn("name: macos-binaries-${{ matrix.target }}", build)
+        join = "\n".join(release["macos"])
+        self.assertIn("macos-build", needs(release["macos"]))
+        self.assertIn("lipo -create", join)
+        self.assertIn("pattern: macos-binaries-*", join)
+        self.assertNotIn("cargo build", join, "the join builds nothing")
+
+    def test_only_the_packages_are_published(self):
+        # Each platform's packages, by name: not the macOS jobs' binaries, nor the Flatpak bundle,
+        # which stays with the run, whichever has finished by then.
+        publish = "\n".join(jobs(read("release.yml"))["publish"])
+        downloads = re.findall(
+            r"uses: actions/download-artifact@\S+[^\n]*\n\s+with:\n((?:\s{10}\S[^\n]*\n)+)", publish
+        )
+        chosen = sorted(
+            re.search(r"(?:name|pattern): (\S+)", step).group(1) for step in downloads
+        )
+        self.assertEqual(chosen, ["linux-*", "macos", "windows-*"])
 
     def test_the_release_is_published_with_its_changelog_section(self):
         publish = "\n".join(jobs(read("release.yml"))["publish"])

@@ -60,6 +60,20 @@ notarise() {
   fi
 }
 
+# Staples $1's notarisation ticket, which stapler fetches from Apple, trying again when that
+# fails: a dropped connection ("The network connection was lost") once failed a whole release.
+staple() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if xcrun stapler staple "$1"; then
+      return 0
+    fi
+    echo "stapling $1 failed (attempt $attempt of 5)" >&2
+    [[ "$attempt" -lt 5 ]] && sleep 30
+  done
+  return 1
+}
+
 notarising=""
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" && -n "${APPLE_ID:-}" ]]; then
   notarising=1
@@ -79,7 +93,7 @@ if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
     notarise "$zip"
     rm -f "$zip"
     # Stapled to the app too, so a copy dragged out of the DMG opens offline.
-    xcrun stapler staple "$app"
+    staple "$app"
   fi
 else
   codesign --force --deep --sign - "$app"
@@ -93,7 +107,7 @@ if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
   if [[ -n "$notarising" ]]; then
     notarise "$dmg"
-    xcrun stapler staple "$dmg"
+    staple "$dmg"
   fi
 fi
 echo "$dmg"

@@ -8,7 +8,7 @@ flowchart TD
     tag["Tag v*"] --> version["version: the tag matches Cargo.toml,<br/>src/docs/antora.yml and CHANGELOG.md"]
     version --> rel
     subgraph rel["Release workflow"]
-        mac["macOS universal DMG<br/>lipo, packaging/macos/bundle.sh,<br/>ad-hoc signed (Developer ID in Phase 6)"]
+        mac["macOS universal DMG<br/>each architecture on its own runner,<br/>then lipo, packaging/macos/bundle.sh,<br/>signed and notarised with the Developer ID secrets"]
         win["Windows MSI (cargo-wix) and zip<br/>x64, arm64"]
         lin["Linux AppImage, deb, rpm<br/>x86_64, aarch64 on native runners"]
         tools["adoc-ls and adocfoundry-cli tarballs"]
