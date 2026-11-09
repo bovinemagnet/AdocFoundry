@@ -5540,6 +5540,8 @@ impl Render for WorkspaceView {
                 ),
             )
             .child(self.render_status(window, cx))
+            // Painted last, so the typing benchmark knows when the frame's paint ended.
+            .children(crate::typing_bench::paint_marker())
     }
 }
 
