@@ -87,6 +87,11 @@ class FlatpakUsesThePinnedToolchain(unittest.TestCase):
         # The compiler builds the app and is left out of it.
         self.assertRegex(manifest, r"(?m)^    cleanup:\n      - /rust$")
         rust = manifest.index("  - name: rust\n")
+        # Splitting the debug information out of a prebuilt libLLVM.so left it unloadable
+        # ("object file has no loadable segments"), so flatpak-builder leaves the module's files
+        # as the Rust project built them.
+        module = manifest[rust : manifest.index("  - name: adocfoundry\n")]
+        self.assertRegex(module, r"build-options:\n\s+no-debuginfo: true\n")
         self.assertLess(rust, manifest.index("  - name: adocfoundry\n"), "Rust is built first")
 
     def test_the_release_builds_in_the_manifests_runtime(self):

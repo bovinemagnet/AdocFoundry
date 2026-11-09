@@ -31,6 +31,9 @@ modules:
   # packaging/test_toolchain.py).
   - name: rust
     buildsystem: simple
+    # Prebuilt: splitting out its debug information left libLLVM.so unloadable.
+    build-options:
+      no-debuginfo: true
     build-commands:
       - ./install.sh --prefix=/app/rust --disable-ldconfig --components=rustc,cargo,rust-std-${FLATPAK_ARCH}-unknown-linux-gnu
     cleanup:
