@@ -27,6 +27,10 @@ tree-sitter-asciidoc-inline.workspace = true
 tree-sitter-containerfile.workspace = true
 tree-sitter-xml.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# The typing benchmark reads the front end's thread's CPU time beside the clock's.
+rustix = { workspace = true, features = ["time"] }
+
 [build-dependencies]
 embed-resource.workspace = true
 serde_json.workspace = true

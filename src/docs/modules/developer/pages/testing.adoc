@@ -115,10 +115,35 @@ They are for investigating a path, not for guarding it.
 
 === Typing frame times
 
-CI's `typing` job runs the release app on a macOS runner with `ADOCFOUNDRY_TYPING_BENCH=20`, which types a character every 35 ms for twenty seconds into a generated 1 MB page, through the editor widget and the engine (`crates/adocfoundry/src/typing_bench.rs`).
-It records the interval between drawn frames and prints the count, the median, the 99th percentile, the worst, and how many were over 16.7 ms, 25 ms and 33 ms.
-The job appends that line to the run's summary.
-It is recorded, never held to a budget: macOS draws no frames for a window that is covered, minimised or on a locked screen, and the benchmark then says that no frames were drawn rather than failing.
+CI's `typing` job runs the release app on a macOS runner with `ADOCFOUNDRY_TYPING_BENCH=20`, which types a character every 35 ms for twenty seconds, through the editor widget and the engine (`crates/adocfoundry/src/typing_bench.rs`).
+The job runs it twice: on a generated 1 MB page, and on a three-line page as a control for the runner's own noise.
+
+The benchmark records the interval between drawn frames and prints the count, the median, the 99th percentile, the worst, and how many were over 16.7 ms, 25 ms and 33 ms.
+Those intervals are recorded only, not held to a budget.
+Three runs of the same commit showed that their tail is mostly the hosted runner's.
+Frames over 25 ms were almost all untimed time, the app's own parts were under 5 ms, and the three-line page did about as badly as the 1 MB page.
+One run had a display stall of 15.8 s while keystrokes were still handled in about 1 ms.
+
+The benchmark therefore also times the app's own work in each interval.
+That is the layout and paint of the frame drawn at the interval's start, timed from the frame callback GPUI runs just before drawing to an empty marker element painted last in the workspace.
+It adds the parts timed on the front end's thread after that paint (`pump`, `edit`, `type` and the engine-event handlers), counting a part nested in another once.
+What remains of the interval is the platform's: presenting the frame, waiting for the display, and whatever else the machine did.
+Work the editor widget does in its own tasks between frames is not timed.
+
+After the first second, which leaves out the page's first layout and highlight, the budget has two conditions:
+
+* the app's work per interval is within 16.7 ms at the 99th percentile;
+* no single piece of work, whether one frame's layout and paint or one timed part, takes over 33 ms.
+
+The benchmark prints a `typing benchmark work:` line with the median, 99th percentile and worst work, the longest single piece and when it came, and how many intervals had no paint.
+A `typing benchmark budget:` line then says `within:` or `over:` and gives the reason.
+Each frame over 25 ms is listed with its parts longest first, the frame's layout and paint appearing among them as `draw`, and how much of the interval was not timed.
+
+For each run, the job adds both lines and the long frames to the run's summary.
+It fails when either run is not within the budget.
+It also fails when a run draws no frames, since that run cannot be judged: macOS draws none for a window that is covered, minimised or on a locked screen.
+Real frame timing on a display, which a hosted runner cannot show, remains a manual check in `docs/qa/phase1.md`.
+
 The same command runs locally, with the window visible:
 
 [source,sh]
