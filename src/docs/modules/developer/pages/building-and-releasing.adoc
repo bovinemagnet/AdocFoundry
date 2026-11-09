@@ -116,7 +116,7 @@ On a `v*` tag it runs `python3 packaging/release-version.py check "${GITHUB_REF_
 * `display_version` in `src/docs/antora.yml`
 * a `## <version> ` section heading in `CHANGELOG.md`
 
-The `ci-passed` and `ci` jobs and the macOS, Windows and Linux build jobs all wait for `version`, so a mismatched tag fails before anything is built.
+The `ci-passed` and `ci` jobs and the `macos-build`, `windows`, `linux` and `flatpak` jobs all wait for `version`, so a mismatched tag fails before anything is built.
 The check matters because the binaries report `Cargo.toml`'s version (`CARGO_PKG_VERSION`), while the packages are named after the tag, and the updater compares the running version with the release's tag.
 A release whose two versions differ would be offered to its own users again and again.
 On a manual (`workflow_dispatch`) run from a branch the check is skipped.
@@ -146,8 +146,16 @@ include::example$release-pipeline.mmd[]
 |===
 |Job |Output
 
+|`macos-build`
+|A matrix over `aarch64-apple-darwin` and `x86_64-apple-darwin`, which builds each target on its own `macos-15` runner at the same time, with a limit of 75 minutes (#391).
+v0.8.0 built both targets one after the other on one runner, which took 68 of the job's 75 minutes and made the release take 77 minutes from tag to publication.
+Each job reports its executables' sizes with `packaging/binary-sizes.py` and uploads the four executables as the artefact `macos-binaries-<target>`, kept for one day.
+The `aarch64-apple-darwin` job also runs `cargo xtask notices` and adds `THIRD-PARTY-NOTICES.txt` to its artefact.
+
 |`macos`
-|Builds `aarch64-apple-darwin` and `x86_64-apple-darwin`, joins them with `lipo` into universal binaries, and runs `packaging/macos/bundle.sh` to make the `.app` and the DMG, with the tools beside the app in `Contents/MacOS`. The tools are signed separately with the hardened runtime and a timestamp, then the app.
+|Needs `version` and `macos-build`, has a limit of 45 minutes and builds nothing.
+It downloads both architectures' artefacts and joins them with `lipo` into universal binaries, setting the executable bit again, which artefacts drop.
+It puts the notices at `target/THIRD-PARTY-NOTICES.txt` for `bundle.sh`, then runs `packaging/macos/bundle.sh` to make the `.app` and the DMG, with the tools beside the app in `Contents/MacOS`. The tools are signed separately with the hardened runtime and a timestamp, then the app.
 The app is notarised and stapled, then the DMG is signed, notarised and stapled.
 The tool archives carry the signed tools from the bundle.
 The bundle (in `Contents/Resources/licenses/`) and the tool archives (in `licenses/`) carry the dictionaries' licence, `SCOWL.txt`, and `THIRD-PARTY-NOTICES.txt`.
@@ -171,7 +179,8 @@ The `ci` job runs only when it is not `true`.
 |Runs `packaging/smoke-test.py` on each platform's downloaded artefacts before `publish` (see below).
 
 |`publish`
-|On a tag, checks out the repository, downloads every artefact and writes `SHA256SUMS` (`sha256sum` over every asset).
+|On a tag, checks out the repository, downloads the packages by name and writes `SHA256SUMS` (`sha256sum` over every asset).
+It downloads `macos`, the `windows-*` artefacts and the `linux-*` artefacts only, so the macOS jobs' intermediate binaries and the Flatpak bundle are never published, whichever job finished first.
 It takes the changelog's section for the version, without its heading, with `python3 packaging/release-version.py notes <version> <file>`, and uses it as the release's body (`body_path`).
 It attaches the artefacts and `SHA256SUMS` to a GitHub release, and GitHub's generated list of pull requests (`generate_release_notes: true`) is still appended after the changelog section.
 |===
@@ -329,6 +338,7 @@ Its signature checks, and where it finds the licence, have unit tests in `packag
 `packaging/test_ci_result.py` tests the decisions of `packaging/ci-result.py`.
 `packaging/test_workflows.py` checks that `release.yml` calls `ci.yml` only when `main`'s run did not pass (`test_ci_that_passed_on_main_is_not_run_again`) and that `publish` needs `ci-passed`, `ci` and `smoke`.
 It also checks that the `version` job precedes every build (`test_tag_check_precedes_build`), that `publish` uses the changelog section, and that the smoke test is given the tag's version.
+It checks that the two macOS architectures build at once (`test_the_macos_architectures_build_at_once`) and that `publish` downloads only the packages (`test_only_the_packages_are_published`).
 The `lint` job runs them with `python3 -m unittest discover -s packaging -p 'test_*.py'`.
 
 === The Flatpak manifest
@@ -337,8 +347,17 @@ The manifest in `packaging/flatpak/` builds the git source at the release's tag 
 It sets `CARGO_NET_OFFLINE`, so every cargo command in the sandbox, `cargo metadata` inside `xtask notices` included, reads only the vendored sources.
 It installs the AppStream metadata to `/app/share/metainfo`.
 
+The manifest names `runtime-version: '26.08'` and no SDK extension.
+The 24.08 runtime reached end of life in September 2026, and the runtime's `rust-stable` SDK extension lags the pinned toolchain: 24.08's had Rust 1.89, so v0.8.0's `flatpak` job failed, and 25.08's and 26.08's had 1.98.
+Its first module, `rust`, therefore installs the Rust project's own archive of the release `rust-toolchain.toml` names, Rust 1.99.1.
+There is one archive per architecture (`https://static.rust-lang.org/dist/rust-1.99.1-<arch>-unknown-linux-gnu.tar.xz`, chosen with `only-arches`), each checked against its SHA-256.
+The module runs `install.sh` to put rustc, cargo and the standard library in `/app/rust`, which `append-path` adds to the path.
+Its `cleanup: [/rust]` leaves the compiler out of the finished app.
+flatpak-builder downloads and checks every source before the offline build starts.
+Moving the toolchain means changing both URLs and both checksums, which `packaging/test_toolchain.py` checks against `rust-toolchain.toml` (`FlatpakUsesThePinnedToolchain`), along with the release job's container being the manifest's runtime.
+
 The release workflow's `flatpak` job builds it from the checked-out commit rather than the tag, on any `v*` tag or a run on demand.
-It runs in the `flathub-infra/flatpak-github-actions` freedesktop-24.08 image, pinned to its digest.
+It runs in the `flathub-infra/flatpak-github-actions` freedesktop-26.08 image, pinned to its digest, which is the manifest's runtime.
 It writes `cargo-sources.json` with `flatpak-cargo-generator.py` from flatpak-builder-tools at a pinned commit, checked against its SHA-256, with `aiohttp` and `tomlkit` at pinned versions.
 It then builds with `flatpak/flatpak-github-actions/flatpak-builder` v6.8 and keeps `AdocFoundry.flatpak` with the run.
 The bundle is not published, and `publish` does not wait for that job.

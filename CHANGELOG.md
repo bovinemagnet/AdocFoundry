@@ -8,6 +8,15 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 - Tabs can be dragged into another order, pinned, and copy their path (#82). A tab dropped on another takes its place, and Close Left and Close Right follow the order shown. Pin Tab, in a tab's menu, puts it with the other pinned tabs at the start of the strip, a pin in place of its X, which unpins it; Close Others, Left, Right, Clean and All leave pinned tabs open, and the session keeps them. A pinned tab is dragged only among the pinned ones, and any other only after them. The tab menu also has Copy Path, Copy Relative Path (to the workspace folder holding it) and Reveal in Navigation. `adoc-engine` gains `document.pin_tab`, `document.unpin_tab` and `document.move_tab` (`CommandArgs::MoveTab`), `Engine::is_pinned`, `pin_tab`, `unpin_tab` and `move_tab`, and `EngineEvent::TabsReordered`.
 
+### Changed
+
+- The macOS release builds each architecture on its own runner at the same time (#391), and the `macos` job joins them into universal binaries, signs them and makes the DMG. Built one after the other they took 68 minutes of v0.8.0's 77 from tag to publication.
+- The Flatpak builds on the Freedesktop 26.08 runtime, as 24.08 reached its end of life, and with Rust 1.99.1, `rust-toolchain.toml`'s release, from the Rust project's own archives checked against their SHA-256, rather than the runtime's `rust-stable` extension, which lags it. v0.8.0's Flatpak build failed on the extension's Rust 1.89. The compiler is left out of the finished app.
+
+### Fixed
+
+- A release publishes only its packages: it now downloads each platform's by name, where it took every artifact of the run, which would have published the macOS jobs' intermediate binaries and the Flatpak bundle, which stays with the run, whenever that job finished first.
+
 ## 0.8.0 — 2026-11-09
 
 ### Added
