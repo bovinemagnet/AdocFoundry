@@ -169,10 +169,16 @@ jobs:
           # macOS has no `timeout`; the app quits itself once the benchmark ends.
           ADOCFOUNDRY_TYPING_BENCH=20 perl -e 'alarm shift; exec @ARGV' 300 \
             target/release/adocfoundry "$(dirname "$page")" "$page" 2> typing.log || tail -20 typing.log
-          result=$(grep 'typing benchmark' typing.log || echo 'typing benchmark: no result')
+          result=$(grep 'typing benchmark:' typing.log || echo 'typing benchmark: no result')
           echo "$result"
           printf '### Typing\n\nA character every 35 ms for 20 s into a 1 MB page: %s\n' \
             "${result#typing benchmark: }" >> "$GITHUB_STEP_SUMMARY"
+          # Each frame over 25 ms, when it came and what the front end's thread did for it (#241).
+          long=$(grep 'typing benchmark long frame:' typing.log | sed 's/^typing benchmark long frame: /- /')
+          if [ -n "$long" ]; then
+            echo "$long"
+            printf '\nFrames over 25 ms:\n\n%s\n' "$long" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   pdf-standards:
     # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1,

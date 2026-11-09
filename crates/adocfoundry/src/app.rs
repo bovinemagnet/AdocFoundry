@@ -158,7 +158,7 @@ impl AppState {
     /// Drains as [`AppState::drain`] does, leaving out the failure of `answered`, which its
     /// caller answers itself. A pump can schedule work, so the pump task is told.
     fn drain_answered(&mut self, answered: Option<CommandId>, cx: &mut Context<Self>) {
-        self.engine.pump();
+        crate::typing_bench::measure("pump", || self.engine.pump());
         self.publish(answered, cx);
     }
 
@@ -169,7 +169,7 @@ impl AppState {
         {
             self.pumps += 1;
         }
-        self.engine.engine.pump();
+        crate::typing_bench::measure("pump", || self.engine.engine.pump());
         self.publish(None, cx);
         self.engine.next_due()
     }

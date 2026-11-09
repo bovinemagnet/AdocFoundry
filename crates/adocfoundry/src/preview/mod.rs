@@ -608,6 +608,7 @@ impl gpui::EventEmitter<PreviewEvent> for PreviewView {}
 impl Render for PreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::renders::rendered(crate::renders::View::Preview);
+        let _timed = crate::typing_bench::timed("render.preview");
         self.finish_revealing(window, cx);
         // Repopulated as this frame's blocks are painted.
         self.extents.borrow_mut().clear();
