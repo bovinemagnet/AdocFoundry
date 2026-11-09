@@ -4,13 +4,14 @@
 //! seconds through the real widget → engine path, records the interval between rendered frames,
 //! prints a summary to standard error and quits.
 //!
-//! It also records the app's own work in each interval (#241): the layout and paint of the frame
-//! drawn at its start, from the frame callback GPUI runs just before drawing to [`paint_marker`],
-//! painted last in the workspace, and the parts [`measure`] times on the front end's thread after
-//! that paint. What is left of the interval is the platform's: presenting the frame, waiting for
-//! the display and whatever else the machine did. A hosted runner's tail is mostly that, so the
-//! budget ([`budget`]) holds the app's work, not the intervals. Work the editor widget does in its
-//! own tasks between frames is not timed.
+//! It also records the app's own work in each interval (#241): the CPU time the front end's
+//! thread used in it, all of GPUI's and the editor widget's work included, and where that went:
+//! the layout and paint of the frame drawn at the interval's start, from the frame callback GPUI
+//! runs just before drawing to [`paint_marker`], painted last in the workspace, and the parts
+//! [`measure`] times after that paint. A hosted runner's tail is mostly time the thread spent
+//! waiting, for the display or for the machine, which no CPU time counts, so the budget
+//! ([`budget`]) holds the CPU time, not the intervals. Where the platform gives no thread CPU
+//! time, the timed parts' and draws' own times stand in for it.
 
 use std::{
     cell::RefCell,
@@ -42,22 +43,26 @@ const DRAW: &str = "draw";
 #[derive(Default)]
 struct Frames {
     start: Option<Instant>,
-    last: Option<Instant>,
+    last: Option<Clocks>,
     frames: Vec<Frame>,
 }
 
-/// One interval between frames: when it ended, after the first frame, how long it was, the app's
-/// work in it and that work's longest single piece, and the parts timed in it, the frame's
-/// layout and paint as [`DRAW`] among them (absent when the workspace was not painted).
+/// One interval between frames: when it ended, after the first frame, and how long it was.
 struct Frame {
     at: Duration,
     interval: Duration,
+    /// The app's work in it: the thread's CPU time, or where that is not known, `timed`.
     work: Duration,
+    /// Whether `work` is CPU time.
+    cpu_time: bool,
+    /// The longest single piece of that work, one draw or one outermost timed part, measured as
+    /// `work` is.
     longest: Option<(&'static str, Duration)>,
+    /// The time the timed parts and the draw took by the clock.
+    timed: Duration,
+    /// The parts timed in it by the clock, the frame's layout and paint as [`DRAW`] among them
+    /// (absent when the workspace was not painted).
     parts: Vec<(&'static str, Duration)>,
-    /// The thread's CPU time in the frame's layout and paint, where the platform gives it: far
-    /// less than the draw's own time when the machine held the thread rather than the app.
-    draw_cpu: Option<Duration>,
 }
 
 /// A moment by the clock and by the front end's thread's CPU time.
@@ -76,11 +81,31 @@ impl Clocks {
     }
 }
 
-/// A frame's layout and paint, by the clock and on the CPU.
+impl Clocks {
+    /// The time from `earlier` to this moment, by the clock and on the CPU.
+    fn since(self, earlier: Clocks) -> Span {
+        Span {
+            wall: self.wall - earlier.wall,
+            cpu: self
+                .cpu
+                .zip(earlier.cpu)
+                .map(|(now, before)| now.saturating_sub(before)),
+        }
+    }
+}
+
+/// A stretch of the thread's time, by the clock and on the CPU.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Drawn {
+struct Span {
     wall: Duration,
     cpu: Option<Duration>,
+}
+
+impl Span {
+    /// What a piece of work is judged by: its CPU time where known.
+    fn judged(self) -> Duration {
+        self.cpu.unwrap_or(self.wall)
+    }
 }
 
 /// The CPU time the calling thread has used.
@@ -105,14 +130,15 @@ struct Recording {
     parts: Vec<(&'static str, Duration)>,
     /// How many timed parts are running, so a nested part is not counted twice.
     depth: usize,
-    /// The outermost parts' time since the last frame began, outside its layout and paint.
+    /// The outermost parts' time by the clock since the last frame began, outside its layout
+    /// and paint.
     busy: Duration,
-    /// The longest of those parts.
+    /// The longest of those parts, as [`Span::judged`] measures it.
     longest: Option<(&'static str, Duration)>,
     /// When the frame being drawn began, until the workspace is painted.
     drawing: Option<Clocks>,
     /// That frame's layout and paint, once painted.
-    drawn: Option<Drawn>,
+    drawn: Option<Span>,
 }
 
 /// What was recorded between one frame beginning and the next.
@@ -121,7 +147,7 @@ struct Taken {
     parts: Vec<(&'static str, Duration)>,
     busy: Duration,
     longest: Option<(&'static str, Duration)>,
-    drawn: Option<Drawn>,
+    drawn: Option<Span>,
 }
 
 thread_local! {
@@ -162,7 +188,7 @@ pub fn timed(name: &'static str) -> Timed {
         recording.depth += 1;
         Timed {
             name,
-            start: Some(Instant::now()),
+            start: Some(Clocks::now()),
             // Inside a frame's layout and paint, the draw's own time covers it.
             counted: recording.depth == 1 && recording.drawing.is_none(),
         }
@@ -171,7 +197,7 @@ pub fn timed(name: &'static str) -> Timed {
 
 pub struct Timed {
     name: &'static str,
-    start: Option<Instant>,
+    start: Option<Clocks>,
     counted: bool,
 }
 
@@ -180,7 +206,7 @@ impl Drop for Timed {
         let Some(start) = self.start else {
             return;
         };
-        let took = start.elapsed();
+        let took = Clocks::now().since(start);
         RECORDING.with(|recording| {
             if let Some(recording) = recording.borrow_mut().as_mut() {
                 recording.depth = recording.depth.saturating_sub(1);
@@ -189,12 +215,12 @@ impl Drop for Timed {
                     .iter_mut()
                     .find(|(part, _)| *part == self.name)
                 {
-                    Some((_, total)) => *total += took,
-                    None => recording.parts.push((self.name, took)),
+                    Some((_, total)) => *total += took.wall,
+                    None => recording.parts.push((self.name, took.wall)),
                 }
                 if self.counted {
-                    recording.busy += took;
-                    recording.longest = longer(recording.longest, self.name, took);
+                    recording.busy += took.wall;
+                    recording.longest = longer(recording.longest, self.name, took.judged());
                 }
             }
         });
@@ -217,13 +243,7 @@ fn painted(now: Clocks) {
     RECORDING.with(|recording| {
         if let Some(recording) = recording.borrow_mut().as_mut() {
             if let Some(began) = recording.drawing.take() {
-                recording.drawn = Some(Drawn {
-                    wall: now.wall - began.wall,
-                    cpu: now
-                        .cpu
-                        .zip(began.cpu)
-                        .map(|(now, began)| now.saturating_sub(began)),
-                });
+                recording.drawn = Some(now.since(began));
             }
         }
     });
@@ -303,9 +323,10 @@ fn track(frames: Rc<RefCell<Frames>>, end: Instant, window: &mut Window) {
             let mut frames = frames.borrow_mut();
             let start = *frames.start.get_or_insert(now);
             if let Some(last) = frames.last {
-                frames.frames.push(frame(now - start, now - last, taken));
+                let at = now - start;
+                frames.frames.push(frame(at, clocks.since(last), taken));
             }
-            frames.last = Some(now);
+            frames.last = Some(clocks);
         }
         if now < end {
             track(frames, end, window);
@@ -313,8 +334,8 @@ fn track(frames: Rc<RefCell<Frames>>, end: Instant, window: &mut Window) {
     });
 }
 
-/// An interval of `interval` ending `at` after the first frame, from what was recorded in it.
-fn frame(at: Duration, interval: Duration, taken: Taken) -> Frame {
+/// An interval ending `at` after the first frame, from what was recorded in it.
+fn frame(at: Duration, interval: Span, taken: Taken) -> Frame {
     let Taken {
         mut parts,
         busy,
@@ -323,15 +344,17 @@ fn frame(at: Duration, interval: Duration, taken: Taken) -> Frame {
     } = taken;
     if let Some(drawn) = drawn {
         parts.push((DRAW, drawn.wall));
-        longest = longer(longest, DRAW, drawn.wall);
+        longest = longer(longest, DRAW, drawn.judged());
     }
+    let timed = busy + drawn.map(|drawn| drawn.wall).unwrap_or_default();
     Frame {
         at,
-        interval,
-        work: busy + drawn.map(|drawn| drawn.wall).unwrap_or_default(),
+        interval: interval.wall,
+        work: interval.cpu.unwrap_or(timed),
+        cpu_time: interval.cpu.is_some(),
         longest,
+        timed,
         parts,
-        draw_cpu: drawn.and_then(|drawn| drawn.cpu),
     }
 }
 
@@ -382,21 +405,19 @@ fn work_summary(frames: &[Frame]) -> String {
         .iter()
         .filter(|frame| !frame.parts.iter().any(|(part, _)| *part == DRAW))
         .count();
-    let most_cpu = frames
-        .iter()
-        .filter_map(|frame| frame.draw_cpu.map(|cpu| (frame.at, cpu)))
-        .max_by_key(|(_, cpu)| *cpu);
+    let measured = if frames.iter().all(|frame| frame.cpu_time) {
+        "CPU time"
+    } else {
+        "timed by the clock"
+    };
     format!(
-        "median {}, p99 {}, worst {}; longest piece {}; most CPU in one draw {}; intervals without a paint: {unpainted}",
+        "{measured}: median {}, p99 {}, worst {}; longest piece {}; intervals without a paint: {unpainted}",
         ms(percentile(&work, 0.5)),
         ms(percentile(&work, 0.99)),
         ms(work[work.len() - 1]),
         longest_piece(frames.iter())
             .map(|(at, name, took)| format!("{name} {} at {:.2} s", ms(took), at.as_secs_f64()))
             .unwrap_or_else(|| "none".to_owned()),
-        most_cpu
-            .map(|(at, cpu)| format!("{} at {:.2} s", ms(cpu), at.as_secs_f64()))
-            .unwrap_or_else(|| "not known".to_owned()),
     )
 }
 
@@ -449,7 +470,8 @@ fn budget(frames: &[Frame]) -> Result<String, String> {
     }
 }
 
-/// A long frame as one line: when, how long, its parts, the longest first, and what was left.
+/// A long frame as one line: when, how long, its parts by the clock, the longest first, what
+/// was left, and the thread's CPU time in it.
 fn describe(frame: &Frame) -> String {
     let mut parts = frame.parts.clone();
     parts.sort_by_key(|(_, took)| std::cmp::Reverse(*took));
@@ -458,10 +480,11 @@ fn describe(frame: &Frame) -> String {
         .filter(|(_, took)| *took >= Duration::from_micros(100))
         .map(|(part, took)| format!("{part} {}", ms(*took)))
         .collect();
-    let cpu = frame
-        .draw_cpu
-        .map(|cpu| format!("; draw on the CPU {}", ms(cpu)))
-        .unwrap_or_default();
+    let cpu = if frame.cpu_time {
+        format!("; on the CPU {}", ms(frame.work))
+    } else {
+        String::new()
+    };
     format!(
         "at {:.2} s, {}: {}; not timed {}{cpu}",
         frame.at.as_secs_f64(),
@@ -471,7 +494,7 @@ fn describe(frame: &Frame) -> String {
         } else {
             listed.join(", ")
         },
-        ms(frame.interval.saturating_sub(frame.work)),
+        ms(frame.interval.saturating_sub(frame.timed)),
     )
 }
 
@@ -492,9 +515,17 @@ mod tests {
             at: Duration::from_millis(at_ms),
             interval: Duration::from_millis(17),
             work: Duration::from_millis(work_ms),
+            cpu_time: true,
             longest: longest.map(|(name, ms)| (name, Duration::from_millis(ms))),
+            timed: Duration::from_millis(work_ms),
             parts: Vec::new(),
-            draw_cpu: None,
+        }
+    }
+
+    fn span(wall_ms: u64, cpu_ms: Option<u64>) -> Span {
+        Span {
+            wall: Duration::from_millis(wall_ms),
+            cpu: cpu_ms.map(Duration::from_millis),
         }
     }
 
@@ -502,7 +533,7 @@ mod tests {
     fn a_long_frame_lists_its_parts_longest_first() {
         let frame = frame(
             Duration::from_millis(1_250),
-            Duration::from_millis(40),
+            span(40, Some(19)),
             Taken {
                 parts: vec![
                     ("render.editor", Duration::from_millis(3)),
@@ -511,15 +542,12 @@ mod tests {
                 ],
                 busy: Duration::from_millis(12),
                 longest: Some(("pump", Duration::from_millis(12))),
-                drawn: Some(Drawn {
-                    wall: Duration::from_millis(5),
-                    cpu: Some(Duration::from_millis(4)),
-                }),
+                drawn: Some(span(5, Some(4))),
             },
         );
         assert_eq!(
             describe(&frame),
-            "at 1.25 s, 40.0 ms: pump 12.0 ms, draw 5.0 ms, render.editor 3.0 ms; not timed 23.0 ms; draw on the CPU 4.0 ms"
+            "at 1.25 s, 40.0 ms: pump 12.0 ms, draw 5.0 ms, render.editor 3.0 ms; not timed 23.0 ms; on the CPU 19.0 ms"
         );
     }
 
@@ -542,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn a_nested_part_counts_once_towards_the_work() {
+    fn a_nested_part_counts_once_towards_the_timed_work() {
         record();
         measure("pump", || measure("events.workspace", || ()));
         let taken = begin_frame(Clocks::now());
@@ -553,7 +581,7 @@ mod tests {
             .unwrap()
             .1;
         assert_eq!(taken.busy, pump, "the outer part's time only");
-        assert_eq!(taken.longest, Some(("pump", pump)));
+        assert_eq!(taken.longest.map(|(name, _)| name), Some("pump"));
         stop();
     }
 
@@ -579,36 +607,67 @@ mod tests {
             .find(|(part, _)| *part == "type")
             .unwrap()
             .1;
-        assert_eq!(
-            taken.drawn,
-            Some(Drawn {
-                wall: Duration::from_millis(6),
-                cpu: Some(Duration::from_millis(2)),
-            })
-        );
+        assert_eq!(taken.drawn, Some(span(6, Some(2))));
         assert_eq!(taken.busy, typed, "render.editor is not counted twice");
-        let frame = frame(Duration::from_secs(2), Duration::from_millis(17), taken);
-        assert_eq!(frame.work, Duration::from_millis(6) + typed);
-        assert_eq!(frame.longest, Some((DRAW, Duration::from_millis(6))));
-        assert_eq!(frame.draw_cpu, Some(Duration::from_millis(2)));
+        let frame = frame(Duration::from_secs(2), span(17, Some(10)), taken);
+        assert_eq!(frame.timed, Duration::from_millis(6) + typed);
+        assert_eq!(
+            frame.work,
+            Duration::from_millis(10),
+            "the interval's CPU time"
+        );
+        assert!(frame.cpu_time);
         stop();
     }
 
     #[test]
-    fn a_draw_s_cpu_time_is_not_known_without_both_ends() {
-        record();
+    fn a_draw_the_machine_held_up_is_judged_by_its_cpu_time() {
+        let frame = frame(
+            Duration::from_secs(9),
+            span(42, Some(8)),
+            Taken {
+                drawn: Some(span(41, Some(6))),
+                ..Taken::default()
+            },
+        );
+        assert_eq!(frame.longest, Some((DRAW, Duration::from_millis(6))));
+        assert_eq!(frame.work, Duration::from_millis(8));
+        assert!(budget(&[frame]).is_ok());
+    }
+
+    #[test]
+    fn without_cpu_time_the_timed_work_stands_in() {
+        let frame = frame(
+            Duration::from_secs(2),
+            span(17, None),
+            Taken {
+                parts: vec![("type", Duration::from_millis(3))],
+                busy: Duration::from_millis(3),
+                longest: Some(("type", Duration::from_millis(3))),
+                drawn: Some(span(5, None)),
+            },
+        );
+        assert_eq!(frame.work, Duration::from_millis(8));
+        assert!(!frame.cpu_time);
+        assert_eq!(frame.longest, Some((DRAW, Duration::from_millis(5))));
+        assert_eq!(
+            describe(&frame),
+            "at 2.00 s, 17.0 ms: draw 5.0 ms, type 3.0 ms; not timed 9.0 ms"
+        );
+    }
+
+    #[test]
+    fn cpu_time_is_not_known_without_both_ends() {
         let began = Instant::now();
-        begin_frame(Clocks {
+        let without = Clocks {
             wall: began,
             cpu: None,
-        });
-        painted(Clocks {
+        };
+        let with = Clocks {
             wall: began + Duration::from_millis(6),
             cpu: Some(Duration::from_millis(3)),
-        });
-        let taken = begin_frame(Clocks::now());
-        assert_eq!(taken.drawn.map(|drawn| drawn.cpu), Some(None));
-        stop();
+        };
+        assert_eq!(with.since(without), span(6, None));
     }
 
     #[cfg(unix)]
@@ -628,7 +687,7 @@ mod tests {
         begin_frame(Clocks::now());
         let frame = frame(
             Duration::from_secs(2),
-            Duration::from_millis(17),
+            span(17, None),
             begin_frame(Clocks::now()),
         );
         assert!(frame.parts.is_empty());

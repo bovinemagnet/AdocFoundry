@@ -124,20 +124,29 @@ Three runs of the same commit showed that their tail is mostly the hosted runner
 Frames over 25 ms were almost all untimed time, the app's own parts were under 5 ms, and the three-line page did about as badly as the 1 MB page.
 One run had a display stall of 15.8 s while keystrokes were still handled in about 1 ms.
 
-The benchmark therefore also times the app's own work in each interval.
-That is the layout and paint of the frame drawn at the interval's start, timed from the frame callback GPUI runs just before drawing to an empty marker element painted last in the workspace.
-It adds the parts timed on the front end's thread after that paint (`pump`, `edit`, `type` and the engine-event handlers), counting a part nested in another once.
-What remains of the interval is the platform's: presenting the frame, waiting for the display, and whatever else the machine did.
-Work the editor widget does in its own tasks between frames is not timed.
+The benchmark therefore also measures the app's own work in each interval, as the CPU time the front end's thread used in it, read from the thread's CPU clock.
+That counts all of GPUI's and the editor widget's work on that thread, not only the parts timed below.
+Time the thread spent waiting, for the display or for the machine, counts in no CPU time.
+That is why the intervals and the clock are recorded but not held to a budget.
+The clock also stretched the app's own draws: one frame's layout and paint took 25.9 ms by the clock but only 6.6 ms of the thread's CPU, while on ordinary frames the two agree.
+So the budget reads CPU time.
+Where the platform gives no thread CPU time, the clock times of the parts and draws stand in for it.
+Only Unix-like systems give it, and CI runs on macOS.
+
+The benchmark also measures single pieces of work, both by the clock and by the thread's CPU time.
+One is the layout and paint of a frame, timed from the frame callback GPUI runs just before drawing to an empty marker element painted last in the workspace.
+The others are the outermost parts timed on the front end's thread after that paint (`pump`, `edit`, `type` and the engine-event handlers), a part nested in another counted once.
+What remains of an interval is the platform's: presenting the frame, waiting for the display, and whatever else the machine did.
 
 After the first second, which leaves out the page's first layout and highlight, the budget has two conditions:
 
-* the app's work per interval is within 16.7 ms at the 99th percentile;
-* no single piece of work, whether one frame's layout and paint or one timed part, takes over 33 ms.
+* the app's work per interval, as CPU time, is within 16.7 ms at the 99th percentile;
+* no single piece of work, whether one frame's layout and paint or one outermost timed part, takes over 33 ms of CPU time.
 
-The benchmark prints a `typing benchmark work:` line with the median, 99th percentile and worst work, the longest single piece and when it came, and how many intervals had no paint.
+The benchmark prints a `typing benchmark work:` line.
+It starts with `CPU time:` (or `timed by the clock:` where the platform gives no thread CPU time), then gives the median, 99th percentile and worst work, the longest single piece and when it came, and how many intervals had no paint.
 A `typing benchmark budget:` line then says `within:` or `over:` and gives the reason.
-Each frame over 25 ms is listed with its parts longest first, the frame's layout and paint appearing among them as `draw`, and how much of the interval was not timed.
+Each frame over 25 ms is listed with its parts by the clock, longest first, the frame's layout and paint appearing among them as `draw`, how much of the interval was not timed, and the thread's CPU time in that interval.
 
 For each run, the job adds both lines and the long frames to the run's summary.
 It fails when either run is not within the budget.

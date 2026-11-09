@@ -141,9 +141,10 @@ jobs:
 
   typing:
     # The real app types into a 1 MB page for twenty seconds, through the editor widget and the
-    # engine. The frame intervals and the app's own work in them go in the run's summary, and the
-    # job fails when the work misses the benchmark's budget (#241): the intervals are mostly the
-    # runner's, so they are recorded only. A run that draws no frames cannot be judged and fails.
+    # engine. The frame intervals and the app's own work in them, the CPU time its thread used, go
+    # in the run's summary, and the job fails when the work misses the benchmark's budget (#241):
+    # the intervals, and the clock, are mostly the runner's, so they are recorded only. A run that
+    # draws no frames cannot be judged and fails.
     timeout-minutes: 45
     runs-on: macos-15
     steps:
@@ -185,7 +186,7 @@ jobs:
             echo "$label: $result"
             echo "$label: $work"
             echo "$label: $verdict"
-            printf '\nA character every 35 ms for 20 s into a %s: %s\n\nWork on the front end in each interval: %s\n\nBudget: %s\n' \
+            printf '\nA character every 35 ms for 20 s into a %s: %s\n\nWork on the front end in each interval, in %s\n\nBudget: %s\n' \
               "$label" "${result#typing benchmark: }" "${work#typing benchmark work: }" \
               "${verdict#typing benchmark budget: }" >> "$GITHUB_STEP_SUMMARY"
             case "$verdict" in
