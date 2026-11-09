@@ -15,6 +15,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ### Fixed
 
+- Stapling the macOS app's and DMG's notarisation tickets tries again, up to five times, when the connection to Apple drops, as it did in a candidate run, rather than failing the release.
 - A release publishes only its packages: it now downloads each platform's by name, where it took every artifact of the run, which would have published the macOS jobs' intermediate binaries and the Flatpak bundle, which stays with the run, whenever that job finished first.
 
 ## 0.8.0 — 2026-11-09
