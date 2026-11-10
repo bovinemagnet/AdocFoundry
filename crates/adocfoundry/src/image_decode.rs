@@ -228,7 +228,7 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
 
 /// The longer side, in pixels, an SVG is drawn at, so it stays sharp when zoomed in; less when
 /// the limits say so.
-const SVG_LONG_SIDE: f32 = 2048.0;
+pub(crate) const SVG_LONG_SIDE: f32 = 2048.0;
 
 /// How an SVG is read: with the system's fonts, and nothing loaded from outside it.
 fn svg_options() -> usvg::Options<'static> {
@@ -279,6 +279,38 @@ pub fn svg_to_png(svg: &str, scale: f32) -> Result<Vec<u8>, DecodeError> {
         .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
         .map_err(|error| DecodeError::Corrupt(error.to_string()))?;
     Ok(png)
+}
+
+/// `svg` drawn at `scale` pixels to its unit, as straight BGRA pixels for the GPU, at most
+/// `max_pixels` of them: a larger drawing is made at the largest scale that fits.
+pub fn svg_to_bgra(svg: &str, scale: f32, max_pixels: f32) -> Result<RgbaImage, DecodeError> {
+    let tree = usvg::Tree::from_data(svg.as_bytes(), &svg_options())
+        .map_err(|error| DecodeError::Corrupt(error.to_string()))?;
+    let size = tree.size();
+    let scale = scale.min((max_pixels / (size.width() * size.height())).sqrt());
+    let width = (size.width() * scale).round().max(1.0) as u32;
+    let height = (size.height() * scale).round().max(1.0) as u32;
+    check_size(width, height, Limits::DEFAULT)?;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| DecodeError::TooLarge(format!("{width} × {height} pixels")))?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+    let mut pixels = RgbaImage::from_raw(width, height, pixmap.take())
+        .ok_or_else(|| DecodeError::Corrupt("the drawing has the wrong size".to_owned()))?;
+    // Premultiplied RGBA to straight BGRA.
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+        let alpha = u16::from(pixel[3]);
+        for channel in &mut pixel[..3] {
+            if let Some(straight) = (u16::from(*channel) * 255).checked_div(alpha) {
+                *channel = straight.min(255) as u8;
+            }
+        }
+    }
+    Ok(pixels)
 }
 
 fn decode_svg(bytes: &[u8], file_bytes: u64, limits: Limits) -> Result<Decoded, DecodeError> {
@@ -521,6 +553,19 @@ mod tests {
         assert_eq!(decoded.dimensions(), (80, 40));
         assert_eq!(decoded.get_pixel(10, 10).0, [255, 0, 0, 255]);
         assert!(svg_to_png("<not svg", 1.0).is_err());
+    }
+
+    #[test]
+    fn an_svg_is_drawn_for_the_gpu_at_a_scale_within_a_pixel_budget() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">
+            <rect width="40" height="20" fill="#ff0000"/></svg>"##;
+        let pixels = svg_to_bgra(svg, 3.0, f32::MAX).unwrap();
+        assert_eq!(pixels.dimensions(), (120, 60));
+        // Blue, green, red, alpha.
+        assert_eq!(pixels.get_pixel(10, 10).0, [0, 0, 255, 255]);
+        // 800 pixels allow a scale of 1.
+        assert_eq!(svg_to_bgra(svg, 3.0, 800.0).unwrap().dimensions(), (40, 20));
+        assert!(svg_to_bgra("<not svg", 1.0, f32::MAX).is_err());
     }
 
     #[test]

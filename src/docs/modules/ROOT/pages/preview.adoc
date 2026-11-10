@@ -11,11 +11,15 @@ See xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the bindings.
 == Showing and hiding the preview
 
 Toggle Preview (`view.toggle_preview`) shows or hides the preview.
+The PDF is a way of showing an open preview, so closing the preview while the PDF shows turns the PDF off.
+It closes in the place it had before the PDF was turned on, docked or in its own window.
+When it opens again, it shows the rendered page there.
+This applies to Toggle Preview, the close button and the Preview button alike.
 It is bound to kbd:[Cmd+K] then kbd:[V] on macOS and kbd:[Ctrl+K] then kbd:[V] on Linux and Windows.
 This is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
 
 The preview is a pane docked to the right of the editor.
-Its toolbar shows the title of the page being previewed and three buttons:
+Its toolbar shows the title of the page being previewed and these buttons:
 
 [cols="1,4"]
 |===
@@ -29,6 +33,10 @@ Its toolbar shows the title of the page being previewed and three buttons:
 
 |Detach or Dock
 |Moves the preview into its own window, or back beside the editor.
+
+|Close (×)
+|Close Preview hides the preview, docked or in its own window, as Toggle Preview does.
+It is in the header of the PDF pages too.
 |===
 
 == Following the active page
@@ -48,6 +56,25 @@ Toggle PDF Preview (`view.toggle_pdf_preview`) switches it on and off.
 It is in the View menu and the command palette, and has no default key binding.
 The preview's header also has a PDF button; while the PDF is shown it reads Page, to switch back.
 Turning the PDF preview on also shows the preview if it was hidden.
+Turning it off puts the preview back as it was before the PDF was turned on.
+If turning the PDF on opened the preview, turning it off closes the preview again.
+If the rendered page was showing, it shows again.
+This is remembered across a restart.
+
+Toggle PDF Preview Window (`view.toggle_pdf_window`) shows the PDF in its own window.
+Run again, it turns the PDF off and puts the preview back as it was before.
+Closing that window does the same.
+It is in the View menu and the command palette, and has no default key binding.
+
+The title bar has three buttons, Preview, PDF and PDF Window, each highlighted while that view is showing.
+Preview shows the rendered page.
+Clicked while highlighted, it closes the preview.
+Clicked while the PDF shows, it switches back to the rendered page, docked.
+If the PDF had opened the preview, the preview opens again as the rendered page.
+Otherwise it shows the preview.
+PDF shows the PDF docked beside the editor, moving it out of its own window if it is there.
+PDF Window shows the PDF in its own window.
+Clicked while highlighted, either of these buttons turns the PDF off.
 
 The pages are typeset as Export Page to PDF typesets the page, with the same theme and fonts.
 The theme is the page's `pdf-theme`, else `[pdf] theme`, found in `pdf-themesdir` or `[pdf] themes_dir`.
@@ -57,7 +84,45 @@ Unsaved edits are included.
 After typing, the pages follow once the page settles, which is the preview's 100 ms pause.
 They are typeset on a background worker, so the editor never waits.
 An ordinary page takes about a tenth of a second more; the typesetting of the four-page reference article takes about 25 ms in a release build.
-Pages are drawn at one screen pixel per point and scroll in the pane.
+
+[[pdf-zoom]]
+=== Zoom
+
+The pages open fitted to the pane's width (Fit Width) and follow the pane as it is resized.
+A toolbar above the pages has, from left to right:
+
+* Zoom Out (−).
+* The zoom as a percentage.
+* Zoom In (+).
+* Width, for Fit Width.
+* Page, for Fit to Window: the largest page whole in the pane, which also follows its size.
+* 100%, for Actual Size: one point of the page to one screen pixel.
+
+Zoom In and Zoom Out step through 50%, 67%, 75%, 90%, 100%, 110%, 125%, 150%, 175%, 200%, 300% and 400%.
+Below 50%, Zoom Out goes on down to 10%, a step of 1.25 times each.
+
+The keys are the same as for images.
+kbd:[Cmd+=] (or kbd:[Cmd++]) zooms in and kbd:[Cmd+-] zooms out.
+kbd:[Cmd+0] is Actual Size and kbd:[Cmd+9] is Fit to Window.
+On Linux and Windows use kbd:[Ctrl] in place of kbd:[Cmd].
+They work anywhere in the workspace window while the PDF preview is shown, the editor included, and in the preview's own window once you click in it.
+Fit Width has no key.
+Zoom In, Zoom Out, Actual Size, Fit to Window and Fit Width are in the View menu and the command palette while the PDF preview is shown or an image is the active tab.
+
+Holding kbd:[Cmd] (kbd:[Ctrl] on Windows and Linux) while scrolling zooms about the pointer.
+A trackpad pinch zooms on Linux; macOS does not deliver pinch gestures to the application yet.
+Zooming keeps the point under the pointer where it is, or the point at the centre of the pane for keys and buttons.
+
+The zoom is kept while you edit and the pages are typeset again, for as long as the window is open.
+It is not saved between sessions.
+
+Each page is first drawn at 2048 pixels on its longer side.
+This is sharp up to about 240% on a standard display and about 120% on a Retina or other 2× display.
+Above that, the pages in and near the view are drawn again, sharper, a moment after the zoom or the scrolling stops.
+That redrawing is limited to 16 million pixels a page.
+This is about 580% of an A4 page on a standard display and about 290% on a 2× display, so very high zooms on a 2× display are a little soft.
+
+Clicking a line goes to its source at any zoom.
 
 Clicking a line of text on a page puts the caret at the start of the paragraph, heading or other block that line came from.
 When the line came from an included file, that file opens, as it does when you click a block in the rendered preview.

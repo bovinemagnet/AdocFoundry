@@ -4345,6 +4345,140 @@ impl WorkspaceView {
         self.invoke(ids::VIEW_TOGGLE_PDF_PREVIEW, CommandArgs::None, window, cx);
     }
 
+    fn on_toggle_pdf_window(
+        &mut self,
+        _: &TogglePdfWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::VIEW_TOGGLE_PDF_WINDOW, CommandArgs::None, window, cx);
+    }
+
+    /// Zooms the PDF preview, docked or in its own window, as a zoom key, menu or the palette
+    /// asks (#420); with no PDF shown, the action goes on to whatever else handles it.
+    fn zoom_pdf(&mut self, step: crate::preview::pdf::ZoomStep, cx: &mut Context<Self>) {
+        let layout = self.app.read(cx).engine.preview_layout();
+        if !(layout.visible && layout.pdf) {
+            cx.propagate();
+            return;
+        }
+        let preview = match &self.detached {
+            Some((_, view)) if layout.detached => view.clone(),
+            _ => self.preview.clone(),
+        };
+        preview.update(cx, |preview, cx| preview.zoom_pdf(step, cx));
+    }
+
+    fn on_zoom_in(
+        &mut self,
+        _: &crate::image_view::ZoomIn,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.zoom_pdf(crate::preview::pdf::ZoomStep::In, cx);
+    }
+
+    fn on_zoom_out(
+        &mut self,
+        _: &crate::image_view::ZoomOut,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.zoom_pdf(crate::preview::pdf::ZoomStep::Out, cx);
+    }
+
+    fn on_actual_size(
+        &mut self,
+        _: &crate::image_view::ActualSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let zoom = crate::preview::pdf::PdfZoom::Scale(1.0);
+        self.zoom_pdf(crate::preview::pdf::ZoomStep::To(zoom), cx);
+    }
+
+    fn on_fit_to_window(
+        &mut self,
+        _: &crate::image_view::FitToWindow,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let zoom = crate::preview::pdf::PdfZoom::FitPage;
+        self.zoom_pdf(crate::preview::pdf::ZoomStep::To(zoom), cx);
+    }
+
+    fn on_fit_width(
+        &mut self,
+        _: &crate::image_view::FitWidth,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let zoom = crate::preview::pdf::PdfZoom::FitWidth;
+        self.zoom_pdf(crate::preview::pdf::ZoomStep::To(zoom), cx);
+    }
+
+    /// The title bar's preview buttons (#420): the rendered page, the PDF beside the editor and
+    /// the PDF in its own window, each lit while it shows, and closing it when clicked again.
+    fn render_preview_toggles(
+        &self,
+        layout: adoc_engine::PreviewLayout,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        use gpui_component::Selectable as _;
+        let pdf = self
+            .app
+            .read(cx)
+            .engine
+            .commands()
+            .get(ids::VIEW_TOGGLE_PDF_PREVIEW)
+            .is_some();
+        let toggle = |id: &'static str, label: &'static str, tooltip: &'static str| {
+            Button::new(id)
+                .ghost()
+                .xsmall()
+                .label(label)
+                .tooltip(tooltip)
+                .debug_selector(move || id.to_owned())
+        };
+        let shown = layout.visible && layout.pdf;
+        h_flex()
+            .gap_1()
+            .child(
+                toggle("title-preview", "Preview", "Toggle Preview")
+                    .selected(layout.visible && !layout.pdf)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let layout = this.app.read(cx).engine.preview_layout();
+                        for &command in crate::preview::preview_commands(layout) {
+                            this.invoke(command, CommandArgs::None, window, cx);
+                        }
+                    })),
+            )
+            .when(pdf, |toggles| {
+                toggles
+                    .child(
+                        toggle("title-pdf", "PDF", "Toggle PDF Preview")
+                            .selected(shown && !layout.detached)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let layout = this.app.read(cx).engine.preview_layout();
+                                for &command in crate::preview::docked_pdf_commands(layout) {
+                                    this.invoke(command, CommandArgs::None, window, cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        toggle(
+                            "title-pdf-window",
+                            "PDF Window",
+                            "Toggle PDF Preview Window",
+                        )
+                        .selected(shown && layout.detached)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_toggle_pdf_window(&TogglePdfWindow, window, cx);
+                        })),
+                    )
+            })
+    }
+
     fn on_pin_preview(&mut self, _: &PinPreview, window: &mut Window, cx: &mut Context<Self>) {
         self.invoke(ids::PREVIEW_PIN, CommandArgs::None, window, cx);
     }
@@ -4454,13 +4588,13 @@ impl WorkspaceView {
                 )
             })
             .collect();
-        let image = self.app.read(cx).engine.active_image().is_some();
+        let zoom = crate::menus::can_zoom(&self.app.read(cx).engine);
         items.extend(
             UI_ACTIONS
                 .iter()
                 .enumerate()
-                // The zoom commands only while an image is shown.
-                .filter(|(index, _)| image || *index < IMAGE_UI_ACTIONS)
+                // The zoom commands only while an image or the PDF preview is shown.
+                .filter(|(index, _)| zoom || *index < ZOOM_UI_ACTIONS)
                 .map(|(index, (title, _))| {
                     actions.push(ui_action(index));
                     CommandItem::new().label(*title)
@@ -5451,6 +5585,12 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_detach_preview))
             .on_action(cx.listener(Self::on_toggle_preview_sync))
             .on_action(cx.listener(Self::on_toggle_pdf_preview))
+            .on_action(cx.listener(Self::on_toggle_pdf_window))
+            .on_action(cx.listener(Self::on_zoom_in))
+            .on_action(cx.listener(Self::on_zoom_out))
+            .on_action(cx.listener(Self::on_actual_size))
+            .on_action(cx.listener(Self::on_fit_to_window))
+            .on_action(cx.listener(Self::on_fit_width))
             .on_action(cx.listener(Self::on_pin_preview))
             .on_action(cx.listener(Self::on_show_source))
             .on_action(cx.listener(Self::on_show_visual))
@@ -5491,7 +5631,8 @@ impl Render for WorkspaceView {
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.on_palette(&CommandPalette, window, cx);
                                 })),
-                        ),
+                        )
+                        .child(self.render_preview_toggles(layout, cx)),
                 ),
             )
             .child(

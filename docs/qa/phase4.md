@@ -46,6 +46,8 @@ Automated coverage for reference: the theme loader against asciidoctor-pdf's own
 - [x] Export Component to PDF… exports the active page's component; unsaved edits are in the PDF: `export_component_exports_the_active_page_s_component_with_unsaved_edits` on GPUI's test platform. From a page of the book fixture the export is the whole `guide` book, and 150 unsaved paragraphs lengthen it while the file on disk is unchanged.
 - [x] A theme error (a broken `pdf-theme`) and a Typst error (an unreadable image) are reported with the file and line: `export_errors_name_the_file_and_line` on GPUI's test platform, and by hand with the CLI (`broken-theme.yml: error: line 2 column 4: …` and `imaged.adoc:5: failed to decode image …`).
 
+- [ ] The PDF preview's zoom (#420), on a 2× display and a standard one: the pages open fitted to the pane's width and keep fitting as the pane is resized; Width, Page and 100% fit, fit whole and show a point to a pixel; Zoom In and Out step through 50%–400%; text stays sharp at 200% and 400% a moment after zooming; Cmd/Ctrl-scroll zooms about the pointer without scrolling; a pinch zooms on Linux; a click on a line at 200% goes to its source. On GPUI's test platform `the_pdf_preview_zooms` checks the fit, the toolbar, the keys' actions from the editor, Cmd-scroll and the sharper drawings, and `the_pdf_buttons_close_what_they_opened` the title bar's buttons and the close button.
+
 ## Scale
 
 - [x] Every page of a real 786-page documentation project exports as an article without an error, in about 40 ms a page in a release build (`ADOC_PDF_CORPUS`, macOS).

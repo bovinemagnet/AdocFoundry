@@ -227,7 +227,7 @@ Three document commands also have no default binding and are available from the 
 See xref:using-the-editor.adoc[Using the editor].
 Two file commands also have no default binding and are available from the palette and the File menu: Local History… (`document.local_history`) and Recover Unsaved Changes… (`document.recover_unsaved`).
 See xref:using-the-editor.adoc#crash-recovery[Recovering unsaved changes] and xref:using-the-editor.adoc#local-history[Local history].
-Four preview commands also have no default binding and are available from the palette: Detach Preview (`view.detach_preview`), Toggle PDF Preview (`view.toggle_pdf_preview`), Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) and Pin Preview (`preview.pin`).
+Five preview commands also have no default binding and are available from the palette: Detach Preview (`view.detach_preview`), Toggle PDF Preview (`view.toggle_pdf_preview`), Toggle PDF Preview Window (`view.toggle_pdf_window`), Toggle Preview Scroll Sync (`view.toggle_scroll_sync`) and Pin Preview (`preview.pin`).
 Toggle Preview is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
 See xref:preview.adoc[The preview].
 Reset Graph Layout (`graph.reset_layout`) has no default binding and is available from the palette and the View menu.
@@ -242,7 +242,8 @@ Undo, redo, go to definition, follow link and peek include are bound in the edit
 [[image-viewer]]
 == Image viewer
 
-These keys apply while an image tab is active.
+These keys apply while an image tab is active or the PDF preview is shown.
+They act on the image viewer and on the PDF preview.
 
 [cols="3,2,2,3"]
 |===
@@ -269,9 +270,10 @@ These keys apply while an image tab is active.
 |UI only
 |===
 
-Zoom In, Zoom Out, Actual Size and Fit to Window are also in the View menu and the command palette while an image is the active tab.
+Fit Width has no key.
+Zoom In, Zoom Out, Actual Size, Fit to Window and Fit Width are also in the View menu and the command palette while an image is the active tab or the PDF preview is shown.
 Reload Image (`image.reload`) has no default binding and is available from the same places.
-See xref:using-the-editor.adoc#image-viewer[Using the editor].
+See xref:using-the-editor.adoc#image-viewer[Using the editor] and xref:preview.adoc#pdf-zoom[the PDF preview's zoom].
 
 [[visual-editor]]
 == Visual editor

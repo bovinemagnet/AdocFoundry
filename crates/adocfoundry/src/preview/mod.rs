@@ -20,7 +20,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     highlighter::SyntaxHighlighter,
-    v_flex, ActiveTheme as _, Sizable as _, TitleBar, WindowExt as _,
+    v_flex, ActiveTheme as _, IconName, Sizable as _, TitleBar, WindowExt as _,
 };
 
 use crate::app::AppState;
@@ -68,6 +68,8 @@ pub struct PreviewView {
     blocks: Option<adoc_render::BlockIndex>,
     /// The target's PDF pages, while the preview shows them.
     pdf: pdf::PdfPages,
+    /// Focused by a click on the PDF pages, so the zoom keys reach them.
+    focus_handle: gpui::FocusHandle,
     _subscription: Subscription,
 }
 
@@ -106,6 +108,7 @@ impl PreviewView {
             inline_for: None,
             blocks: None,
             pdf: pdf::PdfPages::default(),
+            focus_handle: cx.focus_handle(),
             _subscription: subscription,
         };
         view.refresh(cx);
@@ -195,7 +198,7 @@ impl PreviewView {
         else {
             return;
         };
-        if let Some(top) = pdf::page_tops(pages).get(page) {
+        if let Some(top) = pdf::page_tops(pages, self.pdf.scale()).get(page) {
             self.pdf.scroll.set_offset(gpui::point(px(0.), -px(*top)));
             cx.notify();
         }
@@ -205,12 +208,30 @@ impl PreviewView {
     #[cfg(test)]
     pub fn pdf_position(&self, page: usize, y: f32) -> Option<gpui::Point<Pixels>> {
         let pages = self.pdf.shown.as_ref()?.pages.as_ref().ok()?;
-        let top = *pdf::page_tops(pages).get(page)?;
+        let scale = self.pdf.scale();
+        let top = *pdf::page_tops(pages, scale).get(page)?;
         let container = self.pdf.scroll.bounds();
         Some(gpui::point(
             container.origin.x + container.size.width / 2.,
-            container.origin.y + self.pdf.scroll.offset().y + px(top + y),
+            container.origin.y + self.pdf.scroll.offset().y + px(top + y * scale),
         ))
+    }
+
+    /// The PDF pages' zoom and the scale it draws them at.
+    #[cfg(test)]
+    pub fn pdf_zoom(&self) -> (pdf::PdfZoom, f32) {
+        (self.pdf.zoom, self.pdf.scale())
+    }
+
+    /// The PDF pages drawn sharper for the zoom, and the scale of each.
+    #[cfg(test)]
+    pub fn pdf_sharp_pages(&self) -> Vec<(usize, f32)> {
+        self.pdf.sharp_pages()
+    }
+
+    /// Zooms the PDF pages, as the zoom keys, menus and palette do (#420).
+    pub fn zoom_pdf(&mut self, step: pdf::ZoomStep, cx: &mut Context<Self>) {
+        self.pdf.step(step, cx);
     }
 
     /// Scrolls so the innermost block containing `offset` in `path` is at the top, keeping the
@@ -387,14 +408,18 @@ impl PreviewView {
             })
         };
         h_flex()
+            .debug_selector(|| "preview-header".to_owned())
             .px_2()
             .py_1()
             .gap_1()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
+                // Shortened, so a long page name never pushes the buttons out of the pane.
                 div()
                     .flex_1()
+                    .min_w_0()
+                    .truncate()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(title),
@@ -444,6 +469,15 @@ impl PreviewView {
                     .xsmall()
                     .label(if layout.detached { "Dock" } else { "Detach" })
                     .on_click(command(ids::VIEW_DETACH_PREVIEW)),
+            )
+            .child(
+                Button::new("preview-close")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Close)
+                    .tooltip("Close Preview")
+                    .debug_selector(|| "preview-close".to_owned())
+                    .on_click(command(ids::VIEW_TOGGLE_PREVIEW)),
             )
     }
 
@@ -649,9 +683,37 @@ impl Render for PreviewView {
                         cx,
                     );
                 },
+                |this: &mut Self| &mut this.pdf,
+                window,
                 cx,
             );
             return v_flex()
+                .id("pdf-preview")
+                .key_context(pdf::PDF_CONTEXT)
+                .track_focus(&self.focus_handle)
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, window, cx| window.focus(&this.focus_handle, cx)),
+                )
+                .on_action(cx.listener(|this, _: &crate::image_view::ZoomIn, _, cx| {
+                    this.zoom_pdf(pdf::ZoomStep::In, cx);
+                }))
+                .on_action(cx.listener(|this, _: &crate::image_view::ZoomOut, _, cx| {
+                    this.zoom_pdf(pdf::ZoomStep::Out, cx);
+                }))
+                .on_action(
+                    cx.listener(|this, _: &crate::image_view::ActualSize, _, cx| {
+                        this.zoom_pdf(pdf::ZoomStep::To(pdf::PdfZoom::Scale(1.0)), cx);
+                    }),
+                )
+                .on_action(
+                    cx.listener(|this, _: &crate::image_view::FitToWindow, _, cx| {
+                        this.zoom_pdf(pdf::ZoomStep::To(pdf::PdfZoom::FitPage), cx);
+                    }),
+                )
+                .on_action(cx.listener(|this, _: &crate::image_view::FitWidth, _, cx| {
+                    this.zoom_pdf(pdf::ZoomStep::To(pdf::PdfZoom::FitWidth), cx);
+                }))
                 .size_full()
                 .bg(cx.theme().background)
                 .text_color(cx.theme().foreground)
@@ -701,6 +763,83 @@ impl Render for PreviewView {
                     }),
             )
             .into_any_element()
+    }
+}
+
+/// What the title bar's PDF button invokes (#420): turns the PDF off where it shows docked,
+/// docks it where it shows in its own window, and otherwise shows it, docked.
+pub(crate) fn docked_pdf_commands(
+    layout: adoc_engine::PreviewLayout,
+) -> &'static [adoc_engine::CommandId] {
+    match (layout.visible && layout.pdf, layout.detached) {
+        (true, false) => &[ids::VIEW_TOGGLE_PDF_PREVIEW],
+        (true, true) => &[ids::VIEW_DETACH_PREVIEW],
+        // Shown where the preview last was, which is its own window: then docked.
+        (false, true) => &[ids::VIEW_TOGGLE_PDF_PREVIEW, ids::VIEW_DETACH_PREVIEW],
+        (false, false) => &[ids::VIEW_TOGGLE_PDF_PREVIEW],
+    }
+}
+
+/// What the title bar's Preview button invokes: hides the rendered page where it shows, turns
+/// the PDF off where it shows, opening the preview again if the PDF had opened it, and
+/// otherwise shows the preview.
+pub(crate) fn preview_commands(
+    layout: adoc_engine::PreviewLayout,
+) -> &'static [adoc_engine::CommandId] {
+    let closes_with_pdf = layout.before_pdf.is_some_and(|before| !before.visible);
+    match (layout.visible && layout.pdf, closes_with_pdf) {
+        (true, true) => &[ids::VIEW_TOGGLE_PDF_PREVIEW, ids::VIEW_TOGGLE_PREVIEW],
+        (true, false) => &[ids::VIEW_TOGGLE_PDF_PREVIEW],
+        (false, _) => &[ids::VIEW_TOGGLE_PREVIEW],
+    }
+}
+
+#[cfg(test)]
+mod toggle_tests {
+    use adoc_engine::{commands::ids, PreviewLayout, PreviewPlace};
+
+    use super::{docked_pdf_commands, preview_commands};
+
+    fn layout(visible: bool, detached: bool, pdf: bool) -> PreviewLayout {
+        PreviewLayout {
+            visible,
+            detached,
+            pdf,
+            ..PreviewLayout::default()
+        }
+    }
+
+    #[test]
+    fn the_pdf_button_shows_the_pdf_docked_or_turns_it_off() {
+        let pdf = ids::VIEW_TOGGLE_PDF_PREVIEW;
+        let dock = ids::VIEW_DETACH_PREVIEW;
+        assert_eq!(docked_pdf_commands(layout(false, false, false)), [pdf]);
+        assert_eq!(docked_pdf_commands(layout(false, true, true)), [pdf, dock]);
+        assert_eq!(docked_pdf_commands(layout(true, false, false)), [pdf]);
+        assert_eq!(docked_pdf_commands(layout(true, true, false)), [pdf, dock]);
+        assert_eq!(docked_pdf_commands(layout(true, true, true)), [dock]);
+        assert_eq!(docked_pdf_commands(layout(true, false, true)), [pdf]);
+    }
+
+    #[test]
+    fn the_preview_button_shows_or_hides_the_rendered_page() {
+        let (pdf, preview) = (ids::VIEW_TOGGLE_PDF_PREVIEW, ids::VIEW_TOGGLE_PREVIEW);
+        assert_eq!(preview_commands(layout(false, false, false)), [preview]);
+        assert_eq!(preview_commands(layout(true, false, false)), [preview]);
+        // The PDF replaced a rendered page: turning it off shows that page.
+        let mut replaced = layout(true, false, true);
+        replaced.before_pdf = Some(PreviewPlace {
+            visible: true,
+            detached: false,
+        });
+        assert_eq!(preview_commands(replaced), [pdf]);
+        // The PDF opened the preview: turning it off closes it, so it is opened again.
+        let mut opened = layout(true, false, true);
+        opened.before_pdf = Some(PreviewPlace {
+            visible: false,
+            detached: false,
+        });
+        assert_eq!(preview_commands(opened), [pdf, preview]);
     }
 }
 
