@@ -111,6 +111,9 @@ struct SavedPreview {
     detached: bool,
     scroll_sync: bool,
     pdf: bool,
+    /// Where the preview was before the PDF was shown: `[visible, detached]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    before_pdf: Option<[bool; 2]>,
     /// The pinned page, by its place in `tabs`.
     pinned: Option<usize>,
 }
@@ -232,6 +235,9 @@ impl Engine {
                 detached: layout.detached,
                 scroll_sync: layout.scroll_sync,
                 pdf: layout.pdf,
+                before_pdf: layout
+                    .before_pdf
+                    .map(|place| [place.visible, place.detached]),
                 pinned: layout
                     .pinned
                     .and_then(|id| places.get(&TabItem::Document(id)).copied()),
@@ -313,7 +319,13 @@ impl Engine {
         layout.visible = saved.preview.visible;
         layout.detached = saved.preview.detached;
         layout.scroll_sync = saved.preview.scroll_sync;
-        layout.pdf = cfg!(feature = "typst") && saved.preview.pdf;
+        // The PDF is a way of showing an open preview (#420).
+        layout.pdf = cfg!(feature = "typst") && saved.preview.pdf && saved.preview.visible;
+        layout.before_pdf = saved
+            .preview
+            .before_pdf
+            .filter(|_| layout.pdf)
+            .map(|[visible, detached]| crate::PreviewPlace { visible, detached });
         layout.pinned = saved
             .preview
             .pinned

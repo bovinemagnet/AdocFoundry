@@ -131,7 +131,7 @@ pub use problems::{Problem, ProblemFilter, ProblemPlace};
 pub use profiles::{PdfProfile, PdfThemeChoice, ProfileContent, BUNDLED_THEMES};
 pub use quick_open::{QuickOpenItem, QUICK_OPEN_LIMIT};
 pub use recovery::{Recoverable, RECOVERY_DIR, RECOVERY_SETTLE};
-pub use rendered::{PreviewLayout, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
+pub use rendered::{PreviewLayout, PreviewPlace, RenderedPreview, DIAGRAM_WORKERS, PREVIEW_SETTLE};
 pub use session::{WindowPlacement, RECENT_FOLDERS, RECENT_FOLDERS_FILE, SESSION_FILE};
 pub use settings::{
     pdf_standard, AppearanceSettings, AutoSave, EditorSettings, ExpansionPolicy, FontScale,
