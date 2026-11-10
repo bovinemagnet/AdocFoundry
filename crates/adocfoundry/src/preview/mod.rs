@@ -408,14 +408,18 @@ impl PreviewView {
             })
         };
         h_flex()
+            .debug_selector(|| "preview-header".to_owned())
             .px_2()
             .py_1()
             .gap_1()
             .border_b_1()
             .border_color(cx.theme().border)
             .child(
+                // Shortened, so a long page name never pushes the buttons out of the pane.
                 div()
                     .flex_1()
+                    .min_w_0()
+                    .truncate()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(title),
@@ -776,11 +780,25 @@ pub(crate) fn docked_pdf_commands(
     }
 }
 
+/// What the title bar's Preview button invokes: hides the rendered page where it shows, turns
+/// the PDF off where it shows, opening the preview again if the PDF had opened it, and
+/// otherwise shows the preview.
+pub(crate) fn preview_commands(
+    layout: adoc_engine::PreviewLayout,
+) -> &'static [adoc_engine::CommandId] {
+    let closes_with_pdf = layout.before_pdf.is_some_and(|before| !before.visible);
+    match (layout.visible && layout.pdf, closes_with_pdf) {
+        (true, true) => &[ids::VIEW_TOGGLE_PDF_PREVIEW, ids::VIEW_TOGGLE_PREVIEW],
+        (true, false) => &[ids::VIEW_TOGGLE_PDF_PREVIEW],
+        (false, _) => &[ids::VIEW_TOGGLE_PREVIEW],
+    }
+}
+
 #[cfg(test)]
 mod toggle_tests {
-    use adoc_engine::{commands::ids, PreviewLayout};
+    use adoc_engine::{commands::ids, PreviewLayout, PreviewPlace};
 
-    use super::docked_pdf_commands;
+    use super::{docked_pdf_commands, preview_commands};
 
     fn layout(visible: bool, detached: bool, pdf: bool) -> PreviewLayout {
         PreviewLayout {
@@ -801,6 +819,27 @@ mod toggle_tests {
         assert_eq!(docked_pdf_commands(layout(true, true, false)), [pdf, dock]);
         assert_eq!(docked_pdf_commands(layout(true, true, true)), [dock]);
         assert_eq!(docked_pdf_commands(layout(true, false, true)), [pdf]);
+    }
+
+    #[test]
+    fn the_preview_button_shows_or_hides_the_rendered_page() {
+        let (pdf, preview) = (ids::VIEW_TOGGLE_PDF_PREVIEW, ids::VIEW_TOGGLE_PREVIEW);
+        assert_eq!(preview_commands(layout(false, false, false)), [preview]);
+        assert_eq!(preview_commands(layout(true, false, false)), [preview]);
+        // The PDF replaced a rendered page: turning it off shows that page.
+        let mut replaced = layout(true, false, true);
+        replaced.before_pdf = Some(PreviewPlace {
+            visible: true,
+            detached: false,
+        });
+        assert_eq!(preview_commands(replaced), [pdf]);
+        // The PDF opened the preview: turning it off closes it, so it is opened again.
+        let mut opened = layout(true, false, true);
+        opened.before_pdf = Some(PreviewPlace {
+            visible: false,
+            detached: false,
+        });
+        assert_eq!(preview_commands(opened), [pdf, preview]);
     }
 }
 

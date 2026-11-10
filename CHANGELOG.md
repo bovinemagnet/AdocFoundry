@@ -7,7 +7,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Added
 
 - The PDF preview zooms (#420). The pages open fitted to the pane's width; a toolbar above them has Zoom Out, the zoom, Zoom In, Width (Fit Width), Page (Fit to Window) and 100% (Actual Size). Zoom In and Zoom Out step from 50% to 400%, and Zoom Out goes on down to 10%. The image viewer's keys work on the pages (Cmd/Ctrl-`=`, `-`, `0` and `9`) anywhere in the workspace window while they are shown, Cmd/Ctrl-scroll zooms about the pointer, and a pinch zooms on Linux. Pages in view are drawn again, sharper, once the zoom settles above what their first drawing holds, up to 16 million pixels a page, and let go when they leave the view. The image viewer gains Fit Width too.
-- Toggle PDF Preview Window (`view.toggle_pdf_window`) shows the PDF in its own window, and the title bar has PDF and PDF Window buttons, lit while each shows (#420). The preview's header has a close button.
+- Toggle PDF Preview Window (`view.toggle_pdf_window`) shows the PDF in its own window, and the title bar has Preview, PDF and PDF Window buttons, lit while each shows (#420). The preview's header has a close button, which stays in view however long the page's name.
 
 - Tabs can be dragged into another order, pinned, and copy their path (#82). A tab dropped on another takes its place, and Close Left and Close Right follow the order shown. Pin Tab, in a tab's menu, puts it with the other pinned tabs at the start of the strip, a pin in place of its X, which unpins it; Close Others, Left, Right, Clean and All leave pinned tabs open, and the session keeps them. A pinned tab is dragged only among the pinned ones, and any other only after them. The tab menu also has Copy Path, Copy Relative Path (to the workspace folder holding it) and Reveal in Navigation. `adoc-engine` gains `document.pin_tab`, `document.unpin_tab` and `document.move_tab` (`CommandArgs::MoveTab`), `Engine::is_pinned`, `pin_tab`, `unpin_tab` and `move_tab`, and `EngineEvent::TabsReordered`.
 
@@ -21,7 +21,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 
 ### Fixed
 
-- Turning the PDF preview off puts the preview back as it was before it was turned on, so a preview or window the PDF opened closes again, rather than leaving the rendered page in its place (#420). Closing the PDF's own window does the same, and it is remembered across a restart.
+- Turning the PDF preview off puts the preview back as it was before it was turned on, so a preview or window the PDF opened closes again, rather than leaving the rendered page in its place (#420). Closing the PDF's own window does the same, and it is remembered across a restart. Closing the preview turns the PDF off too, so the preview opens again as the rendered page.
 
 - Stapling the macOS app's and DMG's notarisation tickets tries again, up to five times, when the connection to Apple drops, as it did in a candidate run, rather than failing the release.
 - A release publishes only its packages: it now downloads each platform's by name, where it took every artifact of the run, which would have published the macOS jobs' intermediate binaries and the Flatpak bundle, which stays with the run, whenever that job finished first.

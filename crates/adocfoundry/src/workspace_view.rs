@@ -4417,8 +4417,8 @@ impl WorkspaceView {
         self.zoom_pdf(crate::preview::pdf::ZoomStep::To(zoom), cx);
     }
 
-    /// The title bar's PDF buttons (#420): the PDF beside the editor and the PDF in its own
-    /// window, each lit while it shows, and turning the PDF off when clicked again.
+    /// The title bar's preview buttons (#420): the rendered page, the PDF beside the editor and
+    /// the PDF in its own window, each lit while it shows, and closing it when clicked again.
     fn render_preview_toggles(
         &self,
         layout: adoc_engine::PreviewLayout,
@@ -4441,30 +4441,42 @@ impl WorkspaceView {
                 .debug_selector(move || id.to_owned())
         };
         let shown = layout.visible && layout.pdf;
-        h_flex().gap_1().when(pdf, |toggles| {
-            toggles
-                .child(
-                    toggle("title-pdf", "PDF", "Toggle PDF Preview")
-                        .selected(shown && !layout.detached)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            let layout = this.app.read(cx).engine.preview_layout();
-                            for &command in crate::preview::docked_pdf_commands(layout) {
-                                this.invoke(command, CommandArgs::None, window, cx);
-                            }
-                        })),
-                )
-                .child(
-                    toggle(
-                        "title-pdf-window",
-                        "PDF Window",
-                        "Toggle PDF Preview Window",
-                    )
-                    .selected(shown && layout.detached)
+        h_flex()
+            .gap_1()
+            .child(
+                toggle("title-preview", "Preview", "Toggle Preview")
+                    .selected(layout.visible && !layout.pdf)
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.on_toggle_pdf_window(&TogglePdfWindow, window, cx);
+                        let layout = this.app.read(cx).engine.preview_layout();
+                        for &command in crate::preview::preview_commands(layout) {
+                            this.invoke(command, CommandArgs::None, window, cx);
+                        }
                     })),
-                )
-        })
+            )
+            .when(pdf, |toggles| {
+                toggles
+                    .child(
+                        toggle("title-pdf", "PDF", "Toggle PDF Preview")
+                            .selected(shown && !layout.detached)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let layout = this.app.read(cx).engine.preview_layout();
+                                for &command in crate::preview::docked_pdf_commands(layout) {
+                                    this.invoke(command, CommandArgs::None, window, cx);
+                                }
+                            })),
+                    )
+                    .child(
+                        toggle(
+                            "title-pdf-window",
+                            "PDF Window",
+                            "Toggle PDF Preview Window",
+                        )
+                        .selected(shown && layout.detached)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_toggle_pdf_window(&TogglePdfWindow, window, cx);
+                        })),
+                    )
+            })
     }
 
     fn on_pin_preview(&mut self, _: &PinPreview, window: &mut Window, cx: &mut Context<Self>) {

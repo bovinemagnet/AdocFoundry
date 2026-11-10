@@ -786,9 +786,17 @@ fn workspace_open_folder(
         .map(|()| CommandOutcome::Done)
 }
 
+/// Shows or hides the preview. The PDF is a way of showing an open preview, so hiding it turns
+/// the PDF off, back where the preview was before the PDF, and it opens again as the rendered
+/// page (#420).
 fn view_toggle_preview(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
     let mut layout = engine.preview_layout();
-    layout.visible = !layout.visible;
+    if layout.visible && layout.pdf {
+        layout.hide_pdf();
+        layout.visible = false;
+    } else {
+        layout.visible = !layout.visible;
+    }
     engine.set_preview_layout(layout);
     Ok(CommandOutcome::Done)
 }

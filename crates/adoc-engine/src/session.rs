@@ -319,7 +319,8 @@ impl Engine {
         layout.visible = saved.preview.visible;
         layout.detached = saved.preview.detached;
         layout.scroll_sync = saved.preview.scroll_sync;
-        layout.pdf = cfg!(feature = "typst") && saved.preview.pdf;
+        // The PDF is a way of showing an open preview (#420).
+        layout.pdf = cfg!(feature = "typst") && saved.preview.pdf && saved.preview.visible;
         layout.before_pdf = saved
             .preview
             .before_pdf

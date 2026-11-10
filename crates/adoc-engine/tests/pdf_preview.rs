@@ -320,3 +320,22 @@ fn a_pdf_shown_after_the_preview_was_closed_opens_it_again() {
         (false, false, false)
     );
 }
+
+/// Issue #420: the PDF is a way of showing an open preview; closing the preview turns it off,
+/// so the preview opens again as the rendered page.
+#[test]
+fn closing_the_preview_turns_the_pdf_off() {
+    let (mut engine, _clock) = engine_with_clock();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PDF_WINDOW, CommandArgs::None)
+        .unwrap();
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PREVIEW),
+        (false, false, false)
+    );
+    assert_eq!(engine.preview_layout().before_pdf, None);
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PREVIEW),
+        (true, false, false)
+    );
+}

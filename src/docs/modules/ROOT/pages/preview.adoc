@@ -11,6 +11,10 @@ See xref:keyboard-shortcuts.adoc[Keyboard shortcuts] for the bindings.
 == Showing and hiding the preview
 
 Toggle Preview (`view.toggle_preview`) shows or hides the preview.
+The PDF is a way of showing an open preview, so closing the preview while the PDF shows turns the PDF off.
+It closes in the place it had before the PDF was turned on, docked or in its own window.
+When it opens again, it shows the rendered page there.
+This applies to Toggle Preview, the close button and the Preview button alike.
 It is bound to kbd:[Cmd+K] then kbd:[V] on macOS and kbd:[Ctrl+K] then kbd:[V] on Linux and Windows.
 This is a chord: hold the modifier for kbd:[K] only, release it, then press kbd:[V] on its own.
 
@@ -62,10 +66,15 @@ Run again, it turns the PDF off and puts the preview back as it was before.
 Closing that window does the same.
 It is in the View menu and the command palette, and has no default key binding.
 
-The title bar has two buttons, PDF and PDF Window, each highlighted while that view is showing.
+The title bar has three buttons, Preview, PDF and PDF Window, each highlighted while that view is showing.
+Preview shows the rendered page.
+Clicked while highlighted, it closes the preview.
+Clicked while the PDF shows, it switches back to the rendered page, docked.
+If the PDF had opened the preview, the preview opens again as the rendered page.
+Otherwise it shows the preview.
 PDF shows the PDF docked beside the editor, moving it out of its own window if it is there.
 PDF Window shows the PDF in its own window.
-Clicked while highlighted, either button turns the PDF off.
+Clicked while highlighted, either of these buttons turns the PDF off.
 
 The pages are typeset as Export Page to PDF typesets the page, with the same theme and fonts.
 The theme is the page's `pdf-theme`, else `[pdf] theme`, found in `pdf-themesdir` or `[pdf] themes_dir`.

@@ -9910,6 +9910,26 @@ fn the_pdf_buttons_close_what_they_opened(cx: &mut TestAppContext) {
         (false, false, false),
         "closed by its button"
     );
+
+    // The Preview button shows and hides the rendered page, and turns a PDF back into it.
+    press("title-preview", &mut cx);
+    assert_eq!(layout(&mut cx), (true, false, false), "the rendered page");
+    press("title-pdf", &mut cx);
+    press("title-preview", &mut cx);
+    assert_eq!(
+        layout(&mut cx),
+        (true, false, false),
+        "the rendered page again"
+    );
+    press("title-preview", &mut cx);
+    assert_eq!(layout(&mut cx), (false, false, false), "closed");
+    press("title-pdf-window", &mut cx);
+    press("title-preview", &mut cx);
+    assert_eq!(
+        layout(&mut cx),
+        (true, false, false),
+        "the rendered page, docked"
+    );
 }
 
 /// Issue #420: the PDF pages open fitted to the preview's width, and zoom from the toolbar, from
@@ -10010,4 +10030,33 @@ fn the_pdf_preview_zooms(cx: &mut TestAppContext) {
     );
     cx.dispatch_action(crate::image_view::ActualSize);
     assert_eq!(sharp(&mut cx), [], "let go at 100%");
+}
+
+/// A long page name shortens in the preview's header rather than pushing its buttons, the
+/// close button last, out of the pane.
+#[gpui::test]
+fn the_preview_header_keeps_its_close_button_in_view(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(
+        &directory
+            .path()
+            .join("a_rather_long_page_name_for_the_events_staging_customer_table_reference.adoc"),
+    );
+    std::fs::write(&page, "= Page\n\nText.\n").unwrap();
+    let (app, _workspace, mut cx) = previewing(vec![page], cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let header = cx
+        .debug_bounds("preview-header")
+        .expect("the header is drawn");
+    let close = cx
+        .debug_bounds("preview-close")
+        .expect("the close button is drawn");
+    assert!(
+        close.right() <= header.right(),
+        "the close button ends at {:?}, past the header's {:?}",
+        close.right(),
+        header.right()
+    );
+    click("preview-close", &mut cx);
+    assert!(!cx.update(|_, cx| app.read(cx).engine.preview_layout().visible));
 }
