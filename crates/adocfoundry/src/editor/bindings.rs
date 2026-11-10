@@ -79,6 +79,7 @@ actions!(
         DetachPreview,
         TogglePreviewScrollSync,
         TogglePdfPreview,
+        TogglePdfWindow,
         PinPreview,
         ShowSource,
         ShowVisual,
@@ -157,11 +158,12 @@ pub const UI_ACTIONS: &[(&str, &str)] = &[
     ("Zoom Out", "secondary--"),
     ("Actual Size", "secondary-0"),
     ("Fit to Window", "secondary-9"),
+    ("Fit Width", ""),
 ];
 
-/// The first of the [`UI_ACTIONS`] that act on the image viewer, offered only while an image is
-/// the active tab.
-pub const IMAGE_UI_ACTIONS: usize = 11;
+/// The first of the [`UI_ACTIONS`] that zoom, offered only while an image is the active tab or the
+/// PDF preview is shown.
+pub const ZOOM_UI_ACTIONS: usize = 11;
 
 /// Whether command `id`'s default binding is left out on this platform: Windows quits with
 /// Alt-F4, which closes the window, and gives File › Exit no key of its own.
@@ -291,6 +293,7 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::VIEW_DETACH_PREVIEW => key_binding(keys, DetachPreview, workspace, cx),
         ids::VIEW_TOGGLE_SCROLL_SYNC => key_binding(keys, TogglePreviewScrollSync, workspace, cx),
         ids::VIEW_TOGGLE_PDF_PREVIEW => key_binding(keys, TogglePdfPreview, workspace, cx),
+        ids::VIEW_TOGGLE_PDF_WINDOW => key_binding(keys, TogglePdfWindow, workspace, cx),
         ids::PREVIEW_PIN => key_binding(keys, PinPreview, workspace, cx),
         ids::VIEW_SHOW_SOURCE => key_binding(keys, ShowSource, workspace, cx),
         ids::VIEW_SHOW_VISUAL => key_binding(keys, ShowVisual, workspace, cx),
@@ -397,6 +400,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::VIEW_DETACH_PREVIEW => Box::new(DetachPreview),
         ids::VIEW_TOGGLE_SCROLL_SYNC => Box::new(TogglePreviewScrollSync),
         ids::VIEW_TOGGLE_PDF_PREVIEW => Box::new(TogglePdfPreview),
+        ids::VIEW_TOGGLE_PDF_WINDOW => Box::new(TogglePdfWindow),
         ids::PREVIEW_PIN => Box::new(PinPreview),
         ids::VIEW_SHOW_SOURCE => Box::new(ShowSource),
         ids::VIEW_SHOW_VISUAL => Box::new(ShowVisual),
@@ -448,7 +452,8 @@ pub fn ui_action(index: usize) -> Box<dyn gpui::Action> {
         11 => Box::new(crate::image_view::ZoomIn),
         12 => Box::new(crate::image_view::ZoomOut),
         13 => Box::new(crate::image_view::ActualSize),
-        _ => Box::new(crate::image_view::FitToWindow),
+        14 => Box::new(crate::image_view::FitToWindow),
+        _ => Box::new(crate::image_view::FitWidth),
     }
 }
 

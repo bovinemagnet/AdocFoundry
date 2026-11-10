@@ -36,7 +36,10 @@ use crate::{
     image_decode::{byte_size, decode_file, DecodeError, ImageInfo, Limits},
 };
 
-actions!(adocfoundry, [ZoomIn, ZoomOut, ActualSize, FitToWindow]);
+actions!(
+    adocfoundry,
+    [ZoomIn, ZoomOut, ActualSize, FitToWindow, FitWidth]
+);
 
 /// The key context of the image viewer, where its zoom keys work.
 pub const IMAGE_CONTEXT: &str = "ImageViewer";
@@ -57,6 +60,8 @@ pub enum Zoom {
     Initial,
     /// Fit to Window: whole and as large as the canvas allows. It follows the window's size.
     Fit,
+    /// Fit Width: as wide as the canvas. It follows the window's size.
+    FitWidth,
     /// A scale the user chose, kept as the window changes size.
     Scale(f32),
 }
@@ -243,6 +248,15 @@ impl ImageView {
             Zoom::Scale(scale) => scale,
             Zoom::Initial => fit().map_or(1.0, |fit| fit.min(1.0)),
             Zoom::Fit => fit().unwrap_or(1.0),
+            Zoom::FitWidth => {
+                let viewport = self.viewport.get();
+                match self.natural_size(scale_factor) {
+                    Some(natural) if viewport.width > px(0.) => {
+                        (viewport.width / natural.width).clamp(MIN_ZOOM, MAX_ZOOM)
+                    }
+                    _ => 1.0,
+                }
+            }
         }
     }
 
@@ -299,6 +313,10 @@ impl ImageView {
 
     fn on_fit(&mut self, _: &FitToWindow, window: &mut Window, cx: &mut Context<Self>) {
         self.set_zoom(Zoom::Fit, window, cx);
+    }
+
+    fn on_fit_width(&mut self, _: &FitWidth, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_zoom(Zoom::FitWidth, window, cx);
     }
 
     /// Asks the engine for a new revision, which loads the file again.
@@ -507,6 +525,7 @@ impl ImageView {
                 menu.menu("Zoom In", Box::new(ZoomIn))
                     .menu("Zoom Out", Box::new(ZoomOut))
                     .menu("Fit to Window", Box::new(FitToWindow))
+                    .menu("Fit Width", Box::new(FitWidth))
                     .menu("Actual Size", Box::new(ActualSize))
                     .separator()
                     .menu("Reload Image", Box::new(ReloadImage))
@@ -703,6 +722,7 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::on_zoom_out))
             .on_action(cx.listener(Self::on_actual_size))
             .on_action(cx.listener(Self::on_fit))
+            .on_action(cx.listener(Self::on_fit_width))
             .on_action(cx.listener(Self::on_reload))
             .child(self.render_toolbar(window, cx))
             .children(banner)
@@ -710,17 +730,25 @@ impl Render for ImageView {
     }
 }
 
-/// The viewer's zoom keys, as in macOS Preview: Command (Control elsewhere) with `=` and `-`
-/// to zoom, `0` for actual size and `9` to fit.
+/// The zoom keys, as in macOS Preview: Command (Control elsewhere) with `=` and `-` to zoom,
+/// `0` for actual size and `9` to fit. They work in the image viewer and the PDF preview, and
+/// anywhere in the workspace window while the PDF preview is shown (#420).
 pub fn bind(cx: &mut App) {
-    let context = Some(IMAGE_CONTEXT);
-    let bindings = [
-        key_binding(&platform_binding("cmd-="), ZoomIn, context, cx),
-        key_binding(&platform_binding("cmd-+"), ZoomIn, context, cx),
-        key_binding(&platform_binding("cmd--"), ZoomOut, context, cx),
-        key_binding(&platform_binding("cmd-0"), ActualSize, context, cx),
-        key_binding(&platform_binding("cmd-9"), FitToWindow, context, cx),
-    ];
+    let mut bindings = Vec::new();
+    for context in [
+        IMAGE_CONTEXT,
+        crate::preview::pdf::PDF_CONTEXT,
+        crate::editor::bindings::WORKSPACE_CONTEXT,
+    ] {
+        let context = Some(context);
+        bindings.extend([
+            key_binding(&platform_binding("cmd-="), ZoomIn, context, cx),
+            key_binding(&platform_binding("cmd-+"), ZoomIn, context, cx),
+            key_binding(&platform_binding("cmd--"), ZoomOut, context, cx),
+            key_binding(&platform_binding("cmd-0"), ActualSize, context, cx),
+            key_binding(&platform_binding("cmd-9"), FitToWindow, context, cx),
+        ]);
+    }
     cx.bind_keys(bindings);
 }
 

@@ -623,6 +623,8 @@ The toolbar has these controls:
 
 An image first opens whole and centred, and is never enlarged beyond its actual size.
 Fit to Window fills the canvas and follows the window when it is resized.
+Fit Width makes the image as wide as the canvas, and also follows the window's size.
+Fit Width has no toolbar button and no key.
 A zoom you have chosen runs from 5% to 3200% in steps of 1.25 times, and is kept when the window is resized.
 Scroll or drag to pan.
 
@@ -632,9 +634,9 @@ SVGs are drawn at up to 16 times, about 2048 pixels on the long side, so they st
 
 Transparent images are shown over a checkerboard that suits light and dark themes.
 
-Right-click the image for Zoom In, Zoom Out, Fit to Window, Actual Size, Reload Image, Open Externally, Copy Path, Reveal in Files, and Reveal in Finder (Reveal in File Explorer on Windows, Reveal in File Manager on Linux).
+Right-click the image for Zoom In, Zoom Out, Fit to Window, Fit Width, Actual Size, Reload Image, Open Externally, Copy Path, Reveal in Files, and Reveal in Finder (Reveal in File Explorer on Windows, Reveal in File Manager on Linux).
 
-Zoom In, Zoom Out, Actual Size, Fit to Window and Reload Image are also in the View menu and the command palette, which offer them only while an image is the active tab.
+Zoom In, Zoom Out, Actual Size, Fit to Window, Fit Width and Reload Image are also in the View menu and the command palette, which offer them only while an image is the active tab.
 See xref:keyboard-shortcuts.adoc#image-viewer[Keyboard shortcuts] for their keys.
 
 ==== Loading, errors and changes

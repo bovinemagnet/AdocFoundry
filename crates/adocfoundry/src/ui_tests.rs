@@ -9860,3 +9860,154 @@ fn files_dropped_beside_the_visual_blocks_go_after_the_caret_s_and_several_ask_f
     assert!(text_of(&app, id, &mut cx)
         .contains("Set it up.\n\nimage::one.png[]\n\nimage::two.png[]\n\nBuilt by"));
 }
+
+/// Issue #420: the title bar's PDF buttons open the PDF beside the editor or in its own window
+/// and close what they opened, and the preview's close button closes it.
+#[gpui::test]
+fn the_pdf_buttons_close_what_they_opened(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    std::fs::write(&page, "= Page\n\nText.\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    let layout = |cx: &mut VisualTestContext| {
+        let layout = cx.update(|_, cx| app.read(cx).engine.preview_layout());
+        (layout.visible, layout.detached, layout.pdf)
+    };
+    let press = |selector: &'static str, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        click(selector, cx);
+    };
+
+    press("title-pdf", &mut cx);
+    assert_eq!(layout(&mut cx), (true, false, true), "the PDF, docked");
+    press("title-pdf", &mut cx);
+    assert_eq!(layout(&mut cx), (false, false, false), "closed again");
+
+    press("title-pdf-window", &mut cx);
+    assert_eq!(layout(&mut cx), (true, true, true), "the PDF in a window");
+    press("title-pdf", &mut cx);
+    assert_eq!(
+        layout(&mut cx),
+        (true, false, true),
+        "docked from the window"
+    );
+    press("title-pdf-window", &mut cx);
+    press("title-pdf-window", &mut cx);
+    assert_eq!(layout(&mut cx), (false, false, false), "closed again");
+
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None, cx)
+                .unwrap();
+        });
+    });
+    cx.run_until_parked();
+    press("preview-close", &mut cx);
+    assert_eq!(
+        layout(&mut cx),
+        (false, false, false),
+        "closed by its button"
+    );
+}
+
+/// Issue #420: the PDF pages open fitted to the preview's width, and zoom from the toolbar, from
+/// the zoom keys' actions wherever focus is, and on a scroll with the platform's modifier.
+#[gpui::test]
+fn the_pdf_preview_zooms(cx: &mut TestAppContext) {
+    use crate::preview::pdf::PdfZoom;
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    std::fs::write(
+        &page,
+        "= Page\n\nFirst paragraph.\n\n<<<\n\nLast paragraph.\n",
+    )
+    .unwrap();
+    let (app, workspace, mut cx) = previewing(vec![page], cx);
+    cx.dispatch_action(crate::editor::bindings::TogglePdfPreview);
+    let typeset = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .preview()
+                .read(cx)
+                .pdf_shown()
+                .and_then(|shown| shown.pages.as_ref().ok().map(Vec::len))
+                == Some(2)
+        })
+    };
+    assert!(drain_until(&app, &mut cx, typeset), "the pages are shown");
+    let zoom = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_zoom())
+    };
+    let (mode, fitted) = zoom(&mut cx);
+    assert_eq!(mode, PdfZoom::FitWidth);
+    let width = cx
+        .debug_bounds("pdf-preview-scroll")
+        .expect("the pages are drawn")
+        .size
+        .width;
+    let expected = (f32::from(width) - 32.0) / 595.0;
+    assert!((fitted - expected).abs() < 0.01, "{fitted} for {width:?}");
+
+    click("pdf-actual-size", &mut cx);
+    assert_eq!(zoom(&mut cx), (PdfZoom::Scale(1.0), 1.0));
+    click("pdf-zoom-in", &mut cx);
+    assert_eq!(zoom(&mut cx), (PdfZoom::Scale(1.1), 1.1));
+    click("pdf-zoom-out", &mut cx);
+    click("pdf-zoom-out", &mut cx);
+    assert_eq!(zoom(&mut cx), (PdfZoom::Scale(0.9), 0.9));
+    click("pdf-fit-page", &mut cx);
+    assert_eq!(zoom(&mut cx).0, PdfZoom::FitPage);
+
+    // The keys' actions reach the PDF from the editor too.
+    cx.dispatch_action(crate::image_view::ActualSize);
+    cx.dispatch_action(crate::image_view::ZoomIn);
+    assert_eq!(zoom(&mut cx), (PdfZoom::Scale(1.1), 1.1));
+    cx.dispatch_action(crate::image_view::FitWidth);
+    assert_eq!(zoom(&mut cx).0, PdfZoom::FitWidth);
+
+    // A scroll up with the platform's modifier zooms in, and does not scroll.
+    cx.dispatch_action(crate::image_view::ActualSize);
+    let bounds = cx.debug_bounds("pdf-preview-scroll").unwrap();
+    let modifiers = cx.update(|_, cx| gpui::Modifiers::secondary_key(cx));
+    cx.simulate_event(gpui::ScrollEvent {
+        position: bounds.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(40.))),
+        modifiers,
+        ..Default::default()
+    });
+    let (mode, scale) = zoom(&mut cx);
+    assert!(matches!(mode, PdfZoom::Scale(_)) && scale > 1.1, "{scale}");
+
+    // At 400% the pages in view are drawn again, sharper, once the zoom settles; at 100% those
+    // drawings are let go.
+    let sharp = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(500));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_sharp_pages())
+    };
+    workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace.preview().update(cx, |preview, cx| {
+            preview.zoom_pdf(crate::preview::pdf::ZoomStep::To(PdfZoom::Scale(4.0)), cx);
+        });
+    });
+    let scale_factor = cx.update(|window, _| window.scale_factor());
+    let drawn = sharp(&mut cx);
+    assert!(!drawn.is_empty(), "no page was drawn sharper");
+    // Sharper than the first rasterisation, about 2.4 pixels to the point, and no more than the
+    // zoom and the display ask for (or a page's pixels allow).
+    assert!(
+        drawn
+            .iter()
+            .all(|(_, scale)| *scale > 2.5 && *scale <= 4.0 * scale_factor + 0.01),
+        "{drawn:?}"
+    );
+    cx.dispatch_action(crate::image_view::ActualSize);
+    assert_eq!(sharp(&mut cx), [], "let go at 100%");
+}

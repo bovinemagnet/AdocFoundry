@@ -375,12 +375,16 @@ pub fn open_secondary_window(
             let docking = app.clone();
             window.on_window_should_close(cx, move |_, cx| {
                 docking.update(cx, |app, cx| {
-                    if app.engine.preview_layout().detached {
-                        let _ = app.invoke(
-                            adoc_engine::commands::ids::VIEW_DETACH_PREVIEW,
-                            CommandArgs::None,
-                            cx,
-                        );
+                    let layout = app.engine.preview_layout();
+                    if layout.detached {
+                        // A PDF window turns off as its toggle would, putting back what was
+                        // there before it (#420); any other preview docks again.
+                        let command = if layout.pdf && layout.before_pdf.is_some() {
+                            adoc_engine::commands::ids::VIEW_TOGGLE_PDF_WINDOW
+                        } else {
+                            adoc_engine::commands::ids::VIEW_DETACH_PREVIEW
+                        };
+                        let _ = app.invoke(command, CommandArgs::None, cx);
                     }
                 });
                 true

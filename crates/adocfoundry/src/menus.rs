@@ -21,7 +21,7 @@ use gpui_component::{
 
 use crate::{
     app::AppState,
-    editor::bindings::{action_for, ui_action, IMAGE_UI_ACTIONS, UI_ACTIONS},
+    editor::bindings::{action_for, ui_action, UI_ACTIONS, ZOOM_UI_ACTIONS},
 };
 
 /// An entry in a menu's definition.
@@ -161,6 +161,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Separator,
             Command(ids::VIEW_TOGGLE_PREVIEW),
             Command(ids::VIEW_TOGGLE_PDF_PREVIEW),
+            Command(ids::VIEW_TOGGLE_PDF_WINDOW),
             Command(ids::VIEW_DETACH_PREVIEW),
             Command(ids::PREVIEW_PIN),
             Command(ids::VIEW_TOGGLE_SCROLL_SYNC),
@@ -182,6 +183,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Ui(12),
             Ui(13),
             Ui(14),
+            Ui(15),
             Command(ids::IMAGE_RELOAD),
             Separator,
             Ui(5),
@@ -289,6 +291,12 @@ impl Item {
     }
 }
 
+/// Whether the zoom commands have something to zoom: the active image or the PDF preview.
+pub(crate) fn can_zoom(engine: &Engine) -> bool {
+    let layout = engine.preview_layout();
+    engine.active_image().is_some() || (layout.visible && layout.pdf)
+}
+
 /// A menu as shown: its name and items.
 pub(crate) struct Menu {
     pub name: &'static str,
@@ -314,8 +322,8 @@ pub(crate) fn menus(engine: &Engine) -> Vec<Menu> {
                     Ui(index) => Item::Action {
                         label: UI_ACTIONS[index].0.into(),
                         action: ui_action(index),
-                        // The zoom commands act on an image.
-                        disabled: index >= IMAGE_UI_ACTIONS && engine.active_image().is_none(),
+                        // The zoom commands act on an image or the PDF preview.
+                        disabled: index >= ZOOM_UI_ACTIONS && !can_zoom(engine),
                     },
                     Command(id) => {
                         let (Some(command), Some(action)) =
