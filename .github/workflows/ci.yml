@@ -141,8 +141,11 @@ jobs:
 
   typing:
     # The real app types into a 1 MB page for twenty seconds, through the editor widget and the
-    # engine, and the frame intervals go in the run's summary. Recorded only: macOS draws no
-    # frames for a window it cannot show, so a run with none says so rather than failing.
+    # engine. The frame intervals and the app's own work in them, the CPU time its thread used, go
+    # in the run's summary, and the job fails when the 1 MB page's work misses the benchmark's
+    # budget (#241): the intervals, and the clock, are mostly the runner's, so they are recorded
+    # only. A run that draws no frames cannot be judged and fails. The three-line control page is
+    # recorded only until its own cost per frame is understood (#418).
     timeout-minutes: 45
     runs-on: macos-15
     steps:
@@ -166,13 +169,44 @@ jobs:
               lines += [f"Paragraph {n} with *bold*, _emphasis_, `code` and xref:other.adoc[a link].", ""]
           open(sys.argv[1], "w").write("\n".join(lines))
           EOF
-          # macOS has no `timeout`; the app quits itself once the benchmark ends.
-          ADOCFOUNDRY_TYPING_BENCH=20 perl -e 'alarm shift; exec @ARGV' 300 \
-            target/release/adocfoundry "$(dirname "$page")" "$page" 2> typing.log || tail -20 typing.log
-          result=$(grep 'typing benchmark' typing.log || echo 'typing benchmark: no result')
-          echo "$result"
-          printf '### Typing\n\nA character every 35 ms for 20 s into a 1 MB page: %s\n' \
-            "${result#typing benchmark: }" >> "$GITHUB_STEP_SUMMARY"
+          # A control: the same typing into a page of a few lines, so a long frame here is the
+          # runner's, not the page's (#241). Recorded only: it costs more per frame than the
+          # 1 MB page (#418).
+          short="$RUNNER_TEMP/typing-short/page.adoc"
+          mkdir -p "$(dirname "$short")"
+          printf '= A short page\n\nA paragraph with *bold* and _emphasis_.\n' > "$short"
+          printf '### Typing\n' >> "$GITHUB_STEP_SUMMARY"
+          failed=
+          for run in "1 MB page:$page" "short page (control):$short"; do
+            label="${run%%:*}" file="${run#*:}"
+            # macOS has no `timeout`; the app quits itself once the benchmark ends.
+            ADOCFOUNDRY_TYPING_BENCH=20 perl -e 'alarm shift; exec @ARGV' 300 \
+              target/release/adocfoundry "$(dirname "$file")" "$file" 2> typing.log || tail -20 typing.log
+            result=$(grep 'typing benchmark:' typing.log || echo 'typing benchmark: no result')
+            work=$(grep 'typing benchmark work:' typing.log || echo 'typing benchmark work: no result')
+            verdict=$(grep 'typing benchmark budget:' typing.log || echo 'typing benchmark budget: no result')
+            echo "$label: $result"
+            echo "$label: $work"
+            echo "$label: $verdict"
+            printf '\nA character every 35 ms for 20 s into a %s: %s\n\nWork on the front end in each interval, in %s\n\nBudget: %s\n' \
+              "$label" "${result#typing benchmark: }" "${work#typing benchmark work: }" \
+              "${verdict#typing benchmark budget: }" >> "$GITHUB_STEP_SUMMARY"
+            case "$label:$verdict" in
+              *'(control):'*) ;;
+              *'typing benchmark budget: within:'*) ;;
+              *) failed="$failed $label;" ;;
+            esac
+            # Each frame over 25 ms, when it came and what the front end's thread did for it.
+            long=$(grep 'typing benchmark long frame:' typing.log | sed 's/^typing benchmark long frame: /- /')
+            if [ -n "$long" ]; then
+              echo "$long"
+              printf '\nFrames over 25 ms:\n\n%s\n' "$long" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::Over the typing budget:$failed"
+            exit 1
+          fi
 
   pdf-standards:
     # The reference article and the book fixture, validated by veraPDF as PDF/A-2a and PDF/UA-1,

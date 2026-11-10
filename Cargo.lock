@@ -411,6 +411,7 @@ dependencies = [
  "lsp-types",
  "resvg 0.46.0",
  "ropey",
+ "rustix 1.1.6",
  "serde_json",
  "skrifa 0.44.0",
  "smol",

@@ -115,10 +115,47 @@ They are for investigating a path, not for guarding it.
 
 === Typing frame times
 
-CI's `typing` job runs the release app on a macOS runner with `ADOCFOUNDRY_TYPING_BENCH=20`, which types a character every 35 ms for twenty seconds into a generated 1 MB page, through the editor widget and the engine (`crates/adocfoundry/src/typing_bench.rs`).
-It records the interval between drawn frames and prints the count, the median, the 99th percentile, the worst, and how many were over 16.7 ms, 25 ms and 33 ms.
-The job appends that line to the run's summary.
-It is recorded, never held to a budget: macOS draws no frames for a window that is covered, minimised or on a locked screen, and the benchmark then says that no frames were drawn rather than failing.
+CI's `typing` job runs the release app on a macOS runner with `ADOCFOUNDRY_TYPING_BENCH=20`, which types a character every 35 ms for twenty seconds, through the editor widget and the engine (`crates/adocfoundry/src/typing_bench.rs`).
+The job runs it twice: on a generated 1 MB page, and on a three-line page as a control for the runner's own noise.
+
+The benchmark records the interval between drawn frames and prints the count, the median, the 99th percentile, the worst, and how many were over 16.7 ms, 25 ms and 33 ms.
+Those intervals are recorded only, not held to a budget.
+Three runs of the same commit showed that their tail is mostly the hosted runner's.
+Frames over 25 ms were almost all untimed time, the app's own parts were under 5 ms, and the three-line page did about as badly as the 1 MB page.
+One run had a display stall of 15.8 s while keystrokes were still handled in about 1 ms.
+
+The benchmark therefore also measures the app's own work in each interval, as the CPU time the front end's thread used in it, read from the thread's CPU clock.
+That counts all of GPUI's and the editor widget's work on that thread, not only the parts timed below.
+Time the thread spent waiting, for the display or for the machine, counts in no CPU time.
+That is why the intervals and the clock are recorded but not held to a budget.
+The clock also stretched the app's own draws: one frame's layout and paint took 25.9 ms by the clock but only 6.6 ms of the thread's CPU, while on ordinary frames the two agree.
+So the budget reads CPU time.
+Where the platform gives no thread CPU time, the clock times of the parts and draws stand in for it.
+Only Unix-like systems give it, and CI runs on macOS.
+
+The benchmark also measures single pieces of work, both by the clock and by the thread's CPU time.
+One is the layout and paint of a frame, timed from the frame callback GPUI runs just before drawing to an empty marker element painted last in the workspace.
+The others are the outermost parts timed on the front end's thread after that paint (`pump`, `edit`, `type` and the engine-event handlers), a part nested in another counted once.
+What remains of an interval is the platform's: presenting the frame, waiting for the display, and whatever else the machine did.
+
+After the first second, which leaves out the page's first layout and highlight, the budget has two conditions:
+
+* the app's work per interval, as CPU time, is within 16.7 ms at the 99th percentile;
+* no single piece of work, whether one frame's layout and paint or one outermost timed part, takes over 33 ms of CPU time.
+
+The benchmark prints a `typing benchmark work:` line.
+It starts with `CPU time:` (or `timed by the clock:` where the platform gives no thread CPU time), then gives the median, 99th percentile and worst work, the longest single piece and when it came, and how many intervals had no paint.
+A `typing benchmark budget:` line then says `within:` or `over:` and gives the reason.
+Each frame over 25 ms is listed with its parts by the clock, longest first, the frame's layout and paint appearing among them as `draw`, how much of the interval was not timed, and the thread's CPU time in that interval.
+
+For each run, the job adds both lines and the long frames to the run's summary.
+It fails when the 1 MB page's run is not within the budget.
+It also fails when that run draws no frames, since it cannot be judged: macOS draws none for a window that is covered, minimised or on a locked screen.
+The control page's lines are recorded only.
+In CI a three-line page costs more CPU per frame than the 1 MB page does (a median of 9.8 ms against 3.9 ms, and a 99th percentile of 17.1 ms against 8.5 ms), so the cost is the app's own and not the runner's, and #418 tracks it.
+The control page will be held to the budget too once that is fixed.
+Real frame timing on a display, which a hosted runner cannot show, remains a manual check in `docs/qa/phase1.md`.
+
 The same command runs locally, with the window visible:
 
 [source,sh]

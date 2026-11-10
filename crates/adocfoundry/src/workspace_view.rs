@@ -685,6 +685,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let _timed = crate::typing_bench::timed("events.workspace");
         // The Changes panel's rows follow Git and the open pages' hunks.
         if matches!(
             event,
@@ -5284,6 +5285,7 @@ impl Focusable for WorkspaceView {
 impl Render for WorkspaceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::renders::rendered(crate::renders::View::Workspace);
+        let _timed = crate::typing_bench::timed("render.workspace");
         self.refresh_outline(cx);
         let (can_back, can_forward, title) = {
             let engine = &self.app.read(cx).engine;
@@ -5538,6 +5540,8 @@ impl Render for WorkspaceView {
                 ),
             )
             .child(self.render_status(window, cx))
+            // Painted last, so the typing benchmark knows when the frame's paint ended.
+            .children(crate::typing_bench::paint_marker())
     }
 }
 

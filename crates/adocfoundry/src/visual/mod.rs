@@ -1109,6 +1109,7 @@ impl Focusable for VisualView {
 impl Render for VisualView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::renders::rendered(crate::renders::View::Visual);
+        let _timed = crate::typing_bench::timed("render.visual");
         // Repopulated as this frame's text blocks are drawn.
         self.layouts.borrow_mut().clear();
         // As the rows below are drawn, so that a formula's gap fits the text around it.

@@ -235,6 +235,7 @@ impl SourceEditorView {
         let mut subscriptions =
             vec![
                 cx.subscribe(&state, |this, _, event: &InputEditsEvent, cx| {
+                    let _timed = crate::typing_bench::timed("edit");
                     let edits = event.edits();
                     // Edits up to the text the engine already has were sent another way.
                     let sent = this
@@ -250,10 +251,9 @@ impl SourceEditorView {
                     }
                 }),
             ];
-        subscriptions.push(cx.subscribe_in(
-            &app,
-            window,
-            |this, _, event, window, cx| match event {
+        subscriptions.push(cx.subscribe_in(&app, window, |this, _, event, window, cx| {
+            let _timed = crate::typing_bench::timed("events.editor");
+            match event {
                 // The engine echoing an edit the widget made needs nothing applied back.
                 EngineEvent::DocumentChanged { id, version, .. } if *id == this.document => {
                     if !this.own_versions.remove(version) {
@@ -279,8 +279,8 @@ impl SourceEditorView {
                     }));
                 }
                 _ => {}
-            },
-        ));
+            }
+        }));
 
         subscriptions.push(cx.observe(&state, |this: &mut Self, state, cx| {
             let (caret, scroll) = {
@@ -765,6 +765,7 @@ impl SourceEditorView {
 
     /// Types `text` at the caret as a keystroke would, for the typing benchmark.
     pub fn type_for_benchmark(&self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let _timed = crate::typing_bench::timed("type");
         self.state
             .update(cx, |state, cx| state.insert(text.to_owned(), window, cx));
     }
@@ -897,6 +898,7 @@ impl Focusable for SourceEditorView {
 impl Render for SourceEditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::renders::rendered(crate::renders::View::Editor);
+        let _timed = crate::typing_bench::timed("render.editor");
         let settings = self.app.read(cx).engine.settings();
         let (font_family, font_size) = crate::fonts::source(settings, cx);
         let font_size = font_size as f32 * settings.appearance.font_scale.factor();
