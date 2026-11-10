@@ -233,6 +233,17 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
     register(
         registry,
         spec(
+            ids::VIEW_TOGGLE_PDF_WINDOW,
+            "Toggle PDF Preview Window",
+            CommandCategory::View,
+            None,
+            CommandContext::Always,
+        ),
+        toggle_pdf_window,
+    );
+    register(
+        registry,
+        spec(
             ids::EXPORT_PDF_PAGES,
             "Export Pages as PDF…",
             CommandCategory::Workspace,
@@ -255,17 +266,40 @@ pub(crate) fn register_export(registry: &mut CommandRegistry) {
 }
 
 /// Switches the preview between the rendered page and its PDF pages, showing the preview when
-/// it switches to the PDF.
+/// it switches to the PDF; switched back, a preview it opened closes again (#420).
 #[cfg(feature = "typst")]
 fn toggle_pdf_preview(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
     let mut layout = engine.preview_layout();
-    layout.pdf = !layout.pdf || !layout.visible;
-    layout.visible = true;
+    if layout.pdf && layout.visible {
+        layout.hide_pdf();
+    } else {
+        layout.show_pdf(None);
+    }
+    set_pdf_layout(engine, layout);
+    Ok(CommandOutcome::Done)
+}
+
+/// Shows the PDF in its own window, or, when it is shown there, turns it off, putting the
+/// preview back where it was before (#420).
+#[cfg(feature = "typst")]
+fn toggle_pdf_window(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, EngineError> {
+    let mut layout = engine.preview_layout();
+    if layout.pdf && layout.visible && layout.detached {
+        layout.hide_pdf();
+    } else {
+        layout.show_pdf(Some(true));
+    }
+    set_pdf_layout(engine, layout);
+    Ok(CommandOutcome::Done)
+}
+
+#[cfg(feature = "typst")]
+fn set_pdf_layout(engine: &mut Engine, layout: crate::PreviewLayout) {
+    let pdf = layout.pdf;
     engine.set_preview_layout(layout);
-    if let Some(target) = engine.preview_target() {
+    if let Some(target) = engine.preview_target().filter(|_| pdf) {
         engine.request_pdf_preview(target);
     }
-    Ok(CommandOutcome::Done)
 }
 
 /// Exports a publication profile to the output it names.

@@ -216,3 +216,107 @@ fn a_theme_change_shows_on_the_next_preview() {
     assert_eq!(pdf_ready(&events, id), [2]);
     assert!(width(&engine) < a4, "A5 is narrower than A4");
 }
+
+/// Issue #420: what a PDF command opened, turning the PDF off closes again.
+fn layout_after(engine: &mut Engine, command: adoc_engine::CommandId) -> (bool, bool, bool) {
+    engine.invoke(command, CommandArgs::None).unwrap();
+    let layout = engine.preview_layout();
+    (layout.visible, layout.detached, layout.pdf)
+}
+
+#[test]
+fn turning_the_pdf_off_closes_the_preview_it_opened() {
+    let (mut engine, _clock) = engine_with_clock();
+    // (visible, detached, pdf)
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_PREVIEW),
+        (true, false, true)
+    );
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_PREVIEW),
+        (false, false, false)
+    );
+}
+
+#[test]
+fn turning_the_pdf_off_shows_the_rendered_page_it_replaced() {
+    let (mut engine, _clock) = engine_with_clock();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None)
+        .unwrap();
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_PREVIEW),
+        (true, false, true)
+    );
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_PREVIEW),
+        (true, false, false)
+    );
+}
+
+#[test]
+fn the_pdf_window_opens_and_closes_its_own_window() {
+    let (mut engine, _clock) = engine_with_clock();
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_WINDOW),
+        (true, true, true)
+    );
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_WINDOW),
+        (false, false, false)
+    );
+
+    // Beside a docked rendered page, the window leaves it docked again.
+    engine
+        .invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None)
+        .unwrap();
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_WINDOW),
+        (true, true, true)
+    );
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_WINDOW),
+        (true, false, false)
+    );
+}
+
+#[test]
+fn the_pdf_window_takes_a_docked_pdf_and_gives_back_what_was_before_it() {
+    let (mut engine, _clock) = engine_with_clock();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PDF_PREVIEW, CommandArgs::None)
+        .unwrap();
+    // The docked PDF moves into its own window.
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_WINDOW),
+        (true, true, true)
+    );
+    // The preview was closed before the PDF opened it.
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_PREVIEW),
+        (false, false, false)
+    );
+}
+
+#[test]
+fn a_pdf_shown_after_the_preview_was_closed_opens_it_again() {
+    let (mut engine, _clock) = engine_with_clock();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None)
+        .unwrap();
+    engine
+        .invoke(ids::VIEW_TOGGLE_PDF_PREVIEW, CommandArgs::None)
+        .unwrap();
+    // Closed by its own close button while the PDF showed.
+    engine
+        .invoke(ids::VIEW_TOGGLE_PREVIEW, CommandArgs::None)
+        .unwrap();
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_PREVIEW),
+        (true, false, true)
+    );
+    assert_eq!(
+        layout_after(&mut engine, ids::VIEW_TOGGLE_PDF_PREVIEW),
+        (false, false, false)
+    );
+}

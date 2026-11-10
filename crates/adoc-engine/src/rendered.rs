@@ -50,6 +50,16 @@ pub struct PreviewLayout {
     pub pinned: Option<DocumentId>,
     /// Shows the target's pages as the PDF export typesets them, instead of the rendered page.
     pub pdf: bool,
+    /// Where the preview was before a PDF command showed the PDF, which turning the PDF off
+    /// puts back: a preview the PDF opened closes again.
+    pub before_pdf: Option<PreviewPlace>,
+}
+
+/// Whether the preview is shown, and where.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreviewPlace {
+    pub visible: bool,
+    pub detached: bool,
 }
 
 impl Default for PreviewLayout {
@@ -60,6 +70,34 @@ impl Default for PreviewLayout {
             scroll_sync: true,
             pinned: None,
             pdf: false,
+            before_pdf: None,
+        }
+    }
+}
+
+impl PreviewLayout {
+    /// Shows the PDF, in its own window when `detached` is `Some(true)`, docked when
+    /// `Some(false)`, and where the preview is when `None`, remembering where it was.
+    pub(crate) fn show_pdf(&mut self, detached: Option<bool>) {
+        if !(self.pdf && self.visible) {
+            self.before_pdf = Some(PreviewPlace {
+                visible: self.visible,
+                detached: self.detached,
+            });
+        }
+        self.pdf = true;
+        self.visible = true;
+        if let Some(detached) = detached {
+            self.detached = detached;
+        }
+    }
+
+    /// Turns the PDF off, putting the preview back where it was before the PDF was shown.
+    pub(crate) fn hide_pdf(&mut self) {
+        self.pdf = false;
+        if let Some(place) = self.before_pdf.take() {
+            self.visible = place.visible;
+            self.detached = place.detached;
         }
     }
 }

@@ -499,3 +499,32 @@ fn only_the_latest_folders_are_remembered() {
     assert_eq!(recent.len(), adoc_engine::RECENT_FOLDERS);
     assert_eq!(recent[0], normalize_path(folders.last().unwrap().path()));
 }
+
+/// Issue #420: a PDF that opened the preview closes it when turned off, after a restart too.
+#[test]
+fn a_pdf_preview_still_closes_what_it_opened_after_a_restart() {
+    let setup = Setup::new();
+    {
+        let mut engine = setup.engine();
+        open_workspace(&mut engine, &setup.root());
+        open(
+            &mut engine,
+            &setup.path("one.adoc"),
+            OpenDisposition::Persistent,
+        );
+        engine
+            .invoke(ids::VIEW_TOGGLE_PDF_WINDOW, CommandArgs::None)
+            .unwrap();
+        engine.write_session(&HashMap::new()).unwrap();
+    }
+
+    let mut engine = setup.engine();
+    engine.restore_session();
+    let layout = engine.preview_layout();
+    assert!(layout.visible && layout.detached && layout.pdf);
+    engine
+        .invoke(ids::VIEW_TOGGLE_PDF_WINDOW, CommandArgs::None)
+        .unwrap();
+    let layout = engine.preview_layout();
+    assert!(!layout.visible && !layout.detached && !layout.pdf);
+}
