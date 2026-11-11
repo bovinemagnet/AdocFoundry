@@ -260,6 +260,40 @@ image::diagram.png[Architecture]\n";
         assert!(document.references.is_empty());
     }
 
+    /// A `<<…>>` target with a `#` after its start names another document, as Asciidoctor
+    /// reads it; anything else, `.adoc` and all, is an id in this one (#521).
+    #[test]
+    fn double_angle_references_with_a_path_name_another_document() {
+        let source = "See <<other.adoc#details,Details>> and <<other.adoc#details>> and <<other#details>>.\n\
+                      And <<intro>>, <<#intro>>, <<sec.1>>, <<Section Title>> and <<other.adoc>>.\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let kinds = document
+            .references
+            .iter()
+            .map(|reference| {
+                (
+                    reference.kind,
+                    reference.target.as_str(),
+                    reference.text.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                (ReferenceKind::Xref, "other.adoc#details", Some("Details")),
+                (ReferenceKind::Xref, "other.adoc#details", None),
+                (ReferenceKind::Xref, "other#details", None),
+                (ReferenceKind::LocalAnchor, "intro", None),
+                (ReferenceKind::LocalAnchor, "intro", None),
+                (ReferenceKind::LocalAnchor, "sec.1", None),
+                (ReferenceKind::LocalAnchor, "Section Title", None),
+                (ReferenceKind::LocalAnchor, "other.adoc", None),
+            ]
+        );
+    }
+
     #[test]
     fn treats_extensionless_xref_targets_as_id_references() {
         let source = "= Demo\n\nSee xref:smtp[SMTP], xref:#later[] and xref:page.adoc[Page].\n";

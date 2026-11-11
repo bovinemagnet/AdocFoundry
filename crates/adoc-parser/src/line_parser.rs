@@ -140,9 +140,9 @@ pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
                 let (target, text) = value
                     .split_once(',')
                     .map_or((value, None), |(target, text)| (target, nonempty(text)));
-                let target = target.trim();
+                let (kind, target) = classify_angle_target(target.trim());
                 (!target.is_empty()).then(|| Reference {
-                    kind: ReferenceKind::LocalAnchor,
+                    kind,
                     target: target.to_owned(),
                     text,
                     range,
@@ -167,6 +167,19 @@ fn classify_xref_target(target: &str) -> (ReferenceKind, &str) {
             .next()
             .is_some_and(|extension| matches!(extension, "adoc" | "asciidoc" | "ad"));
     if names_a_document {
+        (ReferenceKind::Xref, target)
+    } else {
+        (ReferenceKind::LocalAnchor, target)
+    }
+}
+
+/// Asciidoctor reads a `<<…>>` target as another document only when a `#` follows its start
+/// (`<<other.adoc#id>>`, `<<other#id>>`); unlike the `xref:` macro, `<<other.adoc>>` is an id.
+fn classify_angle_target(target: &str) -> (ReferenceKind, &str) {
+    if let Some(fragment) = target.strip_prefix('#') {
+        return (ReferenceKind::LocalAnchor, fragment);
+    }
+    if target.contains('#') {
         (ReferenceKind::Xref, target)
     } else {
         (ReferenceKind::LocalAnchor, target)

@@ -402,6 +402,23 @@ mod tests {
         assert!(workspace_diagnostics(&index, path).is_empty());
     }
 
+    /// `<<other.adoc#details>>` is a link to another page, as `xref:` is (#521).
+    #[test]
+    fn a_double_angle_reference_to_another_page_resolves_there() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            Path::new("docs/other.adoc"),
+            "= Other\n\n[[details]]\n== Details\n",
+        );
+        index.index_source(
+            path,
+            "= Guide\n\nSee <<other.adoc#details,Details>> and <<other.adoc#details>>.\n",
+        );
+
+        assert_eq!(workspace_diagnostics(&index, path), Vec::new());
+    }
+
     #[test]
     fn shorthand_anchor_with_role_resolves() {
         let path = Path::new("docs/index.adoc");
