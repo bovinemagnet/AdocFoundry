@@ -293,6 +293,9 @@ pub struct WorkspaceView {
     /// A signed commit is being made, to be pushed once it is (Commit and Push).
     push_after_commit: bool,
     _subscriptions: Vec<Subscription>,
+    /// The subscription to each editor, visual editor and detached preview, kept while the
+    /// window holds the view ([`WorkspaceView::forget_released_views`]).
+    view_subscriptions: HashMap<gpui::EntityId, Subscription>,
 }
 
 /// The panel whose branches the tree `id` of [`WorkspaceView::render_tree`] opens and closes.
@@ -609,6 +612,7 @@ impl WorkspaceView {
             push_after_commit: false,
             app,
             _subscriptions: subscriptions,
+            view_subscriptions: HashMap::new(),
         };
         view.apply_theme(window, cx);
         view.warn_about_settings(window, cx);
@@ -762,10 +766,13 @@ impl WorkspaceView {
                 self.tabs
                     .retain(|tab| tab.item(cx) != TabItem::Document(*id));
                 self.visuals.remove(id);
+                self.shown_dirty.remove(id);
+                self.forget_released_views();
                 self.follow_active(window, cx);
             }
             EngineEvent::ImageClosed(id) => {
                 self.tabs.retain(|tab| tab.item(cx) != TabItem::Image(*id));
+                self.forget_released_views();
                 self.follow_active(window, cx);
             }
             EngineEvent::EditorModeChanged(id) => self.sync_visual(*id, window, cx),
@@ -866,16 +873,33 @@ impl WorkspaceView {
         let mode = self.app.read(cx).engine.editor_mode(id);
         if mode == EditorMode::Source {
             self.visuals.remove(&id);
+            self.forget_released_views();
         } else if !self.visuals.contains_key(&id) {
             let app = self.app.clone();
             let visual = cx.new(|cx| VisualView::new(app, id, window, cx));
-            self._subscriptions
-                .push(cx.subscribe(&visual, Self::on_visual_event));
+            self.view_subscriptions.insert(
+                visual.entity_id(),
+                cx.subscribe(&visual, Self::on_visual_event),
+            );
             self.visuals.insert(id, visual);
         }
         if self.active_document(cx) == Some(id) {
             self.focus_active_editor(window, cx);
         }
+    }
+
+    /// Drops the subscription to each editor, visual editor and detached preview the window no
+    /// longer holds.
+    fn forget_released_views(&mut self) {
+        let held: std::collections::HashSet<gpui::EntityId> = self
+            .tabs
+            .iter()
+            .filter_map(|tab| tab.editor().map(Entity::entity_id))
+            .chain(self.visuals.values().map(Entity::entity_id))
+            .chain(self.detached.iter().map(|(_, view)| view.entity_id()))
+            .collect();
+        self.view_subscriptions
+            .retain(|view, _| held.contains(view));
     }
 
     /// Focuses the visual editor in visual mode, else the source editor, or the image viewer.
@@ -934,6 +958,15 @@ impl WorkspaceView {
         }
     }
 
+    /// Every subscription the window holds, and the pages it remembers showing as unsaved.
+    #[cfg(test)]
+    pub fn kept_for_test(&self) -> (usize, usize) {
+        (
+            self._subscriptions.len() + self.view_subscriptions.len(),
+            self.shown_dirty.len(),
+        )
+    }
+
     #[cfg(test)]
     pub fn visual_for_test(&self, id: DocumentId) -> Option<&Entity<VisualView>> {
         self.visuals.get(&id)
@@ -952,8 +985,8 @@ impl WorkspaceView {
                             .map(|view| (handle, view))
                     });
                 if let Some((_, view)) = &self.detached {
-                    self._subscriptions
-                        .push(cx.subscribe(view, Self::on_preview_event));
+                    self.view_subscriptions
+                        .insert(view.entity_id(), cx.subscribe(view, Self::on_preview_event));
                 }
             }
             (Some(_), false) => {
@@ -961,6 +994,7 @@ impl WorkspaceView {
                     // Fails harmlessly when the window is already closing itself.
                     let _ = handle.update(cx, |_, window, _| window.remove_window());
                 }
+                self.forget_released_views();
             }
             _ => {}
         }
@@ -1962,8 +1996,10 @@ impl WorkspaceView {
         match item {
             TabItem::Document(id) => {
                 let editor = cx.new(|cx| SourceEditorView::new(app, id, false, window, cx));
-                self._subscriptions
-                    .push(cx.subscribe(&editor, Self::on_editor_event));
+                self.view_subscriptions.insert(
+                    editor.entity_id(),
+                    cx.subscribe(&editor, Self::on_editor_event),
+                );
                 TabView::Editor(editor)
             }
             TabItem::Image(id) => TabView::Image(cx.new(|cx| ImageView::new(app, id, cx))),
@@ -1992,6 +2028,7 @@ impl WorkspaceView {
         if let TabItem::Document(old) = old {
             self.visuals.remove(&old);
         }
+        self.forget_released_views();
         let active = self.app.read(cx).engine.active_item();
         if let Some(active) = self
             .tabs

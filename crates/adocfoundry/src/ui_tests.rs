@@ -560,6 +560,49 @@ fn a_result_is_replaced_as_the_search_that_found_it(cx: &mut TestAppContext) {
     assert_eq!(text, "= Page\n\nomega beta\n");
 }
 
+/// Opening and closing pages, in source and visual mode and with unsaved edits, and detaching
+/// and docking the preview, leaves the window holding nothing for views that are gone.
+#[gpui::test]
+fn closed_views_leave_nothing_behind_in_the_window(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.run_until_parked();
+    let before = cx.update(|_, cx| workspace.read(cx).kept_for_test());
+    let invoke = |command, args: CommandArgs, cx: &mut VisualTestContext| {
+        let outcome =
+            cx.update(|_, cx| app.update(cx, |app, cx| app.invoke(command, args, cx).unwrap()));
+        cx.run_until_parked();
+        outcome
+    };
+    for n in 0..3 {
+        let page = directory.path().join(format!("page-{n}.adoc"));
+        std::fs::write(&page, "= Page\n\nText.\n").unwrap();
+        let adoc_engine::CommandOutcome::Opened(id) =
+            invoke(ids::DOCUMENT_OPEN, CommandArgs::Path(page), &mut cx)
+        else {
+            panic!("the page opens");
+        };
+        invoke(ids::VIEW_SHOW_VISUAL, CommandArgs::Document(id), &mut cx);
+        assert!(cx.update(|_, cx| workspace.read(cx).visual_for_test(id).is_some()));
+        let edit = CommandArgs::Text {
+            id,
+            range: SourceRange::new(0, 0),
+            text: "x".to_owned(),
+        };
+        invoke(ids::EDIT_REPLACE_RANGE, edit, &mut cx);
+        invoke(ids::VIEW_DETACH_PREVIEW, CommandArgs::None, &mut cx);
+        assert!(cx.update(|_, cx| workspace.read(cx).detached_preview().is_some()));
+        invoke(ids::VIEW_DETACH_PREVIEW, CommandArgs::None, &mut cx);
+        invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(id), &mut cx);
+    }
+    assert_eq!(
+        cx.update(|_, cx| workspace.read(cx).kept_for_test()),
+        before
+    );
+}
+
 /// IME composition reaches the editor through GPUI's input handler: marked (provisional) text is
 /// replaced as the user composes, then committed. The engine must end up with exactly the
 /// committed text, with nothing of the provisional stages left behind.
