@@ -258,24 +258,14 @@ impl Context<'_> {
     /// Where `path` is: its root's place and the path relative to it. An indexed file is always
     /// beneath a root; anything else is named by its file name alone, never by its full path.
     pub(crate) fn location(&self, path: &Path, range: Option<SourceRange>) -> Location {
-        let path = normalize_path(path);
-        let found = self
-            .input
-            .roots
-            .iter()
-            .enumerate()
-            .find_map(|(index, root)| {
-                path.strip_prefix(normalize_path(root))
-                    .ok()
-                    .map(|relative| (index, portable_path(relative)))
+        let (root, relative) =
+            locate(self.input.roots, &normalize_path(path)).unwrap_or_else(|| {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (0, name)
             });
-        let (root, relative) = found.unwrap_or_else(|| {
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            (0, name)
-        });
         Location::new(root, relative, range)
     }
 
@@ -322,6 +312,31 @@ impl Context<'_> {
             .resource_for_path(path)
             .map(|resource| Coordinate::from(&resource.coordinate))
     }
+}
+
+/// The root and the path from it with `/` separators that a report names the file at `path` by:
+/// the first of `roots` (normalised, as [`AuditInput::roots`] are) holding it, or `None` for a
+/// file beneath none of them.
+#[must_use]
+pub fn locate(roots: &[PathBuf], path: &Path) -> Option<(usize, String)> {
+    roots.iter().enumerate().find_map(|(index, root)| {
+        path.strip_prefix(root)
+            .ok()
+            .map(|relative| (index, portable_path(relative)))
+    })
+}
+
+/// The file a report's `location` names: its path from its root, joined to the root, or `None`
+/// for a root not among `roots`. The inverse of [`locate`].
+#[must_use]
+pub fn file_at(roots: &[PathBuf], location: &Location) -> Option<PathBuf> {
+    let root = roots.get(location.root)?;
+    Some(
+        location
+            .path
+            .split('/')
+            .fold(root.clone(), |path, step| path.join(step)),
+    )
 }
 
 /// Whether a path named in a message ends where `rest` begins: at the end of the message,
@@ -397,6 +412,23 @@ mod tests {
             context.relative_paths("/elsewhere/x.adoc"),
             "/elsewhere/x.adoc"
         );
+    }
+
+    #[test]
+    fn a_file_is_located_and_found_again_by_its_first_root() {
+        let roots = [
+            normalize_path(Path::new("/work/docs")),
+            normalize_path(Path::new("/work/docs/inner")),
+        ];
+        let path = roots[1].join("a").join("b.adoc");
+        assert_eq!(
+            locate(&roots, &path),
+            Some((0, "inner/a/b.adoc".to_owned()))
+        );
+        let location = Location::new(0, "inner/a/b.adoc", None);
+        assert_eq!(file_at(&roots, &location), Some(path));
+        assert_eq!(locate(&roots, Path::new("/elsewhere/x.adoc")), None);
+        assert_eq!(file_at(&roots, &Location::new(2, "x.adoc", None)), None);
     }
 
     #[test]
