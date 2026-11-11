@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    fs,
+    fs, io,
     path::{Component, Path, PathBuf},
 };
 
@@ -390,19 +390,56 @@ impl Repository {
     /// tree, as `git add` would: new and changed files are added and missing ones removed, line
     /// endings, `ident` and `working-tree-encoding` applied by the repository's attributes and
     /// configuration, and a link staged as a link. A file under a named `filter` (Git LFS, say)
-    /// is refused, since that would mean running a command the repository's configuration names.
-    /// Nothing is staged unless every path can be.
+    /// is refused, since that would mean running a command the repository's configuration names,
+    /// and so is a path Git never stores, one inside `.git`, one inside a submodule, or one
+    /// beyond a linked folder. The index is locked from reading to writing, as `git add` locks it,
+    /// and staging is refused while another program holds the lock. A file staged where the index
+    /// has a file at one of its folders, or a folder at its path, replaces them. Nothing is staged
+    /// unless every path can be.
     pub fn stage(&self, paths: &[&Path]) -> Result<(), GitError> {
-        let mut index = self.index_file()?;
+        let (lock, mut index) = self.locked_index()?;
         let capabilities = self.repo.filesystem_options().map_err(GitError::git)?;
         let (mut pipeline, mut attributes) = self.to_git_pipeline()?;
+        let protect = self.protect_options();
         for path in paths {
             let relative = self.relative(path)?;
             let name = unix_path(&relative);
+            for component in name.split_str("/") {
+                gix::validate::path::component(component.as_bstr(), None, protect).map_err(
+                    |error| GitError::Unstorable {
+                        path: relative.clone(),
+                        reason: error.to_string(),
+                    },
+                )?;
+            }
+            if let Some(submodule) = index.entries().iter().find(|entry| {
+                entry.mode == gix::index::entry::Mode::COMMIT
+                    && holds(entry.path(&index), name.as_ref())
+            }) {
+                return Err(GitError::Unstorable {
+                    path: relative,
+                    reason: format!("it is in the submodule {}", submodule.path(&index)),
+                });
+            }
+            if let Some(link) = self.linked_folder(&relative) {
+                return Err(GitError::Unstorable {
+                    path: relative,
+                    reason: format!("it is beyond the symbolic link {}", link.display()),
+                });
+            }
             let file = self.workdir.join(&relative);
-            let Ok(metadata) = gix::index::fs::Metadata::from_path_no_follow(&file) else {
-                index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
-                continue; // Gone: staged as deleted.
+            let metadata = match gix::index::fs::Metadata::from_path_no_follow(&file) {
+                Ok(metadata) => metadata,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
+                    continue; // Gone: staged as deleted.
+                }
+                Err(source) => return Err(GitError::Io { path: file, source }),
             };
             let in_index = index.entry_by_path(name.as_ref()).map(|entry| entry.mode);
             let bytes = if metadata.is_symlink() {
@@ -413,7 +450,12 @@ impl Repository {
             let id = self.repo.write_blob(bytes).map_err(GitError::git)?.detach();
             let stat = gix::index::entry::Stat::from_fs(&metadata).unwrap_or_default();
             let mode = staged_mode(&metadata, in_index, capabilities);
-            index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
+            // A file cannot live beside a file at one of its folders, nor a folder at its path.
+            index.remove_entries(|_, entry_path, _| {
+                entry_path == name.as_slice()
+                    || holds(entry_path, name.as_ref())
+                    || holds(name.as_ref(), entry_path)
+            });
             index.dangerously_push_entry(
                 stat,
                 id,
@@ -422,7 +464,38 @@ impl Repository {
                 name.as_ref(),
             );
         }
-        write_changed_index(index)
+        write_changed_index(index, lock)
+    }
+
+    /// The first folder on the way to `relative` that is a symbolic link, as Git's
+    /// `has_symlink_leading_path` finds it: what lies beyond is not the working tree's to stage.
+    /// `relative` itself may be a link, which is staged as one.
+    fn linked_folder(&self, relative: &Path) -> Option<PathBuf> {
+        let mut folder = PathBuf::new();
+        let mut components = relative.components().peekable();
+        while let Some(component) = components.next() {
+            components.peek()?;
+            folder.push(component);
+            match fs::symlink_metadata(self.workdir.join(&folder)) {
+                Ok(metadata) if metadata.file_type().is_symlink() => return Some(folder),
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+        }
+        None
+    }
+
+    /// The names Git refuses to store, by `core.protectHFS` and `core.protectNTFS` with Git's
+    /// defaults: `.git` in every spelling the file systems Git protects would take for it.
+    fn protect_options(&self) -> gix::validate::path::component::Options {
+        let config = self.repo.config_snapshot();
+        gix::validate::path::component::Options {
+            protect_windows: cfg!(windows),
+            protect_hfs: config
+                .boolean("core.protectHFS")
+                .unwrap_or(cfg!(target_os = "macos")),
+            protect_ntfs: config.boolean("core.protectNTFS").unwrap_or(true),
+        }
     }
 
     /// The conversions `git add` applies, with the attributes they read. Its drivers are dropped:
@@ -497,9 +570,10 @@ impl Repository {
 
     /// Puts `paths` back in the index as they are in `HEAD`, leaving the working tree alone, as
     /// `git restore --staged` would, a link as a link and a submodule as a submodule. A path that
-    /// is a folder in `HEAD` is refused, and nothing is unstaged unless every path can be.
+    /// is a folder in `HEAD` is refused, and nothing is unstaged unless every path can be. The
+    /// index is locked as `stage` locks it.
     pub fn unstage(&self, paths: &[&Path]) -> Result<(), GitError> {
-        let mut index = self.index_file()?;
+        let (lock, mut index) = self.locked_index()?;
         let head_tree = if self.repo.head().map_err(GitError::git)?.is_unborn() {
             None
         } else {
@@ -536,7 +610,7 @@ impl Repository {
                 name.as_ref(),
             );
         }
-        write_changed_index(index)
+        write_changed_index(index, lock)
     }
 
     /// The name and email commits are made with, as Git finds the committer's: from
@@ -714,6 +788,19 @@ impl Repository {
         }
     }
 
+    /// The index with Git's `index.lock` held, taken before reading so that no other writer can
+    /// change it between this read and `write_changed_index`. Refused while another holds it.
+    fn locked_index(&self) -> Result<(gix::lock::File, gix::index::File), GitError> {
+        let lock = gix::lock::File::acquire_to_update_resource(
+            self.repo.index_path(),
+            gix::lock::acquire::Fail::Immediately,
+            None,
+            0,
+        )
+        .map_err(GitError::git)?;
+        Ok((lock, self.index_file()?))
+    }
+
     /// The fetch URL of remote `name`, as configured.
     pub fn remote_url(&self, name: &str) -> Result<Option<String>, GitError> {
         let names = self.repo.remote_names();
@@ -729,14 +816,21 @@ impl Repository {
             .map(|url| url.to_bstring().to_string()))
     }
 
-    /// `path` relative to the working tree: an absolute path inside it, or a relative one as is.
+    /// `path` relative to the working tree: an absolute path inside it, or a relative one taken
+    /// from the working tree. `.` and `..` are resolved lexically, so a path that leaves the
+    /// working tree is refused however it is spelt.
     pub(crate) fn relative(&self, path: &Path) -> Result<PathBuf, GitError> {
-        if path.is_relative() {
-            return Ok(path.to_path_buf());
-        }
-        path.strip_prefix(&self.workdir)
-            .map(Path::to_path_buf)
-            .map_err(|_| GitError::OutsideWorkdir(path.to_path_buf()))
+        let outside = || GitError::OutsideWorkdir(path.to_path_buf());
+        let joined = self.workdir.join(path);
+        let normalised =
+            gix::path::normalize(joined.as_path().into(), &self.workdir).ok_or_else(outside)?;
+        let relative = normalised
+            .strip_prefix(&self.workdir)
+            .map_err(|_| outside())?;
+        Ok(relative
+            .components()
+            .filter(|component| *component != Component::CurDir)
+            .collect())
     }
 }
 
@@ -776,13 +870,27 @@ fn worktree_change(
     }
 }
 
+/// Whether `path` is inside the folder `folder`, both `/`-separated and relative.
+fn holds(folder: &BStr, path: &BStr) -> bool {
+    path.len() > folder.len() && path.starts_with(folder) && path[folder.len()] == b'/'
+}
+
 /// Writes `index` after its entries changed. Its cached trees (the `TREE` extension) are dropped,
 /// since `gix` writes them as read and Git trusts them: `git write-tree`, `git commit` and
 /// `git status` would see the trees `HEAD` had. Git builds them again on its next commit.
-fn write_changed_index(mut index: gix::index::File) -> Result<(), GitError> {
+/// It is written through `lock`, held since it was read.
+fn write_changed_index(mut index: gix::index::File, lock: gix::lock::File) -> Result<(), GitError> {
     index.sort_entries();
     index.remove_tree();
-    index.write(Default::default()).map_err(GitError::git)
+    let mut out = io::BufWriter::new(lock);
+    index
+        .write_to(&mut out, Default::default())
+        .map_err(GitError::git)?;
+    let lock = out
+        .into_inner()
+        .map_err(|error| GitError::git(error.error()))?;
+    lock.commit().map_err(GitError::git)?;
+    Ok(())
 }
 
 /// A relative platform path as Git writes it, `/`-separated.

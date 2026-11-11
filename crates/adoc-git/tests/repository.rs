@@ -555,3 +555,47 @@ fn init_makes_an_empty_repository_that_discover_finds() {
         (Change::Unmodified, Change::Untracked)
     );
 }
+
+#[test]
+fn a_path_with_a_leading_dot_is_staged_as_its_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("docs/page.adoc", "= Page\n");
+    let repo = repo_in(dir.path());
+    repo.stage(&[Path::new("./docs/page.adoc")]).unwrap();
+    assert_eq!(
+        status_of(&repo.status().unwrap(), "docs/page.adoc"),
+        (Change::Added, Change::Unmodified)
+    );
+}
+
+#[test]
+fn a_path_that_leaves_the_working_tree_is_outside_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("docs");
+    let test = TestRepo::init(&root);
+    test.write("page.adoc", "= Page\n");
+    test.commit_all("first");
+    std::fs::write(dir.path().join("outside.txt"), "not ours\n").unwrap();
+    let repo = repo_in(&root);
+    let escaping = [root.join("../outside.txt"), PathBuf::from("../outside.txt")];
+    for path in &escaping {
+        assert!(
+            matches!(repo.stage(&[path]), Err(GitError::OutsideWorkdir(_))),
+            "stage {path:?}"
+        );
+        assert!(
+            matches!(repo.unstage(&[path]), Err(GitError::OutsideWorkdir(_))),
+            "unstage {path:?}"
+        );
+        assert!(
+            matches!(repo.head_content(path), Err(GitError::OutsideWorkdir(_))),
+            "head_content {path:?}"
+        );
+    }
+    // A detour that comes back in is the path it arrives at.
+    assert_eq!(
+        repo.head_content(&root.join("../docs/page.adoc")).unwrap(),
+        Some("= Page\n".to_owned())
+    );
+}

@@ -26,6 +26,11 @@ pub enum GitError {
     Unmerged(Vec<PathBuf>),
     /// `path` is a folder in `HEAD`, which unstaging takes only a file at a time.
     Folder(PathBuf),
+    /// `path` has a component Git never stores, such as `.git` in any of its spellings.
+    Unstorable {
+        path: PathBuf,
+        reason: String,
+    },
     /// `spec` names no commit in the repository.
     UnknownRevision {
         spec: String,
@@ -76,6 +81,9 @@ impl fmt::Display for GitError {
                 "{} is a folder: unstage the files in it one at a time",
                 path.display()
             ),
+            Self::Unstorable { path, reason } => {
+                write!(formatter, "{} cannot be stored in Git: {reason}", path.display())
+            }
             Self::UnknownRevision { spec, message } => {
                 write!(formatter, "`{spec}` names no commit here: {message}")
             }

@@ -11,7 +11,8 @@ use std::{
 
 use adoc_git::Repository;
 
-/// Runs `git` in `dir`, reading no configuration but the repository's own.
+/// Runs `git` in `dir`, reading no configuration but the repository's own. Commits are dated
+/// alike, so the two repositories a test builds hold the same commits however long it takes.
 fn git(dir: &Path, args: &[&str]) -> Output {
     Command::new("git")
         .args(args)
@@ -25,6 +26,8 @@ fn git(dir: &Path, args: &[&str]) -> Output {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Writer")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
+        .env("GIT_AUTHOR_DATE", "2026-11-11T12:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-11-11T12:00:00Z")
         .output()
         .expect("git runs")
 }
@@ -332,6 +335,208 @@ fn a_removed_file_is_staged_as_deleted() {
         commit_all(dir);
         fs::remove_file(dir.join("page.adoc")).unwrap();
     });
+}
+
+/// Builds the repository `setup` makes, and checks that `git add` stages nothing of `paths`
+/// (refusing them, or passing over them in silence), that `stage` refuses them, and that
+/// neither changes anything. Returns `stage`'s error.
+fn assert_refused_like_git_add(paths: &[&str], setup: impl Fn(&Path)) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path());
+    let before = state(dir.path());
+    let mut add = vec!["add", "--"];
+    add.extend_from_slice(paths);
+    git(dir.path(), &add);
+    assert_eq!(state(dir.path()), before, "git add stages nothing");
+    let error = stage(dir.path(), paths).expect_err("stage refuses");
+    assert_eq!(state(dir.path()), before, "nothing is staged");
+    error
+}
+
+#[test]
+fn a_path_inside_the_git_folder_is_refused() {
+    if !has_git() {
+        return;
+    }
+    for path in [".git/config", "pages/.git/page.adoc"] {
+        let error = assert_refused_like_git_add(&[path], |dir| {
+            init(dir, &[]);
+            fs::create_dir_all(dir.join("pages/.git")).unwrap();
+            fs::write(dir.join("pages/.git/page.adoc"), "one\n").unwrap();
+        });
+        assert!(error.contains(".git"), "{error}");
+    }
+}
+
+#[test]
+fn a_file_replaced_by_a_folder_leaves_the_index() {
+    if !has_git() {
+        return;
+    }
+    let (entries, _) = assert_stages_like_git_add(&["guide/index.adoc"], |dir| {
+        init(dir, &[]);
+        fs::write(dir.join("guide"), "a file\n").unwrap();
+        commit_all(dir);
+        fs::remove_file(dir.join("guide")).unwrap();
+        fs::create_dir(dir.join("guide")).unwrap();
+        fs::write(dir.join("guide/index.adoc"), "= Guide\n").unwrap();
+    });
+    assert!(!entries.contains("\tguide\n"), "{entries}");
+}
+
+#[test]
+fn a_folder_replaced_by_a_file_leaves_the_index() {
+    if !has_git() {
+        return;
+    }
+    let (entries, _) = assert_stages_like_git_add(&["guide"], |dir| {
+        init(dir, &[]);
+        fs::create_dir_all(dir.join("guide/deeper")).unwrap();
+        fs::write(dir.join("guide/index.adoc"), "= Guide\n").unwrap();
+        fs::write(dir.join("guide/deeper/page.adoc"), "= Page\n").unwrap();
+        fs::write(dir.join("guide.adoc"), "= Beside\n").unwrap();
+        commit_all(dir);
+        fs::remove_dir_all(dir.join("guide")).unwrap();
+        fs::write(dir.join("guide"), "a file\n").unwrap();
+    });
+    assert!(!entries.contains("guide/"), "{entries}");
+}
+
+#[test]
+fn a_file_whose_folder_became_a_file_is_staged_as_deleted() {
+    if !has_git() {
+        return;
+    }
+    assert_stages_like_git_add(&["guide/index.adoc"], |dir| {
+        init(dir, &[]);
+        fs::create_dir(dir.join("guide")).unwrap();
+        fs::write(dir.join("guide/index.adoc"), "= Guide\n").unwrap();
+        commit_all(dir);
+        fs::remove_dir_all(dir.join("guide")).unwrap();
+        fs::write(dir.join("guide"), "a file\n").unwrap();
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_cannot_be_read_is_not_staged_as_deleted() {
+    use std::os::unix::fs::PermissionsExt as _;
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), &[]);
+    let folder = dir.path().join("locked");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("page.adoc"), "one\n").unwrap();
+    commit_all(dir.path());
+    let before = git_ok(dir.path(), &["ls-files", "--stage"]);
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = fs::symlink_metadata(folder.join("page.adoc")).is_ok();
+    // `git add` says "Permission denied" and leaves the entry as it was.
+    git(dir.path(), &["add", "--", "locked/page.adoc"]);
+    let after_theirs = git_ok(dir.path(), &["ls-files", "--stage"]);
+    let ours = stage(dir.path(), &["locked/page.adoc"]);
+    let after_ours = git_ok(dir.path(), &["ls-files", "--stage"]);
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+    if readable {
+        eprintln!("permissions are not enforced here: skipping");
+        return;
+    }
+    assert_eq!(after_theirs, before, "git add stages nothing");
+    let error = ours.expect_err("stage refuses");
+    assert!(error.contains("page.adoc"), "{error}");
+    assert_eq!(after_ours, before, "nothing is staged");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_path_through_a_linked_folder_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("secret.txt"), "not ours\n").unwrap();
+    for path in [
+        "docs/git/config",
+        "docs/out/secret.txt",
+        "docs/out/gone.txt",
+    ] {
+        let error = assert_refused_like_git_add(&[path], |dir| {
+            init(dir, &[]);
+            fs::create_dir(dir.join("docs")).unwrap();
+            std::os::unix::fs::symlink(dir.join(".git"), dir.join("docs/git")).unwrap();
+            std::os::unix::fs::symlink(outside.path(), dir.join("docs/out")).unwrap();
+        });
+        assert!(error.contains("link"), "{path}: {error}");
+    }
+}
+
+/// `stage` holds Git's index lock from reading the index to writing it, so a `git add` in between
+/// is refused rather than undone. The page staged is a named pipe, which keeps `stage` waiting
+/// after it has read the index until the test writes to it. (`git add` stages no pipe; if `stage`
+/// ever refuses one, this test needs another way to pause it.)
+#[cfg(unix)]
+#[test]
+fn a_git_add_while_staging_is_not_undone() {
+    if !has_git() {
+        return;
+    }
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), &[]);
+    fs::write(dir.path().join("page.adoc"), "one\n").unwrap();
+    commit_all(dir.path());
+    fs::write(dir.path().join("other.adoc"), "other\n").unwrap();
+    let pipe = dir.path().join("pipe.adoc");
+    let made = Command::new("mkfifo").arg(&pipe).status();
+    if !made.is_ok_and(|status| status.success()) {
+        eprintln!("mkfifo failed: skipping");
+        return;
+    }
+    let staging = std::thread::spawn({
+        let dir = dir.path().to_path_buf();
+        let pipe = pipe.clone();
+        move || {
+            let staged = stage(&dir, &["pipe.adoc"]);
+            // Lets the writer below open the pipe if `stage` never did.
+            let _ = fs::OpenOptions::new().read(true).write(true).open(&pipe);
+            staged
+        }
+    });
+    // Opening the pipe waits for `stage` to open it for reading, after it read the index.
+    let mut writer = fs::OpenOptions::new().write(true).open(&pipe).unwrap();
+    let added = git(dir.path(), &["add", "--", "other.adoc"])
+        .status
+        .success();
+    writer.write_all(b"piped\n").unwrap();
+    drop(writer);
+    staging.join().unwrap().unwrap();
+    let entries = git_ok(dir.path(), &["ls-files", "--stage"]);
+    assert!(entries.contains("\tpipe.adoc\n"), "{entries}");
+    assert!(
+        !added || entries.contains("\tother.adoc\n"),
+        "the git add in between is undone: {entries}"
+    );
+    assert!(!added, "git add is refused while the index is locked");
+}
+
+#[test]
+fn a_file_inside_a_submodule_is_refused_and_the_submodule_kept() {
+    if !has_git() {
+        return;
+    }
+    let error = assert_refused_like_git_add(&["sub/page.adoc"], |dir| {
+        init(dir, &[]);
+        fs::write(dir.join("page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        let head = git_ok(dir, &["rev-parse", "HEAD"]);
+        let gitlink = format!("160000,{},sub", head.trim());
+        git_ok(dir, &["update-index", "--add", "--cacheinfo", &gitlink]);
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/page.adoc"), "two\n").unwrap();
+    });
+    assert!(error.contains("submodule"), "{error}");
 }
 
 #[test]

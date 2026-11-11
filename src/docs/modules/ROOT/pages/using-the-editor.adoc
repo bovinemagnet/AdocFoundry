@@ -1938,6 +1938,7 @@ Ticking it stages the file as it is in the working tree: new and changed files a
 Staging follows the repository's `.gitattributes` and line-ending settings, as `git add` does.
 A symbolic link is staged as a link, not as the content of the file it points to.
 A file under a named filter, such as Git LFS, is refused, because AdocFoundry does not run the commands a repository's configuration names: stage it with `git add`.
+A file Git would not store is refused in the same way: one inside the `.git` folder, inside a submodule, or reached through a folder that is a symbolic link.
 When one request includes such a file, nothing else in that request is staged, and Save and Commit is refused too.
 Unticking it unstages the file by putting the `HEAD` version back in the index.
 The working tree is not touched.
