@@ -15,7 +15,7 @@ adocfoundry-cli impact <root> (--base <ref> --head <ref> | --against HEAD | --ch
     [--format text|json] [--output <file>] [--max-impacts <n>] [--require-complete]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
-adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--link-images] [--parser acdc|asciidoc-parser]
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
@@ -283,7 +283,9 @@ Use `--root <dir>` to choose another.
 `render` writes a page as a standalone HTML file, as the xref:preview.adoc[preview] renders it.
 Without `--output` the HTML goes to standard output.
 It waits for diagrams to finish before writing.
-Images are linked by `file://` address; the application's Export Page to HTML… embeds them instead, see xref:preview.adoc#exporting-html[Exporting to HTML].
+With `--output`, local images, diagrams and formula images are embedded in the file as `data:` URIs, as the application's Export Page to HTML… does, so it opens anywhere; `--link-images` keeps their `file://` addresses instead.
+Written to standard output, images stay linked by `file://` address.
+Links to other pages follow the same rules as Export Page to HTML, see xref:preview.adoc#exporting-html[Exporting to HTML].
 
 [source,sh]
 ----
@@ -297,6 +299,9 @@ adocfoundry-cli render docs/modules/ROOT/pages/index.adoc --root docs > index.ht
 
 |`--root <dir>`
 |The workspace root, so that includes, xrefs and images resolve across components. Without it, the root is the parent of the nearest Antora component (the directory above the one holding `antora.yml`), or the file's own directory outside Antora. `.` is accepted.
+
+|`--link-images`
+|With `--output`, keep the `file://` addresses of local images, diagrams and formula images instead of embedding them.
 
 |`--output <file.html>`
 |Write to this file instead of standard output.
