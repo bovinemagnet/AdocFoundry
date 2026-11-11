@@ -391,7 +391,8 @@ impl Repository {
     /// endings, `ident` and `working-tree-encoding` applied by the repository's attributes and
     /// configuration, and a link staged as a link. A file under a named `filter` (Git LFS, say)
     /// is refused, since that would mean running a command the repository's configuration names,
-    /// and so is a path Git never stores, one inside `.git`, or one inside a submodule. A file
+    /// and so is a path Git never stores, one inside `.git`, one inside a submodule, or one
+    /// beyond a linked folder. A file
     /// staged where the index has a file at one of its folders, or a folder at its path, replaces
     /// them. Nothing is staged unless every path can be.
     pub fn stage(&self, paths: &[&Path]) -> Result<(), GitError> {
@@ -417,6 +418,12 @@ impl Repository {
                 return Err(GitError::Unstorable {
                     path: relative,
                     reason: format!("it is in the submodule {}", submodule.path(&index)),
+                });
+            }
+            if let Some(link) = self.linked_folder(&relative) {
+                return Err(GitError::Unstorable {
+                    path: relative,
+                    reason: format!("it is beyond the symbolic link {}", link.display()),
                 });
             }
             let file = self.workdir.join(&relative);
@@ -457,6 +464,24 @@ impl Repository {
             );
         }
         write_changed_index(index)
+    }
+
+    /// The first folder on the way to `relative` that is a symbolic link, as Git's
+    /// `has_symlink_leading_path` finds it: what lies beyond is not the working tree's to stage.
+    /// `relative` itself may be a link, which is staged as one.
+    fn linked_folder(&self, relative: &Path) -> Option<PathBuf> {
+        let mut folder = PathBuf::new();
+        let mut components = relative.components().peekable();
+        while let Some(component) = components.next() {
+            components.peek()?;
+            folder.push(component);
+            match fs::symlink_metadata(self.workdir.join(&folder)) {
+                Ok(metadata) if metadata.file_type().is_symlink() => return Some(folder),
+                Ok(_) => {}
+                Err(_) => return None,
+            }
+        }
+        None
     }
 
     /// The names Git refuses to store, by `core.protectHFS` and `core.protectNTFS` with Git's

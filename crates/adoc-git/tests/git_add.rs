@@ -446,6 +446,29 @@ fn a_file_that_cannot_be_read_is_not_staged_as_deleted() {
     assert_eq!(after_ours, before, "nothing is staged");
 }
 
+#[cfg(unix)]
+#[test]
+fn a_path_through_a_linked_folder_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("secret.txt"), "not ours\n").unwrap();
+    for path in [
+        "docs/git/config",
+        "docs/out/secret.txt",
+        "docs/out/gone.txt",
+    ] {
+        let error = assert_refused_like_git_add(&[path], |dir| {
+            init(dir, &[]);
+            fs::create_dir(dir.join("docs")).unwrap();
+            std::os::unix::fs::symlink(dir.join(".git"), dir.join("docs/git")).unwrap();
+            std::os::unix::fs::symlink(outside.path(), dir.join("docs/out")).unwrap();
+        });
+        assert!(error.contains("link"), "{path}: {error}");
+    }
+}
+
 #[test]
 fn a_file_inside_a_submodule_is_refused_and_the_submodule_kept() {
     if !has_git() {
