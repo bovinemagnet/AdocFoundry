@@ -2,6 +2,17 @@
 
 All notable changes are recorded here. Versions follow [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- Find in Workspace has an All files option, which searches every text file in the open folders, such as `antora.yml`, the playbook and examples, rather than only the AsciiDoc pages (#434). The folders are walked on the search worker, never entering a folder named in `[workspace] ignore` or a link, and binary and non-UTF-8 files are left out, as the editor will not open them. Replace reaches the same files. `SearchRequest` gains `all_text_files`.
+
+### Fixed
+
+- Find in Workspace lists every result, in a list that draws only the rows in view, where it listed only the first 500 without saying so (#432).
+- After a replace is applied, Find in Workspace searches again, so a second result replaced in the same file is replaced where it now is, rather than the preview finding nothing to change (#432). Changing the regular expression, case, whole-word or All files option while results are shown searches again too, so the list always matches what a replace will use.
+
 ## 0.9.0 — 2026-11-10
 
 ### Added

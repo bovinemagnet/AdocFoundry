@@ -838,6 +838,7 @@ impl Server {
                     case_sensitive: args.case_sensitive,
                     whole_word: args.whole_word,
                     scope,
+                    all_text_files: false,
                 }),
             )?;
             // The search runs on one worker, which reports its matches in batches; this waits

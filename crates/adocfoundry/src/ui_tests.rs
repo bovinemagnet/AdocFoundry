@@ -345,9 +345,23 @@ fn the_search_panel_shows_workspace_results(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         search.update(cx, |search, cx| search.run_query("xref:", window, cx));
     });
+    assert_eq!(
+        search_results(&app, &search, &mut cx),
+        Some(9),
+        "every xref: in the fixture is found"
+    );
+}
+
+/// Waits for the search panel's search to finish, pumping the engine, and gives the number of
+/// results it lists.
+fn search_results(
+    app: &Entity<AppState>,
+    search: &Entity<crate::search_view::SearchView>,
+    cx: &mut VisualTestContext,
+) -> Option<usize> {
     // Results arrive from a worker thread through the engine's event pump.
     let mut count = None;
-    for _ in 0..200 {
+    for _ in 0..400 {
         std::thread::sleep(std::time::Duration::from_millis(5));
         cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
         cx.run_until_parked();
@@ -356,7 +370,148 @@ fn the_search_panel_shows_workspace_results(cx: &mut TestAppContext) {
             break;
         }
     }
-    assert_eq!(count, Some(9), "every xref: in the fixture is found");
+    count
+}
+
+/// A search panel in a window of its own over a workspace of `files`, each a name and its
+/// text.
+fn search_window(
+    files: &[(&str, &str)],
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    Entity<AppState>,
+    Entity<crate::search_view::SearchView>,
+    VisualTestContext,
+) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    for (name, text) in files {
+        std::fs::write(directory.path().join(name), text).unwrap();
+    }
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let mut search = None;
+    let window = cx.open_window(size(px(800.), px(400.)), |window, cx| {
+        let view = cx.new(|cx| {
+            crate::search_view::SearchView::new(
+                app.clone(),
+                gpui::WeakEntity::new_invalid(),
+                window,
+                cx,
+            )
+        });
+        search = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let cx = VisualTestContext::from_window(window.into(), cx);
+    (directory, app, search.unwrap(), cx)
+}
+
+/// Every result is listed, however many there are: the list draws only the rows in view, and
+/// the last can be scrolled to.
+#[gpui::test]
+fn the_search_panel_lists_every_result(cx: &mut TestAppContext) {
+    let page = format!("= Page\n\n{}", "A needle here.\n\n".repeat(700));
+    let (_directory, app, search, mut cx) = search_window(&[("page.adoc", &page)], cx);
+    cx.update(|window, cx| {
+        search.update(cx, |search, cx| search.run_query("needle", window, cx));
+    });
+    assert_eq!(search_results(&app, &search, &mut cx), Some(700));
+    assert!(cx.debug_bounds("search-result-0").is_some());
+    assert!(
+        cx.debug_bounds("search-result-699").is_none(),
+        "rows out of view are not drawn"
+    );
+    cx.update(|_, cx| search.update(cx, |search, cx| search.reveal_result(699, cx)));
+    cx.run_until_parked();
+    assert!(
+        cx.debug_bounds("search-result-699").is_some(),
+        "the last result can be reached"
+    );
+}
+
+/// Changing an option while results are shown searches again with it.
+#[gpui::test]
+fn changing_a_search_option_searches_again(cx: &mut TestAppContext) {
+    let (_directory, app, search, mut cx) = search_window(
+        &[
+            ("page.adoc", "= Page\n\nalpha Alpha ALPHA\n"),
+            ("notes.txt", "alpha\n"),
+        ],
+        cx,
+    );
+    cx.update(|window, cx| {
+        search.update(cx, |search, cx| search.run_query("alpha", window, cx));
+    });
+    assert_eq!(search_results(&app, &search, &mut cx), Some(3));
+    click("search-case", &mut cx);
+    assert_eq!(
+        search_results(&app, &search, &mut cx),
+        Some(1),
+        "a case-sensitive search finds only `alpha`"
+    );
+    click("search-case", &mut cx);
+    assert_eq!(search_results(&app, &search, &mut cx), Some(3));
+    click("search-all-files", &mut cx);
+    assert_eq!(
+        search_results(&app, &search, &mut cx),
+        Some(4),
+        "searching all text files reaches `notes.txt`"
+    );
+}
+
+/// After a result is replaced the results are found again, so a second result of the same page
+/// is replaced where it now is.
+#[gpui::test]
+fn two_single_replaces_in_one_page_both_change_it(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let path = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    std::fs::write(&path, "= Page\n\nalpha alpha alpha\n").unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.run_until_parked();
+    let search = cx.update(|_, cx| workspace.read(cx).search_view_for_test().clone());
+    cx.update(|window, cx| {
+        search.update(cx, |search, cx| {
+            search.set_replacement_for_test("omega-long", window, cx);
+            search.run_query("alpha", window, cx);
+        });
+    });
+    assert_eq!(search_results(&app, &search, &mut cx), Some(3));
+
+    let replace = |index: usize, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            search.update(cx, |search, cx| search.replace_result(index, window, cx));
+        });
+        cx.run_until_parked();
+        assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+    };
+    replace(0, &mut cx);
+    assert_eq!(
+        search_results(&app, &search, &mut cx),
+        Some(2),
+        "the replaced result is no longer listed"
+    );
+    replace(1, &mut cx);
+    let text = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.document_for_path(&path).unwrap();
+        engine.document(id).unwrap().text.to_string()
+    });
+    assert_eq!(text, "= Page\n\nomega-long alpha omega-long\n");
 }
 
 /// IME composition reaches the editor through GPUI's input handler: marked (provisional) text is
