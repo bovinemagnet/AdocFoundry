@@ -60,7 +60,8 @@ const USAGE: &str = "usage:
       [--no-nav] [--index-title <title>]
   adocfoundry-cli new-project <folder> --name <name> [--template <id|folder>] [--title <title>]
       [--version <version>] [--subfolder <dir>] [--no-git] [--no-readme] [--no-playbook]
-  adocfoundry-cli --version";
+  adocfoundry-cli --version
+Relative paths, `--changed-file` among them, are read against the current directory.";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -338,11 +339,14 @@ fn impact(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     if !matches!(format, "text" | "json") {
         return Err(format!("unknown format `{format}`"));
     }
+    let root = adoc_index::normalize_path(Path::new(root));
+    // Read against the current directory, as `git diff --name-only` gives them from the top of
+    // the repository, and handed to the engine relative to the root.
     let changed: Vec<PathBuf> = options
         .iter()
         .filter(|(name, _)| *name == "changed-file")
-        .map(|(_, path)| PathBuf::from(path))
-        .collect();
+        .map(|(_, path)| within(&root, path))
+        .collect::<Result<_, _>>()?;
     let source = match (
         option(&options, "base"),
         option(&options, "head"),
@@ -372,7 +376,6 @@ fn impact(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             .parse()
             .map_err(|_| format!("--max-impacts takes a number, not `{max}`"))?;
     }
-    let root = adoc_index::normalize_path(Path::new(root));
     let mut engine = open_engine(&root, false)?;
     let report = match engine.analyse_impact(&source, limits) {
         Ok(report) => report,
@@ -833,23 +836,46 @@ fn symbols(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The root to index for `file`: the parent of the nearest component (so sibling components
-/// resolve), or the file's own directory outside Antora.
+/// `path` made absolute against the current directory, lexically: the file system is not read,
+/// so a path that does not exist is made absolute too. The file `follow`, `render` and `pdf`
+/// take, and their root, go through it, so the component above the file is found wherever the
+/// command runs from and however the two are written (#510); what is printed stays relative to
+/// the root, through `display_path`.
+fn absolute(path: impl AsRef<Path>) -> Result<PathBuf, String> {
+    let path = path.as_ref();
+    std::path::absolute(path)
+        .map(|absolute| adoc_index::normalize_path(&absolute))
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// `path`, read against the current directory, relative to `root` when it lies beneath it, and
+/// otherwise absolute: so a relative root and an absolute path, or the reverse, name the same
+/// file.
+fn within(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let path = absolute(path)?;
+    Ok(match path.strip_prefix(absolute(root)?) {
+        Ok(relative) => relative.to_path_buf(),
+        Err(_) => path,
+    })
+}
+
+/// `path`, read against the current directory, written as the index writes the files beneath
+/// `root`: joined to the root as it was given.
+fn beneath(root: &Path, path: &str) -> Result<PathBuf, String> {
+    Ok(adoc_index::normalize_path(&root.join(within(root, path)?)))
+}
+
+/// The root to index for `file`, an absolute path: the parent of the nearest component (so
+/// sibling components resolve), or the file's own directory outside Antora.
 fn default_root(file: &Path) -> PathBuf {
-    let directory = file.parent().unwrap_or_else(|| Path::new("."));
-    let root = directory
+    let directory = file.parent().unwrap_or(file);
+    directory
         .ancestors()
         .find(|ancestor| ancestor.join("antora.yml").is_file())
         .map_or_else(
             || directory.to_path_buf(),
             |component| component.parent().unwrap_or(component).to_path_buf(),
-        );
-    // A relative path's last ancestor is the empty path, which stands for the current directory.
-    if root.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        root
-    }
+        )
 }
 
 fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
@@ -857,14 +883,14 @@ fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let [file, offset] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let file = adoc_index::normalize_path(Path::new(file));
+    let file = absolute(file)?;
     let offset: usize = offset
         .parse()
         .map_err(|_| format!("`{offset}` is not a byte offset"))?;
-    let root = option(&options, "root").map_or_else(
-        || default_root(&file),
-        |root| adoc_index::normalize_path(Path::new(root)),
-    );
+    let root = match option(&options, "root") {
+        Some(root) => absolute(root)?,
+        None => default_root(&file),
+    };
 
     let mut engine = open_engine(&root, false)?;
     let id = engine.open(&file).map_err(|error| error.to_string())?;
@@ -925,11 +951,11 @@ fn render(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             "asciidoc-parser" => std::sync::Arc::new(adoc_dom::AsciidocParser),
             other => return Err(format!("unknown parser `{other}`")),
         };
-    let file = adoc_index::normalize_path(Path::new(file));
-    let root = option(&options, "root").map_or_else(
-        || default_root(&file),
-        |root| adoc_index::normalize_path(Path::new(root)),
-    );
+    let file = absolute(file)?;
+    let root = match option(&options, "root") {
+        Some(root) => absolute(root)?,
+        None => default_root(&file),
+    };
 
     let mut engine = open_engine(&root, false)?;
     engine.set_document_parser(parser);
@@ -1020,27 +1046,19 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let target = adoc_index::normalize_path(Path::new(target));
+    // A page's PDF goes beside it, named as the page was.
+    let beside = Path::new(target).with_extension("pdf");
+    let target = absolute(target)?;
     let is_dir = target.is_dir();
-    let root = option(&options, "root").map_or_else(
-        || {
-            if is_dir {
-                // A component directory: its parent, so sibling components resolve; the parent
-                // of a relative name such as `guide` is the current directory.
-                if target.join("antora.yml").is_file() {
-                    match target.parent() {
-                        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-                        _ => PathBuf::from("."),
-                    }
-                } else {
-                    target.clone()
-                }
-            } else {
-                default_root(&target)
-            }
-        },
-        |root| adoc_index::normalize_path(Path::new(root)),
-    );
+    let root = match option(&options, "root") {
+        Some(root) => absolute(root)?,
+        // A component directory: its parent, so sibling components resolve.
+        None if is_dir && target.join("antora.yml").is_file() => {
+            target.parent().unwrap_or(&target).to_path_buf()
+        }
+        None if is_dir => target.clone(),
+        None => default_root(&target),
+    };
 
     let mut engine = open_engine(&root, false)?;
     let component = match option(&options, "component") {
@@ -1073,7 +1091,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         }
         None => {
             let id = engine.open(&target).map_err(|error| error.to_string())?;
-            (ExportTarget::Page(id), target.with_extension("pdf"))
+            (ExportTarget::Page(id), beside)
         }
     };
     let output = option(&options, "output").map_or(default_output, PathBuf::from);
@@ -1218,9 +1236,9 @@ fn graph(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
     let root = adoc_index::normalize_path(Path::new(root));
     let scope = match option(&options, "page") {
-        // Relative, as the root may be: the index holds paths as the root gives them.
+        // Written as the root is: the index holds paths as the root gives them.
         Some(page) => GraphScope::Local {
-            path: adoc_index::normalize_path(Path::new(page)),
+            path: beneath(&root, page)?,
             depth,
         },
         None => GraphScope::Workspace,
@@ -1247,11 +1265,8 @@ fn graph(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         if option(&options, "page").is_some() {
             return Err("`--path` and `--page` cannot be used together".to_owned());
         }
-        // Relative, as the root may be, like `--page`.
-        let (from, to) = (
-            adoc_index::normalize_path(Path::new(&from)),
-            adoc_index::normalize_path(Path::new(&to)),
-        );
+        // Written as the root is, like `--page`.
+        let (from, to) = (beneath(&root, &from)?, beneath(&root, &to)?);
         for page in [&from, &to] {
             if engine.workspace().index.file(page).is_none() {
                 return Err(format!(

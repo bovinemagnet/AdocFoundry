@@ -1057,3 +1057,85 @@ fn check_reports_what_it_could_not_read() {
     assert_eq!(failed.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("indexing failed"), "{stderr}");
 }
+
+/// Every path argument is read against the current directory, so the workspace is the same
+/// wherever the command runs from and however its paths are written (#510).
+#[test]
+fn paths_are_read_against_the_current_directory() {
+    let succeeded = |output: &Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        stdout(output)
+    };
+
+    // From inside a pages folder, the component above is still found.
+    let pages = "tests/fixtures/antora-single-component/modules/ROOT/pages";
+    let html = succeeded(&cli_in(pages, &["render", "index.adoc"]));
+    assert!(
+        html.contains("<a href=\"../../security/pages/authentication.html\">Authentication</a>"),
+        "{html}"
+    );
+    assert!(!html.contains("class=\"unresolved\""), "{html}");
+
+    // From a component's own folder, its siblings are in the workspace.
+    let alpha = "tests/fixtures/antora-multi-component/alpha";
+    let page = "modules/ROOT/pages/index.adoc";
+    let text = std::fs::read_to_string(repository_root().join(alpha).join(page)).unwrap();
+    let offset = (text.find("xref:beta::index.adoc").unwrap() + 6).to_string();
+    let followed = succeeded(&cli_in(alpha, &["follow", page, &offset]));
+    assert_eq!(followed.trim(), "beta/modules/ROOT/pages/index.adoc:1:1");
+
+    // An absolute root with a relative file.
+    let fixture = "tests/fixtures/antora-single-component";
+    let absolute = std::path::absolute(repository_root().join(fixture)).unwrap();
+    let absolute = absolute.to_str().unwrap();
+    let page = format!("{fixture}/modules/ROOT/pages/index.adoc");
+    let text = std::fs::read_to_string(repository_root().join(&page)).unwrap();
+    let offset = (text.find("xref:").unwrap() + 6).to_string();
+    let followed = succeeded(&cli(&["follow", &page, &offset, "--root", absolute]));
+    assert_eq!(
+        followed.trim(),
+        "modules/security/pages/authentication.adoc:1:1"
+    );
+    let html = succeeded(&cli(&["render", &page, "--root", absolute]));
+    assert!(!html.contains("class=\"unresolved\""), "{html}");
+
+    // An absolute root with a relative page, and the reverse.
+    let graph = std::path::absolute(repository_root().join("tests/fixtures/graph")).unwrap();
+    let configure = "tests/fixtures/graph/guide/modules/ROOT/pages/configure.adoc";
+    succeeded(&cli(&[
+        "graph",
+        graph.to_str().unwrap(),
+        "--page",
+        configure,
+    ]));
+    succeeded(&cli(&[
+        "graph",
+        "tests/fixtures/graph",
+        "--page",
+        graph
+            .join("guide/modules/ROOT/pages/configure.adoc")
+            .to_str()
+            .unwrap(),
+    ]));
+
+    // A relative component folder with an absolute root. Copied, so the diagram cache is
+    // written outside the repository.
+    let directory = tempfile::tempdir().unwrap();
+    copy_tree(
+        &repository_root().join("tests/fixtures/pdf/book"),
+        &directory.path().join("book"),
+    );
+    // As the current directory is read, with any link in the temporary folder's path followed.
+    let book = directory.path().canonicalize().unwrap().join("book");
+    let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(directory.path())
+        .args(["pdf", "book/guide", "--root", book.to_str().unwrap()])
+        .output()
+        .unwrap();
+    succeeded(&output);
+    assert!(directory.path().join("guide.pdf").is_file());
+}
