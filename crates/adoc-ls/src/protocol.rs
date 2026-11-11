@@ -84,10 +84,7 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
     let mut server = ProtocolServer::new(
         encoding,
         engine,
-        Box::new(BrowserSink::new(
-            std::env::temp_dir().join("adoc-ls-preview"),
-            SystemLauncher,
-        )),
+        Box::new(BrowserSink::private(SystemLauncher)),
     );
     server.open_workspace(roots);
 
