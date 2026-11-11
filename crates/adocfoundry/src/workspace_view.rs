@@ -990,6 +990,11 @@ impl WorkspaceView {
     }
 
     #[cfg(test)]
+    pub fn search_view_for_test(&self) -> &Entity<SearchView> {
+        &self.search
+    }
+
+    #[cfg(test)]
     pub fn active_editor_for_test(&self) -> Option<&Entity<SourceEditorView>> {
         self.active_editor()
     }
@@ -2407,6 +2412,19 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_preview_then(preview, |_| {}, window, cx);
+    }
+
+    /// Shows a multi-file change for confirmation as [`WorkspaceView::show_preview`] does,
+    /// calling `applied_then` once it has been applied.
+    pub fn show_preview_then(
+        &mut self,
+        preview: EditPreview,
+        applied_then: impl Fn(&mut App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let applied_then = Rc::new(applied_then);
         let app = self.app.clone();
         let roots = app.read(cx).engine.roots().to_vec();
         let id = preview.id;
@@ -2447,6 +2465,7 @@ impl WorkspaceView {
             let app_close = app.clone();
             let applied_ok = applied.clone();
             let applied_close = applied.clone();
+            let applied_then = applied_then.clone();
             dialog
                 .title(title.clone())
                 .width(px(720.))
@@ -2473,7 +2492,9 @@ impl WorkspaceView {
                     });
                     applied_ok.set(true);
                     // A failure is reported by the window.
-                    let _ = result;
+                    if result.is_ok() {
+                        applied_then(cx);
+                    }
                     true
                 })
                 .on_close(move |_, _, cx| {
