@@ -48,7 +48,13 @@ fn whole_report(client: &mut Client, arguments: &Value, limit: usize) -> Value {
     let mut report = first.unwrap();
     assert_eq!(report["findings_total"], findings.len());
     for finding in &mut findings {
-        finding.as_object_mut().unwrap().remove("region");
+        // Every page gives the region of each of its findings with a range.
+        let region = finding.as_object_mut().unwrap().remove("region");
+        assert_eq!(
+            region.is_some(),
+            !finding["location"]["range"].is_null(),
+            "{finding}"
+        );
     }
     report["findings"] = Value::Array(findings);
     for field in ADDED {
