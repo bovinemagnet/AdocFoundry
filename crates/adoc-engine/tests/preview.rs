@@ -1068,9 +1068,9 @@ fn opening_a_workspace_prunes_diagrams_not_read_for_the_period() {
         set_age(&path, age);
         path
     };
-    let old = entry("old", 20 * day);
-    let new = entry("new", 2 * day);
-    let shown = entry("shown", 20 * day);
+    let old = entry(&format!("{:064x}", 1), 20 * day);
+    let new = entry(&format!("{:064x}", 2), 2 * day);
+    let shown = entry(&format!("{:064x}", 3), 20 * day);
 
     let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap().with_git_opt_in());
     let diagrams = Diagrams::with_providers(
@@ -1078,7 +1078,10 @@ fn opening_a_workspace_prunes_diagrams_not_read_for_the_period() {
         vec![Box::new(MermaidProvider::default())],
     );
     // Shown already, so in use, though not read for as long as the old one.
-    assert_eq!(diagrams.cached_at("shown"), Some(shown.clone()));
+    assert_eq!(
+        diagrams.cached_at(&format!("{:064x}", 3)),
+        Some(shown.clone())
+    );
     set_age(&shown, 20 * day);
     engine.set_diagrams(diagrams);
     engine.open_workspace(vec![root.clone()]).unwrap();

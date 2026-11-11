@@ -238,6 +238,7 @@ The preview updates when a diagram finishes, so the page never waits on one.
 Rendered diagrams are cached by a checksum of their source and options in `<workspace>/.cache/adocfoundry/diagrams/`.
 When a workspace opens, images in the cache that have not been read for 30 days are removed in the background; `history.diagram_cache_days` in the user settings file changes the period (see xref:settings.adoc[Settings]).
 An image is marked as read at most once a day, by its file's modification time, and those the window is showing are never removed.
+Only the cache's own files are removed, regular files named as it names them, and if `.cache`, `.cache/adocfoundry` or the `diagrams` folder is a link, as a repository could make it, the cache is neither read, written nor pruned there.
 Help › Show Diagnostics and `adocfoundry-cli doctor` report the folder's size and how many files it holds.
 A diagram drawn by Graphviz, PlantUML or D2 is also keyed by the program that drew it and the page's folder, so a different or upgraded tool draws it afresh.
 It is keyed too by the size and modification time of each local file the diagram names for its tool to read: PlantUML's `!include`, `!include_many`, `!include_once`, `!includesub`, `!import` and `!theme ... from`, Graphviz's `image` and `shapefile`, and D2's imports (`x: @file`, `...@file`) and local `icon` paths.
