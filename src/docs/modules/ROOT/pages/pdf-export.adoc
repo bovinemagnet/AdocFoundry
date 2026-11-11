@@ -9,6 +9,10 @@ It needs no Ruby, Node.js, Java or network access.
 
 Block attributes and options are honoured: a list's numbering style, `start` and `%reversed`; a table's `frame`, `grid`, `stripes`, `width` and `%autowidth`; vertical cell alignment; an image's `align`, `float`, `link` and `pdfwidth`; and `%collapsible` blocks.
 
+Footnotes taller than a page are never drawn past the page's bottom edge: a list of footnotes that does not fit on a page follows the content and continues on the next page.
+A listing, admonition or other block kept whole is judged at its table column's width when it is in a table cell.
+Where the column's width is not known (`%autowidth` or `auto` columns), the block may break across pages, so its lines are never drawn past the bottom of the page.
+
 A block image is sized as asciidoctor-pdf sizes it.
 Its width is the first of these that is set.
 
@@ -66,7 +70,10 @@ The suggested file name is the component's name.
 The book follows the component's navigation.
 
 * The title page shows the `title` from `antora.yml` (or the component's name), and the version as "Version X".
+A `revnumber` such as `v2.0` is shown as "Version 2.0", but one like `vNext` keeps its `v`.
 * The table of contents is on its own page.
+It lists a page only down to `toclevels`, as a section at its level would be: a chapter is level 1, a page nested one level deeper is level 2, and so on.
+Deeper pages are still bookmarked.
 * When there is more than one navigation file, each becomes a part, titled by its nav list's title if it has one.
 * A nav list title that links to a page, as in `.xref:index.adoc[Architecture]`, names the part, and the linked page leads that part as its first chapter.
 * A page with no title of its own, such as an empty file listed in the navigation, takes the text of its navigation entry as its heading.
@@ -81,6 +88,8 @@ A cross reference between two pages of the book becomes an internal link.
 A cross reference to a page outside the book links to the site address when there is one, laid out as Antora publishes a site (`<site>/<component>/<version>/<module>/<page>.html`).
 The address is `[pdf] site_url`, else the playbook's `site.url`.
 Without either, it is plain text.
+Such a reference links only to a page the workspace's catalogue gives an address for.
+A reference to any other page is plain text, never an address guessed from the target's file name.
 
 The book's title can be overridden with a `pdf-title` attribute in the component's or playbook's `asciidoc.attributes`.
 
@@ -322,7 +331,8 @@ These attributes are read before the theme's `page_size`, `page_layout` and `pag
 `pdf-page-size`::
 A name (`A4`, `Letter`, `Legal` or `Executive`, in any case), `[8.5in, 11in]` or `8.5in x 11in`.
 The units are `in`, `mm`, `cm`, `pt`, `px` and `pc`.
-The names known are A0 to A8, B4, B5, Executive, Folio, Legal, Letter and Tabloid; any other gives A4, as an unknown name does in asciidoctor-pdf.
+The names known are all of Prawn's: 4A0, 2A0, A0 to A10, B0 to B10, C0 to C10, RA0 to RA4, SRA0 to SRA4, Executive, Folio, Legal, Letter and Tabloid, in any case.
+Any other name gives A4 with the warning `unknown page size <name>; A4 is used`, as it does for the theme's `page_size`.
 
 `pdf-page-layout`::
 `portrait` or `landscape`.
@@ -363,6 +373,11 @@ The `fit` option says how the image fills the page.
 |The image keeps its own size, and is no larger than the page.
 |===
 
+The title page's logo, from `title-logo-image` or the theme's `title_page_logo_image`, is found as the page's other images are.
+An image macro, such as `+image:logo.png[]+`, is found in `imagesdir`, a path is found beside the page, and a theme's value is found beside the theme.
+Its width comes from the macro's `pdfwidth`, `scaledwidth` or `width`, in any unit a block image's may use.
+A logo that is missing, unreadable or outside the workspace roots is left out with a warning, and the export does not fail.
+
 An empty value, as in `:back-cover-image:`, gives a blank page.
 The value `none`, or `~`, gives no cover, and overrides the theme's.
 
@@ -386,6 +401,7 @@ A language without a grammar, such as Kotlin or C, is highlighted by Typst's hig
 The listing keeps the theme's code font, size, background and border.
 Only the token colours come from the preview.
 Code that is not in a token keeps the theme's `code_font_color`, and callout numbers keep their colour.
+Callout numbers above 20 use the circled numbers asciidoctor-pdf uses (㉑ to ㊿); past 50 the number itself is shown.
 
 == Running content and the title page
 
@@ -414,12 +430,17 @@ Text in a header or footer may use these references.
 * `+{document-title}+`
 * `+{section-title}+`, `+{chapter-title}+` and `+{part-title}+`
 * `+{section-or-chapter-title}+`
+* `+{page-layout}+`, which is `portrait` or `landscape`, following the page
 * Any document attribute. A reference to an attribute that is not set drops that line.
+
+An `image:` macro standing alone in a header or footer is found beside the theme.
+One that cannot be shown is left out with a warning, rather than printed as its macro text.
 
 An article opens with its title and the body follows on the first page.
 A book, or an article with the `title-page` attribute, opens with a title page, then the table of contents.
 The table of contents appears when `toc` is set, which a book does by default.
 It lists sections down to `toclevels`, which is 2 unless you set it.
+In a book, a page is listed down to the same limit, as described under xref:#_exporting_a_component[Exporting a component].
 When `toc` or `toc-placement` is `macro` or `preamble`, the table of contents is not put at the top; place it with the `toc::[]` macro.
 
 == The index
@@ -503,7 +524,9 @@ It is used for equations only; the text around them keeps the theme's fonts.
 Each formula's source is its alternative text, so a tagged PDF (PDF/UA-1) carries it.
 
 A formula that cannot be converted, or that holds anything but maths, is shown as its source in a code style.
+So is one that calls a function with fewer or more arguments than it takes, such as `+stem:[\frac{1}]+`, or `\sqrt` with nothing after it, rather than failing the document.
 The export warns with `STEM not typeset: <reason>` and the file and line.
+The rendered preview and HTML give the same message.
 
 == Diagnostics
 
@@ -512,6 +535,10 @@ A missing image is a warning, not a failure.
 So is an image that exists but cannot be read, such as a corrupt or unrecognised file: its alt text is shown and the export warns `image could not be read: <target> (<reason>)` with the file and line, as asciidoctor-pdf warns `could not embed image`.
 A problem with no source position is reported against the page.
 A diagram that failed to render is reported as a warning.
+So is a rendered diagram's SVG that Typst cannot read: the diagram is left out, and the export does not fail.
+An image is read by its content, so a PNG named `.jpg`, or any image named for another format, is shown.
+A link Typst cannot take, such as an empty `link=` on an image or an address over 8,000 bytes, is left as plain text or an unlinked image.
+An index term with no text, such as `((()))`, is left out of the index.
 A page the parser cannot read is shown in the PDF as its source, and the export warns with the file and the parser's message.
 
 == What is not supported
