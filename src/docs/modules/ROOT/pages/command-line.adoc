@@ -29,6 +29,10 @@ adocfoundry-cli doctor [<root>] [--format text|json]
 adocfoundry-cli --version
 ----
 
+Relative paths, those given to `--changed-file` included, are read against the current directory.
+Paths in the output are relative to the workspace root.
+Output piped to a command that stops reading early, such as `head`, ends quietly, and the exit code is the one the command earned.
+
 == check
 
 `check` opens the workspace at `<root>`, waits for indexing to finish and prints every diagnostic, sorted by path.
@@ -71,6 +75,8 @@ Lines and columns are one-based, and the column counts bytes.
 
 `range` holds byte offsets into the file.
 
+A folder or file that could not be read, for example for want of permission, was not checked, so it is reported as an error with the code `adoc.unreadable` at line 1, column 1 of its path.
+
 === Exit codes
 
 [cols="1,4"]
@@ -84,8 +90,10 @@ Lines and columns are one-based, and the column counts bytes.
 |At least one diagnostic met `--fail-on`. The default threshold is `error`.
 
 |2
-|Usage or runtime error, such as an unknown option, a bad format or a workspace that could not be indexed in time.
+|Usage or runtime error, such as an unknown option, a bad format, or a workspace that could not be indexed in time or at all (when, for example, a module's `pages` folder cannot be read).
 |===
+
+`audit` exits with 2 too when the workspace could not be indexed, rather than passing an audit of nothing.
 
 The thresholds are `warning` (fails on warnings and errors) and `error`.
 Information diagnostics never fail the check.
@@ -333,7 +341,8 @@ A file argument exports that page as an article.
 By default the PDF is written beside the page with a `.pdf` extension.
 
 A directory that holds an `antora.yml`, or `--component`, exports the component version as a book in navigation order.
-By default the PDF is `<name>.pdf` in the current directory.
+By default the PDF is `<name>.pdf` in the current directory, where `<name>` is the last part of the component's name with any character other than a letter, digit, `-`, `_` or `.` replaced by `-`; a name such as `api/v2` gives `v2.pdf`, so the workspace never decides where the file is written.
+A directory exports the component version it holds, an unversioned (`~`) one included.
 Without a version, `--component` uses the latest version of the component.
 
 [cols="2,4"]
@@ -423,7 +432,7 @@ Git stays off unless the source is a pair of revisions.
 ----
 adocfoundry-cli impact docs --base main --head HEAD
 adocfoundry-cli impact docs --against HEAD --format json --output impact.json
-adocfoundry-cli impact docs --changed-file modules/ROOT/pages/install.adoc
+adocfoundry-cli impact docs --changed-file docs/modules/ROOT/pages/install.adoc
 ----
 
 === Sources
@@ -439,7 +448,7 @@ adocfoundry-cli impact docs --changed-file modules/ROOT/pages/install.adoc
 |`HEAD` against the working tree, which is the files on disk. The command line has no unsaved buffers.
 
 |`--changed-file <path>`
-|The paths named, relative to the root or absolute, against the working tree. Repeat the option for more paths. No base revision and no Git are needed. A path that exists is modified. A path that does not exist was removed, and then the report is partial (`no-base-revision`), since what used it cannot be known.
+|The paths named, relative to the current directory (as `git diff --name-only` prints them when run from the top of the repository) or absolute, against the working tree. Repeat the option for more paths. No base revision and no Git are needed. A path that exists is modified. A path that does not exist was removed, and then the report is partial (`no-base-revision`), since what used it cannot be known.
 |===
 
 Giving more than one source is an error.

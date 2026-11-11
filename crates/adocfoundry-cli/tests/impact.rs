@@ -118,13 +118,16 @@ fn impact_cli_handles_no_git() {
     let root = directory.path().join("docs");
     copy_tree(&repository_root().join("tests/fixtures/impact"), &root);
     let root_text = root.to_string_lossy().into_owned();
+    // Absolute, as the current directory is elsewhere.
+    let nested = root.join(NESTED).to_string_lossy().into_owned();
+    let install = root.join(INSTALL).to_string_lossy().into_owned();
 
     // Explicit paths need no repository.
     let output = cli(&[
         "impact",
         &root_text,
         "--changed-file",
-        NESTED,
+        &nested,
         "--format",
         "json",
     ]);
@@ -140,7 +143,7 @@ fn impact_cli_handles_no_git() {
 
     // A removed path with no base is partial: exit 0, or 2 under --require-complete.
     fs::remove_file(root.join(INSTALL)).unwrap();
-    let partial = cli(&["impact", &root_text, "--changed-file", INSTALL]);
+    let partial = cli(&["impact", &root_text, "--changed-file", &install]);
     assert_eq!(partial.status.code(), Some(0));
     assert!(stdout(&partial)
         .lines()
@@ -151,7 +154,7 @@ fn impact_cli_handles_no_git() {
         "impact",
         &root_text,
         "--changed-file",
-        INSTALL,
+        &install,
         "--require-complete",
     ]);
     assert_eq!(strict.status.code(), Some(2));
@@ -167,7 +170,40 @@ fn impact_cli_handles_no_git() {
         "--base",
         "main",
         "--changed-file",
-        NESTED,
+        &nested,
     ]);
     assert_eq!(ambiguous.status.code(), Some(2));
+}
+
+/// `--changed-file` is read against the current directory, as every other path argument is and
+/// as `git diff --name-only` prints paths from the top of the repository (#510).
+#[test]
+fn impact_changed_files_are_relative_to_the_current_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    copy_tree(
+        &repository_root().join("tests/fixtures/impact"),
+        &directory.path().join("docs"),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(directory.path())
+        .args([
+            "impact",
+            "docs",
+            "--changed-file",
+            &format!("docs/{NESTED}"),
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(report["changes"][0]["path"], NESTED, "{report}");
+    assert_eq!(report["changes"][0]["kind"], "modified", "{report}");
+    assert_eq!(report["counts"]["render"], 2);
 }

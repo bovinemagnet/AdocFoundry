@@ -118,10 +118,12 @@ fn audit_cli_strict_mode_fails_incomplete() {
     use std::os::unix::fs::PermissionsExt;
 
     let (_directory, root) = copy();
-    let locked = root.join("product/modules/ROOT/pages/locked");
+    // Outside the modules: one inside a family folder fails Antora discovery, and the index.
+    let locked = root.join("product/locked");
     fs::create_dir_all(&locked).unwrap();
     fs::write(locked.join("secret.adoc"), "= Secret\n").unwrap();
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = fs::read_dir(&locked).is_ok();
     let root_text = root.to_str().unwrap().to_owned();
 
     let default = cli(&["audit", &root_text, "--format", "json"]);
@@ -135,11 +137,16 @@ fn audit_cli_strict_mode_fails_incomplete() {
     let text = cli(&["audit", &root_text]);
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
 
-    if code(&default) == 0 && json(&default)["completeness"]["status"] == "complete" {
+    if readable {
         // Running with the rights to read anything (as root), so nothing is unreadable.
         return;
     }
-    assert_eq!(code(&default), 0, "passing, with partial coverage");
+    assert_eq!(
+        code(&default),
+        0,
+        "passing, with partial coverage: {}",
+        String::from_utf8_lossy(&default.stderr)
+    );
     let report = json(&default);
     assert_eq!(report["completeness"]["status"], "partial");
     assert_eq!(
@@ -148,7 +155,7 @@ fn audit_cli_strict_mode_fails_incomplete() {
     );
     assert_eq!(
         report["completeness"]["gaps"][0]["affected"][0],
-        "product/modules/ROOT/pages/locked"
+        "product/locked"
     );
     assert_eq!(code(&strict), 2);
     assert!(json(&strict)["findings"].is_array(), "written in full");
@@ -158,6 +165,15 @@ fn audit_cli_strict_mode_fails_incomplete() {
         "the first line says so: {text}"
     );
     assert!(text.contains("with partial coverage"), "{text}");
+
+    // An index that failed audited nothing, which is no pass (#505).
+    let pages = root.join("product/modules/ROOT/pages");
+    fs::set_permissions(&pages, fs::Permissions::from_mode(0o000)).unwrap();
+    let failed = cli(&["audit", &root_text]);
+    fs::set_permissions(&pages, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(code(&failed), 2);
+    assert!(stdout(&failed).is_empty());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("indexing failed"));
 }
 
 #[test]

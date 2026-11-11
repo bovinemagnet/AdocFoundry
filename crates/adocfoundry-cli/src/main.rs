@@ -21,6 +21,7 @@
 //! ```
 
 use std::{
+    io::{self, BufWriter, Write as _},
     path::{Path, PathBuf},
     process::ExitCode,
     time::Duration,
@@ -59,46 +60,108 @@ const USAGE: &str = "usage:
       [--no-nav] [--index-title <title>]
   adocfoundry-cli new-project <folder> --name <name> [--template <id|folder>] [--title <title>]
       [--version <version>] [--subfolder <dir>] [--no-git] [--no-readme] [--no-playbook]
-  adocfoundry-cli --version";
+  adocfoundry-cli --version
+Relative paths, `--changed-file` among them, are read against the current directory.";
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn main() -> ExitCode {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    match run(&arguments) {
-        Ok(code) => code,
-        Err(message) => {
-            eprintln!("adocfoundry-cli: {message}");
-            ExitCode::from(2)
+/// Writes to standard output through an [`Out`], as `print!` does.
+macro_rules! out {
+    ($out:expr, $($argument:tt)*) => {
+        $out.write(format_args!($($argument)*))
+    };
+}
+
+/// Writes a line to standard output through an [`Out`], as `println!` does.
+macro_rules! outln {
+    ($out:expr, $($argument:tt)*) => {
+        $out.write(format_args!("{}\n", format_args!($($argument)*)))
+    };
+}
+
+/// Standard output, locked and buffered once. A failed write ends the output rather than the
+/// program, as `println!` would by panicking: a reader that has gone (`check docs | head`) is
+/// the end of what anyone reads, and the command exits with the code it earned (#513).
+struct Out {
+    writer: BufWriter<io::StdoutLock<'static>>,
+    /// The first failed write, after which nothing more is written.
+    error: Option<io::Error>,
+}
+
+impl Out {
+    fn new() -> Self {
+        Self {
+            writer: BufWriter::new(io::stdout().lock()),
+            error: None,
         }
+    }
+
+    fn write(&mut self, arguments: std::fmt::Arguments<'_>) {
+        if self.error.is_none() {
+            if let Err(error) = self.writer.write_fmt(arguments) {
+                self.error = Some(error);
+            }
+        }
+    }
+
+    /// Writes what is buffered, and returns the error that stopped the output, unless it was
+    /// only that the reader went.
+    fn finish(mut self) -> Option<io::Error> {
+        if self.error.is_none() {
+            if let Err(error) = self.writer.flush() {
+                self.error = Some(error);
+            }
+        }
+        self.error
+            .take()
+            .filter(|error| error.kind() != io::ErrorKind::BrokenPipe)
     }
 }
 
-fn run(arguments: &[String]) -> Result<ExitCode, String> {
+fn main() -> ExitCode {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let mut out = Out::new();
+    let result = run(&arguments, &mut out);
+    // What was written goes out before any message about it.
+    let unwritten = out.finish();
+    match (result, unwritten) {
+        (Err(message), _) => {
+            eprintln!("adocfoundry-cli: {message}");
+            ExitCode::from(2)
+        }
+        (Ok(_), Some(error)) => {
+            eprintln!("adocfoundry-cli: could not write the output: {error}");
+            ExitCode::from(2)
+        }
+        (Ok(code), None) => code,
+    }
+}
+
+fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let Some((command, rest)) = arguments.split_first() else {
         return Err(USAGE.to_owned());
     };
     match command.as_str() {
         "--version" | "-V" => {
-            println!("adocfoundry-cli {}", env!("CARGO_PKG_VERSION"));
+            outln!(out, "adocfoundry-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
         }
         "--help" | "-h" => {
-            println!("{USAGE}");
+            outln!(out, "{USAGE}");
             Ok(ExitCode::SUCCESS)
         }
-        "check" => check(rest),
-        "audit" => audit(rest),
-        "symbols" => symbols(rest),
-        "follow" => follow(rest),
-        "render" => render(rest),
-        "pdf" => pdf(rest),
-        "git-status" => git_status(rest),
-        "graph" => graph(rest),
-        "doctor" => doctor(rest),
-        "new-module" => new_module(rest),
-        "new-project" => new_project(rest),
-        "impact" => impact(rest),
+        "check" => check(rest, out),
+        "audit" => audit(rest, out),
+        "symbols" => symbols(rest, out),
+        "follow" => follow(rest, out),
+        "render" => render(rest, out),
+        "pdf" => pdf(rest, out),
+        "git-status" => git_status(rest, out),
+        "graph" => graph(rest, out),
+        "doctor" => doctor(rest, out),
+        "new-module" => new_module(rest, out),
+        "new-project" => new_project(rest, out),
+        "impact" => impact(rest, out),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
 }
@@ -106,7 +169,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
 /// Makes a module in the component version at `<component-root>` (the folder holding
 /// `antora.yml`) through the engine's `module.new`, as the app's New Module does, and lists the
 /// files it made, relative to the component root.
-fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
+fn new_module(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let nav = !arguments.iter().any(|argument| argument == "--no-nav");
     let arguments: Vec<String> = arguments
         .iter()
@@ -165,10 +228,10 @@ fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
     }
     made.sort();
     for file in made {
-        println!("made {file}");
+        outln!(out, "made {file}");
     }
     if nav {
-        println!("listed modules/{name}/nav.adoc in antora.yml");
+        outln!(out, "listed modules/{name}/nav.adoc in antora.yml");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -176,7 +239,7 @@ fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
 /// Makes an Antora project in `<folder>` (empty, or with `--subfolder` for a code repository)
 /// through the engine's `project.new`, as the app's New Antora Project does, and lists the files
 /// it made, relative to the folder.
-fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
+fn new_project(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let flags = ["--no-git", "--no-readme", "--no-playbook"];
     let has = |flag: &str| arguments.iter().any(|argument| argument == flag);
     let (git, readme, playbook) = (!has("--no-git"), !has("--no-readme"), !has("--no-playbook"));
@@ -236,10 +299,10 @@ fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| error.to_string())?;
     made.sort();
     for file in made {
-        println!("made {file}");
+        outln!(out, "made {file}");
     }
     if !had_repository && root.join(".git").exists() {
-        println!("initialised a Git repository");
+        outln!(out, "initialised a Git repository");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -248,7 +311,7 @@ fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
 /// Git refs, `HEAD` against the working tree, or for paths named, as text or JSON. The exit
 /// code is 0 for a finished analysis, however many impacts; 2 when the source is invalid or
 /// unavailable, or the analysis is partial under `--require-complete`.
-fn impact(arguments: &[String]) -> Result<ExitCode, String> {
+fn impact(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let require_complete = arguments
         .iter()
         .any(|argument| argument == "--require-complete");
@@ -276,11 +339,14 @@ fn impact(arguments: &[String]) -> Result<ExitCode, String> {
     if !matches!(format, "text" | "json") {
         return Err(format!("unknown format `{format}`"));
     }
+    let root = adoc_index::normalize_path(Path::new(root));
+    // Read against the current directory, as `git diff --name-only` gives them from the top of
+    // the repository, and handed to the engine relative to the root.
     let changed: Vec<PathBuf> = options
         .iter()
         .filter(|(name, _)| *name == "changed-file")
-        .map(|(_, path)| PathBuf::from(path))
-        .collect();
+        .map(|(_, path)| within(&root, path))
+        .collect::<Result<_, _>>()?;
     let source = match (
         option(&options, "base"),
         option(&options, "head"),
@@ -310,7 +376,6 @@ fn impact(arguments: &[String]) -> Result<ExitCode, String> {
             .parse()
             .map_err(|_| format!("--max-impacts takes a number, not `{max}`"))?;
     }
-    let root = adoc_index::normalize_path(Path::new(root));
     let mut engine = open_engine(&root, false)?;
     let report = match engine.analyse_impact(&source, limits) {
         Ok(report) => report,
@@ -326,7 +391,7 @@ fn impact(arguments: &[String]) -> Result<ExitCode, String> {
     match option(&options, "output") {
         Some(file) => std::fs::write(file, format!("{written}\n"))
             .map_err(|error| format!("{file}: {error}"))?,
-        None => println!("{written}"),
+        None => outln!(out, "{written}"),
     }
     let incomplete = !report.is_complete();
     Ok(ExitCode::from(if require_complete && incomplete {
@@ -492,10 +557,14 @@ fn open_engine_with(root: &Path, settings: Settings) -> Result<Engine, String> {
     if !engine.wait_for_workers(INDEX_TIMEOUT) {
         return Err("indexing did not finish".to_owned());
     }
+    // A workspace that could not be indexed has nothing to report, which is not a pass.
+    if let Some(error) = engine.index_failure() {
+        return Err(error.to_owned());
+    }
     Ok(engine)
 }
 
-fn check(arguments: &[String]) -> Result<ExitCode, String> {
+fn check(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format", "fail-on"])?;
     let [root] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -517,12 +586,18 @@ fn check(arguments: &[String]) -> Result<ExitCode, String> {
     let failed = entries.iter().any(|entry| entry.meets(threshold));
     if json {
         let output = serde_json::to_string_pretty(&entries).map_err(|error| error.to_string())?;
-        println!("{output}");
+        outln!(out, "{output}");
     } else {
         for entry in &entries {
-            println!(
+            outln!(
+                out,
                 "{}:{}:{}: {} {} {}",
-                entry.path, entry.line, entry.column, entry.severity, entry.code, entry.message
+                entry.path,
+                entry.line,
+                entry.column,
+                entry.severity,
+                entry.code,
+                entry.message
             );
         }
     }
@@ -539,7 +614,7 @@ fn check(arguments: &[String]) -> Result<ExitCode, String> {
 /// code is the report's verdict (Quality PRD §5.4): 0 below the threshold, 1 at it, and 2 when
 /// the audit is unavailable, partial while completeness is required, or the `[quality]`
 /// settings are invalid. The report is written in full before exiting, whatever the code.
-fn audit(arguments: &[String]) -> Result<ExitCode, String> {
+fn audit(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let require_complete = arguments
         .iter()
         .any(|argument| argument == "--require-complete");
@@ -578,9 +653,7 @@ fn audit(arguments: &[String]) -> Result<ExitCode, String> {
     };
 
     let root = adoc_index::normalize_path(Path::new(root));
-    let mut settings = Settings::load(None, Some(&root)).map_err(|error| error.to_string())?;
-    settings.git.enabled = false;
-    let engine = open_engine_with(&root, settings)?;
+    let engine = open_engine_with(&root, audit_settings(&root)?)?;
     // Opening the workspace reads its settings file again, so the options apply afterwards.
     let quality = &engine.settings().quality;
     let problems = quality.problems.clone();
@@ -620,7 +693,7 @@ fn audit(arguments: &[String]) -> Result<ExitCode, String> {
     match option(&options, "output") {
         Some(file) => std::fs::write(file, format!("{written}\n"))
             .map_err(|error| format!("{file}: {error}"))?,
-        None => println!("{written}"),
+        None => outln!(out, "{written}"),
     }
     for problem in &problems {
         eprintln!("adocfoundry-cli: invalid [quality] settings: {problem}");
@@ -631,6 +704,15 @@ fn audit(arguments: &[String]) -> Result<ExitCode, String> {
         2
     };
     Ok(ExitCode::from(code))
+}
+
+/// The settings `audit` opens the workspace at `root` with: its own settings file, never a
+/// user's, and Git off, as the audit reads nothing of it. Opt-in rather than off, so opening
+/// the workspace, which reads the settings again, does not turn it back on (#508).
+fn audit_settings(root: &Path) -> Result<Settings, String> {
+    Settings::load(None, Some(root))
+        .map(Settings::with_git_opt_in)
+        .map_err(|error| error.to_string())
 }
 
 /// A report for reading: its scope and completeness first, the counts, each finding at its
@@ -738,7 +820,7 @@ fn audit_text(
     lines.join("\n")
 }
 
-fn symbols(arguments: &[String]) -> Result<ExitCode, String> {
+fn symbols(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, _) = parse_options(arguments, &[])?;
     let [root, query] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -748,7 +830,8 @@ fn symbols(arguments: &[String]) -> Result<ExitCode, String> {
     for symbol in engine.workspace_symbols(query) {
         let text = std::fs::read_to_string(&symbol.path).unwrap_or_default();
         let (line, column) = LineIndex::new(&text).line_column(symbol.range.start);
-        println!(
+        outln!(
+            out,
             "{:?} {} {}:{}:{}",
             symbol.kind,
             symbol.name,
@@ -760,38 +843,61 @@ fn symbols(arguments: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The root to index for `file`: the parent of the nearest component (so sibling components
-/// resolve), or the file's own directory outside Antora.
+/// `path` made absolute against the current directory, lexically: the file system is not read,
+/// so a path that does not exist is made absolute too. The file `follow`, `render` and `pdf`
+/// take, and their root, go through it, so the component above the file is found wherever the
+/// command runs from and however the two are written (#510); what is printed stays relative to
+/// the root, through `display_path`.
+fn absolute(path: impl AsRef<Path>) -> Result<PathBuf, String> {
+    let path = path.as_ref();
+    std::path::absolute(path)
+        .map(|absolute| adoc_index::normalize_path(&absolute))
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// `path`, read against the current directory, relative to `root` when it lies beneath it, and
+/// otherwise absolute: so a relative root and an absolute path, or the reverse, name the same
+/// file.
+fn within(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let path = absolute(path)?;
+    Ok(match path.strip_prefix(absolute(root)?) {
+        Ok(relative) => relative.to_path_buf(),
+        Err(_) => path,
+    })
+}
+
+/// `path`, read against the current directory, written as the index writes the files beneath
+/// `root`: joined to the root as it was given.
+fn beneath(root: &Path, path: &str) -> Result<PathBuf, String> {
+    Ok(adoc_index::normalize_path(&root.join(within(root, path)?)))
+}
+
+/// The root to index for `file`, an absolute path: the parent of the nearest component (so
+/// sibling components resolve), or the file's own directory outside Antora.
 fn default_root(file: &Path) -> PathBuf {
-    let directory = file.parent().unwrap_or_else(|| Path::new("."));
-    let root = directory
+    let directory = file.parent().unwrap_or(file);
+    directory
         .ancestors()
         .find(|ancestor| ancestor.join("antora.yml").is_file())
         .map_or_else(
             || directory.to_path_buf(),
             |component| component.parent().unwrap_or(component).to_path_buf(),
-        );
-    // A relative path's last ancestor is the empty path, which stands for the current directory.
-    if root.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        root
-    }
+        )
 }
 
-fn follow(arguments: &[String]) -> Result<ExitCode, String> {
+fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["root"])?;
     let [file, offset] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let file = adoc_index::normalize_path(Path::new(file));
+    let file = absolute(file)?;
     let offset: usize = offset
         .parse()
         .map_err(|_| format!("`{offset}` is not a byte offset"))?;
-    let root = option(&options, "root").map_or_else(
-        || default_root(&file),
-        |root| adoc_index::normalize_path(Path::new(root)),
-    );
+    let root = match option(&options, "root") {
+        Some(root) => absolute(root)?,
+        None => default_root(&file),
+    };
 
     let mut engine = open_engine(&root, false)?;
     let id = engine.open(&file).map_err(|error| error.to_string())?;
@@ -802,7 +908,8 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
         Ok(CommandOutcome::Location(location)) => {
             let text = std::fs::read_to_string(&location.path).unwrap_or_default();
             let (line, column) = LineIndex::new(&text).line_column(location.range.start);
-            println!(
+            outln!(
+                out,
                 "{}:{}:{}",
                 display_path(&location.path, &root),
                 line + 1,
@@ -811,7 +918,17 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Ok(CommandOutcome::External(path)) => {
-            println!("external {}", display_path(&path, &root));
+            outln!(out, "external {}", display_path(&path, &root));
+            Ok(ExitCode::SUCCESS)
+        }
+        // An image opens in an image tab, where the app shows it; here it is a path like any
+        // attachment's.
+        Ok(CommandOutcome::OpenedImage(image)) => {
+            let path = engine
+                .image(image)
+                .map(|image| image.path.clone())
+                .ok_or_else(|| format!("unexpected outcome {image:?}"))?;
+            outln!(out, "external {}", display_path(&path, &root));
             Ok(ExitCode::SUCCESS)
         }
         Ok(other) => Err(format!("unexpected outcome {other:?}")),
@@ -824,7 +941,7 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
 }
 
 /// Renders a page to a standalone HTML file, or to standard output, as the preview shows it.
-fn render(arguments: &[String]) -> Result<ExitCode, String> {
+fn render(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let link_images = arguments.iter().any(|argument| argument == "--link-images");
     let arguments: Vec<String> = arguments
         .iter()
@@ -841,11 +958,11 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
             "asciidoc-parser" => std::sync::Arc::new(adoc_dom::AsciidocParser),
             other => return Err(format!("unknown parser `{other}`")),
         };
-    let file = adoc_index::normalize_path(Path::new(file));
-    let root = option(&options, "root").map_or_else(
-        || default_root(&file),
-        |root| adoc_index::normalize_path(Path::new(root)),
-    );
+    let file = absolute(file)?;
+    let root = match option(&options, "root") {
+        Some(root) => absolute(root)?,
+        None => default_root(&file),
+    };
 
     let mut engine = open_engine(&root, false)?;
     engine.set_document_parser(parser);
@@ -865,13 +982,13 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
             };
             std::fs::write(output, html).map_err(|error| format!("{output}: {error}"))?;
         }
-        None => print!("{html}"),
+        None => out!(out, "{html}"),
     }
     Ok(ExitCode::SUCCESS)
 }
 
 /// Exports a page, or a component version as a book, to PDF.
-fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
+fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(
         arguments,
         &[
@@ -931,39 +1048,41 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
             }
         }
         args.typst = option(&options, "typst").map(PathBuf::from);
-        return report_export(&mut engine, args, &root, fail_on);
+        return report_export(&mut engine, args, &root, fail_on, out);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
-    let target = adoc_index::normalize_path(Path::new(target));
+    // A page's PDF goes beside it, named as the page was.
+    let beside = Path::new(target).with_extension("pdf");
+    let target = absolute(target)?;
     let is_dir = target.is_dir();
-    let root = option(&options, "root").map_or_else(
-        || {
-            if is_dir {
-                // A component directory: its parent, so sibling components resolve; the parent
-                // of a relative name such as `guide` is the current directory.
-                if target.join("antora.yml").is_file() {
-                    match target.parent() {
-                        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-                        _ => PathBuf::from("."),
-                    }
-                } else {
-                    target.clone()
-                }
-            } else {
-                default_root(&target)
-            }
-        },
-        |root| adoc_index::normalize_path(Path::new(root)),
-    );
+    let root = match option(&options, "root") {
+        Some(root) => absolute(root)?,
+        // A component directory: its parent, so sibling components resolve.
+        None if is_dir && target.join("antora.yml").is_file() => {
+            target.parent().unwrap_or(&target).to_path_buf()
+        }
+        None if is_dir => target.clone(),
+        None => default_root(&target),
+    };
 
     let mut engine = open_engine(&root, false)?;
+    // The component version to export, `None` its version for one unversioned (`~`).
     let component = match option(&options, "component") {
         Some(spec) => Some(match spec.split_once('@') {
             Some((version, name)) => (name.to_owned(), Some(version.to_owned())),
-            None => (spec.to_owned(), None),
+            // No version: the latest, as Antora reads a coordinate without one.
+            None => (
+                spec.to_owned(),
+                engine
+                    .workspace()
+                    .antora
+                    .latest_version(spec)
+                    .and_then(|latest| latest.version.clone()),
+            ),
         }),
+        // A folder: the version it holds, never the latest in its place (#511).
         None if is_dir => {
             let component = engine
                 .workspace()
@@ -977,19 +1096,12 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
     };
     let (export_target, default_output) = match component {
         Some((name, version)) => {
-            let version = version.or_else(|| {
-                engine
-                    .workspace()
-                    .antora
-                    .latest_version(&name)
-                    .and_then(|latest| latest.version.clone())
-            });
-            let output = PathBuf::from(format!("{name}.pdf"));
+            let output = PathBuf::from(pdf_file_name(&name));
             (ExportTarget::Component { name, version }, output)
         }
         None => {
             let id = engine.open(&target).map_err(|error| error.to_string())?;
-            (ExportTarget::Page(id), target.with_extension("pdf"))
+            (ExportTarget::Page(id), beside)
         }
     };
     let output = option(&options, "output").map_or(default_output, PathBuf::from);
@@ -1002,7 +1114,32 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
         typst: option(&options, "typst").map(PathBuf::from),
         attributes: Vec::new(),
     };
-    report_export(&mut engine, args, &root, fail_on)
+    report_export(&mut engine, args, &root, fail_on, out)
+}
+
+/// The file a component named `name` is exported to by default, in the current directory: the
+/// name's last part, with anything but letters, digits, `-`, `_` and `.` made `-`, so the
+/// workspace's content never decides where the file goes (#511).
+fn pdf_file_name(name: &str) -> String {
+    let last = name
+        .rsplit(['/', '\\'])
+        .find(|part| !part.is_empty())
+        .unwrap_or_default();
+    let safe: String = last
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if safe.chars().all(|character| character == '.') {
+        "component.pdf".to_owned()
+    } else {
+        format!("{safe}.pdf")
+    }
 }
 
 /// Exports and waits, printing each diagnostic and then the output and its page count. Fails
@@ -1012,6 +1149,7 @@ fn report_export(
     args: ExportArgs,
     root: &Path,
     fail_on: Option<DiagnosticSeverity>,
+    out: &mut Out,
 ) -> Result<ExitCode, String> {
     let output = args.output.clone();
     match engine.export_blocking(args, INDEX_TIMEOUT) {
@@ -1031,7 +1169,7 @@ fn report_export(
                     ),
                 }
             }
-            println!("{} ({} pages)", output.display(), summary.pages);
+            outln!(out, "{} ({} pages)", output.display(), summary.pages);
             let failed = fail_on.is_some_and(|threshold| {
                 summary.diagnostics.iter().any(|diagnostic| {
                     threshold == DiagnosticSeverity::Warning
@@ -1053,7 +1191,7 @@ fn report_export(
 
 /// The branch of the repository holding `root`, and its changed AsciiDoc files with the number
 /// of changed line runs in each.
-fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
+fn git_status(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format"])?;
     let [root] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1070,14 +1208,14 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| error.to_string())?;
     if json {
         let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-        println!("{output}");
+        outln!(out, "{output}");
     } else {
-        println!("branch {}", report.head);
+        outln!(out, "branch {}", report.head);
         for file in &report.files {
             let hunks = file
                 .hunks
                 .map_or_else(String::new, |count| format!(" ({count} changed)"));
-            println!("{} {}{hunks}", short_status(file), file.path);
+            outln!(out, "{} {}{hunks}", short_status(file), file.path);
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -1085,7 +1223,7 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
 
 /// The link graph of the workspace at `root`, of a page and its neighbours, or along the
 /// shortest path between two pages, as JSON, DOT or an SVG image.
-fn graph(arguments: &[String]) -> Result<ExitCode, String> {
+fn graph(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     // Flags take no value: take them out before the options.
     let flags = [
         "--no-partials",
@@ -1133,9 +1271,9 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
     };
     let root = adoc_index::normalize_path(Path::new(root));
     let scope = match option(&options, "page") {
-        // Relative, as the root may be: the index holds paths as the root gives them.
+        // Written as the root is: the index holds paths as the root gives them.
         Some(page) => GraphScope::Local {
-            path: adoc_index::normalize_path(Path::new(page)),
+            path: beneath(&root, page)?,
             depth,
         },
         None => GraphScope::Workspace,
@@ -1162,11 +1300,8 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
         if option(&options, "page").is_some() {
             return Err("`--path` and `--page` cannot be used together".to_owned());
         }
-        // Relative, as the root may be, like `--page`.
-        let (from, to) = (
-            adoc_index::normalize_path(Path::new(&from)),
-            adoc_index::normalize_path(Path::new(&to)),
-        );
+        // Written as the root is, like `--page`.
+        let (from, to) = (beneath(&root, &from)?, beneath(&root, &to)?);
         for page in [&from, &to] {
             if engine.workspace().index.file(page).is_none() {
                 return Err(format!(
@@ -1194,10 +1329,11 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
                 let (snapshot, _) = engine
                     .graph_path_view(&filter, &from, &to, directed)
                     .unwrap_or_default();
-                print!("{}", adoc_engine::to_svg_laid_out(&snapshot, &style));
+                out!(out, "{}", adoc_engine::to_svg_laid_out(&snapshot, &style));
             }
-            "dot" => print!("{}", report.to_dot()),
-            _ => println!(
+            "dot" => out!(out, "{}", report.to_dot()),
+            _ => outln!(
+                out,
                 "{}",
                 serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
             ),
@@ -1218,15 +1354,15 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
             colour_by: engine.settings().graph.colour_by,
             dark: flag("--dark"),
         };
-        print!("{}", engine.graph_svg(&scope, &filter, &style));
+        out!(out, "{}", engine.graph_svg(&scope, &filter, &style));
         return Ok(ExitCode::SUCCESS);
     }
     let report = engine.graph_report(&root, &scope, &filter);
     if format == "dot" {
-        print!("{}", report.to_dot());
+        out!(out, "{}", report.to_dot());
     } else {
         let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-        println!("{output}");
+        outln!(out, "{output}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -1256,7 +1392,7 @@ fn change_letter(name: &str) -> char {
 
 /// The doctor report, for support requests: with the user settings file the app reads, and
 /// `root`'s workspace settings when given.
-fn doctor(arguments: &[String]) -> Result<ExitCode, String> {
+fn doctor(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format"])?;
     let json = match option(&options, "format").unwrap_or("text") {
         "text" => false,
@@ -1279,9 +1415,44 @@ fn doctor(arguments: &[String]) -> Result<ExitCode, String> {
         .run();
     if json {
         let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-        println!("{output}");
+        outln!(out, "{output}");
     } else {
-        print!("{}", report.to_text());
+        out!(out, "{}", report.to_text());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Opening the workspace reads its settings again, which must leave Git off: the audit
+    /// reads nothing of it, so it neither finds the repository nor waits for its workers (#508).
+    #[test]
+    fn the_audit_looks_at_no_repository() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = adoc_git::testing::TestRepo::init(directory.path());
+        repository.write("page.adoc", "= Page\n");
+        repository.commit_all("page");
+
+        let root = directory.path();
+        let engine = open_engine_with(root, audit_settings(root).unwrap()).unwrap();
+        assert!(engine.git().repositories().is_empty());
+    }
+
+    #[test]
+    fn a_component_name_gives_a_file_name_in_the_current_directory() {
+        for (name, file) in [
+            ("guide", "guide.pdf"),
+            ("api/v2", "v2.pdf"),
+            ("../../escaped", "escaped.pdf"),
+            ("/etc/passwd", "passwd.pdf"),
+            ("C:\\Windows\\x", "x.pdf"),
+            ("a b:c", "a-b-c.pdf"),
+            ("v1.0_beta-2", "v1.0_beta-2.pdf"),
+            ("..", "component.pdf"),
+        ] {
+            assert_eq!(pdf_file_name(name), file, "{name}");
+        }
+    }
 }

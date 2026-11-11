@@ -931,3 +931,277 @@ fn new_project_scaffolds_a_component_that_checks_clean() {
         "{descriptor}"
     );
 }
+
+/// Output to a pipe whose reader has gone (`check docs | head`) ends the output, not the
+/// program: the exit code is the one the command earned, never a panic's 101 (#513).
+#[test]
+fn a_closed_standard_output_ends_the_output_quietly() {
+    let run = |arguments: &[&str]| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(repository_root())
+            .args(arguments)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // The reader goes before the command writes anything.
+        drop(child.stdout.take());
+        child.wait_with_output().unwrap()
+    };
+    for (arguments, earned) in [
+        (&["check", "tests/fixtures/antora-broken-references"][..], 0),
+        (
+            &[
+                "check",
+                "tests/fixtures/antora-broken-references",
+                "--fail-on",
+                "warning",
+            ][..],
+            1,
+        ),
+        (
+            &["symbols", "tests/fixtures/antora-multi-component", "e"][..],
+            0,
+        ),
+        (&["graph", "tests/fixtures/graph"][..], 0),
+    ] {
+        let output = run(arguments);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(earned),
+            "{arguments:?}: {stderr}"
+        );
+        assert!(!stderr.contains("panicked"), "{arguments:?}: {stderr}");
+    }
+}
+
+/// An image target opens in an image tab in the app; here it is printed as an attachment's
+/// is, rather than failing as an unexpected outcome (#506).
+#[test]
+fn follow_prints_an_image_target() {
+    let page = "tests/fixtures/images/guide.adoc";
+    let text = std::fs::read_to_string(repository_root().join(page)).unwrap();
+    let offset = text.find("present.svg").unwrap() + 2;
+    let output = cli(&["follow", page, &offset.to_string()]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(stdout(&output).trim(), "external media/present.svg");
+}
+
+/// What could not be read was not checked, so `check` says so rather than passing it in
+/// silence: a folder the index left out is an error in the report, and an index that failed
+/// is a runtime error (#505).
+#[cfg(unix)]
+#[test]
+fn check_reports_what_it_could_not_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    copy_tree(
+        &repository_root().join("tests/fixtures/antora-broken-references"),
+        &root,
+    );
+    let notes = root.join("notes");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(notes.join("note.adoc"), "= Note\n\nxref:nope.adoc[]\n").unwrap();
+    let lock = |folder: &Path, mode| {
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let check = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(directory.path())
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+
+    lock(&notes, 0o000);
+    let readable = std::fs::read_dir(&notes).is_ok();
+    let text = check(&["check", "docs"]);
+    let json = check(&["check", "docs", "--format", "json"]);
+    lock(&notes, 0o755);
+    if readable {
+        // Running with the rights to read anything (as root), so nothing is unreadable.
+        return;
+    }
+    assert_eq!(text.status.code(), Some(1), "an error by default");
+    assert!(
+        stdout(&text)
+            .lines()
+            .any(|line| line.starts_with("notes:1:1: error adoc.unreadable ")),
+        "{}",
+        stdout(&text)
+    );
+    let entries: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert!(
+        entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "notes" && entry["code"] == "adoc.unreadable"),
+        "{entries}"
+    );
+
+    // A module's family folder that cannot be read fails Antora discovery, and the index.
+    let pages = root.join("modules/ROOT/pages");
+    lock(&pages, 0o000);
+    let failed = check(&["check", "docs"]);
+    lock(&pages, 0o755);
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert_eq!(failed.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("indexing failed"), "{stderr}");
+}
+
+/// Every path argument is read against the current directory, so the workspace is the same
+/// wherever the command runs from and however its paths are written (#510).
+#[test]
+fn paths_are_read_against_the_current_directory() {
+    let succeeded = |output: &Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        stdout(output)
+    };
+
+    // From inside a pages folder, the component above is still found.
+    let pages = "tests/fixtures/antora-single-component/modules/ROOT/pages";
+    let html = succeeded(&cli_in(pages, &["render", "index.adoc"]));
+    assert!(
+        html.contains("<a href=\"../../security/pages/authentication.html\">Authentication</a>"),
+        "{html}"
+    );
+    assert!(!html.contains("class=\"unresolved\""), "{html}");
+
+    // From a component's own folder, its siblings are in the workspace.
+    let alpha = "tests/fixtures/antora-multi-component/alpha";
+    let page = "modules/ROOT/pages/index.adoc";
+    let text = std::fs::read_to_string(repository_root().join(alpha).join(page)).unwrap();
+    let offset = (text.find("xref:beta::index.adoc").unwrap() + 6).to_string();
+    let followed = succeeded(&cli_in(alpha, &["follow", page, &offset]));
+    assert_eq!(followed.trim(), "beta/modules/ROOT/pages/index.adoc:1:1");
+
+    // An absolute root with a relative file.
+    let fixture = "tests/fixtures/antora-single-component";
+    let absolute = std::path::absolute(repository_root().join(fixture)).unwrap();
+    let absolute = absolute.to_str().unwrap();
+    let page = format!("{fixture}/modules/ROOT/pages/index.adoc");
+    let text = std::fs::read_to_string(repository_root().join(&page)).unwrap();
+    let offset = (text.find("xref:").unwrap() + 6).to_string();
+    let followed = succeeded(&cli(&["follow", &page, &offset, "--root", absolute]));
+    assert_eq!(
+        followed.trim(),
+        "modules/security/pages/authentication.adoc:1:1"
+    );
+    let html = succeeded(&cli(&["render", &page, "--root", absolute]));
+    assert!(!html.contains("class=\"unresolved\""), "{html}");
+
+    // An absolute root with a relative page, and the reverse.
+    let graph = std::path::absolute(repository_root().join("tests/fixtures/graph")).unwrap();
+    let configure = "tests/fixtures/graph/guide/modules/ROOT/pages/configure.adoc";
+    succeeded(&cli(&[
+        "graph",
+        graph.to_str().unwrap(),
+        "--page",
+        configure,
+    ]));
+    succeeded(&cli(&[
+        "graph",
+        "tests/fixtures/graph",
+        "--page",
+        graph
+            .join("guide/modules/ROOT/pages/configure.adoc")
+            .to_str()
+            .unwrap(),
+    ]));
+
+    // A relative component folder with an absolute root. Copied, so the diagram cache is
+    // written outside the repository.
+    let directory = tempfile::tempdir().unwrap();
+    copy_tree(
+        &repository_root().join("tests/fixtures/pdf/book"),
+        &directory.path().join("book"),
+    );
+    // As the current directory is read, with any link in the temporary folder's path followed.
+    let book = directory.path().canonicalize().unwrap().join("book");
+    let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(directory.path())
+        .args(["pdf", "book/guide", "--root", book.to_str().unwrap()])
+        .output()
+        .unwrap();
+    succeeded(&output);
+    assert!(directory.path().join("guide.pdf").is_file());
+}
+
+/// A component folder is exported as the component version it holds, and to a file in the
+/// current directory whatever the component's name says (#511).
+#[test]
+fn pdf_exports_the_component_folder_named_to_the_current_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let work = directory.path().join("work");
+    std::fs::create_dir(&work).unwrap();
+    let docs = work.join("docs");
+    copy_tree(
+        &repository_root().join("tests/fixtures/antora-versions"),
+        &docs,
+    );
+    // Unversioned and a prerelease, so not the latest version: 2.0 is.
+    std::fs::write(
+        docs.join("main/antora.yml"),
+        "name: product\nversion: ~\nprerelease: true\n",
+    )
+    .unwrap();
+    let pdf = |arguments: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(&work)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        stdout(&output)
+    };
+
+    pdf(&["pdf", "docs/main", "--typst", "main.typ"]);
+    let typst = std::fs::read_to_string(work.join("main.typ")).unwrap();
+    assert!(typst.contains("[#\"Product\"]"), "{typst}");
+    assert!(!typst.contains("Product 2.0"), "{typst}");
+    // Without a version, `--component` is the latest version, as Antora reads it.
+    pdf(&[
+        "pdf",
+        "docs",
+        "--component",
+        "product",
+        "--typst",
+        "latest.typ",
+        "--output",
+        "latest.pdf",
+    ]);
+    let typst = std::fs::read_to_string(work.join("latest.typ")).unwrap();
+    assert!(typst.contains("Product 2.0"), "{typst}");
+
+    // A name that is a path writes only its last part, here.
+    for name in ["api/v2", "../../escaped"] {
+        std::fs::write(
+            docs.join("v1/antora.yml"),
+            format!("name: '{name}'\nversion: '1.0'\n"),
+        )
+        .unwrap();
+        let last = name.rsplit('/').next().unwrap();
+        let printed = pdf(&["pdf", "docs/v1"]);
+        assert!(printed.starts_with(&format!("{last}.pdf (")), "{printed}");
+        assert!(work.join(format!("{last}.pdf")).is_file(), "{name}");
+    }
+    assert!(!directory.path().join("escaped.pdf").exists());
+    assert!(!work.join("api").exists());
+}
