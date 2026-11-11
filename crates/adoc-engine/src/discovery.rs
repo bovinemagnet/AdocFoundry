@@ -264,7 +264,7 @@ impl Engine {
 
     /// The ids each section of the indexed page at `path` is reached by, in section order: its
     /// anchor, or the id generated from its title as the component's `idprefix` and
-    /// `idseparator` make it.
+    /// `idseparator` make it; empty where only rendering the title could tell it.
     #[must_use]
     pub fn section_ids(&self, path: &Path) -> Vec<String> {
         let path = normalize_path(path);

@@ -5,8 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use adoc_core::{
-    asciidoctor_id, canonical_id, section_ids, Document, IdStyle, Location, Reference,
-    ReferenceKind, Section, SourceRange,
+    section_ids, Document, IdStyle, Location, Reference, ReferenceKind, Section, SourceRange,
 };
 use adoc_index::{normalize_path, FileEntry, IncludeLocation, ReferenceLocation};
 
@@ -134,9 +133,10 @@ pub fn anchor_at(
         .iter()
         .position(|section| section.range.start <= offset && offset <= section.range.end)
     {
-        return Some(AnchorTarget {
+        let id = crate::xref::section_ids(&ws.antora, path, document).swap_remove(section);
+        return (!id.is_empty()).then(|| AnchorTarget {
             path: path.to_path_buf(),
-            id: crate::xref::section_ids(&ws.antora, path, document).swap_remove(section),
+            id,
         });
     }
     let reference = document
@@ -268,7 +268,9 @@ fn anchor_ids(ws: &WorkspaceState, anchor: &AnchorTarget) -> Vec<String> {
             let numbered = [IdStyle::Antora, IdStyle::Asciidoctor].map(|style| {
                 section_ids(&document.sections, &document.anchors, style).swap_remove(at)
             });
-            if numbered == [canonical_id(&section.title), asciidoctor_id(&section.title)] {
+            let unnumbered = [IdStyle::Antora, IdStyle::Asciidoctor]
+                .map(|style| style.generate(&section.title).unwrap_or_default());
+            if numbered == unnumbered {
                 ids.extend(section.implicit_ids());
             } else {
                 ids.extend(numbered);
