@@ -583,9 +583,15 @@ fn open_in_version_resolves_same_resource_in_other_root() {
         .iter()
         .map(|root| adoc_index::normalize_path(&fixture.join(root)))
         .collect();
-    let mut engine = engine();
+    // Versions come from the catalog, not Git.
+    let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
     engine.open_workspace(roots.clone()).unwrap();
     assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    // The fixture lies inside the developer's checkout, whose repository is not the test's.
+    assert!(
+        engine.git().repositories().is_empty(),
+        "a fixture opened in place reads no repository"
+    );
     let feature = |root: &Path| root.join("modules/ROOT/pages/feature.adoc");
     let id = engine.open(&feature(&roots[2])).unwrap();
 
