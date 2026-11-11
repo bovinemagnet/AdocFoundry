@@ -502,6 +502,27 @@ fn pdf_export_never_writes_through_a_link() {
 }
 
 #[test]
+fn pdf_export_never_replaces_a_page_or_another_file() {
+    let (_directory, root) = scratch("references");
+    std::fs::write(root.join("notes.txt"), "keep me").unwrap();
+    let before = common::snapshot(&root);
+    let mut client = Client::start(&root, true);
+    for output in ["other.adoc", "notes.txt"] {
+        let result = client.call_result(
+            "export_pdf",
+            json!({ "path": "index.adoc", "output": output }),
+        );
+        assert_eq!(result["isError"], true, "{output}: {result}");
+        assert_eq!(
+            result["_meta"]["error"]["code"], "invalid_argument",
+            "{output}: {result}"
+        );
+    }
+    assert_eq!(common::snapshot(&root), before, "nothing replaced");
+    client.stop();
+}
+
+#[test]
 fn includes_stay_inside_the_roots() {
     let (_directory, root) = escaping_workspace("= Page\n\ninclude::../outside.adoc[]\n");
     #[cfg(unix)]

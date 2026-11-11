@@ -293,7 +293,8 @@ struct ExportPdfArgs {
     path: Option<String>,
     /// Or a component version to export as a book: `name` or `version@name`.
     component: Option<String>,
-    /// The PDF to write, inside a root.
+    /// The PDF to write, inside a root. A file there already is replaced only when it is a
+    /// `.pdf`.
     output: String,
     theme: Option<String>,
     /// `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a`, `pdf-ua-1`.
@@ -1239,6 +1240,16 @@ impl Server {
             if std::fs::symlink_metadata(&output).is_ok_and(|meta| meta.file_type().is_symlink()) {
                 return Err(Failure::invalid(format!(
                     "{} is a link, which is not written through",
+                    args.output
+                )));
+            }
+            // Only a PDF is replaced: never a page, nor any other file there already.
+            let pdf = output
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+            if (!pdf && output.exists()) || state.engine.workspace().index.file(&output).is_some() {
+                return Err(Failure::invalid(format!(
+                    "{} is there already and is not a PDF; export to a `.pdf` file",
                     args.output
                 )));
             }
