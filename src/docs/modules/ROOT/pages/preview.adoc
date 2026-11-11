@@ -237,6 +237,10 @@ The preview updates when a diagram finishes, so the page never waits on one.
 
 Rendered diagrams are cached by a checksum of their source and options in `<workspace>/.cache/adocfoundry/diagrams/`.
 A diagram drawn by Graphviz, PlantUML or D2 is also keyed by the program that drew it and the page's folder, so a different or upgraded tool draws it afresh.
+It is keyed too by the size and modification time of each local file the diagram names for its tool to read: PlantUML's `!include`, `!include_many`, `!include_once`, `!includesub`, `!import` and `!theme ... from`, Graphviz's `image` and `shapefile`, and D2's imports (`x: @file`, `...@file`) and local `icon` paths.
+Editing such a file therefore draws the diagram again, in the preview and in exports, and the preview and visual editor show it again as soon as the change is saved.
+Only plain paths inside the page's folder count: a path that leaves the folder, an absolute path, a URL, PlantUML's standard library (`<...>`) and a name made from a variable are not followed, and neither are the files an included file includes in turn.
+A file that does not exist, or cannot be read, never stops the diagram from rendering.
 The `.cache` folder is skipped by workspace discovery by default.
 
 TIP: On macOS an application started from the Dock does not see your shell's `PATH`, so a Homebrew tool is often not found.

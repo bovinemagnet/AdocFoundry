@@ -899,6 +899,7 @@ impl Engine {
                 }
             } else if *change == Change::File {
                 catalogued.extend(self.catalog_file_changed(path, None));
+                self.diagram_input_changed(path);
             }
         }
         if settings {

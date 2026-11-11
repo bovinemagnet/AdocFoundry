@@ -186,13 +186,27 @@ impl DiagramProvider for ExternalProvider {
         ExternalProvider::look_again(self);
     }
 
+    /// The program, the page's folder, and the size and modification time of each file the
+    /// diagram names for the tool to read there, so editing an included file draws it again.
     fn identity(&self, request: &DiagramRequest) -> String {
         let folder = request
             .directory
             .as_deref()
             .map(|folder| folder.display().to_string())
             .unwrap_or_default();
-        format!("{}\n{folder}", self.fingerprint())
+        let mut identity = format!("{}\n{folder}", self.fingerprint());
+        for input in self.inputs(request) {
+            identity.push_str(&format!("\n{} {}", input.display(), file_stamp(&input)));
+        }
+        identity
+    }
+
+    fn inputs(&self, request: &DiagramRequest) -> Vec<PathBuf> {
+        request
+            .directory
+            .as_deref()
+            .map(|folder| crate::reads::files_read(&request.kind, &request.source, folder))
+            .unwrap_or_default()
     }
 
     fn render(&self, request: &DiagramRequest) -> Result<String, DiagramError> {

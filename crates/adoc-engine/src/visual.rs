@@ -234,10 +234,11 @@ impl Engine {
             return;
         };
         let (id, version, dom) = (parse.id, parse.version, parse.dom.clone());
-        let sources = parse.sources.clone();
+        let mut sources = parse.sources.clone();
         let model = Model::build(&path, &parse.text, &dom);
         self.trim_diagram_failures();
-        let (view, waiting) = self.view_of(&path, &dom, true);
+        let (view, waiting, inputs) = self.view_and_inputs(&path, &dom, true);
+        sources.extend(inputs);
         let current = Arc::new(VisualDocument {
             document: id,
             version,
@@ -283,6 +284,14 @@ impl Engine {
                 self.visual.marked += 1;
             }
         }
+    }
+
+    /// Whether a visual view was built from `path`, or has a diagram that reads it.
+    pub(crate) fn visual_reads(&self, path: &Path) -> bool {
+        self.visual
+            .sessions
+            .values()
+            .any(|session| session.sources.contains(path))
     }
 
     /// Marks every model out of date, after a catalog or index change.

@@ -963,6 +963,89 @@ fn remembered_diagram_failures_are_bounded() {
     assert_eq!(engine.diagram_failures(), adoc_engine::MAX_DIAGRAM_FAILURES);
 }
 
+/// A renderer that draws what the file beside the page, `styles.puml`, holds, keyed by it as
+/// the external tools are keyed by the files they include.
+struct ReadsStyles;
+
+impl ReadsStyles {
+    fn styles(request: &adoc_diagrams::DiagramRequest) -> PathBuf {
+        request.directory.clone().unwrap().join("styles.puml")
+    }
+}
+
+impl adoc_diagrams::DiagramProvider for ReadsStyles {
+    fn kinds(&self) -> &[&str] {
+        &["plantuml"]
+    }
+
+    fn inputs(&self, request: &adoc_diagrams::DiagramRequest) -> Vec<PathBuf> {
+        vec![Self::styles(request)]
+    }
+
+    fn identity(&self, request: &adoc_diagrams::DiagramRequest) -> String {
+        fs::read_to_string(Self::styles(request)).unwrap_or_default()
+    }
+
+    fn render(
+        &self,
+        request: &adoc_diagrams::DiagramRequest,
+    ) -> Result<String, adoc_diagrams::DiagramError> {
+        let styles = fs::read_to_string(Self::styles(request)).unwrap_or_default();
+        Ok(format!("<svg>{styles}</svg>"))
+    }
+}
+
+#[test]
+fn a_change_to_a_file_a_diagram_reads_previews_its_page_again() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_engine::normalize_path(&directory.path().join("docs"));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("page.adoc"),
+        "= Page\n\n[plantuml]\n....\n!include styles.puml\nA -> B\n....\n",
+    )
+    .unwrap();
+    fs::write(root.join("styles.puml"), "first").unwrap();
+    let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+    engine.set_diagrams(Diagrams::with_providers(
+        DiagramCache::new(directory.path().join("cache")),
+        vec![Box::new(ReadsStyles)],
+    ));
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+    let id = engine.open(&root.join("page.adoc")).unwrap();
+    engine.request_preview(id);
+    let drawn = |engine: &Engine| {
+        blocks(engine, id)
+            .into_iter()
+            .find_map(|block| match block.kind {
+                ViewKind::Diagram(DiagramView::Svg(path)) => fs::read_to_string(path).ok(),
+                _ => None,
+            })
+    };
+    let until = |engine: &mut Engine, wanted: &str| {
+        let deadline = std::time::Instant::now() + WAIT;
+        while std::time::Instant::now() < deadline {
+            engine.pump();
+            if engine.rendered_preview(id).is_some() && drawn(engine).as_deref() == Some(wanted) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    };
+    assert!(until(&mut engine, "<svg>first</svg>"));
+
+    // Nothing but the included file changes, on disk: the watcher's report draws it again.
+    std::thread::sleep(Duration::from_millis(100));
+    fs::write(root.join("styles.puml"), "second").unwrap();
+    assert!(
+        until(&mut engine, "<svg>second</svg>"),
+        "{:?}",
+        drawn(&engine)
+    );
+}
+
 // --- the pause in typing (#401) ------------------------------------------------------------------
 
 /// A page shown in the preview, its preview up to date, with "Typed." just typed at its end.

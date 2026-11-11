@@ -4,6 +4,7 @@
 mod cache;
 mod external;
 mod mermaid;
+mod reads;
 
 use std::{
     collections::{BTreeMap, HashSet},
@@ -155,6 +156,11 @@ pub trait DiagramProvider: Send + Sync {
     /// Forgets what the provider found out about its tools, so the next render looks again.
     /// Nothing by default.
     fn look_again(&self) {}
+    /// The local files the diagram names for the renderer to read, such as a PlantUML
+    /// `!include`, whose changes change the image. None by default.
+    fn inputs(&self, _request: &DiagramRequest) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 /// The providers and the cache the preview renders diagrams through.
@@ -239,6 +245,15 @@ impl Diagrams {
             hasher.update(part.as_bytes());
         }
         hex(&hasher.finalize())
+    }
+
+    /// The local files `request` names for its renderer to read ([`DiagramProvider::inputs`]):
+    /// a change to one is a reason to show the diagram again.
+    #[must_use]
+    pub fn inputs(&self, request: &DiagramRequest) -> Vec<PathBuf> {
+        self.provider(&request.kind)
+            .map(|provider| provider.inputs(request))
+            .unwrap_or_default()
     }
 
     /// Has every provider look for its tools again, so one installed or upgraded since is used.
@@ -667,6 +682,131 @@ mod tests {
         };
         let diagrams = Diagrams::with_tools(DiagramCache::new(dir.path().join("cache")), &tools);
         assert_ne!(diagrams.checksum(&request), diagrams.checksum(&elsewhere));
+    }
+
+    /// A diagram of `kind` holding `source`, on a page in `folder`, and the renderer of a
+    /// provider whose tool is a stub that is never run.
+    fn keyed(folder: &Path, kind: &str, source: &str) -> (Diagrams, DiagramRequest) {
+        let provider = ExternalProvider::new(
+            vec!["graphviz", "plantuml", "d2"],
+            "adoc-diagrams-stub-tool",
+            Vec::new(),
+        );
+        let diagrams = Diagrams::with_providers(
+            DiagramCache::new(folder.join("cache")),
+            vec![Box::new(provider)],
+        );
+        let request = DiagramRequest {
+            directory: Some(folder.to_path_buf()),
+            ..DiagramRequest::new(kind, source)
+        };
+        (diagrams, request)
+    }
+
+    #[test]
+    fn a_file_a_diagram_includes_is_part_of_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path();
+        std::fs::create_dir_all(folder.join("common")).unwrap();
+        std::fs::write(folder.join("common/styles.puml"), "skinparam a b\n").unwrap();
+        std::fs::write(folder.join("unrelated.puml"), "skinparam c d\n").unwrap();
+        let (diagrams, request) = keyed(
+            folder,
+            "plantuml",
+            "@startuml\n!include common/styles.puml\nA -> B\n@enduml\n",
+        );
+        let before = diagrams.checksum(&request);
+        assert_eq!(
+            diagrams.inputs(&request),
+            [folder.join("common/styles.puml")]
+        );
+
+        // Another file changing leaves the key.
+        std::fs::write(folder.join("unrelated.puml"), "skinparam c d e f\n").unwrap();
+        assert_eq!(diagrams.checksum(&request), before);
+
+        // The included file changing changes it, so the image is drawn again.
+        std::fs::write(folder.join("common/styles.puml"), "skinparam a b c\n").unwrap();
+        let after = diagrams.checksum(&request);
+        assert_ne!(after, before);
+
+        // Taken away, it changes again; the diagram is still keyed, never refused.
+        std::fs::remove_file(folder.join("common/styles.puml")).unwrap();
+        assert_ne!(diagrams.checksum(&request), after);
+    }
+
+    #[test]
+    fn graphviz_and_d2_files_are_part_of_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path();
+        for name in ["logo.png", "shape.svg", "shared.d2", "icons/db.svg"] {
+            let path = folder.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "1").unwrap();
+        }
+        let cases = [
+            (
+                "graphviz",
+                "digraph { a [image=\"logo.png\"]; b [shapefile=shape.svg] }",
+            ),
+            ("d2", "x: @shared\ndb: {\n  icon: ./icons/db.svg\n}\n"),
+        ];
+        for (kind, source) in cases {
+            let (diagrams, request) = keyed(folder, kind, source);
+            let before = diagrams.checksum(&request);
+            for input in diagrams.inputs(&request) {
+                std::fs::write(&input, "22").unwrap();
+                let after = diagrams.checksum(&request);
+                assert_ne!(after, before, "{} in {source}", input.display());
+                std::fs::write(&input, "1").unwrap();
+            }
+            assert_eq!(diagrams.inputs(&request).len(), 2, "{source}");
+        }
+    }
+
+    #[test]
+    fn only_local_files_in_the_page_s_folder_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("pages");
+        std::fs::create_dir_all(&folder).unwrap();
+        let source = "@startuml\n\
+            !include ../outside.puml\n\
+            !include /etc/passwd\n\
+            !include <C4/C4_Container>\n\
+            !include https://example.com/x.puml\n\
+            !include $STYLES\n\
+            !include %getenv(\"HOME\")/x.puml\n\
+            !include\n\
+            A -> B\n@enduml\n";
+        let (diagrams, request) = keyed(&folder, "plantuml", source);
+        assert_eq!(diagrams.inputs(&request), Vec::<PathBuf>::new());
+        // Without the page's folder nothing resolves.
+        let mut request = request;
+        request.source = "!include styles.puml\n".to_owned();
+        request.directory = None;
+        assert_eq!(diagrams.inputs(&request), Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn plantuml_names_files_in_each_directive() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path();
+        let source = "@startuml\n\
+            !include a.puml!1\n\
+            !include_many b.puml\n\
+            !include_once \"c d.puml\"\n\
+            !includesub e.puml!PART\n\
+            !import f.zip\n\
+            !theme spacelab from themes\n\
+            !theme plain\n\
+            A -> B\n@enduml\n";
+        let (diagrams, request) = keyed(folder, "plantuml", source);
+        let names: Vec<PathBuf> = ["a.puml", "b.puml", "c d.puml", "e.puml", "f.zip"]
+            .iter()
+            .map(|name| folder.join(name))
+            .chain([folder.join("themes/puml-theme-spacelab.puml")])
+            .collect();
+        assert_eq!(diagrams.inputs(&request), names);
     }
 
     /// Writes `script` as an executable tool in `dir`.

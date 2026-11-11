@@ -107,7 +107,8 @@ struct Parsed {
     version: u64,
     path: PathBuf,
     dom: Arc<Dom>,
-    /// Every file the page was assembled from, itself included.
+    /// Every file the page was assembled from, itself included, and every file its diagrams
+    /// read: a change to any of them previews it again.
     sources: BTreeSet<PathBuf>,
     /// Diagrams still rendering, by checksum.
     waiting: BTreeSet<String>,
@@ -443,6 +444,15 @@ impl Engine {
         }
     }
 
+    /// A file that is not a page changed on disk: the previews and visual views with a diagram
+    /// that reads it, such as a PlantUML `!include`, are shown again, keyed afresh by it.
+    pub(crate) fn diagram_input_changed(&mut self, path: &Path) {
+        self.preview_source_changed(path);
+        if self.visual_reads(path) {
+            self.visual_source_changed(path);
+        }
+    }
+
     /// Schedules a re-render of every previewed document, after a catalog or index change.
     pub(crate) fn preview_workspace_changed(&mut self) {
         let ids: Vec<DocumentId> = self.rendered.requests.keys().copied().collect();
@@ -706,6 +716,18 @@ impl Engine {
         dom: &Dom,
         formulas: bool,
     ) -> (ViewTree, BTreeSet<String>) {
+        let (view, waiting, _) = self.view_and_inputs(path, dom, formulas);
+        (view, waiting)
+    }
+
+    /// [`Engine::view_of`], with the files the view's diagrams read, whose changes are to
+    /// show it again ([`adoc_diagrams::Diagrams::inputs`]).
+    pub(crate) fn view_and_inputs(
+        &mut self,
+        path: &Path,
+        dom: &Dom,
+        formulas: bool,
+    ) -> (ViewTree, BTreeSet<String>, BTreeSet<PathBuf>) {
         let diagrams = self.diagrams();
         let resolver = EngineResolver {
             workspace: &self.workspace,
@@ -713,15 +735,17 @@ impl Engine {
             failed: &self.rendered.failed,
             formulas,
             wanted: RefCell::default(),
+            inputs: RefCell::default(),
             directory: path.parent().map(Path::to_path_buf),
         };
         let view = build_view(path, dom, &resolver);
+        let inputs = resolver.inputs.into_inner();
         let mut waiting = BTreeSet::new();
         for (checksum, request) in resolver.wanted.into_inner() {
             waiting.insert(checksum.clone());
             self.spawn_diagram(&diagrams, checksum, request);
         }
-        (view, waiting)
+        (view, waiting, inputs)
     }
 
     /// Builds the view from the cached parse, starts any diagram it is missing, and publishes.
@@ -730,7 +754,7 @@ impl Engine {
             return;
         };
         let (path, dom) = (parsed.path.clone(), parsed.dom.clone());
-        let (view, waiting) = self.view_of(&path, &dom, true);
+        let (view, waiting, inputs) = self.view_and_inputs(&path, &dom, true);
         let Some(parsed) = self.rendered.parsed.get(&id) else {
             return;
         };
@@ -742,6 +766,7 @@ impl Engine {
         });
         if let Some(parsed) = self.rendered.parsed.get_mut(&id) {
             parsed.waiting = waiting;
+            parsed.sources.extend(inputs);
         }
         let version = preview.version;
         self.rendered.published.insert(id, preview);
@@ -914,6 +939,8 @@ struct EngineResolver<'e> {
     formulas: bool,
     /// Diagrams to render, gathered while building because the view is built immutably.
     wanted: RefCell<Vec<(String, DiagramRequest)>>,
+    /// The files the view's diagrams read.
+    inputs: RefCell<BTreeSet<PathBuf>>,
     /// The folder of the page the view is of, where its diagrams' tools run.
     directory: Option<PathBuf>,
 }
@@ -995,6 +1022,9 @@ impl ViewResolver for EngineResolver<'_> {
             attributes: attributes.clone(),
             directory: self.directory.clone(),
         };
+        self.inputs
+            .borrow_mut()
+            .extend(self.diagrams.inputs(&request));
         let checksum = self.diagrams.checksum(&request);
         if let Some(path) = self.diagrams.cached_at(&checksum) {
             return DiagramView::Svg(path);
