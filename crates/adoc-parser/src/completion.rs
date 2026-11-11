@@ -159,7 +159,8 @@ fn line_context(
             if let Some((file, anchor)) = target.split_once('#') {
                 return Some(CompletionContext {
                     kind: CompletionKind::XrefAnchor {
-                        target: file.to_owned(),
+                        // `other#` names `other.adoc`, as Asciidoctor reads it.
+                        target: adoc_core::xref_file(target).into_owned(),
                     },
                     prefix: anchor.to_owned(),
                     range: SourceRange::new(range_start + file.len() + 1, offset),

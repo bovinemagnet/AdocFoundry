@@ -55,27 +55,26 @@ pub fn links_from(ws: &WorkspaceState, path: &Path) -> Vec<Link> {
 
 fn xrefs(ws: &WorkspaceState, path: &Path, document: &Document, links: &mut Vec<Link>) {
     // A page often names one target many times: each is resolved once.
-    let mut resolved: std::collections::BTreeMap<&str, Option<LinkTarget>> =
+    let mut resolved: std::collections::BTreeMap<String, Option<LinkTarget>> =
         std::collections::BTreeMap::new();
     for reference in &document.references {
         if reference.kind != ReferenceKind::Xref {
             continue;
         }
-        let target = reference
-            .target
-            .split_once('#')
-            .map_or(reference.target.as_str(), |(file, _)| file)
-            .trim();
+        // `other#details` names `other.adoc`, as Asciidoctor reads it.
+        let file = adoc_core::xref_file(&reference.target);
+        let target = file.trim();
         if target.is_empty() || is_dynamic(target) || target.contains("://") {
             continue;
         }
-        let target = resolved.entry(target).or_insert_with(|| {
-            match reference_target_path(&ws.index, &ws.antora, path, target) {
-                Some(found) => Some(LinkTarget::File(normalize_path(&found))),
-                None if published_elsewhere(ws, path, target) => None,
-                None => Some(LinkTarget::Unresolved(target.to_owned())),
-            }
-        });
+        let target =
+            resolved.entry(target.to_owned()).or_insert_with(|| {
+                match reference_target_path(&ws.index, &ws.antora, path, target) {
+                    Some(found) => Some(LinkTarget::File(normalize_path(&found))),
+                    None if published_elsewhere(ws, path, target) => None,
+                    None => Some(LinkTarget::Unresolved(target.to_owned())),
+                }
+            });
         let Some(target) = target.clone() else {
             continue;
         };

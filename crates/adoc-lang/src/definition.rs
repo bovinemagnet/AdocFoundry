@@ -75,13 +75,8 @@ fn resolve_antora_reference(
         return None;
     }
     let context = antora.context_for_path(current_path)?;
-    let (target, anchor) = reference
-        .target
-        .split_once('#')
-        .map_or((reference.target.as_str(), None), |(target, anchor)| {
-            (target, Some(anchor))
-        });
-    let id = parse_resource_id(target).ok()?;
+    let anchor = reference.target.split_once('#').map(|(_, anchor)| anchor);
+    let id = parse_resource_id(&adoc_core::xref_file(&reference.target)).ok()?;
     let resource = AntoraResolver::resolve(antora, &id, &context).ok()?;
     resource_definition(index, resource, anchor)
 }
@@ -133,19 +128,15 @@ pub fn resolve_reference(
     let (target_path, anchor) = match reference.kind {
         ReferenceKind::LocalAnchor => (current_path.to_path_buf(), Some(reference.target.as_str())),
         ReferenceKind::Xref => {
-            let (file, anchor) = reference
-                .target
-                .split_once('#')
-                .map_or((reference.target.as_str(), None), |(file, anchor)| {
-                    (file, Some(anchor))
-                });
+            let anchor = reference.target.split_once('#').map(|(_, anchor)| anchor);
+            let file = adoc_core::xref_file(&reference.target);
             let path = if file.is_empty() {
                 current_path.to_path_buf()
             } else {
                 current_path
                     .parent()
                     .unwrap_or_else(|| Path::new(""))
-                    .join(file)
+                    .join(file.as_ref())
             };
             (path, anchor.filter(|anchor| !anchor.is_empty()))
         }

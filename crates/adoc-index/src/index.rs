@@ -444,13 +444,13 @@ impl WorkspaceIndex {
         for (position, reference) in references.iter().enumerate() {
             if let Some(name) = target_file_name(reference) {
                 self.xrefs_by_name
-                    .entry(name.to_owned())
+                    .entry(name.into_owned())
                     .or_default()
                     .push((shared.clone(), position));
             }
             if let Some(fragment) = target_fragment(reference) {
                 self.by_fragment
-                    .entry(fragment.to_owned())
+                    .entry(fragment.into_owned())
                     .or_default()
                     .push((shared.clone(), position));
             }
@@ -464,7 +464,7 @@ impl WorkspaceIndex {
                 (target_fragment(reference), &mut self.by_fragment),
             ] {
                 if let Some(key) = key {
-                    unlist(map, key, |(file, _)| Arc::ptr_eq(file, shared));
+                    unlist(map, &key, |(file, _)| Arc::ptr_eq(file, shared));
                 }
             }
         }
@@ -783,14 +783,14 @@ fn unlist<T>(map: &mut BTreeMap<String, Vec<T>>, key: &str, of_file: impl Fn(&T)
 fn refile(
     map: &mut BTreeMap<String, Vec<ReferenceAt>>,
     file: &Arc<Path>,
-    keys: &BTreeSet<&str>,
+    keys: &BTreeSet<Cow<'_, str>>,
     references: &[Reference],
-    key_of: fn(&Reference) -> Option<&str>,
+    key_of: fn(&Reference) -> Option<Cow<'_, str>>,
 ) {
     if keys.is_empty() {
         return;
     }
-    let mut places: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut places: BTreeMap<Cow<'_, str>, Vec<usize>> = BTreeMap::new();
     for (position, reference) in references.iter().enumerate() {
         if let Some(key) = key_of(reference).filter(|key| keys.contains(key)) {
             places.entry(key).or_default().push(position);
@@ -799,7 +799,7 @@ fn refile(
     for key in keys {
         unlist(map, key, |(listed, _)| Arc::ptr_eq(listed, file));
         if let Some(positions) = places.remove(key) {
-            map.entry((*key).to_owned()).or_default().extend(
+            map.entry(key.clone().into_owned()).or_default().extend(
                 positions
                     .into_iter()
                     .map(|position| (file.clone(), position)),
@@ -809,16 +809,16 @@ fn refile(
 }
 
 /// The file name an xref's target ends with: `setup.adoc` for `sub/setup.adoc#ports` or
-/// `admin:setup.adoc`.
-fn target_file_name(reference: &Reference) -> Option<&str> {
+/// `admin:setup.adoc`. A page named without `.adoc` before a fragment is filed with it
+/// ([`adoc_core::xref_file`]).
+fn target_file_name(reference: &Reference) -> Option<Cow<'_, str>> {
     if reference.kind != ReferenceKind::Xref {
         return None;
     }
-    let file = reference
-        .target
-        .split_once('#')
-        .map_or(reference.target.as_str(), |(file, _)| file);
-    file_name(file)
+    match adoc_core::xref_file(&reference.target) {
+        Cow::Borrowed(file) => file_name(file).map(Cow::Borrowed),
+        Cow::Owned(file) => file_name(&file).map(|name| Cow::Owned(name.to_owned())),
+    }
 }
 
 /// The last segment of a target: `setup.adoc` for `sub/setup.adoc` or `partial$setup.adoc`.
@@ -828,14 +828,14 @@ fn file_name(target: &str) -> Option<&str> {
 }
 
 /// The anchor id a reference points at, if any.
-fn target_fragment(reference: &Reference) -> Option<&str> {
+fn target_fragment(reference: &Reference) -> Option<Cow<'_, str>> {
     let fragment = match reference.kind {
         ReferenceKind::LocalAnchor => reference.target.as_str(),
         ReferenceKind::Xref => reference.target.split_once('#')?.1,
         ReferenceKind::Link | ReferenceKind::Attribute => return None,
     };
     let fragment = fragment.trim();
-    (!fragment.is_empty()).then_some(fragment)
+    (!fragment.is_empty()).then_some(Cow::Borrowed(fragment))
 }
 
 fn hash_text(text: &str) -> u64 {

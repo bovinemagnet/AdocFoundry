@@ -42,6 +42,7 @@ Codes are stable strings, so you can filter on them in scripts.
 |`adoc.unresolved-xref-file`
 |Warning
 |An `xref:` or `+<<...>>+` names a page that does not exist.
+A page named without its extension before a `#`, as in `+xref:other#details[]+`, is `other.adoc`, as Asciidoctor and Antora read it.
 
 |`adoc.unresolved-anchor`
 |Warning

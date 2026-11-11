@@ -314,17 +314,13 @@ pub fn references_to(ws: &WorkspaceState, target: &Path) -> Vec<Location> {
         .iter()
         .flat_map(|name| ws.index.xrefs_naming(name))
         .filter(|location| {
-            let file_part = location
-                .reference
-                .target
-                .split_once('#')
-                .map_or(location.reference.target.as_str(), |(file, _)| file);
+            let file_part = adoc_core::xref_file(&location.reference.target);
             !file_part.is_empty()
                 && definition::reference_target_path(
                     &ws.index,
                     &ws.antora,
                     location.path,
-                    file_part,
+                    &file_part,
                 )
                 .is_some_and(|path| normalize_path(&path) == target)
         })
@@ -353,6 +349,55 @@ mod tests {
         let mut ws = WorkspaceState::new();
         ws.index_roots(&[fixture(name)]).unwrap();
         ws
+    }
+
+    /// In an Antora component, `xref:other#details[]` names `other.adoc` as Antora 3.2 reads
+    /// it (Asciidoctor adds the extension before Antora resolves the target): it is no problem,
+    /// it leads to the page, it is one of the page's references and a link of the graph.
+    #[test]
+    fn an_extensionless_page_before_a_fragment_is_its_adoc_file_in_a_component() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = normalize_path(&directory.path().join("docs"));
+        let pages = root.join("modules/ROOT/pages");
+        std::fs::create_dir_all(&pages).unwrap();
+        std::fs::write(root.join("antora.yml"), "name: docs\nversion: ~\n").unwrap();
+        let text = "= Index\n\nSee xref:other#details[] and <<other#details,Details>>.\n";
+        std::fs::write(pages.join("index.adoc"), text).unwrap();
+        std::fs::write(
+            pages.join("other.adoc"),
+            "= Other\n\n[#details]\n== Details\n",
+        )
+        .unwrap();
+        let mut ws = WorkspaceState::new();
+        ws.index_roots(std::slice::from_ref(&root)).unwrap();
+        let index = pages.join("index.adoc");
+        let other = pages.join("other.adoc");
+
+        let problems = crate::diagnostics::diagnostics(&ws.index, &ws.antora, &index);
+        assert_eq!(problems, Vec::new());
+
+        let offset = text.find("xref:other").unwrap() + 6;
+        let Some(DefinitionTarget::Location(location)) =
+            definition_at_offset(&ws, &index, text, offset)
+        else {
+            panic!("the xref leads to the page");
+        };
+        assert_eq!(location.path, other);
+
+        assert_eq!(references_to(&ws, &other).len(), 2);
+
+        let linked: Vec<_> = graph::links_from(&ws, &index)
+            .into_iter()
+            .map(|link| link.target)
+            .collect();
+        // One link for each xref, in source order.
+        assert_eq!(
+            linked,
+            [
+                graph::LinkTarget::File(other.clone()),
+                graph::LinkTarget::File(other)
+            ]
+        );
     }
 
     #[test]

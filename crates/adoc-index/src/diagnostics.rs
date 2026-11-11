@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
 };
@@ -105,7 +106,7 @@ struct Lookups<'a> {
     own: PathBuf,
     own_anchors: Option<Anchors<'a>>,
     on_disk: HashMap<PathBuf, bool>,
-    xref_files: HashMap<&'a str, XrefFile<'a>>,
+    xref_files: HashMap<Cow<'a, str>, XrefFile<'a>>,
 }
 
 /// The file an xref's file part names.
@@ -139,10 +140,10 @@ impl<'a> Lookups<'a> {
     }
 
     /// The file `file_target`, not empty, names from the page.
-    fn xref_file(&mut self, index: &'a WorkspaceIndex, file_target: &'a str) -> &XrefFile<'a> {
-        if !self.xref_files.contains_key(file_target) {
+    fn xref_file(&mut self, index: &'a WorkspaceIndex, file_target: Cow<'a, str>) -> &XrefFile<'a> {
+        if !self.xref_files.contains_key(&file_target) {
             let parent = self.own.parent().unwrap_or_else(|| Path::new(""));
-            let path = normalize_path(&parent.join(file_target));
+            let path = normalize_path(&parent.join(file_target.as_ref()));
             // Every indexed file has its anchors, if none.
             let file = match index.anchors_in(&path) {
                 Some(anchors) => XrefFile::Indexed(anchors),
@@ -151,9 +152,9 @@ impl<'a> Lookups<'a> {
                     XrefFile::Missing(format!("Unresolved AsciiDoc xref target: {file_target}"))
                 }
             };
-            self.xref_files.insert(file_target, file);
+            self.xref_files.insert(file_target.clone(), file);
         }
-        &self.xref_files[file_target]
+        &self.xref_files[&file_target]
     }
 }
 
@@ -220,9 +221,9 @@ fn diagnose_xref<'a>(
         return;
     }
 
-    let (file_target, anchor) = target
-        .split_once('#')
-        .map_or((target, None), |(file, anchor)| (file, Some(anchor)));
+    let anchor = target.split_once('#').map(|(_, anchor)| anchor);
+    // `other#details` names `other.adoc`, as Asciidoctor reads it.
+    let file_target = adoc_core::xref_file(target);
     let anchors = if file_target.is_empty() {
         lookups.own_anchors
     } else {
@@ -417,6 +418,37 @@ mod tests {
         );
 
         assert_eq!(workspace_diagnostics(&index, path), Vec::new());
+    }
+
+    /// A target whose path has no extension and is followed by `#` names that path with
+    /// `.adoc`, as Asciidoctor and Antora 3.2 read it: `other#details` is `other.adoc#details`.
+    /// A missing file and a missing anchor are still reported.
+    #[test]
+    fn an_extensionless_page_before_a_fragment_is_its_adoc_file() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            Path::new("docs/other.adoc"),
+            "= Other\n\n[[details]]\n== Details\n",
+        );
+        index.index_source(Path::new("docs/sub/deep.adoc"), "= Deep\n\n[[x]]\n== X\n");
+        index.index_source(
+            path,
+            "= Guide\n\n. xref:other#details[A]\n. <<other#details,B>>\n. xref:other#[E]\n\
+             . xref:sub/deep#x[F]\n. xref:other#nope[G]\n. xref:missing#x[I]\n",
+        );
+
+        let messages: Vec<String> = workspace_diagnostics(&index, path)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect();
+        assert_eq!(
+            messages,
+            [
+                "Unresolved AsciiDoc anchor: nope",
+                "Unresolved AsciiDoc xref target: missing.adoc",
+            ]
+        );
     }
 
     /// Ids given after a style or role, and by the anchor macro, resolve (#522).
