@@ -543,31 +543,45 @@ impl Repository {
             .edit_tree(gix::ObjectId::empty_tree(self.repo.object_hash()))
             .map_err(GitError::git)?;
         for entry in index.entries() {
-            use gix::index::entry::Mode;
+            use gix::index::entry::{Flags, Mode};
             use gix::object::tree::EntryKind;
+            if entry.flags.contains(Flags::INTENT_TO_ADD) {
+                continue; // Not staged yet: `git commit` leaves it out too.
+            }
+            let path = entry.path(&index);
             let kind = match entry.mode {
                 Mode::FILE_EXECUTABLE => EntryKind::BlobExecutable,
                 Mode::SYMLINK => EntryKind::Link,
                 Mode::COMMIT => EntryKind::Commit,
                 Mode::FILE => EntryKind::Blob,
-                _ => continue,
+                // A sparse index's folder outside the cone, its tree as it is.
+                Mode::DIR => EntryKind::Tree,
+                mode => {
+                    return Err(GitError::Git(format!(
+                        "{path} has a mode ({:o}) that cannot be committed here",
+                        mode.bits()
+                    )))
+                }
             };
-            let path = entry.path(&index).to_str_lossy().into_owned();
-            editor
-                .upsert(path.as_str(), kind, entry.id)
-                .map_err(GitError::git)?;
+            // A sparse folder's path ends with `/`.
+            let path = path.strip_suffix(b"/").unwrap_or(path).as_bstr();
+            editor.upsert(path, kind, entry.id).map_err(GitError::git)?;
         }
         let tree = editor.write().map_err(GitError::git)?.detach();
         let head = self.repo.head().map_err(GitError::git)?;
-        let parents: Vec<gix::ObjectId> = if head.is_unborn() {
-            Vec::new()
+        let (head_tree, parents) = if head.is_unborn() {
+            (
+                gix::ObjectId::empty_tree(self.repo.object_hash()),
+                Vec::new(),
+            )
         } else {
             let head_tree = self.repo.head_tree_id().map_err(GitError::git)?.detach();
-            if head_tree == tree {
-                return Err(GitError::NothingToCommit);
-            }
-            vec![self.repo.head_id().map_err(GitError::git)?.detach()]
+            let head_id = self.repo.head_id().map_err(GitError::git)?.detach();
+            (head_tree, vec![head_id])
         };
+        if head_tree == tree {
+            return Err(GitError::NothingToCommit);
+        }
         let id = self
             .repo
             .commit("HEAD", message, tree, parents)

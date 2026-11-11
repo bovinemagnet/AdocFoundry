@@ -514,11 +514,119 @@ fn a_commit_during_a_cherry_pick_is_refused() {
     assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
 }
 
+const IDENTITY: [(&str, &str); 2] = [
+    ("user.name", "Ada Writer"),
+    ("user.email", "ada@example.com"),
+];
+
+/// Builds the repository `setup` makes twice, and checks that `Repository::commit` in one commits
+/// the tree `git commit` does in the other. Returns the tree, as `ls-tree` lists it.
+fn assert_commits_like_git(setup: impl Fn(&Path)) -> String {
+    let ours = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    setup(ours.path());
+    setup(theirs.path());
+    commit(ours.path(), "second").unwrap();
+    git_ok(theirs.path(), &["commit", "-q", "-m", "second"]);
+    let tree = |dir: &Path| git_ok(dir, &["ls-tree", "-r", "-t", "HEAD"]);
+    let expected = tree(theirs.path());
+    assert_eq!(tree(ours.path()), expected);
+    assert_eq!(state(ours.path()), state(theirs.path()));
+    expected
+}
+
+#[test]
+fn an_intent_to_add_file_is_left_out_of_a_commit() {
+    if !has_git() {
+        return;
+    }
+    let tree = assert_commits_like_git(|dir| {
+        init(dir, &IDENTITY);
+        fs::write(dir.join("page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        fs::write(dir.join("draft.adoc"), "draft\n").unwrap();
+        git_ok(dir, &["add", "-N", "draft.adoc"]);
+        fs::write(dir.join("page.adoc"), "two\n").unwrap();
+        git_ok(dir, &["add", "page.adoc"]);
+    });
+    assert!(!tree.contains("draft.adoc"), "{tree}");
+}
+
+#[test]
+fn a_sparse_index_keeps_its_folders_in_a_commit() {
+    if !has_git() {
+        return;
+    }
+    let tree = assert_commits_like_git(|dir| {
+        init(dir, &IDENTITY);
+        for folder in ["docs", "other"] {
+            fs::create_dir(dir.join(folder)).unwrap();
+            fs::write(dir.join(folder).join("page.adoc"), "one\n").unwrap();
+        }
+        commit_all(dir);
+        git_ok(
+            dir,
+            &["sparse-checkout", "set", "--cone", "--sparse-index", "docs"],
+        );
+        let sparse = git_ok(dir, &["ls-files", "--sparse", "--stage"]);
+        assert!(sparse.contains("040000 "), "not a sparse index: {sparse}");
+        fs::write(dir.join("docs/page.adoc"), "two\n").unwrap();
+        git_ok(dir, &["add", "docs/page.adoc"]);
+    });
+    assert!(tree.contains("other/page.adoc"), "{tree}");
+}
+
+#[test]
+fn a_first_commit_with_nothing_staged_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), &IDENTITY);
+    assert!(!git(dir.path(), &["commit", "-q", "-m", "nothing"])
+        .status
+        .success());
+    let error = commit(dir.path(), "nothing").unwrap_err();
+    assert!(error.contains("nothing"), "{error}");
+    assert!(!git(dir.path(), &["rev-parse", "--verify", "-q", "HEAD"])
+        .status
+        .success());
+}
+
 #[cfg(unix)]
 mod unix {
-    use std::os::unix::fs::{symlink, PermissionsExt as _};
+    use std::os::unix::{
+        ffi::OsStrExt as _,
+        fs::{symlink, PermissionsExt as _},
+    };
 
     use super::*;
+
+    #[test]
+    fn a_file_name_that_is_not_utf8_is_committed_as_it_is() {
+        if !has_git() {
+            return;
+        }
+        let tree = assert_commits_like_git(|dir| {
+            init(dir, &IDENTITY);
+            fs::write(dir.join("page.adoc"), "one\n").unwrap();
+            let blob = git_ok(dir, &["hash-object", "-w", "page.adoc"]);
+            // Latin-1, as older repositories hold; not every file system can name a file so.
+            let cacheinfo = [b"100644,", blob.trim().as_bytes(), b",caf\xe9.adoc"].concat();
+            let output = Command::new("git")
+                .args(["update-index", "--add", "--cacheinfo"])
+                .arg(std::ffi::OsStr::from_bytes(&cacheinfo))
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            git_ok(dir, &["add", "page.adoc"]);
+            git_ok(dir, &["commit", "-q", "-m", "first"]);
+            fs::write(dir.join("page.adoc"), "two\n").unwrap();
+            git_ok(dir, &["add", "page.adoc"]);
+        });
+        assert!(tree.contains("\"caf\\351.adoc\""), "{tree}");
+    }
 
     #[test]
     fn a_symlink_to_a_file_is_staged_as_a_link() {
