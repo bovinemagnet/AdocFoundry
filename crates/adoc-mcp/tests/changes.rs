@@ -223,6 +223,66 @@ fn mcp_apply_rejects_stale_revision() {
     client.stop();
 }
 
+#[test]
+fn an_idempotency_key_names_one_preview_and_only_a_change_made_is_replayed() {
+    let (_directory, root) = scratch("discovery");
+    let mut client = Client::start(&root, true);
+    let preview = |client: &mut Client, old_text: &str, new_text: &str| {
+        client
+            .call(
+                "preview_changes",
+                json!({ "operations": [
+                    { "kind": "replace", "path": GUIDE, "old_text": old_text, "new_text": new_text },
+                ] }),
+            )
+            .unwrap()["preview_id"]
+            .clone()
+    };
+
+    // Refused before anything changed: the key is not spent, so the corrected retry applies.
+    let stale = preview(&mut client, "= Guide", "= The Guide");
+    std::fs::write(
+        root.join(GUIDE),
+        read(&root, GUIDE).replace("Read", "Do read"),
+    )
+    .unwrap();
+    let refused = client.call_result(
+        "apply_changes",
+        json!({ "preview_id": stale, "idempotency_key": "k" }),
+    );
+    assert_eq!(error_code(&refused), "stale_preview");
+    let fresh = preview(&mut client, "= Guide", "= The Guide");
+    let applied = client
+        .call(
+            "apply_changes",
+            json!({ "preview_id": fresh, "idempotency_key": "k" }),
+        )
+        .unwrap();
+    assert_eq!(applied["applied"], true, "{applied}");
+    assert!(read(&root, GUIDE).starts_with("= The Guide"));
+
+    // The same key with another preview is refused, and that preview is not applied.
+    let other = preview(&mut client, "= The Guide", "= A Guide");
+    let misused = client.call_result(
+        "apply_changes",
+        json!({ "preview_id": other, "idempotency_key": "k" }),
+    );
+    assert_eq!(error_code(&misused), "invalid_argument");
+    assert!(read(&root, GUIDE).starts_with("= The Guide"));
+
+    // Repeated as it was, the first answer comes back without a second change.
+    let before = read(&root, GUIDE);
+    let retried = client
+        .call(
+            "apply_changes",
+            json!({ "preview_id": fresh, "idempotency_key": "k" }),
+        )
+        .unwrap();
+    assert_eq!(retried, applied);
+    assert_eq!(read(&root, GUIDE), before);
+    client.stop();
+}
+
 #[cfg(unix)]
 #[test]
 fn mcp_multi_file_failure_is_reported_and_recoverable() {
