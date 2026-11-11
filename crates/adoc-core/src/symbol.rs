@@ -25,9 +25,8 @@ impl Section {
             generated_id(&self.title, "_", '_'),
             alphanumeric_id(&self.title),
         ]);
-        ids.retain(|id| !id.is_empty());
         let mut seen = HashSet::new();
-        ids.retain(|id| seen.insert(id.clone()));
+        ids.retain(|id| !id.is_empty() && seen.insert(id.clone()));
         ids
     }
 }
@@ -421,6 +420,15 @@ mod tests {
         let ids = section("What's new?", None, 0).implicit_ids();
         assert!(ids.contains(&"whats-new".to_owned()), "{ids:?}");
         assert!(ids.contains(&"_whats_new".to_owned()), "{ids:?}");
+    }
+
+    #[test]
+    fn implicit_ids_hold_each_form_once() {
+        // Issue #533: `dedup` removed neighbours only.
+        assert_eq!(
+            section("parameters", None, 0).implicit_ids(),
+            ["parameters", "_parameters"]
+        );
     }
 
     #[test]

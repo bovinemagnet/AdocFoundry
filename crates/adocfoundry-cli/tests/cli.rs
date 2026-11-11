@@ -57,6 +57,21 @@ fn check_antora_single_component() {
 }
 
 #[test]
+fn a_page_in_a_build_folder_of_a_module_is_checked_and_indexed() {
+    // Issue #531: catalogued and indexed alike, so an xref to its anchor resolves.
+    let output = cli(&["check", "tests/fixtures/ignored-folders"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert!(
+        !stdout(&output).contains("unresolved"),
+        "{}",
+        stdout(&output)
+    );
+    let output = cli(&["symbols", "tests/fixtures/ignored-folders", "Tools"]);
+    assert!(stdout(&output).contains("build"), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("stray"), "{}", stdout(&output));
+}
+
+#[test]
 fn check_antora_nested_pages() {
     insta::assert_snapshot!(check_json("antora-nested-pages"));
 }
@@ -797,6 +812,34 @@ fn pdf_profile_writes_what_the_app_writes() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("no PDF profile `missing`"));
+}
+
+#[test]
+fn pdf_profile_from_inside_the_workspace_writes_only_inside_it() {
+    // Issue #528: from a relative root, `../../out` was read as `out` and permitted.
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("a/b/book");
+    copy_tree(&repository_root().join("tests/fixtures/pdf/book"), &root);
+    std::fs::create_dir_all(directory.path().join("a/out")).unwrap();
+    std::fs::create_dir_all(root.join("out")).unwrap();
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[pdf.profiles.manual]\nnav = [\"guide/modules/ROOT/nav.adoc\"]\noutput = \"../../out/manual.pdf\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(&root)
+        .args(["pdf", "--profile", "manual"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{}", stdout(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("outside the workspace"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!directory.path().join("a/out/manual.pdf").exists());
+    assert!(!root.join("out/manual.pdf").exists());
 }
 
 #[test]

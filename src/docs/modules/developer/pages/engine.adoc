@@ -936,7 +936,7 @@ The result goes to a temporary file that is renamed over the settings file, and 
 
 `adoc_core::FileAccess` is the policy for which files the engine may read.
 It has two variants: `Any`, the default, and `Within(roots)`.
-`permits(path)` checks the path lexically, then checks the part of it that exists with symbolic links followed.
+`permits(path)` makes the path and each root absolute against the current directory and checks the path lexically (`adoc_core::normalize_path`, which never drops a leading `..`), then checks the part of the path as given that exists with symbolic links followed, so a `..` after a link climbs from where the link leads.
 
 The engine holds one policy (`Engine::set_file_access` and `Engine::file_access`) and applies it when it opens a document, to includes (`SnapshotIncludes`), and to the pages an export reads.
 `adoc-pdf` receives it through `PdfOptions::access`.

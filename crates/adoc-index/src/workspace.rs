@@ -1,9 +1,9 @@
 use std::{
     fs, io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
-pub use adoc_core::DEFAULT_IGNORED_DIRECTORIES;
+pub use adoc_core::{normalize_path, DEFAULT_IGNORED_DIRECTORIES};
 
 #[must_use]
 pub fn is_asciidoc_path(path: &Path) -> bool {
@@ -12,10 +12,11 @@ pub fn is_asciidoc_path(path: &Path) -> bool {
         .is_some_and(|extension| matches!(extension, "adoc" | "asciidoc" | "ad"))
 }
 
-/// Collects the AsciiDoc files beneath `path`, never entering a folder named in `ignore` or a
-/// link. `on_directory` sees each folder entered before it is read; one that cannot be read is
+/// Collects the AsciiDoc files beneath `path`, a folder beneath `root`, never entering a link
+/// or a folder `ignore` leaves out ([`adoc_core::is_ignored_beneath`]). `on_directory` sees each folder entered before it is read; one that cannot be read is
 /// added to `unreadable` and left out.
 pub(crate) fn collect_asciidoc_files(
+    root: &Path,
     path: &Path,
     ignore: &[impl AsRef<str>],
     on_directory: &mut dyn FnMut(&Path),
@@ -43,12 +44,18 @@ pub(crate) fn collect_asciidoc_files(
         };
         let entry_path = entry.path();
         if file_type.is_dir() {
+            // The folders above were entered, so only a folder named in `ignore` needs the rule.
             let ignored = entry
                 .file_name()
                 .to_str()
-                .is_some_and(|name| ignore.iter().any(|ignored| ignored.as_ref() == name));
+                .is_some_and(|name| ignore.iter().any(|ignored| ignored.as_ref() == name))
+                && entry_path.strip_prefix(root).is_ok_and(|beneath| {
+                    adoc_core::is_ignored_beneath(beneath, ignore, |folder| {
+                        root.join(folder).join("antora.yml").is_file()
+                    })
+                });
             if !ignored {
-                collect_asciidoc_files(&entry_path, ignore, on_directory, output, unreadable);
+                collect_asciidoc_files(root, &entry_path, ignore, on_directory, output, unreadable);
             }
         } else if file_type.is_file() && is_asciidoc_path(&entry_path) {
             output.push(normalize_path(&entry_path));
@@ -94,38 +101,11 @@ pub fn list_directory(directory: &Path) -> Vec<DirectoryEntry> {
     listed
 }
 
-pub fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => match normalized.components().next_back() {
-                // `a/..` is nothing.
-                Some(Component::Normal(_)) => {
-                    normalized.pop();
-                }
-                // Above the root is the root.
-                Some(Component::RootDir | Component::Prefix(_)) => {}
-                // A relative path keeps every leading `..`.
-                _ => normalized.push(component.as_os_str()),
-            },
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    // `.` and `docs/..` name the current directory; an empty path names nothing.
-    if normalized.as_os_str().is_empty() && !path.as_os_str().is_empty() {
-        normalized.push(Component::CurDir.as_os_str());
-    }
-    normalized
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::{is_asciidoc_path, normalize_path};
+    use super::is_asciidoc_path;
 
     #[test]
     fn recognizes_supported_suffixes() {
@@ -133,42 +113,6 @@ mod tests {
         assert!(is_asciidoc_path(Path::new("guide.asciidoc")));
         assert!(is_asciidoc_path(Path::new("guide.ad")));
         assert!(!is_asciidoc_path(Path::new("guide.md")));
-    }
-
-    #[test]
-    fn normalizes_dot_components() {
-        assert_eq!(
-            normalize_path(Path::new("docs/./pages/../index.adoc")),
-            Path::new("docs/index.adoc")
-        );
-    }
-
-    #[test]
-    fn keeps_leading_parent_components() {
-        for (path, expected) in [
-            ("../a", "../a"),
-            ("../../a", "../../a"),
-            ("../../../a/b", "../../../a/b"),
-            ("a/../../b", "../b"),
-            ("../a/../b", "../b"),
-            // Above the root is the root.
-            ("/..", "/"),
-            ("/a/../../b", "/b"),
-        ] {
-            assert_eq!(
-                normalize_path(Path::new(path)),
-                Path::new(expected),
-                "{path}"
-            );
-        }
-    }
-
-    #[test]
-    fn keeps_the_current_directory() {
-        for path in [".", "./", "docs/..", "./docs/./.."] {
-            assert_eq!(normalize_path(Path::new(path)), Path::new("."), "{path}");
-        }
-        assert_eq!(normalize_path(Path::new("")), Path::new(""));
     }
 
     #[test]

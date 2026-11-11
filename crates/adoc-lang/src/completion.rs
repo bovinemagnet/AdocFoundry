@@ -548,6 +548,24 @@ mod tests {
     }
 
     #[test]
+    fn a_section_whose_id_is_empty_is_not_offered() {
+        // Issue #533: `== ???` has the empty id.
+        let path = Path::new("/docs/guide.adoc");
+        let text = "== ???\n\n== Parameters\n\nSee <<";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+        let document = parse("file:///docs/guide.adoc", text).document;
+
+        let labels: Vec<_> =
+            completion_at_offset(&index, &AntoraCatalog::new(), path, &document, text.len())
+                .into_iter()
+                .map(|candidate| candidate.label)
+                .collect();
+
+        assert_eq!(labels, ["_parameters"]);
+    }
+
+    #[test]
     fn filters_anchors_by_what_has_been_typed() {
         let path = Path::new("/docs/guide.adoc");
         let text = "[[intro]]\n== Intro\n\n[[detail]]\n== Detail\n\nSee <<det";

@@ -439,6 +439,23 @@ fn analyse_git(inputs: &Inputs<'_>, built: &mut Built) -> Result<ImpactReport, I
     }
 }
 
+/// Whether `path`, a revision's file beneath `root`, is in a folder `ignore` leaves out, by the
+/// index's rule ([`adoc_core::is_ignored_beneath`]); the `antora.yml` files among `listed`, the
+/// revision's files, mark its components.
+#[cfg(feature = "git")]
+fn ignored_in_revision(
+    path: &Path,
+    root: &Path,
+    ignore: &[String],
+    listed: &std::collections::HashSet<PathBuf>,
+) -> bool {
+    path.strip_prefix(root).is_ok_and(|inside| {
+        adoc_core::is_ignored_beneath(inside, ignore, |folder| {
+            listed.contains(&root.join(folder).join("antora.yml"))
+        })
+    })
+}
+
 /// The index and catalog of `revision`, built from its objects, from the cache (or what this
 /// analysis built already) when its tree was built before; with the gaps its descriptors leave.
 #[cfg(feature = "git")]
@@ -461,22 +478,19 @@ fn revision_snapshot(
     let workdir = repository.workdir().to_path_buf();
     let ignore = inputs.ignore;
     let mut files: BTreeMap<PathBuf, String> = BTreeMap::new();
-    for relative in repository
+    let listed: Vec<(PathBuf, PathBuf)> = repository
         .tree_files(revision)
         .map_err(|error| ImpactError::Git(error.to_string()))?
-    {
-        let path = normalize_path(&workdir.join(&relative));
+        .into_iter()
+        .map(|relative| (normalize_path(&workdir.join(&relative)), relative))
+        .collect();
+    let paths: std::collections::HashSet<PathBuf> =
+        listed.iter().map(|(path, _)| path.clone()).collect();
+    for (path, relative) in listed {
         let Some(root) = roots.iter().find(|root| path.starts_with(root)) else {
             continue;
         };
-        let ignored = path.strip_prefix(root).is_ok_and(|inside| {
-            inside.components().any(|part| {
-                ignore
-                    .iter()
-                    .any(|name| part.as_os_str() == std::ffi::OsStr::new(name))
-            })
-        });
-        if ignored {
+        if ignored_in_revision(&path, root, ignore, &paths) {
             continue;
         }
         // Only text is read; anything else is listed with no text, as the catalog needs only
@@ -571,4 +585,29 @@ fn descriptor_gaps(state: &WorkspaceState, roots: &[PathBuf], spec: &str) -> Vec
                 )],
         })
         .collect()
+}
+
+#[cfg(all(test, feature = "git"))]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_revision_keeps_build_folders_inside_modules() {
+        // Issue #531: a revision's files are left out by the index's rule.
+        let root = Path::new("/work");
+        let ignore = vec!["build".to_owned(), ".git".to_owned()];
+        let listed: std::collections::HashSet<PathBuf> = [
+            "/work/docs/antora.yml",
+            "/work/docs/modules/ROOT/pages/build/index.adoc",
+            "/work/build/stray.adoc",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        let ignored =
+            |path: &str| super::ignored_in_revision(Path::new(path), root, &ignore, &listed);
+        assert!(!ignored("/work/docs/modules/ROOT/pages/build/index.adoc"));
+        assert!(ignored("/work/build/stray.adoc"));
+        assert!(ignored("/work/docs/build/site.adoc"));
+    }
 }

@@ -1222,17 +1222,19 @@ fn as_opened(path: &Path, aliases: &[(PathBuf, PathBuf)]) -> PathBuf {
 /// Whether `path` is in a folder `[workspace] ignore` names, as the index's walk decides: only
 /// the folders beneath the root holding it count, the innermost such root, so a workspace
 /// that itself sits in a folder named `build` is still watched. Outside every root (`.git`
-/// metadata, the user settings folder) the whole path counts.
+/// metadata, the user settings folder) the whole path counts. Beneath a component's `modules`
+/// folder, build output names are ordinary folders ([`adoc_core::is_ignored_beneath`]).
 fn is_ignored(path: &Path, roots: &[PathBuf], ignore: &[String]) -> bool {
     let beneath = roots
         .iter()
-        .filter_map(|root| path.strip_prefix(root).ok())
-        .min_by_key(|rest| rest.components().count())
-        .unwrap_or(path);
-    beneath.components().any(|component| {
-        let component = component.as_os_str().to_string_lossy();
-        ignore.iter().any(|ignored| *ignored == component)
-    })
+        .filter_map(|root| Some((root, path.strip_prefix(root).ok()?)))
+        .min_by_key(|(_, rest)| rest.components().count());
+    match beneath {
+        Some((root, beneath)) => adoc_core::is_ignored_beneath(beneath, ignore, |folder| {
+            root.join(folder).join("antora.yml").is_file()
+        }),
+        None => adoc_core::is_ignored_beneath(path, ignore, |_| false),
+    }
 }
 
 /// A whole index held once it has read the files ([`Engine::hold_next_index`]); dropping it lets
@@ -1288,6 +1290,29 @@ mod tests {
         // Outside every root, the whole path counts.
         assert!(is_ignored(
             Path::new("/home/ada/build/settings.toml"),
+            &roots,
+            &ignore
+        ));
+    }
+
+    #[test]
+    fn a_build_folder_inside_a_module_is_watched() {
+        // Issue #531: the watcher follows the index's rule.
+        let ignore: Vec<String> = adoc_core::DEFAULT_IGNORED_DIRECTORIES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ignored-folders");
+        let roots = vec![root.clone()];
+        assert!(!is_ignored(
+            &root.join("docs/modules/ROOT/pages/build/index.adoc"),
+            &roots,
+            &ignore
+        ));
+        assert!(is_ignored(&root.join("build/stray.adoc"), &roots, &ignore));
+        assert!(is_ignored(
+            &root.join("docs/modules/ROOT/pages/node_modules/x.adoc"),
             &roots,
             &ignore
         ));

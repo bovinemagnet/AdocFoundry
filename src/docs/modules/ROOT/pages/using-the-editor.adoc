@@ -22,6 +22,7 @@ include::example$workspace-discovery.mmd[]
 ----
 
 Folders named in `workspace.ignore` (by default `.cache`, `.git`, `.zed`, `node_modules`, `build`, `target`, `dist`, `.idea` and `.gradle`) are skipped by indexing, Antora discovery and watching.
+Inside a component version's `modules` folder, `build`, `target` and `dist` are ordinary folders, so a page in `pages/build/` is indexed and watched.
 A folder or file that cannot be read is skipped and reported once, and the rest of the workspace is indexed.
 See xref:settings.adoc[Settings].
 
@@ -2046,8 +2047,10 @@ Remote URLs in the forms `git@host:org/repo.git`, `ssh://git@host/org/repo.git` 
 The GitHub link carries `?plain=1`, which shows the source so that the line anchor works on rendered files such as AsciiDoc.
 Azure DevOps uses `GC` and the commit in place of `GB` and the branch when HEAD is detached.
 
-github.com, gitlab.com, bitbucket.org, dev.azure.com, ssh.dev.azure.com and `*.visualstudio.com` are recognised.
-A self-hosted site is named in the `[git.hosts]` table of the user settings file, host name to kind:
+github.com, gitlab.com, bitbucket.org, dev.azure.com, ssh.dev.azure.com and `*.visualstudio.com` are recognised; a `*.visualstudio.com` remote is linked at dev.azure.com under the organisation its host names.
+The branch and the file's path are percent-encoded, so a branch such as `fix/#123` opens as it should.
+A remote fetched over `http://` or `https://` is linked with its own scheme and port; one fetched over SSH is linked with `https://` and no port.
+A self-hosted site is named in the `[git.hosts]` table of the user settings file, host name to kind; a self-hosted Azure DevOps Server keeps its own address and the path up to `_git/<repository>`:
 
 [source,toml]
 ----

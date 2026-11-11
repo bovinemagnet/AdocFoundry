@@ -187,6 +187,22 @@ mod tests {
     }
 
     #[test]
+    fn a_section_whose_id_is_empty_is_linked_as_its_page() {
+        // Issue #533: `== ???` has the empty id, which made a link ending in `#`.
+        let mut ws = WorkspaceState::new();
+        let from = Path::new("/docs/index.adoc");
+        let to = Path::new("/docs/other.adoc");
+        ws.index.index_source(from, "= Home\n");
+        ws.index.index_source(to, "= Other\n\n== ???\n");
+        let target = ws.index.file(to).unwrap().document.clone();
+        let at = target.sections[0].selection_range;
+        assert_eq!(
+            xref_to(&ws, from, to, &target, Some(at)),
+            xref("other.adoc", "Other")
+        );
+    }
+
+    #[test]
     fn a_page_in_the_same_module_is_named_by_its_path() {
         let (ws, root) = workspace("antora-multi-component");
         let pages = root.join("alpha/modules/ROOT/pages");
