@@ -556,6 +556,9 @@ pub(crate) struct VerbatimBlocks<'a> {
     in_text: bool,
     /// The line before, when it began a block of text and could be a two-line title.
     title: Option<&'a str>,
+    /// The delimiters of the example, sidebar, quote, open and table blocks open, innermost
+    /// last, inside which a heading is no section.
+    compound: Vec<&'a str>,
 }
 
 impl<'a> VerbatimBlocks<'a> {
@@ -581,8 +584,11 @@ impl<'a> VerbatimBlocks<'a> {
             return Verbatim::Content;
         }
         // Asciidoctor reads a two-line title before a delimiter, so `Section` over `-------`
-        // is a section, not the start of a listing block.
-        if let Some(level) = title.and_then(|title| setext_level(title, trimmed)) {
+        // is a section, not the start of a listing block; inside a block it reads none.
+        if let Some(level) = title
+            .filter(|_| self.compound.is_empty())
+            .and_then(|title| setext_level(title, trimmed))
+        {
             self.in_text = false;
             return Verbatim::Underline(level);
         }
@@ -603,11 +609,18 @@ impl<'a> VerbatimBlocks<'a> {
                 return Verbatim::No;
             }
             self.styled = false;
+            // An open block takes the verbatim style: `[listing]` over `--` is a listing.
+            if trimmed == "--" {
+                self.open = Some(trimmed);
+                self.in_text = false;
+                return Verbatim::Delimiter;
+            }
             if !trimmed.starts_with('=') && !is_compound_delimiter(trimmed) {
                 self.paragraph = true;
                 return Verbatim::Content;
             }
             self.in_text = false;
+            self.follow_compound(trimmed);
             return Verbatim::No;
         }
         self.styled = has_verbatim_style(trimmed);
@@ -619,6 +632,7 @@ impl<'a> VerbatimBlocks<'a> {
     /// two-line title. Block metadata (attribute lines, anchors, titles, comments and
     /// attribute entries) before a block leaves its start where it is.
     fn follow_text(&mut self, trimmed: &'a str) {
+        self.follow_compound(trimmed);
         if trimmed.is_empty()
             || is_compound_delimiter(trimmed)
             || parse_heading(trimmed, 0).is_some()
@@ -633,6 +647,24 @@ impl<'a> VerbatimBlocks<'a> {
             self.in_text = true;
             self.title = Some(trimmed);
         }
+    }
+
+    /// Opens or closes a compound block on its delimiter.
+    fn follow_compound(&mut self, trimmed: &'a str) {
+        if !is_compound_delimiter(trimmed) {
+            return;
+        }
+        if self.compound.last() == Some(&trimmed) {
+            self.compound.pop();
+        } else {
+            self.compound.push(trimmed);
+        }
+    }
+
+    /// Whether the line read last stands inside an example, sidebar, quote, open or table
+    /// block, where Asciidoctor reads a heading as text.
+    pub(crate) fn in_compound_block(&self) -> bool {
+        !self.compound.is_empty()
     }
 
     /// The preprocessor conditional `line` is, which the preprocessor reads everywhere but in
@@ -721,11 +753,11 @@ fn is_block_title(line: &str) -> bool {
         .is_some_and(|first| first != '.' && !first.is_whitespace())
 }
 
-/// A block attribute line whose style is `source`, `listing` or `literal`, such as
+/// A block attribute line whose style is `source`, `listing`, `literal` or `pass`, such as
 /// `[source,ruby]` or `[source#id.role]`.
 fn has_verbatim_style(line: &str) -> bool {
     block_attribute_list(line)
-        .is_some_and(|list| matches!(shorthand(list).0, "source" | "listing" | "literal"))
+        .is_some_and(|list| matches!(shorthand(list).0, "source" | "listing" | "literal" | "pass"))
 }
 
 fn nonempty(value: &str) -> Option<String> {

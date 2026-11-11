@@ -185,7 +185,8 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             document.anchors.push(anchor);
         }
 
-        if let Some(heading) = parse_heading(line, offset) {
+        if let Some(heading) = parse_heading(line, offset).filter(|_| !verbatim.in_compound_block())
+        {
             add_heading(&mut document, &heading, pending_anchor.take());
         } else if let Some(mut attribute) = parse_attribute(line, offset) {
             if let Some(value) = &attribute.value {
@@ -884,6 +885,39 @@ image::diagram.png[Architecture]\n";
         assert_eq!(targets, ["real.adoc"]);
         assert!(document.anchors.is_empty());
         assert_eq!(document.includes.len(), 1);
+    }
+
+    /// An open block under a verbatim style is that verbatim block, and a `[pass]` paragraph
+    /// is raw (#532).
+    #[test]
+    fn verbatim_styles_over_open_blocks_and_pass_paragraphs_are_verbatim() {
+        for source in [
+            "[listing]\n--\n<<x>>\n[[a]]\n--\n",
+            "[source,ruby]\n--\n<<x>>\n\n[[a]]\n--\n",
+            "[pass]\n<<x>> [[a]]\n",
+        ] {
+            let document = parse("file:///doc.adoc", source).document;
+            assert!(document.references.is_empty(), "{source:?}");
+            assert!(document.anchors.is_empty(), "{source:?}");
+        }
+        assert_eq!(
+            reference_targets("[listing]\n--\n<<x>>\n--\n\nSee <<y>>.\n"),
+            ["y"]
+        );
+    }
+
+    /// A heading inside an example, sidebar, quote or open block is no section (#532).
+    #[test]
+    fn headings_inside_compound_blocks_are_not_sections() {
+        let source = "====\n== Not a section\n====\n\n****\n=== In sidebar\n****\n\n\
+                      ____\n== Quoted\n____\n\n--\n== Open\n\n====\n== Nested\n====\n--\n\n== Real\n";
+        let titles: Vec<_> = parse("file:///doc.adoc", source)
+            .document
+            .sections
+            .into_iter()
+            .map(|section| section.title)
+            .collect();
+        assert_eq!(titles, ["Real"]);
     }
 
     #[test]
