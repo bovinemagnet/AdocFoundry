@@ -1,0 +1,8 @@
+= An Appendix Without Numbered Sections
+
+== A Chapter
+
+[appendix]
+== Extra Material
+
+=== Inside the Appendix

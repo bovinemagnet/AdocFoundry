@@ -1,0 +1,19 @@
+= Numbering Turned On and Off
+:sectnums:
+
+== Numbered
+
+:sectnums!:
+
+== Left Unnumbered
+
+:sectnums:
+
+== Numbered Again
+
+=== A Subsection
+
+[appendix]
+== An Appendix
+
+=== Inside It

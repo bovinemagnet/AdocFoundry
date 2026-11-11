@@ -437,7 +437,10 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
         resolver,
         ids: collect_ids(dom),
         imagesdir: dom.attributes.get("imagesdir").cloned(),
-        numbered: dom.attributes.contains_key("sectnums"),
+        // `numbered` is the older name Asciidoctor still accepts.
+        numbered: ["sectnums", "numbered"]
+            .iter()
+            .any(|name| dom.attributes.contains_key(*name)),
         counters: Vec::new(),
         numbering: Numbering::Numbered,
         saved_counters: None,
@@ -674,14 +677,21 @@ impl Builder<'_> {
     /// The number of a section at `level` with block style `style`, and how the sections inside
     /// it are numbered, as Asciidoctor numbers them: special sections (a preface, glossary,
     /// bibliography and the like) and what they hold are not numbered, and an appendix is
-    /// lettered (`Appendix A:`, then `A.1.`) outside the count of the other sections. Past
+    /// lettered (`Appendix A:`, then `A.1.`) outside the count of the other sections, whether
+    /// or not they are numbered (`numbered`: `sectnums` where the section starts). Past
     /// `sectnumlevels` a section is counted but shows no number.
-    fn section_number(&mut self, level: u8, style: Option<&str>) -> (Option<String>, Numbering) {
-        if !self.numbered || level == 0 {
+    fn section_number(
+        &mut self,
+        level: u8,
+        style: Option<&str>,
+        numbered: bool,
+    ) -> (Option<String>, Numbering) {
+        if level == 0 {
             return (None, self.numbering);
         }
         match self.numbering {
             Numbering::Unnumbered => return (None, Numbering::Unnumbered),
+            Numbering::Appendix { .. } if !numbered => return (None, self.numbering),
             Numbering::Appendix { letter, level: top } => {
                 let depth = usize::from(level.saturating_sub(top));
                 self.counters.resize(depth.max(1), 0);
@@ -693,6 +703,7 @@ impl Builder<'_> {
             Numbering::Numbered => {}
         }
         match style {
+            // An appendix is lettered whether or not sections are numbered.
             Some("appendix") => {
                 let letter = char::from(b'A' + (self.appendices % 26) as u8);
                 self.appendices += 1;
@@ -706,6 +717,7 @@ impl Builder<'_> {
                 (Some(number), Numbering::Appendix { letter, level })
             }
             Some(style) if SPECIAL_SECTIONS.contains(&style) => (None, Numbering::Unnumbered),
+            _ if !numbered => (None, Numbering::Numbered),
             _ => {
                 let depth = usize::from(level);
                 self.counters.resize(depth, 0);
@@ -737,7 +749,10 @@ impl Builder<'_> {
                 title,
                 blocks,
             } => {
-                let (number, inside) = self.section_number(*level, block.meta.style.as_deref());
+                // `sectnums` where the section starts, else the header's.
+                let numbered = block.meta.sectnums.unwrap_or(self.numbered);
+                let (number, inside) =
+                    self.section_number(*level, block.meta.style.as_deref(), numbered);
                 let title = self.inlines(title);
                 if *level <= self.toc_levels {
                     if let Some(id) = &block.meta.id {

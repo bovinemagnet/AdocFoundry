@@ -830,6 +830,49 @@ fn special_sections_are_numbered_as_asciidoctor_numbers_them() {
     assert_eq!(number.as_deref(), Some("Annex A:"));
 }
 
+/// The headings of a page's sections, numbers included, as its HTML writes them.
+fn headings_of(text: &str) -> Vec<String> {
+    let html = html_of(text);
+    html.split("<h")
+        .skip(1)
+        .filter(|tag| tag.starts_with(['2', '3', '4']))
+        .filter_map(|tag| {
+            let text = &tag[tag.find('>')? + 1..];
+            Some(text[..text.find("</h")?].to_owned())
+        })
+        .collect()
+}
+
+/// An appendix is lettered and captioned whether or not sections are numbered; its own
+/// sections are numbered only when they are.
+#[test]
+fn an_appendix_is_captioned_without_sectnums() {
+    assert_eq!(
+        headings_of("= T\n\n== One\n\n[appendix]\n== Extra\n\n=== Sub\n"),
+        ["One", "Appendix A: Extra", "Sub"]
+    );
+}
+
+/// A section is numbered by `sectnums` where it starts, so a page can leave some sections
+/// unnumbered; `numbered` is its older name.
+#[test]
+fn sectnums_is_read_where_each_section_starts() {
+    assert_eq!(
+        headings_of(
+            "= T\n:sectnums:\n\n== One\n\n:sectnums!:\n\n== Two\n\n:sectnums:\n\n== Three\n"
+        ),
+        ["1. One", "Two", "2. Three"]
+    );
+    assert_eq!(
+        headings_of("= T\n\n== One\n\n:sectnums:\n\n== Two\n\n:sectnums!:\n"),
+        ["One", "1. Two"]
+    );
+    assert_eq!(
+        headings_of("= T\n:numbered:\n\n== One\n\n=== Sub\n"),
+        ["1. One", "1.1. Sub"]
+    );
+}
+
 #[test]
 fn captions_follow_the_document_attributes() {
     /// Numbers or captions, each with its title.
