@@ -90,7 +90,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Change markers beside the line numbers (green added, blue modified, a red triangle where lines were deleted) and beside changed blocks in the visual editor. Clicking a marker shows the lines as they were, with Revert Change (one undo step) and Copy. Alt-Down and Alt-Up go to the next and previous change.
 - A Changes panel in the sidebar lists the changed pages and Antora resource files under the roots; clicking one opens it at its first change.
 - Branch-aware Antora versions: the status bar and the Navigation panel show the page's version and branch (`product@2.0 · main`). The playbook's content sources and each matching branch's `antora.yml`, read from the repository without checking anything out, say which branch publishes which version; an xref to a version published from another branch warns (`adoc.antora.version-not-on-branch`). Checking out another branch in the same folder re-indexes without a restart, and Open in Another Version opens the same page in another version's checkout in the workspace.
-- Toggle Blame shows who last changed each line beside the editor (`abc1234 Paul Snow, 3 days ago`, or `Not committed`), and with `blame_on_hover` resting on the gutter shows the commit's summary too. Open on Remote and Copy Remote Link give the caret's line on GitHub, GitLab, Bitbucket or Azure DevOps (self-hosted sites named under `[git.hosts]`).
+- Toggle Blame shows who last changed each line beside the editor (`abc1234 Paul Snow, 3 days ago`, or `Not committed`), and with `blame_on_hover` resting on the gutter shows the commit's summary too. Open on Remote and Copy Remote Link give the caret's line on GitHub, GitLab, Bitbucket or Azure DevOps (self-hosted sites named under `[git.hosts]`), the branch and path percent-encoded and an `http(s)` remote's port kept.
 - Staging and committing from the Changes panel: a box per file stages it, Stage All stages them all, and Commit… opens a message dialog (Commit, or Commit and Push). Save and Commit saves the page, stages it and starts the message as `docs: update <title>`. The status bar shows `↑n` for commits not yet pushed. Staging follows `.gitattributes` and your line-ending settings as `git add` does and stages a link as a link; a file under a named filter such as Git LFS is refused, and needs `git add`. Pushing runs your `git` (so credential helpers and SSH keys work), never forces and never sets an upstream; so does a signed commit (`commit.gpgsign`), in the background so the window keeps working while you type a passphrase or touch a key, stopped after `[tools] commit_timeout` (120 s); everything else goes through `gix`. A commit is refused while conflicts are unresolved or a merge, rebase, cherry-pick or revert is in progress. No merge, rebase or history: use a Git client for those (epic [#2](https://github.com/bovinemagnet/AdocFoundry/issues/2)).
 
 **PDF export**
@@ -221,7 +221,7 @@ dark_theme = "Tokyo Night"
 font_scale = 1.0                 # draw all text this many times larger, 0.5 to 3: 1.5 for a big, high-resolution screen
 
 [workspace]
-ignore = [".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]   # never indexed, discovered or watched
+ignore = [".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]   # never indexed, discovered or watched (build, target and dist only outside a component's modules)
 
 [sidebar]
 remember_expansion = true        # user file only
