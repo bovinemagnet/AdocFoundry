@@ -401,6 +401,7 @@ dependencies = [
  "adoc-index",
  "adoc-pdf",
  "adoc-render",
+ "base64 0.22.1",
  "embed-resource",
  "gpui-component",
  "gpui-kit-assets",
