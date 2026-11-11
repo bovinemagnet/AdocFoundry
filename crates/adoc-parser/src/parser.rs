@@ -808,6 +808,24 @@ image::diagram.png[Architecture]\n";
         .is_empty());
     }
 
+    /// A reference's target starts straight after `<<` or `xref:` with a word character or one
+    /// of `#/.:{`, as Asciidoctor's pattern has it; shift operators and prose are text (#524).
+    #[test]
+    fn shift_operators_and_spaced_openings_are_not_references() {
+        assert!(reference_targets("Use `x << 2` and `y >> 1` here.\n").is_empty());
+        assert_eq!(
+            reference_targets("If a << b then see <<real>>.\n"),
+            ["real"]
+        );
+        assert!(reference_targets("Use $$<<a>>$$ here.\n").is_empty());
+        assert!(reference_targets("The xref: macro takes a target [and text].\n").is_empty());
+        assert!(reference_targets("A page break <<< is not <<-e>> either.\n").is_empty());
+        assert_eq!(
+            reference_targets("See <<{x}>>, <</a>>, <<:b>>, <<.c>> and <<<d>>.\n"),
+            ["{x}", "/a", ":b", ".c", "d"]
+        );
+    }
+
     #[test]
     fn still_finds_references_beside_a_passthrough() {
         let text = "See +literal+ and <<real>>.\n";

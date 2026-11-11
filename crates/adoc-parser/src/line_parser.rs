@@ -122,6 +122,7 @@ pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
     let line = content(line);
     let mut references = find_macros(line, "xref:", offset)
         .into_iter()
+        .filter(|mac| starts_a_target(&line[mac.range.start - offset + "xref:".len()..]))
         .map(|mac| {
             let (kind, target) = classify_xref_target(mac.target);
             Reference {
@@ -133,25 +134,57 @@ pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
         })
         .collect::<Vec<_>>();
 
-    references.extend(
-        find_delimited(line, "<<", ">>", offset)
-            .into_iter()
-            .filter_map(|(value, range)| {
-                let (target, text) = value
-                    .split_once(',')
-                    .map_or((value, None), |(target, text)| (target, nonempty(text)));
-                let (kind, target) = classify_angle_target(target.trim());
-                (!target.is_empty()).then(|| Reference {
-                    kind,
-                    target: target.to_owned(),
-                    text,
-                    range,
-                })
-            }),
-    );
+    references.extend(find_angle_references(line, offset).into_iter().filter_map(
+        |(value, range)| {
+            let (target, text) = value
+                .split_once(',')
+                .map_or((value, None), |(target, text)| (target, nonempty(text)));
+            let (kind, target) = classify_angle_target(target.trim());
+            (!target.is_empty()).then(|| Reference {
+                kind,
+                target: target.to_owned(),
+                text,
+                range,
+            })
+        },
+    ));
     // A backslash before a reference shows it as written.
     references.retain(|reference| !line[..reference.range.start - offset].ends_with('\\'));
     references
+}
+
+/// Whether `rest`, what follows `<<` or `xref:`, starts a target as Asciidoctor's pattern
+/// wants it: with a word character or one of `#/.:{`.
+fn starts_a_target(rest: &str) -> bool {
+    rest.chars().next().is_some_and(|first| {
+        first.is_alphanumeric() || matches!(first, '_' | '#' | '/' | '.' | ':' | '{')
+    })
+}
+
+/// Each `<<…>>` on `line` whose target starts as `starts_a_target` wants. An opening that
+/// starts none (`a << b`, `<<<`) is text, and the scan goes on from its second `<`, so a
+/// later reference on the line is still found.
+fn find_angle_references(line: &str, offset: usize) -> Vec<(&str, SourceRange)> {
+    let mut found = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = line[cursor..].find("<<") {
+        let start = cursor + relative_start;
+        let value_start = start + 2;
+        if !starts_a_target(&line[value_start..]) {
+            cursor = start + 1;
+            continue;
+        }
+        let Some(close_relative) = line[value_start..].find(">>") else {
+            break;
+        };
+        let end = value_start + close_relative + 2;
+        found.push((
+            &line[value_start..value_start + close_relative],
+            SourceRange::new(offset + start, offset + end),
+        ));
+        cursor = end;
+    }
+    found
 }
 
 /// Asciidoctor reads an `xref:` target as another document only when it names an AsciiDoc file
@@ -530,7 +563,8 @@ pub(crate) fn mask_passthroughs(line: &str) -> Cow<'_, str> {
     Cow::Owned(masked)
 }
 
-/// The byte spans of `pass:[…]`, `+++…+++`, `++…++` and constrained `+…+` passthroughs.
+/// The byte spans of `pass:[…]`, `+++…+++`, `++…++`, `$$…$$` and constrained `+…+`
+/// passthroughs.
 fn passthrough_spans(line: &str) -> Vec<(usize, usize)> {
     let bytes = line.as_bytes();
     let mut spans = Vec::new();
@@ -549,6 +583,14 @@ fn passthrough_spans(line: &str) -> Vec<(usize, usize)> {
                     None => index += 1,
                 }
             }
+            b'$' if line[index..].starts_with("$$") => match line[index + 2..].find("$$") {
+                Some(relative) => {
+                    let end = index + 2 + relative + 2;
+                    spans.push((index, end));
+                    index = end;
+                }
+                None => index += 2,
+            },
             b'+' => {
                 let run = bytes[index..]
                     .iter()
