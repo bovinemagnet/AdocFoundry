@@ -297,7 +297,11 @@ impl Repository {
         let mut reference = reference;
         let commit = reference.peel_to_commit().map_err(GitError::git)?;
         let tree = commit.tree().map_err(GitError::git)?;
-        let Some(entry) = tree.lookup_entry_by_path(path).map_err(GitError::git)? else {
+        let relative = self.relative(path)?;
+        let Some(entry) = tree
+            .lookup_entry_by_path(&relative)
+            .map_err(GitError::git)?
+        else {
             return Ok(None);
         };
         if !entry.mode().is_blob() {
@@ -534,13 +538,19 @@ impl Repository {
         index.write(Default::default()).map_err(GitError::git)
     }
 
-    /// The name and email commits are made with, from the usual configuration scopes.
+    /// The name and email commits are made with, as Git finds the committer's: from
+    /// `committer.*`, else `user.*`, in the usual configuration scopes, or the
+    /// `GIT_COMMITTER_*` variables. A commit also needs an author, found the same way.
     pub fn identity(&self) -> Result<(String, String), GitError> {
-        let config = self.repo.config_snapshot();
-        let name = config.string("user.name").map(|name| name.to_string());
-        let email = config.string("user.email").map(|email| email.to_string());
-        match (name, email) {
-            (Some(name), Some(email)) if !name.is_empty() && !email.is_empty() => Ok((name, email)),
+        let named = |signature: Option<Result<gix::actor::SignatureRef<'_>, _>>| {
+            signature
+                .and_then(Result::ok)
+                .map(|signature| (signature.name.to_string(), signature.email.to_string()))
+                .filter(|(name, email)| !name.is_empty() && !email.is_empty())
+        };
+        let committer = named(self.repo.committer());
+        match (committer, named(self.repo.author())) {
+            (Some(committer), Some(_)) => Ok(committer),
             _ => Err(GitError::NoIdentity),
         }
     }
@@ -608,14 +618,25 @@ impl Repository {
             return Ok(None);
         };
         let pushed = tracking.peel_to_id().map_err(GitError::git)?.detach();
-        let head = self.repo.head_id().map_err(GitError::git)?.detach();
+        let tip = self
+            .repo
+            .find_reference(format!("refs/heads/{branch}").as_str())
+            .map_err(GitError::git)?
+            .peel_to_id()
+            .map_err(GitError::git)?
+            .detach();
         let walk = self
             .repo
-            .rev_walk([head])
+            .rev_walk([tip])
             .with_hidden([pushed])
             .all()
             .map_err(GitError::git)?;
-        Ok(Some(walk.filter_map(Result::ok).count()))
+        let mut count = 0;
+        for commit in walk {
+            commit.map_err(GitError::git)?;
+            count += 1;
+        }
+        Ok(Some(count))
     }
 
     /// The full id of the commit `HEAD` points at; `None` before the first commit.

@@ -8,7 +8,7 @@ use std::{
     process::{Command, Output},
 };
 
-use adoc_git::{testing::TestRepo, HunkKind, Repository};
+use adoc_git::{testing::TestRepo, Change, HunkKind, Repository};
 
 fn repo_in(dir: &Path) -> Repository {
     Repository::discover(dir)
@@ -146,4 +146,75 @@ fn last_changed_stops_at_a_shallow_clone_s_boundary() {
     assert_eq!(found.changes.len(), 1, "{found:?}");
     assert_eq!(found.changes[Path::new("new.adoc")].commit, newest);
     assert_eq!(found.cut_short, Some(2_000));
+}
+
+#[test]
+fn unpushed_counts_the_branch_asked_for_not_head() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("page.adoc", "one\n");
+    test.commit_all("first");
+    test.add_remote("origin", "git@github.com:org/docs.git");
+    test.track_remote("origin");
+    test.switch_branch("other");
+    test.write("page.adoc", "two\n");
+    test.commit_all("second");
+    assert_eq!(
+        repo_in(dir.path()).unpushed("origin", "main").unwrap(),
+        Some(0)
+    );
+}
+
+#[test]
+fn status_reports_a_copy_as_added() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    append_config(dir.path(), "[status]\n\trenames = copies\n");
+    let text: String = (1..=20).map(|line| format!("line {line}\n")).collect();
+    test.write("a.adoc", &text);
+    test.commit_all("first");
+    // Git finds copies of files changed in the same change.
+    test.write("a.adoc", &format!("{text}line 21\n"));
+    test.write("b.adoc", &text);
+    let repo = repo_in(dir.path());
+    repo.stage(&[&dir.path().join("a.adoc"), &dir.path().join("b.adoc")])
+        .unwrap();
+    let status = repo.status().unwrap();
+    let b = status
+        .iter()
+        .find(|status| status.path == Path::new("b.adoc"))
+        .unwrap();
+    // Git says `C  a.adoc -> b.adoc`: a copy, which leaves `a.adoc` where it was.
+    assert_eq!(b.index, Change::Added, "{status:?}");
+}
+
+#[test]
+fn identity_reads_author_and_committer_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    TestRepo::init(dir.path());
+    append_config(
+        dir.path(),
+        "[author]\n\tname = Ada Author\n\temail = ada@example.com\n\
+         [committer]\n\tname = Cy Committer\n\temail = cy@example.com\n",
+    );
+    let repo = Repository::discover_isolated(dir.path()).unwrap().unwrap();
+    assert_eq!(
+        repo.identity().unwrap(),
+        ("Cy Committer".to_owned(), "cy@example.com".to_owned())
+    );
+}
+
+#[test]
+fn file_at_takes_an_absolute_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("docs/page.adoc", "= Page\n");
+    test.commit_all("first");
+    let repo = repo_in(dir.path());
+    assert_eq!(
+        repo.file_at("main", &dir.path().join("docs/page.adoc"))
+            .unwrap()
+            .as_deref(),
+        Some("= Page\n")
+    );
 }
