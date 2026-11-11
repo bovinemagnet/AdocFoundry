@@ -392,11 +392,12 @@ impl Repository {
     /// configuration, and a link staged as a link. A file under a named `filter` (Git LFS, say)
     /// is refused, since that would mean running a command the repository's configuration names,
     /// and so is a path Git never stores, one inside `.git`, one inside a submodule, or one
-    /// beyond a linked folder. A file
-    /// staged where the index has a file at one of its folders, or a folder at its path, replaces
-    /// them. Nothing is staged unless every path can be.
+    /// beyond a linked folder. The index is locked from reading to writing, as `git add` locks it,
+    /// and staging is refused while another program holds the lock. A file staged where the index
+    /// has a file at one of its folders, or a folder at its path, replaces them. Nothing is staged
+    /// unless every path can be.
     pub fn stage(&self, paths: &[&Path]) -> Result<(), GitError> {
-        let mut index = self.index_file()?;
+        let (lock, mut index) = self.locked_index()?;
         let capabilities = self.repo.filesystem_options().map_err(GitError::git)?;
         let (mut pipeline, mut attributes) = self.to_git_pipeline()?;
         let protect = self.protect_options();
@@ -463,7 +464,7 @@ impl Repository {
                 name.as_ref(),
             );
         }
-        write_changed_index(index)
+        write_changed_index(index, lock)
     }
 
     /// The first folder on the way to `relative` that is a symbolic link, as Git's
@@ -569,9 +570,10 @@ impl Repository {
 
     /// Puts `paths` back in the index as they are in `HEAD`, leaving the working tree alone, as
     /// `git restore --staged` would, a link as a link and a submodule as a submodule. A path that
-    /// is a folder in `HEAD` is refused, and nothing is unstaged unless every path can be.
+    /// is a folder in `HEAD` is refused, and nothing is unstaged unless every path can be. The
+    /// index is locked as `stage` locks it.
     pub fn unstage(&self, paths: &[&Path]) -> Result<(), GitError> {
-        let mut index = self.index_file()?;
+        let (lock, mut index) = self.locked_index()?;
         let head_tree = if self.repo.head().map_err(GitError::git)?.is_unborn() {
             None
         } else {
@@ -608,7 +610,7 @@ impl Repository {
                 name.as_ref(),
             );
         }
-        write_changed_index(index)
+        write_changed_index(index, lock)
     }
 
     /// The name and email commits are made with, as Git finds the committer's: from
@@ -786,6 +788,19 @@ impl Repository {
         }
     }
 
+    /// The index with Git's `index.lock` held, taken before reading so that no other writer can
+    /// change it between this read and `write_changed_index`. Refused while another holds it.
+    fn locked_index(&self) -> Result<(gix::lock::File, gix::index::File), GitError> {
+        let lock = gix::lock::File::acquire_to_update_resource(
+            self.repo.index_path(),
+            gix::lock::acquire::Fail::Immediately,
+            None,
+            0,
+        )
+        .map_err(GitError::git)?;
+        Ok((lock, self.index_file()?))
+    }
+
     /// The fetch URL of remote `name`, as configured.
     pub fn remote_url(&self, name: &str) -> Result<Option<String>, GitError> {
         let names = self.repo.remote_names();
@@ -863,10 +878,19 @@ fn holds(folder: &BStr, path: &BStr) -> bool {
 /// Writes `index` after its entries changed. Its cached trees (the `TREE` extension) are dropped,
 /// since `gix` writes them as read and Git trusts them: `git write-tree`, `git commit` and
 /// `git status` would see the trees `HEAD` had. Git builds them again on its next commit.
-fn write_changed_index(mut index: gix::index::File) -> Result<(), GitError> {
+/// It is written through `lock`, held since it was read.
+fn write_changed_index(mut index: gix::index::File, lock: gix::lock::File) -> Result<(), GitError> {
     index.sort_entries();
     index.remove_tree();
-    index.write(Default::default()).map_err(GitError::git)
+    let mut out = io::BufWriter::new(lock);
+    index
+        .write_to(&mut out, Default::default())
+        .map_err(GitError::git)?;
+    let lock = out
+        .into_inner()
+        .map_err(|error| GitError::git(error.error()))?;
+    lock.commit().map_err(GitError::git)?;
+    Ok(())
 }
 
 /// A relative platform path as Git writes it, `/`-separated.

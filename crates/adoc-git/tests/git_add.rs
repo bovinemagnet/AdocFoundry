@@ -469,6 +469,55 @@ fn a_path_through_a_linked_folder_is_refused() {
     }
 }
 
+/// `stage` holds Git's index lock from reading the index to writing it, so a `git add` in between
+/// is refused rather than undone. The page staged is a named pipe, which keeps `stage` waiting
+/// after it has read the index until the test writes to it. (`git add` stages no pipe; if `stage`
+/// ever refuses one, this test needs another way to pause it.)
+#[cfg(unix)]
+#[test]
+fn a_git_add_while_staging_is_not_undone() {
+    if !has_git() {
+        return;
+    }
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), &[]);
+    fs::write(dir.path().join("page.adoc"), "one\n").unwrap();
+    commit_all(dir.path());
+    fs::write(dir.path().join("other.adoc"), "other\n").unwrap();
+    let pipe = dir.path().join("pipe.adoc");
+    let made = Command::new("mkfifo").arg(&pipe).status();
+    if !made.is_ok_and(|status| status.success()) {
+        eprintln!("mkfifo failed: skipping");
+        return;
+    }
+    let staging = std::thread::spawn({
+        let dir = dir.path().to_path_buf();
+        let pipe = pipe.clone();
+        move || {
+            let staged = stage(&dir, &["pipe.adoc"]);
+            // Lets the writer below open the pipe if `stage` never did.
+            let _ = fs::OpenOptions::new().read(true).write(true).open(&pipe);
+            staged
+        }
+    });
+    // Opening the pipe waits for `stage` to open it for reading, after it read the index.
+    let mut writer = fs::OpenOptions::new().write(true).open(&pipe).unwrap();
+    let added = git(dir.path(), &["add", "--", "other.adoc"])
+        .status
+        .success();
+    writer.write_all(b"piped\n").unwrap();
+    drop(writer);
+    staging.join().unwrap().unwrap();
+    let entries = git_ok(dir.path(), &["ls-files", "--stage"]);
+    assert!(entries.contains("\tpipe.adoc\n"), "{entries}");
+    assert!(
+        !added || entries.contains("\tother.adoc\n"),
+        "the git add in between is undone: {entries}"
+    );
+    assert!(!added, "git add is refused while the index is locked");
+}
+
 #[test]
 fn a_file_inside_a_submodule_is_refused_and_the_submodule_kept() {
     if !has_git() {
