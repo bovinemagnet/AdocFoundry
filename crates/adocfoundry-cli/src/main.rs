@@ -10,7 +10,9 @@
 //! adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
 //!     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
 //!     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+//!     [--fail-on none|warning|error]
 //! adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
+//!     [--fail-on none|warning|error]
 //! adocfoundry-cli git-status <root> [--format text|json]
 //! adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
 //!     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -44,7 +46,9 @@ const USAGE: &str = "usage:
   adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
       [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
       [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+      [--fail-on none|warning|error]
   adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
+      [--fail-on none|warning|error]
   adocfoundry-cli git-status <root> [--format text|json]
   adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
       [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -879,8 +883,15 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
             "standard",
             "typst",
             "profile",
+            "fail-on",
         ],
     )?;
+    let fail_on = match option(&options, "fail-on").unwrap_or("none") {
+        "none" => None,
+        "warning" => Some(DiagnosticSeverity::Warning),
+        "error" => Some(DiagnosticSeverity::Error),
+        other => return Err(format!("unknown --fail-on level `{other}`")),
+    };
     let standards = options
         .iter()
         .filter(|(name, _)| *name == "standard")
@@ -920,7 +931,7 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
             }
         }
         args.typst = option(&options, "typst").map(PathBuf::from);
-        return report_export(&mut engine, args, &root);
+        return report_export(&mut engine, args, &root, fail_on);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -991,11 +1002,17 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
         typst: option(&options, "typst").map(PathBuf::from),
         attributes: Vec::new(),
     };
-    report_export(&mut engine, args, &root)
+    report_export(&mut engine, args, &root, fail_on)
 }
 
-/// Exports and waits, printing each diagnostic and then the output and its page count.
-fn report_export(engine: &mut Engine, args: ExportArgs, root: &Path) -> Result<ExitCode, String> {
+/// Exports and waits, printing each diagnostic and then the output and its page count. Fails
+/// when a diagnostic is at least as severe as `fail_on`, though the PDF is written.
+fn report_export(
+    engine: &mut Engine,
+    args: ExportArgs,
+    root: &Path,
+    fail_on: Option<DiagnosticSeverity>,
+) -> Result<ExitCode, String> {
     let output = args.output.clone();
     match engine.export_blocking(args, INDEX_TIMEOUT) {
         Ok(summary) => {
@@ -1015,7 +1032,17 @@ fn report_export(engine: &mut Engine, args: ExportArgs, root: &Path) -> Result<E
                 }
             }
             println!("{} ({} pages)", output.display(), summary.pages);
-            Ok(ExitCode::SUCCESS)
+            let failed = fail_on.is_some_and(|threshold| {
+                summary.diagnostics.iter().any(|diagnostic| {
+                    threshold == DiagnosticSeverity::Warning
+                        || diagnostic.severity == DiagnosticSeverity::Error
+                })
+            });
+            Ok(if failed {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            })
         }
         Err(error) => {
             eprintln!("adocfoundry-cli: {error}");

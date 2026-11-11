@@ -1215,32 +1215,53 @@ pub fn block_by_trail<'v>(view: &'v ViewTree, trail: &[usize]) -> Option<&'v Vie
     Some(block)
 }
 
+impl ViewTree {
+    /// Calls `visit` with every block of the tree, depth first, each before the blocks inside
+    /// it: those of sections and delimited blocks, list items, description and callout list
+    /// entries, and table cells. The one walk of every block, so a container cannot be missed.
+    pub fn each_block<'a>(&'a self, visit: &mut impl FnMut(&'a ViewBlock)) {
+        each_block(&self.blocks, visit);
+    }
+}
+
+/// [`ViewTree::each_block`] over `blocks` and every block inside them.
+pub fn each_block<'a>(blocks: &'a [ViewBlock], visit: &mut impl FnMut(&'a ViewBlock)) {
+    for block in blocks {
+        visit(block);
+        block.each_child_list(&mut |children| each_block(children, visit));
+    }
+}
+
 impl ViewBlock {
     /// The blocks directly inside this one, in order (list items' and cells' blocks included).
     #[must_use]
     pub fn child_refs(&self) -> Vec<&ViewBlock> {
         adoc_core::probe::hit(adoc_core::probe::Probe::ChildRefs);
+        let mut children = Vec::new();
+        self.each_child_list(&mut |blocks| children.extend(blocks));
+        children
+    }
+
+    /// Calls `visit` with each list of blocks directly inside this one, in order.
+    fn each_child_list<'a>(&'a self, visit: &mut impl FnMut(&'a [ViewBlock])) {
         match &self.kind {
             ViewKind::Section { blocks, .. }
             | ViewKind::Admonition { blocks, .. }
             | ViewKind::Quote { blocks, .. }
             | ViewKind::Sidebar(blocks)
             | ViewKind::Example(blocks)
-            | ViewKind::Open(blocks) => blocks.iter().collect(),
-            ViewKind::List { items, .. } => items.iter().flat_map(|item| &item.blocks).collect(),
-            ViewKind::DescriptionList(items) => {
-                items.iter().flat_map(|item| &item.blocks).collect()
-            }
-            ViewKind::CalloutList(items) => items.iter().flat_map(|item| &item.blocks).collect(),
+            | ViewKind::Open(blocks) => visit(blocks),
+            ViewKind::List { items, .. } => items.iter().for_each(|item| visit(&item.blocks)),
+            ViewKind::DescriptionList(items) => items.iter().for_each(|item| visit(&item.blocks)),
+            ViewKind::CalloutList(items) => items.iter().for_each(|item| visit(&item.blocks)),
             ViewKind::Table(table) => table
                 .header
                 .iter()
                 .chain(&table.rows)
                 .chain(&table.footer)
                 .flatten()
-                .flat_map(|cell| &cell.blocks)
-                .collect(),
-            _ => Vec::new(),
+                .for_each(|cell| visit(&cell.blocks)),
+            _ => {}
         }
     }
 }

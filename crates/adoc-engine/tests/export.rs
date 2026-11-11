@@ -408,3 +408,86 @@ fn unconvertible_stem_is_reported() {
         Some((page.as_path(), 5))
     );
 }
+
+/// A renderer whose every diagram fails, as one with its tool missing does.
+struct Fails;
+
+impl adoc_diagrams::DiagramProvider for Fails {
+    fn kinds(&self) -> &[&str] {
+        &["graphviz"]
+    }
+
+    fn render(
+        &self,
+        request: &adoc_diagrams::DiagramRequest,
+    ) -> Result<String, adoc_diagrams::DiagramError> {
+        Err(adoc_diagrams::DiagramError::Failed(format!(
+            "cannot draw {}",
+            request.source.trim()
+        )))
+    }
+}
+
+/// The export's failed-diagram warnings for a page holding `text`, with their lines.
+fn failed_diagrams(text: &str) -> Vec<(String, u32)> {
+    let (directory, root, mut engine) = book_workspace("");
+    engine.set_diagrams(Diagrams::with_providers(
+        DiagramCache::new(directory.path().join("failing-cache")),
+        vec![Box::new(Fails)],
+    ));
+    let page = root.join("guide/modules/ROOT/pages/diagrams.adoc");
+    fs::write(&page, text).unwrap();
+    let id = engine.open(&page).unwrap();
+    let (summary, _) = export(&mut engine, directory.path(), ExportTarget::Page(id));
+    summary
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message.contains("diagram not rendered"))
+        .map(|diagnostic| {
+            let (path, line) = diagnostic.location.clone().expect("a location");
+            assert_eq!(path, page);
+            (diagnostic.message.clone(), line)
+        })
+        .collect()
+}
+
+fn not_rendered(name: &str, line: u32) -> Vec<(String, u32)> {
+    vec![(
+        format!("graphviz diagram not rendered: cannot draw {name}"),
+        line,
+    )]
+}
+
+#[test]
+fn a_failed_diagram_at_the_top_of_the_page_is_reported() {
+    let failed = failed_diagrams("= Page\n\n[graphviz]\n....\ntop\n....\n");
+    assert_eq!(failed, not_rendered("top", 3));
+}
+
+#[test]
+fn a_failed_diagram_in_a_list_item_is_reported() {
+    let failed = failed_diagrams("= Page\n\n* An item\n+\n[graphviz]\n....\nin-list\n....\n");
+    assert_eq!(failed, not_rendered("in-list", 5));
+}
+
+#[test]
+fn a_failed_diagram_in_a_description_list_is_reported() {
+    let failed = failed_diagrams(
+        "= Page\n\nTerm:: A description\n+\n[graphviz]\n....\nin-description\n....\n",
+    );
+    assert_eq!(failed, not_rendered("in-description", 5));
+}
+
+#[test]
+fn a_failed_diagram_in_a_callout_list_is_reported() {
+    let failed = failed_diagrams(
+        "= Page\n\n----\nsome code <1>\n----\n<1> A callout\n+\n[graphviz]\n....\nin-callout\n....\n",
+    );
+    assert_eq!(failed, not_rendered("in-callout", 8));
+}
+
+#[test]
+fn a_failed_diagram_in_a_table_cell_is_reported() {
+    let failed = failed_diagrams("= Page\n\n|===\na|\n[graphviz]\n....\nin-cell\n....\n|===\n");
+    assert_eq!(failed, not_rendered("in-cell", 5));
+}

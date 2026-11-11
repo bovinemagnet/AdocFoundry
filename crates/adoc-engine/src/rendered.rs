@@ -109,7 +109,8 @@ struct Parsed {
     generation: u64,
     path: PathBuf,
     dom: Arc<Dom>,
-    /// Every file the page was assembled from, itself included.
+    /// Every file the page was assembled from, itself included, and every file its diagrams
+    /// read: a change to any of them previews it again.
     sources: BTreeSet<PathBuf>,
     /// Diagrams still rendering, by checksum.
     waiting: BTreeSet<String>,
@@ -140,11 +141,56 @@ pub(crate) struct PreviewState {
     queued: std::collections::VecDeque<(Arc<Diagrams>, String, DiagramRequest)>,
     /// Diagram renders running on workers.
     running: usize,
-    failed: BTreeMap<String, String>,
+    /// Diagrams that could not be rendered, so they are not tried again on every rebuild.
+    failed: FailedDiagrams,
 }
 
 /// The most diagrams rendered at once, however many a page holds.
 pub const DIAGRAM_WORKERS: usize = 4;
+
+/// The most diagram failures remembered from one parse of a page to the next: the oldest are
+/// forgotten first, when a page is parsed afresh, and tried again when next shown. Between
+/// parses the failures of the pages being shown are added, never forgotten, so a view rebuilt
+/// as its other diagrams finish never asks for one again.
+pub const MAX_DIAGRAM_FAILURES: usize = 256;
+
+/// Why each diagram that failed did, by checksum, at most [`MAX_DIAGRAM_FAILURES`] of them.
+#[derive(Default)]
+pub(crate) struct FailedDiagrams {
+    messages: HashMap<String, String>,
+    /// Checksums, oldest first.
+    order: std::collections::VecDeque<String>,
+}
+
+impl FailedDiagrams {
+    fn get(&self, checksum: &str) -> Option<&String> {
+        self.messages.get(checksum)
+    }
+
+    fn insert(&mut self, checksum: String, message: String) {
+        if self.messages.insert(checksum.clone(), message).is_none() {
+            self.order.push_back(checksum);
+        }
+    }
+
+    /// Forgets the oldest failures beyond [`MAX_DIAGRAM_FAILURES`].
+    fn trim(&mut self) {
+        while self.order.len() > MAX_DIAGRAM_FAILURES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.messages.remove(&oldest);
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.messages.clear();
+        self.order.clear();
+    }
+
+    fn len(&self) -> usize {
+        self.messages.len()
+    }
+}
 
 impl PreviewState {
     /// When the next scheduled preview is to start.
@@ -428,6 +474,15 @@ impl Engine {
         }
     }
 
+    /// A file that is not a page changed on disk: the previews and visual views with a diagram
+    /// that reads it, such as a PlantUML `!include`, are shown again, keyed afresh by it.
+    pub(crate) fn diagram_input_changed(&mut self, path: &Path) {
+        self.preview_source_changed(path);
+        if self.visual_reads(path) {
+            self.visual_source_changed(path);
+        }
+    }
+
     /// Schedules a re-render of every previewed document, after a catalog or index change.
     pub(crate) fn preview_workspace_changed(&mut self) {
         let ids: Vec<DocumentId> = self.rendered.requests.keys().copied().collect();
@@ -685,6 +740,7 @@ impl Engine {
                 waiting: BTreeSet::new(),
             },
         );
+        self.trim_diagram_failures();
         self.publish_preview(id);
     }
 
@@ -696,6 +752,18 @@ impl Engine {
         dom: &Dom,
         formulas: bool,
     ) -> (ViewTree, BTreeSet<String>) {
+        let (view, waiting, _) = self.view_and_inputs(path, dom, formulas);
+        (view, waiting)
+    }
+
+    /// [`Engine::view_of`], with the files the view's diagrams read, whose changes are to
+    /// show it again ([`adoc_diagrams::Diagrams::inputs`]).
+    pub(crate) fn view_and_inputs(
+        &mut self,
+        path: &Path,
+        dom: &Dom,
+        formulas: bool,
+    ) -> (ViewTree, BTreeSet<String>, BTreeSet<PathBuf>) {
         let diagrams = self.diagrams();
         let resolver = EngineResolver {
             workspace: &self.workspace,
@@ -703,15 +771,17 @@ impl Engine {
             failed: &self.rendered.failed,
             formulas,
             wanted: RefCell::default(),
+            inputs: RefCell::default(),
             directory: path.parent().map(Path::to_path_buf),
         };
         let view = build_view(path, dom, &resolver);
+        let inputs = resolver.inputs.into_inner();
         let mut waiting = BTreeSet::new();
         for (checksum, request) in resolver.wanted.into_inner() {
             waiting.insert(checksum.clone());
             self.spawn_diagram(&diagrams, checksum, request);
         }
-        (view, waiting)
+        (view, waiting, inputs)
     }
 
     /// Builds the view from the cached parse, starts any diagram it is missing, and publishes.
@@ -720,7 +790,7 @@ impl Engine {
             return;
         };
         let (path, dom) = (parsed.path.clone(), parsed.dom.clone());
-        let (view, waiting) = self.view_of(&path, &dom, true);
+        let (view, waiting, inputs) = self.view_and_inputs(&path, &dom, true);
         let Some(parsed) = self.rendered.parsed.get(&id) else {
             return;
         };
@@ -732,6 +802,7 @@ impl Engine {
         });
         if let Some(parsed) = self.rendered.parsed.get_mut(&id) {
             parsed.waiting = waiting;
+            parsed.sources.extend(inputs);
         }
         let version = preview.version;
         self.rendered.published.insert(id, preview);
@@ -799,9 +870,64 @@ impl Engine {
         };
         if tools(before) != tools(now) {
             self.rendered.diagrams = None;
-            self.rendered.failed.clear();
-            self.preview_workspace_changed();
+            self.retry_diagrams();
         }
+    }
+
+    /// Forgets every diagram that failed, has the renderer look for its tools again, so one
+    /// installed since is used, and shows the previews and visual views again, rendering those
+    /// diagrams afresh: `preview.retry_diagrams`.
+    pub fn retry_diagrams(&mut self) {
+        self.rendered.failed.clear();
+        if let Some(diagrams) = &self.rendered.diagrams {
+            diagrams.look_for_tools_again();
+        }
+        self.preview_workspace_changed();
+        self.refresh_visual_views();
+    }
+
+    /// Forgets the oldest diagram failures beyond [`MAX_DIAGRAM_FAILURES`]. Called only where
+    /// a page has been parsed afresh, before its view is built, never as a view is rebuilt for
+    /// a diagram that finished, which would ask again for a failure just forgotten, and again.
+    pub(crate) fn trim_diagram_failures(&mut self) {
+        self.rendered.failed.trim();
+    }
+
+    /// How many diagram failures are remembered: at most [`MAX_DIAGRAM_FAILURES`] and those
+    /// of the pages shown since they were last parsed.
+    #[must_use]
+    pub fn diagram_failures(&self) -> usize {
+        self.rendered.failed.len()
+    }
+
+    /// The workspace's diagram cache: under the first root, where the renderer keeps it.
+    pub(crate) fn diagram_cache(&self) -> Option<DiagramCache> {
+        self.roots
+            .first()
+            .map(|root| DiagramCache::for_workspace(root))
+    }
+
+    /// Removes, on a worker, the images in the workspace's diagram cache not read for
+    /// `[history] diagram_cache_days`, keeping every one the renderer has shown (#431).
+    pub(crate) fn prune_diagram_cache(&mut self) {
+        let Some(cache) = self.diagram_cache().filter(|cache| cache.dir().is_dir()) else {
+            return;
+        };
+        let keep = self
+            .rendered
+            .diagrams
+            .as_ref()
+            .map(|diagrams| diagrams.in_use())
+            .unwrap_or_default();
+        let unused_for =
+            Duration::from_secs(u64::from(self.settings.history.diagram_cache_days) * 86_400);
+        let sender = self.worker_sender.clone();
+        self.workers_running += 1;
+        let crashed = |_| WorkerMessage::DiagramCachePruned;
+        worker::spawn(sender, crashed, move |sender| {
+            let _ = cache.prune(unused_for, &keep);
+            let _ = sender.send(WorkerMessage::DiagramCachePruned);
+        });
     }
 
     /// Replaces the diagram renderer, for tests and front ends with their own providers.
@@ -880,11 +1006,13 @@ impl Engine {
 struct EngineResolver<'e> {
     workspace: &'e WorkspaceState,
     diagrams: &'e Diagrams,
-    failed: &'e BTreeMap<String, String>,
+    failed: &'e FailedDiagrams,
     /// Whether formulas are rendered as images for this view.
     formulas: bool,
     /// Diagrams to render, gathered while building because the view is built immutably.
     wanted: RefCell<Vec<(String, DiagramRequest)>>,
+    /// The files the view's diagrams read.
+    inputs: RefCell<BTreeSet<PathBuf>>,
     /// The folder of the page the view is of, where its diagrams' tools run.
     directory: Option<PathBuf>,
 }
@@ -966,6 +1094,9 @@ impl ViewResolver for EngineResolver<'_> {
             attributes: attributes.clone(),
             directory: self.directory.clone(),
         };
+        self.inputs
+            .borrow_mut()
+            .extend(self.diagrams.inputs(&request));
         let checksum = self.diagrams.checksum(&request);
         if let Some(path) = self.diagrams.cached_at(&checksum) {
             return DiagramView::Svg(path);

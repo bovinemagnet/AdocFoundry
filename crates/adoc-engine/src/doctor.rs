@@ -131,6 +131,8 @@ pub struct Doctor {
     search_path: Option<OsString>,
     settings: DoctorSection,
     spelling: DoctorSection,
+    /// The workspace's diagram cache, measured when the report runs.
+    diagram_cache: Option<PathBuf>,
     #[cfg(feature = "typst")]
     theme: adoc_pdf::ThemeSource,
     #[cfg(feature = "typst")]
@@ -229,6 +231,7 @@ impl Engine {
             search_path: std::env::var_os("PATH"),
             settings: section,
             spelling,
+            diagram_cache: self.diagram_cache().map(|cache| cache.dir().to_path_buf()),
             #[cfg(feature = "typst")]
             theme: self.theme_source(None, &attributes, None),
             #[cfg(feature = "typst")]
@@ -326,7 +329,24 @@ impl Doctor {
             title: "Tools".to_owned(),
             lines: tools,
         });
-        sections.push(self.settings);
+        let mut settings = self.settings;
+        if let Some(cache) = self
+            .diagram_cache
+            .clone()
+            .map(adoc_diagrams::DiagramCache::new)
+        {
+            let usage = cache.usage();
+            settings = settings.line(
+                "Diagram cache",
+                format!(
+                    "{} ({} files, {})",
+                    cache.dir().display(),
+                    usage.entries,
+                    size(usage.bytes)
+                ),
+            );
+        }
+        sections.push(settings);
         sections.push(self.spelling);
         DoctorReport { sections }
     }
@@ -378,6 +398,22 @@ impl Doctor {
     fn pdf_section(&self) -> DoctorSection {
         DoctorSection::new("PDF").line("Export", "not built in")
     }
+}
+
+/// `bytes` for a reader: `512 bytes`, `3.4 KB`, `12.0 MB`.
+fn size(bytes: u64) -> String {
+    const UNITS: [&str; 3] = ["KB", "MB", "GB"];
+    if bytes < 1024 {
+        return format!("{bytes} bytes");
+    }
+    #[allow(clippy::cast_precision_loss)]
+    let mut amount = bytes as f64 / 1024.0;
+    let mut unit = 0;
+    while amount >= 1024.0 && unit + 1 < UNITS.len() {
+        amount /= 1024.0;
+        unit += 1;
+    }
+    format!("{amount:.1} {}", UNITS[unit])
 }
 
 /// The tool's path and version, or why it cannot be used.

@@ -88,6 +88,7 @@ pub mod ids {
     pub const VIEW_TOGGLE_PDF_PREVIEW: CommandId = CommandId::new("view.toggle_pdf_preview");
     pub const VIEW_TOGGLE_PDF_WINDOW: CommandId = CommandId::new("view.toggle_pdf_window");
     pub const PREVIEW_PIN: CommandId = CommandId::new("preview.pin");
+    pub const PREVIEW_RETRY_DIAGRAMS: CommandId = CommandId::new("preview.retry_diagrams");
     pub const VIEW_SHOW_SOURCE: CommandId = CommandId::new("view.show_source");
     pub const VIEW_SHOW_VISUAL: CommandId = CommandId::new("view.show_visual");
     pub const VIEW_SHOW_SPLIT: CommandId = CommandId::new("view.show_split");
@@ -170,7 +171,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, ActiveTab, Always};
 
-    let builtin: [(CommandSpec, Run); 42] = [
+    let builtin: [(CommandSpec, Run); 43] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -551,6 +552,16 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
         ),
         (
             spec(
+                ids::PREVIEW_RETRY_DIAGRAMS,
+                "Retry Failed Diagrams",
+                View,
+                None,
+                Always,
+            ),
+            preview_retry_diagrams,
+        ),
+        (
+            spec(
                 ids::NAVIGATE_GO_TO,
                 "Go to Location",
                 Navigate,
@@ -850,6 +861,15 @@ fn preview_pin(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome,
         layout.visible = true;
     }
     engine.set_preview_layout(layout);
+    Ok(CommandOutcome::Done)
+}
+
+/// Renders again the diagrams that failed, looking for their tools again (#429).
+fn preview_retry_diagrams(
+    engine: &mut Engine,
+    _: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    engine.retry_diagrams();
     Ok(CommandOutcome::Done)
 }
 

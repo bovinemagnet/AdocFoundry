@@ -24,7 +24,7 @@ use adoc_pdf::{
     Book, BookItem, Document, LoadedTheme, PageView, PdfOptions, PdfSeverity, ThemeSource,
 };
 #[cfg(feature = "typst")]
-use adoc_render::{DiagramView, ViewBlock, ViewInline, ViewKind, ViewTree};
+use adoc_render::{DiagramView, ViewInline, ViewKind, ViewTree};
 
 #[cfg(feature = "typst")]
 use crate::{
@@ -776,6 +776,7 @@ impl Engine {
             return;
         };
         state.doms = doms;
+        self.trim_diagram_failures();
         let waiting = self.export_views(job).1;
         let Some(state) = self.export.jobs.get_mut(&job) else {
             return;
@@ -1154,33 +1155,24 @@ fn unread_pages(doms: &[(PathBuf, Dom)]) -> Vec<ExportDiagnostic> {
 /// A warning for each diagram that could not be rendered and is shown as its source.
 #[cfg(feature = "typst")]
 fn failed_diagrams(document: &Document) -> Vec<ExportDiagnostic> {
-    fn walk(blocks: &[ViewBlock], out: &mut Vec<ExportDiagnostic>) {
-        for block in blocks {
-            match &block.kind {
-                ViewKind::Diagram(DiagramView::Failed { kind, message, .. }) => {
-                    out.push(ExportDiagnostic {
-                        severity: DiagnosticSeverity::Warning,
-                        message: format!("{kind} diagram not rendered: {message}"),
-                        location: Some((block.span.path.clone(), block.span.line)),
-                    });
-                }
-                ViewKind::Section { blocks, .. }
-                | ViewKind::Admonition { blocks, .. }
-                | ViewKind::Quote { blocks, .. }
-                | ViewKind::Sidebar(blocks)
-                | ViewKind::Example(blocks)
-                | ViewKind::Open(blocks) => walk(blocks, out),
-                _ => {}
-            }
-        }
-    }
     let mut out = Vec::new();
+    let mut walk = |view: &ViewTree| {
+        view.each_block(&mut |block| {
+            if let ViewKind::Diagram(DiagramView::Failed { kind, message, .. }) = &block.kind {
+                out.push(ExportDiagnostic {
+                    severity: DiagnosticSeverity::Warning,
+                    message: format!("{kind} diagram not rendered: {message}"),
+                    location: Some((block.span.path.clone(), block.span.line)),
+                });
+            }
+        });
+    };
     match document {
-        Document::Article(page) => walk(&page.view.blocks, &mut out),
+        Document::Article(page) => walk(&page.view),
         Document::Book(book) => {
             for item in &book.items {
                 if let BookItem::Page(page) = item {
-                    walk(&page.view.blocks, &mut out);
+                    walk(&page.view);
                 }
             }
         }

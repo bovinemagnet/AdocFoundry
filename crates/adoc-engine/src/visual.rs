@@ -234,9 +234,11 @@ impl Engine {
             return;
         };
         let (id, version, dom) = (parse.id, parse.version, parse.dom.clone());
-        let sources = parse.sources.clone();
+        let mut sources = parse.sources.clone();
         let model = Model::build(&path, &parse.text, &dom);
-        let (view, waiting) = self.view_of(&path, &dom, true);
+        self.trim_diagram_failures();
+        let (view, waiting, inputs) = self.view_and_inputs(&path, &dom, true);
+        sources.extend(inputs);
         let current = Arc::new(VisualDocument {
             document: id,
             version,
@@ -282,6 +284,14 @@ impl Engine {
                 self.visual.marked += 1;
             }
         }
+    }
+
+    /// Whether a visual view was built from `path`, or has a diagram that reads it.
+    pub(crate) fn visual_reads(&self, path: &Path) -> bool {
+        self.visual
+            .sessions
+            .values()
+            .any(|session| session.sources.contains(path))
     }
 
     /// Marks every model out of date, after a catalog or index change.
@@ -364,7 +374,18 @@ impl Engine {
             .filter(|(_, session)| session.waiting.contains(checksum))
             .map(|(id, _)| *id)
             .collect();
-        for id in waiting {
+        self.rebuild_visual_views(waiting);
+    }
+
+    /// Rebuilds every visual view, so diagrams that failed are tried again.
+    pub(crate) fn refresh_visual_views(&mut self) {
+        let ids: Vec<DocumentId> = self.visual.sessions.keys().copied().collect();
+        self.rebuild_visual_views(ids);
+    }
+
+    /// Builds the views of these visual sessions again from their parses.
+    fn rebuild_visual_views(&mut self, ids: Vec<DocumentId>) {
+        for id in ids {
             let Some(session) = self.visual.sessions.get(&id) else {
                 continue;
             };

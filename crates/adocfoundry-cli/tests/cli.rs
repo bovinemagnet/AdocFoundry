@@ -539,6 +539,50 @@ fn pdf_exports_a_page() {
 }
 
 #[test]
+fn pdf_fail_on_warning_refuses_a_diagram_left_as_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    // In a list item, where the export once missed it (#433).
+    std::fs::write(
+        &page,
+        "= Page\n\n* An item\n+\n[graphviz]\n....\ndigraph { a -> b }\n....\n",
+    )
+    .unwrap();
+    // An empty PATH, so `dot` is never found.
+    let empty = directory.path().join("empty");
+    std::fs::create_dir(&empty).unwrap();
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(directory.path())
+            .env("PATH", &empty)
+            .args(["pdf", "page.adoc", "--output", "page.pdf"])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    let output = run(&[]);
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("page.adoc:5: warning: graphviz diagram not rendered"),
+        "{stderr}"
+    );
+
+    let output = run(&["--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(1));
+    // The PDF is written all the same, for whoever wants to look at it.
+    assert!(std::fs::read(directory.path().join("page.pdf"))
+        .unwrap()
+        .starts_with(b"%PDF-"));
+
+    let output = run(&["--fail-on", "error"]);
+    assert!(output.status.success());
+    let output = run(&["--fail-on", "sometimes"]);
+    assert!(!output.status.success());
+}
+
+#[test]
 fn pdf_exports_a_component() {
     // Copied, so the diagram cache is written outside the repository.
     let directory = tempfile::tempdir().unwrap();

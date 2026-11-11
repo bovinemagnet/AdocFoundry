@@ -104,6 +104,8 @@ pub(crate) enum WorkerMessage {
         checksum: String,
         result: Result<PathBuf, String>,
     },
+    /// The diagram cache was pruned (or pruning it crashed): nothing waits for it.
+    DiagramCachePruned,
     WordsCounted {
         id: crate::DocumentId,
         version: u64,
@@ -411,6 +413,7 @@ impl Engine {
         self.record_recent_folders();
         self.reindex();
         self.discover_git();
+        self.prune_diagram_cache();
         Ok(())
     }
 
@@ -728,6 +731,7 @@ impl Engine {
             WorkerMessage::DiagramRendered { checksum, result } => {
                 self.diagram_rendered(&checksum, result);
             }
+            WorkerMessage::DiagramCachePruned => {}
             WorkerMessage::WordsCounted { id, version, count } => {
                 self.words_counted(id, version, count);
             }
@@ -917,6 +921,7 @@ impl Engine {
                 }
             } else if *change == Change::File {
                 catalogued.extend(self.catalog_file_changed(path, None));
+                self.diagram_input_changed(path);
             }
         }
         if settings {

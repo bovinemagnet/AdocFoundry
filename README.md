@@ -69,7 +69,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Clicking a block places the caret on its source, opening the partial it came from when there is one. Clicking an xref follows it, recorded in back and forward history; external links open the browser and attachments the default application.
 - Unresolved xrefs are underlined in red, and missing images show a placeholder naming the target.
 - Includes resolve as Antora resolves them, including qualified ids such as `include::other:partial$note.adoc[]`, and images and attachments are also found in a module's older `assets/images` and `assets/attachments` directories.
-- Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render through `dot`, `plantuml` or `d2`, from `[tools]` or else `PATH`, and otherwise show their source with the reason. At most four diagrams render at once, and a diagram that renders past `[tools] diagram_timeout` (Mermaid included), or a tool that writes more than 32 MB, is stopped. A renderer that crashes fails only its diagram, which shows its source and the reason. External tools run in the page's folder, so a diagram's relative `!include` or `image=` resolves as asciidoctor-diagram resolves it. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace, keyed by the program that drew them as well as the source, so another or an upgraded tool draws afresh.
+- Source blocks are highlighted with the editor's grammars. Mermaid diagrams render in process; Graphviz, PlantUML and D2 diagrams render through `dot`, `plantuml` or `d2`, from `[tools]` or else `PATH`, and otherwise show their source with the reason. At most four diagrams render at once, and a diagram that renders past `[tools] diagram_timeout` (Mermaid included), or a tool that writes more than 32 MB, is stopped, an external tool with every process it started (the `plantuml` launcher's Java included). A renderer that crashes fails only its diagram, which shows its source and the reason. External tools run in the page's folder, so a diagram's relative `!include` or `image=` resolves as asciidoctor-diagram resolves it. Rendered diagrams are cached in `.cache/adocfoundry/diagrams` in the workspace, keyed by the program that drew them as well as the source, so another or an upgraded tool draws afresh.
 - STEM is typeset: block formulas are drawn as images, and inline formulas are drawn in the line of text, on its baseline and at its size, with their source in a tooltip; the visual editor draws them the same way. A formula that cannot be converted shows as its source.
 
 **Visual editing**
@@ -196,7 +196,7 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Toggle theme | Cmd-K Cmd-T | Ctrl-K Ctrl-T |
 | Read-only second window | Cmd-K Cmd-N | Ctrl-K Ctrl-N |
 
-Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the preview's toolbar and commands in the palette. The visual editor's toolbar holds the block-type picker, the marks, Link, the lists, an Insert menu (image, table, code block, admonition) and, in a table cell, the Table menu; every one of them is also in the palette.
+Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the preview's toolbar and commands in the palette. A Graphviz, PlantUML or D2 diagram's cache key includes the size and modification time of the local files it names for its tool to read (PlantUML includes, imports and themes, Graphviz `image` and `shapefile`, D2 imports and icons), when they lie in the page's folder, so editing one draws the diagram again, and the watcher shows the pages that read it again. Opening a workspace removes, on a worker, the images in `.cache/adocfoundry/diagrams` not read for `[history] diagram_cache_days` (30 by default), keeping those the window shows; the support report gives the folder's size and file count. Retry Failed Diagrams (`preview.retry_diagrams`, in the View menu and the palette) forgets the diagrams that failed, looks for Graphviz, PlantUML and D2 again, and renders those diagrams afresh; a tool that was not found is also looked for again a second later on its own, and the engine remembers at most 256 failures beyond those of the pages shown. The visual editor's toolbar holds the block-type picker, the marks, Link, the lists, an Insert menu (image, table, code block, admonition) and, in a table cell, the Table menu; every one of them is also in the palette.
 
 ## Settings
 
@@ -327,8 +327,8 @@ adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--link-images] [--parser acdc|asciidoc-parser]
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
-    [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
-adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
+    [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>] [--fail-on none|warning|error]
+adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>] [--fail-on none|warning|error]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -341,7 +341,7 @@ adocfoundry-cli doctor [<root>] [--format text|json]
 
 `render` writes a page as a standalone HTML file, as the preview renders it, waiting for its diagrams; without `--output` it writes to standard output. Without `--root`, the workspace is the folder above the page's Antora component, or the page's own folder outside Antora. `--parser asciidoc-parser` renders with the second document parser, for comparison; the app always uses `acdc`.
 
-`pdf` exports a page to `<page>.pdf` beside it, or a component directory (or `--component`) as a book to `<name>.pdf`, and prints the file and its page count. Warnings print as `path:line: warning: message`; the exit code is 1 when the export fails. `--typst` also writes the generated Typst, for inspection.
+`pdf` exports a page to `<page>.pdf` beside it, or a component directory (or `--component`) as a book to `<name>.pdf`, and prints the file and its page count. Warnings print as `path:line: warning: message`, among them every diagram that could not be rendered, wherever it sits (a list item, a table cell, any other block); the exit code is 1 when the export fails, or when a diagnostic meets `--fail-on` (`none` by default; `warning` refuses a PDF with a diagram left as its source, though the PDF is still written). `--typst` also writes the generated Typst, for inspection.
 
 `git-status` prints the branch of the repository holding the root and its changed AsciiDoc files as `git status --short` does, with the number of changed line runs against `HEAD` in each (`branch main`, ` M docs/page.adoc (2 changed)`); `--format json` gives the same as an object. The other commands do not look at Git.
 

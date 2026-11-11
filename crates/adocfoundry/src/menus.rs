@@ -165,6 +165,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::VIEW_DETACH_PREVIEW),
             Command(ids::PREVIEW_PIN),
             Command(ids::VIEW_TOGGLE_SCROLL_SYNC),
+            Command(ids::PREVIEW_RETRY_DIAGRAMS),
             Separator,
             Command(ids::GIT_SHOW_CHANGES),
             Command(ids::GIT_SHOW_BLAME),

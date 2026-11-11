@@ -14,7 +14,7 @@ use std::{
     ffi::OsString,
     io::{BufRead as _, BufReader, Read},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
@@ -357,12 +357,8 @@ fn run_step(
     if let Some(path) = path {
         command.env("PATH", path);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt as _;
-        // A group of its own, so stopping it stops what npm started too.
-        command.process_group(0);
-    }
+    // A group of its own, so stopping it stops what npm started too.
+    adoc_diagrams::process::in_own_group(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("could not run {shown}: {error}"))?;
@@ -378,7 +374,7 @@ fn run_step(
             Ok(Some(status)) => break status,
             Ok(None) => {}
             Err(error) => {
-                stop(&mut child);
+                adoc_diagrams::process::stop(&mut child);
                 return Err(format!("{shown} could not be waited for: {error}"));
             }
         }
@@ -398,7 +394,7 @@ fn run_step(
         if let Some(message) = stopped {
             // The readers end once the pipes close; they are not waited for, in case a process
             // outside the group still holds them.
-            stop(&mut child);
+            adoc_diagrams::process::stop(&mut child);
             return Err(message);
         }
         thread::sleep(POLL);
@@ -452,26 +448,6 @@ fn read_lines(
             return;
         }
     }
-}
-
-/// Stops `child` and every process in its group.
-fn stop(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        use rustix::process::{kill_process_group, Pid, Signal};
-        let _ = kill_process_group(Pid::from_child(child), Signal::KILL);
-    }
-    #[cfg(windows)]
-    {
-        // The tree beneath it too: npm runs its scripts through a shell.
-        let _ = Command::new("taskkill")
-            .args(["/T", "/F", "/PID", &child.id().to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[cfg(test)]

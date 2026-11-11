@@ -4,6 +4,8 @@
 mod cache;
 mod external;
 mod mermaid;
+pub mod process;
+mod reads;
 
 use std::{
     collections::{BTreeMap, HashSet},
@@ -12,7 +14,7 @@ use std::{
     sync::Mutex,
 };
 
-pub use cache::DiagramCache;
+pub use cache::{CacheUsage, DiagramCache, MARK_READ_AFTER};
 pub use external::{
     find_program, is_path, ExternalProvider, ToolPaths, DEFAULT_TIMEOUT, MAX_OUTPUT,
 };
@@ -152,6 +154,14 @@ pub trait DiagramProvider: Send + Sync {
     fn identity(&self, _request: &DiagramRequest) -> String {
         String::new()
     }
+    /// Forgets what the provider found out about its tools, so the next render looks again.
+    /// Nothing by default.
+    fn look_again(&self) {}
+    /// The local files the diagram names for the renderer to read, such as a PlantUML
+    /// `!include`, whose changes change the image. None by default.
+    fn inputs(&self, _request: &DiagramRequest) -> Vec<PathBuf> {
+        Vec::new()
+    }
 }
 
 /// The providers and the cache the preview renders diagrams through.
@@ -236,6 +246,38 @@ impl Diagrams {
             hasher.update(part.as_bytes());
         }
         hex(&hasher.finalize())
+    }
+
+    /// The cache the images are kept in.
+    #[must_use]
+    pub fn cache(&self) -> &DiagramCache {
+        &self.cache
+    }
+
+    /// The checksums of the images this renderer has found or put in its cache: those shown
+    /// since it was made, which pruning the cache keeps.
+    #[must_use]
+    pub fn in_use(&self) -> HashSet<String> {
+        self.present
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    /// The local files `request` names for its renderer to read ([`DiagramProvider::inputs`]):
+    /// a change to one is a reason to show the diagram again.
+    #[must_use]
+    pub fn inputs(&self, request: &DiagramRequest) -> Vec<PathBuf> {
+        self.provider(&request.kind)
+            .map(|provider| provider.inputs(request))
+            .unwrap_or_default()
+    }
+
+    /// Has every provider look for its tools again, so one installed or upgraded since is used.
+    pub fn look_for_tools_again(&self) {
+        for provider in &self.providers {
+            provider.look_again();
+        }
     }
 
     /// The cached image for `request`, without rendering.
@@ -591,6 +633,43 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_tool_installed_after_it_was_missed_is_found() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let tool = dir.path().join("bin").join("dot");
+        let tools = ToolPaths {
+            dot: tool.clone(),
+            ..ToolPaths::default()
+        };
+        let diagrams = Diagrams::with_tools(DiagramCache::new(dir.path().join("cache")), &tools);
+        let request = DiagramRequest::new("graphviz", "a -> b");
+        let missing = diagrams.checksum(&request);
+        assert!(matches!(
+            diagrams.render(&request),
+            Err(DiagramError::ToolMissing { .. })
+        ));
+
+        // Installed: a miss is not remembered beyond a moment, so the key moves on its own.
+        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        std::fs::write(&tool, "#!/bin/sh\nprintf '<svg>%s</svg>' \"$(cat)\"\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::thread::sleep(external::MISS_RECHECK + std::time::Duration::from_millis(50));
+        let found = diagrams.checksum(&request);
+        assert_ne!(found, missing);
+        let svg = diagrams.render(&request).unwrap();
+        assert_eq!(std::fs::read_to_string(svg).unwrap(), "<svg>a -> b</svg>");
+
+        // A tool found is kept until asked to look again, as after an upgrade.
+        std::fs::write(&tool, "#!/bin/sh\nprintf '<svg>upgraded</svg>'\n").unwrap();
+        assert_eq!(diagrams.checksum(&request), found);
+        diagrams.look_for_tools_again();
+        assert_ne!(diagrams.checksum(&request), found);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn tools_run_in_the_page_directory() {
         let _guard = spawn_guard();
         let dir = tempfile::tempdir().unwrap();
@@ -622,6 +701,131 @@ mod tests {
         assert_ne!(diagrams.checksum(&request), diagrams.checksum(&elsewhere));
     }
 
+    /// A diagram of `kind` holding `source`, on a page in `folder`, and the renderer of a
+    /// provider whose tool is a stub that is never run.
+    fn keyed(folder: &Path, kind: &str, source: &str) -> (Diagrams, DiagramRequest) {
+        let provider = ExternalProvider::new(
+            vec!["graphviz", "plantuml", "d2"],
+            "adoc-diagrams-stub-tool",
+            Vec::new(),
+        );
+        let diagrams = Diagrams::with_providers(
+            DiagramCache::new(folder.join("cache")),
+            vec![Box::new(provider)],
+        );
+        let request = DiagramRequest {
+            directory: Some(folder.to_path_buf()),
+            ..DiagramRequest::new(kind, source)
+        };
+        (diagrams, request)
+    }
+
+    #[test]
+    fn a_file_a_diagram_includes_is_part_of_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path();
+        std::fs::create_dir_all(folder.join("common")).unwrap();
+        std::fs::write(folder.join("common/styles.puml"), "skinparam a b\n").unwrap();
+        std::fs::write(folder.join("unrelated.puml"), "skinparam c d\n").unwrap();
+        let (diagrams, request) = keyed(
+            folder,
+            "plantuml",
+            "@startuml\n!include common/styles.puml\nA -> B\n@enduml\n",
+        );
+        let before = diagrams.checksum(&request);
+        assert_eq!(
+            diagrams.inputs(&request),
+            [folder.join("common/styles.puml")]
+        );
+
+        // Another file changing leaves the key.
+        std::fs::write(folder.join("unrelated.puml"), "skinparam c d e f\n").unwrap();
+        assert_eq!(diagrams.checksum(&request), before);
+
+        // The included file changing changes it, so the image is drawn again.
+        std::fs::write(folder.join("common/styles.puml"), "skinparam a b c\n").unwrap();
+        let after = diagrams.checksum(&request);
+        assert_ne!(after, before);
+
+        // Taken away, it changes again; the diagram is still keyed, never refused.
+        std::fs::remove_file(folder.join("common/styles.puml")).unwrap();
+        assert_ne!(diagrams.checksum(&request), after);
+    }
+
+    #[test]
+    fn graphviz_and_d2_files_are_part_of_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path();
+        for name in ["logo.png", "shape.svg", "shared.d2", "icons/db.svg"] {
+            let path = folder.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "1").unwrap();
+        }
+        let cases = [
+            (
+                "graphviz",
+                "digraph { a [image=\"logo.png\"]; b [shapefile=shape.svg] }",
+            ),
+            ("d2", "x: @shared\ndb: {\n  icon: ./icons/db.svg\n}\n"),
+        ];
+        for (kind, source) in cases {
+            let (diagrams, request) = keyed(folder, kind, source);
+            let before = diagrams.checksum(&request);
+            for input in diagrams.inputs(&request) {
+                std::fs::write(&input, "22").unwrap();
+                let after = diagrams.checksum(&request);
+                assert_ne!(after, before, "{} in {source}", input.display());
+                std::fs::write(&input, "1").unwrap();
+            }
+            assert_eq!(diagrams.inputs(&request).len(), 2, "{source}");
+        }
+    }
+
+    #[test]
+    fn only_local_files_in_the_page_s_folder_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("pages");
+        std::fs::create_dir_all(&folder).unwrap();
+        let source = "@startuml\n\
+            !include ../outside.puml\n\
+            !include /etc/passwd\n\
+            !include <C4/C4_Container>\n\
+            !include https://example.com/x.puml\n\
+            !include $STYLES\n\
+            !include %getenv(\"HOME\")/x.puml\n\
+            !include\n\
+            A -> B\n@enduml\n";
+        let (diagrams, request) = keyed(&folder, "plantuml", source);
+        assert_eq!(diagrams.inputs(&request), Vec::<PathBuf>::new());
+        // Without the page's folder nothing resolves.
+        let mut request = request;
+        request.source = "!include styles.puml\n".to_owned();
+        request.directory = None;
+        assert_eq!(diagrams.inputs(&request), Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn plantuml_names_files_in_each_directive() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path();
+        let source = "@startuml\n\
+            !include a.puml!1\n\
+            !include_many b.puml\n\
+            !include_once \"c d.puml\"\n\
+            !includesub e.puml!PART\n\
+            !import f.zip\n\
+            !theme spacelab from themes\n\
+            !theme plain\n\
+            A -> B\n@enduml\n";
+        let (diagrams, request) = keyed(folder, "plantuml", source);
+        let names: Vec<PathBuf> = ["a.puml", "b.puml", "c d.puml", "e.puml", "f.zip"]
+            .iter()
+            .map(|name| folder.join(name))
+            .chain([folder.join("themes/puml-theme-spacelab.puml")])
+            .collect();
+        assert_eq!(diagrams.inputs(&request), names);
+    }
+
     /// Writes `script` as an executable tool in `dir`.
     #[cfg(unix)]
     fn script(dir: &Path, script: &str) -> PathBuf {
@@ -649,6 +853,55 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         assert!(matches!(error, DiagramError::TimedOut { .. }), "{error:?}");
         assert!(error.to_string().contains("did not finish"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_stopped_at_the_deadline_takes_its_own_processes_with_it() {
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("helper.pid");
+        // A launcher that starts a helper of its own, as the `plantuml` script starts Java.
+        let tool = script(
+            dir.path(),
+            &format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\nwait\n",
+                pid_file.display()
+            ),
+        );
+        // Run by `/bin/sh` rather than executed itself: macOS can take seconds to launch a
+        // program it has not seen before, which would let the deadline pass first.
+        let provider = ExternalProvider::new(
+            vec!["plantuml"],
+            "/bin/sh",
+            vec![tool.display().to_string()],
+        )
+        .with_timeout(std::time::Duration::from_secs(1));
+        let error = provider
+            .render(&DiagramRequest::new("plantuml", "A -> B"))
+            .unwrap_err();
+        assert!(matches!(error, DiagramError::TimedOut { .. }), "{error:?}");
+
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let running = || {
+            std::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while running() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let left = running();
+        if left {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", pid.trim()])
+                .status();
+        }
+        assert!(!left, "the helper was left running");
     }
 
     #[cfg(unix)]

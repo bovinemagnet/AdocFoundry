@@ -222,6 +222,9 @@ pub struct HistorySettings {
     /// The history of every page together is kept under this many megabytes, the oldest
     /// versions removed first.
     pub max_size_mb: u32,
+    /// Rendered diagrams and formulas not read for this many days are removed from the
+    /// workspace's cache when it opens.
+    pub diagram_cache_days: u32,
 }
 
 impl Default for HistorySettings {
@@ -231,6 +234,7 @@ impl Default for HistorySettings {
             keep_days: 30,
             max_versions: 50,
             max_size_mb: 256,
+            diagram_cache_days: 30,
         }
     }
 }
@@ -1058,6 +1062,9 @@ impl Settings {
             ("history", "keep_days") => self.history.keep_days = positive(value)?,
             ("history", "max_versions") => self.history.max_versions = positive(value)?,
             ("history", "max_size_mb") => self.history.max_size_mb = positive(value)?,
+            ("history", "diagram_cache_days") => {
+                self.history.diagram_cache_days = positive(value)?;
+            }
             ("sidebar", "remember_expansion") => {
                 self.sidebar.remember_expansion = boolean(value)?;
             }
@@ -1346,7 +1353,7 @@ fn is_known(section: &str, key: &str) -> bool {
             )
             | (
                 "history",
-                "enabled" | "keep_days" | "max_versions" | "max_size_mb"
+                "enabled" | "keep_days" | "max_versions" | "max_size_mb" | "diagram_cache_days"
             )
     )
 }
@@ -1865,11 +1872,12 @@ mod tests {
         assert!(defaults.enabled);
         assert_eq!((defaults.keep_days, defaults.max_versions), (30, 50));
         assert_eq!(defaults.max_size_mb, 256);
+        assert_eq!(defaults.diagram_cache_days, 30);
         let directory = tempfile::tempdir().unwrap();
         let user = directory.path().join("adocfoundry.toml");
         fs::write(
             &user,
-            "[history]\nenabled = false\nkeep_days = 7\nmax_versions = 10\nmax_size_mb = 64\n",
+            "[history]\nenabled = false\nkeep_days = 7\nmax_versions = 10\nmax_size_mb = 64\ndiagram_cache_days = 5\n",
         )
         .unwrap();
         fs::write(
@@ -1882,6 +1890,7 @@ mod tests {
         assert_eq!(settings.history.keep_days, 7);
         assert_eq!(settings.history.max_versions, 10);
         assert_eq!(settings.history.max_size_mb, 64);
+        assert_eq!(settings.history.diagram_cache_days, 5);
         assert_eq!(settings.warnings.len(), 1, "{:?}", settings.warnings);
         assert!(settings.warnings[0].contains("can only be set in the user settings file"));
     }

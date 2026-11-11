@@ -5,7 +5,7 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -21,6 +21,10 @@ pub const MAX_OUTPUT: usize = 32 * 1024 * 1024;
 
 /// How often a running tool is checked for having finished.
 const POLL: Duration = Duration::from_millis(5);
+
+/// How long a program not found stays not found before it is looked for again, so a tool
+/// installed while the app runs is found without looking on every diagram of every preview.
+pub(crate) const MISS_RECHECK: Duration = Duration::from_secs(1);
 
 /// The programs the external providers run, and how long each may run: a bare name is looked
 /// up on the PATH, anything else is used as a path.
@@ -52,8 +56,16 @@ pub struct ExternalProvider {
     args: Vec<String>,
     timeout: Duration,
     max_output: usize,
-    /// Which program `program` finds, worked out once: part of every cache key.
-    fingerprint: Arc<OnceLock<String>>,
+    /// Which program `program` finds, part of every cache key: kept once found (until
+    /// [`ExternalProvider::look_again`]), and for [`MISS_RECHECK`] when not found.
+    fingerprint: Arc<Mutex<Option<Fingerprint>>>,
+}
+
+#[derive(Clone, Debug)]
+struct Fingerprint {
+    text: String,
+    /// When the program was looked for and not found.
+    missed: Option<Instant>,
 }
 
 impl ExternalProvider {
@@ -112,24 +124,57 @@ impl ExternalProvider {
         &self.program
     }
 
+    /// Forgets which program `program` finds, so the next diagram looks for it again: one
+    /// installed or upgraded since is used, and renders afresh.
+    pub fn look_again(&self) {
+        *self
+            .fingerprint
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+    }
+
     /// The program `program` finds, by where it is, its size and when it last changed, so
     /// another program, or an upgrade of it, renders afresh. Worked out the first time it is
-    /// needed; a provider is made again when the settings name another program.
-    fn fingerprint(&self) -> &str {
-        self.fingerprint.get_or_init(|| {
-            let Some(found) = find_program(&self.program) else {
-                return format!("{} (not found)", self.program.display());
-            };
-            let metadata = std::fs::metadata(&found).ok();
-            let modified = metadata
-                .as_ref()
-                .and_then(|metadata| metadata.modified().ok())
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |since| since.as_nanos());
-            let size = metadata.map_or(0, |metadata| metadata.len());
-            format!("{} {size} {modified}", found.display())
-        })
+    /// needed and kept; a program not found is looked for again after [`MISS_RECHECK`].
+    fn fingerprint(&self) -> String {
+        let mut kept = self
+            .fingerprint
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let fresh = kept.as_ref().is_some_and(|fingerprint| {
+            fingerprint
+                .missed
+                .is_none_or(|missed| missed.elapsed() < MISS_RECHECK)
+        });
+        if !fresh {
+            *kept = Some(match find_program(&self.program) {
+                Some(found) => Fingerprint {
+                    text: format!("{} {}", found.display(), file_stamp(&found)),
+                    missed: None,
+                },
+                None => Fingerprint {
+                    text: format!("{} (not found)", self.program.display()),
+                    missed: Some(Instant::now()),
+                },
+            });
+        }
+        kept.as_ref()
+            .map(|fingerprint| fingerprint.text.clone())
+            .unwrap_or_default()
     }
+}
+
+/// A file's size and modification time, which change when it does: `0 0` when it cannot be
+/// read.
+pub(crate) fn file_stamp(path: &Path) -> String {
+    let metadata = std::fs::metadata(path).ok();
+    let modified = metadata
+        .as_ref()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_nanos());
+    let size = metadata.map_or(0, |metadata| metadata.len());
+    format!("{size} {modified}")
 }
 
 impl DiagramProvider for ExternalProvider {
@@ -137,13 +182,31 @@ impl DiagramProvider for ExternalProvider {
         &self.kinds
     }
 
+    fn look_again(&self) {
+        ExternalProvider::look_again(self);
+    }
+
+    /// The program, the page's folder, and the size and modification time of each file the
+    /// diagram names for the tool to read there, so editing an included file draws it again.
     fn identity(&self, request: &DiagramRequest) -> String {
         let folder = request
             .directory
             .as_deref()
             .map(|folder| folder.display().to_string())
             .unwrap_or_default();
-        format!("{}\n{folder}", self.fingerprint())
+        let mut identity = format!("{}\n{folder}", self.fingerprint());
+        for input in self.inputs(request) {
+            identity.push_str(&format!("\n{} {}", input.display(), file_stamp(&input)));
+        }
+        identity
+    }
+
+    fn inputs(&self, request: &DiagramRequest) -> Vec<PathBuf> {
+        request
+            .directory
+            .as_deref()
+            .map(|folder| crate::reads::files_read(&request.kind, &request.source, folder))
+            .unwrap_or_default()
     }
 
     fn render(&self, request: &DiagramRequest) -> Result<String, DiagramError> {
@@ -161,6 +224,9 @@ impl DiagramProvider for ExternalProvider {
         {
             command.current_dir(folder);
         }
+        // A group of its own, so stopping it stops what it starts too: the `plantuml`
+        // launcher's Java, a tool's own helpers.
+        crate::process::in_own_group(&mut command);
         let mut child = command
             .args(&self.args)
             .stdin(Stdio::piped())
@@ -207,9 +273,8 @@ impl DiagramProvider for ExternalProvider {
             };
             if let Some(error) = stop {
                 // The readers end once the pipes close; they are not waited for, in case the
-                // tool left a process of its own holding them open.
-                let _ = child.kill();
-                let _ = child.wait();
+                // tool left a process outside its group holding them open.
+                crate::process::stop(&mut child);
                 return Err(error);
             }
             thread::sleep(POLL);

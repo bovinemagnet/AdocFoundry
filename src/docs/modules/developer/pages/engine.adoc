@@ -312,8 +312,8 @@ They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `E
 |`navigate.go_to`, `navigate.reveal`
 |Move to a position, taking `CommandArgs::Position`. `go_to` is recorded in back and forward history and is used when an xref is clicked in the preview. `reveal` is not recorded and is used for click-to-source, because the source of a block may be an unopened partial.
 
-|`view.toggle_preview`, `view.detach_preview`, `view.toggle_scroll_sync`, `preview.pin`
-|The preview's layout: shown or hidden, docked or detached, scroll sync, and pinned to a document.
+|`view.toggle_preview`, `view.detach_preview`, `view.toggle_scroll_sync`, `preview.pin`, `preview.retry_diagrams`
+|The preview's layout: shown or hidden, docked or detached, scroll sync, and pinned to a document; and retrying the diagrams that failed, with the diagram tools looked for again (`Engine::retry_diagrams`; the failures kept are bounded by `MAX_DIAGRAM_FAILURES`, trimmed only where a page is parsed afresh).
 
 |`view.show_source`, `view.show_visual`, `view.show_split`
 |A document's editor mode.
@@ -1076,6 +1076,7 @@ The engine emits `EngineEvent::SiteBuildOutput` for each line and `EngineEvent::
 
 On Unix the step runs in a process group of its own (`process_group(0)`), and is stopped with `rustix::process::kill_process_group`.
 On Windows it is stopped with `taskkill /T /F`.
+Both are `adoc_diagrams::process` (`in_own_group`, `stop`), shared with the external diagram tools.
 
 `Engine::site_build_plan()` returns the playbook's folder and the commands a build would run, as `Option<(PathBuf, Vec<String>)>`.
 It is `None` while Build Site cannot run.
