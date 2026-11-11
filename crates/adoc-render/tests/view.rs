@@ -647,6 +647,49 @@ fn html_renders_list_styles_and_asciidoc_cells() {
     assert!(html.contains("File&#160;&#8250; Save"), "{html}");
 }
 
+/// A cell is written in its column's style, as Asciidoctor writes it.
+#[test]
+fn html_writes_cells_in_their_style() {
+    let html = html_of("[cols=\"e,s,m,h,l\"]\n|===\n|a |b |c |d |e\n|===\n");
+    for cell in [
+        "valign-top\"><p class=\"tableblock\"><em>a</em></p></td>",
+        "valign-top\"><p class=\"tableblock\"><strong>b</strong></p></td>",
+        "valign-top\"><p class=\"tableblock\"><code>c</code></p></td>",
+        "<th class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">d</p></th>",
+        "valign-top\"><div class=\"literal\"><pre>e</pre></div></td>",
+    ] {
+        assert!(html.contains(cell), "{cell}: {html}");
+    }
+}
+
+/// Hosted videos are embedded from their host, and a video or audio block keeps its
+/// attributes and options.
+#[test]
+fn html_writes_videos_as_asciidoctor_does() {
+    let html = html_of(
+        "video::rPQoq7ThGAU[youtube]\n\nvideo::67480300[vimeo]\n\n\
+         video::clip.mp4[poster=p.png,width=640,height=480,start=10,end=20,opts=\"autoplay,loop,muted,nocontrols\"]\n\n\
+         audio::a.mp3[opts=\"autoplay,loop\"]\n",
+    );
+    for element in [
+        "<iframe src=\"https://www.youtube.com/embed/rPQoq7ThGAU?rel=0\" frameborder=\"0\" allowfullscreen>",
+        "<iframe src=\"https://player.vimeo.com/video/67480300\" frameborder=\"0\" allowfullscreen>",
+        "<video src=\"clip.mp4#t=10,20\" width=\"640\" height=\"480\" poster=\"p.png\" autoplay muted loop>",
+        "<audio src=\"a.mp3\" autoplay controls loop>",
+    ] {
+        assert!(html.contains(element), "{element}: {html}");
+    }
+}
+
+#[test]
+fn html_writes_a_callout_list_title() {
+    let html = html_of("----\nputs 1 <1>\n----\n.Notes\n<1> Prints.\n");
+    assert!(
+        html.contains("<div class=\"colist arabic\">\n<div class=\"title\">Notes</div>"),
+        "{html}"
+    );
+}
+
 #[test]
 fn file_urls_are_absolute_for_relative_paths() {
     // A page opened by a relative path resolves images and diagrams relative to the working

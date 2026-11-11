@@ -317,6 +317,7 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
                 "<div{id} class=\"{}\">",
                 classes("colist arabic", block)
             );
+            block_title(out, view, block);
             out.push_str("<ol>\n");
             for item in items {
                 let _ = write!(out, "<li><p>{}</p>", page_inlines(view, &item.content));
@@ -552,17 +553,43 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
                         let _ = writeln!(out, "</{tag}>");
                         continue;
                     }
+                    // A header row's cells are plain; a literal cell keeps its text as written.
+                    if cell.style == CellStyle::Literal && !header {
+                        let text: Vec<String> = cell
+                            .blocks
+                            .iter()
+                            .map(|block| match &block.kind {
+                                ViewKind::Paragraph(content) => ViewInline::plain_text(content),
+                                ViewKind::Literal(text) => text.clone(),
+                                _ => String::new(),
+                            })
+                            .collect();
+                        let _ = writeln!(
+                            out,
+                            "<div class=\"literal\"><pre>{}</pre></div></{tag}>",
+                            escape(&text.join("\n\n"))
+                        );
+                        continue;
+                    }
+                    let wrap = match cell.style {
+                        _ if header => None,
+                        CellStyle::Emphasis => Some("em"),
+                        CellStyle::Strong => Some("strong"),
+                        CellStyle::Monospace => Some("code"),
+                        _ => None,
+                    };
                     for block in &cell.blocks {
                         match &block.kind {
-                            ViewKind::Paragraph(content) if tag == "th" => {
+                            ViewKind::Paragraph(content) if header => {
                                 out.push_str(&page_inlines(view, content));
                             }
                             ViewKind::Paragraph(content) => {
-                                let _ = write!(
-                                    out,
-                                    "<p class=\"tableblock\">{}</p>",
-                                    page_inlines(view, content)
-                                );
+                                let content = page_inlines(view, content);
+                                let content = match wrap {
+                                    Some(wrap) => format!("<{wrap}>{content}</{wrap}>"),
+                                    None => content,
+                                };
+                                let _ = write!(out, "<p class=\"tableblock\">{content}</p>");
                             }
                             _ => render_block(out, view, block),
                         }
@@ -616,11 +643,10 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
             };
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes(class, block));
             block_title(out, view, block);
-            let source = targets.first().map(String::as_str).unwrap_or("");
             let _ = writeln!(
                 out,
-                "<div class=\"content\">\n<{tag} src=\"{}\" controls></{tag}>\n</div>\n</div>",
-                escape(source)
+                "<div class=\"content\">\n{}\n</div>\n</div>",
+                media_element(*kind, tag, targets, block)
             );
         }
         ViewKind::Diagram(diagram) => match diagram {
@@ -753,6 +779,114 @@ fn file_url(path: &std::path::Path) -> String {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     url::Url::from_file_path(&absolute)
         .map_or_else(|()| format!("file://{}", absolute.display()), String::from)
+}
+
+/// A video or audio block's player, as Asciidoctor writes it: a YouTube or Vimeo video
+/// (`video::id[youtube]`) embedded from its host, any other a `<video>` or `<audio>` with the
+/// block's `width`, `height`, `poster`, `start` and `end` and its options.
+fn media_element(kind: MediaKind, tag: &str, targets: &[String], block: &ViewBlock) -> String {
+    let attribute = |name: &str| block.attributes.get(name).map(String::as_str);
+    let option = |name: &str| block.options.contains(name);
+    // The host is the first positional attribute, which may also be named `poster`.
+    let host = ["youtube", "vimeo"]
+        .into_iter()
+        .find(|host| block.attributes.contains_key(*host) || attribute("poster") == Some(host))
+        .filter(|_| kind == MediaKind::Video);
+    let mut size = String::new();
+    for name in ["width", "height"] {
+        if let Some(value) = attribute(name) {
+            let _ = write!(size, " {name}=\"{}\"", escape(value));
+        }
+    }
+    let fullscreen = if option("nofullscreen") {
+        ""
+    } else {
+        " allowfullscreen"
+    };
+    match host {
+        Some("youtube") => {
+            let video = targets.first().map(String::as_str).unwrap_or("");
+            let mut query = format!("rel={}", u8::from(option("related")));
+            for name in ["start", "end"] {
+                if let Some(value) = attribute(name) {
+                    let _ = write!(query, "&{name}={value}");
+                }
+            }
+            for (name, parameter) in [
+                ("autoplay", "&autoplay=1"),
+                ("loop", "&loop=1"),
+                ("muted", "&mute=1"),
+                ("nocontrols", "&controls=0"),
+            ] {
+                if option(name) {
+                    query.push_str(parameter);
+                }
+            }
+            // More videos, or a loop, play as a playlist.
+            if targets.len() > 1 || option("loop") {
+                let _ = write!(query, "&playlist={}", targets.join(","));
+            }
+            if option("nofullscreen") {
+                query.push_str("&fs=0");
+            }
+            format!(
+                "<iframe{size} src=\"{}\" frameborder=\"0\"{fullscreen}></iframe>",
+                escape(&format!("https://www.youtube.com/embed/{video}?{query}"))
+            )
+        }
+        Some(_) => {
+            let video = targets.first().map(String::as_str).unwrap_or("");
+            let parameters: Vec<&str> = [
+                ("autoplay", "autoplay=1"),
+                ("loop", "loop=1"),
+                ("muted", "muted=1"),
+            ]
+            .into_iter()
+            .filter(|(name, _)| option(name))
+            .map(|(_, parameter)| parameter)
+            .collect();
+            let mut address = format!("https://player.vimeo.com/video/{video}");
+            if !parameters.is_empty() {
+                let _ = write!(address, "?{}", parameters.join("&"));
+            }
+            if let Some(start) = attribute("start") {
+                let _ = write!(address, "#at={start}");
+            }
+            format!(
+                "<iframe{size} src=\"{}\" frameborder=\"0\"{fullscreen}></iframe>",
+                escape(&address)
+            )
+        }
+        None => {
+            let mut source = targets.first().cloned().unwrap_or_default();
+            let (start, end) = (attribute("start"), attribute("end"));
+            if start.is_some() || end.is_some() {
+                let _ = write!(source, "#t={}", start.unwrap_or(""));
+                if let Some(end) = end {
+                    let _ = write!(source, ",{end}");
+                }
+            }
+            let mut element = format!("<{tag} src=\"{}\"", escape(&source));
+            if kind == MediaKind::Video {
+                element.push_str(&size);
+                if let Some(poster) = attribute("poster").filter(|poster| !poster.is_empty()) {
+                    let _ = write!(element, " poster=\"{}\"", escape(poster));
+                }
+            }
+            for (name, shown) in [
+                ("autoplay", option("autoplay")),
+                ("muted", kind == MediaKind::Video && option("muted")),
+                ("controls", !option("nocontrols")),
+                ("loop", option("loop")),
+            ] {
+                if shown {
+                    let _ = write!(element, " {name}");
+                }
+            }
+            let _ = write!(element, "></{tag}>");
+            element
+        }
+    }
 }
 
 /// An ordered list's `class`, `type`, `start` and `reversed`, as Asciidoctor writes them.
