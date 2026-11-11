@@ -10,9 +10,9 @@ use std::{
 
 use adoc_engine::{commands::ids, CommandArgs, DiffLine, DocumentId, Recoverable, SavedVersion};
 use gpui::{
-    div, prelude::FluentBuilder as _, px, App, AppContext as _, Context, Entity,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, Stateful,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
+    div, prelude::FluentBuilder as _, px, uniform_list, App, AppContext as _, Context, Entity,
+    InteractiveElement as _, IntoElement, ListHorizontalSizingBehavior, ParentElement as _, Render,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
@@ -178,7 +178,7 @@ impl Render for RecoveryList {
                     .child(diff_view(
                         "recovery-diff",
                         "Changes to the file on disk",
-                        &diff,
+                        diff,
                         cx,
                     )),
             )
@@ -310,7 +310,7 @@ impl Render for HistoryList {
                     .child(diff_view(
                         "history-diff",
                         "Changes made since this version",
-                        &diff,
+                        diff,
                         cx,
                     )),
             )
@@ -358,17 +358,48 @@ fn row(
 fn diff_view(
     id: &'static str,
     caption: &'static str,
-    lines: &[DiffLine],
+    lines: Rc<Vec<DiffLine>>,
     cx: &App,
 ) -> impl IntoElement {
     let theme = cx.theme();
-    let line = |text: String| {
-        // Blank lines keep their height.
-        div().child(if text.is_empty() {
-            " ".to_owned()
-        } else {
-            text
-        })
+    let body = if lines.is_empty() {
+        div().child("No differences.").into_any_element()
+    } else {
+        // The longest line sets the list's width: a long line scrolls sideways rather than
+        // wrapping, so every row is one line high, as the list needs.
+        let widest = lines
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, diff)| shown(diff).0.chars().count())
+            .map(|(index, _)| index);
+        let count = lines.len();
+        uniform_list(
+            SharedString::from(format!("{id}-lines")),
+            count,
+            move |range, _, cx| {
+                let theme = cx.theme();
+                range
+                    .filter_map(|index| lines.get(index).map(|diff| (index, diff)))
+                    .map(|(index, diff)| {
+                        let (text, kind) = shown(diff);
+                        div()
+                            .debug_selector(move || format!("{id}-line-{index}"))
+                            .whitespace_nowrap()
+                            .child(text)
+                            .map(|line| match kind {
+                                Shown::Same => line,
+                                Shown::Removed => line.bg(theme.danger.opacity(0.18)),
+                                Shown::Added => line.bg(theme.success.opacity(0.18)),
+                                Shown::Skipped => line.text_color(theme.muted_foreground),
+                            })
+                    })
+                    .collect::<Vec<_>>()
+            },
+        )
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+        .with_width_from_item(widest)
+        .size_full()
+        .into_any_element()
     };
     v_flex()
         .flex_1()
@@ -385,28 +416,36 @@ fn diff_view(
                 .id(id)
                 .debug_selector(move || id.to_owned())
                 .h(px(360.))
-                .overflow_y_scroll()
                 .p_2()
                 .bg(theme.muted)
                 .rounded(theme.radius)
                 .font_family(theme.mono_font_family.clone())
                 .text_xs()
-                .when(lines.is_empty(), |view| view.child("No differences."))
-                .children(lines.iter().map(|diff| match diff {
-                    DiffLine::Same(text) => line(format!("  {text}")),
-                    DiffLine::Removed(text) => {
-                        line(format!("- {text}")).bg(theme.danger.opacity(0.18))
-                    }
-                    DiffLine::Added(text) => {
-                        line(format!("+ {text}")).bg(theme.success.opacity(0.18))
-                    }
-                    DiffLine::Skipped(count) => {
-                        let plural = if *count == 1 { "" } else { "s" };
-                        line(format!("⋯ {count} unchanged line{plural}"))
-                            .text_color(theme.muted_foreground)
-                    }
-                })),
+                .child(body),
         )
+}
+
+/// How a diff line is drawn.
+#[derive(Clone, Copy)]
+enum Shown {
+    Same,
+    Removed,
+    Added,
+    Skipped,
+}
+
+/// A diff line's text as drawn, marked, and how it is drawn.
+fn shown(diff: &DiffLine) -> (String, Shown) {
+    let (text, kind) = match diff {
+        DiffLine::Same(text) => (format!("  {text}"), Shown::Same),
+        DiffLine::Removed(text) => (format!("- {text}"), Shown::Removed),
+        DiffLine::Added(text) => (format!("+ {text}"), Shown::Added),
+        DiffLine::Skipped(count) => {
+            let plural = if *count == 1 { "" } else { "s" };
+            (format!("⋯ {count} unchanged line{plural}"), Shown::Skipped)
+        }
+    };
+    (text, kind)
 }
 
 /// `2.1 KB`, or `640 bytes`.

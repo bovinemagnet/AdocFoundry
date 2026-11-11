@@ -6210,6 +6210,49 @@ fn local_history_restores_a_saved_version(cx: &mut TestAppContext) {
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "second\n");
 }
 
+/// A long diff draws only the lines in view, as every long list does.
+#[gpui::test]
+fn local_history_draws_only_the_diff_lines_in_view(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&pages.path().join("page.adoc"));
+    let before: String = (0..600).map(|n| format!("old line {n}\n")).collect();
+    let after: String = (0..600).map(|n| format!("new line {n}\n")).collect();
+    std::fs::write(&page, &before).unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            app.invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(0, before.len()),
+                    text: after.clone(),
+                },
+                cx,
+            )
+            .unwrap();
+            app.invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id), cx)
+                .unwrap();
+        });
+    });
+    cx.run_until_parked();
+
+    cx.dispatch_action(crate::editor::bindings::LocalHistory);
+    cx.run_until_parked();
+    // The version before the save: 600 lines removed and 600 added.
+    click("history-item-1", &mut cx);
+    assert!(cx.debug_bounds("history-diff-line-0").is_some());
+    assert!(
+        cx.debug_bounds("history-diff-line-1199").is_none(),
+        "lines out of view are not drawn"
+    );
+}
+
 #[gpui::test]
 fn a_misspelt_word_is_underlined_and_replaced_in_one_undo_step(cx: &mut TestAppContext) {
     init(cx);
