@@ -685,6 +685,41 @@ fn a_malformed_workspace_settings_file_still_opens_the_folder() {
 }
 
 #[test]
+fn a_page_changed_on_disk_while_the_workspace_is_indexed_is_not_lost() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_engine::normalize_path(&directory.path().join("page.adoc"));
+    fs::write(&page, "= Before\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    let title = |engine: &Engine| {
+        engine
+            .workspace()
+            .index
+            .file(&page)
+            .and_then(|entry| entry.document.title.as_ref())
+            .map(|title| title.text.clone())
+    };
+    // The index reads the page, then waits while it is rewritten and the change applied.
+    let hold = engine.hold_next_index();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    thread::sleep(Duration::from_millis(300));
+    fs::write(&page, "= After\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| {
+        title(engine).as_deref() == Some("After")
+    }));
+
+    drop(hold);
+    assert!(pump_until(&mut engine, |engine| !engine.is_indexing()));
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert_eq!(
+        title(&engine).as_deref(),
+        Some("After"),
+        "the index holds the page as it is on disk"
+    );
+}
+
+#[test]
 fn user_settings_reload_on_external_change() {
     let user = tempfile::tempdir().unwrap();
     // The folder as the watcher reports it: macOS's temporary folder is behind a link, and

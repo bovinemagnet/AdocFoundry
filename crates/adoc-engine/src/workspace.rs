@@ -449,6 +449,9 @@ impl Engine {
         self.indexing += 1;
         self.index_generation += 1;
         let generation = self.index_generation;
+        let hold = self.index_hold.take();
+        // This index reads every file as it is from now on.
+        self.changed_while_indexing.clear();
         let crashed = move |error| WorkerMessage::IndexFailed {
             generation,
             error: format!("indexing crashed: {error}"),
@@ -469,6 +472,9 @@ impl Engine {
                     entered.insert(folder.to_path_buf());
                 }
             });
+            if let Some(hold) = hold {
+                let _ = hold.recv();
+            }
             let message = match result {
                 Ok(report) => WorkerMessage::Indexed {
                     generation,
@@ -487,6 +493,15 @@ impl Engine {
             };
             let _ = sender.send(message);
         });
+    }
+
+    /// Holds the next whole index, once it has read the files, until the returned sender is
+    /// dropped, so a test can change files while its result is still to come.
+    #[doc(hidden)]
+    pub fn hold_next_index(&mut self) -> std::sync::mpsc::Sender<()> {
+        let (hold, held) = std::sync::mpsc::channel();
+        self.index_hold = Some(held);
+        hold
     }
 
     /// True while indexing runs or file-system changes wait to be applied.
@@ -679,6 +694,8 @@ impl Engine {
                     self.graph_file_changed(&path);
                     self.workspace.replace_document(path, parsed);
                 }
+                // So are files changed on disk while the worker read them.
+                self.replay_changes_while_indexing();
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
                 self.audit_changed_everywhere();
@@ -914,6 +931,15 @@ impl Engine {
             })
             .count();
         let burst = closed_pages > FILE_BURST;
+        if self.indexing > 0 {
+            // The whole index may have read them before they changed.
+            self.changed_while_indexing.extend(
+                ready
+                    .iter()
+                    .filter(|(_, change)| *change == Change::File)
+                    .map(|(path, _)| path.clone()),
+            );
+        }
         // Pages not open were indexed again: their dependants are diagnosed once, after all.
         let mut indexed = false;
         // The descriptors of the components whose resources came, went or changed aliases.
@@ -963,6 +989,26 @@ impl Engine {
             self.reindex();
         }
         ready.len()
+    }
+
+    /// Applies again, over a whole index's result, the changes on disk applied while it ran,
+    /// which it may have read before they were made. Open pages are left to the caller, which
+    /// replays their buffers.
+    fn replay_changes_while_indexing(&mut self) {
+        let mut catalogued = BTreeSet::new();
+        for path in std::mem::take(&mut self.changed_while_indexing) {
+            if self.is_settings_file(&path) || self.document_for_path(&path).is_some() {
+                continue;
+            }
+            if path.file_name().is_some_and(|name| name == "antora.yml") {
+                let _ = self.workspace.reload_descriptor(&path);
+                self.graph_catalog_changed();
+            } else if is_asciidoc_path(&path) {
+                self.file_changed_on_disk(&path, &mut catalogued);
+            } else {
+                self.catalog_file_changed(&path, None);
+            }
+        }
     }
 
     pub(crate) fn is_settings_file(&self, path: &Path) -> bool {

@@ -55,6 +55,12 @@ pub struct Engine {
     pub(crate) indexing: usize,
     /// The latest whole-workspace index job; results of earlier ones are dropped.
     pub(crate) index_generation: u64,
+    /// Holds the next whole index's result until its sender is dropped; see
+    /// [`Engine::hold_next_index`].
+    pub(crate) index_hold: Option<Receiver<()>>,
+    /// Files whose change on disk was applied while a whole index ran, perhaps after it read
+    /// them: applied again over its result.
+    pub(crate) changed_while_indexing: std::collections::BTreeSet<PathBuf>,
     /// How many times a whole index has replaced the workspace, so a revision taken from the
     /// old index never equals one of the new.
     pub(crate) workspace_replacements: u64,
@@ -203,6 +209,8 @@ impl Engine {
             worker_receiver,
             workers_running: 0,
             indexing: 0,
+            index_hold: None,
+            changed_while_indexing: std::collections::BTreeSet::new(),
             index_generation: 0,
             workspace_replacements: 0,
             workspace_revision: std::cell::Cell::new(((0, 0, 0), 0)),
