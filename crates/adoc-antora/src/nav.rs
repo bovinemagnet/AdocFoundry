@@ -3,11 +3,12 @@
 /// One entry of a navigation file: a `.Title` line or a list item.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NavEntry {
-    /// `0` for a `.Title`, otherwise the number of `*` marking the item.
+    /// `0` for a `.Title`, otherwise the number of `*` marking the item (`1` for `-`).
     pub level: u8,
     /// The link text of an `xref:`, its target when the text is empty, or the item's text.
     pub text: String,
-    /// The `xref:` target, for an entry that links to a page.
+    /// The target of the entry's `xref:`, or of its `<<page.adoc#,text>>` shorthand (without an
+    /// empty fragment), for an entry that links to a page.
     pub target: Option<String>,
     /// Byte offsets of the entry's line, without its line ending.
     pub start: usize,
@@ -87,9 +88,13 @@ fn block_title(line: &str) -> Option<&str> {
     (first != '.' && !first.is_whitespace()).then(|| title.trim_end())
 }
 
-/// The level and text of a `*` list item.
+/// The level and text of a list item: `*` to `*****`, or `-`, a list of the first level.
 fn list_item(line: &str) -> Option<(u8, &str)> {
     let line = line.trim_start();
+    if let Some(text) = line.strip_prefix("- ") {
+        let text = text.trim();
+        return (!text.is_empty()).then_some((1, text));
+    }
     let stars = line.bytes().take_while(|byte| *byte == b'*').count();
     let text = line[stars..].strip_prefix(' ')?.trim();
     let level = u8::try_from(stars)
@@ -98,12 +103,31 @@ fn list_item(line: &str) -> Option<(u8, &str)> {
     (!text.is_empty()).then_some((level, text))
 }
 
-/// The target and link text of the first `xref:` macro in `item`.
+/// The target and link text of the first link to a page in `item`: an `xref:` macro, or the
+/// shorthand `<<page.adoc#fragment,text>>`, which Asciidoctor reads as the same reference.
 fn xref(item: &str) -> Option<(&str, &str)> {
-    let after = &item[item.find("xref:")? + "xref:".len()..];
-    let (target, rest) = after.split_once('[')?;
-    let (link_text, _) = rest.split_once(']')?;
-    Some((target.trim(), link_text.trim()))
+    let shorthand = item.find("<<");
+    if let Some(start) = item.find("xref:") {
+        if shorthand.is_none_or(|shorthand| start < shorthand) {
+            let after = &item[start + "xref:".len()..];
+            let (target, rest) = after.split_once('[')?;
+            let (link_text, _) = rest.split_once(']')?;
+            return Some((target.trim(), link_text.trim()));
+        }
+    }
+    let after = &item[shorthand? + "<<".len()..];
+    let (inside, _) = after.split_once(">>")?;
+    let (target, link_text) = inside.split_once(',').unwrap_or((inside, ""));
+    let target = target.trim();
+    // Only a target naming a document is a page; `<<anchor>>` is a place in this file.
+    let (page, fragment) = target.split_once('#').unwrap_or((target, ""));
+    if !page.ends_with(".adoc") {
+        return None;
+    }
+    Some((
+        if fragment.is_empty() { page } else { target },
+        link_text.trim(),
+    ))
 }
 
 #[cfg(test)]
@@ -143,6 +167,22 @@ mod tests {
                 (0, "Home", Some("index.adoc")),
                 (1, "A", Some("a.adoc")),
                 (0, "b.adoc", Some("b.adoc")),
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_dash_items_and_the_xref_shorthand() {
+        let text = "* <<shorthand.adoc#,Shorthand>>\n- xref:dash.adoc[Dash]\n** <<deep.adoc#part,Deep>>\n* <<bare.adoc#>>\n* <<anchor,Not a page>>\n";
+
+        assert_eq!(
+            summary(&parse_nav(text)),
+            [
+                (1, "Shorthand", Some("shorthand.adoc")),
+                (1, "Dash", Some("dash.adoc")),
+                (2, "Deep", Some("deep.adoc#part")),
+                (1, "bare.adoc", Some("bare.adoc")),
+                (1, "<<anchor,Not a page>>", None),
             ]
         );
     }

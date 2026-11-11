@@ -454,3 +454,31 @@ fn a_missing_navigation_file_leaves_what_the_others_list_listed() {
     );
     assert!(found(&report, UNLISTED).is_empty());
 }
+
+#[test]
+fn dash_items_and_the_xref_shorthand_list_their_pages() {
+    let report = audit_files(
+        &[
+            (
+                "docs/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n",
+            ),
+            (
+                "docs/modules/ROOT/nav.adoc",
+                "* xref:a.adoc[A]\n* <<shorthand.adoc#,Shorthand>>\n- xref:dash.adoc[Dash]\n",
+            ),
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            ("docs/modules/ROOT/pages/a.adoc", "= A\n"),
+            ("docs/modules/ROOT/pages/shorthand.adoc", "= Shorthand\n"),
+            ("docs/modules/ROOT/pages/dash.adoc", "= Dash\n"),
+            ("docs/modules/ROOT/pages/orphan.adoc", "= Orphan\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    assert_eq!(
+        found(&report, UNLISTED),
+        ["docs/modules/ROOT/pages/orphan.adoc"]
+    );
+    let coverage = coverage(&report, "docs", None);
+    assert_eq!((coverage.pages, coverage.listed), (5, 4));
+}
