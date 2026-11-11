@@ -49,9 +49,7 @@ fn file<'a>(preview: &'a Value, path: &str) -> &'a Value {
 
 fn error_code(result: &Value) -> &str {
     assert_eq!(result["isError"], true, "{result}");
-    result["structuredContent"]["error"]["code"]
-        .as_str()
-        .unwrap()
+    result["_meta"]["error"]["code"].as_str().unwrap()
 }
 
 #[test]
@@ -114,7 +112,7 @@ fn mcp_preview_does_not_mutate() {
     assert!(refused["content"][0]["text"]
         .as_str()
         .unwrap()
-        .starts_with("operation 1:"));
+        .starts_with("conflict: operation 1:"));
     for (operations, code) in [
         (json!([]), "invalid_argument"),
         (
@@ -314,7 +312,7 @@ fn mcp_multi_file_failure_is_reported_and_recoverable() {
 
     // Not claimed as a success: what was saved and what was not, and where the rest is.
     assert_eq!(error_code(&failed), "internal_error");
-    let details = &failed["structuredContent"]["error"]["details"];
+    let details = &failed["_meta"]["error"]["details"];
     assert_eq!(details["applied"], true);
     assert_eq!(details["saved"], json!([INSTALL]));
     assert_eq!(details["failed"][0]["path"], GUIDE);

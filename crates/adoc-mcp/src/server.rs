@@ -1623,9 +1623,9 @@ mod tests {
 
     fn code(result: &CallToolResult) -> Value {
         result
-            .structured_content
+            .meta
             .as_ref()
-            .map(|value| value["error"]["code"].clone())
+            .map(|meta| meta.0["error"]["code"].clone())
             .unwrap_or_default()
     }
 

@@ -22,9 +22,7 @@ const MUTATING: [&str; 9] = [
 
 fn error_code(result: &Value) -> &str {
     assert_eq!(result["isError"], true, "{result}");
-    result["structuredContent"]["error"]["code"]
-        .as_str()
-        .unwrap()
+    result["_meta"]["error"]["code"].as_str().unwrap()
 }
 
 #[test]

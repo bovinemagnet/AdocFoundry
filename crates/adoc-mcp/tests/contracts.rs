@@ -214,7 +214,7 @@ fn mcp_existing_tools_are_backwards_compatible() {
         );
         assert_eq!(refused["isError"], true, "{name}");
         assert_eq!(
-            refused["structuredContent"]["error"]["code"], "permission_denied",
+            refused["_meta"]["error"]["code"], "permission_denied",
             "{name}"
         );
         assert!(text_of(&refused).contains("--allow-write"));
@@ -253,7 +253,7 @@ fn mcp_structured_result_matches_text_fallback() {
         conforms(&result["structuredContent"], schema, name).unwrap();
     }
 
-    // A failure's text is its message, and its structured content adds the stable code.
+    // A failure's text is its stable code and message, which `_meta` gives as JSON.
     for (name, arguments, code) in [
         (
             "read_page",
@@ -280,9 +280,12 @@ fn mcp_structured_result_matches_text_fallback() {
     ] {
         let result = client.call_result(name, arguments.clone());
         assert_eq!(result["isError"], true, "{name} {arguments}");
-        let error = &result["structuredContent"]["error"];
+        let error = &result["_meta"]["error"];
         assert_eq!(error["code"], code, "{name} {arguments}: {result}");
-        assert_eq!(error["message"], text_of(&result));
+        assert_eq!(
+            format!("{code}: {}", error["message"].as_str().unwrap()),
+            text_of(&result)
+        );
     }
     client.stop();
 }
@@ -317,7 +320,12 @@ fn mcp_negotiated_protocol_versions_are_pinned() {
         assert_eq!(text["components"][0]["name"], "demo");
         let failed = client.call_result("read_page", json!({ "path": "../outside.adoc" }));
         assert_eq!(failed["isError"], true);
-        assert_eq!(failed.get("structuredContent").is_some(), structured);
+        assert!(
+            failed.get("structuredContent").is_none(),
+            "{asked}: {failed}"
+        );
+        assert_eq!(failed["_meta"]["error"]["code"], "outside_workspace");
+        assert!(text_of(&failed).starts_with("outside_workspace: "));
         assert!(text_of(&failed).contains("outside the workspace"));
         client.stop();
     }
@@ -483,11 +491,106 @@ fn check_pages_its_diagnostics_with_a_cursor() {
 
     // The cursor holds to its query.
     let other = client.call_result("check", json!({ "fail_on": "error", "cursor": cursor }));
-    assert_eq!(
-        other["structuredContent"]["error"]["code"],
-        "invalid_argument"
-    );
+    assert_eq!(other["_meta"]["error"]["code"], "invalid_argument");
     client.stop();
+}
+
+/// A failing call of each tool that can fail on its arguments, and the code it fails with.
+fn failing_calls() -> Vec<(&'static str, Value, &'static str)> {
+    vec![
+        ("get_nav", json!({ "component": "absent" }), "not_found"),
+        ("read_page", json!({}), "invalid_argument"),
+        (
+            "resolve",
+            json!({ "target": "a.adoc", "from": "../outside.adoc" }),
+            "outside_workspace",
+        ),
+        ("check", json!({ "fail_on": "fatal" }), "invalid_argument"),
+        (
+            "symbols",
+            json!({ "query": "a", "cursor": "not-a-cursor" }),
+            "invalid_argument",
+        ),
+        (
+            "search",
+            json!({ "query": "a", "scope": "../outside" }),
+            "outside_workspace",
+        ),
+        (
+            "render_page",
+            json!({ "path": "modules/ROOT/pages/index.adoc", "format": "pdf" }),
+            "invalid_argument",
+        ),
+        ("link_graph", json!({ "format": "png" }), "invalid_argument"),
+        (
+            "list_pages",
+            json!({ "cursor": "not-a-cursor" }),
+            "invalid_argument",
+        ),
+        ("get_outline", json!({}), "invalid_argument"),
+        ("get_page_context", json!({}), "invalid_argument"),
+        ("find_references", json!({}), "invalid_argument"),
+        (
+            "quality_audit",
+            json!({ "severity": "fatal" }),
+            "invalid_argument",
+        ),
+        (
+            "analyse_impact",
+            json!({ "source": { "type": "paths", "paths": ["../outside.adoc"] } }),
+            "outside_workspace",
+        ),
+        (
+            "preview_changes",
+            json!({ "operations": [] }),
+            "invalid_argument",
+        ),
+        (
+            "edit_page",
+            json!({ "path": "modules/ROOT/pages/index.adoc", "edits": [{ "old_text": "not there at all", "new_text": "x" }] }),
+            "conflict",
+        ),
+        (
+            "revert_page",
+            json!({ "path": "../outside.adoc" }),
+            "outside_workspace",
+        ),
+        (
+            "apply_changes",
+            json!({ "preview_id": "unknown" }),
+            "stale_preview",
+        ),
+        (
+            "export_pdf",
+            json!({ "output": "x.pdf" }),
+            "invalid_argument",
+        ),
+    ]
+}
+
+#[test]
+fn an_error_result_gives_its_code_in_the_text_and_no_structured_content() {
+    let (_directory, root) = scratch("antora-single-component");
+    for version in ["2025-06-18", "2025-03-26"] {
+        let (mut client, _) = Client::start_with(&root, true, version);
+        for (name, arguments, code) in failing_calls() {
+            let result = client.call_result(name, arguments.clone());
+            assert_eq!(result["isError"], true, "{name} {arguments}: {result}");
+            // Every client reads the code, text-only ones and older sessions included.
+            assert!(
+                text_of(&result).starts_with(&format!("{code}: ")),
+                "{version} {name}: {result}"
+            );
+            // No structured content to hold against the tool's output schema, which
+            // describes its success; the code and message are in `_meta` as well.
+            assert!(
+                result.get("structuredContent").is_none(),
+                "{version} {name}: {result}"
+            );
+            assert_eq!(result["_meta"]["error"]["code"], code, "{name}");
+        }
+        client.stop();
+    }
 }
 
 #[test]

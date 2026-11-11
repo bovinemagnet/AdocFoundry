@@ -297,7 +297,10 @@ mod tests {
             .block_on(server.build_site(Parameters(BuildSiteArgs { wait_seconds: None })))
             .unwrap();
         assert_eq!(refused.is_error, Some(true));
-        assert_eq!(structured(&refused)["error"]["code"], "unavailable");
+        assert_eq!(
+            refused.meta.as_ref().unwrap().0["error"]["code"],
+            "unavailable"
+        );
     }
 
     #[test]

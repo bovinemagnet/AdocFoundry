@@ -83,10 +83,7 @@ fn validate_publication_reports_what_the_engine_checks() {
         .unwrap();
     assert_eq!(guide["outcome"], "ready", "{guide}");
     let refused = client.call_result("validate_publication", json!({ "version": "1.0" }));
-    assert_eq!(
-        refused["structuredContent"]["error"]["code"],
-        "invalid_argument"
-    );
+    assert_eq!(refused["_meta"]["error"]["code"], "invalid_argument");
     client.stop();
 }
 
@@ -186,10 +183,7 @@ fn mcp_build_not_enabled_by_allow_write() {
     // --allow-write.
     let refused = client.call_result("build_site", json!({}));
     assert_eq!(refused["isError"], true, "{refused}");
-    assert_eq!(
-        refused["structuredContent"]["error"]["code"],
-        "permission_denied"
-    );
+    assert_eq!(refused["_meta"]["error"]["code"], "permission_denied");
     assert!(refused["content"][0]["text"]
         .as_str()
         .unwrap()

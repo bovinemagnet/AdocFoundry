@@ -206,10 +206,7 @@ fn mcp_analysis_pagination_does_not_hide_incomplete() {
         json!({ "limit": 1, "cursor": cursor, "require_complete": true }),
     ] {
         let refused = client.call_result("quality_audit", arguments);
-        assert_eq!(
-            refused["structuredContent"]["error"]["code"],
-            "invalid_argument"
-        );
+        assert_eq!(refused["_meta"]["error"]["code"], "invalid_argument");
     }
     for (arguments, code) in [
         (json!({ "version": "3.0" }), "invalid_argument"),
@@ -223,10 +220,7 @@ fn mcp_analysis_pagination_does_not_hide_incomplete() {
         (json!({ "fail_on": "always" }), "invalid_argument"),
     ] {
         let refused = client.call_result("quality_audit", arguments.clone());
-        assert_eq!(
-            refused["structuredContent"]["error"]["code"], code,
-            "{arguments}"
-        );
+        assert_eq!(refused["_meta"]["error"]["code"], code, "{arguments}");
     }
     client.stop();
 }

@@ -379,10 +379,7 @@ fn a_failed_save_leaves_the_page_as_it_was_and_revert_page_clears_a_conflict() {
         json!({ "path": "index.adoc", "edits": [{ "old_text": "= Home", "new_text": "= Start" }], "save": true }),
     );
     assert_eq!(failed["isError"], true, "{failed}");
-    assert_eq!(
-        failed["structuredContent"]["error"]["code"], "conflict",
-        "{failed}"
-    );
+    assert_eq!(failed["_meta"]["error"]["code"], "conflict", "{failed}");
     assert!(text(&mut client).starts_with("= Home"));
     assert_eq!(std::fs::read_to_string(&page).unwrap(), on_disk);
 
@@ -483,7 +480,7 @@ fn pdf_export_never_writes_through_a_link() {
     );
     assert_eq!(result["isError"], true, "{result}");
     assert_eq!(
-        result["structuredContent"]["error"]["code"], "outside_workspace",
+        result["_meta"]["error"]["code"], "outside_workspace",
         "{result}"
     );
     assert!(

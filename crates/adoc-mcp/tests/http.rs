@@ -298,10 +298,7 @@ fn mcp_http_requires_token_and_loopback() {
     );
     let result = &response["result"];
     assert_eq!(result["isError"], true);
-    assert_eq!(
-        result["structuredContent"]["error"]["code"],
-        "outside_workspace"
-    );
+    assert_eq!(result["_meta"]["error"]["code"], "outside_workspace");
 }
 
 #[test]
@@ -354,10 +351,7 @@ fn mcp_preview_ids_are_session_bound() {
         json!({ "name": "apply_changes", "arguments": { "preview_id": id } }),
     );
     assert_eq!(taken["result"]["isError"], true);
-    assert_eq!(
-        taken["result"]["structuredContent"]["error"]["code"],
-        "stale_preview"
-    );
+    assert_eq!(taken["result"]["_meta"]["error"]["code"], "stale_preview");
     let page = std::fs::read_to_string(root.join("guide/modules/ROOT/pages/index.adoc")).unwrap();
     assert!(
         page.starts_with("= Guide"),
