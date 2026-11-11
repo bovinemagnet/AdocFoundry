@@ -10792,15 +10792,15 @@ fn the_pdf_preview_zooms(cx: &mut TestAppContext) {
     let (mode, scale) = zoom(&mut cx);
     assert!(matches!(mode, PdfZoom::Scale(_)) && scale > 1.1, "{scale}");
 
-    // At 400% the pages in view are drawn again, sharper, once the zoom settles; at 100% those
-    // drawings are let go.
-    let sharp = |cx: &mut VisualTestContext| {
+    // At 400% the pages in view are drawn again, sharper, once the zoom settles; at 100% they
+    // are drawn again for that, with fewer pixels.
+    let drawn = |cx: &mut VisualTestContext| {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(500));
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_sharp_pages())
+        cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_drawn_pages())
     };
     workspace.update_in(&mut cx, |workspace, _, cx| {
         workspace.preview().update(cx, |preview, cx| {
@@ -10808,18 +10808,101 @@ fn the_pdf_preview_zooms(cx: &mut TestAppContext) {
         });
     });
     let scale_factor = cx.update(|window, _| window.scale_factor());
-    let drawn = sharp(&mut cx);
-    assert!(!drawn.is_empty(), "no page was drawn sharper");
-    // Sharper than the first rasterisation, about 2.4 pixels to the point, and no more than the
-    // zoom and the display ask for (or a page's pixels allow).
+    let sharp = drawn(&mut cx);
+    assert!(!sharp.is_empty(), "no page was drawn");
+    // As the zoom and the display ask for (or a page's pixels allow).
     assert!(
-        drawn
+        sharp
             .iter()
             .all(|(_, scale)| *scale > 2.5 && *scale <= 4.0 * scale_factor + 0.01),
-        "{drawn:?}"
+        "{sharp:?}"
     );
     cx.dispatch_action(crate::image_view::ActualSize);
-    assert_eq!(sharp(&mut cx), [], "let go at 100%");
+    let actual = drawn(&mut cx);
+    assert!(
+        !actual.is_empty()
+            && actual
+                .iter()
+                .all(|(_, scale)| (*scale - scale_factor).abs() < 0.01),
+        "{actual:?}"
+    );
+}
+
+/// Issue #499: of many pages only those near the view are drawn, at the scale the view needs,
+/// and closing the PDF's window lets the GPU go of them.
+#[gpui::test]
+fn the_pdf_preview_draws_only_the_pages_near_the_view(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let mut text = "= Page\n\nFirst paragraph.\n".to_owned();
+    for _ in 0..11 {
+        text.push_str("\n<<<\n\nAnother paragraph.\n");
+    }
+    std::fs::write(&page, text).unwrap();
+    let (app, workspace, mut cx) = previewing(vec![page], cx);
+    cx.dispatch_action(crate::editor::bindings::TogglePdfPreview);
+    let typeset = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .preview()
+                .read(cx)
+                .pdf_shown()
+                .and_then(|shown| shown.pages.as_ref().ok().map(Vec::len))
+                == Some(12)
+        })
+    };
+    assert!(drain_until(&app, &mut cx, typeset), "the pages are shown");
+    let drawn = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_drawn_pages())
+    };
+    let first = drawn(&mut cx);
+    let indices: Vec<usize> = first.iter().map(|(index, _)| *index).collect();
+    assert!(
+        !indices.is_empty() && indices.len() <= 3 && indices[0] == 0,
+        "only the first pages, in view: {first:?}"
+    );
+    let (_, scale) = cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_zoom());
+    let scale_factor = cx.update(|window, _| window.scale_factor());
+    assert!(
+        first
+            .iter()
+            .all(|(_, drawn)| (drawn - scale * scale_factor).abs() < 0.01),
+        "drawn for the view, not larger: {first:?} at {scale}"
+    );
+
+    // Detached, the PDF's own window draws its pages; closing it lets them go.
+    crate::preview::pdf::RELEASED.with(|released| released.set(0));
+    let press = |selector: &'static str, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        click(selector, cx);
+    };
+    press("title-pdf-window", &mut cx);
+    let detached_drawn = |cx: &mut VisualTestContext| {
+        cx.cx.update(|cx| {
+            for window in cx.windows() {
+                let _ = window.update(cx, |_, window, cx| window.draw(cx).clear(cx));
+            }
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .detached_preview()
+                .is_some_and(|preview| !preview.read(cx).pdf_drawn_pages().is_empty())
+        })
+    };
+    assert!(drain_until(&app, &mut cx, detached_drawn));
+    press("title-pdf-window", &mut cx);
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| workspace.read(cx).detached_preview().is_none()));
+    assert!(
+        crate::preview::pdf::RELEASED.with(std::cell::Cell::get) > 0,
+        "the closed window's pages were let go"
+    );
 }
 
 /// A long page name shortens in the preview's header rather than pushing its buttons, the

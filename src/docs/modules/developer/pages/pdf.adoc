@@ -363,8 +363,9 @@ The worker reuses it while `KeptTheme::is_current` is true, and loads the theme 
 A bundled theme has no files, so it stays current.
 A theme edit therefore shows at the next typesetting, after the next edit to the page; exports still load the theme each time.
 
-The app's `src/preview/pdf.rs` rasterises the SVG pages on a background task with the image viewer's decoder (`image_decode`).
-It drops the results of superseded rasterisations by generation and releases replaced images from the GPU.
+The app's `src/preview/pdf.rs` rasterises the SVG pages on a background task with the image viewer's decoder (`image_decode::svg_to_bgra`).
+Only the pages near the view (`near_pages`) are drawn, at the scale the zoom and the display ask for (`draw_scale`, at most `SHARP_PIXELS`); a page leaving the view is let go, and a new typesetting keeps the drawing of each page whose SVG is unchanged.
+It drops the results of superseded rasterisations by generation, releases replaced images from the GPU, and releases every drawing when the `PreviewView` is dropped (its `on_release`), as closing the PDF's window does.
 `anchor_at` picks the line a click falls on.
 
 The tests are `crates/adoc-pdf/tests/preview.rs`, `crates/adoc-engine/tests/pdf_preview.rs` and the app's `the_pdf_preview_shows_the_pages_and_a_click_goes_to_the_source`.

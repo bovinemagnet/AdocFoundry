@@ -117,11 +117,11 @@ Zooming keeps the point under the pointer where it is, or the point at the centr
 The zoom is kept while you edit and the pages are typeset again, for as long as the window is open.
 It is not saved between sessions.
 
-Each page is first drawn at 2048 pixels on its longer side.
-This is sharp up to about 240% on a standard display and about 120% on a Retina or other 2× display.
-Above that, the pages in and near the view are drawn again, sharper, a moment after the zoom or the scrolling stops.
-That redrawing is limited to 16 million pixels a page.
+Only the pages in and near the view are drawn, at the zoom and the display's resolution, so a long document costs no more than a short one.
+A page scrolled into view is drawn at once; after a zoom, the pages are drawn again for it a moment after the zoom or the scrolling stops.
+Each page's drawing is limited to 16 million pixels.
 This is about 580% of an A4 page on a standard display and about 290% on a 2× display, so very high zooms on a 2× display are a little soft.
+When the page is typeset again, the drawing of each page whose content did not change is kept.
 
 Clicking a line goes to its source at any zoom.
 
