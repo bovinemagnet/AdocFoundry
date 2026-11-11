@@ -19,6 +19,8 @@ use adoc_lang::{graph::LinkKind, WorkspaceState};
 pub struct DependencySnapshot<'a> {
     state: Cow<'a, WorkspaceState>,
     roots: Vec<PathBuf>,
+    /// The navigation files the component versions' `antora.yml` files list, worked out once.
+    listed_navs: BTreeSet<PathBuf>,
 }
 
 /// A reference that leads to a file: who writes it, where, its target as written, and how many
@@ -32,11 +34,25 @@ pub(crate) struct Referrer {
     pub(crate) ordinal: usize,
 }
 
+fn listed_navs(state: &WorkspaceState) -> BTreeSet<PathBuf> {
+    state
+        .antora
+        .components()
+        .flat_map(|component| {
+            component
+                .nav
+                .iter()
+                .map(|nav| normalize_path(&component.root.join(nav)))
+        })
+        .collect()
+}
+
 impl<'a> DependencySnapshot<'a> {
     /// The live workspace's evidence, borrowed.
     #[must_use]
     pub fn borrowed(state: &'a WorkspaceState, roots: &[PathBuf]) -> Self {
         Self {
+            listed_navs: listed_navs(state),
             state: Cow::Borrowed(state),
             roots: roots.iter().map(|root| normalize_path(root)).collect(),
         }
@@ -46,6 +62,7 @@ impl<'a> DependencySnapshot<'a> {
     #[must_use]
     pub fn owned(state: WorkspaceState, roots: &[PathBuf]) -> DependencySnapshot<'static> {
         DependencySnapshot {
+            listed_navs: listed_navs(&state),
             state: Cow::Owned(state),
             roots: roots.iter().map(|root| normalize_path(root)).collect(),
         }
@@ -163,12 +180,7 @@ impl<'a> DependencySnapshot<'a> {
 
     /// Whether `path` is a navigation file a component version's `antora.yml` lists.
     pub(crate) fn is_listed_nav(&self, path: &Path) -> bool {
-        self.state.antora.components().any(|component| {
-            component
-                .nav
-                .iter()
-                .any(|nav| normalize_path(&component.root.join(nav)) == path)
-        })
+        self.listed_navs.contains(path)
     }
 
     pub(crate) fn is_descriptor(&self, path: &Path) -> bool {

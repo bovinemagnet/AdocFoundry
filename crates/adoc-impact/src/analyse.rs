@@ -638,8 +638,9 @@ fn now_resolving(
 }
 
 /// A changed navigation file's or descriptor's effect on its component version's navigation:
-/// the pages it lists now and no longer, compared between the sides; and a changed page's
-/// navigation entries.
+/// the file itself, and the pages it lists now and no longer, compared between the sides. A
+/// page's own entries are reported only when it is moved or removed (`moved_or_removed`, as
+/// navigation referrers); a modified page's are not.
 fn navigation(
     gathered: &mut Gathered,
     base: Option<&DependencySnapshot<'_>>,
