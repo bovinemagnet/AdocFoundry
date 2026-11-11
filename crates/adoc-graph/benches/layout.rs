@@ -1,6 +1,7 @@
-//! The layout's budget: `cargo bench -p adoc-graph`. One step for 2,000 nodes and 6,000 edges
+//! The graph's budgets: `cargo bench -p adoc-graph`. One step for 2,000 nodes and 6,000 edges
 //! must take under 8 ms (median), grouped by module or not, and so must building a mind map of
-//! them and laying it out, or the run fails. `BENCH_RECORD=1` records without failing.
+//! them and laying it out, and a shortest path that cannot be found through a navigation file of
+//! 2,000 entries, or the run fails. `BENCH_RECORD=1` records without failing.
 //! The table is appended to `$GITHUB_STEP_SUMMARY` when CI sets it.
 
 use std::{
@@ -12,8 +13,8 @@ use std::{
 };
 
 use adoc_graph::{
-    EdgeKind, GraphEdge, GraphKey, GraphNode, GraphSnapshot, GroupBy, Layout, MindMap,
-    NodeCoordinate, NodeKind, TreeStyle,
+    EdgeKind, GraphEdge, GraphKey, GraphNode, GraphSnapshot, GroupBy, Layout, LinkStore, MindMap,
+    NodeCoordinate, NodeKind, StoredLink, TreeStyle,
 };
 
 const BUDGET: Duration = Duration::from_millis(8);
@@ -112,6 +113,44 @@ fn time_mind_maps(snapshot: &GraphSnapshot) -> (Duration, Duration) {
     (samples[samples.len() / 2], samples[samples.len() - 1])
 }
 
+/// The median and worst of 20 undirected searches for a node no link reaches, through a
+/// navigation file listing `entries` pages, each of which links to the next.
+fn time_unreachable_path(entries: usize) -> (Duration, Duration) {
+    let nav: Arc<Path> = Arc::from(Path::new("modules/ROOT/nav.adoc"));
+    let page = |n: usize| -> Arc<Path> {
+        Arc::from(Path::new(&format!("modules/ROOT/pages/p{n:05}.adoc")))
+    };
+    let mut store = LinkStore::new();
+    store.set_owned_links(
+        Arc::clone(&nav),
+        (0..entries)
+            .map(|n| StoredLink {
+                from: Arc::clone(&nav),
+                to: GraphKey::File(page(n)),
+                kind: EdgeKind::Nav,
+            })
+            .collect(),
+    );
+    for n in 0..entries {
+        store.set_links(
+            page(n),
+            vec![(GraphKey::File(page((n + 1) % entries)), EdgeKind::Xref)],
+        );
+    }
+    let from = GraphKey::File(nav);
+    let nowhere = GraphKey::Unresolved("nowhere".to_owned());
+    let mut samples: Vec<Duration> = (0..20)
+        .map(|_| {
+            let started = Instant::now();
+            let path = store.shortest_path(&from, &nowhere, false, |_| true, |_| true);
+            std::hint::black_box(path);
+            started.elapsed()
+        })
+        .collect();
+    samples.sort();
+    (samples[samples.len() / 2], samples[samples.len() - 1])
+}
+
 fn main() {
     // `cargo test` runs benches once to check they build; there is nothing to time then.
     if std::env::args().any(|argument| argument == "--test" || argument == "--list") {
@@ -121,21 +160,34 @@ fn main() {
     let mut table =
         "| bench | size | median | worst | budget |\n|---|---|---|---|---|\n".to_owned();
     let mut over = false;
-    for (name, timing) in [
-        ("layout step", time_steps(&snapshot, None)),
+    let size = format!(
+        "{} nodes, {} edges",
+        snapshot.nodes.len(),
+        snapshot.edges.len()
+    );
+    for (name, size, timing) in [
+        ("layout step", size.clone(), time_steps(&snapshot, None)),
         (
             "layout step, grouped",
+            size.clone(),
             time_steps(&snapshot, Some(GroupBy::Module)),
         ),
-        ("mind map, built and laid out", time_mind_maps(&snapshot)),
+        (
+            "mind map, built and laid out",
+            size.clone(),
+            time_mind_maps(&snapshot),
+        ),
+        (
+            "shortest path, unreachable",
+            "2,000 navigation entries".to_owned(),
+            time_unreachable_path(2_000),
+        ),
     ] {
         let (median, worst) = timing;
         let this_over = median > BUDGET;
         over |= this_over;
         table.push_str(&format!(
-            "| {name} | {} nodes, {} edges | {:.2} ms | {:.2} ms | ≤ {} ms{} |\n",
-            snapshot.nodes.len(),
-            snapshot.edges.len(),
+            "| {name} | {size} | {:.2} ms | {:.2} ms | ≤ {} ms{} |\n",
             median.as_secs_f64() * 1e3,
             worst.as_secs_f64() * 1e3,
             BUDGET.as_millis(),
@@ -149,7 +201,7 @@ fn main() {
         }
     }
     if over && std::env::var_os("BENCH_RECORD").is_none() {
-        eprintln!("the layout step is over its budget");
+        eprintln!("a bench is over its budget");
         std::process::exit(1);
     }
 }
