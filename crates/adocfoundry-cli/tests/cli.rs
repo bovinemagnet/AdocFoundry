@@ -975,3 +975,20 @@ fn a_closed_standard_output_ends_the_output_quietly() {
         assert!(!stderr.contains("panicked"), "{arguments:?}: {stderr}");
     }
 }
+
+/// An image target opens in an image tab in the app; here it is printed as an attachment's
+/// is, rather than failing as an unexpected outcome (#506).
+#[test]
+fn follow_prints_an_image_target() {
+    let page = "tests/fixtures/images/guide.adoc";
+    let text = std::fs::read_to_string(repository_root().join(page)).unwrap();
+    let offset = text.find("present.svg").unwrap() + 2;
+    let output = cli(&["follow", page, &offset.to_string()]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(stdout(&output).trim(), "external media/present.svg");
+}

@@ -884,6 +884,16 @@ fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
             outln!(out, "external {}", display_path(&path, &root));
             Ok(ExitCode::SUCCESS)
         }
+        // An image opens in an image tab, where the app shows it; here it is a path like any
+        // attachment's.
+        Ok(CommandOutcome::OpenedImage(image)) => {
+            let path = engine
+                .image(image)
+                .map(|image| image.path.clone())
+                .ok_or_else(|| format!("unexpected outcome {image:?}"))?;
+            outln!(out, "external {}", display_path(&path, &root));
+            Ok(ExitCode::SUCCESS)
+        }
         Ok(other) => Err(format!("unexpected outcome {other:?}")),
         Err(EngineError::NotFound(message)) => {
             eprintln!("{message}");
