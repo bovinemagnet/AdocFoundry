@@ -1889,14 +1889,7 @@ mod tests {
         );
     }
 
-    /// Tests that write and run an executable take this, so no other test forks while the
-    /// script is open for writing (`ETXTBSY`), as `adoc-render`'s `spawn_guard` does there.
-    fn spawn_guard() -> std::sync::MutexGuard<'static, ()> {
-        static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        GUARD
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+    use crate::spawn_guard;
 
     /// Renders `uri` with `adoc.renderPreview` and reads the artefact written.
     fn rendered(server: &mut ProtocolServer, uri: &str) -> String {
