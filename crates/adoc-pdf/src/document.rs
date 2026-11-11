@@ -267,18 +267,24 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
                         emitter.push(&format!("#adoc-part[{}]\n\n", text(title)));
                     }
                     BookItem::Heading { title, depth } => {
-                        heading(&mut emitter, *depth, &text(title), None);
+                        heading(&mut emitter, *depth, &text(title), None, "");
                     }
                     BookItem::Page(page) => {
                         emitter.begin_page(page);
                         let anchor = emitter.label("");
-                        let title = page
+                        let (title, markers) = page
                             .view
                             .title
                             .as_ref()
-                            .map(|title| emitter.inlines(title))
+                            .map(|title| emitter.heading_title(title))
                             .unwrap_or_default();
-                        heading(&mut emitter, page.depth.max(1), &title, Some(&anchor));
+                        heading(
+                            &mut emitter,
+                            page.depth.max(1),
+                            &title,
+                            Some(&anchor),
+                            &markers,
+                        );
                         emitter.page_body(&page.view);
                         emitter.footnotes(&page.view);
                     }
@@ -446,14 +452,15 @@ fn cover(document: &Document, facts: &Facts<'_>, theme: &LoadedTheme, face: Face
     Some(Cover::Image { image, fit, page })
 }
 
-/// A book heading at `depth`: a chapter (depth 1) starts a new page.
-fn heading(emitter: &mut Emitter<'_>, depth: u8, title: &str, label: Option<&str>) {
+/// A book heading at `depth`: a chapter (depth 1) starts a new page. `markers`, the title's
+/// anchors and index terms, follow it.
+fn heading(emitter: &mut Emitter<'_>, depth: u8, title: &str, label: Option<&str>, markers: &str) {
     if depth <= 1 {
         emitter.push("#pagebreak(weak: true)\n\n");
     }
     let label = label.map(|label| format!("#{label}")).unwrap_or_default();
     emitter.push(&format!(
-        "#heading(level: {}, outlined: true, bookmarked: true)[{title}]{label}\n\n",
+        "#heading(level: {}, outlined: true, bookmarked: true)[{title}]{label}{markers}\n\n",
         u32::from(depth) + 1
     ));
 }

@@ -260,6 +260,108 @@ fn labels_are_namespaced_per_page() {
 }
 
 #[test]
+fn a_repeated_inline_anchor_links_to_its_first_place() {
+    // A repeated id is the author's mistake, reported as `adoc.duplicate-anchor`; it must not
+    // cost the export.
+    for page in [
+        "= Page\n\nOne [[dup]]here.\n\nTwo [[dup]]there.\n\nSee <<dup>>.\n",
+        "= Page\n\n[#dup]\nOne here.\n\nTwo [[dup]]there.\n\nSee <<dup>>.\n",
+    ] {
+        let typst = typst_of(page);
+        assert_eq!(
+            typst.source.matches("#label(\"p0#dup\")").count(),
+            1,
+            "{}",
+            typst.source
+        );
+        assert!(squeeze(&compiled_text(&typst)).contains("Twothere."));
+    }
+}
+
+/// Pages written to a temporary folder, as a book of chapters with the book's `attributes`.
+fn book_of(pages: &[(&str, &str)], attributes: &[(&str, &str)]) -> adoc_pdf::Typst {
+    let directory = tempfile::tempdir().unwrap();
+    let items = pages
+        .iter()
+        .enumerate()
+        .map(|(index, (name, text))| {
+            let path = directory.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            adoc_pdf::BookItem::Page(PageView {
+                key: format!("p{index}"),
+                view: common::view_of(&path),
+                depth: 1,
+            })
+        })
+        .collect();
+    let book = adoc_pdf::Document::Book(adoc_pdf::Book {
+        title: "The book".to_owned(),
+        attributes: attributes
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect(),
+        items,
+        ..adoc_pdf::Book::default()
+    });
+    to_typst(&book, &common::default_theme(), &PdfOptions::default())
+}
+
+#[test]
+fn an_anchor_in_a_section_title_is_not_repeated_by_the_contents() {
+    let typst = book_of(
+        &[
+            (
+                "first.adoc",
+                "= First\n\n== Install [[foo]]steps\n\nText.\n",
+            ),
+            (
+                "second.adoc",
+                "= Second\n\nSee xref:first.adoc#foo[the steps].\n",
+            ),
+        ],
+        &[("toc", "")],
+    );
+    assert!(
+        typst.source.contains("adoc-link(label(\"p0#foo\")"),
+        "{}",
+        typst.source
+    );
+    let text = squeeze(&compiled_text(&typst));
+    assert!(text.contains("Installsteps"), "{text}");
+}
+
+#[test]
+fn an_index_term_in_a_title_is_indexed_once() {
+    let typst = typst_of(
+        "= Book\n:doctype: book\n:toc:\n\n== Chapter ((Apple))\n\nText.\n\n[index]\n== Index\n",
+    );
+    let pages = typeset_text(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let index = pages.last().unwrap();
+    let entry = &index[index.rfind("Apple").expect(index)..];
+    let entry = squeeze(entry.lines().next().unwrap_or(entry));
+    assert!(entry.starts_with("Apple,1"), "{index}");
+    assert!(!entry.starts_with("Apple,1,"), "{index}");
+}
+
+#[test]
+fn a_missing_image_in_a_block_s_own_title_is_reported_once() {
+    for kind in ["NOTE", "sidebar"] {
+        let delimiter = if kind == "NOTE" { "====" } else { "****" };
+        let typst = typst_of(&format!(
+            "= Page\n\n[{kind}]\n.See image:missing.png[] [[mark]]here\n{delimiter}\nBody.\n{delimiter}\n"
+        ));
+        assert_eq!(typst.missing.len(), 1, "{kind}: {:?}", typst.missing);
+        assert_eq!(
+            typst.source.matches("#label(\"p0#mark\")").count(),
+            1,
+            "{}",
+            typst.source
+        );
+    }
+}
+
+#[test]
 fn unresolved_references_stay_text() {
     let typst = typst_of("= Page\n\nSee xref:missing.adoc[the missing page] and <<nowhere>>.\n");
     assert!(typst.source.contains("#\"the missing page\""));

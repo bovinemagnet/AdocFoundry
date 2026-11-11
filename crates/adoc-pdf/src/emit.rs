@@ -157,6 +157,9 @@ pub(crate) struct Emitter<'a> {
     highlighter: Highlighter,
     /// The next paragraph is an article's lead.
     lead: bool,
+    /// While a heading's title is written: its anchors and index terms, which go beside the
+    /// heading rather than in its body, since the contents and running titles repeat the body.
+    markers: Option<String>,
 }
 
 /// What follows each block of a run.
@@ -212,6 +215,7 @@ impl<'a> Emitter<'a> {
             olist_depth: 0,
             highlighter: Highlighter::new(),
             lead: false,
+            markers: None,
         }
     }
 
@@ -271,9 +275,27 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    /// Whether a block's label for `id` is the first on the page, which it now is.
+    /// Whether a label for `id` is the first on the page, which it now is.
     fn first_place(&mut self, id: &str) -> bool {
         self.placed.insert(label_name(&self.key, id))
+    }
+
+    /// A heading's title as its body, and the anchors and index terms in it, to be written once
+    /// beside the heading: the contents and running titles draw a heading's body again, and a
+    /// label or index term in it would be repeated with it.
+    pub(crate) fn heading_title(&mut self, title: &[ViewInline]) -> (String, String) {
+        let outer = self.markers.replace(String::new());
+        let body = self.inlines(title);
+        let markers = std::mem::replace(&mut self.markers, outer).unwrap_or_default();
+        (body, markers)
+    }
+
+    /// An anchor or index term's marker: in `out`, or beside the heading being written.
+    fn marker(&mut self, out: &mut String, marker: &str) {
+        match &mut self.markers {
+            Some(markers) => markers.push_str(marker),
+            None => out.push_str(marker),
+        }
     }
 
     /// The page's blocks, with the first paragraph of an article's preamble as the lead.
@@ -418,7 +440,14 @@ impl<'a> Emitter<'a> {
                     | ViewKind::Sidebar(_)
                     | ViewKind::Admonition { .. }
             );
-            match this.caption_text(block).filter(|_| !owns_title) {
+            // A block that owns its title writes it itself: building it here too would report
+            // its images and formulas twice and place its anchors here.
+            let caption = if owns_title {
+                None
+            } else {
+                this.caption_text(block)
+            };
+            match caption {
                 Some(caption) => {
                     let below = matches!(block.kind, ViewKind::Image(_) | ViewKind::Diagram(_));
                     let _ = write!(
@@ -484,7 +513,8 @@ impl<'a> Emitter<'a> {
                 if let Some(number) = number {
                     heading.push_str(&text(&format!("{number} ")));
                 }
-                heading.push_str(&self.inlines(title));
+                let (title, markers) = self.heading_title(title);
+                heading.push_str(&title);
                 let outlined = section_level + self.depth <= self.options.toc_levels;
                 let label = block
                     .id
@@ -494,7 +524,7 @@ impl<'a> Emitter<'a> {
                     .unwrap_or_default();
                 let _ = writeln!(
                     self.out,
-                    "#heading(level: {}, outlined: {outlined}, bookmarked: true)[{heading}]{label}\n",
+                    "#heading(level: {}, outlined: {outlined}, bookmarked: true)[{heading}]{label}{markers}\n",
                     u32::from(level) + 1
                 );
                 if block.style.as_deref() == Some("index") {
@@ -505,10 +535,10 @@ impl<'a> Emitter<'a> {
                 }
             }
             ViewKind::Heading { level, title } => {
-                let heading = self.inlines(title);
+                let (heading, markers) = self.heading_title(title);
                 let _ = writeln!(
                     self.out,
-                    "#heading(level: {}, outlined: false, bookmarked: false)[{heading}]\n",
+                    "#heading(level: {}, outlined: false, bookmarked: false)[{heading}]{markers}\n",
                     u32::from(level + self.depth) + 1
                 );
             }
@@ -1135,8 +1165,12 @@ impl<'a> Emitter<'a> {
                     None => out.push_str(&inner),
                 }
             }
+            // As a block's: Typst refuses a link to a label that occurs twice.
             ViewInline::Anchor(id) => {
-                let _ = write!(out, "#metadata(none)#{}", self.label(id));
+                if self.first_place(id) {
+                    let marker = format!("#metadata(none)#{}", self.label(id));
+                    self.marker(out, &marker);
+                }
             }
             ViewInline::Image(image) => match self.usable_image(image, &self.span.clone()) {
                 Some((path, _)) => {
@@ -1199,11 +1233,9 @@ impl<'a> Emitter<'a> {
                 let inner = self.inlines(content);
                 let terms: Vec<String> = terms.iter().map(|term| string(term)).collect();
                 // The marker the index finds the term and its page by.
-                let _ = write!(
-                    out,
-                    "{inner}#metadata(({},))<adoc-index-term>",
-                    terms.join(", ")
-                );
+                out.push_str(&inner);
+                let marker = format!("#metadata(({},))<adoc-index-term>", terms.join(", "));
+                self.marker(out, &marker);
             }
         }
     }
