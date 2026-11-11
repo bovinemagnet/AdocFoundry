@@ -87,6 +87,20 @@ pub fn nav_tree(
     version: Option<&str>,
     read: &dyn Fn(&Path) -> io::Result<String>,
 ) -> Result<Vec<NavTree>, NavError> {
+    nav_tree_each(catalog, component, version, read)?
+        .into_iter()
+        .collect()
+}
+
+/// The navigation of `component` at `version` as [`nav_tree`] reads it, each file's tree or
+/// why it could not be read on its own, so that one file that cannot be read leaves the others'
+/// trees. The error is for a component version the catalog does not have.
+pub fn nav_tree_each(
+    catalog: &AntoraCatalog,
+    component: &str,
+    version: Option<&str>,
+    read: &dyn Fn(&Path) -> io::Result<String>,
+) -> Result<Vec<Result<NavTree, NavError>>, NavError> {
     let descriptor =
         catalog
             .component(component, version)
@@ -94,7 +108,7 @@ pub fn nav_tree(
                 component: component.to_owned(),
                 version: version.map(str::to_owned),
             })?;
-    descriptor
+    Ok(descriptor
         .nav
         .iter()
         .map(|entry| {
@@ -105,7 +119,7 @@ pub fn nav_tree(
             })?;
             Ok(build_tree(catalog, component, version, path, &text))
         })
-        .collect()
+        .collect())
 }
 
 /// The navigation trees of `files`, in the order given, each read in the component version and

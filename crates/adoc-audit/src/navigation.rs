@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 
 use adoc_antora::{
-    nav_tree, parse_nav, parse_resource_id, ComponentDescriptor, NavError, NavItem, NavTree,
+    nav_tree_each, parse_nav, parse_resource_id, ComponentDescriptor, NavError, NavItem, NavTree,
     ResourceFamily,
 };
 use adoc_core::SourceRange;
@@ -35,16 +35,22 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
     let mut skips = Vec::new();
     let catalog = &context.workspace().antora;
     let version = descriptor.version.as_deref();
-    let (trees, mut unknown) =
-        match nav_tree(catalog, &descriptor.name, version, context.input.read) {
-            Ok(trees) => (trees, None),
-            Err(error) => (
-                Vec::new(),
-                Some(Unknown {
+    // Each file is read on its own: one that cannot be read leaves what the others list
+    // listed, and only the pages none of them lists unknown.
+    let mut trees = Vec::new();
+    let mut unknown = None;
+    let each = nav_tree_each(catalog, &descriptor.name, version, context.input.read)
+        .unwrap_or_else(|error| vec![Err(error)]);
+    for tree in each {
+        match tree {
+            Ok(tree) => trees.push(tree),
+            Err(error) => {
+                unknown.get_or_insert(Unknown {
                     reason: unreadable(context, &error),
-                }),
-            ),
-        };
+                });
+            }
+        }
+    }
 
     for tree in &trees {
         let dynamic = dynamic_entries(context, tree);

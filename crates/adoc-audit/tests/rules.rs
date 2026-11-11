@@ -398,3 +398,59 @@ fn existing_messages_name_files_relative_to_their_root() {
         "an absolute path in {text}"
     );
 }
+
+/// The report of a workspace made of `files`, each a path from the root and its text.
+fn audit_files(files: &[(&str, &str)], scope: AuditScope) -> AuditReport {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    for (path, text) in files {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let mut workspace = WorkspaceState::new();
+    workspace.index_roots(std::slice::from_ref(&root)).unwrap();
+    let roots = [root];
+    let read = |path: &Path| fs::read_to_string(path);
+    let input = AuditInput {
+        workspace: &workspace,
+        roots: &roots,
+        read: &read,
+    };
+    audit(&input, scope).finish(&Policy::default())
+}
+
+#[test]
+fn a_missing_navigation_file_leaves_what_the_others_list_listed() {
+    let report = audit_files(
+        &[
+            (
+                "docs/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n- modules/admin/nav.adoc\n",
+            ),
+            (
+                "docs/modules/ROOT/nav.adoc",
+                "* xref:a.adoc[A]\n* xref:b.adoc[B]\n",
+            ),
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            ("docs/modules/ROOT/pages/a.adoc", "= A\n"),
+            ("docs/modules/ROOT/pages/b.adoc", "= B\n"),
+            ("docs/modules/ROOT/pages/c.adoc", "= C\n"),
+            ("docs/modules/admin/pages/x.adoc", "= X\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    let coverage = coverage(&report, "docs", None);
+    assert_eq!(
+        (coverage.pages, coverage.listed, coverage.undetermined),
+        (5, 3, 2)
+    );
+    assert_eq!(
+        skipped(&report, UNLISTED),
+        [
+            "docs/modules/ROOT/pages/c.adoc",
+            "docs/modules/admin/pages/x.adoc"
+        ]
+    );
+    assert!(found(&report, UNLISTED).is_empty());
+}
