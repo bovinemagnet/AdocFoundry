@@ -6,6 +6,7 @@ use std::{
     convert::Infallible,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 
 use bytes::Bytes;
@@ -26,6 +27,9 @@ pub const PATH: &str = "/mcp";
 
 /// The environment variable a client's token is taken from, when set and not empty.
 pub const TOKEN_VARIABLE: &str = "ADOC_MCP_TOKEN";
+
+/// How long the listener waits after a failed `accept` before trying again.
+const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
 /// `address` as a socket address, when it names a loopback host: `127.0.0.1:8765`,
 /// `[::1]:8765` or `localhost:8765`. Port 0 picks any free port.
@@ -110,11 +114,25 @@ pub async fn serve(server: Server, address: SocketAddr, token: String) -> Result
 
     let shutdown = shutdown();
     tokio::pin!(shutdown);
+    // Whether the failing `accept` was reported: once until one succeeds again.
+    let mut failing = false;
     loop {
         let stream = tokio::select! {
             accepted = listener.accept() => match accepted {
-                Ok((stream, _)) => stream,
-                Err(_) => continue,
+                Ok((stream, _)) => {
+                    failing = false;
+                    stream
+                }
+                // Out of file descriptors, say: it fails again at once, so wait a little
+                // rather than spin.
+                Err(error) => {
+                    if !failing {
+                        eprintln!("adoc-mcp: cannot accept a connection: {error}");
+                        failing = true;
+                    }
+                    tokio::time::sleep(ACCEPT_RETRY).await;
+                    continue;
+                }
             },
             () = &mut shutdown => break,
         };
