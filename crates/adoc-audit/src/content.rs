@@ -5,11 +5,11 @@
 //! is reported unless a `doctitle` attribute gives one, and skipped when an include before the
 //! first section may supply it.
 //!
-//! Alternative text is checked on the block image macros (`image::`) of published pages and of
-//! partials, which pages include. Inline images are not checked: the parser records block
-//! images only. Text counts as the author's whenever it is written: a first positional
-//! attribute (`image::a.png[What it shows]`), a named `alt`, an attribute reference, or text
-//! explicitly quoted empty (`[""]`), the author's statement that an image is decorative. Only a
+//! Alternative text is checked on the block (`image::`) and inline (`image:`) image macros of
+//! published pages and of partials, which pages include. Text counts as the author's whenever
+//! it is written: a first positional attribute (`image::a.png[What it shows]`,
+//! `image:a.png[What it shows]`), a named `alt`, an attribute reference, or text explicitly
+//! quoted empty (`[""]`), the author's statement that an image is decorative. Only a
 //! macro with no text at all, whose alternative text Asciidoctor would make from the file name,
 //! is reported. A decorative image without quotes, or a generated one, is left to an exclusion.
 
@@ -102,8 +102,9 @@ fn images(context: &Context<'_>, path: &Path, document: &Document, part: &mut Fi
             context.location(path, Some(image.range)),
         );
         finding.coordinate = context.coordinate(path);
+        let prefix = if image.inline { "image:" } else { "image::" };
         finding.remediation = Some(format!(
-            "Describe the image in the macro's first attribute: `image::{}[What it shows]`",
+            "Describe the image in the macro's first attribute: `{prefix}{}[What it shows]`",
             image.target
         ));
         part.findings.push(finding);
@@ -170,6 +171,7 @@ mod tests {
             target: "a.png".to_owned(),
             attributes: attributes.map(str::to_owned),
             range: SourceRange::new(0, 0),
+            inline: false,
         }
     }
 

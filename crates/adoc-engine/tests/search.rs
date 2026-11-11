@@ -616,6 +616,70 @@ fn moving_an_antora_page_to_another_module_qualifies_its_references() {
     assert!(text.contains("image::ROOT:pic.svg[]"), "{text}");
 }
 
+/// Inline `image:` macros are rewritten as block ones are, in prose and in a table cell.
+#[test]
+fn moving_a_plain_page_rewrites_its_inline_images() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    write_files(
+        &root,
+        &[
+            (
+                "index.adoc",
+                "= Index\n\nClick image:icons/save.png[Save] to save.\n\n|===\n| image:pic.svg[] | b\n|===\n",
+            ),
+            ("icons/save.png", "not really a PNG"),
+            ("pic.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n"),
+        ],
+    );
+    let mut engine = open_workspace(&root);
+    let moved = root.join("guides/index.adoc");
+    rename_and_apply(&mut engine, &root.join("index.adoc"), &moved);
+
+    let text = current_text(&engine, &moved);
+    assert!(
+        text.contains("Click image:../icons/save.png[Save] to save."),
+        "{text}"
+    );
+    assert!(text.contains("| image:../pic.svg[] | b"), "{text}");
+    assert_eq!(diagnostics_of(&engine, &moved), Vec::<String>::new());
+}
+
+#[test]
+fn moving_an_antora_page_to_another_module_qualifies_its_inline_images() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    write_files(
+        &root,
+        &[
+            ("antora.yml", "name: docs\nversion: ~\n"),
+            (
+                "modules/ROOT/pages/page.adoc",
+                "= Page\n\nClick image:pic.svg[Picture] here.\n",
+            ),
+            (
+                "modules/ROOT/images/pic.svg",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n",
+            ),
+            ("modules/api/pages/api.adoc", "= API\n"),
+        ],
+    );
+    let mut engine = open_workspace(&root);
+    let moved = root.join("modules/api/pages/page.adoc");
+    rename_and_apply(
+        &mut engine,
+        &root.join("modules/ROOT/pages/page.adoc"),
+        &moved,
+    );
+
+    let text = current_text(&engine, &moved);
+    assert!(
+        text.contains("Click image:ROOT:pic.svg[Picture] here."),
+        "{text}"
+    );
+    assert_eq!(diagnostics_of(&engine, &moved), Vec::<String>::new());
+}
+
 #[test]
 fn moving_an_antora_page_within_its_module_changes_nothing_in_it() {
     let (_directory, root) = antora_component();

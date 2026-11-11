@@ -194,11 +194,12 @@ pub(crate) fn find_includes(line: &str, offset: usize) -> Vec<IncludeDirective> 
         .collect()
 }
 
-/// Block images on `line`. A block macro starts its line, or a table cell (`| image::…`,
-/// `a| image::…`); one mentioned anywhere else is text.
+/// Block and inline images on `line`, in order. A block macro (`image::…`) starts its line, or
+/// a table cell (`| image::…`, `a| image::…`); one mentioned anywhere else is text. An inline
+/// macro (`image:…[…]`) may stand anywhere.
 pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
     let line = content(line);
-    find_macros(line, "image::", offset)
+    let mut images: Vec<_> = find_macros(line, "image::", offset)
         .into_iter()
         .filter(|mac| {
             let before = line[..mac.range.start - offset].trim_end();
@@ -208,8 +209,57 @@ pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
             target: mac.target.to_owned(),
             attributes: nonempty(mac.attributes),
             range: mac.range,
+            inline: false,
         })
-        .collect()
+        .collect();
+    let inline = find_inline_images(line, offset);
+    if !inline.is_empty() {
+        images.extend(inline);
+        images.sort_by_key(|image| image.range.start);
+    }
+    images
+}
+
+/// Inline image macros, `image:target[attributes]`, as Asciidoctor matches them: the target
+/// neither starts with `:` (that is the block macro) nor starts or ends with whitespace, and
+/// holds no `[`. A backslash before the macro escapes it.
+fn find_inline_images(line: &str, offset: usize) -> Vec<ImageDirective> {
+    const PREFIX: &str = "image:";
+    let mut found = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = line[cursor..].find(PREFIX) {
+        let start = cursor + relative_start;
+        let target_start = start + PREFIX.len();
+        cursor = target_start;
+        let opens_target = line[target_start..]
+            .chars()
+            .next()
+            .is_some_and(|first| first != ':' && first != '[' && !first.is_whitespace());
+        if !is_boundary(line, start) || !opens_target {
+            continue;
+        }
+        // With no `[` or `]` left on the line, no later macro can close either.
+        let Some(open_relative) = line[target_start..].find('[') else {
+            break;
+        };
+        let open = target_start + open_relative;
+        let target = &line[target_start..open];
+        if target.ends_with(char::is_whitespace) {
+            continue;
+        }
+        let Some(close_relative) = line[open + 1..].find(']') else {
+            break;
+        };
+        let close = open + 1 + close_relative;
+        found.push(ImageDirective {
+            target: target.to_owned(),
+            attributes: nonempty(&line[open + 1..close]),
+            range: SourceRange::new(offset + start, offset + close + 1),
+            inline: true,
+        });
+        cursor = close + 1;
+    }
+    found
 }
 
 /// How a preprocessor conditional line changes the nesting: `ifdef::attr[]`, `ifndef::attr[]`

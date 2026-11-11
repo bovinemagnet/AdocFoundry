@@ -175,7 +175,7 @@ fn duplicate_anchors(anchors: &[Anchor]) -> Vec<Diagnostic> {
 
 #[cfg(test)]
 mod tests {
-    use adoc_core::ReferenceKind;
+    use adoc_core::{ReferenceKind, SourceRange};
 
     use super::parse;
 
@@ -296,6 +296,110 @@ image::diagram.png[Architecture]\n";
             .map(|image| image.target)
             .collect();
         assert_eq!(targets, ["real.png", "cell.png", "styled.png"]);
+    }
+
+    /// The images a source records, as (target, inline, attributes).
+    fn images(source: &str) -> Vec<(String, bool, Option<String>)> {
+        parse("file:///doc.adoc", source)
+            .document
+            .images
+            .into_iter()
+            .map(|image| (image.target, image.inline, image.attributes))
+            .collect()
+    }
+
+    fn inline(target: &str, attributes: Option<&str>) -> (String, bool, Option<String>) {
+        (target.to_owned(), true, attributes.map(str::to_owned))
+    }
+
+    #[test]
+    fn records_inline_images_in_prose() {
+        let source = "= Demo\n\nClick image:icons/save.png[Save] to save.\n";
+        let document = parse("file:///doc.adoc", source).document;
+
+        assert_eq!(
+            images(source),
+            [inline("icons/save.png", Some("Save"))],
+            "{:?}",
+            document.images
+        );
+        let start = source.find("image:icons").unwrap();
+        let end = source.find("] to").unwrap() + 1;
+        assert_eq!(document.images[0].range, SourceRange::new(start, end));
+    }
+
+    #[test]
+    fn records_inline_images_in_a_table_cell_and_beside_a_block_image() {
+        let source = "|===\n| image:cell.png[] | b\n|===\n\nimage::block.png[Block]\n";
+        assert_eq!(
+            images(source),
+            [
+                inline("cell.png", None),
+                ("block.png".to_owned(), false, Some("Block".to_owned())),
+            ]
+        );
+    }
+
+    /// Asciidoctor shows an image inside plain monospace (`` `image:x.png[]` `` renders an
+    /// `<img>` inside `<code>`), but nothing inside a passthrough or literal monospace.
+    #[test]
+    fn inline_images_follow_asciidoctor_inside_monospace_and_passthroughs() {
+        assert_eq!(
+            images("Write `+image:literal.png[]+` or ++image:pass.png[]++ to show one.\n"),
+            []
+        );
+        assert_eq!(
+            images("The `image:shown.png[Shown]` icon.\n"),
+            [inline("shown.png", Some("Shown"))]
+        );
+    }
+
+    #[test]
+    fn records_no_inline_images_inside_verbatim_blocks() {
+        let source = "----\nimage:listing.png[]\n----\n\n....\nimage:literal.png[]\n....\n\n\
+                      [source]\nimage:styled.png[]\n\n////\nimage:comment.png[]\n////\n\
+                      // image:line-comment.png[]\n";
+        assert_eq!(images(source), []);
+    }
+
+    #[test]
+    fn half_typed_and_escaped_inline_images_record_nothing() {
+        for source in [
+            "image:foo\n",
+            "Text image:foo and more\n",
+            "image:\n",
+            "image:[]\n",
+            "image: spaced.png[]\n",
+            "image:trailing.png [x]\n",
+            "image:foo[unclosed\n",
+            "\\image:escaped.png[]\n",
+            "notimage:word.png[]\n",
+            "image:é\n",
+        ] {
+            assert_eq!(images(source), [], "{source:?}");
+        }
+    }
+
+    #[test]
+    fn block_image_is_not_also_inline() {
+        assert_eq!(
+            images("image::block.png[]\n"),
+            [("block.png".to_owned(), false, None)]
+        );
+        // A block macro in prose is neither: an inline target cannot start with `:`.
+        assert_eq!(images("Text image::prose.png[] here.\n"), []);
+    }
+
+    #[test]
+    fn records_several_inline_images_on_one_line() {
+        assert_eq!(
+            images("image:a.png[] and image:b.png[B, 20] and image:{icon}[]\n"),
+            [
+                inline("a.png", None),
+                inline("b.png", Some("B, 20")),
+                inline("{icon}", None),
+            ]
+        );
     }
 
     /// An include is a preprocessor directive: Asciidoctor recognises it only at the start of

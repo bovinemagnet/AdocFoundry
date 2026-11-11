@@ -14,7 +14,7 @@ use std::{
 };
 
 use adoc_antora::{parse_resource_id, AntoraContext, AntoraCoordinate, ResourceFamily};
-use adoc_core::{LineIndex, SourceRange};
+use adoc_core::{ImageDirective, LineIndex, SourceRange};
 use adoc_index::normalize_path;
 use adoc_lang::DefinitionTarget;
 use adoc_parser::parse;
@@ -637,7 +637,7 @@ impl Engine {
             }
         }
         for image in &document.images {
-            if let Some(range) = image_target_range(text, image.range) {
+            if let Some(range) = image_target_range(text, image) {
                 targets.push((range, image.target.as_str(), Written::Image));
             }
         }
@@ -780,12 +780,13 @@ enum Written {
     Image,
 }
 
-/// The range of the target in `text[directive]`, an `image::target[…]` line.
-fn image_target_range(text: &str, directive: SourceRange) -> Option<SourceRange> {
-    let source = text.get(directive.start..directive.end)?;
-    let after_prefix = source.strip_prefix("image::")?;
+/// The range of the target in `text[image.range]`, an `image::target[…]` or `image:target[…]`.
+fn image_target_range(text: &str, image: &ImageDirective) -> Option<SourceRange> {
+    let prefix = if image.inline { "image:" } else { "image::" };
+    let source = text.get(image.range.start..image.range.end)?;
+    let after_prefix = source.strip_prefix(prefix)?;
     let target = &after_prefix[..after_prefix.find('[')?];
-    let start = directive.start + "image::".len();
+    let start = image.range.start + prefix.len();
     Some(SourceRange::new(start, start + target.len()))
 }
 
