@@ -10,6 +10,10 @@ repository.workspace = true
 merman.workspace = true
 sha2.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# Stopping a tool stops the processes it started too, by their process group.
+rustix.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

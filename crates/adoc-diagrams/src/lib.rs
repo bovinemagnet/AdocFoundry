@@ -4,6 +4,7 @@
 mod cache;
 mod external;
 mod mermaid;
+pub mod process;
 mod reads;
 
 use std::{
@@ -852,6 +853,49 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
         assert!(matches!(error, DiagramError::TimedOut { .. }), "{error:?}");
         assert!(error.to_string().contains("did not finish"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_stopped_at_the_deadline_takes_its_own_processes_with_it() {
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("helper.pid");
+        // A launcher that starts a helper of its own, as the `plantuml` script starts Java.
+        let tool = script(
+            dir.path(),
+            &format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > '{}'\nwait\n",
+                pid_file.display()
+            ),
+        );
+        let provider = ExternalProvider::new(vec!["plantuml"], &tool, Vec::new())
+            .with_timeout(std::time::Duration::from_secs(2));
+        let error = provider
+            .render(&DiagramRequest::new("plantuml", "A -> B"))
+            .unwrap_err();
+        assert!(matches!(error, DiagramError::TimedOut { .. }), "{error:?}");
+
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let running = || {
+            std::process::Command::new("kill")
+                .args(["-0", pid.trim()])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while running() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let left = running();
+        if left {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", pid.trim()])
+                .status();
+        }
+        assert!(!left, "the helper was left running");
     }
 
     #[cfg(unix)]

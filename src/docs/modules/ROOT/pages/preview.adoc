@@ -256,7 +256,7 @@ Changing these settings takes effect when settings reload, and diagrams that fai
 A tool that was not found is looked for again a second later, so one installed while the application runs is used the next time the page is previewed.
 Graphviz, PlantUML and D2 run in the page's folder, so a relative `!include` or `image=` path in a diagram resolves against the page, as it does with asciidoctor-diagram.
 
-A Graphviz, PlantUML or D2 process that runs longer than 30 seconds is stopped, and the diagram shows its source with the reason, for example "`dot` did not finish within 30 seconds and was stopped".
+A Graphviz, PlantUML or D2 process that runs longer than 30 seconds is stopped, together with every process it started, such as the Java that the `plantuml` launcher script runs, and the diagram shows its source with the reason, for example "`dot` did not finish within 30 seconds and was stopped".
 A Mermaid diagram, which renders in process, is stopped at the same limit, and the diagram shows its source with the reason "`Mermaid` did not finish within 30 seconds and was stopped".
 Set `diagram_timeout` in the `[tools]` table of your user settings file to change the limit; it is a positive number of seconds, and it is read from the user settings file only.
 A tool that writes more than 32 MB to standard output or standard error is stopped too, and the diagram shows "<program> wrote more than 33554432 bytes and was stopped".

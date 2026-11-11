@@ -35,10 +35,6 @@ tempfile.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
 
-[target.'cfg(unix)'.dependencies]
-# Stopping a site build stops the processes npm started too, by their process group.
-rustix.workspace = true
-
 [features]
 default = ["typst", "git"]
 # PDF export and typeset STEM, through Typst.

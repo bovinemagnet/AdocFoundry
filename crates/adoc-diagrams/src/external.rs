@@ -224,6 +224,9 @@ impl DiagramProvider for ExternalProvider {
         {
             command.current_dir(folder);
         }
+        // A group of its own, so stopping it stops what it starts too: the `plantuml`
+        // launcher's Java, a tool's own helpers.
+        crate::process::in_own_group(&mut command);
         let mut child = command
             .args(&self.args)
             .stdin(Stdio::piped())
@@ -270,9 +273,8 @@ impl DiagramProvider for ExternalProvider {
             };
             if let Some(error) = stop {
                 // The readers end once the pipes close; they are not waited for, in case the
-                // tool left a process of its own holding them open.
-                let _ = child.kill();
-                let _ = child.wait();
+                // tool left a process outside its group holding them open.
+                crate::process::stop(&mut child);
                 return Err(error);
             }
             thread::sleep(POLL);

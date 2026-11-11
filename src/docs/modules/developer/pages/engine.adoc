@@ -1067,6 +1067,7 @@ The engine emits `EngineEvent::SiteBuildOutput` for each line and `EngineEvent::
 
 On Unix the step runs in a process group of its own (`process_group(0)`), and is stopped with `rustix::process::kill_process_group`.
 On Windows it is stopped with `taskkill /T /F`.
+Both are `adoc_diagrams::process` (`in_own_group`, `stop`), shared with the external diagram tools.
 
 `Engine::site_build_plan()` returns the playbook's folder and the commands a build would run, as `Option<(PathBuf, Vec<String>)>`.
 It is `None` while Build Site cannot run.

@@ -68,6 +68,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 `ExternalProvider::inputs` (`reads.rs`) finds the local files a diagram names for its tool (PlantUML includes, imports and `!theme ... from`, Graphviz `image` and `shapefile`, D2 imports and `icon` paths), conservatively and lexically: only plain paths inside the page's folder, never a URL, variable or standard-library name. The engine adds them to a preview's and a visual view's sources, so the watcher's report of a change to one shows the page again.
 The fingerprint is kept once the program is found, until `Diagrams::look_for_tools_again` (the engine's `preview.retry_diagrams`), and a program not found is looked for again after a second, so one installed meanwhile is used.
 `ExternalProvider` writes the source on a thread, reads both outputs on threads capped at `MAX_OUTPUT` (32 MB), and polls the child against a deadline (`with_timeout`, `ToolPaths::timeout`, `DEFAULT_TIMEOUT` of 30 s, from `[tools] diagram_timeout`), killing it and returning `DiagramError::TimedOut` or a `Failed` message.
+The tool runs in a process group of its own and is stopped with everything it started, through `adoc_diagrams::process` (`in_own_group`, `stop`: `rustix`'s `kill_process_group` on Unix, `taskkill /T` on Windows), which the engine's site build uses too.
 `MermaidProvider` (`with_timeout`) gives merman's `OperationControl` the same deadline and returns `DiagramError::TimedOut` when it passes.
 
 |L2
