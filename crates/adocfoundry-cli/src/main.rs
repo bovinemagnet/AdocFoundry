@@ -1068,11 +1068,21 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
 
     let mut engine = open_engine(&root, false)?;
+    // The component version to export, `None` its version for one unversioned (`~`).
     let component = match option(&options, "component") {
         Some(spec) => Some(match spec.split_once('@') {
             Some((version, name)) => (name.to_owned(), Some(version.to_owned())),
-            None => (spec.to_owned(), None),
+            // No version: the latest, as Antora reads a coordinate without one.
+            None => (
+                spec.to_owned(),
+                engine
+                    .workspace()
+                    .antora
+                    .latest_version(spec)
+                    .and_then(|latest| latest.version.clone()),
+            ),
         }),
+        // A folder: the version it holds, never the latest in its place (#511).
         None if is_dir => {
             let component = engine
                 .workspace()
@@ -1086,14 +1096,7 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
     let (export_target, default_output) = match component {
         Some((name, version)) => {
-            let version = version.or_else(|| {
-                engine
-                    .workspace()
-                    .antora
-                    .latest_version(&name)
-                    .and_then(|latest| latest.version.clone())
-            });
-            let output = PathBuf::from(format!("{name}.pdf"));
+            let output = PathBuf::from(pdf_file_name(&name));
             (ExportTarget::Component { name, version }, output)
         }
         None => {
@@ -1112,6 +1115,31 @@ fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         attributes: Vec::new(),
     };
     report_export(&mut engine, args, &root, fail_on, out)
+}
+
+/// The file a component named `name` is exported to by default, in the current directory: the
+/// name's last part, with anything but letters, digits, `-`, `_` and `.` made `-`, so the
+/// workspace's content never decides where the file goes (#511).
+fn pdf_file_name(name: &str) -> String {
+    let last = name
+        .rsplit(['/', '\\'])
+        .find(|part| !part.is_empty())
+        .unwrap_or_default();
+    let safe: String = last
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if safe.chars().all(|character| character == '.') {
+        "component.pdf".to_owned()
+    } else {
+        format!("{safe}.pdf")
+    }
 }
 
 /// Exports and waits, printing each diagnostic and then the output and its page count. Fails
@@ -1410,5 +1438,21 @@ mod tests {
         let root = directory.path();
         let engine = open_engine_with(root, audit_settings(root).unwrap()).unwrap();
         assert!(engine.git().repositories().is_empty());
+    }
+
+    #[test]
+    fn a_component_name_gives_a_file_name_in_the_current_directory() {
+        for (name, file) in [
+            ("guide", "guide.pdf"),
+            ("api/v2", "v2.pdf"),
+            ("../../escaped", "escaped.pdf"),
+            ("/etc/passwd", "passwd.pdf"),
+            ("C:\\Windows\\x", "x.pdf"),
+            ("a b:c", "a-b-c.pdf"),
+            ("v1.0_beta-2", "v1.0_beta-2.pdf"),
+            ("..", "component.pdf"),
+        ] {
+            assert_eq!(pdf_file_name(name), file, "{name}");
+        }
     }
 }

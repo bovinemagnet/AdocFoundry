@@ -1139,3 +1139,69 @@ fn paths_are_read_against_the_current_directory() {
     succeeded(&output);
     assert!(directory.path().join("guide.pdf").is_file());
 }
+
+/// A component folder is exported as the component version it holds, and to a file in the
+/// current directory whatever the component's name says (#511).
+#[test]
+fn pdf_exports_the_component_folder_named_to_the_current_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let work = directory.path().join("work");
+    std::fs::create_dir(&work).unwrap();
+    let docs = work.join("docs");
+    copy_tree(
+        &repository_root().join("tests/fixtures/antora-versions"),
+        &docs,
+    );
+    // Unversioned and a prerelease, so not the latest version: 2.0 is.
+    std::fs::write(
+        docs.join("main/antora.yml"),
+        "name: product\nversion: ~\nprerelease: true\n",
+    )
+    .unwrap();
+    let pdf = |arguments: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(&work)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        stdout(&output)
+    };
+
+    pdf(&["pdf", "docs/main", "--typst", "main.typ"]);
+    let typst = std::fs::read_to_string(work.join("main.typ")).unwrap();
+    assert!(typst.contains("[#\"Product\"]"), "{typst}");
+    assert!(!typst.contains("Product 2.0"), "{typst}");
+    // Without a version, `--component` is the latest version, as Antora reads it.
+    pdf(&[
+        "pdf",
+        "docs",
+        "--component",
+        "product",
+        "--typst",
+        "latest.typ",
+        "--output",
+        "latest.pdf",
+    ]);
+    let typst = std::fs::read_to_string(work.join("latest.typ")).unwrap();
+    assert!(typst.contains("Product 2.0"), "{typst}");
+
+    // A name that is a path writes only its last part, here.
+    for name in ["api/v2", "../../escaped"] {
+        std::fs::write(
+            docs.join("v1/antora.yml"),
+            format!("name: '{name}'\nversion: '1.0'\n"),
+        )
+        .unwrap();
+        let last = name.rsplit('/').next().unwrap();
+        let printed = pdf(&["pdf", "docs/v1"]);
+        assert!(printed.starts_with(&format!("{last}.pdf (")), "{printed}");
+        assert!(work.join(format!("{last}.pdf")).is_file(), "{name}");
+    }
+    assert!(!directory.path().join("escaped.pdf").exists());
+    assert!(!work.join("api").exists());
+}
