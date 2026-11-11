@@ -310,7 +310,7 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |`workspace.ignore`
 |array of strings
 |`[".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]`
-|Folder names skipped by indexing, Antora discovery and the file watcher, and hidden in Files unless Show Excluded Files is on. A workspace file's list replaces the default rather than adding to it. Only folders beneath a workspace folder count, so a workspace that itself sits in a folder named `build` is indexed and watched as usual.
+|Folder names skipped by indexing, Antora discovery and the file watcher, and hidden in Files unless Show Excluded Files is on. A workspace file's list replaces the default rather than adding to it. Only folders beneath a workspace folder count, so a workspace that itself sits in a folder named `build` is indexed and watched as usual. Inside the `modules` folder of a component version, `build`, `target` and `dist` are ordinary folders, since nothing is built there: a page in `modules/ROOT/pages/build/` is indexed and watched like any other.
 
 |`tools.asciidoctor`
 |string

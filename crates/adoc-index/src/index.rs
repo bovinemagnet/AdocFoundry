@@ -572,7 +572,14 @@ impl WorkspaceIndex {
         let mut paths = Vec::new();
         let mut unreadable = Vec::new();
         for root in roots {
-            collect_asciidoc_files(root, ignore, &mut on_directory, &mut paths, &mut unreadable);
+            collect_asciidoc_files(
+                root,
+                root,
+                ignore,
+                &mut on_directory,
+                &mut paths,
+                &mut unreadable,
+            );
         }
         paths.sort();
         paths.dedup();
@@ -882,6 +889,21 @@ mod tests {
         assert_eq!(seen.len(), 4);
         let _ = index.file(&path);
         assert_eq!(index.revision(), seen[3]);
+    }
+
+    #[test]
+    fn a_build_folder_inside_a_module_is_indexed() {
+        // Issue #531: `build` is build output beside a component, but a topic folder in a
+        // module.
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ignored-folders");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let page = super::normalize_path(&root.join("docs/modules/ROOT/pages/build/index.adoc"));
+        assert!(index.file(&page).is_some(), "the page in pages/build");
+        assert!(index.resolve_anchor(&page, "tools").is_some());
+        let stray = super::normalize_path(&root.join("build/stray.adoc"));
+        assert!(index.file(&stray).is_none(), "build output beside it");
     }
 
     #[test]

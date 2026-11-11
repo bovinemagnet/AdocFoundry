@@ -12,10 +12,11 @@ pub fn is_asciidoc_path(path: &Path) -> bool {
         .is_some_and(|extension| matches!(extension, "adoc" | "asciidoc" | "ad"))
 }
 
-/// Collects the AsciiDoc files beneath `path`, never entering a folder named in `ignore` or a
-/// link. `on_directory` sees each folder entered before it is read; one that cannot be read is
+/// Collects the AsciiDoc files beneath `path`, a folder beneath `root`, never entering a link
+/// or a folder `ignore` leaves out ([`adoc_core::is_ignored_beneath`]). `on_directory` sees each folder entered before it is read; one that cannot be read is
 /// added to `unreadable` and left out.
 pub(crate) fn collect_asciidoc_files(
+    root: &Path,
     path: &Path,
     ignore: &[impl AsRef<str>],
     on_directory: &mut dyn FnMut(&Path),
@@ -43,12 +44,18 @@ pub(crate) fn collect_asciidoc_files(
         };
         let entry_path = entry.path();
         if file_type.is_dir() {
+            // The folders above were entered, so only a folder named in `ignore` needs the rule.
             let ignored = entry
                 .file_name()
                 .to_str()
-                .is_some_and(|name| ignore.iter().any(|ignored| ignored.as_ref() == name));
+                .is_some_and(|name| ignore.iter().any(|ignored| ignored.as_ref() == name))
+                && entry_path.strip_prefix(root).is_ok_and(|beneath| {
+                    adoc_core::is_ignored_beneath(beneath, ignore, |folder| {
+                        root.join(folder).join("antora.yml").is_file()
+                    })
+                });
             if !ignored {
-                collect_asciidoc_files(&entry_path, ignore, on_directory, output, unreadable);
+                collect_asciidoc_files(root, &entry_path, ignore, on_directory, output, unreadable);
             }
         } else if file_type.is_file() && is_asciidoc_path(&entry_path) {
             output.push(normalize_path(&entry_path));

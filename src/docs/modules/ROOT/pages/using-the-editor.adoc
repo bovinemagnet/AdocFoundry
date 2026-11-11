@@ -22,6 +22,7 @@ include::example$workspace-discovery.mmd[]
 ----
 
 Folders named in `workspace.ignore` (by default `.cache`, `.git`, `.zed`, `node_modules`, `build`, `target`, `dist`, `.idea` and `.gradle`) are skipped by indexing, Antora discovery and watching.
+Inside a component version's `modules` folder, `build`, `target` and `dist` are ordinary folders, so a page in `pages/build/` is indexed and watched.
 A folder or file that cannot be read is skipped and reported once, and the rest of the workspace is indexed.
 See xref:settings.adoc[Settings].
 

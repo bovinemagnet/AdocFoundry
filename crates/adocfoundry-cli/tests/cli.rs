@@ -57,6 +57,21 @@ fn check_antora_single_component() {
 }
 
 #[test]
+fn a_page_in_a_build_folder_of_a_module_is_checked_and_indexed() {
+    // Issue #531: catalogued and indexed alike, so an xref to its anchor resolves.
+    let output = cli(&["check", "tests/fixtures/ignored-folders"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert!(
+        !stdout(&output).contains("unresolved"),
+        "{}",
+        stdout(&output)
+    );
+    let output = cli(&["symbols", "tests/fixtures/ignored-folders", "Tools"]);
+    assert!(stdout(&output).contains("build"), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("stray"), "{}", stdout(&output));
+}
+
+#[test]
 fn check_antora_nested_pages() {
     insta::assert_snapshot!(check_json("antora-nested-pages"));
 }
