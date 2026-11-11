@@ -155,13 +155,15 @@ impl Repository {
                     }
                     ChangeDetached::Deletion { .. } => continue,
                 };
-                let at = relative_path(location.as_bstr());
-                let Some(asked) = wanted.remove(&at) else {
+                let Some(asked) =
+                    relative_path(location.as_bstr()).and_then(|at| wanted.remove(&at))
+                else {
                     continue;
                 };
-                match moved_from {
+                // A move from a name no path here can hold is taken as a change.
+                match moved_from.and_then(|from| relative_path(from.as_bstr())) {
                     Some(from) => {
-                        wanted.insert(relative_path(from.as_bstr()), asked);
+                        wanted.insert(from, asked);
                     }
                     None => {
                         found.changes.insert(asked.to_path_buf(), change.clone());

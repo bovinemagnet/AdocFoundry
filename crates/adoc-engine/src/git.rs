@@ -629,8 +629,15 @@ impl Engine {
             .strip_prefix(&repository.workdir)
             .unwrap_or(&document.path)
             .components()
-            .map(|component| component.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
+            .map(|component| component.as_os_str().to_str())
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                // Rather than a link to another name.
+                EngineError::InvalidRequest(format!(
+                    "{} has a name that is not UTF-8, which a link cannot hold",
+                    document.path.display()
+                ))
+            })?
             .join("/");
         let text = document.text.to_string();
         let (line, _) = adoc_core::LineIndex::new(&text).line_column(offset.min(text.len()));
