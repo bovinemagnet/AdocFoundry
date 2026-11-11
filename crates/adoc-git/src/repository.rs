@@ -26,23 +26,33 @@ impl Repository {
     /// The working tree is spelt as `path` spells it (no symbolic links resolved), so paths the
     /// caller builds from its own roots can be compared with it.
     pub fn discover(path: &Path) -> Result<Option<Self>, GitError> {
+        Self::discover_with(path, gix::discover(path))
+    }
+
+    /// The repository `discovered` found from `path`, or `None` when the walk found none.
+    fn discover_with(
+        path: &Path,
+        discovered: Result<gix::Repository, gix::Error>,
+    ) -> Result<Option<Self>, GitError> {
         use gix::discover::upwards::Error as NotFound;
-        if let Err(error) = gix::discover::upwards(path) {
-            let not_found = matches!(
-                error.downcast_any_ref::<NotFound>(),
-                Some(
-                    NotFound::NoGitRepository { .. }
-                        | NotFound::NoGitRepositoryWithinCeiling { .. }
-                        | NotFound::NoGitRepositoryWithinFs { .. }
-                )
-            );
-            return if not_found {
-                Ok(None)
-            } else {
-                Err(GitError::git(error))
-            };
-        }
-        let repo = gix::discover(path).map_err(GitError::git)?;
+        let repo = match discovered {
+            Ok(repo) => repo,
+            Err(error) => {
+                let not_found = matches!(
+                    error.downcast_any_ref::<NotFound>(),
+                    Some(
+                        NotFound::NoGitRepository { .. }
+                            | NotFound::NoGitRepositoryWithinCeiling { .. }
+                            | NotFound::NoGitRepositoryWithinFs { .. }
+                    )
+                );
+                return if not_found {
+                    Ok(None)
+                } else {
+                    Err(GitError::git(error))
+                };
+            }
+        };
         let Some(found) = repo.workdir() else {
             return Ok(None);
         };
@@ -76,12 +86,10 @@ impl Repository {
     /// As [`Repository::discover`], but reading only the repository's own configuration, not
     /// the user's or the system's.
     pub fn discover_isolated(path: &Path) -> Result<Option<Self>, GitError> {
-        let Some(found) = Self::discover(path)? else {
-            return Ok(None);
-        };
-        let repo = gix::open_opts(found.repo.git_dir(), gix::open::Options::isolated())
-            .map_err(GitError::git)?;
-        Ok(Some(Self { repo, ..found }))
+        Self::discover_with(
+            path,
+            gix::discover_opts(path, Default::default(), gix::open::Options::isolated()),
+        )
     }
 
     /// The root of the working tree.
