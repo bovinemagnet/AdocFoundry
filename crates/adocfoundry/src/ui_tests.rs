@@ -2009,6 +2009,37 @@ fn changes_panel_lists_changed_adoc_files_only(cx: &mut TestAppContext) {
     );
 }
 
+/// Issue #502: a changed page clicked in the Changes panel opens, once, with the caret on its
+/// first change.
+#[gpui::test]
+fn a_change_opens_its_page_at_the_first_change(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("page.adoc", "= Page\n\nOne.\n\nTwo.\n");
+    test.commit_all("first");
+    test.write("page.adoc", "= Page\n\nOne.\n\nTwo, changed.\n");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    settle_engine(&app, &mut cx);
+    let page = dir.path().join("page.adoc");
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_first_change(&page, window, cx)
+        })
+    });
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let caret = cx.update(|_, cx| editor.read(cx).cursor(cx));
+    assert_eq!(caret, "= Page\n\nOne.\n\n".len());
+    assert_eq!(cx.update(|_, cx| app.read(cx).engine.tab_order().len()), 1);
+}
+
 #[gpui::test]
 fn blame_column_toggles_and_hover_shows_the_commit(cx: &mut TestAppContext) {
     init(cx);
@@ -10932,4 +10963,130 @@ fn the_preview_header_keeps_its_close_button_in_view(cx: &mut TestAppContext) {
     );
     click("preview-close", &mut cx);
     assert!(!cx.update(|_, cx| app.read(cx).engine.preview_layout().visible));
+}
+
+/// Issue #502: Fit Width from a menu or the palette reaches the active image, as the other zoom
+/// actions do.
+#[gpui::test]
+fn fit_width_from_the_workspace_reaches_the_image(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    open_path(
+        &workspace,
+        &images.join("logo.png"),
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    image_settled(&app, &workspace, &mut cx);
+    let view = cx.update(|_, cx| workspace.read(cx).active_image_view().unwrap().clone());
+    // Focus away from the viewer, as a menu or the palette leaves it.
+    cx.update(|window, cx| {
+        let focus = gpui::Focusable::focus_handle(workspace.read(cx), cx);
+        window.focus(&focus, cx);
+    });
+    cx.dispatch_action(crate::image_view::FitWidth);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).zoom()),
+        crate::image_view::Zoom::FitWidth
+    );
+}
+
+/// Issue #502: a sidebar link dropped on a read-only editor, the mirror window's, edits nothing.
+#[gpui::test]
+fn a_link_dropped_on_a_read_only_editor_edits_nothing(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let other = adoc_index::normalize_path(&directory.path().join("other.adoc"));
+    std::fs::write(&page, "= Page\n\nText.\n").unwrap();
+    std::fs::write(&other, "= Other\n").unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let id = cx.update(|cx| app.update(cx, |app, _| app.engine.open(&page).unwrap()));
+    let linkable = cx.update(|cx| app.read(cx).engine.xref_to(id, &other, None).is_some());
+    assert!(linkable, "the page can link to the other");
+    let mut editor = None;
+    let window = cx.open_window(size(px(600.), px(400.)), |window, cx| {
+        let view = cx.new(|cx| SourceEditorView::new(app.clone(), id, true, window, cx));
+        editor = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let editor = editor.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let link = crate::sidebar::DraggedLink {
+        path: other,
+        section: None,
+        label: "Other".into(),
+    };
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.drop_link(&link, window, cx)));
+    cx.run_until_parked();
+    assert_eq!(document_text(&app, &mut cx), "= Page\n\nText.\n");
+}
+
+/// Issue #502: Cut that the engine refuses, here across a comment, leaves the clipboard as it
+/// was.
+#[gpui::test]
+fn a_refused_cut_leaves_the_clipboard_alone(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst para\n\n// A note.\n\nSecond para\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    cx.update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string("kept".to_owned())));
+    let start = text.find("para").unwrap();
+    let end = text.rfind("para").unwrap();
+    select_in_visual(&visual, start, end, &mut cx);
+    cx.dispatch_action(crate::visual::input::Cut);
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), text, "refused");
+    let clipboard = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(clipboard.as_deref(), Some("kept"));
+}
+
+/// Issue #502: clicking read-only text in the visual editor again shows the one notice, not
+/// another beside it.
+#[gpui::test]
+fn clicking_read_only_text_again_shows_one_notice(cx: &mut TestAppContext) {
+    let text = "= Page\n\n[subs=none]\nSome *literal stars* here.\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    draw_visual(&visual, &mut cx);
+    let notifications = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len())
+    };
+    let before = notifications(&mut cx);
+    // The read-only paragraph, the second node, clicked three times.
+    for _ in 0..3 {
+        cx.update(|window, cx| {
+            visual.update(cx, |visual, cx| {
+                visual.mouse_down(&[1], gpui::Point::default(), false, 1, window, cx);
+            });
+        });
+        cx.run_until_parked();
+    }
+    assert_eq!(notifications(&mut cx), before + 1);
+}
+
+/// Issue #502: a linked file's row does not offer Open Externally: where it leads is not the
+/// system's to open.
+#[cfg(unix)]
+#[gpui::test]
+fn a_linked_file_is_not_offered_to_the_system(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, files, mut cx) = files_workspace(cx);
+    std::os::unix::fs::symlink(root.join("README.md"), root.join("readme-link.md")).unwrap();
+    cx.update(|_, cx| files.update(cx, |files, cx| files.refresh(cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx).contains(&"  readme-link.md →".to_owned())
+    }));
+    crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow_mut().clear());
+    let index = files_row(&files, "readme-link.md →", &mut cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let selector: &'static str = Box::leak(format!("files-row-{index}").into_boxed_str());
+    click_selector(selector, gpui::MouseButton::Right, &mut cx);
+    // The second item: Open Externally for a file, the next one for a link.
+    cx.simulate_keystrokes("down down enter");
+    cx.run_until_parked();
+    let opened = crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
+    assert!(opened.is_empty(), "{opened:?}");
 }

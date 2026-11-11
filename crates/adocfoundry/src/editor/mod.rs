@@ -392,7 +392,15 @@ impl SourceEditorView {
 
     /// Inserts an xref to the page or section dragged in from the sidebar at the text under
     /// the pointer, or at the caret when there is none, and puts the caret after it.
-    fn drop_link(&mut self, link: &DraggedLink, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn drop_link(
+        &mut self,
+        link: &DraggedLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.readonly {
+            return;
+        }
         let engine = &self.app.read(cx).engine;
         let Some(xref) = engine.xref_to(self.document, &link.path, link.section) else {
             window.push_notification(link.unlinkable(), cx);
@@ -648,7 +656,7 @@ impl SourceEditorView {
     }
 
     /// Replaces the open change with its text in `HEAD`, as one undo step.
-    pub(crate) fn revert_open_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn revert_open_change(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let Some((hunk, _, _)) = self.open_change.take() else {
             return;
         };
@@ -656,29 +664,23 @@ impl SourceEditorView {
             id: self.document,
             offset: hunk.range.start,
         };
-        let result = self
+        // A failure is reported by the window, through `EngineEvent::CommandFailed`.
+        let _ = self
             .app
             .update(cx, |app, cx| app.invoke(ids::GIT_REVERT_HUNK, args, cx));
-        if let Err(error) = result {
-            gpui_component::WindowExt::push_notification(window, error.to_string(), cx);
-        }
         cx.notify();
     }
 
     /// Shows or hides the blame column, asking the engine for the blame when shown.
-    pub fn toggle_blame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_blame(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let document = self.document;
         let result = self.app.update(cx, |app, cx| {
             app.invoke(ids::GIT_SHOW_BLAME, CommandArgs::Document(document), cx)
         });
-        match result {
-            Ok(_) => {
-                self.show_blame = !self.show_blame;
-                cx.notify();
-            }
-            Err(error) => {
-                gpui_component::WindowExt::push_notification(window, error.to_string(), cx)
-            }
+        // A failure is reported by the window, through `EngineEvent::CommandFailed`.
+        if result.is_ok() {
+            self.show_blame = !self.show_blame;
+            cx.notify();
         }
     }
 

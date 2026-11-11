@@ -2,7 +2,11 @@
 //! which ended left behind, and the active page's saved versions. Each list sits beside the
 //! lines the chosen entry changes, with the buttons that take it back.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    path::PathBuf,
+    rc::Rc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use adoc_engine::{commands::ids, CommandArgs, DiffLine, DocumentId, Recoverable, SavedVersion};
 use gpui::{
@@ -30,6 +34,7 @@ pub fn show_recovery(
         workspace,
         items,
         selected: 0,
+        diff: None,
     });
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
@@ -61,6 +66,7 @@ pub fn show_history(
         document,
         versions,
         selected: 0,
+        diff: None,
     });
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
@@ -75,6 +81,8 @@ struct RecoveryList {
     workspace: WeakEntity<WorkspaceView>,
     items: Vec<Recoverable>,
     selected: usize,
+    /// The chosen entry's diff, by its record, worked out once rather than on every frame.
+    diff: Option<(PathBuf, Rc<Vec<DiffLine>>)>,
 }
 
 impl RecoveryList {
@@ -145,11 +153,17 @@ impl Render for RecoveryList {
                 }))
             })
             .collect();
-        let diff = self
-            .items
-            .get(self.selected)
-            .map(|item| self.app.read(cx).engine.recovery_diff(item))
-            .unwrap_or_default();
+        let diff = match self.items.get(self.selected) {
+            Some(item) => match &self.diff {
+                Some((record, diff)) if *record == item.record => diff.clone(),
+                _ => {
+                    let diff = Rc::new(self.app.read(cx).engine.recovery_diff(item));
+                    self.diff = Some((item.record.clone(), diff.clone()));
+                    diff
+                }
+            },
+            None => Rc::default(),
+        };
         v_flex()
             .gap_3()
             .child(
@@ -199,6 +213,8 @@ struct HistoryList {
     document: DocumentId,
     versions: Vec<SavedVersion>,
     selected: usize,
+    /// The chosen version's diff, by its id, worked out once rather than on every frame.
+    diff: Option<(String, Rc<Vec<DiffLine>>)>,
 }
 
 impl HistoryList {
@@ -252,16 +268,25 @@ impl Render for HistoryList {
                 }))
             })
             .collect();
-        let diff = self.versions.get(self.selected).map(|version| {
-            self.app
-                .read(cx)
-                .engine
-                .version_diff(self.document, &version.id)
-        });
-        let diff = match diff {
-            Some(Ok(diff)) => diff,
-            Some(Err(error)) => vec![DiffLine::Same(error.to_string())],
-            None => Vec::new(),
+        let diff = match self.versions.get(self.selected) {
+            Some(version) => match &self.diff {
+                Some((id, diff)) if *id == version.id => diff.clone(),
+                _ => {
+                    let diff = match self
+                        .app
+                        .read(cx)
+                        .engine
+                        .version_diff(self.document, &version.id)
+                    {
+                        Ok(diff) => diff,
+                        Err(error) => vec![DiffLine::Same(error.to_string())],
+                    };
+                    let diff = Rc::new(diff);
+                    self.diff = Some((version.id.clone(), diff.clone()));
+                    diff
+                }
+            },
+            None => Rc::default(),
         };
         v_flex()
             .gap_3()

@@ -90,6 +90,9 @@ pub enum VisualEvent {
     CaretMoved(usize),
 }
 
+/// The id of the notice that read-only text is edited in the source, so one shows at a time.
+struct ReadOnlyNotice;
+
 pub struct VisualView {
     app: Entity<AppState>,
     document: DocumentId,
@@ -782,7 +785,7 @@ impl VisualView {
         block.source_offset(display, block.marks_at(display))
     }
 
-    fn mouse_down(
+    pub(crate) fn mouse_down(
         &mut self,
         path: &[usize],
         position: gpui::Point<gpui::Pixels>,
@@ -798,8 +801,14 @@ impl VisualView {
             .and_then(|shown| shown.model.node(path))
             .is_some_and(adoc_engine::Node::is_editable);
         if !editable {
+            // One notice however often it is clicked.
             window.push_notification(
-                "This text can only be edited in the source: Show Source and Visual Editor (Cmd/Ctrl-K D).",
+                gpui_component::notification::Notification::new()
+                    .message(
+                        "This text can only be edited in the source: Show Source and Visual \
+                         Editor (Cmd/Ctrl-K D).",
+                    )
+                    .id::<ReadOnlyNotice>(),
                 cx,
             );
             return;

@@ -45,7 +45,7 @@ use crate::{
     attribute_view::{AttributeEvent, AttributeView},
     editor::{bindings::*, language, SourceEditorEvent, SourceEditorView},
     graph_view::{GraphMode, GraphView},
-    image_view::{ActualSize, FitToWindow, ImageView, ZoomIn, ZoomOut},
+    image_view::{ActualSize, FitToWindow, FitWidth, ImageView, ZoomIn, ZoomOut},
     menus::AppMenu,
     preview::{PreviewEvent, PreviewView},
     references_view::{ReferencesEvent, ReferencesView},
@@ -1888,10 +1888,9 @@ impl WorkspaceView {
             .ok()
             .and_then(|hunks| hunks.first().map(|hunk| hunk.range.start))
             .unwrap_or(0);
-        self.open_at(
-            path,
+        self.show_opened(
+            TabItem::Document(id),
             SourceRange::new(first, first),
-            OpenDisposition::Preview,
             window,
             cx,
         );
@@ -2471,13 +2470,25 @@ impl WorkspaceView {
             CommandOutcome::OpenedImage(id) => TabItem::Image(id),
             _ => return None,
         };
+        self.show_opened(item, range, window, cx);
+        Some(item)
+    }
+
+    /// Shows `item`, just opened, as the active tab, with `range` selected in a page.
+    fn show_opened(
+        &mut self,
+        item: TabItem,
+        range: SourceRange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.app.update(cx, |app, cx| {
             app.engine.activate(item);
             app.drain(cx);
         });
         self.follow_active(window, cx);
         let TabItem::Document(id) = item else {
-            return Some(item);
+            return;
         };
         if let Some(editor) = self.active_editor().cloned() {
             editor.update(cx, |editor, cx| editor.reveal(range, window, cx));
@@ -2486,7 +2497,6 @@ impl WorkspaceView {
             visual.update(cx, |visual, cx| visual.go_to(range.start, cx));
             self.focus_active_editor(window, cx);
         }
-        Some(item)
     }
 
     /// Shows a multi-file change for confirmation; applying it is one undo step.
@@ -5697,6 +5707,9 @@ impl Render for WorkspaceView {
             }))
             .on_action(cx.listener(|this, _: &FitToWindow, window, cx| {
                 this.zoom_active_image(Box::new(FitToWindow), window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FitWidth, window, cx| {
+                this.zoom_active_image(Box::new(FitWidth), window, cx);
             }))
             .on_action(cx.listener(Self::on_expand_sidebar))
             .on_action(cx.listener(Self::on_collapse_sidebar))

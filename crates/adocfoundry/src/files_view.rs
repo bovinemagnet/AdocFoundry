@@ -646,10 +646,13 @@ fn files_menu(
                 let _ = opening.update(cx, |files, cx| files.activate(&id, false, window, cx));
             }));
             let external = path.clone();
-            menu = menu.item(
-                PopupMenuItem::new("Open Externally")
-                    .on_click(move |_, _, cx| open_externally(&external, cx)),
-            );
+            // A link is opened as text at most: where it leads is not the system's to open.
+            menu = menu.when(row.kind == RowKind::File, |menu| {
+                menu.item(
+                    PopupMenuItem::new("Open Externally")
+                        .on_click(move |_, _, cx| open_externally(&external, cx)),
+                )
+            });
             if adoc_engine::is_asciidoc_path(&path) {
                 let files = files.clone();
                 let page = path.clone();
