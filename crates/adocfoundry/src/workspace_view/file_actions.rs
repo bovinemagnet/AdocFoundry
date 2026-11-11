@@ -57,35 +57,46 @@ impl WorkspaceView {
         first.update(cx, |input, cx| input.focus(window, cx));
     }
 
-    /// Opens `page`, then asks for a new page to follow it in its module's navigation.
+    /// Opens `page`, then asks for a new page to follow it in its module's navigation. Asks
+    /// nothing when the page does not open (the failure is reported), since New Page acts
+    /// after the active page.
     pub(crate) fn new_page_after(
         &mut self,
         page: &Path,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_at(
+        let Some(TabItem::Document(id)) = self.open_at(
             page,
             SourceRange::default(),
             OpenDisposition::Preview,
             window,
             cx,
-        );
-        cx.defer_in(window, |this, window, cx| {
-            this.on_new_page(&NewPage, window, cx)
+        ) else {
+            return;
+        };
+        cx.defer_in(window, move |this, window, cx| {
+            if this.active_document(cx) == Some(id) {
+                this.on_new_page(&NewPage, window, cx);
+            }
         });
     }
 
     /// Opens the page at `path` and asks for its new path, as Rename Page does for the open one.
+    /// Asks nothing when the page does not open (the failure is reported).
     pub(crate) fn rename_file(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_at(
+        let Some(TabItem::Document(id)) = self.open_at(
             path,
             SourceRange::default(),
             OpenDisposition::Preview,
             window,
             cx,
-        );
-        cx.defer_in(window, |this, window, cx| this.rename_page(window, cx));
+        ) else {
+            return;
+        };
+        cx.defer_in(window, move |this, window, cx| {
+            this.rename_document(id, window, cx);
+        });
     }
 
     /// Lists `page` at the end of its module's navigation.

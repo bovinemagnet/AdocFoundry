@@ -9623,6 +9623,47 @@ fn a_navigation_entry_offers_a_new_page_after_it(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+fn a_row_s_rename_or_new_page_asks_nothing_when_its_page_does_not_open(cx: &mut TestAppContext) {
+    let (directory, app, workspace, mut cx) = expansion_workspace(Settings::default(), cx);
+    let pages = adoc_index::normalize_path(directory.path()).join("guide-2.0/modules/ROOT/pages");
+    let index = pages.join("index.adoc");
+    open_path(
+        &workspace,
+        &index,
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    assert_eq!(active_path(&app, &mut cx), Some(index.clone()));
+    // A legacy page in Latin-1, which is not UTF-8, so it cannot be opened.
+    let legacy = pages.join("legacy.adoc");
+    std::fs::write(&legacy, b"= Caf\xe9\n").unwrap();
+
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.rename_file(&legacy, window, cx)
+        })
+    });
+    cx.run_until_parked();
+    assert!(
+        !cx.update(gpui_component::WindowExt::has_active_dialog),
+        "Rename… asked about another page"
+    );
+    assert_eq!(active_path(&app, &mut cx), Some(index.clone()));
+
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.new_page_after(&legacy, window, cx)
+        })
+    });
+    cx.run_until_parked();
+    assert!(
+        !cx.update(gpui_component::WindowExt::has_active_dialog),
+        "New Page Here… asked after another page"
+    );
+    assert_eq!(active_path(&app, &mut cx), Some(index));
+}
+
 /// A window whose settings file is `user`'s, holding `text`.
 fn themed_window(
     text: &str,

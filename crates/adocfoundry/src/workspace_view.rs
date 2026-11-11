@@ -3541,9 +3541,13 @@ impl WorkspaceView {
     }
 
     fn rename_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.active_document(cx) else {
-            return;
-        };
+        if let Some(id) = self.active_document(cx) {
+            self.rename_document(id, window, cx);
+        }
+    }
+
+    /// Asks for page `id`'s new path, then previews renaming it and rewriting every xref to it.
+    fn rename_document(&mut self, id: DocumentId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self
             .app
             .read(cx)
