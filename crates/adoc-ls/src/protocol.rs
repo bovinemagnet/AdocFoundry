@@ -72,8 +72,8 @@ const EXPORT_TIMEOUT: Duration = Duration::from_secs(600);
 /// The settings the server runs with: the files the app reads, the user settings file at
 /// `user_file` and the workspace's `.adocfoundry.toml` (which `open_workspace` loads). Git is
 /// opt-in here, and auto-save always off: the client owns its buffers and saves them. A file
-/// that does not parse gives the defaults, still reading the file, so its correction is picked
-/// up, and the problem to show.
+/// that does not parse gives the defaults, still naming the file, so a reload reads it again,
+/// and the problem to show.
 fn lsp_settings(user_file: Option<&Path>) -> (Settings, Option<String>) {
     let (settings, problem) = Settings::load_or_default(user_file, None);
     (
