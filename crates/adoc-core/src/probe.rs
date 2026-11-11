@@ -50,9 +50,11 @@ pub enum Probe {
     ThemeLoad,
     /// A file looked for on disk while diagnosing a page.
     FileExists,
+    /// A commit's tree compared with its parent's by `adoc_git::Repository::last_changed`.
+    HistoryCommit,
 }
 
-const PROBES: usize = 21;
+const PROBES: usize = 22;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -94,4 +96,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::FileExists as usize == PROBES - 1);
+const _: () = assert!(Probe::HistoryCommit as usize == PROBES - 1);
