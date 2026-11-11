@@ -658,6 +658,25 @@ fn remote_links_need_a_known_host_and_a_pushed_branch() {
     );
 }
 
+/// A page whose name is not UTF-8 has no link, rather than a link to another name.
+#[cfg(unix)]
+#[test]
+fn a_remote_link_is_refused_for_a_name_that_is_not_utf8() {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let dir = tempfile::tempdir().unwrap();
+    let (test, mut engine, _, _) = ten_lines(dir.path());
+    test.add_remote("origin", "git@github.com:bovinemagnet/AdocFoundry.git");
+    test.track_remote("origin");
+    let page = dir.path().join(OsStr::from_bytes(b"caf\xe9.adoc"));
+    let id = engine.open_text(&page, "= Caf\n");
+    let link = engine.invoke(
+        ids::NAVIGATE_OPEN_ON_REMOTE,
+        CommandArgs::Offset { id, offset: 0 },
+    );
+    let error = link.unwrap_err().to_string();
+    assert!(error.contains("not UTF-8"), "{error}");
+}
+
 /// A repository with an identity and one committed page, open in an engine.
 fn committing_repository(dir: &Path) -> (TestRepo, Engine, adoc_engine::DocumentId) {
     let test = TestRepo::init(dir);
