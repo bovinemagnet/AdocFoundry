@@ -108,7 +108,7 @@ pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQue
 pub use doctor::{Doctor, DoctorLine, DoctorReport, DoctorSection, PROBE_TIMEOUT};
 pub use document::{DocumentId, OpenDocument};
 pub use edit::TextEdit;
-pub use engine::{Engine, INDEX_SETTLE};
+pub use engine::{Engine, INDEX_SETTLE, MAX_TEXT_FILE};
 pub use error::EngineError;
 pub use event::EngineEvent;
 pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE_FILE};

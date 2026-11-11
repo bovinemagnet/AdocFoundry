@@ -284,3 +284,88 @@ fn only_pdfs_go_to_the_system_viewer_whatever_their_case() {
         );
     }
 }
+
+/// Runs `open` on a thread of its own and fails, rather than hanging, if it blocks.
+fn without_blocking<T: Send + 'static>(open: impl FnOnce() -> T + Send + 'static) -> T {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(open());
+    });
+    receiver
+        .recv_timeout(Duration::from_secs(20))
+        .expect("opening the file blocked")
+}
+
+fn open_path(engine: &mut Engine, path: &Path) -> Result<CommandOutcome, EngineError> {
+    engine.invoke(ids::DOCUMENT_BROWSE, CommandArgs::Path(path.to_path_buf()))
+}
+
+fn refused_because(result: &Result<CommandOutcome, EngineError>, reason: &str) -> bool {
+    matches!(result, Err(EngineError::Refused(message)) if message.contains(reason))
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_to_a_pipe_is_refused_rather_than_read_for_ever() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().to_path_buf();
+    fs::write(
+        root.join("page.adoc"),
+        "= Page\n\nimage::waiting.txt[Waiting]\n",
+    )
+    .unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(root.join("waiting.txt"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let (followed, opened) = without_blocking(move || {
+        let mut engine = open_workspace(&root);
+        let id = match open_path(&mut engine, &root.join("page.adoc")).unwrap() {
+            CommandOutcome::Opened(id) => id,
+            other => panic!("opening the page gave {other:?}"),
+        };
+        let followed = follow(&mut engine, id, "waiting.txt");
+        let opened = open_path(&mut engine, &root.join("waiting.txt"));
+        (followed, opened)
+    });
+    assert!(
+        refused_because(&opened, "not a regular file"),
+        "opening the pipe gave {opened:?}"
+    );
+    assert!(followed.is_err(), "following the pipe gave {followed:?}");
+}
+
+#[test]
+fn a_folder_is_refused_as_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir_all(root.join("notes.txt")).unwrap();
+    let mut engine = open_workspace(root);
+    let result = open_path(&mut engine, &root.join("notes.txt"));
+    assert!(
+        refused_because(&result, "not a regular file"),
+        "opening the folder gave {result:?}"
+    );
+}
+
+#[test]
+fn a_file_over_the_text_limit_is_refused_and_a_page_still_opens() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    // Sparse, so the test writes almost nothing.
+    let huge = fs::File::create(root.join("huge.txt")).unwrap();
+    huge.set_len(adoc_engine::MAX_TEXT_FILE + 1).unwrap();
+    fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let mut engine = open_workspace(root);
+
+    let result = open_path(&mut engine, &root.join("huge.txt"));
+    assert!(
+        refused_because(&result, "too large"),
+        "opening the huge file gave {result:?}"
+    );
+    assert!(matches!(
+        open_path(&mut engine, &root.join("page.adoc")),
+        Ok(CommandOutcome::Opened(_))
+    ));
+}
