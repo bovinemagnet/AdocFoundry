@@ -22,7 +22,7 @@ pub use group::{group_name, GroupBy, Groups, OTHER_GROUP};
 pub use layout::{Layout, Point, SETTLED};
 pub use snapshot::NodeInput;
 pub use store::{LinkStore, PathStep, StoredLink};
-pub use style::{node_radius, ColourBy, Hsl, Palette};
+pub use style::{colour_group, colour_groups, node_radius, ColourBy, Hsl, Palette};
 pub use svg::{to_svg, to_svg_laid_out, SvgStyle, EXPORT_SEED};
 pub use tree::{MindMap, TreeStyle, LEVEL_GAP, SIBLING_GAP};
 

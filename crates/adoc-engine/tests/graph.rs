@@ -1005,3 +1005,37 @@ fn neighbours_merge_kinds_per_page() {
         .unwrap();
     assert_eq!(to_configure.kinds, [EdgeKind::Xref]);
 }
+
+/// Given the workspace's colour groups, a local graph colours each page as the whole graph
+/// does, though it holds fewer modules.
+#[test]
+fn a_page_keeps_its_colour_in_a_local_graph() {
+    let root = fixture();
+    let engine = open(&root, &ManualClock::new());
+    let by = adoc_engine::GraphColour::Module;
+    let groups = engine.graph_colour_groups(by);
+    assert_eq!(groups, ["guide:ROOT", "guide:admin", "reference:ROOT"]);
+    let api = root.join("reference/modules/ROOT/pages/api.adoc");
+    let whole = engine.graph(&GraphScope::Workspace, &everything());
+    let local = engine.graph(
+        &GraphScope::Local {
+            path: api.clone(),
+            depth: 1,
+        },
+        &everything(),
+    );
+    let colour = |snapshot: &GraphSnapshot, palette: &adoc_engine::Palette| {
+        palette
+            .colour(snapshot.node(&file(&api)).unwrap(), false)
+            .map(|hsl| hsl.to_hex())
+    };
+    let everywhere = colour(&whole, &adoc_engine::Palette::of(&whole, by));
+    assert!(everywhere.is_some());
+    // Alone, the local graph's two modules would rank Reference second rather than third.
+    assert_ne!(
+        colour(&local, &adoc_engine::Palette::of(&local, by)),
+        everywhere
+    );
+    let palette = adoc_engine::Palette::of(&local, by).with_groups(groups);
+    assert_eq!(colour(&local, &palette), everywhere);
+}

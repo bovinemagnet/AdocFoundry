@@ -8026,7 +8026,7 @@ fn exporting_the_graph_writes_an_svg_and_a_png(cx: &mut TestAppContext) {
 
     // With the window open, its drawing, as a PNG.
     let (_, view, _graph_cx) = open_graph_window(&workspace, &mut cx);
-    let drawn = cx.update(|_, cx| view.read(cx).to_svg(false));
+    let drawn = cx.update(|_, cx| view.read(cx).to_svg(false, cx));
     assert!(drawn.contains(">Install</text>"));
     let png = directory.path().join("graph.png");
     export_graph_to(&png, &mut cx);

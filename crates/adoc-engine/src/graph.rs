@@ -490,6 +490,44 @@ impl Engine {
         self.graph.dirty.clear();
     }
 
+    /// The colour groups the workspace's catalog holds, as [`adoc_graph::colour_group`] names
+    /// them, in name order: every component, module or family, whichever `by` colours by.
+    /// Given to the palette of any drawing ([`adoc_graph::Palette::with_groups`],
+    /// [`crate::SvgStyle::groups`]), they keep each group's colour the same in every part of
+    /// the graph.
+    #[must_use]
+    pub fn graph_colour_groups(&self, by: crate::GraphColour) -> Vec<String> {
+        const FAMILIES: [&str; 6] = ["attachment", "example", "image", "nav", "page", "partial"];
+        let antora = &self.workspace.antora;
+        let mut groups: Vec<String> = match by {
+            crate::GraphColour::Age => Vec::new(),
+            crate::GraphColour::Family => {
+                FAMILIES.iter().map(|&family| family.to_owned()).collect()
+            }
+            crate::GraphColour::Component => antora
+                .components()
+                .map(|component| component.name.clone())
+                .collect(),
+            crate::GraphColour::Module => antora
+                .modules()
+                .filter_map(|module| {
+                    adoc_graph::colour_group(
+                        &NodeCoordinate {
+                            component: module.component.clone(),
+                            version: module.version.clone(),
+                            module: module.name.clone(),
+                            family: String::new(),
+                        },
+                        by,
+                    )
+                })
+                .collect(),
+        };
+        groups.sort();
+        groups.dedup();
+        groups
+    }
+
     /// The mind map of `snapshot` from `root`, as [`MindMap::build`] makes it, a navigation
     /// file's from the links that file owns, so another file listing the same pages adds
     /// nothing to it.

@@ -11,11 +11,14 @@ use crate::{
 };
 
 /// How an exported image looks.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SvgStyle {
     pub colour_by: ColourBy,
     /// Light text and lines on a dark background.
     pub dark: bool,
+    /// Colour groups to rank the snapshot's among ([`crate::Palette::with_groups`]): the whole
+    /// graph's, so that a part of it is coloured as the whole is.
+    pub groups: Vec<String>,
 }
 
 /// The colours of one background.
@@ -53,7 +56,7 @@ const MARGIN: f32 = 20.0;
 #[must_use]
 pub fn to_svg(snapshot: &GraphSnapshot, positions: &[Point], style: &SvgStyle) -> String {
     let theme = if style.dark { &DARK } else { &LIGHT };
-    let palette = Palette::of(snapshot, style.colour_by);
+    let palette = Palette::of(snapshot, style.colour_by).with_groups(style.groups.iter().cloned());
     let at = |place: usize| positions.get(place).copied().unwrap_or_default();
     let radii: Vec<f32> = snapshot
         .nodes
@@ -356,6 +359,7 @@ mod tests {
         let style = SvgStyle {
             colour_by: ColourBy::Module,
             dark: true,
+            ..SvgStyle::default()
         };
         assert_eq!(
             to_svg(&snapshot, &positions, &style),

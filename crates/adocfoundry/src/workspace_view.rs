@@ -4221,10 +4221,11 @@ impl WorkspaceView {
         let style = adoc_engine::SvgStyle {
             colour_by: settings.colour_by,
             dark,
+            groups: engine.graph_colour_groups(settings.colour_by),
         };
         // The window's drawing, else the snapshot to lay out on the worker.
         let source = match &self.graph_window {
-            Some((_, view)) => Ok(view.read(cx).to_svg(dark)),
+            Some((_, view)) => Ok(view.read(cx).to_svg(dark, cx)),
             None => Err(engine.graph(&adoc_engine::GraphScope::Workspace, &settings.filter())),
         };
         let directory = engine.roots().first().cloned().unwrap_or_default();

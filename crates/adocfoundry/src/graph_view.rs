@@ -1153,7 +1153,7 @@ impl GraphView {
 
     /// The graph as it is shown, its scope, filters, colours and every node where the layout
     /// has it, pinned or not, drawn as SVG on a light or dark background.
-    pub(crate) fn to_svg(&self, dark: bool) -> String {
+    pub(crate) fn to_svg(&self, dark: bool, cx: &App) -> String {
         let positions: Vec<LayoutPoint> = self
             .snapshot
             .nodes
@@ -1166,6 +1166,7 @@ impl GraphView {
             &adoc_engine::SvgStyle {
                 colour_by: self.colour_by,
                 dark,
+                groups: self.app.read(cx).engine.graph_colour_groups(self.colour_by),
             },
         )
     }
@@ -1202,7 +1203,9 @@ impl GraphView {
                     .path()
                     .is_some_and(|path| path.to_string_lossy().to_lowercase().contains(&self.query))
         };
-        let palette = Palette::of(&self.snapshot, self.colour_by);
+        // Ranked among the workspace's groups, so a group keeps its colour in any part of it.
+        let groups = self.app.read(cx).engine.graph_colour_groups(self.colour_by);
+        let palette = Palette::of(&self.snapshot, self.colour_by).with_groups(groups);
         let stale_before = self.stale_before(cx);
         // Stale pages are ringed while the colours or the filter are about age.
         let ring_stale = self.colour_by == GraphColour::Age || self.stale_only;
