@@ -181,9 +181,9 @@ impl ProtocolServer {
     /// Lets the engine apply worker results and settled changes, and publishes the
     /// diagnostics that changed.
     pub(crate) fn tick(&mut self) -> Vec<Notification> {
-        if self.engine.pump() == 0 {
-            return Vec::new();
-        }
+        self.engine.pump();
+        // Also what changed while a request was answered: a command that indexes typing left
+        // pending diagnoses the page, and its publish waits for nothing else.
         self.published(None)
     }
 
@@ -363,7 +363,7 @@ impl ProtocolServer {
         if let Some((_, version)) = self.open.get_mut(&id) {
             *version = params.text_document.version;
         }
-        Ok(self.published(Some(id)))
+        Ok(self.published_after_edit(id))
     }
 
     fn did_close(&mut self, params: DidCloseTextDocumentParams) -> Vec<Notification> {
@@ -389,6 +389,30 @@ impl ProtocolServer {
     /// engine says changed.
     fn published(&mut self, changed: Option<DocumentId>) -> Vec<Notification> {
         let mut ids: Vec<DocumentId> = changed.into_iter().collect();
+        for id in self.updated() {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        self.notifications_for(ids)
+    }
+
+    /// After an edit to `edited`, diagnostics for every open document the engine says changed,
+    /// `edited` first. A typed edit's diagnosis waits until typing pauses, and until then the
+    /// document holds the previous text's diagnostics, which are not the new version's: it is
+    /// published once diagnosed.
+    fn published_after_edit(&mut self, edited: DocumentId) -> Vec<Notification> {
+        let mut ids = self.updated();
+        if let Some(index) = ids.iter().position(|id| *id == edited) {
+            ids[..=index].rotate_right(1);
+        }
+        self.notifications_for(ids)
+    }
+
+    /// The documents whose diagnostics or misspellings the engine says changed since last
+    /// asked, each once, in the order it said so.
+    fn updated(&mut self) -> Vec<DocumentId> {
+        let mut ids: Vec<DocumentId> = Vec::new();
         for event in self.events.try_iter() {
             let id = match event {
                 EngineEvent::DiagnosticsUpdated { path } => self.engine.document_for_path(&path),
@@ -399,6 +423,10 @@ impl ProtocolServer {
                 ids.push(id);
             }
         }
+        ids
+    }
+
+    fn notifications_for(&self, ids: Vec<DocumentId>) -> Vec<Notification> {
         ids.into_iter()
             .filter_map(|id| self.diagnostics_notification(id))
             .collect()
@@ -2242,6 +2270,77 @@ mod tests {
         assert!(published
             .iter()
             .any(|(published, hints)| published == uri.as_str() && hints.is_empty()));
+    }
+
+    /// The ranges of each publish for `uri` with its version, in order.
+    fn published_ranges(
+        notifications: Vec<Notification>,
+        uri: &str,
+    ) -> Vec<(Option<i32>, Vec<Range>)> {
+        notifications
+            .into_iter()
+            .filter(|notification| notification.method == PublishDiagnostics::METHOD)
+            .map(|notification| {
+                serde_json::from_value::<PublishDiagnosticsParams>(notification.params).unwrap()
+            })
+            .filter(|params| params.uri.as_str() == uri)
+            .map(|params| {
+                (
+                    params.version,
+                    params
+                        .diagnostics
+                        .into_iter()
+                        .map(|diagnostic| diagnostic.range)
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// A typed character defers the page's diagnostics until typing pauses; until then the
+    /// previous text's are not published again under the new version at shifted places.
+    #[test]
+    fn a_typed_change_publishes_only_diagnostics_of_the_text_it_made() {
+        let clock = adoc_engine::ManualClock::new();
+        let mut server = ProtocolServer::new(
+            PositionEncoding::Utf16,
+            Engine::with_clock(Settings::default(), std::sync::Arc::new(clock.clone())),
+            Box::new(BrowserSink::new(
+                std::env::temp_dir().join("adoc-ls-test-previews"),
+                Unopened,
+            )),
+        );
+        open(&mut server, PAGE, "= Guide\n\nSee <<missing>>.\n");
+        let warning = Range::new(Position::new(2, 4), Position::new(2, 15));
+
+        let typed = server
+            .handle_notification(Notification::new(
+                DidChangeTextDocument::METHOD.to_owned(),
+                DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier::new(PAGE.parse().unwrap(), 2),
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
+                        range_length: None,
+                        text: "X".to_owned(),
+                    }],
+                },
+            ))
+            .unwrap();
+        for (_, ranges) in published_ranges(typed, PAGE) {
+            assert_eq!(ranges, [warning], "a stale publish");
+        }
+
+        clock.advance(adoc_engine::INDEX_SETTLE * 2);
+        let mut settled = server.tick();
+        assert!(server
+            .engine
+            .wait_for_workers(std::time::Duration::from_secs(10)));
+        settled.extend(server.tick());
+        assert_eq!(
+            published_ranges(settled, PAGE),
+            [(Some(2), vec![warning])],
+            "published once diagnosed"
+        );
     }
 
     /// `adoc.spelling.addToWorkspace [uri, start, end]`.
