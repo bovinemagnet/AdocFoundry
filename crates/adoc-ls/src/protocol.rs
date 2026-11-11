@@ -129,6 +129,13 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
     }
 }
 
+/// A document a request uses, and whether the request opened it (see
+/// [`ProtocolServer::borrow_document`]).
+struct Borrowed {
+    id: DocumentId,
+    opened: bool,
+}
+
 pub(crate) struct ProtocolServer {
     pub(crate) engine: Engine,
     events: std::sync::mpsc::Receiver<EngineEvent>,
@@ -185,6 +192,17 @@ impl ProtocolServer {
         // Also what changed while a request was answered: a command that indexes typing left
         // pending diagnoses the page, and its publish waits for nothing else.
         self.published(None)
+    }
+
+    /// The engine's document for `path`, opened from disk when the engine does not have it.
+    /// A request that opened it closes it before answering (when `opened`), so the engine holds
+    /// only what the client has open.
+    fn borrow_document(&mut self, path: &Path) -> Result<Borrowed, adoc_engine::EngineError> {
+        if let Some(id) = self.engine.document_for_path(path) {
+            return Ok(Borrowed { id, opened: false });
+        }
+        let id = self.engine.open(path)?;
+        Ok(Borrowed { id, opened: true })
     }
 
     fn id_for(&self, uri: &str) -> Option<DocumentId> {
@@ -840,6 +858,7 @@ impl ProtocolServer {
             }
         }
         let path = document_path(&args.uri);
+        let mut opened = None;
         let target = if args.component {
             let Some(context) = self.engine.workspace().antora.context_for_path(&path) else {
                 return failed(format!("{} is not in an Antora component", path.display()));
@@ -849,14 +868,13 @@ impl ProtocolServer {
                 version: context.version,
             }
         } else {
-            let page = match self.engine.document_for_path(&path) {
-                Some(page) => page,
-                None => match self.engine.open(&path) {
-                    Ok(page) => page,
-                    Err(error) => return failed(error.to_string()),
-                },
-            };
-            ExportTarget::Page(page)
+            match self.borrow_document(&path) {
+                Ok(page) => {
+                    opened = page.opened.then_some(page.id);
+                    ExportTarget::Page(page.id)
+                }
+                Err(error) => return failed(error.to_string()),
+            }
         };
         let export = ExportArgs {
             target,
@@ -867,7 +885,11 @@ impl ProtocolServer {
             typst: None,
             attributes: Vec::new(),
         };
-        match self.engine.export_blocking(export, EXPORT_TIMEOUT) {
+        let exported = self.engine.export_blocking(export, EXPORT_TIMEOUT);
+        if let Some(page) = opened {
+            let _ = self.engine.close(page);
+        }
+        match exported {
             Ok(summary) => {
                 let mut message = format!(
                     "Exported {} ({} pages)",
@@ -1047,17 +1069,16 @@ impl ProtocolServer {
             if !adoc_index::is_asciidoc_path(&from) {
                 continue;
             }
-            let was_closed = self.engine.document_for_path(&from).is_none();
-            let Ok(page) = self.engine.open(&from) else {
+            let Ok(page) = self.borrow_document(&from) else {
                 continue;
             };
-            if let Ok(preview) = self.engine.rename_preview(page, &to) {
+            if let Ok(preview) = self.engine.rename_preview(page.id, &to) {
                 let preview_id = preview.id;
                 edits.extend(preview.edits.clone());
                 self.engine.discard_preview(preview_id);
             }
-            if was_closed {
-                let _ = self.engine.close(page);
+            if page.opened {
+                let _ = self.engine.close(page.id);
             }
         }
         // Opening and closing pages to compute the edits changes nothing the client sees.
@@ -2422,5 +2443,44 @@ mod tests {
 
         assert!(response.response_result.is_err(), "{response:?}");
         assert!(!root.join(adoc_engine::WORKSPACE_WORDS_FILE).exists());
+    }
+
+    /// `adoc.exportPdf { uri, output }`.
+    fn export(server: &mut ProtocolServer, page: &Path, output: &Path) -> lsp_server::Response {
+        server
+            .execute_command_response(Request::new(
+                RequestId::from(9),
+                ExecuteCommand::METHOD.to_owned(),
+                ExecuteCommandParams {
+                    command: crate::capabilities::EXPORT_PDF_COMMAND.to_owned(),
+                    arguments: vec![serde_json::json!({
+                        "uri": file_uri(page).as_str(),
+                        "output": output,
+                    })],
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                },
+            ))
+            .0
+    }
+
+    #[test]
+    fn exporting_a_page_the_client_has_not_opened_leaves_it_closed() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_index::normalize_path(directory.path());
+        let page = root.join("old.adoc");
+        fs::write(&page, "= Old\n\nA paragraph.\n").unwrap();
+        let mut server = server();
+        server.open_workspace(vec![root.clone()]);
+
+        let response = export(&mut server, &page, &root.join("old.pdf"));
+        assert!(response.response_result.is_ok(), "{response:?}");
+        assert_eq!(server.engine.document_for_path(&page), None);
+
+        // And so on failure: the output is a folder.
+        let folder = root.join("folder.pdf");
+        fs::create_dir(&folder).unwrap();
+        let response = export(&mut server, &page, &folder);
+        assert!(response.response_result.is_err(), "{response:?}");
+        assert_eq!(server.engine.document_for_path(&page), None);
     }
 }
