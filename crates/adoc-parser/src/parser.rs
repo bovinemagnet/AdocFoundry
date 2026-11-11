@@ -7,7 +7,8 @@ use adoc_core::{
 
 use crate::line_parser::{
     conditional_directive, content, find_anchors, find_images, find_includes, find_references,
-    mask_passthroughs, parse_attribute, parse_heading, Conditional, Verbatim, VerbatimBlocks,
+    is_dynamic_id, mask_passthroughs, parse_attribute, parse_heading, Conditional, Verbatim,
+    VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -155,12 +156,16 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 
 /// A warning for each anchor whose id an earlier one declared, naming the first by its line and
 /// column and relating it, for a front end to link to. Anchors inside conditionals are left
-/// out: two branches commonly declare the same id, and only one is ever built.
+/// out: two branches commonly declare the same id, and only one is ever built. So are ids made
+/// with an attribute reference, whose values are not known here.
 fn duplicate_anchors(text: &str, anchors: &[Anchor]) -> Vec<Diagnostic> {
     let mut first = HashMap::<&str, SourceRange>::new();
     let mut diagnostics = Vec::new();
     let mut lines = None;
-    for anchor in anchors.iter().filter(|anchor| !anchor.conditional) {
+    for anchor in anchors
+        .iter()
+        .filter(|anchor| !anchor.conditional && !is_dynamic_id(&anchor.id))
+    {
         match first.get(anchor.id.as_str()) {
             Some(first_range) => {
                 let (line, column) = line_and_column(text, &mut lines, first_range.start);
@@ -329,6 +334,83 @@ image::diagram.png[Architecture]\n";
         assert_eq!(anchor_ids("[#intro,role=lead]\n== Intro\n"), ["intro"]);
         // Inline, before marked text.
         assert_eq!(anchor_ids("Some [#key.big]#word# here.\n"), ["key"]);
+    }
+
+    /// `[#…]` is an anchor only as a whole block attribute line or straight before a formatting
+    /// mark; link text and prose such as `[#12]` are text (#523).
+    #[test]
+    fn link_text_and_prose_starting_with_a_hash_are_not_anchors() {
+        let source = "* Fixed https://example.com/issues/12[#12] crash\n\
+                      * Follow-up to https://example.com/issues/12[#12]\n\n\
+                      See [#12] and again [#12].\n\n\
+                      x[#w]#y# and [#spaced id]#z#\n";
+        let document = parse("file:///doc.adoc", source).document;
+        assert!(document.anchors.is_empty(), "{:?}", document.anchors);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+
+        assert_eq!(
+            anchor_ids("A [#s1]^sup^, [#s2]~sub~, [#d1]**dbl**x, [#c]`code` and [#e]_em_.\n"),
+            ["s1", "s2", "d1", "c", "e"]
+        );
+    }
+
+    /// An escaped anchor is shown as written (#523).
+    #[test]
+    fn escaped_anchors_are_not_anchors() {
+        let document = parse(
+            "file:///doc.adoc",
+            "Write \\[[literal]] and \\[[literal]] twice.\n",
+        )
+        .document;
+        assert!(document.anchors.is_empty(), "{:?}", document.anchors);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+    }
+
+    /// An inline anchor's id starts with a letter, `_` or `:` and holds only word characters,
+    /// `-`, `:` and `.`, as Asciidoctor's pattern has it (#523).
+    #[test]
+    fn text_that_cannot_be_an_id_is_not_an_anchor() {
+        let document = parse(
+            "file:///doc.adoc",
+            "Index m[[0]] and m[[0]] again; [[two words]] and [[ spaced]].\n",
+        )
+        .document;
+        assert!(document.anchors.is_empty(), "{:?}", document.anchors);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+
+        assert_eq!(
+            anchor_ids("[[ok-1.2:x]] [[_u]] [[:c]] [[x,Ref Text]] [[é]] [[{p}-a]]\n"),
+            ["ok-1.2:x", "_u", ":c", "x", "é", "{p}-a"]
+        );
+    }
+
+    /// An id made with an attribute reference cannot be compared before it is substituted,
+    /// so two of them are no duplicate (#523).
+    #[test]
+    fn dynamic_ids_are_left_out_of_the_duplicate_check() {
+        let document = parse(
+            "file:///doc.adoc",
+            "[[{prefix}-a]]\nOne.\n\n[[{prefix}-a]]\nTwo.\n",
+        )
+        .document;
+        assert_eq!(document.anchors.len(), 2);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
     }
 
     #[test]

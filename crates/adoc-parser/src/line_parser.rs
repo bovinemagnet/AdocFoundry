@@ -60,11 +60,13 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
     let line = content(line);
     let mut anchors = find_delimited(line, "[[", "]]", offset)
         .into_iter()
+        // A backslash before an anchor shows it as written.
+        .filter(|(_, range)| !line[..range.start - offset].ends_with('\\'))
         .filter_map(|(value, range)| {
             // A bibliography entry is written `[[[id, label]]]`, so the extra bracket rides
             // along on the id.
-            let id = value.trim_start_matches('[').split(',').next()?.trim();
-            (!id.is_empty()).then(|| Anchor {
+            let id = value.trim_start_matches('[').split(',').next()?;
+            is_anchor_id(id).then(|| Anchor {
                 id: id.to_owned(),
                 range,
                 conditional: false,
@@ -72,22 +74,107 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
         })
         .collect::<Vec<_>>();
 
-    anchors.extend(
-        find_delimited(line, "[#", "]", offset)
-            .into_iter()
-            .filter_map(|(value, range)| {
-                // `[#id.role]`, `[#id%option]` and `[#id,name=value]`: the id ends at the first
-                // role, option or further attribute.
-                let id = value.split(['.', '%', ',']).next()?.trim();
-                (!id.is_empty()).then(|| Anchor {
-                    id: id.to_owned(),
-                    range,
-                    conditional: false,
-                })
-            }),
-    );
+    anchors.extend(shorthand_anchors(line, offset));
     anchors.extend(id_attribute(line, offset));
     anchors
+}
+
+/// Whether `id` may be an anchor's id: as Asciidoctor's pattern has it, a letter, `_` or `:`
+/// followed by word characters, `-`, `:` and `.`. An id made with an attribute reference is
+/// taken as written, since its value is not known here.
+fn is_anchor_id(id: &str) -> bool {
+    if is_dynamic_id(id) {
+        return !id.contains(char::is_whitespace);
+    }
+    let mut characters = id.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || matches!(first, '_' | ':'))
+        && characters.all(|character| {
+            character.is_alphanumeric() || matches!(character, '_' | '-' | ':' | '.')
+        })
+}
+
+/// Whether `id` is made with an attribute reference, so it cannot be compared before the
+/// attribute is substituted.
+pub(crate) fn is_dynamic_id(id: &str) -> bool {
+    id.contains('{')
+}
+
+/// The list of a line that is a whole block attribute line, such as `[source#id,ruby]`: not an
+/// anchor line, and holding no further brackets.
+fn block_attribute_list(line: &str) -> Option<&str> {
+    let list = line.trim_end().strip_prefix('[')?.strip_suffix(']')?;
+    (!list.starts_with('[') && !list.contains(['[', ']'])).then_some(list)
+}
+
+/// The id the shorthand of an attribute list's first entry gives, `#id` in `[#id.role%option]`
+/// or `[#id,name=value]`. An entry holding a space has no shorthand, as in Asciidoctor.
+fn shorthand_id(list: &str) -> Option<&str> {
+    let first = list.split(',').next()?.trim();
+    if first.contains(char::is_whitespace) {
+        return None;
+    }
+    let id = first.strip_prefix('#')?.split(['.', '%', '#']).next()?;
+    (!id.is_empty()).then_some(id)
+}
+
+/// Anchors given by the `#id` shorthand: on a whole block attribute line, or inline in the
+/// `[…]` straight before a formatting mark (`[#key]#word#`). Anywhere else, as in link text
+/// (`https://example.com/issues/12[#12]`) or prose, the brackets are text.
+fn shorthand_anchors(line: &str, offset: usize) -> Vec<Anchor> {
+    let anchor = |id: &str, start: usize, end: usize| Anchor {
+        id: id.to_owned(),
+        range: SourceRange::new(offset + start, offset + end),
+        conditional: false,
+    };
+    if let Some(list) = block_attribute_list(line) {
+        return shorthand_id(list)
+            .map(|id| anchor(id, 0, line.trim_end().len()))
+            .into_iter()
+            .collect();
+    }
+    let mut anchors = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = line[cursor..].find('[') {
+        let open = cursor + relative;
+        cursor = open + 1;
+        let Some(close_relative) = line[open + 1..].find(']') else {
+            break;
+        };
+        let close = open + 1 + close_relative;
+        let list = &line[open + 1..close];
+        if list.contains('[')
+            || line[..open].ends_with(['[', '\\'])
+            || !before_a_formatting_mark(line, open, close + 1)
+        {
+            continue;
+        }
+        if let Some(id) = shorthand_id(list) {
+            anchors.push(anchor(id, open, close + 1));
+        }
+        cursor = close + 1;
+    }
+    anchors
+}
+
+/// Whether the `[…]` from `open` to `after` stands straight before a formatting mark that
+/// takes it: `#`, `*`, `_` or `` ` `` opening constrained text after a character that is not
+/// a word character, or doubled anywhere, or `^` or `~`, closed later on the line.
+fn before_a_formatting_mark(line: &str, open: usize, after: usize) -> bool {
+    let rest = &line[after..];
+    let Some(mark) = rest.chars().next().filter(|mark| "#*_`^~".contains(*mark)) else {
+        return false;
+    };
+    let doubled = rest[1..].starts_with(mark);
+    let opens = doubled
+        || matches!(mark, '^' | '~')
+        || line[..open]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !before.is_alphanumeric() && before != '_');
+    let mark_len = if doubled { 2 } else { 1 };
+    opens && rest[mark_len..].contains(mark)
 }
 
 /// The `id=…` entry of a line that is a whole block attribute list, `[id=intro]` or
