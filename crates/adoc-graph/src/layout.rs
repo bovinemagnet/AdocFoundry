@@ -610,6 +610,9 @@ fn unit(bits: u64) -> Point {
 /// Cells of a quadtree over the bodies, for Barnes–Hut.
 struct QuadTree {
     cells: Vec<Cell>,
+    /// For each body in a leaf of bodies too close to part, the next body in that leaf, else
+    /// `u32::MAX`.
+    next: Vec<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -623,6 +626,9 @@ struct Cell {
     children: u32,
     /// The body in a leaf with one, else `u32::MAX`.
     body: u32,
+    /// The first body in a leaf of several too close to part, the rest following through
+    /// [`QuadTree::next`], else `u32::MAX`.
+    first: u32,
 }
 
 impl Cell {
@@ -634,6 +640,7 @@ impl Cell {
             sum: Point::default(),
             children: 0,
             body: u32::MAX,
+            first: u32::MAX,
         }
     }
 }
@@ -650,6 +657,7 @@ impl QuadTree {
         let centre = Point::new((low.x + high.x) / 2.0, (low.y + high.y) / 2.0);
         let mut tree = Self {
             cells: Vec::with_capacity(positions.len() * 2),
+            next: vec![u32::MAX; positions.len()],
         };
         tree.cells.push(Cell::new(centre, half));
         for (body, &position) in positions.iter().enumerate() {
@@ -675,8 +683,16 @@ impl QuadTree {
                     return;
                 }
                 if depth >= MAX_TREE_DEPTH || current.body == u32::MAX {
-                    // Bodies too close to part stay together in one leaf.
-                    self.cells[cell].body = u32::MAX;
+                    // Bodies too close to part stay together in one leaf, listed so that each
+                    // is pushed by the others as in the exact sum.
+                    let leaf = &mut self.cells[cell];
+                    for member in [leaf.body, body] {
+                        if member != u32::MAX {
+                            self.next[member as usize] = leaf.first;
+                            leaf.first = member;
+                        }
+                    }
+                    leaf.body = u32::MAX;
                     return;
                 }
                 // Split the leaf, moving its one body down.
@@ -719,28 +735,35 @@ impl QuadTree {
             if current.children == 0 && current.body == body as u32 {
                 continue;
             }
+            if current.children == 0 && current.body == u32::MAX {
+                // A leaf of bodies too close to part, perhaps this one among them: each pushes
+                // on its own, so bodies in one place are parted by their indices.
+                let mut member = current.first;
+                while member != u32::MAX {
+                    if member as usize != body {
+                        let push =
+                            repel(at, positions[member as usize], 1.0, body, member as usize);
+                        force.x += push.x;
+                        force.y += push.y;
+                    }
+                    member = self.next[member as usize];
+                }
+                continue;
+            }
             let centre = Point::new(current.sum.x / current.mass, current.sum.y / current.mass);
             let (dx, dy) = (at.x - centre.x, at.y - centre.y);
             let squared = dx * dx + dy * dy;
             let width = current.half * 2.0;
             if current.children == 0 || width * width < THETA * THETA * squared {
+                // A leaf of one other body, or a cell far enough to count as one.
                 let other = if current.body == u32::MAX {
                     usize::MAX
                 } else {
                     current.body as usize
                 };
-                let mass = if current.children == 0 && current.body == u32::MAX {
-                    // A leaf of bodies in one place, perhaps this one among them.
-                    let inside = (at.x - centre.x).abs() < 1e-3 && (at.y - centre.y).abs() < 1e-3;
-                    current.mass - if inside { 1.0 } else { 0.0 }
-                } else {
-                    current.mass
-                };
-                if mass > 0.0 {
-                    let push = repel(at, centre, mass, body, other);
-                    force.x += push.x;
-                    force.y += push.y;
-                }
+                let push = repel(at, centre, current.mass, body, other);
+                force.x += push.x;
+                force.y += push.y;
             } else {
                 for child in 0..4 {
                     stack.push(current.children as usize + child);
@@ -935,6 +958,38 @@ mod tests {
             error <= exact.length() * 0.2 + 0.5,
             "{approximate:?} vs {exact:?}"
         );
+    }
+
+    #[test]
+    fn nodes_in_one_place_part_whatever_the_layouts_size() {
+        for size in [100, BARNES_HUT_ABOVE + 100] {
+            // No links, so only the push between them can part the two.
+            let snapshot = graph(size, 0);
+            let mut layout = Layout::new(1);
+            layout.sync(&snapshot);
+            let start = Point::new(5.0, 5.0);
+            let (first, second) = (&snapshot.nodes[7].key, &snapshot.nodes[8].key);
+            layout.pin(first, start);
+            layout.pin(second, start);
+            layout.step(1.0);
+            layout.unpin(first);
+            layout.unpin(second);
+            for _ in 0..100 {
+                layout.wake();
+                layout.step(1.0);
+            }
+            let (a, b) = (
+                layout.position(first).unwrap(),
+                layout.position(second).unwrap(),
+            );
+            let apart = Point::new(a.x - b.x, a.y - b.y).length();
+            assert!(apart > 1.0, "{size} nodes: {a:?} and {b:?}");
+            // Flung apart by a push no distance limits, but within the layout's reach.
+            for at in [a, b] {
+                let away = Point::new(at.x - start.x, at.y - start.y).length();
+                assert!(away < 2.0 * ring_radius(size), "{size} nodes: {at:?}");
+            }
+        }
     }
 
     #[test]
