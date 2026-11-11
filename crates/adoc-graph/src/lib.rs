@@ -165,21 +165,8 @@ impl GraphSnapshot {
             .filter(|edge| kept.contains(&edge.from) && kept.contains(&edge.to))
             .cloned()
             .collect();
-        let mut counts: std::collections::HashMap<&GraphKey, (usize, usize)> =
-            std::collections::HashMap::new();
-        for edge in &edges {
-            counts.entry(&edge.from).or_default().0 += 1;
-            counts.entry(&edge.to).or_default().1 += 1;
-        }
-        let counts: Vec<(usize, usize)> = nodes
-            .iter()
-            .map(|node| counts.get(&node.key).copied().unwrap_or_default())
-            .collect();
         let mut nodes = nodes;
-        for (node, (out, into)) in nodes.iter_mut().zip(counts) {
-            node.links_out = out;
-            node.links_in = into;
-        }
+        recount(&mut nodes, &edges);
         Self {
             revision: self.revision,
             nodes,
@@ -188,7 +175,7 @@ impl GraphSnapshot {
     }
 
     /// The part of the snapshot a path covers: its nodes, and the edges of the kinds it took
-    /// between each and the next.
+    /// between each and the next, each node's links in and out counted again.
     #[must_use]
     pub fn along(&self, steps: &[PathStep]) -> Self {
         let mut taken = BTreeSet::new();
@@ -204,21 +191,39 @@ impl GraphSnapshot {
             }
         }
         let on_path: BTreeSet<&GraphKey> = steps.iter().map(|step| &step.key).collect();
+        let mut nodes: Vec<GraphNode> = self
+            .nodes
+            .iter()
+            .filter(|node| on_path.contains(&node.key))
+            .cloned()
+            .collect();
+        let edges: Vec<GraphEdge> = self
+            .edges
+            .iter()
+            .filter(|edge| taken.contains(&(edge.from.clone(), edge.to.clone(), edge.kind)))
+            .cloned()
+            .collect();
+        recount(&mut nodes, &edges);
         Self {
             revision: self.revision,
-            nodes: self
-                .nodes
-                .iter()
-                .filter(|node| on_path.contains(&node.key))
-                .cloned()
-                .collect(),
-            edges: self
-                .edges
-                .iter()
-                .filter(|edge| taken.contains(&(edge.from.clone(), edge.to.clone(), edge.kind)))
-                .cloned()
-                .collect(),
+            nodes,
+            edges,
         }
+    }
+}
+
+/// Sets each node's links in and out to the number of `edges` leaving and reaching it.
+pub(crate) fn recount(nodes: &mut [GraphNode], edges: &[GraphEdge]) {
+    let mut counts: std::collections::HashMap<&GraphKey, (usize, usize)> =
+        std::collections::HashMap::new();
+    for edge in edges {
+        counts.entry(&edge.from).or_default().0 += 1;
+        counts.entry(&edge.to).or_default().1 += 1;
+    }
+    for node in nodes {
+        let (out, into) = counts.get(&node.key).copied().unwrap_or_default();
+        node.links_out = out;
+        node.links_in = into;
     }
 }
 
@@ -267,5 +272,76 @@ impl GraphFilter {
             NodeKind::Unresolved => self.unresolved,
             NodeKind::Group => true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(name: &str) -> GraphKey {
+        GraphKey::File(Arc::from(Path::new(name)))
+    }
+
+    fn node(name: &str, links_out: usize, links_in: usize) -> GraphNode {
+        GraphNode {
+            key: file(name),
+            title: name.to_owned(),
+            kind: NodeKind::Page,
+            coordinate: None,
+            links_out,
+            links_in,
+            last_changed: None,
+        }
+    }
+
+    fn edge(from: &str, to: &str) -> GraphEdge {
+        GraphEdge {
+            from: file(from),
+            to: file(to),
+            kind: EdgeKind::Xref,
+            count: 1,
+        }
+    }
+
+    fn step(name: &str, kinds: Vec<EdgeKind>) -> PathStep {
+        PathStep {
+            key: file(name),
+            kinds,
+            backwards: false,
+        }
+    }
+
+    #[test]
+    fn a_path_counts_only_its_own_links() {
+        let snapshot = GraphSnapshot {
+            revision: 1,
+            nodes: vec![
+                node("a", 3, 0),
+                node("b", 1, 1),
+                node("c", 0, 1),
+                node("d", 0, 1),
+                node("e", 0, 1),
+            ],
+            edges: vec![
+                edge("a", "b"),
+                edge("a", "c"),
+                edge("a", "d"),
+                edge("b", "e"),
+            ],
+        };
+        let path = snapshot.along(&[
+            step("a", Vec::new()),
+            step("b", vec![EdgeKind::Xref]),
+            step("e", vec![EdgeKind::Xref]),
+        ]);
+        assert_eq!(path.edges.len(), 2);
+        let counts = |name: &str| {
+            let node = path.node(&file(name)).unwrap();
+            (node.links_out, node.links_in)
+        };
+        assert_eq!(counts("a"), (1, 0));
+        assert_eq!(counts("b"), (1, 1));
+        assert_eq!(counts("e"), (0, 1));
     }
 }

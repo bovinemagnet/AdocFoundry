@@ -150,7 +150,6 @@ impl GraphSnapshot {
             }))
             .collect();
         nodes.sort_by(|left, right| left.key.cmp(&right.key));
-        let mut counts: BTreeMap<&GraphKey, (usize, usize)> = BTreeMap::new();
         let edges: Vec<GraphEdge> = merged
             .into_iter()
             .map(|((from, to, kind), count)| GraphEdge {
@@ -160,15 +159,7 @@ impl GraphSnapshot {
                 count,
             })
             .collect();
-        for edge in &edges {
-            counts.entry(&edge.from).or_default().0 += 1;
-            counts.entry(&edge.to).or_default().1 += 1;
-        }
-        for node in &mut nodes {
-            let (out, into) = counts.get(&node.key).copied().unwrap_or_default();
-            node.links_out = out;
-            node.links_in = into;
-        }
+        crate::recount(&mut nodes, &edges);
         Self {
             revision: self.revision,
             nodes,
