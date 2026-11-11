@@ -1032,13 +1032,16 @@ struct EngineResolver<'e> {
 
 impl ViewResolver for EngineResolver<'_> {
     fn xref(&self, from: &Path, target: &str) -> ResolvedLink {
-        let (file, anchor) = target
-            .split_once('#')
-            .map_or((target, None), |(file, anchor)| (file, Some(anchor)));
+        let anchor = target.split_once('#').map(|(_, anchor)| anchor);
+        // `other#details` names `other.adoc`, as Asciidoctor reads it.
+        let file = adoc_core::xref_file(target);
         let index = &self.workspace.index;
-        let Some(path) =
-            adoc_lang::definition::reference_target_path(index, &self.workspace.antora, from, file)
-        else {
+        let Some(path) = adoc_lang::definition::reference_target_path(
+            index,
+            &self.workspace.antora,
+            from,
+            &file,
+        ) else {
             return ResolvedLink {
                 unresolved: true,
                 ..ResolvedLink::default()

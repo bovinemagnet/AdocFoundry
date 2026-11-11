@@ -134,9 +134,10 @@ fn xref(item: &str) -> Option<(&str, &str)> {
     let (inside, _) = after.split_once(">>")?;
     let (target, link_text) = inside.split_once(',').unwrap_or((inside, ""));
     let target = target.trim();
-    // Only a target naming a document is a page; `<<anchor>>` is a place in this file.
+    // Only a target naming a document is a page; `<<anchor>>` is a place in this file, and
+    // `<<other#details>>` names `other.adoc`, as Asciidoctor reads it.
     let (page, fragment) = target.split_once('#').unwrap_or((target, ""));
-    if !page.ends_with(".adoc") {
+    if !adoc_core::xref_file(target).ends_with(".adoc") {
         return None;
     }
     Some((

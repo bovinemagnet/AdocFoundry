@@ -321,7 +321,8 @@ fn fragment_target<'a>(
                 .or_else(|| Some((path.to_path_buf(), id)))
         }
         ReferenceKind::Xref => {
-            let (file, id) = reference.target.split_once('#')?;
+            let (_, id) = reference.target.split_once('#')?;
+            let file = adoc_core::xref_file(&reference.target);
             let target = reference_target_path(&ws.index, &ws.antora, path, file.trim())?;
             Some((normalize_path(&target), id.trim()))
         }

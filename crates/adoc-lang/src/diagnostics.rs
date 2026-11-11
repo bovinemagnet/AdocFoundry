@@ -28,12 +28,10 @@ pub fn diagnostics(index: &WorkspaceIndex, antora: &AntoraCatalog, path: &Path) 
         if reference.kind != ReferenceKind::Xref || !is_antora_target(&reference.target) {
             continue;
         }
-        let (target, anchor) = reference
-            .target
-            .split_once('#')
-            .map_or((reference.target.as_str(), None), |(target, anchor)| {
-                (target, Some(anchor))
-            });
+        let anchor = reference.target.split_once('#').map(|(_, anchor)| anchor);
+        // `other#details` names `other.adoc`, as Asciidoctor gives it to Antora.
+        let file = adoc_core::xref_file(&reference.target);
+        let target = file.as_ref();
         let id = match parse_resource_id(target) {
             Ok(id) => id,
             Err(error) => {

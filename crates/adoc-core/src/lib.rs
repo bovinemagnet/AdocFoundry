@@ -12,7 +12,7 @@ pub use document::{
     AttributeDeclaration, Document, DocumentTitle, LineIndex, Location, SourceRange,
 };
 pub use path::normalize_path;
-pub use reference::{ImageDirective, IncludeDirective, Reference, ReferenceKind};
+pub use reference::{xref_file, ImageDirective, IncludeDirective, Reference, ReferenceKind};
 pub use symbol::{alphanumeric_id, canonical_id, section_ids, Anchor, IdStyle, Section};
 
 /// The folders a workspace leaves out unless `[workspace] ignore` says otherwise: the index,

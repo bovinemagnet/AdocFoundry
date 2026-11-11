@@ -218,8 +218,9 @@ fn build_tree(
                 .and_then(|target| target.split_once('#'))
                 .map(|(_, fragment)| fragment.to_owned());
             let target = entry.target.as_deref().and_then(|target| {
-                let page = target.split_once('#').map_or(target, |(page, _)| page);
-                let resolved = parse_resource_id(page)
+                // `other#details` names `other.adoc`, as Asciidoctor gives it to Antora.
+                let page = adoc_core::xref_file(target);
+                let resolved = parse_resource_id(&page)
                     .map_err(|error| error.to_string())
                     .and_then(|id| {
                         let context = context.as_ref().ok_or_else(|| {

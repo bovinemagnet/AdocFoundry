@@ -374,7 +374,8 @@ impl<'a> DependencySnapshot<'a> {
 
     /// Where the xref target `written`, from the file at `from`, leads in this revision.
     pub(crate) fn resolves(&self, from: &Path, written: &str) -> Option<PathBuf> {
-        let file_part = written.split_once('#').map_or(written, |(file, _)| file);
+        // `other#details` names `other.adoc`, as Asciidoctor reads it.
+        let file_part = adoc_core::xref_file(written);
         if file_part.is_empty() {
             return Some(from.to_path_buf());
         }
@@ -382,7 +383,7 @@ impl<'a> DependencySnapshot<'a> {
             &self.state.index,
             &self.state.antora,
             from,
-            file_part,
+            &file_part,
         )
         .map(|path| normalize_path(&path))
         // Only to a file this side has: resolution falls back to the disk, which is not the

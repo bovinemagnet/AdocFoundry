@@ -311,3 +311,46 @@ fn a_version_spread_over_two_descriptors_keeps_both() {
     assert_eq!(catalog.len(), 1, "only the second root's page is left");
     assert_eq!(nav_tree(&catalog, "docs", None, &read).unwrap().len(), 1);
 }
+
+/// A navigation entry naming a page without `.adoc` before a fragment lists that page, as
+/// Antora 3.2 reads it: Asciidoctor adds the extension, so `xref:other#details[]` and
+/// `<<sub/deep#x,Deep>>` link to `other.adoc` and `sub/deep.adoc`.
+#[test]
+fn a_nav_entry_without_the_extension_before_a_fragment_lists_its_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_path(directory.path()).join("docs");
+    let module = root.join("modules/ROOT");
+    fs::create_dir_all(module.join("pages/sub")).unwrap();
+    fs::write(
+        root.join("antora.yml"),
+        "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n",
+    )
+    .unwrap();
+    fs::write(
+        module.join("nav.adoc"),
+        "* xref:other#details[Other]\n* <<sub/deep#x,Deep>>\n",
+    )
+    .unwrap();
+    fs::write(module.join("pages/other.adoc"), "= Other\n").unwrap();
+    fs::write(module.join("pages/sub/deep.adoc"), "= Deep\n").unwrap();
+
+    let catalog = catalog(std::slice::from_ref(&root));
+    let trees = nav_tree(&catalog, "docs", None, &read).unwrap();
+    assert!(
+        trees[0].diagnostics.is_empty(),
+        "{:?}",
+        trees[0].diagnostics
+    );
+    let targets: Vec<_> = trees[0]
+        .items
+        .iter()
+        .map(|item| item.target.as_ref().map(|target| target.path.clone()))
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            Some("other.adoc".to_owned()),
+            Some("sub/deep.adoc".to_owned())
+        ]
+    );
+}
