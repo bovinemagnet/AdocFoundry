@@ -224,8 +224,9 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
                 title: main,
                 subtitle,
                 attributes: &attributes,
+                logo: document.attribute_image("title-logo-image"),
             };
-            let markup = title_page.markup(theme, &mut |path| emitter.file(path));
+            let markup = title_page.markup(theme, &mut |image| emitter.image_file(image, &span));
             emitter.push(&markup);
         }
         if facts.toc_at_top() {
@@ -303,7 +304,9 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
             .entry("doctitle".to_owned())
             .or_insert_with(|| title.clone());
     }
-    let running = running::running_dictionary(theme, &attributes, &mut |path| emitter.file(path));
+    let running = running::running_dictionary(theme, &attributes, &mut |image| {
+        emitter.image_file(image, &span)
+    });
     let Emitted {
         source: body,
         files,

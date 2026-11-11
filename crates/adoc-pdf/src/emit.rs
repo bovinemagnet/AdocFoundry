@@ -883,6 +883,21 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    /// The virtual path of an image shown outside the body (the title page's logo, running
+    /// content), when it can be shown: checked as the body's images are, and reported against
+    /// `span` when it cannot be.
+    pub(crate) fn image_file(&mut self, image: &ViewImage, span: &SourceSpan) -> Option<String> {
+        let reported = self.missing.len();
+        let Some((path, _)) = self.usable_image(image, span) else {
+            // Running content names an image for each side of the page: report it once.
+            if self.missing[..reported].contains(&self.missing[reported]) {
+                self.missing.truncate(reported);
+            }
+            return None;
+        };
+        Some(self.file(path))
+    }
+
     fn block_image(&mut self, block: &ViewBlock, image: &ViewImage) {
         let Some((path, natural)) = self.usable_image(image, &block.span) else {
             let _ = writeln!(self.out, "#adoc-missing-image({})\n", string(&image.alt));
@@ -1945,8 +1960,9 @@ fn circled(number: usize) -> char {
     }
 }
 
-/// An image size attribute as a Typst length: a percentage, or pixels at 96 dpi.
-fn image_size(value: &str) -> Option<String> {
+/// An image size attribute as a Typst length: a percentage, or pixels at 96 dpi. Only a number
+/// parsed from the value is written, never the value itself.
+pub(crate) fn image_size(value: &str) -> Option<String> {
     image_extent(value).map(|extent| match extent {
         Natural::Percent(percent) => {
             format!("{}%", typst::number(percent).trim_end_matches(".0"))
@@ -1958,16 +1974,24 @@ fn image_size(value: &str) -> Option<String> {
 
 /// An image size attribute: a percentage, or a length, pixels at 96 dpi when it has no unit.
 fn image_extent(value: &str) -> Option<Natural> {
-    let value = value.trim();
+    let value = value.trim().trim_matches(['"', '\'']).trim();
+    let positive = |number: f64| (number.is_finite() && number > 0.0).then_some(number);
     if let Some(percent) = value.strip_suffix('%') {
-        return percent.trim().parse().ok().map(Natural::Percent);
+        return percent
+            .trim()
+            .parse()
+            .ok()
+            .and_then(positive)
+            .map(Natural::Percent);
     }
     let (number, unit) = match value.find(|c: char| !(c.is_ascii_digit() || c == '.')) {
         Some(split) => value.split_at(split),
         None => (value, "px"),
     };
     let number: f64 = number.parse().ok()?;
-    crate::theme::to_pt(number, unit.trim()).map(Natural::Points)
+    crate::theme::to_pt(number, unit.trim())
+        .and_then(positive)
+        .map(Natural::Points)
 }
 
 /// A hash of `path` that is the same in every process, for stable virtual paths.

@@ -27,8 +27,10 @@ pub struct ViewTree {
     pub attribute_images: BTreeMap<String, ViewImage>,
 }
 
-/// The document attributes that name an image file: asciidoctor-pdf's covers.
-pub const IMAGE_ATTRIBUTES: [&str; 2] = ["front-cover-image", "back-cover-image"];
+/// The document attributes that name an image file: asciidoctor-pdf's covers and title page
+/// logo.
+pub const IMAGE_ATTRIBUTES: [&str; 3] =
+    ["front-cover-image", "back-cover-image", "title-logo-image"];
 
 /// An image an attribute names, as asciidoctor-pdf reads one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

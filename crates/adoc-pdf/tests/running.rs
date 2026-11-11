@@ -191,6 +191,79 @@ fn footnotes_sit_where_asciidoctor_pdf_puts_them() {
     );
 }
 
+/// `text` written as `page.adoc` beside `logo.png` holding `logo`, exported with `theme`.
+fn export_with_logo(
+    text: &str,
+    logo: Option<&[u8]>,
+    theme: &LoadedTheme,
+) -> (adoc_pdf::PdfOutput, Vec<TypesetPage>) {
+    let directory = tempfile::tempdir().unwrap();
+    if let Some(logo) = logo {
+        std::fs::write(directory.path().join("logo.png"), logo).unwrap();
+    }
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, text).unwrap();
+    let document = common::article(common::view_of(&page));
+    let output = adoc_pdf::export(&document, theme, &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let typst = to_typst(&document, theme, &PdfOptions::default());
+    let pages = typeset_pages(&typst, theme, &PdfOptions::default()).unwrap();
+    (output, pages)
+}
+
+fn image_warnings(output: &adoc_pdf::PdfOutput) -> Vec<&adoc_pdf::PdfDiagnostic> {
+    output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message.contains("logo.png"))
+        .collect()
+}
+
+#[test]
+fn a_title_logo_is_found_beside_the_page_and_checked() {
+    let png = std::fs::read(common::fixtures().join("pdf/reference/images/wide.png")).unwrap();
+    let text = "= Handbook\n:title-page:\n:title-logo-image: image:logo.png[]\n\nText.\n";
+    // Beside the page, as asciidoctor-pdf finds it.
+    let (output, pages) = export_with_logo(text, Some(&png), &common::default_theme());
+    assert_eq!(pages[0].images.len(), 1, "{:?}", output.diagnostics);
+    assert!(
+        image_warnings(&output).is_empty(),
+        "{:?}",
+        output.diagnostics
+    );
+    // Missing, or not an image: a warning, and the document still exports.
+    for logo in [None, Some(&b"not an image"[..])] {
+        let (output, pages) = export_with_logo(text, logo, &common::default_theme());
+        assert!(pages[0].images.is_empty());
+        assert_eq!(image_warnings(&output).len(), 1, "{:?}", output.diagnostics);
+    }
+    // A width in any unit, as a body image reads it.
+    let sized =
+        "= Handbook\n:title-page:\n:title-logo-image: image:logo.png[pdfwidth=1in]\n\nText.\n";
+    let (_, pages) = export_with_logo(sized, Some(&png), &common::default_theme());
+    assert!(
+        (pages[0].images[0].width - 72.0).abs() < 0.01,
+        "{:?}",
+        pages[0].images
+    );
+}
+
+#[test]
+fn a_running_content_image_that_cannot_be_shown_is_a_warning() {
+    // Found beside the theme, as asciidoctor-pdf finds it.
+    let (dir, theme) = theme_with(
+        "header:\n  height: 0.75in\n  recto:\n    center:\n      content: image:logo.png[]\n  verso:\n    center:\n      content: image:logo.png[]\n",
+    );
+    for logo in [None, Some(&b"not an image"[..])] {
+        if let Some(logo) = logo {
+            std::fs::write(dir.path().join("logo.png"), logo).unwrap();
+        }
+        let (output, pages) = export_with_logo("= Page\n\nText.\n", None, &theme);
+        assert_eq!(image_warnings(&output).len(), 1, "{:?}", output.diagnostics);
+        assert!(!pages[0].text().contains("image:"), "{}", pages[0].text());
+    }
+}
+
 #[test]
 fn footnotes_taller_than_a_page_flow_onto_the_next() {
     // A float cannot break across pages: a page of notes and more was drawn past the bottom
