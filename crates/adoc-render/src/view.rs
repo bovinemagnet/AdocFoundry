@@ -499,14 +499,31 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
 /// Every id in the document — sections, blocks and inline anchors — with the span and title of
 /// what it identifies, for local references.
 fn collect_ids(dom: &Dom) -> HashMap<String, (SourceSpan, Option<String>)> {
+    /// The inline anchors of a run of inlines, formatted text included.
     fn inline_anchors(
         inlines: &[Inline],
         span: &SourceSpan,
         out: &mut HashMap<String, (SourceSpan, Option<String>)>,
     ) {
         for inline in inlines {
-            if let Inline::Anchor { id } = inline {
-                out.entry(id.clone()).or_insert((span.clone(), None));
+            match inline {
+                Inline::Anchor { id } => {
+                    out.entry(id.clone()).or_insert((span.clone(), None));
+                }
+                Inline::Bold(content)
+                | Inline::Italic(content)
+                | Inline::Monospace(content)
+                | Inline::Highlight(content)
+                | Inline::Superscript(content)
+                | Inline::Subscript(content)
+                | Inline::Span { content, .. }
+                | Inline::Link { text: content, .. }
+                | Inline::Xref { text: content, .. }
+                | Inline::Footnote { content, .. }
+                | Inline::IndexTerm {
+                    visible: content, ..
+                } => inline_anchors(content, span, out),
+                _ => {}
             }
         }
     }
@@ -523,8 +540,32 @@ fn collect_ids(dom: &Dom) -> HashMap<String, (SourceSpan, Option<String>)> {
             ids.entry(id.clone())
                 .or_insert((block.meta.span.clone(), title));
         }
-        if let BlockKind::Paragraph { inlines } = &block.kind {
-            inline_anchors(inlines, &block.meta.span, &mut ids);
+        // Every run of inlines the block holds itself; those of the blocks inside it come with
+        // them, table cells' included.
+        let span = &block.meta.span;
+        inline_anchors(&block.meta.title, span, &mut ids);
+        match &block.kind {
+            BlockKind::Section { title, .. } | BlockKind::Heading { title, .. } => {
+                inline_anchors(title, span, &mut ids);
+            }
+            BlockKind::Paragraph { inlines } => inline_anchors(inlines, span, &mut ids),
+            BlockKind::List { items, .. } => {
+                for item in items {
+                    inline_anchors(&item.content, &item.span, &mut ids);
+                }
+            }
+            BlockKind::DescriptionList { items } => {
+                for item in items {
+                    inline_anchors(&item.term, &item.span, &mut ids);
+                    inline_anchors(&item.content, &item.span, &mut ids);
+                }
+            }
+            BlockKind::CalloutList { items } => {
+                for item in items {
+                    inline_anchors(&item.content, &item.span, &mut ids);
+                }
+            }
+            _ => {}
         }
     }
     ids
@@ -961,7 +1002,9 @@ impl Builder<'_> {
                     let title = link.title.clone().unwrap_or_else(|| {
                         if link.unresolved {
                             target.clone()
-                        } else if !target.contains(['/', ':', '$', '#']) {
+                        } else if !target.contains(['/', ':', '$', '#'])
+                            || link.fragment.as_deref() == Some(target.as_str())
+                        {
                             // An anchor with no title or reference text, as Asciidoctor shows it.
                             format!("[{target}]")
                         } else {
@@ -1038,6 +1081,9 @@ impl Builder<'_> {
             .map_or((target, None), |(file, fragment)| (file, Some(fragment)));
         let local_id = if file.is_empty() {
             fragment
+        } else if fragment.is_none() && self.ids.contains_key(file) {
+            // An id the page defines, though it may hold a `.` or a `:` (`fig:overview`).
+            Some(file)
         } else if !file.contains('.') && !file.contains('$') && !file.contains(':') {
             // `<<id>>` arrives as a bare id.
             Some(file)

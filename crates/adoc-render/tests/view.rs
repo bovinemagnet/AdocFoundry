@@ -944,6 +944,42 @@ fn a_cross_reference_to_a_paragraph_finds_its_anchor() {
     assert_eq!(shown, ["[target]", "the first"]);
 }
 
+/// An id may hold a `.` or a `:` (`fig:`, `sec.1`): one the page defines is a local reference,
+/// not another page, as Asciidoctor reads it.
+#[test]
+fn a_cross_reference_to_an_id_with_a_dot_or_a_colon_is_local() {
+    let html = html_of(
+        "[[fig:overview]]\n.Overview\nimage::x.png[]\n\nSee <<fig:overview>> and <<sec.1>>.\n\n\
+         [[sec.1]]\n== One\n\nAn [[a:b]]anchor, and <<a:b>>.\n",
+    );
+    assert!(
+        html.contains("<a href=\"#fig:overview\">Overview</a>"),
+        "{html}"
+    );
+    assert!(html.contains("<a href=\"#sec.1\">One</a>"), "{html}");
+    assert!(html.contains("<a href=\"#a:b\">[a:b]</a>"), "{html}");
+    assert!(!html.contains("unresolved"), "{html}");
+}
+
+/// Anchors are found wherever inlines are: list items, description terms, bibliography
+/// entries, block titles, formatted text and table cells.
+#[test]
+fn a_cross_reference_finds_anchors_outside_paragraphs() {
+    let html = html_of(
+        "* [[item]]First\n\nTerm [[t1]]:: def\n\n.Title [[bt]]here\n----\nx\n----\n\n\
+         Para *bold [[inb]]x*.\n\n|===\n|cell [[incell]]x\n|===\n\n\
+         See <<item>>, <<t1>>, <<bt>>, <<inb>>, <<incell>> and <<pp>>.\n\n\
+         [bibliography]\n== Refs\n\n* [[[pp]]] Pragmatic.\n",
+    );
+    for id in ["item", "t1", "bt", "inb", "incell", "pp"] {
+        assert!(
+            html.contains(&format!("<a href=\"#{id}\">[{id}]</a>")),
+            "{id}: {html}"
+        );
+    }
+    assert!(!html.contains("unresolved"), "{html}");
+}
+
 #[test]
 fn a_discrete_heading_has_a_generated_id_or_its_own() {
     let html = html_of("[discrete]\n== A Heading\n\n[discrete#own]\n== Another\n");
