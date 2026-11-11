@@ -191,7 +191,7 @@ fn status_reports_a_copy_as_added() {
 #[test]
 fn identity_reads_author_and_committer_settings() {
     let dir = tempfile::tempdir().unwrap();
-    TestRepo::init(dir.path());
+    let _test = TestRepo::init(dir.path());
     append_config(
         dir.path(),
         "[author]\n\tname = Ada Author\n\temail = ada@example.com\n\
