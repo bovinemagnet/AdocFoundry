@@ -178,7 +178,7 @@ impl PreparedFile {
         for style in [IdStyle::Antora, IdStyle::Asciidoctor] {
             let ids = section_ids(&document.sections, &document.anchors, style);
             for (section, id) in document.sections.iter().zip(ids) {
-                if section.id.is_none() {
+                if section.id.is_none() && !id.is_empty() {
                     anchor(id, section.selection_range);
                 }
             }

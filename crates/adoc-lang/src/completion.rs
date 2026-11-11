@@ -140,6 +140,7 @@ fn anchor_candidates(
 
     let mut candidates: Vec<Candidate> = crate::xref::section_ids(antora, path, document)
         .into_iter()
+        .filter(|label| !label.is_empty())
         .map(|label| candidate(label, range))
         .collect();
 
@@ -508,6 +509,25 @@ mod tests {
                 .collect();
 
         assert_eq!(labels, vec!["_getting_started".to_owned()]);
+    }
+
+    /// Completion offers the id Asciidoctor generates, and none for a title whose id only
+    /// rendering could tell (#529).
+    #[test]
+    fn offers_the_generated_id_asciidoctor_has() {
+        let path = Path::new("/docs/guide.adoc");
+        let text = "== What's new?\n\n== Using {product}\n\nSee <<";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+        let document = parse("file:///docs/guide.adoc", text).document;
+
+        let labels: Vec<_> =
+            completion_at_offset(&index, &AntoraCatalog::new(), path, &document, text.len())
+                .into_iter()
+                .map(|candidate| candidate.label)
+                .collect();
+
+        assert_eq!(labels, vec!["_whats_new".to_owned()]);
     }
 
     #[test]

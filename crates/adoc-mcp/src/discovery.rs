@@ -155,7 +155,8 @@ fn symbol(symbol: &DocumentSymbol, ids: &[(SourceRange, String)]) -> Value {
     let id = ids
         .iter()
         .find(|(range, _)| *range == symbol.range)
-        .map(|(_, id)| id.clone());
+        .map(|(_, id)| id.clone())
+        .filter(|id| !id.is_empty());
     json!({
         "kind": kind,
         "title": symbol.name,

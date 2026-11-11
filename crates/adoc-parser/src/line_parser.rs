@@ -19,12 +19,21 @@ pub(crate) fn content(line: &str) -> &str {
 pub(crate) fn parse_heading(line: &str, offset: usize) -> Option<Heading<'_>> {
     let line = content(line);
     let marker_len = line.bytes().take_while(|byte| *byte == b'=').count();
-    if !(1..=6).contains(&marker_len) || line.as_bytes().get(marker_len) != Some(&b' ') {
+    if !(1..=6).contains(&marker_len)
+        || !matches!(line.as_bytes().get(marker_len), Some(b' ' | b'\t'))
+    {
         return None;
     }
 
     let raw_title = &line[marker_len + 1..];
-    let title = raw_title.trim();
+    let mut title = raw_title.trim();
+    // `== Title ==`: a closing marker as long as the opening one, after a space, is no part of
+    // the title.
+    if let Some(before) = title.strip_suffix(&line[..marker_len]) {
+        if before.ends_with([' ', '\t']) && !before.trim().is_empty() {
+            title = before.trim_end();
+        }
+    }
     if title.is_empty() {
         return None;
     }
@@ -39,16 +48,28 @@ pub(crate) fn parse_heading(line: &str, offset: usize) -> Option<Heading<'_>> {
     })
 }
 
+/// An attribute entry, `:name: value`, as Asciidoctor matches one: the name starts with a word
+/// character (after a `!` that unsets it), and a space or the end of the line follows its
+/// second colon, so `:a:b` and `:30:00 is the time` are text.
 pub(crate) fn parse_attribute(line: &str, offset: usize) -> Option<AttributeDeclaration> {
     let line = content(line);
     let rest = line.strip_prefix(':')?;
     let separator = rest.find(':')?;
     let name = &rest[..separator];
-    if name.is_empty() || name.chars().any(char::is_whitespace) {
+    let starts_a_name = name
+        .trim_start_matches('!')
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_alphanumeric() || first == '_');
+    let after = &rest[separator + 1..];
+    if !starts_a_name
+        || name.chars().any(char::is_whitespace)
+        || !(after.is_empty() || after.starts_with([' ', '\t']))
+    {
         return None;
     }
 
-    let value = rest[separator + 1..].trim();
+    let value = after.trim();
     Some(AttributeDeclaration {
         name: name.to_owned(),
         value: (!value.is_empty()).then(|| value.to_owned()),
@@ -60,11 +81,13 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
     let line = content(line);
     let mut anchors = find_delimited(line, "[[", "]]", offset)
         .into_iter()
+        // A backslash before an anchor shows it as written.
+        .filter(|(_, range)| !line[..range.start - offset].ends_with('\\'))
         .filter_map(|(value, range)| {
             // A bibliography entry is written `[[[id, label]]]`, so the extra bracket rides
             // along on the id.
-            let id = value.trim_start_matches('[').split(',').next()?.trim();
-            (!id.is_empty()).then(|| Anchor {
+            let id = value.trim_start_matches('[').split(',').next()?;
+            is_anchor_id(id).then(|| Anchor {
                 id: id.to_owned(),
                 range,
                 conditional: false,
@@ -72,22 +95,174 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
         })
         .collect::<Vec<_>>();
 
-    anchors.extend(
-        find_delimited(line, "[#", "]", offset)
-            .into_iter()
-            .filter_map(|(value, range)| {
-                // `[#id.role]`, `[#id%option]` and `[#id,name=value]`: the id ends at the first
-                // role, option or further attribute.
-                let id = value.split(['.', '%', ',']).next()?.trim();
-                (!id.is_empty()).then(|| Anchor {
-                    id: id.to_owned(),
-                    range,
-                    conditional: false,
-                })
-            }),
-    );
+    anchors.extend(shorthand_anchors(line, offset));
     anchors.extend(id_attribute(line, offset));
+    anchors.extend(anchor_macros(line, offset));
     anchors
+}
+
+/// Whether `id` may be an anchor's id: as Asciidoctor's pattern has it, a letter, `_` or `:`
+/// followed by word characters, `-`, `:` and `.`. An id made with an attribute reference is
+/// taken as written, since its value is not known here.
+fn is_anchor_id(id: &str) -> bool {
+    if is_dynamic_id(id) {
+        return !id.contains(char::is_whitespace);
+    }
+    let mut characters = id.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || matches!(first, '_' | ':'))
+        && characters.all(|character| {
+            character.is_alphanumeric() || matches!(character, '_' | '-' | ':' | '.')
+        })
+}
+
+/// The title and id of a section title ending in an anchor, `Title [[id]]` or
+/// `Title [[id,reftext]]`, which Asciidoctor takes as the section's id.
+pub(crate) fn trailing_anchor(title: &str) -> Option<(&str, &str)> {
+    let inside = title.strip_suffix("]]")?;
+    let open = inside.rfind("[[")?;
+    let before = &title[..open];
+    if !before.ends_with(' ') {
+        return None;
+    }
+    let id = inside[open + 2..].split(',').next()?;
+    is_anchor_id(id).then(|| (before.trim_end(), id))
+}
+
+/// A block attribute line or a block title, which Asciidoctor carries to the next block with
+/// any anchor before it.
+pub(crate) fn is_block_metadata(trimmed: &str) -> bool {
+    block_attribute_list(trimmed).is_some() || is_block_title(trimmed)
+}
+
+/// Whether `id` is made with an attribute reference, so it cannot be compared before the
+/// attribute is substituted.
+pub(crate) fn is_dynamic_id(id: &str) -> bool {
+    id.contains('{')
+}
+
+/// The list of a line that is a whole block attribute line, such as `[source#id,ruby]`: not an
+/// anchor line, and holding no further brackets.
+fn block_attribute_list(line: &str) -> Option<&str> {
+    let list = line.trim_end().strip_prefix('[')?.strip_suffix(']')?;
+    (!list.starts_with('[') && !list.contains(['[', ']'])).then_some(list)
+}
+
+/// The style and id of an attribute list's first entry, read as Asciidoctor's shorthand: an
+/// optional style, then any of `#id`, `.role` and `%option` in any order, as in
+/// `[source#code.lead,ruby]`. A named attribute first (`[link=#top]`) has neither, and an entry
+/// holding a space has no shorthand.
+fn shorthand(list: &str) -> (&str, Option<&str>) {
+    let first = list.split(',').next().unwrap_or_default().trim();
+    if first.contains('=') {
+        return ("", None);
+    }
+    let style_end = first.find(['#', '.', '%']).unwrap_or(first.len());
+    let style = &first[..style_end];
+    if first.contains(char::is_whitespace) {
+        return (style.trim(), None);
+    }
+    let id = first[style_end..]
+        .split_once('#')
+        .and_then(|(_, rest)| rest.split(['.', '%', '#']).next())
+        .filter(|id| !id.is_empty());
+    (style, id)
+}
+
+/// The id the shorthand of an attribute list's first entry gives.
+fn shorthand_id(list: &str) -> Option<&str> {
+    shorthand(list).1
+}
+
+/// `anchor:id[]` and `anchor:id[reftext]`, the anchor macro, unless escaped. Like Asciidoctor,
+/// the macro needs no word boundary before it.
+fn anchor_macros(line: &str, offset: usize) -> Vec<Anchor> {
+    const PREFIX: &str = "anchor:";
+    let mut anchors = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = line[cursor..].find(PREFIX) {
+        let start = cursor + relative;
+        let id_start = start + PREFIX.len();
+        cursor = id_start;
+        let Some(open_relative) = line[id_start..].find('[') else {
+            break;
+        };
+        let open = id_start + open_relative;
+        let Some(close_relative) = line[open + 1..].find(']') else {
+            break;
+        };
+        let id = &line[id_start..open];
+        if line[..start].ends_with('\\') || !is_anchor_id(id) {
+            continue;
+        }
+        let end = open + 1 + close_relative + 1;
+        anchors.push(Anchor {
+            id: id.to_owned(),
+            range: SourceRange::new(offset + start, offset + end),
+            conditional: false,
+        });
+        cursor = end;
+    }
+    anchors
+}
+
+/// Anchors given by the `#id` shorthand: on a whole block attribute line, or inline in the
+/// `[…]` straight before a formatting mark (`[#key]#word#`). Anywhere else, as in link text
+/// (`https://example.com/issues/12[#12]`) or prose, the brackets are text.
+fn shorthand_anchors(line: &str, offset: usize) -> Vec<Anchor> {
+    let anchor = |id: &str, start: usize, end: usize| Anchor {
+        id: id.to_owned(),
+        range: SourceRange::new(offset + start, offset + end),
+        conditional: false,
+    };
+    if let Some(list) = block_attribute_list(line) {
+        return shorthand_id(list)
+            .map(|id| anchor(id, 0, line.trim_end().len()))
+            .into_iter()
+            .collect();
+    }
+    let mut anchors = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = line[cursor..].find('[') {
+        let open = cursor + relative;
+        cursor = open + 1;
+        let Some(close_relative) = line[open + 1..].find(']') else {
+            break;
+        };
+        let close = open + 1 + close_relative;
+        let list = &line[open + 1..close];
+        if list.contains('[')
+            || line[..open].ends_with(['[', '\\'])
+            || !before_a_formatting_mark(line, open, close + 1)
+        {
+            continue;
+        }
+        if let Some(id) = shorthand_id(list) {
+            anchors.push(anchor(id, open, close + 1));
+        }
+        cursor = close + 1;
+    }
+    anchors
+}
+
+/// Whether the `[…]` from `open` to `after` stands straight before a formatting mark that
+/// takes it: `#`, `*`, `_` or `` ` `` opening constrained text after a character that is not
+/// a word character, or doubled anywhere, or `^` or `~`, closed later on the line.
+fn before_a_formatting_mark(line: &str, open: usize, after: usize) -> bool {
+    let rest = &line[after..];
+    let Some(mark) = rest.chars().next().filter(|mark| "#*_`^~".contains(*mark)) else {
+        return false;
+    };
+    let doubled = rest[1..].starts_with(mark);
+    let opens = doubled
+        || matches!(mark, '^' | '~')
+        || line[..open]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !before.is_alphanumeric() && before != '_');
+    let mark_len = if doubled { 2 } else { 1 };
+    opens && rest[mark_len..].contains(mark)
 }
 
 /// The `id=…` entry of a line that is a whole block attribute list, `[id=intro]` or
@@ -122,6 +297,7 @@ pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
     let line = content(line);
     let mut references = find_macros(line, "xref:", offset)
         .into_iter()
+        .filter(|mac| starts_a_target(&line[mac.range.start - offset + "xref:".len()..]))
         .map(|mac| {
             let (kind, target) = classify_xref_target(mac.target);
             Reference {
@@ -133,25 +309,57 @@ pub(crate) fn find_references(line: &str, offset: usize) -> Vec<Reference> {
         })
         .collect::<Vec<_>>();
 
-    references.extend(
-        find_delimited(line, "<<", ">>", offset)
-            .into_iter()
-            .filter_map(|(value, range)| {
-                let (target, text) = value
-                    .split_once(',')
-                    .map_or((value, None), |(target, text)| (target, nonempty(text)));
-                let target = target.trim();
-                (!target.is_empty()).then(|| Reference {
-                    kind: ReferenceKind::LocalAnchor,
-                    target: target.to_owned(),
-                    text,
-                    range,
-                })
-            }),
-    );
+    references.extend(find_angle_references(line, offset).into_iter().filter_map(
+        |(value, range)| {
+            let (target, text) = value
+                .split_once(',')
+                .map_or((value, None), |(target, text)| (target, nonempty(text)));
+            let (kind, target) = classify_angle_target(target.trim());
+            (!target.is_empty()).then(|| Reference {
+                kind,
+                target: target.to_owned(),
+                text,
+                range,
+            })
+        },
+    ));
     // A backslash before a reference shows it as written.
     references.retain(|reference| !line[..reference.range.start - offset].ends_with('\\'));
     references
+}
+
+/// Whether `rest`, what follows `<<` or `xref:`, starts a target as Asciidoctor's pattern
+/// wants it: with a word character or one of `#/.:{`.
+fn starts_a_target(rest: &str) -> bool {
+    rest.chars().next().is_some_and(|first| {
+        first.is_alphanumeric() || matches!(first, '_' | '#' | '/' | '.' | ':' | '{')
+    })
+}
+
+/// Each `<<…>>` on `line` whose target starts as `starts_a_target` wants. An opening that
+/// starts none (`a << b`, `<<<`) is text, and the scan goes on from its second `<`, so a
+/// later reference on the line is still found.
+fn find_angle_references(line: &str, offset: usize) -> Vec<(&str, SourceRange)> {
+    let mut found = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = line[cursor..].find("<<") {
+        let start = cursor + relative_start;
+        let value_start = start + 2;
+        if !starts_a_target(&line[value_start..]) {
+            cursor = start + 1;
+            continue;
+        }
+        let Some(close_relative) = line[value_start..].find(">>") else {
+            break;
+        };
+        let end = value_start + close_relative + 2;
+        found.push((
+            &line[value_start..value_start + close_relative],
+            SourceRange::new(offset + start, offset + end),
+        ));
+        cursor = end;
+    }
+    found
 }
 
 /// Asciidoctor reads an `xref:` target as another document only when it names an AsciiDoc file
@@ -167,6 +375,19 @@ fn classify_xref_target(target: &str) -> (ReferenceKind, &str) {
             .next()
             .is_some_and(|extension| matches!(extension, "adoc" | "asciidoc" | "ad"));
     if names_a_document {
+        (ReferenceKind::Xref, target)
+    } else {
+        (ReferenceKind::LocalAnchor, target)
+    }
+}
+
+/// Asciidoctor reads a `<<…>>` target as another document only when a `#` follows its start
+/// (`<<other.adoc#id>>`, `<<other#id>>`); unlike the `xref:` macro, `<<other.adoc>>` is an id.
+fn classify_angle_target(target: &str) -> (ReferenceKind, &str) {
+    if let Some(fragment) = target.strip_prefix('#') {
+        return (ReferenceKind::LocalAnchor, fragment);
+    }
+    if target.contains('#') {
         (ReferenceKind::Xref, target)
     } else {
         (ReferenceKind::LocalAnchor, target)
@@ -204,7 +425,8 @@ pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
         .into_iter()
         .filter(|mac| {
             let before = line[..mac.range.start - offset].trim_end();
-            before.is_empty() || before.ends_with('|')
+            let ends_the_line = line[mac.range.end - offset..].trim().is_empty();
+            (before.is_empty() && ends_the_line) || before.ends_with('|')
         })
         .map(|mac| ImageDirective {
             target: mac.target.to_owned(),
@@ -265,10 +487,11 @@ fn find_inline_images(line: &str, offset: usize) -> Vec<ImageDirective> {
     found
 }
 
-/// How a preprocessor conditional line changes the nesting: `ifdef::attr[]`, `ifndef::attr[]`
-/// and `ifeval::[…]` open a block (`ifdef::attr[text]` is a whole conditional on one line)
-/// and `endif::[]` closes one. Directives start their line.
-pub(crate) fn conditional_directive(line: &str) -> Option<Conditional> {
+/// The preprocessor conditional `line` is: `ifdef::attr[]`, `ifndef::attr[]` and
+/// `ifeval::[…]` open a block and `endif::[]` closes one, while `ifdef::attr[text]` is a whole
+/// conditional on one line, whose text the preprocessor reads as a line of its own.
+/// Directives start their line.
+pub(crate) fn conditional_directive(line: &str) -> Option<Conditional<'_>> {
     let line = line.trim_end();
     if !line.ends_with(']') {
         return None;
@@ -282,14 +505,27 @@ pub(crate) fn conditional_directive(line: &str) -> Option<Conditional> {
     let rest = line
         .strip_prefix("ifdef::")
         .or_else(|| line.strip_prefix("ifndef::"))?;
-    let (_, text) = rest.split_once('[')?;
-    (text == "]").then_some(Conditional::Open)
+    let open = line.len() - rest.len() + rest.find('[')?;
+    let text = &line[open + 1..line.len() - 1];
+    Some(if text.is_empty() {
+        Conditional::Open
+    } else {
+        Conditional::Line {
+            start: open + 1,
+            text,
+        }
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Conditional {
+pub(crate) enum Conditional<'a> {
     Open,
     Close,
+    /// A single-line conditional's text, starting at byte `start` of its line.
+    Line {
+        start: usize,
+        text: &'a str,
+    },
 }
 
 /// Where a line falls among the blocks whose content Asciidoctor does not parse: listing,
@@ -305,6 +541,9 @@ pub(crate) enum Verbatim {
     Content,
     /// Content of a comment block, where nothing is.
     Comment,
+    /// The underline of a two-line title, whose text is the line before; the heading's marker
+    /// level, 1 for `=` to 5 for `+`.
+    Underline(u8),
 }
 
 /// Follows the verbatim blocks line by line (each line trimmed).
@@ -316,13 +555,22 @@ pub(crate) struct VerbatimBlocks<'a> {
     styled: bool,
     /// Inside a verbatim-styled paragraph.
     paragraph: bool,
+    /// Inside a block of text, so a line does not begin a block.
+    in_text: bool,
+    /// The line before, when it began a block of text and could be a two-line title.
+    title: Option<&'a str>,
+    /// The delimiters of the example, sidebar, quote, open and table blocks open, innermost
+    /// last, inside which a heading is no section.
+    compound: Vec<&'a str>,
 }
 
 impl<'a> VerbatimBlocks<'a> {
     pub(crate) fn line(&mut self, trimmed: &'a str) -> Verbatim {
+        let title = self.title.take();
         if let Some(close) = self.open {
             if trimmed == close {
                 self.open = None;
+                self.in_text = false;
                 return Verbatim::Delimiter;
             }
             return if close.starts_with('/') {
@@ -338,9 +586,19 @@ impl<'a> VerbatimBlocks<'a> {
             }
             return Verbatim::Content;
         }
+        // Asciidoctor reads a two-line title before a delimiter, so `Section` over `-------`
+        // is a section, not the start of a listing block; inside a block it reads none.
+        if let Some(level) = title
+            .filter(|_| self.compound.is_empty())
+            .and_then(|title| setext_level(title, trimmed))
+        {
+            self.in_text = false;
+            return Verbatim::Underline(level);
+        }
         if let Some(close) = verbatim_delimiter(trimmed) {
             self.open = Some(close);
             self.styled = false;
+            self.in_text = false;
             return Verbatim::Delimiter;
         }
         if self.styled {
@@ -348,20 +606,78 @@ impl<'a> VerbatimBlocks<'a> {
             // attribute lines.
             if trimmed.is_empty()
                 || trimmed.starts_with('[')
-                || trimmed.starts_with("//")
+                || is_line_comment(trimmed)
                 || is_block_title(trimmed)
             {
                 return Verbatim::No;
             }
             self.styled = false;
+            // An open block takes the verbatim style: `[listing]` over `--` is a listing.
+            if trimmed == "--" {
+                self.open = Some(trimmed);
+                self.in_text = false;
+                return Verbatim::Delimiter;
+            }
             if !trimmed.starts_with('=') && !is_compound_delimiter(trimmed) {
                 self.paragraph = true;
                 return Verbatim::Content;
             }
+            self.in_text = false;
+            self.follow_compound(trimmed);
             return Verbatim::No;
         }
         self.styled = has_verbatim_style(trimmed);
+        self.follow_text(trimmed);
         Verbatim::No
+    }
+
+    /// Follows where blocks of text begin and end, keeping a block's first line as a possible
+    /// two-line title. Block metadata (attribute lines, anchors, titles, comments and
+    /// attribute entries) before a block leaves its start where it is.
+    fn follow_text(&mut self, trimmed: &'a str) {
+        self.follow_compound(trimmed);
+        if trimmed.is_empty()
+            || is_compound_delimiter(trimmed)
+            || parse_heading(trimmed, 0).is_some()
+        {
+            self.in_text = false;
+        } else if !self.in_text
+            && !(trimmed.starts_with('[') && trimmed.ends_with(']'))
+            && !is_line_comment(trimmed)
+            && !is_block_title(trimmed)
+            && parse_attribute(trimmed, 0).is_none()
+        {
+            self.in_text = true;
+            self.title = Some(trimmed);
+        }
+    }
+
+    /// Opens or closes a compound block on its delimiter.
+    fn follow_compound(&mut self, trimmed: &'a str) {
+        if !is_compound_delimiter(trimmed) {
+            return;
+        }
+        if self.compound.last() == Some(&trimmed) {
+            self.compound.pop();
+        } else {
+            self.compound.push(trimmed);
+        }
+    }
+
+    /// Whether the line read last stands inside an example, sidebar, quote, open or table
+    /// block, where Asciidoctor reads a heading as text.
+    pub(crate) fn in_compound_block(&self) -> bool {
+        !self.compound.is_empty()
+    }
+
+    /// The preprocessor conditional `line` is, which the preprocessor reads everywhere but in
+    /// a comment block and removes before blocks are read. Whoever follows the blocks asks
+    /// here first and gives the line no further.
+    pub(crate) fn directive<'l>(&self, line: &'l str) -> Option<Conditional<'l>> {
+        if self.next() == Verbatim::Comment {
+            return None;
+        }
+        conditional_directive(line)
     }
 
     /// What a line of text typed next would be.
@@ -373,6 +689,31 @@ impl<'a> VerbatimBlocks<'a> {
             None => Verbatim::No,
         }
     }
+}
+
+/// The marker level of the two-line title whose text is `title` and whose underline may be
+/// `underline`: a run of one of `=`, `-`, `~`, `^` or `+` (levels 1 to 5) within one character
+/// of the title's length, under a title that does not start with `.` and holds a word
+/// character, as Asciidoctor reads them.
+fn setext_level(title: &str, underline: &str) -> Option<u8> {
+    let first = underline.chars().next()?;
+    let level = match first {
+        '=' => 1,
+        '-' => 2,
+        '~' => 3,
+        '^' => 4,
+        '+' => 5,
+        _ => return None,
+    };
+    let titled = !title.starts_with('.')
+        && title
+            .chars()
+            .any(|character| character.is_alphanumeric() || character == '_');
+    (underline.len() >= 2
+        && underline.chars().all(|character| character == first)
+        && titled
+        && title.chars().count().abs_diff(underline.len()) < 2)
+        .then_some(level)
 }
 
 /// The line that closes the verbatim block `line` opens: a run of four or more of one of
@@ -403,6 +744,11 @@ fn is_run(line: &str, character: char) -> bool {
     line.len() >= 4 && line.chars().all(|c| c == character)
 }
 
+/// A line comment: `//`, not followed by a third `/`.
+pub(crate) fn is_line_comment(trimmed: &str) -> bool {
+    trimmed.starts_with("//") && !trimmed.starts_with("///")
+}
+
 /// A `.Title` line.
 pub(crate) fn is_block_title(line: &str) -> bool {
     line.strip_prefix('.')
@@ -410,23 +756,11 @@ pub(crate) fn is_block_title(line: &str) -> bool {
         .is_some_and(|first| first != '.' && !first.is_whitespace())
 }
 
-/// A block attribute line whose style is `source`, `listing` or `literal`, such as
+/// A block attribute line whose style is `source`, `listing`, `literal` or `pass`, such as
 /// `[source,ruby]` or `[source#id.role]`.
 fn has_verbatim_style(line: &str) -> bool {
-    let Some(attributes) = line
-        .strip_prefix('[')
-        .and_then(|rest| rest.strip_suffix(']'))
-        .filter(|attributes| !attributes.starts_with('['))
-    else {
-        return false;
-    };
-    let first = attributes.split(',').next().unwrap_or_default();
-    let style = first
-        .split(['#', '.', '%'])
-        .next()
-        .unwrap_or_default()
-        .trim();
-    matches!(style, "source" | "listing" | "literal")
+    block_attribute_list(line)
+        .is_some_and(|list| matches!(shorthand(list).0, "source" | "listing" | "literal" | "pass"))
 }
 
 fn nonempty(value: &str) -> Option<String> {
@@ -456,12 +790,16 @@ fn find_macros<'a>(line: &'a str, prefix: &str, offset: usize) -> Vec<Macro<'a>>
             break;
         };
         let open = target_start + open_relative;
-        let target = line[target_start..open].trim();
+        let target = &line[target_start..open];
         let Some(close_relative) = line[open + 1..].find(']') else {
             break;
         };
         let close = open + 1 + close_relative;
-        if !target.is_empty() {
+        // A target neither starts nor ends with a space: `include:: foo.adoc[]` is text.
+        if !target.is_empty()
+            && !target.starts_with(char::is_whitespace)
+            && !target.ends_with(char::is_whitespace)
+        {
             found.push(Macro {
                 target,
                 attributes: &line[open + 1..close],
@@ -520,7 +858,8 @@ pub(crate) fn mask_passthroughs(line: &str) -> Cow<'_, str> {
     Cow::Owned(masked)
 }
 
-/// The byte spans of `pass:[…]`, `+++…+++`, `++…++` and constrained `+…+` passthroughs.
+/// The byte spans of `pass:[…]`, `+++…+++`, `++…++`, `$$…$$` and constrained `+…+`
+/// passthroughs.
 fn passthrough_spans(line: &str) -> Vec<(usize, usize)> {
     let bytes = line.as_bytes();
     let mut spans = Vec::new();
@@ -539,6 +878,14 @@ fn passthrough_spans(line: &str) -> Vec<(usize, usize)> {
                     None => index += 1,
                 }
             }
+            b'$' if line[index..].starts_with("$$") => match line[index + 2..].find("$$") {
+                Some(relative) => {
+                    let end = index + 2 + relative + 2;
+                    spans.push((index, end));
+                    index = end;
+                }
+                None => index += 2,
+            },
             b'+' => {
                 let run = bytes[index..]
                     .iter()

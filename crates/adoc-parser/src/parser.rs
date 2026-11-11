@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use adoc_core::{
     Anchor, Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle,
-    IncludeDirective, Related, Section, SourceRange,
+    IncludeDirective, LineIndex, Related, Section, SourceRange,
 };
 
 use crate::line_parser::{
-    conditional_directive, content, find_anchors, find_images, find_includes, find_references,
-    is_block_title, mask_passthroughs, parse_attribute, parse_heading, Conditional, Verbatim,
-    VerbatimBlocks,
+    content, find_anchors, find_images, find_includes, find_references, is_block_metadata,
+    is_dynamic_id, is_line_comment, mask_passthroughs, parse_attribute, parse_heading,
+    trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,29 +47,72 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut document = Document::new(uri, text);
     let mut verbatim = VerbatimBlocks::default();
     let mut pending_anchor: Option<String> = None;
+    // The last line read as text: where it starts, its content and the anchor before it, for
+    // a two-line title whose underline follows.
+    let mut previous: Option<(usize, &str, Option<String>)> = None;
     // How many `ifdef`, `ifndef` and `ifeval` blocks are open.
     let mut conditionals = 0_usize;
+    // The last attribute entry's value ended in ` \`, so the next line continues it.
+    let mut continuing = false;
     // Whether body content has begun, so an include can no longer be in the header.
     let mut body = false;
     // The block attribute lines since the last block, for the block image that may follow.
     let mut block_attributes: Vec<String> = Vec::new();
-    let mut offset = 0;
+    // Asciidoctor drops a leading byte order mark; ranges still count it.
+    let (source, mut offset) = match text.strip_prefix('\u{feff}') {
+        Some(source) => (source, '\u{feff}'.len_utf8()),
+        None => (text, 0),
+    };
 
-    for line in text.split_inclusive('\n') {
+    for line in source.split_inclusive('\n') {
         let line_content = content(line);
         let trimmed = line_content.trim();
 
-        // The preprocessor reads conditionals everywhere but in comment blocks, and removes
-        // their lines before the parser sees them.
-        if verbatim.next() != Verbatim::Comment {
-            if let Some(directive) = conditional_directive(line_content) {
-                conditionals = match directive {
-                    Conditional::Open => conditionals + 1,
-                    Conditional::Close => conditionals.saturating_sub(1),
-                };
-                offset += line.len();
-                continue;
+        if let Some(directive) = verbatim.directive(line_content) {
+            match directive {
+                Conditional::Open => conditionals += 1,
+                Conditional::Close => conditionals = conditionals.saturating_sub(1),
+                // The text is a conditional line of its own: what it includes, declares and
+                // references, read as any line is, unless it stands in a verbatim block,
+                // where only an include counts.
+                Conditional::Line { start, text } => {
+                    let at = offset + start;
+                    let found =
+                        find_includes(text, at)
+                            .into_iter()
+                            .map(|include| IncludeDirective {
+                                conditional: true,
+                                before_body: !body,
+                                ..include
+                            });
+                    document.includes.extend(found);
+                    if verbatim.next() == Verbatim::No {
+                        let inline = mask_passthroughs(text);
+                        document
+                            .anchors
+                            .extend(find_anchors(&inline, at).into_iter().map(|anchor| Anchor {
+                                conditional: true,
+                                ..anchor
+                            }));
+                        document.references.extend(find_references(&inline, at));
+                        document.images.extend(find_images(&inline, at));
+                    }
+                }
             }
+            offset += line.len();
+            continue;
+        }
+        if continuing {
+            if let Some(attribute) = document.attributes.last_mut() {
+                let (more, again) = without_continuation(trimmed);
+                let value = attribute.value.take().unwrap_or_default();
+                let joined = [value.as_str(), more].join(" ");
+                attribute.value = Some(joined.trim().to_owned()).filter(|value| !value.is_empty());
+                attribute.range.end = offset + line_content.len();
+                continuing = again;
+            }
+            offset += line.len();
+            continue;
         }
         let conditional = conditionals > 0;
         let includes = |line: &str, offset: usize, body: bool| {
@@ -84,39 +127,73 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 
         match verbatim.line(trimmed) {
             Verbatim::No => {}
+            Verbatim::Underline(marker_level) => {
+                if let Some((start, title_line, pending)) = previous.take() {
+                    if marker_level != 1 || document.title.is_some() {
+                        body = true;
+                    }
+                    block_attributes.clear();
+                    let raw_title = title_line.trim_end();
+                    let title = raw_title.trim_start();
+                    let selection_start = start + raw_title.len() - title.len();
+                    add_heading(
+                        &mut document,
+                        &Heading {
+                            marker_level,
+                            title,
+                            range: SourceRange::new(start, offset + line_content.trim_end().len()),
+                            selection_range: SourceRange::new(
+                                selection_start,
+                                selection_start + title.len(),
+                            ),
+                        },
+                        pending,
+                    );
+                }
+                offset += line.len();
+                continue;
+            }
             Verbatim::Delimiter => {
-                pending_anchor = None;
-                body = true;
-                block_attributes.clear();
+                // A comment block between an anchor and its block is no content.
+                if !trimmed.starts_with('/') {
+                    pending_anchor = None;
+                    body = true;
+                    block_attributes.clear();
+                }
                 offset += line.len();
                 continue;
             }
             kind => {
-                body = true;
-                block_attributes.clear();
+                // A comment block's lines are no content.
+                if kind != Verbatim::Comment {
+                    body = true;
+                    block_attributes.clear();
+                }
                 // Asciidoctor processes includes inside listing, literal and passthrough
                 // blocks — a code sample pulled into a `[source]` block is the commonest
                 // use of the `example$` family. Everything else in the block is content.
                 if kind == Verbatim::Content {
                     document.includes.extend(includes(line, offset, body));
+                    pending_anchor = None;
                 }
-                pending_anchor = None;
                 offset += line.len();
                 continue;
             }
         }
 
-        if trimmed.starts_with("//") {
-            pending_anchor = None;
+        // A line comment, like the block metadata below, leaves an anchor for the next block.
+        if is_line_comment(trimmed) {
             offset += line.len();
             continue;
         }
+
+        previous = Some((offset, line_content, pending_anchor.clone()));
 
         // Inline extraction sees passthroughs blanked out; includes are whole-line directives.
         let inline = mask_passthroughs(line);
         let anchors = find_anchors(&inline, offset);
         let anchor_only = anchors.len() == 1
-            && anchors[0].range == SourceRange::new(offset, offset + line_content.len());
+            && anchors[0].range == SourceRange::new(offset, offset + line_content.trim_end().len());
         for mut anchor in anchors {
             anchor.conditional = conditional;
             if anchor_only {
@@ -127,7 +204,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 
         // Block metadata, attribute entries and includes leave the body unbegun, and block
         // metadata reaches past blank lines to the block it belongs to.
-        let mut metadata = trimmed.is_empty() || anchor_only || is_block_title(trimmed);
+        let mut metadata = trimmed.is_empty() || anchor_only || is_block_metadata(trimmed);
         if let Some(inside) = trimmed
             .strip_prefix('[')
             .and_then(|rest| rest.strip_suffix(']'))
@@ -140,29 +217,21 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         let line_includes: Vec<_> = includes(line, offset, body).collect();
         let mut header_line = metadata || !line_includes.is_empty();
 
-        if let Some(heading) = parse_heading(line, offset) {
+        if let Some(heading) = parse_heading(line, offset).filter(|_| !verbatim.in_compound_block())
+        {
             if heading.marker_level == 1 && document.title.is_none() {
                 header_line = true;
-                document.title = Some(DocumentTitle {
-                    text: heading.title.to_owned(),
-                    range: heading.range,
-                    selection_range: heading.selection_range,
-                });
-                pending_anchor = None;
-            } else {
-                document.sections.push(Section {
-                    level: heading.marker_level.saturating_sub(1),
-                    title: heading.title.to_owned(),
-                    id: pending_anchor.take(),
-                    range: heading.range,
-                    selection_range: heading.selection_range,
-                });
             }
-        } else if let Some(attribute) = parse_attribute(line, offset) {
+            add_heading(&mut document, &heading, pending_anchor.take());
+        } else if let Some(mut attribute) = parse_attribute(line, offset) {
+            if let Some(value) = &attribute.value {
+                let (value, again) = without_continuation(value);
+                continuing = again;
+                attribute.value = Some(value.to_owned()).filter(|value| !value.is_empty());
+            }
             document.attributes.push(attribute);
-            pending_anchor = None;
             header_line = true;
-        } else if !trimmed.is_empty() && !anchor_only {
+        } else if !trimmed.is_empty() && !anchor_only && !is_block_metadata(trimmed) {
             pending_anchor = None;
         }
 
@@ -185,16 +254,60 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     ParseResult { document }
 }
 
+/// An attribute value's text without the ` \` that continues it on the next line, and whether
+/// it had one.
+fn without_continuation(value: &str) -> (&str, bool) {
+    match value.strip_suffix('\\') {
+        Some(before) if before.is_empty() || before.ends_with([' ', '\t']) => {
+            (before.trim_end(), true)
+        }
+        _ => (value, false),
+    }
+}
+
+/// Records `heading`: the document's title, when it is the first at level 0, else a section
+/// whose id is `pending`, the anchor before it, or one ending its title.
+fn add_heading(document: &mut Document, heading: &Heading<'_>, pending: Option<String>) {
+    if heading.marker_level == 1 && document.title.is_none() {
+        document.title = Some(DocumentTitle {
+            text: heading.title.to_owned(),
+            range: heading.range,
+            selection_range: heading.selection_range,
+        });
+        return;
+    }
+    // An anchor before the heading wins over one ending its line.
+    let (title, id) = match pending {
+        Some(id) => (heading.title, Some(id)),
+        None => trailing_anchor(heading.title).map_or((heading.title, None), |(title, id)| {
+            (title, Some(id.to_owned()))
+        }),
+    };
+    let selection_start = heading.selection_range.start;
+    document.sections.push(Section {
+        level: heading.marker_level.saturating_sub(1),
+        title: title.to_owned(),
+        id,
+        range: heading.range,
+        selection_range: SourceRange::new(selection_start, selection_start + title.len()),
+    });
+}
+
 /// A warning for each anchor whose id an earlier one declared, naming the first by its line and
 /// column and relating it, for a front end to link to. Anchors inside conditionals are left
-/// out: two branches commonly declare the same id, and only one is ever built.
+/// out: two branches commonly declare the same id, and only one is ever built. So are ids made
+/// with an attribute reference, whose values are not known here.
 fn duplicate_anchors(text: &str, anchors: &[Anchor]) -> Vec<Diagnostic> {
     let mut first = HashMap::<&str, SourceRange>::new();
     let mut diagnostics = Vec::new();
-    for anchor in anchors.iter().filter(|anchor| !anchor.conditional) {
+    let mut lines = None;
+    for anchor in anchors
+        .iter()
+        .filter(|anchor| !anchor.conditional && !is_dynamic_id(&anchor.id))
+    {
         match first.get(anchor.id.as_str()) {
             Some(first_range) => {
-                let (line, column) = line_and_column(text, first_range.start);
+                let (line, column) = line_and_column(text, &mut lines, first_range.start);
                 diagnostics.push(Diagnostic {
                     code: DiagnosticCode::DuplicateAnchor,
                     severity: DiagnosticSeverity::Warning,
@@ -217,15 +330,14 @@ fn duplicate_anchors(text: &str, anchors: &[Anchor]) -> Vec<Diagnostic> {
     diagnostics
 }
 
-/// The line and the character on it of `offset` in `text`, both counted from 1.
-fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
+/// The line and the character on it of `offset` in `text`, both counted from 1. The line index
+/// is built once, by the first duplicate, so each is placed by counting within its own line.
+fn line_and_column(text: &str, lines: &mut Option<LineIndex>, offset: usize) -> (usize, usize) {
     let offset = text.floor_char_boundary(offset.min(text.len()));
-    let before = &text[..offset];
-    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
-    (
-        before.matches('\n').count() + 1,
-        before[line_start..].chars().count() + 1,
-    )
+    let lines = lines.get_or_insert_with(|| LineIndex::new(text));
+    let (line, column) = lines.line_column(offset);
+    let line_start = offset - column;
+    (line + 1, text[line_start..offset].chars().count() + 1)
 }
 
 #[cfg(test)]
@@ -266,6 +378,143 @@ image::diagram.png[Architecture]\n";
         assert_eq!(document.includes[0].target, "partials/setup.adoc");
         assert_eq!(document.images[0].target, "diagram.png");
         assert!(document.diagnostics.is_empty());
+    }
+
+    fn section_ids_and_titles(source: &str) -> Vec<(Option<String>, String)> {
+        parse("file:///doc.adoc", source)
+            .document
+            .sections
+            .into_iter()
+            .map(|section| (section.id, section.title))
+            .collect()
+    }
+
+    fn section(id: Option<&str>, title: &str) -> (Option<String>, String) {
+        (id.map(str::to_owned), title.to_owned())
+    }
+
+    /// An anchor reaches its section past block attribute lines, block titles, comments,
+    /// attribute entries and blank lines, as Asciidoctor carries block metadata (#527).
+    #[test]
+    fn an_anchor_reaches_its_section_past_metadata() {
+        let source = "[[app-a]]\n[appendix]\n== Appendix A\n\n[[trail]] \n== Trailing\n\n\
+                      [[c]]\n// note\n== Commented\n\n[[x1]]\n.Block title\n[.role]\n== Mixed\n\n\
+                      [[attr]]\n:foo: bar\n== After Attr\n\n[[c2]]\n////\nblock comment\n////\n== After Block Comment\n\n\
+                      [[blank]]\n\n== After Blank\n";
+        assert_eq!(
+            section_ids_and_titles(source),
+            [
+                section(Some("app-a"), "Appendix A"),
+                section(Some("trail"), "Trailing"),
+                section(Some("c"), "Commented"),
+                section(Some("x1"), "Mixed"),
+                section(Some("attr"), "After Attr"),
+                section(Some("c2"), "After Block Comment"),
+                section(Some("blank"), "After Blank"),
+            ]
+        );
+    }
+
+    /// A block attribute line giving an id replaces an anchor before it; content clears it.
+    #[test]
+    fn a_later_block_id_replaces_an_anchor_and_content_clears_it() {
+        assert_eq!(
+            section_ids_and_titles("[[a1]]\n[#b1]\n== Replaced\n\n[[gone]]\nText.\n== Plain\n"),
+            [section(Some("b1"), "Replaced"), section(None, "Plain")]
+        );
+    }
+
+    /// A `[[id]]` ending the title line is the section's id, and leaves the title, unless an
+    /// anchor before the heading gives one (#527).
+    #[test]
+    fn a_trailing_anchor_on_a_heading_is_its_id() {
+        assert_eq!(
+            section_ids_and_titles(
+                "== Title [[custom]]\n\n== Y [[z,Ref]]\n\n[[t]]\n== X [[y]]\n\n== Not [[ok]] end\n"
+            ),
+            [
+                section(Some("custom"), "Title"),
+                section(Some("z"), "Y"),
+                section(Some("t"), "X [[y]]"),
+                section(None, "Not [[ok]] end"),
+            ]
+        );
+        let source = "== Title [[custom]]\n";
+        let section = &parse("file:///doc.adoc", source).document.sections[0];
+        assert_eq!(
+            &source[section.selection_range.start..section.selection_range.end],
+            "Title"
+        );
+    }
+
+    /// With the explicit id kept, a repeated title is numbered as Asciidoctor numbers it.
+    #[test]
+    fn a_discrete_heading_keeps_its_anchor() {
+        assert_eq!(
+            section_ids_and_titles("[[first]]\n[discrete]\n== Overview\n\n== Overview\n"),
+            [
+                section(Some("first"), "Overview"),
+                section(None, "Overview")
+            ]
+        );
+    }
+
+    /// A byte order mark is dropped, as Asciidoctor drops it, and every range still points
+    /// into the text as given (#525).
+    #[test]
+    fn reads_the_first_line_after_a_byte_order_mark() {
+        let source = "\u{feff}= Bom\n\n== S\n";
+        let document = parse("file:///a.adoc", source).document;
+        let title = document.title.expect("a title");
+        assert_eq!(title.text, "Bom");
+        assert_eq!(title.range, SourceRange::new(3, 8));
+        assert_eq!(title.selection_range, SourceRange::new(5, 8));
+        assert_eq!(document.sections[0].title, "S");
+
+        let document = parse("file:///a.adoc", "\u{feff}:toc: left\n").document;
+        assert_eq!(document.attributes[0].name, "toc");
+        assert_eq!(document.attributes[0].range.start, 3);
+
+        let document = parse("file:///a.adoc", "\u{feff}include::part.adoc[]\n").document;
+        assert_eq!(document.includes[0].target, "part.adoc");
+        assert_eq!(document.includes[0].range.start, 3);
+
+        let document = parse("file:///a.adoc", "\u{feff}----\n<<x>>\n----\n").document;
+        assert!(document.references.is_empty());
+    }
+
+    /// A `<<…>>` target with a `#` after its start names another document, as Asciidoctor
+    /// reads it; anything else, `.adoc` and all, is an id in this one (#521).
+    #[test]
+    fn double_angle_references_with_a_path_name_another_document() {
+        let source = "See <<other.adoc#details,Details>> and <<other.adoc#details>> and <<other#details>>.\n\
+                      And <<intro>>, <<#intro>>, <<sec.1>>, <<Section Title>> and <<other.adoc>>.\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let kinds = document
+            .references
+            .iter()
+            .map(|reference| {
+                (
+                    reference.kind,
+                    reference.target.as_str(),
+                    reference.text.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![
+                (ReferenceKind::Xref, "other.adoc#details", Some("Details")),
+                (ReferenceKind::Xref, "other.adoc#details", None),
+                (ReferenceKind::Xref, "other#details", None),
+                (ReferenceKind::LocalAnchor, "intro", None),
+                (ReferenceKind::LocalAnchor, "intro", None),
+                (ReferenceKind::LocalAnchor, "sec.1", None),
+                (ReferenceKind::LocalAnchor, "Section Title", None),
+                (ReferenceKind::LocalAnchor, "other.adoc", None),
+            ]
+        );
     }
 
     #[test]
@@ -351,12 +600,126 @@ image::diagram.png[Architecture]\n";
             .collect()
     }
 
+    /// The `#id` shorthand may follow a style or roles, on a block attribute line and inline
+    /// (#522).
+    #[test]
+    fn anchor_shorthand_after_a_style_or_role() {
+        assert_eq!(anchor_ids("[source#code,ruby]\n----\nx\n----\n"), ["code"]);
+        assert_eq!(anchor_ids("[quote#q1]\n____\nHi\n____\n"), ["q1"]);
+        assert_eq!(anchor_ids("[.lead#intro]\nPara.\n"), ["intro"]);
+        assert_eq!(anchor_ids("[%header#tbl.r]\n|===\n|a\n|===\n"), ["tbl"]);
+        assert_eq!(anchor_ids("[.r#two]#marked# here.\n"), ["two"]);
+        // A named attribute first is no shorthand, and neither is a style alone.
+        assert!(anchor_ids("[link=#top]\nPara.\n").is_empty());
+        assert!(anchor_ids("[source,ruby]\n----\nx\n----\n").is_empty());
+    }
+
+    /// `anchor:id[]` and `anchor:id[reftext]` declare an anchor; an escaped one or one whose id
+    /// cannot be an id is text (#522).
+    #[test]
+    fn anchor_macros_are_anchors() {
+        let source =
+            "See anchor:legacy[] and anchor:lab[Label], not \\anchor:esc[] or anchor:9x[].\n";
+        let document = parse("file:///doc.adoc", source).document;
+        let anchors: Vec<_> = document
+            .anchors
+            .iter()
+            .map(|anchor| {
+                (
+                    anchor.id.as_str(),
+                    &source[anchor.range.start..anchor.range.end],
+                )
+            })
+            .collect();
+        assert_eq!(
+            anchors,
+            [("legacy", "anchor:legacy[]"), ("lab", "anchor:lab[Label]")]
+        );
+    }
+
     #[test]
     fn anchor_shorthand_stops_at_role() {
         assert_eq!(anchor_ids("[#intro.lead]\n== Intro\n"), ["intro"]);
         assert_eq!(anchor_ids("[#intro,role=lead]\n== Intro\n"), ["intro"]);
         // Inline, before marked text.
         assert_eq!(anchor_ids("Some [#key.big]#word# here.\n"), ["key"]);
+    }
+
+    /// `[#…]` is an anchor only as a whole block attribute line or straight before a formatting
+    /// mark; link text and prose such as `[#12]` are text (#523).
+    #[test]
+    fn link_text_and_prose_starting_with_a_hash_are_not_anchors() {
+        let source = "* Fixed https://example.com/issues/12[#12] crash\n\
+                      * Follow-up to https://example.com/issues/12[#12]\n\n\
+                      See [#12] and again [#12].\n\n\
+                      x[#w]#y# and [#spaced id]#z#\n";
+        let document = parse("file:///doc.adoc", source).document;
+        assert!(document.anchors.is_empty(), "{:?}", document.anchors);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+
+        assert_eq!(
+            anchor_ids("A [#s1]^sup^, [#s2]~sub~, [#d1]**dbl**x, [#c]`code` and [#e]_em_.\n"),
+            ["s1", "s2", "d1", "c", "e"]
+        );
+    }
+
+    /// An escaped anchor is shown as written (#523).
+    #[test]
+    fn escaped_anchors_are_not_anchors() {
+        let document = parse(
+            "file:///doc.adoc",
+            "Write \\[[literal]] and \\[[literal]] twice.\n",
+        )
+        .document;
+        assert!(document.anchors.is_empty(), "{:?}", document.anchors);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+    }
+
+    /// An inline anchor's id starts with a letter, `_` or `:` and holds only word characters,
+    /// `-`, `:` and `.`, as Asciidoctor's pattern has it (#523).
+    #[test]
+    fn text_that_cannot_be_an_id_is_not_an_anchor() {
+        let document = parse(
+            "file:///doc.adoc",
+            "Index m[[0]] and m[[0]] again; [[two words]] and [[ spaced]].\n",
+        )
+        .document;
+        assert!(document.anchors.is_empty(), "{:?}", document.anchors);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+
+        assert_eq!(
+            anchor_ids("[[ok-1.2:x]] [[_u]] [[:c]] [[x,Ref Text]] [[é]] [[{p}-a]]\n"),
+            ["ok-1.2:x", "_u", ":c", "x", "é", "{p}-a"]
+        );
+    }
+
+    /// An id made with an attribute reference cannot be compared before it is substituted,
+    /// so two of them are no duplicate (#523).
+    #[test]
+    fn dynamic_ids_are_left_out_of_the_duplicate_check() {
+        let document = parse(
+            "file:///doc.adoc",
+            "[[{prefix}-a]]\nOne.\n\n[[{prefix}-a]]\nTwo.\n",
+        )
+        .document;
+        assert_eq!(document.anchors.len(), 2);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
     }
 
     #[test]
@@ -623,6 +986,39 @@ image::diagram.png[Architecture]\n";
         assert_eq!(document.includes.len(), 1);
     }
 
+    /// An open block under a verbatim style is that verbatim block, and a `[pass]` paragraph
+    /// is raw (#532).
+    #[test]
+    fn verbatim_styles_over_open_blocks_and_pass_paragraphs_are_verbatim() {
+        for source in [
+            "[listing]\n--\n<<x>>\n[[a]]\n--\n",
+            "[source,ruby]\n--\n<<x>>\n\n[[a]]\n--\n",
+            "[pass]\n<<x>> [[a]]\n",
+        ] {
+            let document = parse("file:///doc.adoc", source).document;
+            assert!(document.references.is_empty(), "{source:?}");
+            assert!(document.anchors.is_empty(), "{source:?}");
+        }
+        assert_eq!(
+            reference_targets("[listing]\n--\n<<x>>\n--\n\nSee <<y>>.\n"),
+            ["y"]
+        );
+    }
+
+    /// A heading inside an example, sidebar, quote or open block is no section (#532).
+    #[test]
+    fn headings_inside_compound_blocks_are_not_sections() {
+        let source = "====\n== Not a section\n====\n\n****\n=== In sidebar\n****\n\n\
+                      ____\n== Quoted\n____\n\n--\n== Open\n\n====\n== Nested\n====\n--\n\n== Real\n";
+        let titles: Vec<_> = parse("file:///doc.adoc", source)
+            .document
+            .sections
+            .into_iter()
+            .map(|section| section.title)
+            .collect();
+        assert_eq!(titles, ["Real"]);
+    }
+
     #[test]
     fn source_styled_paragraph_is_verbatim() {
         for style in [
@@ -643,7 +1039,13 @@ image::diagram.png[Architecture]\n";
                 .map(|r| r.target.as_str())
                 .collect();
             assert_eq!(targets, ["real.adoc"], "{style}");
-            assert!(document.anchors.is_empty(), "{style}");
+            assert!(
+                document
+                    .anchors
+                    .iter()
+                    .all(|anchor| anchor.id != "not-real"),
+                "{style}"
+            );
         }
     }
 
@@ -678,6 +1080,61 @@ image::diagram.png[Architecture]\n";
         let document = parse("file:///demo.adoc", source).document;
 
         assert_eq!(document.references.len(), 2);
+    }
+
+    /// A two-line title is a title, not the opening of a listing block that hides the rest of
+    /// the page (#526).
+    #[test]
+    fn two_line_titles_are_titles() {
+        let source = "Title\n=====\n\nSection\n-------\n\n[[real]]\nText xref:other.adoc[] and <<real>>.\n\n\
+                      Sub\n~~~\n\nDeep\n^^^^\n\n[[five]]\nDeeper\n+++++\n";
+        let document = parse("file:///doc.adoc", source).document;
+
+        let title = document.title.expect("a title");
+        assert_eq!(title.text, "Title");
+        assert_eq!(
+            &source[title.selection_range.start..title.selection_range.end],
+            "Title"
+        );
+        let sections: Vec<_> = document
+            .sections
+            .iter()
+            .map(|section| (section.level, section.title.as_str(), section.id.as_deref()))
+            .collect();
+        assert_eq!(
+            sections,
+            [
+                (1, "Section", None),
+                (2, "Sub", None),
+                (3, "Deep", None),
+                (4, "Deeper", Some("five")),
+            ]
+        );
+        let section = &document.sections[0];
+        assert_eq!(
+            &source[section.range.start..section.range.end],
+            "Section\n-------"
+        );
+        assert_eq!(document.anchors.len(), 2);
+        assert_eq!(document.references.len(), 2);
+    }
+
+    /// A delimiter under a blank line or a block attribute line, under a paragraph's second line,
+    /// or two characters longer or shorter than the line above, still opens its block.
+    #[test]
+    fn delimiters_that_underline_nothing_still_open_blocks() {
+        for source in [
+            "Text\n\n----\n<<hidden>>\n----\n",
+            "[source]\n----\n<<hidden>>\n----\n",
+            "Para one\nPara two\n--------\n<<hidden>>\n--------\n",
+            "Abcd\n------\n<<hidden>>\n------\n",
+            "Abcdefgh\n------\n<<hidden>>\n------\n",
+            ".Title\n----\n<<hidden>>\n----\n",
+        ] {
+            let document = parse("file:///doc.adoc", source).document;
+            assert!(document.sections.is_empty(), "{source:?}");
+            assert!(document.references.is_empty(), "{source:?}");
+        }
     }
 
     #[test]
@@ -728,6 +1185,38 @@ image::diagram.png[Architecture]\n";
 
     /// `ifdef::attr[text]` is a single line, not the start of a conditional block, and
     /// directives are lines of their own.
+    /// A single-line conditional's text is a line of its own, conditional: an include in it is
+    /// recorded, and anchors in two of them do not collide (#532).
+    #[test]
+    fn a_single_line_conditional_holds_a_conditional_line() {
+        let source = "ifdef::x[include::part.adoc[]]\nifdef::x[[[a]]]\nifndef::x[[[a]]]\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let includes: Vec<_> = document
+            .includes
+            .iter()
+            .map(|include| {
+                (
+                    include.target.as_str(),
+                    include.conditional,
+                    &source[include.range.start..include.range.end],
+                )
+            })
+            .collect();
+        assert_eq!(includes, [("part.adoc", true, "include::part.adoc[]")]);
+        let anchors: Vec<_> = document
+            .anchors
+            .iter()
+            .map(|anchor| (anchor.id.as_str(), anchor.conditional))
+            .collect();
+        assert_eq!(anchors, [("a", true), ("a", true)]);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+    }
+
     #[test]
     fn single_line_and_indented_directives_open_nothing() {
         let source = "ifdef::x[Some text.]\n  ifdef::y[]\n[[a]]\ninclude::a.adoc[]\n";
@@ -744,6 +1233,89 @@ image::diagram.png[Architecture]\n";
 
         let conditional: Vec<_> = document.includes.iter().map(|i| i.conditional).collect();
         assert_eq!(conditional, [true, false]);
+    }
+
+    /// A continued attribute value runs on to the next line, which is no body text (#532).
+    #[test]
+    fn a_continued_attribute_value_takes_the_next_line() {
+        let source = ":desc: one \\\ntwo <<x>> \\\nthree\nBody <<y>>.\n";
+        let document = parse("file:///doc.adoc", source).document;
+        let attribute = &document.attributes[0];
+        assert_eq!(attribute.name, "desc");
+        assert_eq!(attribute.value.as_deref(), Some("one two <<x>> three"));
+        assert_eq!(
+            &source[attribute.range.start..attribute.range.end],
+            ":desc: one \\\ntwo <<x>> \\\nthree"
+        );
+        assert_eq!(reference_targets(source), ["y"]);
+    }
+
+    /// An attribute entry's name starts with a word character, and a space or the end of the
+    /// line follows its second colon (#532).
+    #[test]
+    fn text_that_only_looks_like_an_attribute_entry_is_not_one() {
+        let document = parse(
+            "file:///doc.adoc",
+            ":a:b\n\n:30:00 is the time\n\n:-x: y\n\n:ok:\n:v:\tvalue\n",
+        )
+        .document;
+        let attributes: Vec<_> = document
+            .attributes
+            .iter()
+            .map(|attribute| (attribute.name.as_str(), attribute.value.as_deref()))
+            .collect();
+        assert_eq!(attributes, [("ok", None), ("v", Some("value"))]);
+    }
+
+    /// `== Title ==` closes with its marker, and a tab may follow the marker (#532).
+    #[test]
+    fn a_heading_may_close_with_its_marker_or_open_with_a_tab() {
+        let source = "= Doc =\n\n== Title ==\n\n==\tTabbed\n\n== Uneven ===\n";
+        let document = parse("file:///doc.adoc", source).document;
+        assert_eq!(document.title.unwrap().text, "Doc");
+        let titles: Vec<_> = document
+            .sections
+            .iter()
+            .map(|section| &source[section.selection_range.start..section.selection_range.end])
+            .collect();
+        assert_eq!(titles, ["Title", "Tabbed", "Uneven ==="]);
+    }
+
+    /// A line comment is `//` not followed by a third `/` (#532).
+    #[test]
+    fn three_slashes_are_text() {
+        assert_eq!(reference_targets("/// see <<x>>\n// see <<y>>\n"), ["x"]);
+    }
+
+    /// A macro's target neither starts nor ends with a space, and a block image ends its line
+    /// (#532).
+    #[test]
+    fn spaced_targets_and_trailing_text_are_not_macros() {
+        let document = parse(
+            "file:///doc.adoc",
+            "include:: foo.adoc[]\n\nimage::a.png[] trailing\n\nimage:: b.png[]\n",
+        )
+        .document;
+        assert!(document.includes.is_empty(), "{:?}", document.includes);
+        assert!(document.images.is_empty(), "{:?}", document.images);
+    }
+
+    /// Every prefix of a page holding the constructs read since the 11 Nov review, as typed one
+    /// character at a time, parses and completes without panicking, and its section ids are
+    /// generated.
+    #[test]
+    fn half_typed_constructs_never_panic() {
+        let source = "\u{feff}= Doc =\n:desc: one \\\ntwo\n\nTitle é\n=======\n\n[[a1]]\n[source#code,ruby]\n--\n<<x>>\n--\n\n\
+                      == What's [[t]] new? [[w,Ref]]\n\nSee <<other.adoc#d,D>>, <<<, a << b, $$<<p>>$$, [#12], \\[[e]], \
+                      [.r#two]#m# and anchor:lab[L] x[#w]#y# **[#z]**b**.\n\nifdef::x[include::p.adoc[]]\nifndef::x[[[a]]]\n\
+                      ====\n== In\n====\n/// c\n|===\n| image::c.png[] | b\n|===\n";
+        for end in (0..=source.len()).filter(|&end| source.is_char_boundary(end)) {
+            let document = parse("file:///doc.adoc", &source[..end]).document;
+            for style in [adoc_core::IdStyle::Antora, adoc_core::IdStyle::Asciidoctor] {
+                let _ = adoc_core::section_ids(&document.sections, &document.anchors, style);
+            }
+            let _ = crate::completion_context(&source[..end], end);
+        }
     }
 
     #[test]
@@ -785,6 +1357,37 @@ image::diagram.png[Architecture]\n";
         );
     }
 
+    /// Reporting duplicates late in a long page costs about what reporting nothing does: each
+    /// is placed without scanning the page from its start again (#530).
+    #[test]
+    fn duplicate_anchors_late_in_a_long_page_are_placed_in_linear_time() {
+        let prose =
+            "A line of prose that runs on for a while to make the page long.\n".repeat(20_000);
+        let distinct: String = (0..4_000).map(|n| format!("[[a{n}]]\n")).collect();
+        let doubled: String = (0..2_000)
+            .map(|n| format!("[[a{n}]]\n[[a{n}]]\n"))
+            .collect();
+        let fastest = |source: &str| {
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    let result = parse("file:///long.adoc", source);
+                    (started.elapsed(), result.diagnostics().len())
+                })
+                .min()
+                .unwrap()
+        };
+
+        let (without, none) = fastest(&format!("{prose}{distinct}"));
+        let (with, reported) = fastest(&format!("{prose}{doubled}"));
+
+        assert_eq!((none, reported), (0, 2_000));
+        assert!(
+            with < without * 3 + std::time::Duration::from_millis(100),
+            "{with:?} with duplicates against {without:?} without"
+        );
+    }
+
     fn reference_targets(text: &str) -> Vec<String> {
         parse("file:///guide.adoc", text)
             .document
@@ -803,6 +1406,24 @@ image::diagram.png[Architecture]\n";
             "Use ++<<a>>++, +++<<b>>+++, pass:[<<c>>], pass:q[<<d>>] and +xref:e.adoc[]+ here.\n"
         )
         .is_empty());
+    }
+
+    /// A reference's target starts straight after `<<` or `xref:` with a word character or one
+    /// of `#/.:{`, as Asciidoctor's pattern has it; shift operators and prose are text (#524).
+    #[test]
+    fn shift_operators_and_spaced_openings_are_not_references() {
+        assert!(reference_targets("Use `x << 2` and `y >> 1` here.\n").is_empty());
+        assert_eq!(
+            reference_targets("If a << b then see <<real>>.\n"),
+            ["real"]
+        );
+        assert!(reference_targets("Use $$<<a>>$$ here.\n").is_empty());
+        assert!(reference_targets("The xref: macro takes a target [and text].\n").is_empty());
+        assert!(reference_targets("A page break <<< is not <<-e>> either.\n").is_empty());
+        assert_eq!(
+            reference_targets("See <<{x}>>, <</a>>, <<:b>>, <<.c>> and <<<d>>.\n"),
+            ["{x}", "/a", ":b", ".c", "d"]
+        );
     }
 
     #[test]

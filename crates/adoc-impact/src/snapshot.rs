@@ -334,11 +334,11 @@ impl<'a> DependencySnapshot<'a> {
             .anchors
             .iter()
             .map(|anchor| anchor.id.clone())
-            .chain(adoc_lang::xref::section_ids(
-                &self.state.antora,
-                path,
-                &file.document,
-            ))
+            .chain(
+                adoc_lang::xref::section_ids(&self.state.antora, path, &file.document)
+                    .into_iter()
+                    .filter(|id| !id.is_empty()),
+            )
             .collect()
     }
 
