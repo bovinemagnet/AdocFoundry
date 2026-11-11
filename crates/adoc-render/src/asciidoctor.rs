@@ -1,6 +1,6 @@
 use std::{
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -88,9 +88,9 @@ impl Renderer for SystemAsciidoctor {
         } else if let Some(file_name) =
             source_directory.and_then(|_| request.source_file.file_name())
         {
-            command.arg(file_name);
+            command.arg(not_an_option(Path::new(file_name)));
         } else {
-            command.arg(&request.source_file);
+            command.arg(not_an_option(&request.source_file));
         }
         command
             .stdin(if request.source_text.is_some() {
@@ -120,8 +120,15 @@ impl Renderer for SystemAsciidoctor {
         let stderr = read_all(child.stderr.take());
         let deadline = Instant::now() + self.timeout;
         let status = loop {
-            if let Some(status) = child.try_wait().map_err(RenderError::Io)? {
-                break status;
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(error) => {
+                    // Reaped all the same.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(RenderError::Io(error));
+                }
             }
             if Instant::now() >= deadline {
                 let _ = child.kill();
@@ -136,12 +143,13 @@ impl Renderer for SystemAsciidoctor {
             }
             thread::sleep(Duration::from_millis(10));
         };
-        if let Some(writer) = writer {
+        // A renderer that exits before reading the page breaks the pipe: its own failure is the
+        // one reported, and a failed write only when it succeeded.
+        let written = writer.map_or(Ok(()), |writer| {
             writer
                 .join()
                 .unwrap_or_else(|_| Err(io::Error::other("writing the source failed")))
-                .map_err(RenderError::Io)?;
-        }
+        });
         let stdout = stdout.join().unwrap_or_default();
         let stderr = stderr.join().unwrap_or_default();
         if !status.success() {
@@ -150,11 +158,22 @@ impl Renderer for SystemAsciidoctor {
                 stderr: String::from_utf8_lossy(&stderr).trim().to_owned(),
             });
         }
+        written.map_err(RenderError::Io)?;
 
         Ok(RenderOutput {
             html: String::from_utf8_lossy(&stdout).into_owned(),
             warnings: stderr_lines(&stderr),
         })
+    }
+}
+
+/// `path`, as `./path` when it would be read as an option (`-n.adoc`). Asciidoctor does not
+/// take `--` to end its options.
+fn not_an_option(path: &Path) -> PathBuf {
+    if path.as_os_str().to_string_lossy().starts_with('-') {
+        Path::new(".").join(path)
+    } else {
+        path.to_path_buf()
     }
 }
 
@@ -351,6 +370,66 @@ mod tests {
             "{}",
             with.html
         );
+    }
+
+    /// An executable at `path` running `script`, written under the spawn guard the caller holds.
+    #[cfg(unix)]
+    fn fake_renderer(path: &std::path::Path, script: &str) {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        fs::write(path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// A renderer that fails before reading the page is reported by its status and message,
+    /// whatever the size of the page, not as the pipe it left broken.
+    #[cfg(unix)]
+    #[test]
+    fn a_renderer_that_fails_without_reading_the_page_reports_its_error() {
+        let _guard = spawn_guard();
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("failing-asciidoctor");
+        fake_renderer(
+            &executable,
+            "#!/bin/sh\nprintf 'cannot load such file -- asciidoctor\\n' >&2\nexit 1\n",
+        );
+        let page = "word ".repeat(40_000);
+
+        let error = SystemAsciidoctor::new(&executable)
+            .render(&RenderRequest::from_source(
+                directory.path().join("guide.adoc"),
+                page,
+            ))
+            .unwrap_err();
+
+        match error {
+            RenderError::ProcessFailed { status, stderr } => {
+                assert_eq!(status, Some(1));
+                assert_eq!(stderr, "cannot load such file -- asciidoctor");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A page whose name starts with `-` is read as a file, not as an option.
+    #[cfg(unix)]
+    #[test]
+    fn a_page_named_like_an_option_is_rendered() {
+        let _guard = spawn_guard();
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("echo-last");
+        fake_renderer(
+            &executable,
+            "#!/bin/sh\nfor a in \"$@\"; do last=$a; done\ncat \"$last\"\n",
+        );
+        let page = directory.path().join("-n.adoc");
+        std::fs::write(&page, "= Dash").unwrap();
+
+        let output = SystemAsciidoctor::new(&executable)
+            .render(&RenderRequest::from_file(&page))
+            .unwrap();
+
+        assert_eq!(output.html, "= Dash");
     }
 
     #[test]
