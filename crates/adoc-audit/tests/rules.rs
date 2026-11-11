@@ -482,3 +482,36 @@ fn dash_items_and_the_xref_shorthand_list_their_pages() {
     let coverage = coverage(&report, "docs", None);
     assert_eq!((coverage.pages, coverage.listed), (5, 4));
 }
+
+#[test]
+fn a_version_in_two_descriptors_reads_both_navigations() {
+    let report = audit_files(
+        &[
+            (
+                "one/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/one/nav.adoc\n",
+            ),
+            ("one/modules/one/nav.adoc", "* xref:page-one.adoc[]\n"),
+            ("one/modules/one/pages/page-one.adoc", "= One\n"),
+            (
+                "two/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/two/nav.adoc\n",
+            ),
+            ("two/modules/two/nav.adoc", "* xref:page-two.adoc[]\n"),
+            ("two/modules/two/pages/page-two.adoc", "= Two\n"),
+            ("two/modules/ROOT/pages/index.adoc", "= Docs\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    assert!(
+        found(&report, UNLISTED).is_empty(),
+        "{:#?}",
+        report.findings()
+    );
+    assert_eq!(report.coverage().len(), 1);
+    let coverage = coverage(&report, "docs", None);
+    assert_eq!(
+        (coverage.navigation_files, coverage.pages, coverage.listed),
+        (2, 3, 3)
+    );
+}

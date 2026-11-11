@@ -223,7 +223,7 @@ impl Context<'_> {
         if let Some(context) = catalog.context_for_path(path) {
             return self.includes(&context.component, context.version.as_deref());
         }
-        catalog.components().any(|descriptor| {
+        catalog.all_descriptors().any(|descriptor| {
             normalize_path(&descriptor.root.join("antora.yml")) == path
                 && self.includes(&descriptor.name, descriptor.version.as_deref())
         })

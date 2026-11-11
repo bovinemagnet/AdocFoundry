@@ -78,7 +78,9 @@ impl fmt::Display for NavError {
 impl std::error::Error for NavError {}
 
 /// The navigation trees of `component` at `version`, one per file listed under `nav` in its
-/// `antora.yml`, in that order. An empty list means the component declares no navigation.
+/// `antora.yml`, in that order; a version spread over several `antora.yml` files has the files
+/// of each, each read from its own root, in root order. An empty list means the component
+/// declares no navigation.
 ///
 /// `read` supplies file contents, so that unsaved buffers can stand in for files on disk.
 pub fn nav_tree(
@@ -101,18 +103,22 @@ pub fn nav_tree_each(
     version: Option<&str>,
     read: &dyn Fn(&Path) -> io::Result<String>,
 ) -> Result<Vec<Result<NavTree, NavError>>, NavError> {
-    let descriptor =
-        catalog
-            .component(component, version)
-            .ok_or_else(|| NavError::UnknownComponent {
-                component: component.to_owned(),
-                version: version.map(str::to_owned),
-            })?;
-    Ok(descriptor
-        .nav
+    let descriptors = catalog.descriptors_of(component, version);
+    if descriptors.is_empty() {
+        return Err(NavError::UnknownComponent {
+            component: component.to_owned(),
+            version: version.map(str::to_owned),
+        });
+    }
+    Ok(descriptors
         .iter()
-        .map(|entry| {
-            let path = normalise(&descriptor.root.join(entry));
+        .flat_map(|descriptor| {
+            descriptor
+                .nav
+                .iter()
+                .map(|entry| normalise(&descriptor.root.join(entry)))
+        })
+        .map(|path| {
             let text = read(&path).map_err(|error| NavError::Read {
                 path: path.clone(),
                 message: error.to_string(),

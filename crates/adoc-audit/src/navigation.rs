@@ -73,11 +73,17 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
         collect_listed(&tree.items, descriptor, &mut listed);
     }
     let start = start_page(descriptor);
+    // A version spread over several `antora.yml` files lists the navigation of each.
+    let navigation_files: usize = catalog
+        .descriptors_of(&descriptor.name, version)
+        .iter()
+        .map(|descriptor| descriptor.nav.len())
+        .sum();
 
     let mut coverage = NavCoverage {
         component: descriptor.name.clone(),
         version: descriptor.version.clone(),
-        navigation_files: descriptor.nav.len(),
+        navigation_files,
         pages: 0,
         listed: 0,
         undetermined: 0,
@@ -99,7 +105,7 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
                 coverage.listed += 1;
                 continue;
             }
-            if descriptor.nav.is_empty() {
+            if navigation_files == 0 {
                 continue;
             }
             let location = context.location(&page.source_path, None);

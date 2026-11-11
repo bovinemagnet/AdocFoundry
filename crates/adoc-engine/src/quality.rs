@@ -510,7 +510,7 @@ impl Engine {
         paths
             .iter()
             .flat_map(|path| {
-                catalog.components().filter(move |descriptor| {
+                catalog.all_descriptors().filter(move |descriptor| {
                     descriptor
                         .nav
                         .iter()
