@@ -337,17 +337,27 @@ impl ProtocolServer {
                 .document(id)
                 .map(adoc_engine::OpenDocument::text_string)
                 .unwrap_or_default();
-            let (range, replacement) = change_range(&text, change, self.encoding)?;
-            self.engine
-                .invoke(
-                    ids::EDIT_REPLACE_RANGE,
-                    CommandArgs::Text {
-                        id,
-                        range,
-                        text: replacement,
-                    },
-                )
-                .map_err(|error| ServerError::InvalidChange(error.to_string()))?;
+            // A change that cannot be applied is reported and skipped: one bad notification
+            // never ends the server, and LSP offers no way to ask for the whole text again.
+            let applied =
+                change_range(&text, change, self.encoding).and_then(|(range, replacement)| {
+                    self.engine
+                        .invoke(
+                            ids::EDIT_REPLACE_RANGE,
+                            CommandArgs::Text {
+                                id,
+                                range,
+                                text: replacement,
+                            },
+                        )
+                        .map_err(|error| ServerError::InvalidChange(error.to_string()))
+                });
+            if let Err(error) = applied {
+                eprintln!(
+                    "adoc-ls: skipped a change to {}: {error}",
+                    params.text_document.uri.as_str()
+                );
+            }
         }
         if let Some((_, version)) = self.open.get_mut(&id) {
             *version = params.text_document.version;

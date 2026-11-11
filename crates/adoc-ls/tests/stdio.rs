@@ -303,6 +303,124 @@ fn binary_completes_an_attribute_name_over_the_auto_closed_brace() {
     assert!(child.wait().expect("wait for adoc-ls").success());
 }
 
+/// The specification says a character past a line's end means the line's end, so such a change
+/// is clamped; and no one bad notification ends the server.
+#[test]
+fn binary_clamps_a_change_past_the_end_and_keeps_serving() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_adoc-ls"))
+        .arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start adoc-ls");
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout"));
+
+    Message::Request(Request::new(
+        RequestId::from(1),
+        Initialize::METHOD.to_owned(),
+        InitializeParams::default(),
+    ))
+    .write(&mut stdin)
+    .expect("send initialize");
+    assert_success_response(read_message(&mut stdout), RequestId::from(1));
+    Message::Notification(Notification::new(
+        Initialized::METHOD.to_owned(),
+        InitializedParams {},
+    ))
+    .write(&mut stdin)
+    .expect("send initialized");
+
+    let uri = "file:///docs/guide.adoc";
+    Message::Notification(Notification::new(
+        "textDocument/didOpen".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri, "languageId": "asciidoc", "version": 1, "text": ":a: 1\nend" },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send didOpen");
+
+    // Past the end of line 0, through a line past the last: the end of the text.
+    Message::Notification(Notification::new(
+        "textDocument/didChange".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri, "version": 2 },
+            "contentChanges": [{
+                "range": {
+                    "start": { "line": 0, "character": 999 },
+                    "end": { "line": 7, "character": 0 },
+                },
+                "text": "\n\n{a}",
+            }],
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send didChange");
+    // A change whose start is after its end cannot be applied; it is skipped.
+    Message::Notification(Notification::new(
+        "textDocument/didChange".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri, "version": 3 },
+            "contentChanges": [{
+                "range": {
+                    "start": { "line": 2, "character": 2 },
+                    "end": { "line": 0, "character": 0 },
+                },
+                "text": "x",
+            }],
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send didChange");
+
+    // The text is now `:a: 1\n\n{a}`, and the server still answers.
+    Message::Request(Request::new(
+        RequestId::from(2),
+        "textDocument/hover".to_owned(),
+        serde_json::json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 2, "character": 1 },
+        }),
+    ))
+    .write(&mut stdin)
+    .expect("send hover");
+    let response = loop {
+        if let Message::Response(response) = read_message(&mut stdout) {
+            break response;
+        }
+    };
+    assert_eq!(response.id, RequestId::from(2));
+    let hover: Option<Hover> =
+        serde_json::from_value(response.response_result.expect("hover succeeded"))
+            .expect("decode hover");
+    let Some(Hover {
+        contents: HoverContents::Markup(markup),
+        ..
+    }) = hover
+    else {
+        panic!("expected a hover on the reference the clamped change wrote");
+    };
+    assert!(markup.value.contains("`1`"), "{}", markup.value);
+
+    Message::Request(Request::new(
+        RequestId::from(3),
+        Shutdown::METHOD.to_owned(),
+        (),
+    ))
+    .write(&mut stdin)
+    .expect("send shutdown");
+    loop {
+        if let Message::Response(_) = read_message(&mut stdout) {
+            break;
+        }
+    }
+    Message::Notification(Notification::new(Exit::METHOD.to_owned(), ()))
+        .write(&mut stdin)
+        .expect("send exit");
+    assert!(child.wait().expect("wait for adoc-ls").success());
+}
+
 fn read_message(stdout: &mut BufReader<impl std::io::Read>) -> Message {
     Message::read(stdout)
         .expect("read server message")

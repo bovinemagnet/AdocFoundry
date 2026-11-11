@@ -44,15 +44,20 @@ impl PositionEncoding {
         }
     }
 
+    /// The byte offset of `position` in `text`. As the specification says, a character past
+    /// the end of its line means the line's end, and a line past the last means the end of the
+    /// text. None only for a position inside a character (or, in UTF-16, a surrogate pair).
     pub(crate) fn offset(self, text: &str, position: Position) -> Option<usize> {
-        let (start, end) = line_bounds(text, usize::try_from(position.line).ok()?)?;
+        let Some((start, end)) = line_bounds(text, usize::try_from(position.line).ok()?) else {
+            return Some(text.len());
+        };
         let line = &text[start..end];
         let character = usize::try_from(position.character).ok()?;
 
         match self {
             Self::Utf8 => {
-                let offset = start.checked_add(character)?;
-                (offset <= end && text.is_char_boundary(offset)).then_some(offset)
+                let offset = start.saturating_add(character).min(end);
+                text.is_char_boundary(offset).then_some(offset)
             }
             Self::Utf16 => utf16_offset(line, character).map(|offset| start + offset),
         }
@@ -108,7 +113,8 @@ fn utf16_offset(line: &str, target_units: usize) -> Option<usize> {
             return None;
         }
     }
-    (units == target_units).then_some(line.len())
+    // Past the end of the line: its end.
+    Some(line.len())
 }
 
 #[cfg(test)]
@@ -128,6 +134,27 @@ mod tests {
             Some(Position::new(0, 3))
         );
         assert_eq!(encoding.offset(text, Position::new(0, 2)), None);
+    }
+
+    #[test]
+    fn clamps_positions_past_a_line_or_the_text_in_both_encodings() {
+        let text = "a😀b\nnext";
+        for encoding in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
+            // Past the end of a line: the line's end, before its newline.
+            assert_eq!(encoding.offset(text, Position::new(0, 999)), Some(6));
+            // Past the last line: the end of the text.
+            assert_eq!(
+                encoding.offset(text, Position::new(1, 999)),
+                Some(text.len())
+            );
+            assert_eq!(encoding.offset(text, Position::new(2, 0)), Some(text.len()));
+            assert_eq!(encoding.offset(text, Position::new(9, 3)), Some(text.len()));
+        }
+        assert_eq!(
+            PositionEncoding::Utf16.offset("ab\r\ncd", Position::new(0, 5)),
+            Some(2),
+            "a line's end is before its carriage return"
+        );
     }
 
     #[test]
