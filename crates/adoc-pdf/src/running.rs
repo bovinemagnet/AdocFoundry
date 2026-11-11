@@ -1,14 +1,54 @@
 //! Running content and the title page: the theme's `header_*` and `footer_*` content written as
 //! Typst functions of the page they are drawn on, and the title page's parts.
 
-use std::{collections::BTreeMap, fmt::Write as _, path::Path, sync::OnceLock};
+use std::{
+    collections::BTreeMap,
+    fmt::Write as _,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
+use adoc_render::ViewImage;
 use regex::Regex;
 
 use crate::{
+    emit::image_size,
     theme::{LoadedTheme, ThemeValue},
     typst::{self, string, text},
 };
+
+/// Gives the virtual path of an image to show, or `None`, the image reported, when it cannot be
+/// shown.
+pub(crate) type Images<'a> = dyn FnMut(&ViewImage) -> Option<String> + 'a;
+
+/// The image `target` names, at `path` when that is a file.
+fn image_at(target: &str, path: PathBuf) -> ViewImage {
+    ViewImage {
+        target: target.to_owned(),
+        path: path.is_file().then_some(path),
+        url: None,
+        alt: String::new(),
+        width: None,
+        height: None,
+    }
+}
+
+/// An image macro's attribute list as the arguments of `image()` that size it: `pdfwidth`,
+/// `scaledwidth` or `width`, in any unit a body image's may be.
+fn macro_width(attributes: &str) -> String {
+    let attribute = |key: &str| {
+        attributes.split(',').find_map(|attribute| {
+            let (name, value) = attribute.split_once('=')?;
+            (name.trim() == key).then_some(value)
+        })
+    };
+    ["pdfwidth", "scaledwidth", "width"]
+        .into_iter()
+        .find_map(attribute)
+        .and_then(image_size)
+        .map(|width| format!(", width: {width}"))
+        .unwrap_or_default()
+}
 
 /// Attributes running content can name that change from page to page.
 const DYNAMIC: &[&str] = &[
@@ -28,7 +68,7 @@ const POSITIONS: [&str; 3] = ["left", "center", "right"];
 pub(crate) fn running_dictionary(
     theme: &LoadedTheme,
     attributes: &BTreeMap<String, String>,
-    files: &mut dyn FnMut(&Path) -> String,
+    images: &mut Images<'_>,
 ) -> String {
     let keys = &theme.keys;
     let mut out = String::from("#let running = (\n");
@@ -57,7 +97,7 @@ pub(crate) fn running_dictionary(
                 else {
                     continue;
                 };
-                let body = content_markup(&content, attributes, theme.dir.as_deref(), files);
+                let body = content_markup(&content, attributes, theme.dir.as_deref(), images);
                 let _ = writeln!(
                     out,
                     "      {position}: (x: {}, width: {}, align: {}, body: ctx => [{body}]),",
@@ -125,13 +165,14 @@ fn column_places(spec: Option<&str>) -> [(f64, f64, &'static str); 3] {
 
 /// Running content as Typst markup: attribute references substituted (those that change per
 /// page read `ctx`), constrained bold, italic and monospace formatting, character references,
-/// and an `image:` macro standing alone. A line naming an attribute that is not set is
-/// dropped, as asciidoctor-pdf drops it.
+/// and an `image:` macro standing alone, found beside the theme; one that cannot be shown is
+/// left out, and reported. A line naming an attribute that is not set is dropped, as
+/// asciidoctor-pdf drops it.
 pub(crate) fn content_markup(
     content: &str,
     attributes: &BTreeMap<String, String>,
     theme_dir: Option<&Path>,
-    files: &mut dyn FnMut(&Path) -> String,
+    images: &mut Images<'_>,
 ) -> String {
     static IMAGE: OnceLock<Regex> = OnceLock::new();
     let image =
@@ -141,15 +182,10 @@ pub(crate) fn content_markup(
         let target = substitute_static(&captures[1], attributes);
         let path =
             theme_dir.map_or_else(|| Path::new(&target).to_path_buf(), |dir| dir.join(&target));
-        if path.is_file() {
-            let width = captures[2]
-                .split(',')
-                .find_map(|attribute| attribute.trim().strip_prefix("width="))
-                .and_then(image_width)
-                .map(|width| format!(", width: {width}"))
-                .unwrap_or_default();
-            return format!("#image({}{width})", string(&files(&path)));
-        }
+        let image = image_at(&target, path);
+        return images(&image).map_or_else(String::new, |file| {
+            format!("#image({}{})", string(&file), macro_width(&captures[2]))
+        });
     }
     let mut lines = Vec::new();
     for line in content.split('\n') {
@@ -158,23 +194,6 @@ pub(crate) fn content_markup(
         }
     }
     lines.join("#linebreak()")
-}
-
-/// An image macro's `width` as a Typst length: a percentage, or pixels at 96 dpi. Only a
-/// number parsed from the value is written, never the value itself, so an attribute cannot
-/// inject Typst code.
-fn image_width(value: &str) -> Option<String> {
-    let value = value.trim().trim_matches('"').trim();
-    match value.strip_suffix('%') {
-        Some(percent) => {
-            let percent: f64 = percent.trim().parse().ok()?;
-            (percent.is_finite() && percent > 0.0).then(|| format!("{}%", typst::number(percent)))
-        }
-        None => {
-            let pixels: f64 = value.trim_end_matches("px").parse().ok()?;
-            (pixels.is_finite() && pixels > 0.0).then(|| typst::points(pixels * 0.75))
-        }
-    }
 }
 
 /// Static attribute references replaced; unknown ones left as they are.
@@ -233,7 +252,6 @@ fn static_attribute(name: &str, attributes: &BTreeMap<String, String>) -> Option
                 .unwrap_or_default(),
         ),
         "doctitle" => title(),
-        "page-layout" => Some("portrait".to_owned()),
         _ => None,
     }
 }
@@ -310,12 +328,17 @@ fn plain(text: &str) -> String {
         let _ = write!(out, "#ctx.at({})", string(&after[..close]));
         rest = after.get(close + CLOSE.len_utf8()..).unwrap_or("");
     }
-    out.push_str(&text_or_empty(rest));
+    out.push_str(&typst::text(rest));
     out
 }
 
-fn text_or_empty(value: &str) -> String {
-    text(value)
+/// A version number without the `v` before its first digit, as asciidoctor-pdf drops it:
+/// `v2.0` is `2.0`, but `vNext` keeps its `v`.
+fn without_v(number: &str) -> &str {
+    number
+        .strip_prefix(['v', 'V'])
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        .unwrap_or(number)
 }
 
 /// The title page's parts, as a call to the template's `adoc-title-page`.
@@ -323,14 +346,12 @@ pub(crate) struct TitlePage<'a> {
     pub title: String,
     pub subtitle: Option<String>,
     pub attributes: &'a BTreeMap<String, String>,
+    /// The document's `title-logo-image`, found as its other images are.
+    pub logo: Option<&'a ViewImage>,
 }
 
 impl TitlePage<'_> {
-    pub(crate) fn markup(
-        &self,
-        theme: &LoadedTheme,
-        files: &mut dyn FnMut(&Path) -> String,
-    ) -> String {
+    pub(crate) fn markup(&self, theme: &LoadedTheme, images: &mut Images<'_>) -> String {
         let attributes = self.attributes;
         let authors = attributes
             .get("authors")
@@ -358,7 +379,7 @@ impl TitlePage<'_> {
             let parts: Vec<String> = [
                 attributes
                     .get("revnumber")
-                    .map(|number| format!("{label} {}", number.trim_start_matches(['v', 'V']))),
+                    .map(|number| format!("{label} {}", without_v(number))),
                 attributes.get("revdate").cloned(),
             ]
             .into_iter()
@@ -372,44 +393,37 @@ impl TitlePage<'_> {
                 revision
             })
         };
-        let logo = attributes
-            .get("title-logo-image")
-            .map(|value| (value.clone(), false))
-            .or_else(|| {
-                theme
-                    .keys
-                    .get("title_page_logo_image")
-                    .filter(|value| !value.is_null())
-                    .map(|value| (value.to_string(), true))
-            })
-            .and_then(|(value, from_theme)| {
-                let (target, attributes) = match value.strip_prefix("image:") {
-                    Some(macro_text) => {
-                        let (target, rest) =
-                            macro_text.split_once('[').unwrap_or((macro_text, "]"));
-                        (
-                            target.trim_start_matches(':').to_owned(),
-                            rest.trim_end_matches(']').to_owned(),
-                        )
-                    }
-                    None => (value, String::new()),
-                };
-                let base = if from_theme {
-                    theme.dir.clone()
+        // The document's logo, found as its images are, else the theme's, beside the theme.
+        let theme_value = theme
+            .keys
+            .get("title_page_logo_image")
+            .filter(|value| !value.is_null())
+            .map(ToString::to_string);
+        let (value, from_theme) = match (attributes.get("title-logo-image"), &theme_value) {
+            (Some(value), _) => (Some(value.as_str()), false),
+            (None, Some(value)) => (Some(value.as_str()), true),
+            (None, None) => (None, false),
+        };
+        let logo = value
+            .and_then(adoc_render::attribute_image)
+            .and_then(|named| {
+                let image = if from_theme {
+                    let path = theme.dir.as_ref().map_or_else(
+                        || Path::new(named.target).to_path_buf(),
+                        |dir| dir.join(named.target),
+                    );
+                    image_at(named.target, path)
                 } else {
-                    self.attributes.get("docdir").map(Into::into)
+                    self.logo
+                        .cloned()
+                        .unwrap_or_else(|| image_at(named.target, PathBuf::new()))
                 };
-                let path =
-                    base.map_or_else(|| Path::new(&target).to_path_buf(), |dir| dir.join(&target));
-                path.is_file().then(|| {
-                    let width = attributes
-                        .split(',')
-                        .find_map(|attribute| attribute.trim().strip_prefix("width="))
-                        .and_then(image_width)
-                        .map(|width| format!(", width: {width}"))
-                        .unwrap_or_default();
-                    format!("image({}{width})", string(&files(&path)))
-                })
+                let file = images(&image)?;
+                Some(format!(
+                    "image({}{})",
+                    string(&file),
+                    macro_width(named.attributes)
+                ))
             });
         let optional = |value: Option<String>| {
             value.map_or_else(|| "none".to_owned(), |value| format!("[{}]", text(&value)))
@@ -436,7 +450,7 @@ mod tests {
             ("doctitle".to_owned(), "Guide: The Subtitle".to_owned()),
             ("revnumber".to_owned(), "1.2".to_owned()),
         ]);
-        content_markup(content, &attributes, None, &mut |_| String::new())
+        content_markup(content, &attributes, None, &mut |_| None)
     }
 
     #[test]
@@ -465,10 +479,14 @@ mod tests {
 
     #[test]
     fn image_widths_are_numbers_only() {
-        assert_eq!(super::image_width("40%").as_deref(), Some("40.0%"));
-        assert_eq!(super::image_width("200").as_deref(), Some("150pt"));
-        assert_eq!(super::image_width("1) #read(\"/etc/passwd\") (%"), None);
-        assert_eq!(super::image_width("-5%"), None);
+        assert_eq!(super::macro_width("width=40%"), ", width: 40%");
+        assert_eq!(super::macro_width("alt, width=200"), ", width: 150pt");
+        assert_eq!(
+            super::macro_width("pdfwidth=1in,width=200"),
+            ", width: 72pt"
+        );
+        assert_eq!(super::macro_width("width=1) #read(\"/etc/passwd\") (%"), "");
+        assert_eq!(super::macro_width("width=-5%"), "");
     }
 
     #[test]

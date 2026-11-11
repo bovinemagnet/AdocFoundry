@@ -260,6 +260,108 @@ fn labels_are_namespaced_per_page() {
 }
 
 #[test]
+fn a_repeated_inline_anchor_links_to_its_first_place() {
+    // A repeated id is the author's mistake, reported as `adoc.duplicate-anchor`; it must not
+    // cost the export.
+    for page in [
+        "= Page\n\nOne [[dup]]here.\n\nTwo [[dup]]there.\n\nSee <<dup>>.\n",
+        "= Page\n\n[#dup]\nOne here.\n\nTwo [[dup]]there.\n\nSee <<dup>>.\n",
+    ] {
+        let typst = typst_of(page);
+        assert_eq!(
+            typst.source.matches("#label(\"p0#dup\")").count(),
+            1,
+            "{}",
+            typst.source
+        );
+        assert!(squeeze(&compiled_text(&typst)).contains("Twothere."));
+    }
+}
+
+/// Pages written to a temporary folder, as a book of chapters with the book's `attributes`.
+fn book_of(pages: &[(&str, &str)], attributes: &[(&str, &str)]) -> adoc_pdf::Typst {
+    let directory = tempfile::tempdir().unwrap();
+    let items = pages
+        .iter()
+        .enumerate()
+        .map(|(index, (name, text))| {
+            let path = directory.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            adoc_pdf::BookItem::Page(PageView {
+                key: format!("p{index}"),
+                view: common::view_of(&path),
+                depth: 1,
+            })
+        })
+        .collect();
+    let book = adoc_pdf::Document::Book(adoc_pdf::Book {
+        title: "The book".to_owned(),
+        attributes: attributes
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect(),
+        items,
+        ..adoc_pdf::Book::default()
+    });
+    to_typst(&book, &common::default_theme(), &PdfOptions::default())
+}
+
+#[test]
+fn an_anchor_in_a_section_title_is_not_repeated_by_the_contents() {
+    let typst = book_of(
+        &[
+            (
+                "first.adoc",
+                "= First\n\n== Install [[foo]]steps\n\nText.\n",
+            ),
+            (
+                "second.adoc",
+                "= Second\n\nSee xref:first.adoc#foo[the steps].\n",
+            ),
+        ],
+        &[("toc", "")],
+    );
+    assert!(
+        typst.source.contains("adoc-link(label(\"p0#foo\")"),
+        "{}",
+        typst.source
+    );
+    let text = squeeze(&compiled_text(&typst));
+    assert!(text.contains("Installsteps"), "{text}");
+}
+
+#[test]
+fn an_index_term_in_a_title_is_indexed_once() {
+    let typst = typst_of(
+        "= Book\n:doctype: book\n:toc:\n\n== Chapter ((Apple))\n\nText.\n\n[index]\n== Index\n",
+    );
+    let pages = typeset_text(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let index = pages.last().unwrap();
+    let entry = &index[index.rfind("Apple").expect(index)..];
+    let entry = squeeze(entry.lines().next().unwrap_or(entry));
+    assert!(entry.starts_with("Apple,1"), "{index}");
+    assert!(!entry.starts_with("Apple,1,"), "{index}");
+}
+
+#[test]
+fn a_missing_image_in_a_block_s_own_title_is_reported_once() {
+    for kind in ["NOTE", "sidebar"] {
+        let delimiter = if kind == "NOTE" { "====" } else { "****" };
+        let typst = typst_of(&format!(
+            "= Page\n\n[{kind}]\n.See image:missing.png[] [[mark]]here\n{delimiter}\nBody.\n{delimiter}\n"
+        ));
+        assert_eq!(typst.missing.len(), 1, "{kind}: {:?}", typst.missing);
+        assert_eq!(
+            typst.source.matches("#label(\"p0#mark\")").count(),
+            1,
+            "{}",
+            typst.source
+        );
+    }
+}
+
+#[test]
 fn unresolved_references_stay_text() {
     let typst = typst_of("= Page\n\nSee xref:missing.adoc[the missing page] and <<nowhere>>.\n");
     assert!(typst.source.contains("#\"the missing page\""));
@@ -421,9 +523,7 @@ fn emits_list_styles_and_table_options() {
         assert!(source.contains(markers), "no {markers} in\n{source}");
     }
     assert!(
-        source.contains(
-            "row-count: 2, frame: \"ends\", grid: \"rows\", stripes: \"even\", width: 50%)"
-        ),
+        source.contains("none, frame: \"ends\", grid: \"rows\", stripes: \"even\", width: 50%)"),
         "{source}"
     );
     assert!(source.contains("#adoc-table((auto,), none,"), "{source}");
@@ -446,6 +546,81 @@ fn emits_list_styles_and_table_options() {
     ] {
         assert!(text.contains(shown), "no {shown} in {text}");
     }
+}
+
+/// Whether `segments`, each a span along one axis, cover `from` to `to` without a gap.
+fn covered(mut segments: Vec<(f64, f64)>, from: f64, to: f64) -> bool {
+    segments.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut reached = from;
+    for (start, end) in segments {
+        if start > reached + 0.5 {
+            return false;
+        }
+        reached = reached.max(end);
+    }
+    reached >= to - 0.5
+}
+
+#[test]
+fn a_cell_spanning_to_the_last_column_or_row_has_the_frame_on_that_side() {
+    let typst = typst_of(
+        "= Page\n\n[cols=\"1,1,1\"]\n|===\n|a |b |c\n3+|across all\n|d 2+|across two\n|g .2+|down |i\n|j |k\n|===\n",
+    );
+    let pages = adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    // The table's lines, not the running content's rules in the margins.
+    let height = pages[0].height;
+    let lines: Vec<_> = pages[0]
+        .lines
+        .iter()
+        .filter(|line| {
+            [line.from.1, line.to.1]
+                .iter()
+                .all(|y| *y > 36.0 && *y < height - 48.0)
+        })
+        .collect();
+    let vertical: Vec<_> = lines
+        .iter()
+        .filter(|line| (line.from.0 - line.to.0).abs() < 0.01)
+        .collect();
+    let horizontal: Vec<_> = lines
+        .iter()
+        .filter(|line| (line.from.1 - line.to.1).abs() < 0.01)
+        .collect();
+    let span = |a: f64, b: f64| (a.min(b), a.max(b));
+    let left = vertical
+        .iter()
+        .map(|line| line.from.0)
+        .fold(f64::MAX, f64::min);
+    let right = vertical
+        .iter()
+        .map(|line| line.from.0)
+        .fold(f64::MIN, f64::max);
+    let top = horizontal
+        .iter()
+        .map(|line| line.from.1)
+        .fold(f64::MAX, f64::min);
+    let bottom = horizontal
+        .iter()
+        .map(|line| line.from.1)
+        .fold(f64::MIN, f64::max);
+    let at = |x: f64| {
+        vertical
+            .iter()
+            .filter(|line| (line.from.0 - x).abs() < 0.5)
+            .map(|line| span(line.from.1, line.to.1))
+            .collect::<Vec<_>>()
+    };
+    assert!(covered(at(left), top, bottom), "left: {lines:?}");
+    assert!(covered(at(right), top, bottom), "right: {lines:?}");
+    let along_bottom: Vec<_> = horizontal
+        .iter()
+        .filter(|line| (line.from.1 - bottom).abs() < 0.5)
+        .map(|line| span(line.from.0, line.to.0))
+        .collect();
+    assert!(covered(along_bottom, left, right), "bottom: {lines:?}");
+    // The frame is the table's, not worked out from a count of the rows written.
+    assert!(!typst.source.contains("row-count"), "{}", typst.source);
 }
 
 #[test]
@@ -579,6 +754,50 @@ fn a_listing_fits_unmeasured_only_where_the_page_holds_it() {
     assert!(small.source.contains("#adoc-code(raw("), "{}", small.source);
 }
 
+#[test]
+fn a_block_in_a_table_cell_is_kept_whole_only_where_its_column_holds_it() {
+    // A block in a cell wraps into more lines than at the page's width: judged at the page's
+    // width, it was kept whole and what did not fit was drawn below the page.
+    let listing = |lines: usize, width: usize| {
+        (0..lines)
+            .map(|n| {
+                format!(
+                    "{:<width$}",
+                    format!("let value = compute(first, second); // note {n}")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let words = "word ".repeat(229);
+    let cases = [
+        format!(
+            "= Page\n\n[cols=\"1,1\"]\n|===\n|Left a|\n----\n{}\n----\n|===\n",
+            listing(38, 63)
+        ),
+        format!(
+            "= Page\n\n[cols=\"1,1,1,1,1\"]\n|===\n|a |b |c |d a|\nNOTE: {words}last\n|===\n"
+        ),
+        format!(
+            "= Page\n\n[cols=\"1,1,1,1,1,1,1,1\"]\n|===\n|a |b |c |d |e |f |g a|\n----\n{}\n----\n|===\n",
+            listing(17, 59)
+        ),
+    ];
+    for (index, case) in cases.iter().enumerate() {
+        let typst = typst_of(case);
+        let pages =
+            adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+                .unwrap_or_else(|error| panic!("{error}"));
+        for page in &pages {
+            let below = page.runs.iter().filter(|run| run.y > page.height).count();
+            assert_eq!(below, 0, "case {index}: runs below the page");
+        }
+        let text: String = pages.iter().map(|page| squeeze(&page.text())).collect();
+        let last = ["note37", "last", "note16"][index];
+        assert!(text.contains(last), "case {index}: {text}");
+    }
+}
+
 /// `text` written as `page.adoc` beside copies of the reference images and `files`, exported
 /// with `theme`: the generated source and every image as it was laid out, page after page.
 fn images_of(
@@ -634,6 +853,36 @@ fn unsized_raster_image_is_75_percent() {
 }
 
 #[test]
+fn images_named_for_another_format_are_read_by_their_content() {
+    // A PNG named `.jpg` and a JPEG named `.png` are shown, as asciidoctor-pdf and browsers
+    // show them, rather than failing the document.
+    let directory = tempfile::tempdir().unwrap();
+    let fixtures = common::fixtures();
+    std::fs::copy(
+        fixtures.join("pdf/reference/images/wide.png"),
+        directory.path().join("x.jpg"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixtures.join("image-viewer/modules/ROOT/images/screenshot.jpg"),
+        directory.path().join("y.png"),
+    )
+    .unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Images\n\nimage::x.jpg[X]\n\nimage::y.png[Y]\n").unwrap();
+    let typst = to_typst(
+        &common::article(common::view_of(&page)),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    assert!(typst.missing.is_empty(), "{:?}", typst.missing);
+    let pages = adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let placed: Vec<_> = pages.into_iter().flat_map(|page| page.images).collect();
+    assert_eq!(placed.len(), 2, "{placed:?}");
+}
+
+#[test]
 fn unsized_svg_images_are_sized_as_asciidoctor_pdf_sizes_them() {
     // prawn-svg reads a width without units as points and one in pixels at 0.75pt each, and
     // an SVG with only a view box fills the column.
@@ -686,4 +935,105 @@ fn theme_image_width_sizes_images_without_a_pdf_width() {
     assert!(close(widths[1], column / 2.0), "{widths:?}");
     assert!(close(widths[2], column / 2.0), "{widths:?}");
     assert!(close(widths[3], column / 4.0), "{widths:?}");
+}
+
+#[test]
+fn an_article_s_first_paragraph_is_its_lead() {
+    // Written with the role added, without copying the page's blocks; only the first
+    // paragraph is the lead.
+    let typst = typst_of("= Page\n\nIntro.\n\nMore.\n\n== Section\n\nBody.\n");
+    assert_eq!(
+        typst
+            .source
+            .matches("#adoc-paragraph((\"lead\",), ")
+            .count(),
+        1,
+        "{}",
+        typst.source
+    );
+    assert!(typst
+        .source
+        .contains("#adoc-paragraph((\"lead\",), [#\"Intro.\"])"));
+}
+
+#[test]
+fn odd_input_still_exports() {
+    // Each failed the whole export: an empty menu or key list, an index term with no text, an
+    // empty link and one longer than Typst takes.
+    let long = format!("https://example.com/{}", "a".repeat(8001));
+    for page in [
+        "= Page\n:experimental:\n\nChoose menu:,[] now and kbd:[] too.\n".to_owned(),
+        "= Page\n\nA ((())) term and indexterm:[ ] another.\n\n[index]\n== Index\n".to_owned(),
+        format!("= Page\n\nSee {long}[the long one].\n"),
+    ] {
+        let typst = typst_of(&page);
+        adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+            .unwrap_or_else(|error| panic!("{page}: {error}"));
+    }
+    let (_, placed) = images_of(
+        "= Page\n\nimage::wide.png[Linked,link=\"\"]\n",
+        &[],
+        &common::default_theme(),
+    );
+    assert_eq!(placed.len(), 1);
+}
+
+#[test]
+fn callouts_above_twenty_are_circled_as_asciidoctor_pdf_circles_them() {
+    let lines: String = (1..=21).map(|n| format!("line <{n}>\n")).collect();
+    let items: String = (1..=21).map(|n| format!("<{n}> Item {n}.\n")).collect();
+    let typst = typst_of(&format!("= Page\n\n----\n{lines}----\n{items}"));
+    let text: String = typeset_text(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"))
+        .concat();
+    // 21 is U+3251 in the listing and in the list below it, never `?` or `⑴`.
+    assert_eq!(text.matches('\u{3251}').count(), 2, "{text}");
+    assert!(!text.contains('\u{2474}'), "{text}");
+    assert!(!text.contains("line ?"), "{text}");
+}
+
+#[test]
+fn a_diagram_typst_cannot_read_is_a_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    let svg = directory.path().join("diagram.svg");
+    std::fs::write(&svg, "<svg this is not").unwrap();
+    let mut view = common::view_of_text(Path::new("/doc/page.adoc"), "= Page\n\nBefore.\n");
+    view.blocks[0].kind = ViewKind::Diagram(adoc_render::DiagramView::Svg(svg));
+    let typst = to_typst(
+        &common::article(view),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    assert_eq!(typst.missing.len(), 1, "{:?}", typst.missing);
+    adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn a_book_page_is_in_the_contents_as_a_section_at_its_level_would_be() {
+    let page = |key: &str, depth: u8| {
+        adoc_pdf::BookItem::Page(PageView {
+            key: key.to_owned(),
+            view: common::view_of_text(
+                Path::new(&format!("/doc/{key}.adoc")),
+                &format!("= Page {key}\n\nText.\n"),
+            ),
+            depth,
+        })
+    };
+    let book = adoc_pdf::Document::Book(adoc_pdf::Book {
+        title: "Book".to_owned(),
+        items: vec![page("p0", 1), page("p1", 2), page("p2", 3)],
+        ..adoc_pdf::Book::default()
+    });
+    let typst = to_typst(&book, &common::default_theme(), &PdfOptions::default());
+    // `toclevels` is 2: a page three levels down is left out, as a section there would be.
+    for (level, outlined) in [(2, true), (3, true), (4, false)] {
+        let heading = format!("#heading(level: {level}, outlined: {outlined}, bookmarked: true)");
+        assert!(
+            typst.source.contains(&heading),
+            "{heading} in {}",
+            typst.source
+        );
+    }
 }

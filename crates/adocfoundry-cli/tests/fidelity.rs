@@ -324,6 +324,30 @@ const ALLOWED: &[Allowed] = &[
         theirs: Some("graph TD\n  A --> B"),
         why: "a diagram is drawn here; without its extension, Asciidoctor lists its source",
     },
+    // acdc-parser 0.11.0 drops a table's last row when a row span from above fills its missing
+    // cell (`group_cells_into_rows` counts the span's column but never marks the row filled);
+    // issue #481. Remove these three when a release of acdc-parser keeps the row.
+    Allowed {
+        page: "table-rowspan.adoc",
+        kind: "presentation",
+        ours: None,
+        theirs: Some("td tableblock halign-left valign-top"),
+        why: "acdc-parser drops the last row under a row span (#481)",
+    },
+    Allowed {
+        page: "table-rowspan.adoc",
+        kind: "paragraph",
+        ours: None,
+        theirs: Some("Last row"),
+        why: "acdc-parser drops the last row under a row span (#481)",
+    },
+    Allowed {
+        page: "table-rowspan.adoc",
+        kind: "table cell",
+        ours: None,
+        theirs: Some("Last row"),
+        why: "acdc-parser drops the last row under a row span (#481)",
+    },
 ];
 
 /// `items` without the first equal to `item`; `None` when none is.
@@ -340,6 +364,35 @@ fn without(items: &mut Vec<String>, item: Option<&str>) -> bool {
     }
 }
 
+/// `items`, ours and Asciidoctor's, of `kind` on `page` without those `allowed` names, each
+/// allowance that applied marked in `used`.
+fn excuse(
+    page: &str,
+    kind: &str,
+    items: (&mut Vec<String>, &mut Vec<String>),
+    allowed: &[Allowed],
+    used: &mut [bool],
+) {
+    let (our_items, their_items) = items;
+    for (index, allowance) in allowed.iter().enumerate() {
+        if allowance.page == page
+            && allowance.kind == kind
+            && our_items
+                .iter()
+                .any(|item| Some(item.as_str()) == allowance.ours)
+                == allowance.ours.is_some()
+            && their_items
+                .iter()
+                .any(|item| Some(item.as_str()) == allowance.theirs)
+                == allowance.theirs.is_some()
+        {
+            without(our_items, allowance.ours);
+            without(their_items, allowance.theirs);
+            used[index] = true;
+        }
+    }
+}
+
 /// Every difference of `COMPARED` between two renderings of `page`, but those in `allowed`. Each
 /// allowance that applied is marked in `used`, so that one that no longer does can be reported.
 fn differences_against(
@@ -352,23 +405,13 @@ fn differences_against(
     let mut found = Vec::new();
     for (kind, read) in COMPARED {
         let (mut our_items, mut their_items) = (read(ours), read(theirs));
-        for (index, allowance) in allowed.iter().enumerate() {
-            if allowance.page == page
-                && allowance.kind == *kind
-                && our_items
-                    .iter()
-                    .any(|item| Some(item.as_str()) == allowance.ours)
-                    == allowance.ours.is_some()
-                && their_items
-                    .iter()
-                    .any(|item| Some(item.as_str()) == allowance.theirs)
-                    == allowance.theirs.is_some()
-            {
-                without(&mut our_items, allowance.ours);
-                without(&mut their_items, allowance.theirs);
-                used[index] = true;
-            }
-        }
+        excuse(
+            page,
+            kind,
+            (&mut our_items, &mut their_items),
+            allowed,
+            used,
+        );
         if our_items == their_items {
             continue;
         }
@@ -544,7 +587,14 @@ fn fidelity_block_structure_matches_asciidoctor() {
         let theirs = String::from_utf8(theirs.stdout).unwrap();
 
         let name = page.file_name().unwrap().to_string_lossy();
-        let (our_shown, their_shown) = (presentation(&ours), presentation(&theirs));
+        let (mut our_shown, mut their_shown) = (presentation(&ours), presentation(&theirs));
+        excuse(
+            &name,
+            "presentation",
+            (&mut our_shown, &mut their_shown),
+            ALLOWED,
+            &mut used,
+        );
         if our_shown != their_shown {
             let differences: Vec<String> = our_shown
                 .iter()

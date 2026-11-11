@@ -191,6 +191,100 @@ fn footnotes_sit_where_asciidoctor_pdf_puts_them() {
     );
 }
 
+/// `text` written as `page.adoc` beside `logo.png` holding `logo`, exported with `theme`.
+fn export_with_logo(
+    text: &str,
+    logo: Option<&[u8]>,
+    theme: &LoadedTheme,
+) -> (adoc_pdf::PdfOutput, Vec<TypesetPage>) {
+    let directory = tempfile::tempdir().unwrap();
+    if let Some(logo) = logo {
+        std::fs::write(directory.path().join("logo.png"), logo).unwrap();
+    }
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, text).unwrap();
+    let document = common::article(common::view_of(&page));
+    let output = adoc_pdf::export(&document, theme, &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let typst = to_typst(&document, theme, &PdfOptions::default());
+    let pages = typeset_pages(&typst, theme, &PdfOptions::default()).unwrap();
+    (output, pages)
+}
+
+fn image_warnings(output: &adoc_pdf::PdfOutput) -> Vec<&adoc_pdf::PdfDiagnostic> {
+    output
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message.contains("logo.png"))
+        .collect()
+}
+
+#[test]
+fn a_title_logo_is_found_beside_the_page_and_checked() {
+    let png = std::fs::read(common::fixtures().join("pdf/reference/images/wide.png")).unwrap();
+    let text = "= Handbook\n:title-page:\n:title-logo-image: image:logo.png[]\n\nText.\n";
+    // Beside the page, as asciidoctor-pdf finds it.
+    let (output, pages) = export_with_logo(text, Some(&png), &common::default_theme());
+    assert_eq!(pages[0].images.len(), 1, "{:?}", output.diagnostics);
+    assert!(
+        image_warnings(&output).is_empty(),
+        "{:?}",
+        output.diagnostics
+    );
+    // Missing, or not an image: a warning, and the document still exports.
+    for logo in [None, Some(&b"not an image"[..])] {
+        let (output, pages) = export_with_logo(text, logo, &common::default_theme());
+        assert!(pages[0].images.is_empty());
+        assert_eq!(image_warnings(&output).len(), 1, "{:?}", output.diagnostics);
+    }
+    // A width in any unit, as a body image reads it.
+    let sized =
+        "= Handbook\n:title-page:\n:title-logo-image: image:logo.png[pdfwidth=1in]\n\nText.\n";
+    let (_, pages) = export_with_logo(sized, Some(&png), &common::default_theme());
+    assert!(
+        (pages[0].images[0].width - 72.0).abs() < 0.01,
+        "{:?}",
+        pages[0].images
+    );
+}
+
+#[test]
+fn a_running_content_image_that_cannot_be_shown_is_a_warning() {
+    // Found beside the theme, as asciidoctor-pdf finds it.
+    let (dir, theme) = theme_with(
+        "header:\n  height: 0.75in\n  recto:\n    center:\n      content: image:logo.png[]\n  verso:\n    center:\n      content: image:logo.png[]\n",
+    );
+    for logo in [None, Some(&b"not an image"[..])] {
+        if let Some(logo) = logo {
+            std::fs::write(dir.path().join("logo.png"), logo).unwrap();
+        }
+        let (output, pages) = export_with_logo("= Page\n\nText.\n", None, &theme);
+        assert_eq!(image_warnings(&output).len(), 1, "{:?}", output.diagnostics);
+        assert!(!pages[0].text().contains("image:"), "{}", pages[0].text());
+    }
+}
+
+#[test]
+fn footnotes_taller_than_a_page_flow_onto_the_next() {
+    // A float cannot break across pages: a page of notes and more was drawn past the bottom
+    // edge and lost.
+    let notes: String = (1..=140)
+        .map(|number| format!("Point.footnote:[MARK{number} a note of one line.] "))
+        .collect();
+    let pages = pages_of(&format!("= Notes\n\n{notes}\n"), &common::default_theme());
+    for page in &pages {
+        let below: Vec<_> = page.runs.iter().filter(|run| run.y > page.height).collect();
+        assert!(below.is_empty(), "{} runs below the page", below.len());
+    }
+    let text: String = pages.iter().map(TypesetPage::text).collect();
+    for number in 1..=140 {
+        assert!(
+            text.contains(&format!("MARK{number} ")),
+            "note {number} is on no page"
+        );
+    }
+}
+
 /// The label a PDF viewer shows for each page, from the catalogue's `/PageLabels`.
 fn page_labels(bytes: &[u8], pages: usize) -> Vec<String> {
     use hayro_syntax::object::{Array, Dict, Name, Object, String as PdfString};
@@ -646,4 +740,94 @@ fn running_content_starts_at_the_title_or_the_contents() {
     ));
     let pages = pages_of(&article(":toc:"), &theme);
     assert_eq!(printed(footer(&pages[0])), "1");
+}
+
+#[test]
+fn page_sizes_prawn_names_are_known_and_others_are_reported() {
+    let export = |size: &str| {
+        let view = common::view_of_text(
+            Path::new("/doc/page.adoc"),
+            &format!("= Page\n:pdf-page-size: {size}\n\nText.\n"),
+        );
+        adoc_pdf::export(
+            &common::article(view),
+            &common::default_theme(),
+            &PdfOptions::default(),
+        )
+        .unwrap()
+    };
+    let pages = |size: &str| {
+        let view = common::view_of_text(
+            Path::new("/doc/page.adoc"),
+            &format!("= Page\n:pdf-page-size: {size}\n\nText.\n"),
+        );
+        pages_of_view(view)
+    };
+    for (size, width) in [
+        ("C5", 459.21),
+        ("B6", 354.33),
+        ("SRA4", 637.80),
+        ("4A0", 4767.87),
+    ] {
+        assert!((pages(size)[0].width - width).abs() < 0.01, "{size}");
+        assert!(export(size).diagnostics.is_empty(), "{size}");
+    }
+    let unknown = export("Postcard");
+    assert!(
+        unknown
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Postcard")),
+        "{:?}",
+        unknown.diagnostics
+    );
+}
+
+fn pages_of_view(view: adoc_render::ViewTree) -> Vec<TypesetPage> {
+    let typst = to_typst(
+        &common::article(view),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    typeset_pages(&typst, &common::default_theme(), &PdfOptions::default()).unwrap()
+}
+
+#[test]
+fn page_layout_in_running_content_follows_the_page() {
+    let (_dir, theme) = theme_with(
+        "footer:\n  recto:\n    center:\n      content: 'layout {page-layout}'\n  verso:\n    center:\n      content: 'layout {page-layout}'\n",
+    );
+    for (layout, expected) in [
+        ("landscape", "layout landscape"),
+        ("portrait", "layout portrait"),
+    ] {
+        let pages = pages_of(
+            &format!("= Page\n:pdf-page-layout: {layout}\n\nText.\n"),
+            &theme,
+        );
+        let text: String = footer(&pages[0])
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect();
+        assert!(text.contains(expected), "{layout}: {text:?}");
+    }
+}
+
+#[test]
+fn only_a_v_before_a_digit_is_taken_from_the_version() {
+    for (number, expected) in [
+        ("v2.0", "Version 2.0"),
+        ("vNext", "Version vNext"),
+        ("V3", "Version 3"),
+    ] {
+        let pages = pages_of(
+            &format!("= Handbook\n:title-page:\n:revnumber: {number}\n\nText.\n"),
+            &common::default_theme(),
+        );
+        assert!(
+            pages[0].text().contains(expected),
+            "{number}: {}",
+            pages[0].text()
+        );
+    }
 }

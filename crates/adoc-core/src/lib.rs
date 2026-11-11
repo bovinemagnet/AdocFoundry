@@ -5,7 +5,7 @@ pub mod probe;
 mod reference;
 mod symbol;
 
-pub use access::FileAccess;
+pub use access::{lexical, FileAccess};
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Related};
 pub use document::{
     AttributeDeclaration, Document, DocumentTitle, LineIndex, Location, SourceRange,

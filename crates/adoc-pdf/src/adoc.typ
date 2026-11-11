@@ -182,15 +182,21 @@
 // A block asciidoctor-pdf keeps on one page when it fits on one: moved whole to the next page
 // rather than split, and split only when it is taller than a page.
 //
-// Measured at the page's content width: `layout` would give the exact width, but links laid out
-// inside it lose their place in a tagged PDF's structure.
-#let keep(body, fits: false) = if fits {
+// Measured at the page's content width, or in a table cell at the cell's `share` of it less the
+// padding of the `cells` it is in: `layout` would give the exact width, but links laid out
+// inside it lose their place in a tagged PDF's structure. A block in a cell whose width the
+// emitter cannot know (`share: none`) may break.
+#let keep(body, fits: false, share: 1, cells: 0) = if share == none {
+  block(breakable: true, width: 100%, body)
+} else if fits {
   // The emitter could tell from the block's text that it fits on a page: no need to measure.
   block(breakable: false, width: 100%, body)
 } else {
   context {
     let margin = doc.page.margin
-    let height = measure(body, width: doc.page.width - margin.left - margin.right).height
+    let padding = inset(pick("table_cell_padding", default: 2pt))
+    let width = (doc.page.width - margin.left - margin.right) * share - cells * (padding.left + padding.right)
+    let height = measure(body, width: calc.max(width, 1pt)).height
     block(breakable: height > doc.page.height - margin.top - margin.bottom, width: 100%, body)
   }
 }
@@ -201,14 +207,14 @@
 
 // A block with its caption ("Table 1. Title") above or below it, `caption_margin_inside`
 // apart.
-#let adoc-captioned(caption, body, below: false, fits: false) = {
+#let adoc-captioned(caption, body, below: false, fits: false, share: 1, cells: 0) = {
   let inside = pick("caption_margin_inside", default: 4pt)
   let outside = pick("caption_margin_outside", default: 0pt)
   // A paragraph, so it is spaced as Prawn spaces lines of text.
   let caption = align(alignment(pick("caption_text_align", "caption_align", default: "left")),
     par(styled(("caption",), caption)))
   if not below { v(outside, weak: true) }
-  keep(fits: fits, grid(
+  keep(fits: fits, share: share, cells: cells, grid(
     columns: 1fr,
     row-gutter: inside,
     ..if below { (body, caption) } else { (caption, body) },
@@ -329,7 +335,7 @@
 // With `icon` (`icons=font`) the label is the kind's icon from `doc.admonition-icons`, in a
 // column `admonition_label_min_width` or one and a half times the icon's size wide, as
 // asciidoctor-pdf draws it; otherwise the label's text, at least that minimum wide.
-#let adoc-admonition(kind, label, body, fits: false, icon: false) = {
+#let adoc-admonition(kind, label, body, fits: false, icon: false, share: 1, cells: 0) = {
   let padding = inset(pick("admonition_padding", default: (4pt, 12pt, 4pt, 12pt)))
   let label-padding = inset(pick("admonition_label_padding", default: pick("admonition_padding", default: (4pt, 12pt, 4pt, 12pt))))
   let rule = border(pick("admonition_column_rule_width", default: 0.5pt), pick("admonition_column_rule_color", "base_border_color"))
@@ -362,7 +368,7 @@
       context box(width: calc.max(measure(label).width, min-width), align(label-align, label))
     }
   }
-  keep(fits: fits, block(
+  keep(fits: fits, share: share, cells: cells, block(
     width: 100%,
     fill: pick("admonition_background_color"),
     stroke: border(pick("admonition_border_width"), pick("admonition_border_color")),
@@ -380,11 +386,11 @@
 }
 
 // A listing, source or literal block.
-#let adoc-code(body, fits: false) = {
+#let adoc-code(body, fits: false, share: 1, cells: 0) = {
   let size = resolve-size(pick("code_font_size", default: base-size), base-size)
   let ratio = pick("code_line_height", default: 1.2)
   let conum-color = pick("conum_font_color", "codespan_font_color", default: base-color)
-  keep(fits: fits, block(
+  keep(fits: fits, share: share, cells: cells, block(
     width: 100%,
     fill: pick("code_background_color"),
     stroke: border(pick("code_border_width", default: 0.5pt), pick("code_border_color")),
@@ -405,7 +411,7 @@
       set text(size: size)
       show raw: set text(font: families(pick("code_font_family", "codespan_font_family")), size: size)
       show raw: it => {
-        show regex("[\u{2460}-\u{2473}]"): set text(fill: conum-color, font: families(pick("conum_font_family", "codespan_font_family")))
+        show regex("[\u{2460}-\u{2473}\u{3251}-\u{325F}\u{32B1}-\u{32BF}]"): set text(fill: conum-color, font: families(pick("conum_font_family", "codespan_font_family")))
         it
       }
       if pick("code_font_color") != none { text(fill: pick("code_font_color"), body) } else { body }
@@ -431,9 +437,10 @@
   body
 }
 
+// Each item is its circled number, as the listing shows it, and its body.
 #let adoc-callouts(items) = context {
   let color = pick("conum_font_color", "codespan_font_color", default: base-color)
-  let markers = items.map(((number, _)) => text(fill: color, font: families(pick("conum_font_family", "codespan_font_family")), str.from-unicode(0x245F + number)))
+  let markers = items.map(((glyph, _)) => text(fill: color, font: families(pick("conum_font_family", "codespan_font_family")), glyph))
   // Closer to the listing above than a block margin, as the theme asks.
   v(pick("callout_list_margin_top_after_code", default: 0pt))
   grid(
@@ -451,9 +458,9 @@
   par(styled((prefix + "_cite",), [— ] + parts.join(", ")))
 }
 
-#let adoc-quote(body, attribution, citation, prefix: "quote", fits: false) = {
+#let adoc-quote(body, attribution, citation, prefix: "quote", fits: false, share: 1, cells: 0) = {
   let size = resolve-size(pick(prefix + "_font_size", default: base-size), base-size)
-  keep(fits: fits, block(
+  keep(fits: fits, share: share, cells: cells, block(
     width: 100%,
     stroke: (left: border(pick(prefix + "_border_left_width", default: 4pt), pick(prefix + "_border_color", "base_border_color"))),
     inset: inset(pick(prefix + "_padding", default: (3pt, 12pt, 3pt, 14pt))),
@@ -468,7 +475,7 @@
 
 // A sidebar or example: a framed container with an optional title inside (sidebar) or a
 // caption above (example, emitted by the caller).
-#let adoc-container(prefix, title, body, fits: false) = keep(fits: fits, block(
+#let adoc-container(prefix, title, body, fits: false, share: 1, cells: 0) = keep(fits: fits, share: share, cells: cells, block(
   width: 100%,
   fill: pick(prefix + "_background_color"),
   stroke: border(pick(prefix + "_border_width", default: 0.5pt), pick(prefix + "_border_color", "base_border_color")),
@@ -501,8 +508,7 @@
 }
 
 // A block image; the body passes the `image` itself, so an error loading it points at the
-// AsciiDoc that named it.
-// A block image. `natural` is its width when the document gives it none (`pdfwidth` or
+// AsciiDoc that named it. `natural` is its width when the document gives it none (`pdfwidth` or
 // `scaledwidth` set the image's own width, and `natural` is `none`): the theme's `image_width`
 // when it sets one, else this length held to the column, or this share of it; `auto` leaves the
 // size to Typst.
@@ -546,7 +552,7 @@
 // bottom (`ends`, `topbot`), the sides (`sides`) or none; `grid` keeps the inner lines between
 // rows and columns (`all`), rows (`rows`), columns (`cols`) or none; `width` is the table's
 // share of the page, or `auto` for its content's.
-#let adoc-table(columns, header, rows, footer, row-count: none, stripes: none, frame: "all", grid: "all", width: 100%) = {
+#let adoc-table(columns, header, rows, footer, stripes: none, frame: "all", grid: "all", width: 100%) = {
   let border-color = pick("table_border_color", "base_border_color", default: luma(200))
   let grid-color = pick("table_grid_color", "table_border_color", "base_border_color", default: luma(200))
   let border-width = pick("table_border_width", default: 0.5pt)
@@ -560,6 +566,7 @@
   let grid-cols = grid in ("all", "cols")
   let outer(on, width, color) = if on { border(width, color) } else { none }
   let column-count = if type(columns) == array { columns.len() } else { columns }
+  let bottom = outer(frame-ends, border-width, border-color)
   let body-fill(y) = {
     let row = y - head-rows
     if y < head-rows { pick("table_head_background_color") }
@@ -575,17 +582,20 @@
       columns: columns,
       inset: inset(pick("table_cell_padding", default: 2pt)),
       fill: (_, y) => body-fill(y),
-      // Each cell draws its top and left edges; the last row and column draw the frame's
-      // bottom and right.
+      // Each cell draws its top and left edges, which a spanning cell starts on. The frame's
+      // right and bottom are the table's own lines: Typst asks a spanning cell for its stroke
+      // by its first column and row, so it could never tell it reaches the last of either.
       stroke: (x, y) => (
         top: if y == 0 { outer(frame-ends, border-width, border-color) } else if y == head-rows and head-rows > 0 { border(head-bottom, grid-color) } else { outer(grid-rows, grid-width, grid-color) },
-        bottom: if y == row-count - 1 { outer(frame-ends, border-width, border-color) } else { none },
         left: if x == 0 { outer(frame-sides, border-width, border-color) } else { outer(grid-cols, grid-width, grid-color) },
-        right: if x == column-count - 1 { outer(frame-sides, border-width, border-color) } else { none },
       ),
+      table.vline(x: column-count, stroke: outer(frame-sides, border-width, border-color)),
       ..if header != none { (table.header(..header.map(cell => [#styled(("table_head",), cell)])),) } else { () },
       ..rows,
-      ..if footer != none { (table.footer(..footer.map(cell => [#styled(("table_foot",), cell)])),) } else { () },
+      // Below the last row: the footer's when there is one.
+      ..if footer != none {
+        (table.footer(..footer.map(cell => [#styled(("table_foot",), cell)]), table.hline(stroke: bottom)),)
+      } else { (table.hline(stroke: bottom),) },
     )
   })
 }
@@ -594,16 +604,35 @@
 
 // Footnotes, gathered at the end of the document as asciidoctor-pdf places them. Every item has
 // the item spacing below it, the last one too, and it is that margin that meets the page's
-// bottom margin, as asciidoctor-pdf aligns the block.
+// bottom margin, as asciidoctor-pdf aligns the block. A float cannot break across pages, so a
+// list taller than a page follows the content instead, a block per note, and breaks.
 #let adoc-footnotes(items) = {
   if items.len() == 0 { return }
   let spacing = pick("footnotes_item_spacing", default: 3pt)
-  place(bottom, float: true, clearance: block-bottom, {
+  let style(body) = {
     set text(size: resolve-size(pick("footnotes_font_size", default: base-size * 0.75), base-size), fill: pick("footnotes_font_color", default: base-color))
     set par(justify: false)
-    stack(spacing: spacing, ..items.map(((number, dest, body)) => [#adoc-link(dest, [\[#number\]]) #body]))
+    body
+  }
+  let notes = items.map(((number, dest, body)) => [#adoc-link(dest, [\[#number\]]) #body])
+  let list = style({
+    stack(spacing: spacing, ..notes)
     v(spacing)
   })
+  context {
+    // Measured, as `keep` measures, at the page's content width.
+    let margin = doc.page.margin
+    let height = measure(list, width: doc.page.width - margin.left - margin.right).height
+    if height + block-bottom <= doc.page.height - margin.top - margin.bottom {
+      place(bottom, float: true, clearance: block-bottom, list)
+    } else {
+      v(block-bottom)
+      style(for note in notes {
+        block(width: 100%, note)
+        v(spacing)
+      })
+    }
+  }
 }
 
 // The index: every term the document marks, grouped by first letter, each with the body pages

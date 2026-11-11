@@ -117,10 +117,34 @@ pub fn compile(
     theme: &LoadedTheme,
     options: &PdfOptions,
 ) -> Result<PdfOutput, PdfError> {
-    let (document, diagnostics, world) = typeset(typst, theme, options, Cache::Clear)?;
+    let (document, diagnostics, world) = match typeset(typst, theme, options) {
+        Ok(typeset) => typeset,
+        Err(error) => {
+            evict(Cache::Clear);
+            return Err(error);
+        }
+    };
+    let written = write_pdf(&document, typst, &world, options);
+    // Writing the PDF is memoised too (converted images, fonts, compressed streams), so the
+    // cache is emptied after it, whether or not it succeeded.
+    evict(Cache::Clear);
+    Ok(PdfOutput {
+        bytes: written?,
+        pages: document.pages().len(),
+        diagnostics,
+    })
+}
+
+/// The laid-out document written as PDF bytes.
+fn write_pdf(
+    document: &PagedDocument,
+    typst: &Typst,
+    world: &PdfWorld,
+    options: &PdfOptions,
+) -> Result<Vec<u8>, PdfError> {
     let map = |list: &[SourceDiagnostic]| -> Vec<PdfDiagnostic> {
         list.iter()
-            .map(|diagnostic| diagnostic_of(&world, typst, diagnostic))
+            .map(|diagnostic| diagnostic_of(world, typst, diagnostic))
             .collect()
     };
     let standards: Vec<typst_pdf::PdfStandard> = options
@@ -154,13 +178,7 @@ pub fn compile(
         standards,
         ..typst_pdf::PdfOptions::default()
     };
-    let bytes =
-        typst_pdf::pdf(&document, &pdf_options).map_err(|errors| PdfError::Pdf(map(&errors)))?;
-    Ok(PdfOutput {
-        bytes,
-        pages: document.pages().len(),
-        diagnostics,
-    })
+    typst_pdf::pdf(document, &pdf_options).map_err(|errors| PdfError::Pdf(map(&errors)))
 }
 
 /// A page as Typst laid it out: its size and its runs of text, in points from the top left.
@@ -171,6 +189,15 @@ pub struct TypesetPage {
     pub runs: Vec<TextRun>,
     /// The images on the page, in the order they were laid out.
     pub images: Vec<PlacedImage>,
+    /// The straight lines drawn on the page (rules, borders, table grids), in the order drawn.
+    pub lines: Vec<PlacedLine>,
+}
+
+/// A straight line as Typst drew it, from one end to the other, in points.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlacedLine {
+    pub from: (f64, f64),
+    pub to: (f64, f64),
 }
 
 /// An image as Typst placed it: its top left corner and size, in points.
@@ -219,6 +246,7 @@ pub fn typeset_pages(
         y: f64,
         out: &mut Vec<TextRun>,
         images: &mut Vec<PlacedImage>,
+        lines: &mut Vec<PlacedLine>,
     ) {
         for (point, item) in frame.items() {
             let (px, py) = (x + point.x.to_pt(), y + point.y.to_pt());
@@ -229,7 +257,16 @@ pub fn typeset_pages(
                     py + group.transform.ty.to_pt(),
                     out,
                     images,
+                    lines,
                 ),
+                typst::layout::FrameItem::Shape(shape, _) => {
+                    if let typst::visualize::Geometry::Line(to) = shape.geometry {
+                        lines.push(PlacedLine {
+                            from: (px, py),
+                            to: (px + to.x.to_pt(), py + to.y.to_pt()),
+                        });
+                    }
+                }
                 typst::layout::FrameItem::Text(text) => out.push(TextRun {
                     x: px,
                     y: py,
@@ -247,18 +284,21 @@ pub fn typeset_pages(
             }
         }
     }
-    let (document, _, _) = typeset(typst, theme, options, Cache::Clear)?;
+    let typeset = typeset(typst, theme, options);
+    evict(Cache::Clear);
+    let (document, _, _) = typeset?;
     Ok(document
         .pages()
         .iter()
         .map(|page| {
-            let (mut runs, mut images) = (Vec::new(), Vec::new());
-            collect(&page.frame, 0.0, 0.0, &mut runs, &mut images);
+            let (mut runs, mut images, mut lines) = (Vec::new(), Vec::new(), Vec::new());
+            collect(&page.frame, 0.0, 0.0, &mut runs, &mut images, &mut lines);
             TypesetPage {
                 width: page.frame.width().to_pt(),
                 height: page.frame.height().to_pt(),
                 runs,
                 images,
+                lines,
             }
         })
         .collect())
@@ -337,7 +377,9 @@ pub fn preview_pages(
         }
     }
     adoc_core::probe::hit(adoc_core::probe::Probe::PreviewTypeset);
-    let (document, _, world) = typeset(typst, theme, options, Cache::KeepRecent)?;
+    let typeset = typeset(typst, theme, options);
+    evict(Cache::KeepRecent);
+    let (document, _, world) = typeset?;
     let source = |span: typst::syntax::Span| {
         world
             .range(span)
@@ -503,12 +545,20 @@ enum Cache {
 /// How many compiles a memoised result outlives its last use by in the preview.
 const PREVIEW_CACHE_AGE: usize = 10;
 
-/// Lays the document out, with every warning found on the way.
+/// Empties Typst's cache as `cache` says, after the last memoised stage of a compile.
+fn evict(cache: Cache) {
+    typst::comemo::evict(match cache {
+        Cache::Clear => 0,
+        Cache::KeepRecent => PREVIEW_CACHE_AGE,
+    });
+}
+
+/// Lays the document out, with every warning found on the way. What it memoised stays in the
+/// cache until the caller's last memoised stage is done and it calls [`evict`].
 fn typeset(
     typst: &Typst,
     theme: &LoadedTheme,
     options: &PdfOptions,
-    cache: Cache,
 ) -> Result<(PagedDocument, Vec<PdfDiagnostic>, PdfWorld), PdfError> {
     let mut diagnostics: Vec<PdfDiagnostic> = theme
         .warnings
@@ -527,6 +577,12 @@ fn typeset(
     diagnostics.extend(font_warnings.into_iter().map(|message| PdfDiagnostic {
         severity: PdfSeverity::Warning,
         message,
+        hints: Vec::new(),
+        source: None,
+    }));
+    diagnostics.extend(typst.warnings.iter().map(|message| PdfDiagnostic {
+        severity: PdfSeverity::Warning,
+        message: message.clone(),
         hints: Vec::new(),
         source: None,
     }));
@@ -559,10 +615,6 @@ fn typeset(
         options.access.clone(),
     );
     let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
-    typst::comemo::evict(match cache {
-        Cache::Clear => 0,
-        Cache::KeepRecent => PREVIEW_CACHE_AGE,
-    });
     let map = |list: &[SourceDiagnostic]| -> Vec<PdfDiagnostic> {
         list.iter()
             .map(|diagnostic| diagnostic_of(&world, typst, diagnostic))

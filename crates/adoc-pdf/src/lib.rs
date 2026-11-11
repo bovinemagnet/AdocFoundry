@@ -16,8 +16,8 @@ pub use document::{to_typst, Book, BookItem, Document, PdfOptions, PdfStandard, 
 pub use emit::{EmitOptions, PageView, SourceMap};
 pub use export::{
     compile, export, preview_pages, render_math, render_math_svg, typeset_pages, typeset_text,
-    PageAnchor, PdfDiagnostic, PdfError, PdfOutput, PdfSeverity, PlacedImage, PreviewPage,
-    RenderedMath, TextRun, TypesetPage,
+    PageAnchor, PdfDiagnostic, PdfError, PdfOutput, PdfSeverity, PlacedImage, PlacedLine,
+    PreviewPage, RenderedMath, TextRun, TypesetPage,
 };
 pub use fonts::missing_fonts;
 

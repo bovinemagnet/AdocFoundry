@@ -137,7 +137,10 @@ fn parse(input: &ParseInput<'_>) -> Dom {
     let base = page.parent().map_or_else(PathBuf::new, Path::to_path_buf);
     // acdc joins targets onto an absolute base; resolvers are asked beside the page as it
     // was given, which may be relative.
-    let absolute_base = lexical(&std::path::absolute(&base).unwrap_or_else(|_| base.clone()));
+    // Resolved without touching the file system, as acdc resolves the base it joins include
+    // targets onto.
+    let absolute_base =
+        adoc_core::lexical(&std::path::absolute(&base).unwrap_or_else(|_| base.clone()));
     let resolved: ResolvedIncludes = Arc::default();
     let loader = {
         let resolver: Arc<dyn IncludeResolver> = input.includes.clone();
@@ -518,25 +521,6 @@ fn is_verbatim_delimiter(line: &str) -> bool {
         && ['-', '.', '+', '/']
             .into_iter()
             .any(|delimiter| line.chars().all(|character| character == delimiter))
-}
-
-/// `path` with `.` and `..` resolved without touching the file system, as acdc resolves the
-/// base it joins include targets onto.
-fn lexical(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push(component.as_os_str());
-                }
-            }
-            _ => out.push(component.as_os_str()),
-        }
-    }
-    out
 }
 
 /// A requested path with protected colons restored and protected spaces taken out.

@@ -23,7 +23,6 @@ const TEMPLATE: &str = include_str!("adoc.typ");
 /// STEM's helpers and `adoc-stem`, ahead of the template and in a formula's own document.
 pub(crate) const MATH: &str = include_str!("math.typ");
 
-/// Where running content and page numbering start: the first page of the body, numbered 1.
 /// The body's start: running content and the page count begin here. Typst numbers a page by
 /// its counter after the updates on it, so this page is 1 in the viewer as in the footer.
 const RUNNING_START: &str = "#metadata(none) <adoc-running-start>#counter(page).update(1)\n";
@@ -48,10 +47,8 @@ pub struct PdfOptions {
     /// Where relative font paths in the theme are found, in order (asciidoctor-pdf's
     /// `pdf-fontsdir`); `GEM_FONTS_DIR` stands for the bundled fonts.
     pub fonts_dirs: Vec<PathBuf>,
-    /// The site cross references out of the document link to.
-    pub site_url: Option<String>,
-    /// The address of each page a reference out of the document may lead to; without a site,
-    /// references to any other page are left as text.
+    /// The address of each page a reference out of the document may lead to; a reference to
+    /// any other page is left as text.
     pub page_urls: HashMap<PathBuf, String>,
     /// The date written into the PDF (year, month, day), for reproducible output; none by
     /// default.
@@ -104,14 +101,14 @@ impl Document {
         }
     }
 
-    fn pages(&self) -> Vec<PageView> {
+    fn pages(&self) -> Vec<&PageView> {
         match self {
-            Self::Article(page) => vec![page.clone()],
+            Self::Article(page) => vec![page],
             Self::Book(book) => book
                 .items
                 .iter()
                 .filter_map(|item| match item {
-                    BookItem::Page(page) => Some(page.clone()),
+                    BookItem::Page(page) => Some(page),
                     _ => None,
                 })
                 .collect(),
@@ -130,6 +127,9 @@ pub struct Typst {
     pub missing: Vec<(String, adoc_render::SourceSpan)>,
     /// Formulas that could not be typeset, why, and where they were written.
     pub unconverted: Vec<(String, adoc_render::SourceSpan)>,
+    /// What else was found writing the document that the reader should know: a page size by a
+    /// name neither asciidoctor-pdf nor this knows.
+    pub warnings: Vec<String>,
 }
 
 /// The document's facts the template reads: an article's attributes, or a book's.
@@ -189,13 +189,13 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         title: title.clone(),
         book,
     };
+    let geometry = page_geometry(theme, &attributes);
     let emit_options = EmitOptions {
         highlight: facts.has("source-highlighter"),
-        site_url: options.site_url.clone(),
-        page_urls: options.page_urls.clone(),
+        page_urls: &options.page_urls,
         toc_levels: facts.toc_levels(),
-        access: options.access.clone(),
-        fits_lines: fits_lines(theme, &page_geometry(theme, &attributes)),
+        access: &options.access,
+        fits_lines: fits_lines(theme, &geometry),
         // Font Awesome's glyphs are private-use code points, which PDF/A-2a forbids.
         font_icons: facts.attribute("icons") == Some("font")
             && !options.standards.contains(&PdfStandard::A2a),
@@ -224,8 +224,9 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
                 title: main,
                 subtitle,
                 attributes: &attributes,
+                logo: document.attribute_image("title-logo-image"),
             };
-            let markup = title_page.markup(theme, &mut |path| emitter.file(path));
+            let markup = title_page.markup(theme, &mut |image| emitter.image_file(image, &span));
             emitter.push(&markup);
         }
         if facts.toc_at_top() {
@@ -252,6 +253,7 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
     }
 
     // The body.
+    let toc_levels = facts.toc_levels();
     match document {
         Document::Article(page) => {
             emitter.begin_page(page);
@@ -267,18 +269,25 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
                         emitter.push(&format!("#adoc-part[{}]\n\n", text(title)));
                     }
                     BookItem::Heading { title, depth } => {
-                        heading(&mut emitter, *depth, &text(title), None);
+                        heading(&mut emitter, *depth, &text(title), None, "", toc_levels);
                     }
                     BookItem::Page(page) => {
                         emitter.begin_page(page);
                         let anchor = emitter.label("");
-                        let title = page
+                        let (title, markers) = page
                             .view
                             .title
                             .as_ref()
-                            .map(|title| emitter.inlines(title))
+                            .map(|title| emitter.heading_title(title))
                             .unwrap_or_default();
-                        heading(&mut emitter, page.depth.max(1), &title, Some(&anchor));
+                        heading(
+                            &mut emitter,
+                            page.depth.max(1),
+                            &title,
+                            Some(&anchor),
+                            &markers,
+                            toc_levels,
+                        );
                         emitter.page_body(&page.view);
                         emitter.footnotes(&page.view);
                     }
@@ -297,7 +306,19 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
             .entry("doctitle".to_owned())
             .or_insert_with(|| title.clone());
     }
-    let running = running::running_dictionary(theme, &attributes, &mut |path| emitter.file(path));
+    attributes
+        .entry("page-layout".to_owned())
+        .or_insert_with(|| {
+            if geometry.landscape {
+                "landscape"
+            } else {
+                "portrait"
+            }
+            .to_owned()
+        });
+    let running = running::running_dictionary(theme, &attributes, &mut |image| {
+        emitter.image_file(image, &span)
+    });
     let Emitted {
         source: body,
         files,
@@ -330,6 +351,7 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
         map,
         missing,
         unconverted,
+        warnings: geometry.warnings,
     }
 }
 
@@ -446,15 +468,25 @@ fn cover(document: &Document, facts: &Facts<'_>, theme: &LoadedTheme, face: Face
     Some(Cover::Image { image, fit, page })
 }
 
-/// A book heading at `depth`: a chapter (depth 1) starts a new page.
-fn heading(emitter: &mut Emitter<'_>, depth: u8, title: &str, label: Option<&str>) {
+/// A book heading at `depth`: a chapter (depth 1) starts a new page. `markers`, the title's
+/// anchors and index terms, follow it. It is in the contents as a section at its level would
+/// be: down to `toc_levels`.
+fn heading(
+    emitter: &mut Emitter<'_>,
+    depth: u8,
+    title: &str,
+    label: Option<&str>,
+    markers: &str,
+    toc_levels: u8,
+) {
     if depth <= 1 {
         emitter.push("#pagebreak(weak: true)\n\n");
     }
     let label = label.map(|label| format!("#{label}")).unwrap_or_default();
     emitter.push(&format!(
-        "#heading(level: {}, outlined: true, bookmarked: true)[{title}]{label}\n\n",
-        u32::from(depth) + 1
+        "#heading(level: {}, outlined: {}, bookmarked: true)[{title}]{label}{markers}\n\n",
+        u32::from(depth) + 1,
+        depth <= toc_levels
     ));
 }
 
@@ -589,10 +621,15 @@ struct PageGeometry {
     height: f64,
     /// Top, right, bottom, left.
     margin: [f64; 4],
+    landscape: bool,
+    /// A size by a name that is not known, given as A4.
+    warnings: Vec<String>,
 }
 
-/// Page sizes asciidoctor-pdf (through Prawn) knows by name, in points.
+/// Page sizes asciidoctor-pdf knows by name, in points: Prawn's `PageGeometry::SIZES`.
 const PAPER: &[(&str, f64, f64)] = &[
+    ("4A0", 4767.87, 6740.79),
+    ("2A0", 3370.39, 4767.87),
     ("A0", 2383.94, 3370.39),
     ("A1", 1683.78, 2383.94),
     ("A2", 1190.55, 1683.78),
@@ -602,8 +639,40 @@ const PAPER: &[(&str, f64, f64)] = &[
     ("A6", 297.64, 419.53),
     ("A7", 209.76, 297.64),
     ("A8", 147.40, 209.76),
+    ("A9", 104.88, 147.40),
+    ("A10", 73.70, 104.88),
+    ("B0", 2834.65, 4008.19),
+    ("B1", 2004.09, 2834.65),
+    ("B2", 1417.32, 2004.09),
+    ("B3", 1000.63, 1417.32),
     ("B4", 708.66, 1000.63),
     ("B5", 498.90, 708.66),
+    ("B6", 354.33, 498.90),
+    ("B7", 249.45, 354.33),
+    ("B8", 175.75, 249.45),
+    ("B9", 124.72, 175.75),
+    ("B10", 87.87, 124.72),
+    ("C0", 2599.37, 3676.54),
+    ("C1", 1836.85, 2599.37),
+    ("C2", 1298.27, 1836.85),
+    ("C3", 918.43, 1298.27),
+    ("C4", 649.13, 918.43),
+    ("C5", 459.21, 649.13),
+    ("C6", 323.15, 459.21),
+    ("C7", 229.61, 323.15),
+    ("C8", 161.57, 229.61),
+    ("C9", 113.39, 161.57),
+    ("C10", 79.37, 113.39),
+    ("RA0", 2437.80, 3458.27),
+    ("RA1", 1729.13, 2437.80),
+    ("RA2", 1218.90, 1729.13),
+    ("RA3", 864.57, 1218.90),
+    ("RA4", 609.45, 864.57),
+    ("SRA0", 2551.18, 3628.35),
+    ("SRA1", 1814.17, 2551.18),
+    ("SRA2", 1275.59, 1814.17),
+    ("SRA3", 907.09, 1275.59),
+    ("SRA4", 637.80, 907.09),
     ("EXECUTIVE", 521.86, 756.00),
     ("FOLIO", 612.00, 936.00),
     ("LEGAL", 612.00, 1008.00),
@@ -613,7 +682,7 @@ const PAPER: &[(&str, f64, f64)] = &[
 
 /// The page's size and margins: the document's `pdf-page-size`, `pdf-page-layout` and
 /// `pdf-page-margin`, else the theme's `page_size`, `page_layout` and `page_margin`, as
-/// asciidoctor-pdf reads them. A size by a name neither knows is A4.
+/// asciidoctor-pdf reads them. A size by a name neither knows is A4, with a warning.
 fn page_geometry(theme: &LoadedTheme, attributes: &BTreeMap<String, String>) -> PageGeometry {
     let keys = &theme.keys;
     let attribute = |name: &str| {
@@ -622,10 +691,15 @@ fn page_geometry(theme: &LoadedTheme, attributes: &BTreeMap<String, String>) -> 
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
     };
+    let mut warnings = Vec::new();
+    let mut unknown = |size: &str| {
+        warnings.push(format!("unknown page size {size}; A4 is used"));
+        A4
+    };
     let (mut width, mut height) = match attribute("pdf-page-size") {
-        Some(size) => page_size(size).unwrap_or(A4),
+        Some(size) => page_size(size).unwrap_or_else(|| unknown(size)),
         None => match keys.get("page_size") {
-            Some(ThemeValue::Text(name)) => paper(name).unwrap_or(A4),
+            Some(ThemeValue::Text(name)) => paper(name).unwrap_or_else(|| unknown(name)),
             Some(ThemeValue::List(items)) if items.len() == 2 => (
                 items[0].as_number().unwrap_or(A4.0),
                 items[1].as_number().unwrap_or(A4.1),
@@ -650,6 +724,8 @@ fn page_geometry(theme: &LoadedTheme, attributes: &BTreeMap<String, String>) -> 
         width,
         height,
         margin,
+        landscape,
+        warnings,
     }
 }
 

@@ -109,19 +109,17 @@ impl SourceMap {
     }
 }
 
-/// What the emitter needs to know beyond the pages.
-#[derive(Clone, Debug, Default)]
-pub struct EmitOptions {
+/// What the emitter needs to know beyond the pages, borrowed from the export's options.
+#[derive(Clone, Debug)]
+pub struct EmitOptions<'a> {
     /// Highlight source blocks by language.
     pub highlight: bool,
-    /// The site cross references out of the document link to, for a book.
-    pub site_url: Option<String>,
     /// `toclevels`: sections deeper than this are left out of the outline.
     pub toc_levels: u8,
     /// Addresses of pages outside the document, for references to them.
-    pub page_urls: HashMap<PathBuf, String>,
+    pub page_urls: &'a HashMap<PathBuf, String>,
     /// Which image files may be read.
-    pub access: FileAccess,
+    pub access: &'a FileAccess,
     /// The most lines a block may be estimated to take for it to be kept whole without being
     /// measured (`fits_lines`); none is when zero.
     pub fits_lines: usize,
@@ -130,10 +128,13 @@ pub struct EmitOptions {
 }
 
 pub(crate) struct Emitter<'a> {
-    options: &'a EmitOptions,
+    options: &'a EmitOptions<'a>,
     out: String,
     files: Vec<(String, PathBuf)>,
     file_paths: HashMap<PathBuf, String>,
+    /// The extension of each checked image's format, as its content shows it: Typst decodes a
+    /// file by its path's extension, which may name another format.
+    formats: HashMap<PathBuf, &'static str>,
     map: SourceMap,
     missing: Vec<(String, SourceSpan)>,
     unconverted: Vec<(String, SourceSpan)>,
@@ -152,6 +153,16 @@ pub(crate) struct Emitter<'a> {
     ulist_depth: usize,
     olist_depth: usize,
     highlighter: Highlighter,
+    /// The next paragraph is an article's lead.
+    lead: bool,
+    /// While a heading's title is written: its anchors and index terms, which go beside the
+    /// heading rather than in its body, since the contents and running titles repeat the body.
+    markers: Option<String>,
+    /// The share of the page's content width the blocks being written have: less in a table
+    /// cell, `None` in one whose width depends on its content.
+    share: Option<f64>,
+    /// How many table cells the blocks being written are in.
+    cells: usize,
 }
 
 /// What follows each block of a run.
@@ -175,7 +186,7 @@ pub(crate) fn label_name(key: &str, id: &str) -> String {
 }
 
 impl<'a> Emitter<'a> {
-    pub(crate) fn new(pages: &[PageView], options: &'a EmitOptions) -> Self {
+    pub(crate) fn new(pages: &[&PageView], options: &'a EmitOptions<'a>) -> Self {
         let mut labels = HashSet::new();
         for page in pages {
             labels.insert(label_name(&page.key, ""));
@@ -189,6 +200,7 @@ impl<'a> Emitter<'a> {
             out: String::new(),
             files: Vec::new(),
             file_paths: HashMap::new(),
+            formats: HashMap::new(),
             map: SourceMap::default(),
             missing: Vec::new(),
             unconverted: Vec::new(),
@@ -205,6 +217,10 @@ impl<'a> Emitter<'a> {
             ulist_depth: 0,
             olist_depth: 0,
             highlighter: Highlighter::new(),
+            lead: false,
+            markers: None,
+            share: Some(1.0),
+            cells: 0,
         }
     }
 
@@ -264,9 +280,27 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    /// Whether a block's label for `id` is the first on the page, which it now is.
+    /// Whether a label for `id` is the first on the page, which it now is.
     fn first_place(&mut self, id: &str) -> bool {
         self.placed.insert(label_name(&self.key, id))
+    }
+
+    /// A heading's title as its body, and the anchors and index terms in it, to be written once
+    /// beside the heading: the contents and running titles draw a heading's body again, and a
+    /// label or index term in it would be repeated with it.
+    pub(crate) fn heading_title(&mut self, title: &[ViewInline]) -> (String, String) {
+        let outer = self.markers.replace(String::new());
+        let body = self.inlines(title);
+        let markers = std::mem::replace(&mut self.markers, outer).unwrap_or_default();
+        (body, markers)
+    }
+
+    /// An anchor or index term's marker: in `out`, or beside the heading being written.
+    fn marker(&mut self, out: &mut String, marker: &str) {
+        match &mut self.markers {
+            Some(markers) => markers.push_str(marker),
+            None => out.push_str(marker),
+        }
     }
 
     /// The page's blocks, with the first paragraph of an article's preamble as the lead.
@@ -279,13 +313,10 @@ impl<'a> Emitter<'a> {
             && view.blocks.first().is_some_and(|block| {
                 matches!(block.kind, ViewKind::Paragraph(_)) && block.roles.is_empty()
             });
-        if lead {
-            let mut blocks = view.blocks.clone();
-            blocks[0].roles.push("lead".to_owned());
-            self.blocks(&blocks, Gaps::Flow);
-        } else {
-            self.blocks(&view.blocks, Gaps::Flow);
-        }
+        // The first block is written with the role rather than copying the page to add it.
+        self.lead = lead;
+        self.blocks(&view.blocks, Gaps::Flow);
+        self.lead = false;
     }
 
     /// The page's footnotes, gathered where asciidoctor-pdf puts them.
@@ -414,7 +445,14 @@ impl<'a> Emitter<'a> {
                     | ViewKind::Sidebar(_)
                     | ViewKind::Admonition { .. }
             );
-            match this.caption_text(block).filter(|_| !owns_title) {
+            // A block that owns its title writes it itself: building it here too would report
+            // its images and formulas twice and place its anchors here.
+            let caption = if owns_title {
+                None
+            } else {
+                this.caption_text(block)
+            };
+            match caption {
                 Some(caption) => {
                     let below = matches!(block.kind, ViewKind::Image(_) | ViewKind::Diagram(_));
                     let _ = write!(
@@ -433,13 +471,29 @@ impl<'a> Emitter<'a> {
     }
 
     /// `fits: true, ` for a block that its text shows fits on a page, so the template keeps it
-    /// whole without measuring it; empty otherwise, and the block is measured.
-    fn fits_argument(&self, block: &ViewBlock) -> &'static str {
-        if estimated_lines(block).is_some_and(|lines| lines <= self.options.fits_lines) {
-            "fits: true, "
-        } else {
-            ""
+    /// whole without measuring it; empty otherwise, and the block is measured. In a table cell,
+    /// the cell's share of the page's width and how many cells deep it is, for the template to
+    /// measure it at that width; `share: none` where that is not known, and the block may
+    /// break.
+    fn fits_argument(&self, block: &ViewBlock) -> String {
+        let Some(share) = self.share else {
+            return "share: none, ".to_owned();
+        };
+        // Each line holds the share of the characters a line of the page holds.
+        let per_line = ((CHARACTERS_PER_LINE as f64 * share) as usize).max(1);
+        let mut out = String::new();
+        if estimated_lines(block, per_line).is_some_and(|lines| lines <= self.options.fits_lines) {
+            out.push_str("fits: true, ");
         }
+        if self.cells > 0 {
+            let _ = write!(
+                out,
+                "share: {}, cells: {}, ",
+                typst::number(share),
+                self.cells
+            );
+        }
+        out
     }
 
     fn caption_text(&mut self, block: &ViewBlock) -> Option<String> {
@@ -480,7 +534,8 @@ impl<'a> Emitter<'a> {
                 if let Some(number) = number {
                     heading.push_str(&text(&format!("{number} ")));
                 }
-                heading.push_str(&self.inlines(title));
+                let (title, markers) = self.heading_title(title);
+                heading.push_str(&title);
                 let outlined = section_level + self.depth <= self.options.toc_levels;
                 let label = block
                     .id
@@ -490,7 +545,7 @@ impl<'a> Emitter<'a> {
                     .unwrap_or_default();
                 let _ = writeln!(
                     self.out,
-                    "#heading(level: {}, outlined: {outlined}, bookmarked: true)[{heading}]{label}\n",
+                    "#heading(level: {}, outlined: {outlined}, bookmarked: true)[{heading}]{label}{markers}\n",
                     u32::from(level) + 1
                 );
                 if block.style.as_deref() == Some("index") {
@@ -501,42 +556,45 @@ impl<'a> Emitter<'a> {
                 }
             }
             ViewKind::Heading { level, title } => {
-                let heading = self.inlines(title);
+                let (heading, markers) = self.heading_title(title);
                 let _ = writeln!(
                     self.out,
-                    "#heading(level: {}, outlined: false, bookmarked: false)[{heading}]\n",
+                    "#heading(level: {}, outlined: false, bookmarked: false)[{heading}]{markers}\n",
                     u32::from(level + self.depth) + 1
                 );
             }
             ViewKind::Paragraph(content) => {
+                let lead = std::mem::take(&mut self.lead).then(|| "lead".to_owned());
                 let body = self.inlines(content);
-                if block.roles.is_empty() {
+                if block.roles.is_empty() && lead.is_none() {
                     let _ = writeln!(self.out, "{body}\n");
                 } else {
-                    let roles: Vec<String> = block.roles.iter().map(|role| string(role)).collect();
+                    let roles = block
+                        .roles
+                        .iter()
+                        .chain(lead.as_ref())
+                        .map(|role| string(role));
                     let _ = writeln!(
                         self.out,
-                        "#adoc-paragraph(({},), [{body}])\n",
-                        roles.join(", ")
+                        "#adoc-paragraph({}, [{body}])\n",
+                        typst::array(roles)
                     );
                 }
             }
             ViewKind::List { kind, items } => {
-                let (markers, depth): (Vec<String>, _) = match kind {
+                let markers: Vec<String> = match kind {
                     ListKind::Ordered => {
                         self.olist_depth += 1;
-                        let depth = self.olist_depth;
                         let style = block.style.as_deref().unwrap_or("arabic");
-                        let markers = ordered_numbers(block, items.len())
+                        ordered_numbers(block, items.len())
                             .into_iter()
                             .map(|number| typst::text(&ordered_marker(style, number)))
-                            .collect();
-                        (markers, depth)
+                            .collect()
                     }
                     ListKind::Unordered | ListKind::Checklist => {
                         self.ulist_depth += 1;
                         let depth = self.ulist_depth;
-                        let markers = items
+                        items
                             .iter()
                             .map(|item| {
                                 let marker = match item.checked {
@@ -546,14 +604,11 @@ impl<'a> Emitter<'a> {
                                 };
                                 typst::text(marker)
                             })
-                            .collect();
-                        (markers, depth)
+                            .collect()
                     }
                 };
-                let _ = depth;
-                let markers: Vec<String> =
-                    markers.iter().map(|marker| format!("[{marker}]")).collect();
-                let _ = write!(self.out, "#adoc-list(({},), (", markers.join(", "));
+                let markers = markers.iter().map(|marker| format!("[{marker}]"));
+                let _ = write!(self.out, "#adoc-list({}, (", typst::array(markers));
                 for (index, item) in items.iter().enumerate() {
                     if index > 0 {
                         self.push(", ");
@@ -572,10 +627,9 @@ impl<'a> Emitter<'a> {
                 let qanda = block.style.as_deref() == Some("qanda");
                 match block.style.as_deref() {
                     Some("qanda") => {
-                        let markers: Vec<String> = (1..=items.len())
-                            .map(|number| format!("[{}]", text(&format!("{number}."))))
-                            .collect();
-                        let _ = write!(self.out, "#adoc-list(({},), (", markers.join(", "));
+                        let markers = (1..=items.len())
+                            .map(|number| format!("[{}]", text(&format!("{number}."))));
+                        let _ = write!(self.out, "#adoc-list({}, (", typst::array(markers));
                     }
                     Some("horizontal") => self.push("#adoc-hlist(("),
                     _ => self.push("#adoc-dlist(("),
@@ -607,7 +661,7 @@ impl<'a> Emitter<'a> {
                     if index > 0 {
                         self.push(", ");
                     }
-                    let _ = write!(self.out, "({}, [", item.number);
+                    let _ = write!(self.out, "({}, [", string(&circled(item.number)));
                     self.item_body(&item.content, &item.blocks, Gaps::Items);
                     self.push("])");
                 }
@@ -747,12 +801,27 @@ impl<'a> Emitter<'a> {
             }
             ViewKind::Diagram(diagram) => match diagram {
                 DiagramView::Svg(path) => {
-                    let path = self.file(path);
-                    let _ = writeln!(
-                        self.out,
-                        "#adoc-image(image({}, alt: \"Diagram\"))\n",
-                        string(&path)
-                    );
+                    // Checked as an image is: one Typst cannot read is a warning, not a failed
+                    // document.
+                    let image = ViewImage {
+                        target: path.display().to_string(),
+                        path: Some(path.clone()),
+                        url: None,
+                        alt: "Diagram".to_owned(),
+                        width: None,
+                        height: None,
+                    };
+                    match self.usable_image(&image, &block.span) {
+                        Some((path, _)) => {
+                            let path = self.file(path);
+                            let _ = writeln!(
+                                self.out,
+                                "#adoc-image(image({}, alt: \"Diagram\"))\n",
+                                string(&path)
+                            );
+                        }
+                        None => self.push("#adoc-missing-image(\"Diagram\")\n\n"),
+                    }
                 }
                 DiagramView::Pending { source, .. } | DiagramView::Failed { source, .. } => {
                     let _ = writeln!(
@@ -806,7 +875,10 @@ impl<'a> Emitter<'a> {
             return None;
         }
         match image_natural_width(path) {
-            Ok(natural) => Some((path, natural)),
+            Ok((natural, extension)) => {
+                self.formats.insert(path.to_path_buf(), extension);
+                Some((path, natural))
+            }
             Err(problem) => {
                 self.missing.push((
                     format!("image could not be read: {} ({problem})", image.target),
@@ -815,6 +887,21 @@ impl<'a> Emitter<'a> {
                 None
             }
         }
+    }
+
+    /// The virtual path of an image shown outside the body (the title page's logo, running
+    /// content), when it can be shown: checked as the body's images are, and reported against
+    /// `span` when it cannot be.
+    pub(crate) fn image_file(&mut self, image: &ViewImage, span: &SourceSpan) -> Option<String> {
+        let reported = self.missing.len();
+        let Some((path, _)) = self.usable_image(image, span) else {
+            // Running content names an image for each side of the page: report it once.
+            if self.missing[..reported].contains(&self.missing[reported]) {
+                self.missing.truncate(reported);
+            }
+            return None;
+        };
+        Some(self.file(path))
     }
 
     fn block_image(&mut self, block: &ViewBlock, image: &ViewImage) {
@@ -852,10 +939,10 @@ impl<'a> Emitter<'a> {
             string(&path),
             string(&alt_text(image))
         );
-        // `link=` makes the image a link, as asciidoctor-pdf does.
+        // `link=` makes the image a link, as asciidoctor-pdf does; one Typst refuses, none.
         let shown = match block.attributes.get("link") {
-            Some(link) => format!("link({}, {shown})", string(link)),
-            None => shown,
+            Some(link) if typst::linkable(link) => format!("link({}, {shown})", string(link)),
+            _ => shown,
         };
         let _ = writeln!(self.out, "#adoc-image({shown}{align}{natural})\n");
     }
@@ -927,11 +1014,7 @@ impl<'a> Emitter<'a> {
         } else {
             columns
         };
-        // Every row, the header's and footer's too: the last draws the frame's bottom.
-        let row_count = table.rows.len()
-            + usize::from(table.header.is_some())
-            + usize::from(table.footer.is_some());
-        let mut options = format!(", row-count: {row_count}");
+        let mut options = String::new();
         for name in ["frame", "grid", "stripes"] {
             if let Some(value) = block.attributes.get(name) {
                 let _ = write!(options, ", {name}: {}", string(value));
@@ -951,37 +1034,76 @@ impl<'a> Emitter<'a> {
             None if autowidth => options.push_str(", width: auto"),
             None => {}
         }
-        let _ = write!(self.out, "#adoc-table(({},), ", columns.join(", "));
-        self.header_or_footer(table.header.as_deref(), true);
+        let fractions = column_fractions(table, columns.len(), autowidth);
+        // The table's own share of the page: its `width`, else all of it, or its content's.
+        let whole = match width {
+            Some(width) => Some(width.min(100.0) / 100.0),
+            None if autowidth => None,
+            None => Some(1.0),
+        };
+        let shares = |rows: &[Vec<ViewCell>]| -> Vec<Vec<Option<f64>>> {
+            cell_fractions(rows, &fractions)
+                .into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .map(|fraction| Some(fraction? * whole?))
+                        .collect()
+                })
+                .collect()
+        };
+        let one_row = |cells: Option<&Vec<ViewCell>>| {
+            cells
+                .map(|cells| shares(std::slice::from_ref(cells)).remove(0))
+                .unwrap_or_default()
+        };
+        let (head, body, foot) = (
+            one_row(table.header.as_ref()),
+            shares(&table.rows),
+            one_row(table.footer.as_ref()),
+        );
+        let _ = write!(self.out, "#adoc-table({}, ", typst::array(&columns));
+        self.header_or_footer(table.header.as_deref(), true, &head);
         self.push(", (");
-        for row in &table.rows {
-            for cell in row {
-                self.cell(cell, false);
+        for (row, shares) in table.rows.iter().zip(&body) {
+            for (cell, share) in row.iter().zip(shares) {
+                self.cell(cell, false, *share);
                 self.push(", ");
             }
         }
         self.push("), ");
-        self.header_or_footer(table.footer.as_deref(), false);
+        self.header_or_footer(table.footer.as_deref(), false, &foot);
         let _ = writeln!(self.out, "{options})\n");
     }
 
     /// A header or footer row's cells, or `none`.
-    fn header_or_footer(&mut self, cells: Option<&[ViewCell]>, header: bool) {
+    fn header_or_footer(
+        &mut self,
+        cells: Option<&[ViewCell]>,
+        header: bool,
+        shares: &[Option<f64>],
+    ) {
         let Some(cells) = cells else {
             self.push("none");
             return;
         };
         self.push("(");
         for (index, cell) in cells.iter().enumerate() {
-            if index > 0 {
-                self.push(", ");
-            }
-            self.cell(cell, header);
+            self.cell(cell, header, shares.get(index).copied().flatten());
+            self.push(if index == 0 { "," } else { ", " });
         }
-        self.push(",)");
+        self.push(")");
     }
 
-    fn cell(&mut self, cell: &ViewCell, header: bool) {
+    /// A cell, its blocks written at `share` of the table's width, when known.
+    fn cell(&mut self, cell: &ViewCell, header: bool, share: Option<f64>) {
+        let outer = (self.share, self.cells);
+        self.share = self.share.zip(share).map(|(outer, share)| outer * share);
+        self.cells += 1;
+        self.cell_content(cell, header);
+        (self.share, self.cells) = outer;
+    }
+
+    fn cell_content(&mut self, cell: &ViewCell, header: bool) {
         let align = match cell.align {
             Align::Start => "left",
             Align::Centre => "center",
@@ -1031,16 +1153,20 @@ impl<'a> Emitter<'a> {
         self.push("]");
     }
 
-    /// The virtual path a file is served at; the same file always gets the same path.
+    /// The virtual path a file is served at; the same file always gets the same path. A checked
+    /// image's path ends in its format's extension, whatever its own name says.
     pub(crate) fn file(&mut self, path: &Path) -> String {
         if let Some(existing) = self.file_paths.get(path) {
             return existing.clone();
         }
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("bin")
-            .to_ascii_lowercase();
+        let extension = match self.formats.get(path) {
+            Some(extension) => (*extension).to_owned(),
+            None => path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("bin")
+                .to_ascii_lowercase(),
+        };
         let virtual_path = format!("/files/{}.{extension}", stable_hash(path));
         self.file_paths
             .insert(path.to_path_buf(), virtual_path.clone());
@@ -1098,7 +1224,12 @@ impl<'a> Emitter<'a> {
                 } else {
                     self.inlines(content)
                 };
-                let _ = write!(out, "#adoc-link({}, [{inner}])", string(url));
+                // A link Typst refuses is its text alone.
+                if typst::linkable(url) {
+                    let _ = write!(out, "#adoc-link({}, [{inner}])", string(url));
+                } else {
+                    out.push_str(&inner);
+                }
             }
             ViewInline::Xref {
                 target,
@@ -1118,8 +1249,12 @@ impl<'a> Emitter<'a> {
                     None => out.push_str(&inner),
                 }
             }
+            // As a block's: Typst refuses a link to a label that occurs twice.
             ViewInline::Anchor(id) => {
-                let _ = write!(out, "#metadata(none)#{}", self.label(id));
+                if self.first_place(id) {
+                    let marker = format!("#metadata(none)#{}", self.label(id));
+                    self.marker(out, &marker);
+                }
             }
             ViewInline::Image(image) => match self.usable_image(image, &self.span.clone()) {
                 Some((path, _)) => {
@@ -1152,10 +1287,11 @@ impl<'a> Emitter<'a> {
                 let _ = write!(out, "#adoc-footnote-ref({number}, {label})");
             }
             ViewInline::LineBreak => out.push_str("#linebreak()"),
-            ViewInline::Keyboard(keys) => {
-                let keys: Vec<String> = keys.iter().map(|key| string(key)).collect();
-                let _ = write!(out, "#adoc-kbd(({},))", keys.join(", "));
+            ViewInline::Keyboard(keys) if !keys.is_empty() => {
+                let keys = keys.iter().map(|key| string(key));
+                let _ = write!(out, "#adoc-kbd({})", typst::array(keys));
             }
+            ViewInline::Keyboard(_) => {}
             ViewInline::Button(label) => {
                 let _ = write!(out, "#adoc-button({})", string(label));
             }
@@ -1170,7 +1306,9 @@ impl<'a> Emitter<'a> {
                     .filter(|item| !item.is_empty())
                     .map(string)
                     .collect();
-                let _ = write!(out, "#adoc-menu(({},))", items.join(", "));
+                if !items.is_empty() {
+                    let _ = write!(out, "#adoc-menu({})", typst::array(items));
+                }
             }
             ViewInline::Stem { latex, source, .. } => match self.stem(*latex, source, false) {
                 Some(call) => out.push_str(&call),
@@ -1180,13 +1318,19 @@ impl<'a> Emitter<'a> {
             },
             ViewInline::IndexTerm { terms, content } => {
                 let inner = self.inlines(content);
-                let terms: Vec<String> = terms.iter().map(|term| string(term)).collect();
-                // The marker the index finds the term and its page by.
-                let _ = write!(
-                    out,
-                    "{inner}#metadata(({},))<adoc-index-term>",
-                    terms.join(", ")
-                );
+                out.push_str(&inner);
+                // The marker the index finds the term and its page by: its terms down to the
+                // first with no text, which the index could not file; none without a term.
+                let terms: Vec<String> = terms
+                    .iter()
+                    .map(|term| term.trim())
+                    .take_while(|term| !term.is_empty())
+                    .map(string)
+                    .collect();
+                if !terms.is_empty() {
+                    let marker = format!("#metadata({})<adoc-index-term>", typst::array(terms));
+                    self.marker(out, &marker);
+                }
             }
         }
     }
@@ -1221,31 +1365,18 @@ impl<'a> Emitter<'a> {
             }
             return None;
         }
-        if let Some(url) = link
+        // A page of the site, at the address the site gives it; any other reference stays
+        // text rather than lead to an address worked out from its name.
+        let mut url = link
             .target
             .as_ref()
-            .and_then(|location| self.options.page_urls.get(&location.path))
-        {
-            let mut url = url.clone();
-            if let Some(fragment) = &fragment {
-                url.push('#');
-                url.push_str(fragment);
-            }
-            return Some(string(&url));
-        }
-        let site = self.options.site_url.as_deref()?;
-        let file = target.split('#').next().unwrap_or(target);
-        let file = file
-            .rsplit(['$', ':'])
-            .next()
-            .unwrap_or(file)
-            .replace(".adoc", ".html");
-        let mut url = format!("{}/{file}", site.trim_end_matches('/'));
-        if let Some(fragment) = fragment {
+            .and_then(|location| self.options.page_urls.get(&location.path))?
+            .clone();
+        if let Some(fragment) = &fragment {
             url.push('#');
-            url.push_str(&fragment);
+            url.push_str(fragment);
         }
-        Some(string(&url))
+        typst::linkable(&url).then(|| string(&url))
     }
 }
 
@@ -1342,19 +1473,22 @@ impl Natural {
     }
 }
 
-/// The width of the image at `path` when nothing sizes it, or why it cannot be shown: decoded
-/// as Typst decodes it when it lays the page out (memoised, so the work is not repeated), where
-/// a failure would fail the whole document.
+/// The width of the image at `path` when nothing sizes it, and the extension of its format as
+/// its content shows it, or why it cannot be shown: decoded as Typst decodes it when it lays the
+/// page out (memoised, so the work is not repeated), where a failure would fail the whole
+/// document.
 ///
 /// asciidoctor-pdf gives a raster image 0.75pt to the pixel (96 dpi), whatever resolution the
 /// file records, where Typst would use that resolution or 72 dpi. An SVG is sized as prawn-svg
 /// sizes it: its `width` in points when it has no unit, at 0.75pt to the pixel in `px`, and the
 /// column's width when it has only a view box.
-fn image_natural_width(path: &Path) -> Result<Natural, String> {
+fn image_natural_width(path: &Path) -> Result<(Natural, &'static str), String> {
     // `::typst`, the crate, not this crate's `typst` module.
     use ::typst::{
         foundations::Bytes,
-        visualize::{ImageFormat, RasterImage, SvgImage, VectorFormat},
+        visualize::{
+            ExchangeFormat, ImageFormat, RasterFormat, RasterImage, SvgImage, VectorFormat,
+        },
     };
     let data = std::fs::read(path).map_err(|error| error.to_string())?;
     let format = ImageFormat::detect(&data);
@@ -1364,13 +1498,23 @@ fn image_natural_width(path: &Path) -> Result<Natural, String> {
     };
     let bytes = Bytes::new(data);
     match format {
-        Some(ImageFormat::Raster(format)) => RasterImage::plain(bytes, format)
-            .map(|image| Natural::Points(f64::from(image.width()) * 0.75))
-            .map_err(|error| error.to_string()),
+        Some(ImageFormat::Raster(format)) => {
+            let extension = match format {
+                RasterFormat::Exchange(ExchangeFormat::Png) => "png",
+                RasterFormat::Exchange(ExchangeFormat::Jpg) => "jpg",
+                RasterFormat::Exchange(ExchangeFormat::Gif) => "gif",
+                RasterFormat::Exchange(ExchangeFormat::Webp) => "webp",
+                // Typst detects no pixel buffer from the bytes alone.
+                RasterFormat::Pixel(_) => return Err("an unrecognised image format".to_owned()),
+            };
+            RasterImage::plain(bytes, format)
+                .map(|image| (Natural::Points(f64::from(image.width()) * 0.75), extension))
+                .map_err(|error| error.to_string())
+        }
         Some(ImageFormat::Vector(VectorFormat::Svg)) => SvgImage::new(bytes)
-            .map(|_| natural)
+            .map(|_| (natural, "svg"))
             .map_err(|error| format!("{error:?}")),
-        Some(ImageFormat::Vector(VectorFormat::Pdf)) => Ok(Natural::Typst),
+        Some(ImageFormat::Vector(VectorFormat::Pdf)) => Ok((Natural::Typst, "pdf")),
         None => Err("an unrecognised image format".to_owned()),
     }
 }
@@ -1603,27 +1747,29 @@ fn admonition_label(kind: AdmonitionKind) -> &'static str {
     }
 }
 
+/// The characters `estimated_lines` counts to a line of the page's width.
+const CHARACTERS_PER_LINE: usize = 60;
+
 /// The lines a block can take at most, estimated generously from its text: each line of code
-/// or verse, a line for every 60 characters of a paragraph, and one for the spacing around each
-/// block. `None` when its height cannot be told from its text: images, diagrams, media, tables,
-/// maths, raw and unsupported content.
-fn estimated_lines(block: &ViewBlock) -> Option<usize> {
-    const CHARACTERS_PER_LINE: usize = 60;
-    fn text_lines(text: &str) -> usize {
+/// or verse, a line for every `per_line` characters of a paragraph (`CHARACTERS_PER_LINE` at
+/// the page's width), and one for the spacing around each block. `None` when its height cannot
+/// be told from its text: images, diagrams, media, tables, maths, raw and unsupported content.
+fn estimated_lines(block: &ViewBlock, per_line: usize) -> Option<usize> {
+    let per_line = per_line.max(1);
+    let text_lines = |text: &str| {
         text.lines()
-            .map(|line| 1 + line.chars().count() / CHARACTERS_PER_LINE)
+            .map(|line| 1 + line.chars().count() / per_line)
             .sum::<usize>()
             .max(1)
-    }
-    fn inline_lines(inlines: &[ViewInline]) -> usize {
-        1 + ViewInline::plain_text(inlines).chars().count() / CHARACTERS_PER_LINE
-    }
-    fn blocks_lines(blocks: &[ViewBlock]) -> Option<usize> {
+    };
+    let inline_lines =
+        |inlines: &[ViewInline]| 1 + ViewInline::plain_text(inlines).chars().count() / per_line;
+    let blocks_lines = |blocks: &[ViewBlock]| -> Option<usize> {
         blocks
             .iter()
-            .map(|block| estimated_lines(block).map(|lines| lines + 1))
+            .map(|block| estimated_lines(block, per_line).map(|lines| lines + 1))
             .sum()
-    }
+    };
     match &block.kind {
         ViewKind::Paragraph(content) => Some(inline_lines(content)),
         ViewKind::Heading { title, .. } => Some(inline_lines(title) + 1),
@@ -1661,6 +1807,69 @@ fn estimated_lines(block: &ViewBlock) -> Option<usize> {
     }
 }
 
+/// Each column's share of a table's width: a proportional column's of what percentage columns
+/// leave, a percentage column's its percentage; `None` for one sized by its content.
+fn column_fractions(table: &ViewTable, count: usize, autowidth: bool) -> Vec<Option<f64>> {
+    if autowidth {
+        return vec![None; count];
+    }
+    if table.columns.is_empty() {
+        return vec![Some(1.0 / count.max(1) as f64); count];
+    }
+    let mut percent = 0.0;
+    let mut parts = 0.0;
+    for column in &table.columns {
+        match column.width {
+            ColumnWidth::Proportional(width) => parts += f64::from(width.max(1)),
+            ColumnWidth::Percentage(width) => percent += f64::from(width),
+            ColumnWidth::Auto => {}
+        }
+    }
+    let left = (1.0 - percent / 100.0).max(0.0);
+    table
+        .columns
+        .iter()
+        .map(|column| match column.width {
+            ColumnWidth::Proportional(width) => Some(left * f64::from(width.max(1)) / parts),
+            ColumnWidth::Percentage(width) => Some(f64::from(width) / 100.0),
+            ColumnWidth::Auto => None,
+        })
+        .collect()
+}
+
+/// Each cell's share of the table's width, as its columns are worked out from the spans before
+/// it, those of row spans from above included; `None` where it cannot be told.
+fn cell_fractions(rows: &[Vec<ViewCell>], fractions: &[Option<f64>]) -> Vec<Vec<Option<f64>>> {
+    // Rows still to cover, per column, of row spans from above.
+    let mut spanned = vec![0usize; fractions.len()];
+    rows.iter()
+        .map(|row| {
+            let mut column = 0;
+            let shares = row
+                .iter()
+                .map(|cell| {
+                    while spanned.get(column).is_some_and(|rows| *rows > 0) {
+                        column += 1;
+                    }
+                    let width = cell.colspan.max(1);
+                    let share = fractions
+                        .get(column..column + width)
+                        .and_then(|columns| columns.iter().copied().sum::<Option<f64>>());
+                    for rows in spanned.iter_mut().skip(column).take(width) {
+                        *rows = cell.rowspan.max(1);
+                    }
+                    column += width;
+                    share
+                })
+                .collect();
+            for rows in &mut spanned {
+                *rows = rows.saturating_sub(1);
+            }
+            shares
+        })
+        .collect()
+}
+
 /// Listing text with each callout's circled number at the end of its line.
 fn with_callouts(text: &str, callouts: &[adoc_render::Callout]) -> String {
     if callouts.is_empty() {
@@ -1674,7 +1883,7 @@ fn with_callouts(text: &str, callouts: &[adoc_render::Callout]) -> String {
         out.push_str(line.trim_end());
         for callout in callouts.iter().filter(|callout| callout.line == index) {
             out.push(' ');
-            out.push(circled(callout.number));
+            out.push_str(&circled(callout.number));
         }
     }
     out
@@ -1750,16 +1959,21 @@ fn run(text: &str, style: &Style) -> String {
     )
 }
 
-/// The circled digit for a callout number, as asciidoctor-pdf's `circled` glyphs.
-fn circled(number: usize) -> char {
-    match number {
-        1..=20 => char::from_u32(0x2460 + number as u32 - 1).unwrap_or('?'),
-        _ => '?',
-    }
+/// The circled number for a callout, as asciidoctor-pdf's `circled` glyphs give it: ① to ⑳,
+/// ㉑ to ㉟ and ㊱ to ㊿; the number itself past 50, where they end.
+fn circled(number: usize) -> String {
+    let glyph = match number {
+        1..=20 => char::from_u32(0x2460 + number as u32 - 1),
+        21..=35 => char::from_u32(0x3251 + number as u32 - 21),
+        36..=50 => char::from_u32(0x32B1 + number as u32 - 36),
+        _ => None,
+    };
+    glyph.map_or_else(|| number.to_string(), String::from)
 }
 
-/// An image size attribute as a Typst length: a percentage, or pixels at 96 dpi.
-fn image_size(value: &str) -> Option<String> {
+/// An image size attribute as a Typst length: a percentage, or pixels at 96 dpi. Only a number
+/// parsed from the value is written, never the value itself.
+pub(crate) fn image_size(value: &str) -> Option<String> {
     image_extent(value).map(|extent| match extent {
         Natural::Percent(percent) => {
             format!("{}%", typst::number(percent).trim_end_matches(".0"))
@@ -1771,16 +1985,24 @@ fn image_size(value: &str) -> Option<String> {
 
 /// An image size attribute: a percentage, or a length, pixels at 96 dpi when it has no unit.
 fn image_extent(value: &str) -> Option<Natural> {
-    let value = value.trim();
+    let value = value.trim().trim_matches(['"', '\'']).trim();
+    let positive = |number: f64| (number.is_finite() && number > 0.0).then_some(number);
     if let Some(percent) = value.strip_suffix('%') {
-        return percent.trim().parse().ok().map(Natural::Percent);
+        return percent
+            .trim()
+            .parse()
+            .ok()
+            .and_then(positive)
+            .map(Natural::Percent);
     }
     let (number, unit) = match value.find(|c: char| !(c.is_ascii_digit() || c == '.')) {
         Some(split) => value.split_at(split),
         None => (value, "px"),
     };
     let number: f64 = number.parse().ok()?;
-    crate::theme::to_pt(number, unit.trim()).map(Natural::Points)
+    crate::theme::to_pt(number, unit.trim())
+        .and_then(positive)
+        .map(Natural::Points)
 }
 
 /// A hash of `path` that is the same in every process, for stable virtual paths.

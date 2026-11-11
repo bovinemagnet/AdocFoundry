@@ -62,6 +62,46 @@ fn unconvertible_stem_is_shown_as_source_with_a_warning() {
 }
 
 #[test]
+fn a_formula_short_of_an_argument_is_shown_as_source_with_a_warning() {
+    // Each converts to a call Typst cannot evaluate; one wrong formula must not cost the page.
+    for (notation, formula) in [
+        ("latexmath", r"\frac{1}"),
+        ("latexmath", r"\binom{n}"),
+        ("latexmath", r"\cfrac{1}"),
+        ("latexmath", r"\overset{a}"),
+        ("latexmath", r"\sqrt"),
+        ("asciimath", "frac"),
+        ("asciimath", "root(3)"),
+    ] {
+        let page =
+            format!("= Maths\n:stem:\n\nBefore.\n\nThe value {notation}:[{formula}] here.\n");
+        let document = common::article(common::view_of_text(Path::new("/doc/maths.adoc"), &page));
+        let output = export(&document, &common::default_theme(), &PdfOptions::default())
+            .unwrap_or_else(|error| panic!("{formula}: {error}"));
+        let warnings: Vec<_> = output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.message.starts_with("STEM not typeset"))
+            .collect();
+        assert_eq!(warnings.len(), 1, "{formula}: {:?}", output.diagnostics);
+        assert_eq!(
+            warnings[0].source.as_ref().map(|span| span.line),
+            Some(6),
+            "{formula}"
+        );
+        let typst = emit(&document, &common::default_theme(), &PdfOptions::default());
+        let text: String = typeset_text(&typst, &common::default_theme(), &PdfOptions::default())
+            .unwrap()
+            .join("")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let shown: String = formula.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(text.contains(&shown), "{formula} in {text}");
+    }
+}
+
+#[test]
 fn every_helper_is_defined() {
     // The template defines exactly the helpers adoc-math lets converted LaTeX call.
     // A Windows checkout may have CRLF line endings.
