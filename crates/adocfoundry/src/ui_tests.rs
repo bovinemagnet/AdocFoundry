@@ -8939,6 +8939,122 @@ fn quit_with_nothing_unsaved_quits_at_once(cx: &mut TestAppContext) {
     assert!(quit_asked(), "no window left to ask in");
 }
 
+/// Updates are readied by a stand-in that downloads nothing; the count is how many times one
+/// was finished, which is when the new version would be put in place.
+fn with_staged_updates(
+    app: &Entity<AppState>,
+    cx: &mut VisualTestContext,
+) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+    let finished = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = finished.clone();
+    cx.update(|_, cx| {
+        app.update(cx, |app, _| {
+            app.prepare = std::sync::Arc::new(move |_, _| {
+                let counted = counted.clone();
+                Ok(crate::updates::Staged::new(
+                    move || {
+                        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(())
+                    },
+                    Vec::new(),
+                ))
+            });
+        });
+    });
+    finished
+}
+
+/// Updates to 99.0.0, as the update dialog's Update button does.
+fn start_update(app: &Entity<AppState>, cx: &mut VisualTestContext) {
+    let release = adoc_engine::updates::Release {
+        version: adoc_engine::updates::Version::parse("99.0.0").unwrap(),
+        tag: "v99.0.0".to_owned(),
+        page: "https://example.org/v99.0.0".to_owned(),
+        assets: Vec::new(),
+    };
+    cx.update(|window, cx| crate::updates::update(app, &release, window, cx));
+    cx.run_until_parked();
+}
+
+fn finished(count: &std::sync::atomic::AtomicUsize) -> usize {
+    count.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// A page typed into while the update downloads is asked about as on any quit, and the update
+/// is put in place only once the question is answered.
+#[gpui::test]
+fn finishing_an_update_asks_about_unsaved_pages_before_installing(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    let count = with_staged_updates(&app, &mut cx);
+    cx.simulate_input("x");
+    cx.run_until_parked();
+
+    start_update(&app, &mut cx);
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert!(!quit_asked(), "nothing quits while it asks");
+    assert_eq!(finished(&count), 0, "nothing is installed while it asks");
+
+    click_selector("close-window-save", gpui::MouseButton::Left, &mut cx);
+    assert!(quit_asked());
+    assert_eq!(finished(&count), 1);
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "x= Page\n");
+}
+
+/// Cancel keeps the app and its pages and discards the update: a later quit installs nothing.
+#[gpui::test]
+fn cancelling_the_quit_of_an_update_discards_it(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    let count = with_staged_updates(&app, &mut cx);
+    cx.simulate_input("x");
+    cx.run_until_parked();
+
+    start_update(&app, &mut cx);
+    click_selector("close-window-cancel", gpui::MouseButton::Left, &mut cx);
+    assert!(!quit_asked());
+    assert_eq!(finished(&count), 0);
+    assert_eq!(unsaved(&app, &mut cx), 1);
+    assert!(cx.update(|_, cx| app.read(cx).staged_update.is_none()));
+
+    cx.dispatch_action(crate::editor::bindings::Quit);
+    cx.run_until_parked();
+    click_selector("close-window-discard", gpui::MouseButton::Left, &mut cx);
+    assert!(quit_asked());
+    assert_eq!(finished(&count), 0, "the update went with Cancel");
+}
+
+/// With nothing unsaved, a readied update quits at once and is put in place as it does.
+#[gpui::test]
+fn an_update_with_nothing_unsaved_installs_as_it_quits(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    let count = with_staged_updates(&app, &mut cx);
+
+    start_update(&app, &mut cx);
+    assert!(quit_asked());
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(finished(&count), 1);
+}
+
 /// In a window shorter than the File menu, the menu scrolls below the title bar rather than
 /// being moved up over the menu names, so another menu can still be chosen from them.
 #[gpui::test]

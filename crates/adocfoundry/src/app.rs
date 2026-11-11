@@ -69,6 +69,10 @@ pub struct AppState {
     pub engine: PumpedEngine,
     /// How the releases feed is read: the system's `curl`, or a stand-in in tests.
     pub fetch: crate::updates::Fetch,
+    /// How an update is readied: downloaded, checked and staged, or a stand-in in tests.
+    pub prepare: crate::updates::Prepare,
+    /// An update readied and waiting for the quit it asked for, which puts it in place.
+    pub(crate) staged_update: Option<crate::updates::Staged>,
     events: Receiver<EngineEvent>,
     _pump: Task<()>,
     _quit: gpui::Subscription,
@@ -120,12 +124,16 @@ impl AppState {
         // Edits made in the last moments before quitting are kept too.
         let quit = cx.on_app_quit(|this, _| {
             this.engine.write_recovery_now();
+            // An update still waiting when the app quits some other way was never answered for.
+            drop(this.staged_update.take());
             async {}
         });
         #[cfg_attr(test, allow(unused_mut))]
         let mut state = Self {
             engine: PumpedEngine { engine, wake },
             fetch: crate::updates::system_fetch(),
+            prepare: crate::updates::system_prepare(),
+            staged_update: None,
             events,
             _pump: pump,
             _quit: quit,
@@ -304,6 +312,7 @@ pub fn bind_app_actions(app: &Entity<AppState>, cx: &mut App) {
 /// is over; only a workspace window that is gone quits without it.
 pub fn quit(app: &Entity<AppState>, cx: &mut App) {
     let main = app.read(cx).main.clone();
+    let app = app.clone();
     cx.defer(move |cx| {
         if let Some((handle, workspace)) =
             main.filter(|(_, workspace)| workspace.upgrade().is_some())
@@ -315,15 +324,20 @@ pub fn quit(app: &Entity<AppState>, cx: &mut App) {
                 return;
             }
         }
-        quit_now(cx);
+        quit_now(&app, cx);
     });
 }
 
-/// Quits the app. Tests see that it was asked for instead.
-pub(crate) fn quit_now(cx: &mut App) {
+/// Quits the app, once any question about unsaved pages is answered. An update waiting for
+/// this quit is put in place first. Tests see that the quit was asked for instead.
+pub(crate) fn quit_now(app: &Entity<AppState>, cx: &mut App) {
+    if let Some(staged) = app.update(cx, |app, _| app.staged_update.take()) {
+        if let Err(error) = staged.finish() {
+            eprintln!("adocfoundry: the update was not installed: {error}");
+        }
+    }
     #[cfg(test)]
     {
-        let _ = cx;
         QUIT_ASKED.with(|asked| asked.set(true));
     }
     #[cfg(not(test))]

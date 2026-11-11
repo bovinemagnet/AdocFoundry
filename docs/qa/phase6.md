@@ -49,7 +49,8 @@ Automated coverage for reference:
 
 ## Updates
 
-- [ ] macOS and Windows: an older signed build, pointed at a feed offering a newer release, says once that it is available. After **Update** and confirming, it installs the newer release and relaunches, or, on Windows, runs its installer.
+- [ ] macOS and Windows: an older signed build, pointed at a feed offering a newer release, says once that it is available. After **Update** and confirming, it installs the newer release and relaunches, or, on Windows, runs its installer once the app has exited and then starts the new version.
+- [ ] macOS and Windows: with a page typed into during the download, the update asks to save it before quitting, and Cancel leaves the app open, the page unsaved and the old version installed.
 - [ ] The notice is not shown again after the app restarts. With `[updates] check = false` there is no check at start-up, and the command still checks.
 - [ ] An ad-hoc or unsigned build, a deb, an rpm and a portable zip only notify, with a link to the release.
 - [ ] The AppImage's update information is found by AppImageUpdate.
