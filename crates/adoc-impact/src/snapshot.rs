@@ -387,6 +387,8 @@ impl<'a> DependencySnapshot<'a> {
                 adoc_lang::graph::LinkTarget::File(path) => Some(path),
                 adoc_lang::graph::LinkTarget::Unresolved(_) => None,
             })
+            // Only a file this side has, as for `resolves`.
+            .filter(|path| self.has(path))
             .collect()
     }
 }

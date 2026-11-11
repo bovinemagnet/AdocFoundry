@@ -320,6 +320,12 @@ fn impact_handles_cycles_and_truncation() {
         of_kind(&shallow, ImpactKind::Render).is_empty(),
         "one include deep reaches no page"
     );
+    // #542: and the report says where the walk stopped.
+    let Completeness::Partial { gaps } = &shallow.completeness else {
+        panic!("{:?}", shallow.completeness);
+    };
+    assert_eq!(gaps[0].reason, "include-depth-exceeded");
+    assert_eq!(gaps[0].affected, [INTRO]);
 }
 
 #[test]
@@ -848,4 +854,93 @@ fn impact_ignores_files_no_component_could_hold() {
     );
     assert!(report.is_complete(), "{:#?}", report.completeness);
     assert!(report.impacts.is_empty(), "{:#?}", report.impacts);
+}
+
+#[test]
+fn impact_cut_keeps_references_to_review_first() {
+    // #542: a render impact is cut before a broken reference.
+    let revisions = Revisions::new();
+    revisions.write(
+        INSTALL,
+        "= Installing\n\ninclude::partial$intro.adoc[]\n\n== Getting ready\n\nSteps.\n",
+    );
+    let report = revisions.report_within(
+        &[revisions.change(INSTALL, ChangeKind::Modified)],
+        &[],
+        Limits {
+            depth: 32,
+            impacts: 1,
+        },
+    );
+    assert_eq!(report.counts.render, 1);
+    assert_eq!(report.impacts.len(), 1);
+    assert_eq!(report.impacts[0].kind, ImpactKind::ReferenceIntegrity);
+}
+
+#[test]
+fn impact_now_resolves_only_what_base_left_unresolved() {
+    // #542: two new pages linking to each other were not unresolved before.
+    let revisions = Revisions::new();
+    let one = "v1/modules/ROOT/pages/one.adoc";
+    let two = "v1/modules/ROOT/pages/two.adoc";
+    revisions.write(one, "= One\n\nSee xref:two.adoc[].\n");
+    revisions.write(two, "= Two\n\nSee xref:one.adoc[].\n");
+    let report = revisions.report(
+        &[
+            revisions.change(one, ChangeKind::Added),
+            revisions.change(two, ChangeKind::Added),
+        ],
+        &[],
+    );
+    assert!(
+        !report
+            .impacts
+            .iter()
+            .any(|impact| impact.status == Some(ImpactStatus::NowResolves)),
+        "{:#?}",
+        report.impacts
+    );
+
+    // A reference base held and could not resolve does.
+    let mut revisions = Revisions::new();
+    revisions.write(GUIDE, "= Guide\n\nRead xref:one.adoc[] first.\n");
+    revisions.rebase();
+    revisions.write(one, "= One\n");
+    let report = revisions.report(&[revisions.change(one, ChangeKind::Added)], &[]);
+    let resolving: Vec<&str> = report
+        .impacts
+        .iter()
+        .filter(|impact| impact.status == Some(ImpactStatus::NowResolves))
+        .map(|impact| impact.path.as_str())
+        .collect();
+    assert_eq!(resolving, [GUIDE]);
+}
+
+#[test]
+fn impact_navigation_lists_only_files_its_side_holds() {
+    // #542: head no longer holds the guide, still on disk; its entry, which resolves relative
+    // to the navigation file's folder, does not list it.
+    let mut revisions = Revisions::new();
+    revisions.write(
+        NAV,
+        "* xref:index.adoc[]\n* xref:install.adoc[]\n* xref:pages/guide.adoc[]\n",
+    );
+    revisions.rebase();
+    let mut head = revisions.base.clone();
+    head.remove_document(&revisions.path(GUIDE));
+    head.antora.remove_source(&revisions.path(GUIDE));
+    let roots = [revisions.root.clone()];
+    let report = analyse(
+        &[revisions.change(NAV, ChangeKind::Modified)],
+        Some(&DependencySnapshot::borrowed(&revisions.base, &roots)),
+        &DependencySnapshot::borrowed(&head, &roots),
+        &[],
+        Limits::default(),
+    );
+    let unlisted: Vec<&str> = of_kind(&report, ImpactKind::Navigation)
+        .iter()
+        .filter(|impact| impact.status == Some(ImpactStatus::Unlisted))
+        .map(|impact| impact.path.as_str())
+        .collect();
+    assert_eq!(unlisted, [GUIDE]);
 }

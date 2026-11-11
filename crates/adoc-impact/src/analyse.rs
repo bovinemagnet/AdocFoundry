@@ -327,10 +327,23 @@ fn render(
     let mut seen: BTreeSet<PathBuf> = BTreeSet::from([changed.to_path_buf()]);
     let mut queue: VecDeque<Vec<PathBuf>> = VecDeque::from([vec![changed.to_path_buf()]]);
     while let Some(via) = queue.pop_front() {
+        let last = via.last().expect("a path holds the changed file");
         if via.len() > limits.depth {
+            if !snapshot.includers(last).is_empty() {
+                gathered.gaps.push(Gap {
+                    reason: "include-depth-exceeded",
+                    detail: format!(
+                        "the files including {} were followed {} includes deep, and those \
+                         including {} were not",
+                        snapshot.display(origin),
+                        limits.depth,
+                        snapshot.display(last)
+                    ),
+                    affected: vec![snapshot.display(last)],
+                });
+            }
             continue;
         }
-        let last = via.last().expect("a path holds the changed file");
         for includer in snapshot.includers(last) {
             if !seen.insert(includer.path.clone()) {
                 continue;
@@ -598,9 +611,16 @@ fn now_resolving(
         if referrer.path == path {
             continue;
         }
-        let before = base.and_then(|base| base.resolves(&referrer.path, &referrer.written));
-        if before.as_deref() == Some(path) {
-            continue;
+        // Only a reference base held and could not resolve: not one added with the file, nor
+        // one that led elsewhere before.
+        if let Some(base) = base {
+            let held = base.has(&referrer.path)
+                && base
+                    .still_writes(&referrer.path, &referrer.written, referrer.ordinal)
+                    .is_some();
+            if !held || base.resolves(&referrer.path, &referrer.written).is_some() {
+                continue;
+            }
         }
         let mut impact = referrer_impact(
             head,
@@ -929,7 +949,21 @@ fn finish(
     }
     let total = impacts.len();
     let truncated = (total > limits.impacts).then(|| {
-        impacts.truncate(limits.impacts);
+        // What needs review is kept first; what is kept stays in the report's order.
+        let review = |kind: ImpactKind| match kind {
+            ImpactKind::ReferenceIntegrity => 0,
+            ImpactKind::Navigation => 1,
+            ImpactKind::Publication => 2,
+            ImpactKind::Render => 3,
+        };
+        let mut order: Vec<usize> = (0..total).collect();
+        order.sort_by_key(|&at| (review(impacts[at].kind), at));
+        let kept: BTreeSet<usize> = order.into_iter().take(limits.impacts).collect();
+        let mut at = 0;
+        impacts.retain(|_| {
+            at += 1;
+            kept.contains(&(at - 1))
+        });
         Truncated {
             shown: limits.impacts,
             total,
