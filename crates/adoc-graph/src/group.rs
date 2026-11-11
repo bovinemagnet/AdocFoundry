@@ -93,43 +93,41 @@ impl GraphSnapshot {
         if collapsed.is_empty() {
             return self.clone();
         }
-        // Each node's key in the result: its own, or its group's.
-        let mut members: BTreeMap<String, Vec<&GraphNode>> = BTreeMap::new();
-        let shown: Vec<GraphKey> = self
-            .nodes
-            .iter()
-            .map(|node| {
-                let name = group_name(node, by);
-                if collapsed.contains(&name) {
-                    members.entry(name.clone()).or_default().push(node);
-                    GraphKey::Group(name)
-                } else {
-                    node.key.clone()
-                }
-            })
-            .collect();
-        let place: HashMap<&GraphKey, usize> = self
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(at, node)| (&node.key, at))
-            .collect();
-        let mut merged: BTreeMap<(GraphKey, GraphKey, EdgeKind), usize> = BTreeMap::new();
-        for edge in &self.edges {
-            let from = &shown[place[&edge.from]];
-            let to = &shown[place[&edge.to]];
-            if from != to {
-                *merged
-                    .entry((from.clone(), to.clone(), edge.kind))
-                    .or_default() += edge.count;
+        // The members of each group collapsed, by place, and each node's group if collapsed.
+        let mut members: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut in_group: Vec<bool> = Vec::with_capacity(self.nodes.len());
+        for (at, node) in self.nodes.iter().enumerate() {
+            let name = group_name(node, by);
+            let collapse = collapsed.contains(&name);
+            if collapse {
+                members.entry(name).or_default().push(at);
+            }
+            in_group.push(collapse);
+        }
+        // The result's nodes: those kept, in their order, then the groups in name order. A
+        // group's key sorts after every file's and target's, so they stay sorted.
+        let kept = in_group.iter().filter(|collapse| !**collapse).count();
+        let mut shown = vec![0; self.nodes.len()];
+        let mut next = 0;
+        for (at, collapse) in in_group.iter().enumerate() {
+            if !collapse {
+                shown[at] = next;
+                next += 1;
+            }
+        }
+        for (rank, places) in members.values().enumerate() {
+            for &at in places {
+                shown[at] = kept + rank;
             }
         }
         let mut nodes: Vec<GraphNode> = self
             .nodes
             .iter()
-            .filter(|node| !collapsed.contains(&group_name(node, by)))
-            .cloned()
-            .chain(members.into_iter().map(|(name, members)| {
+            .zip(&in_group)
+            .filter(|(_, collapse)| !**collapse)
+            .map(|(node, _)| node.clone())
+            .chain(members.into_iter().map(|(name, places)| {
+                let members: Vec<&GraphNode> = places.iter().map(|&at| &self.nodes[at]).collect();
                 GraphNode {
                     key: GraphKey::Group(name.clone()),
                     title: name,
@@ -149,17 +147,51 @@ impl GraphSnapshot {
                 }
             }))
             .collect();
-        nodes.sort_by(|left, right| left.key.cmp(&right.key));
+        debug_assert!(nodes.windows(2).all(|pair| pair[0].key < pair[1].key));
+        // Edges merged by their ends' places in the result, which sort as their keys do; hashed
+        // and compared as numbers, as paths compare slowly.
+        let place: HashMap<&GraphKey, usize> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(at, node)| (&node.key, at))
+            .collect();
+        let mut placed: Vec<(usize, usize, EdgeKind, usize)> = self
+            .edges
+            .iter()
+            .map(|edge| {
+                let from = shown[place[&edge.from]];
+                let to = shown[place[&edge.to]];
+                (from, to, edge.kind, edge.count)
+            })
+            .filter(|(from, to, ..)| from != to)
+            .collect();
+        placed.sort_unstable();
+        let mut merged: Vec<(usize, usize, EdgeKind, usize)> = Vec::with_capacity(placed.len());
+        for (from, to, kind, count) in placed {
+            match merged.last_mut() {
+                Some(last) if (last.0, last.1, last.2) == (from, to, kind) => last.3 += count,
+                _ => merged.push((from, to, kind, count)),
+            }
+        }
+        let mut counts = vec![(0, 0); nodes.len()];
         let edges: Vec<GraphEdge> = merged
             .into_iter()
-            .map(|((from, to, kind), count)| GraphEdge {
-                from,
-                to,
-                kind,
-                count,
+            .map(|(from, to, kind, count)| {
+                counts[from].0 += 1;
+                counts[to].1 += 1;
+                GraphEdge {
+                    from: nodes[from].key.clone(),
+                    to: nodes[to].key.clone(),
+                    kind,
+                    count,
+                }
             })
             .collect();
-        crate::recount(&mut nodes, &edges);
+        for (node, (out, into)) in nodes.iter_mut().zip(counts) {
+            node.links_out = out;
+            node.links_in = into;
+        }
         Self {
             revision: self.revision,
             nodes,

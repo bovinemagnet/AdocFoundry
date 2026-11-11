@@ -1,6 +1,7 @@
 //! The graph's budgets: `cargo bench -p adoc-graph`. One step for 2,000 nodes and 6,000 edges
 //! must take under 8 ms (median), grouped by module or not, and so must building a mind map of
-//! them and laying it out, and a shortest path that cannot be found through a navigation file of
+//! them and laying it out, syncing the layout with a snapshot that changed nothing, collapsing
+//! half their modules, and a shortest path that cannot be found through a navigation file of
 //! 2,000 entries, or the run fails. `BENCH_RECORD=1` records without failing.
 //! The table is appended to `$GITHUB_STEP_SUMMARY` when CI sets it.
 
@@ -19,13 +20,17 @@ use adoc_graph::{
 
 const BUDGET: Duration = Duration::from_millis(8);
 
+/// Where the bench's pages are: an absolute path of a usual length, as the engine's keys are,
+/// since comparing paths takes longer the more they share.
+const ROOT: &str = "/home/writer/projects/product-documentation/docs";
+
 /// `nodes` pages with `edges` links among them, spread as a documentation site's are, in 20
 /// modules.
 fn graph(nodes: usize, edges: usize) -> GraphSnapshot {
     let mut keys: Vec<GraphKey> = (0..nodes)
         .map(|n| {
             GraphKey::File(Arc::from(Path::new(&format!(
-                "modules/m{}/pages/p{n:05}.adoc",
+                "{ROOT}/modules/m{}/pages/p{n:05}.adoc",
                 n % 20
             ))))
         })
@@ -53,7 +58,7 @@ fn graph(nodes: usize, edges: usize) -> GraphSnapshot {
             .map(|key| {
                 let module = key
                     .path()
-                    .and_then(|path| path.iter().nth(1))
+                    .and_then(|path| path.strip_prefix(ROOT).ok()?.iter().nth(1))
                     .map(|module| module.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 GraphNode {
@@ -113,12 +118,28 @@ fn time_mind_maps(snapshot: &GraphSnapshot) -> (Duration, Duration) {
     (samples[samples.len() / 2], samples[samples.len() - 1])
 }
 
+/// The median and worst of 20 runs of `run`, after one to warm up.
+fn time(mut run: impl FnMut()) -> (Duration, Duration) {
+    run();
+    let mut samples: Vec<Duration> = (0..20)
+        .map(|_| {
+            let started = Instant::now();
+            run();
+            started.elapsed()
+        })
+        .collect();
+    samples.sort();
+    (samples[samples.len() / 2], samples[samples.len() - 1])
+}
+
 /// The median and worst of 20 undirected searches for a node no link reaches, through a
 /// navigation file listing `entries` pages, each of which links to the next.
 fn time_unreachable_path(entries: usize) -> (Duration, Duration) {
-    let nav: Arc<Path> = Arc::from(Path::new("modules/ROOT/nav.adoc"));
+    let nav: Arc<Path> = Arc::from(Path::new(&format!("{ROOT}/modules/ROOT/nav.adoc")));
     let page = |n: usize| -> Arc<Path> {
-        Arc::from(Path::new(&format!("modules/ROOT/pages/p{n:05}.adoc")))
+        Arc::from(Path::new(&format!(
+            "{ROOT}/modules/ROOT/pages/p{n:05}.adoc"
+        )))
     };
     let mut store = LinkStore::new();
     store.set_owned_links(
@@ -177,6 +198,18 @@ fn main() {
             size.clone(),
             time_mind_maps(&snapshot),
         ),
+        ("layout sync, unchanged", size.clone(), {
+            let mut layout = Layout::new(1);
+            layout.sync(&snapshot);
+            time(|| layout.sync(&snapshot))
+        }),
+        ("collapse half the modules", size.clone(), {
+            let half: std::collections::BTreeSet<String> =
+                (0..10).map(|n| format!("docs:m{n}")).collect();
+            time(|| {
+                std::hint::black_box(snapshot.collapse(GroupBy::Module, &half));
+            })
+        }),
         (
             "shortest path, unreachable",
             "2,000 navigation entries".to_owned(),

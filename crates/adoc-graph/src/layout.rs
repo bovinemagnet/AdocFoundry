@@ -9,7 +9,7 @@
 //! Only `f32` arithmetic in a fixed order is used, never trigonometry or a hash map's order, so
 //! the same seed and the same calls give the same positions on every platform.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use crate::{GraphKey, GraphSnapshot, GroupBy, Groups};
 
@@ -64,9 +64,10 @@ const GROUP_REPULSION: f32 = 6.0 * REPULSION;
 #[derive(Clone, Debug)]
 pub struct Layout {
     seed: u64,
-    /// The nodes, sorted, and each one's place in the tables below.
+    /// The nodes, sorted, and each one's place in the tables below, hashed: paths compare
+    /// component by component, too slowly to look thousands up on every change.
     keys: Vec<GraphKey>,
-    index: BTreeMap<GraphKey, usize>,
+    index: HashMap<GraphKey, usize>,
     positions: Vec<Point>,
     velocities: Vec<Point>,
     pinned: Vec<bool>,
@@ -89,7 +90,7 @@ impl Layout {
         Self {
             seed,
             keys: Vec::new(),
-            index: BTreeMap::new(),
+            index: HashMap::new(),
             positions: Vec::new(),
             velocities: Vec::new(),
             pinned: Vec::new(),
@@ -165,7 +166,7 @@ impl Layout {
     /// they are. A new node starts next to a neighbour already placed, or at a seeded place on
     /// a ring. Wakes the layout if anything changed.
     pub fn sync(&mut self, snapshot: &GraphSnapshot) {
-        let old: BTreeMap<GraphKey, (Point, Point, bool)> = self
+        let old: HashMap<GraphKey, (Point, Point, bool)> = self
             .keys
             .drain(..)
             .zip(self.positions.drain(..))
@@ -173,7 +174,7 @@ impl Layout {
             .map(|((key, position), (velocity, pinned))| (key, (position, velocity, pinned)))
             .collect();
         let keys: Vec<GraphKey> = snapshot.nodes.iter().map(|node| node.key.clone()).collect();
-        let index: BTreeMap<GraphKey, usize> = keys
+        let index: HashMap<GraphKey, usize> = keys
             .iter()
             .enumerate()
             .map(|(at, key)| (key.clone(), at))
