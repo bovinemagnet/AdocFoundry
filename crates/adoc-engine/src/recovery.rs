@@ -20,8 +20,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     commands::{ids, register, spec},
     engine::UndoMode,
-    line_diff, CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry,
-    DiffLine, DocumentId, Engine, EngineError,
+    line_diff,
+    local_history::millis,
+    CommandArgs, CommandCategory, CommandContext, CommandOutcome, CommandRegistry, DiffLine,
+    DocumentId, Engine, EngineError,
 };
 
 /// How long a page must go unedited before its unsaved text is written to the store.
@@ -388,11 +390,5 @@ fn read_record(path: &Path) -> Option<Recoverable> {
         untitled: record.untitled,
         written: UNIX_EPOCH + Duration::from_millis(record.written),
         text: record.text,
-    })
-}
-
-fn millis(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH).map_or(0, |since| {
-        u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
     })
 }

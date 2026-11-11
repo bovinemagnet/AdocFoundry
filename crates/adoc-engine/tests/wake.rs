@@ -310,6 +310,37 @@ fn an_audit_to_build_is_due_at_once() {
     assert!(!engine.audit_stale());
 }
 
+/// A preview waiting for a parse on a worker has no deadline: the worker's message wakes the
+/// front end, which would otherwise pump at every tick until it came.
+#[test]
+fn a_preview_waiting_for_its_parse_is_not_due() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n\nSome words.\n").unwrap();
+    let (mut engine, clock) = manual(plain());
+    let id = engine.open(&page).unwrap();
+    engine.set_active(id);
+    engine.request_preview(id);
+    pump_at_each_deadline(&mut engine, &clock);
+
+    insert(&mut engine, id, "x");
+    clock.advance(PREVIEW_SETTLE);
+    // The settle starts the page's line parse, which the preview's input reads, and waits.
+    engine.pump();
+    assert!(
+        engine.next_due().is_none_or(|due| due > clock.now()),
+        "{:?} at {:?}",
+        engine.next_due(),
+        clock.now()
+    );
+    assert!(engine.has_pending(), "the worker is still counted");
+    // Its message brings the preview back, and the pumps that follow finish it.
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    pump_at_each_deadline(&mut engine, &clock);
+    let version = engine.document(id).unwrap().version;
+    assert_eq!(engine.rendered_preview(id).unwrap().version, version);
+}
+
 /// A page indexed at once leaves the graph to the next pump.
 #[test]
 fn a_graph_to_update_is_due_at_once() {
@@ -377,6 +408,41 @@ fn line_changes_to_compute_are_due_when_typing_pauses() {
     assert_eq!(engine.next_due(), Some(typed + adoc_engine::GIT_SETTLE));
     pump_at_each_deadline(&mut engine, &clock);
     assert!(!engine.git().hunks_for(id).is_empty());
+}
+
+/// A page whose line changes wait for its working tree's job has no deadline until the job is in.
+#[test]
+fn line_changes_waiting_for_their_working_tree_are_not_due() {
+    let directory = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(directory.path());
+    // Long enough that its diff is still running when the second page is due.
+    test.write("long.txt", &"A line of the long file.\n".repeat(200_000));
+    test.write("notes.txt", "Notes.\n");
+    test.commit_all("first");
+    let (mut engine, clock) = manual(Settings::load(None, None).unwrap());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let long = engine.open(&test.path().join("long.txt")).unwrap();
+    let notes = engine.open(&test.path().join("notes.txt")).unwrap();
+    settle(&mut engine);
+    pump_at_each_deadline(&mut engine, &clock);
+
+    insert(&mut engine, long, "x");
+    clock.advance(adoc_engine::GIT_SETTLE);
+    engine.pump();
+    insert(&mut engine, notes, "x");
+    clock.advance(adoc_engine::GIT_SETTLE);
+    engine.pump();
+    assert!(
+        engine.next_due().is_none_or(|due| due > clock.now()),
+        "{:?} at {:?}",
+        engine.next_due(),
+        clock.now()
+    );
+    pump_at_each_deadline(&mut engine, &clock);
+    assert!(!engine.git().hunks_for(notes).is_empty());
 }
 
 #[test]

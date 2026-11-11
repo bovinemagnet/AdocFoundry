@@ -405,6 +405,47 @@ fn save_all_saves_the_rest_and_reports_conflicts() {
     assert!(engine.document(conflicted).unwrap().dirty);
 }
 
+/// A page that cannot be written does not stop the pages after it from being saved, and each
+/// failure is reported.
+#[cfg(unix)]
+#[test]
+fn save_all_saves_past_a_page_it_cannot_write() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let directory = tempfile::tempdir().unwrap();
+    let locked = directory.path().join("locked");
+    fs::create_dir(&locked).unwrap();
+    let (mut engine, first, path) = edited_page(&locked);
+    let events = engine.subscribe();
+    let other = adoc_engine::normalize_path(&directory.path().join("other.adoc"));
+    fs::write(&other, "= Other\n").unwrap();
+    let other_id = engine.open(&other).unwrap();
+    insert(&mut engine, other_id, 0, "// edited\n");
+    let third = adoc_engine::normalize_path(&locked.join("third.adoc"));
+    fs::write(&third, "= Third\n").unwrap();
+    let third_id = engine.open(&third).unwrap();
+    insert(&mut engine, third_id, 0, "// edited\n");
+    // Nothing can be made in the folder, so neither page in it can be written.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let refused = engine.invoke(ids::DOCUMENT_SAVE_ALL, CommandArgs::None);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "// edited\n= Other\n");
+    assert!(!engine.document(other_id).unwrap().dirty);
+    assert!(engine.document(first).unwrap().dirty);
+    assert!(engine.document(third_id).unwrap().dirty);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "= Page\n\nOriginal.\n");
+    // Each page that failed is reported, the one returned included.
+    let reported = events
+        .try_iter()
+        .filter(|event| {
+            matches!(event, EngineEvent::CommandFailed { command, .. } if *command == ids::DOCUMENT_SAVE_ALL)
+        })
+        .count();
+    assert_eq!(reported, 2);
+}
+
 #[test]
 fn saving_a_file_deleted_outside_writes_it_again() {
     let directory = tempfile::tempdir().unwrap();

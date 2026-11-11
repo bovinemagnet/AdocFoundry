@@ -79,6 +79,9 @@ pub struct GitState {
     head_generation: u64,
     /// The working trees whose hunks are being computed: one job each at a time.
     diffing: BTreeSet<PathBuf>,
+    /// Documents whose hunks are due but wait for their working tree's job. They have no
+    /// deadline, since the job's message wakes the front end, and are due again once it is in.
+    waiting_hunks: BTreeSet<DocumentId>,
     /// Discovery runs; a result from an older one is dropped.
     generation: u64,
     /// The latest refresh started for each working tree; older results are dropped.
@@ -146,7 +149,11 @@ impl GitState {
 
     /// When the next page's hunks are to be computed.
     pub(crate) fn next_due(&self) -> Option<std::time::Instant> {
-        self.pending_hunks.values().min().copied()
+        self.pending_hunks
+            .iter()
+            .filter(|(id, _)| !self.waiting_hunks.contains(id))
+            .map(|(_, due)| *due)
+            .min()
     }
 
     pub(crate) fn is_metadata_path(&self, path: &Path) -> bool {
@@ -194,6 +201,7 @@ impl Engine {
         let had_hunks: Vec<DocumentId> = self.git.hunks.keys().copied().collect();
         self.git.hunks.clear();
         self.git.pending_hunks.clear();
+        self.git.waiting_hunks.clear();
         self.git.diffing.clear();
         self.forget_head_texts();
         if had_repositories {
@@ -468,6 +476,7 @@ impl Engine {
     pub(crate) fn forget_hunks(&mut self, id: DocumentId) {
         self.git.hunks.remove(&id);
         self.git.pending_hunks.remove(&id);
+        self.git.waiting_hunks.remove(&id);
         self.git.head_texts.remove(&id);
         self.git.blame_built.borrow_mut().remove(&id);
         self.forget_blame(id);
@@ -666,7 +675,9 @@ impl Engine {
             };
             let workdir = repository.workdir.clone();
             if self.git.diffing.contains(&workdir) {
-                continue; // Started once that working tree's job is done.
+                // Started once that working tree's job is done.
+                self.git.waiting_hunks.insert(id);
+                continue;
             }
             self.git.pending_hunks.remove(&id);
             // An untracked or ignored file has nothing in `HEAD` to differ from.
@@ -714,6 +725,8 @@ impl Engine {
 
     pub(crate) fn git_hunks(&mut self, workdir: &Path, generation: u64, results: Vec<HunkResult>) {
         self.git.diffing.remove(workdir);
+        // Those waiting for another working tree's job wait again at the next pump.
+        self.git.waiting_hunks.clear();
         if generation != self.git.head_generation {
             return; // `HEAD` moved, and every document is due again.
         }
