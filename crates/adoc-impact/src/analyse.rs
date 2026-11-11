@@ -65,9 +65,33 @@ struct Found {
     origin: PathBuf,
     sides: BTreeSet<Side>,
     via: Vec<PathBuf>,
-    source: Option<(PathBuf, adoc_core::SourceRange)>,
+    source: Option<Source>,
     anchor: Option<String>,
     publication: Option<String>,
+}
+
+/// The reference or include an impact rests on. Its target as written and its ordinal among
+/// those with that target identify it on both sides; its range is the side's that found it,
+/// head's whenever head has it.
+#[derive(Clone, Debug)]
+struct Source {
+    path: PathBuf,
+    range: adoc_core::SourceRange,
+    side: Side,
+    written: String,
+    ordinal: usize,
+}
+
+impl Source {
+    fn of(referrer: &Referrer, side: Side) -> Self {
+        Self {
+            path: referrer.path.clone(),
+            range: referrer.range,
+            side,
+            written: referrer.written.clone(),
+            ordinal: referrer.ordinal,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -82,7 +106,7 @@ type Key = (
     PathBuf,
     Option<String>,
     Option<String>,
-    Option<(PathBuf, usize)>,
+    Option<(PathBuf, String, usize)>,
 );
 
 #[derive(Default)]
@@ -102,11 +126,22 @@ impl Gathered {
             found
                 .source
                 .as_ref()
-                .map(|(path, range)| (path.clone(), range.start)),
+                .map(|source| (source.path.clone(), source.written.clone(), source.ordinal)),
         );
         match self.found.get_mut(&key) {
             Some(known) => {
                 known.sides.extend(found.sides);
+                let head_source = found
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| source.side == Side::Head);
+                let base_source = known
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| source.side == Side::Base);
+                if head_source && base_source {
+                    known.source = found.source;
+                }
                 if found.via.len() < known.via.len() {
                     known.via = found.via;
                 }
@@ -154,11 +189,18 @@ pub fn analyse(
                 navigation(&mut gathered, base, head, path);
             }
             ChangeKind::Modified => {
+                let mut pages = BTreeSet::new();
                 if let Some(base) = base {
-                    render(&mut gathered, base, path, path, Side::Base, limits);
+                    pages = render(&mut gathered, base, path, path, Side::Base, limits);
                 }
-                render(&mut gathered, head, path, path, Side::Head, limits);
-                removed_anchors(&mut gathered, base, head, path);
+                pages.extend(render(&mut gathered, head, path, path, Side::Head, limits));
+                if let Some(base) = base {
+                    lost_referrers(&mut gathered, base, head, path, path);
+                }
+                removed_anchors(&mut gathered, base, head, path, &pages);
+                if let Some(base) = base {
+                    descriptor(&mut gathered, base, head, path);
+                }
                 navigation(&mut gathered, base, head, path);
             }
             ChangeKind::Removed => match base {
@@ -187,7 +229,13 @@ pub fn analyse(
                 || snapshot.is_listed_nav(path)
                 || snapshot.is_descriptor(path)
         };
-        if !known(head, path) && !base.is_some_and(|base| known(base, old_path(change))) {
+        let has_components =
+            head.has_components() || base.is_some_and(DependencySnapshot::has_components);
+        if has_components
+            && could_be_content(path)
+            && !known(head, path)
+            && !base.is_some_and(|base| known(base, old_path(change)))
+        {
             gathered.gaps.push(Gap {
                 reason: "not-in-catalog",
                 detail: format!(
@@ -211,8 +259,27 @@ pub fn analyse(
             });
         }
     }
-    publications_of(&mut gathered, head, publications);
+    publications_of(&mut gathered, base, head, publications);
     finish(gathered, &changes, base, head, limits)
+}
+
+/// Whether a component could hold the file at `path`, were it in one: an AsciiDoc file, a
+/// descriptor or playbook, or anything under a `modules` folder. A changed README, source file
+/// or CI file is not documentation, and leaves the report complete.
+fn could_be_content(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    matches!(extension.as_str(), "adoc" | "asciidoc" | "asc")
+        || name == "antora.yml"
+        || (name.contains("playbook") && matches!(extension.as_str(), "yml" | "yaml"))
+        || path.components().any(|part| part.as_os_str() == "modules")
 }
 
 fn old_path(change: &Change) -> &Path {
@@ -234,7 +301,7 @@ fn no_base(head: &DependencySnapshot<'_>, path: &Path, what: &str) -> Gap {
 }
 
 /// The changed file itself, when it is a page, and every page that includes it, transitively,
-/// on `side`: rendered content that may change.
+/// on `side`: rendered content that may change. Returns those pages.
 fn render(
     gathered: &mut Gathered,
     snapshot: &DependencySnapshot<'_>,
@@ -242,11 +309,13 @@ fn render(
     origin: &Path,
     side: Side,
     limits: Limits,
-) {
+) -> BTreeSet<PathBuf> {
+    let mut pages = BTreeSet::new();
     if !snapshot.has(changed) {
-        return;
+        return pages;
     }
     if snapshot.is_page(changed) {
+        pages.insert(changed.to_path_buf());
         gathered.add(found(
             ImpactKind::Render,
             changed,
@@ -258,10 +327,23 @@ fn render(
     let mut seen: BTreeSet<PathBuf> = BTreeSet::from([changed.to_path_buf()]);
     let mut queue: VecDeque<Vec<PathBuf>> = VecDeque::from([vec![changed.to_path_buf()]]);
     while let Some(via) = queue.pop_front() {
+        let last = via.last().expect("a path holds the changed file");
         if via.len() > limits.depth {
+            if !snapshot.includers(last).is_empty() {
+                gathered.gaps.push(Gap {
+                    reason: "include-depth-exceeded",
+                    detail: format!(
+                        "the files including {} were followed {} includes deep, and those \
+                         including {} were not",
+                        snapshot.display(origin),
+                        limits.depth,
+                        snapshot.display(last)
+                    ),
+                    affected: vec![snapshot.display(last)],
+                });
+            }
             continue;
         }
-        let last = via.last().expect("a path holds the changed file");
         for includer in snapshot.includers(last) {
             if !seen.insert(includer.path.clone()) {
                 continue;
@@ -269,6 +351,7 @@ fn render(
             let mut next = via.clone();
             next.push(includer.path.clone());
             if snapshot.is_page(&includer.path) {
+                pages.insert(includer.path.clone());
                 let mut impact = found(
                     ImpactKind::Render,
                     &includer.path,
@@ -276,12 +359,13 @@ fn render(
                     side,
                     next.clone(),
                 );
-                impact.source = Some((includer.path.clone(), includer.range));
+                impact.source = Some(Source::of(&includer, side));
                 gathered.add(impact);
             }
             queue.push_back(next);
         }
     }
+    pages
 }
 
 fn found(kind: ImpactKind, path: &Path, origin: &Path, side: Side, via: Vec<PathBuf>) -> Found {
@@ -322,7 +406,7 @@ fn referrer_impact(
         vec![target.to_path_buf(), referrer.path.clone()],
     );
     impact.status = Some(status);
-    impact.source = Some((referrer.path.clone(), referrer.range));
+    impact.source = Some(Source::of(referrer, side));
     impact
 }
 
@@ -342,9 +426,9 @@ fn moved_or_removed(
         }
         let still = head
             .has(&referrer.path)
-            .then(|| head.still_writes(&referrer.path, &referrer.written))
+            .then(|| head.still_writes(&referrer.path, &referrer.written, referrer.ordinal))
             .flatten();
-        let (status, side, source) = match still {
+        let (status, side, range) = match still {
             None => (ImpactStatus::ResolvedByChange, Side::Base, referrer.range),
             Some(range) => match head.resolves(&referrer.path, &referrer.written) {
                 Some(now) if to.is_some_and(|to| to == now) => {
@@ -356,40 +440,161 @@ fn moved_or_removed(
         };
         let mut impact = referrer_impact(base, &referrer, old, old, Side::Base, status);
         impact.sides.insert(side);
-        impact.source = Some((referrer.path.clone(), source));
+        impact.source = Some(Source {
+            range,
+            side,
+            ..Source::of(&referrer, side)
+        });
         gathered.add(impact);
     }
 }
 
-/// A modified page's anchors that base has and head does not: their references, from both
-/// sides, to review.
+/// The references that led to the file at `path` in base and no longer do in head, though the
+/// file is still there (a dropped `page-aliases` entry, say): broken when head still writes
+/// them, resolved by the change when it does not. A reference that would still lead there is
+/// not one to review, whether or not head still writes it.
+fn lost_referrers(
+    gathered: &mut Gathered,
+    base: &DependencySnapshot<'_>,
+    head: &DependencySnapshot<'_>,
+    path: &Path,
+    origin: &Path,
+) {
+    for referrer in base.referrers(path) {
+        if referrer.path == path
+            || head.resolves(&referrer.path, &referrer.written).as_deref() == Some(path)
+        {
+            continue;
+        }
+        let still = head
+            .has(&referrer.path)
+            .then(|| head.still_writes(&referrer.path, &referrer.written, referrer.ordinal))
+            .flatten();
+        let (status, side, range) = match still {
+            Some(range) => (ImpactStatus::Broken, Side::Head, range),
+            None => (ImpactStatus::ResolvedByChange, Side::Base, referrer.range),
+        };
+        let mut impact = referrer_impact(base, &referrer, path, origin, Side::Base, status);
+        impact.sides.insert(side);
+        impact.source = Some(Source {
+            range,
+            side,
+            ..Source::of(&referrer, side)
+        });
+        gathered.add(impact);
+    }
+}
+
+/// A modified `antora.yml`, compared between the sides beyond its navigation files' listings:
+/// a new name or version moves every page of the version, so the references that led to them
+/// by the old coordinate are reviewed; a new title, version, start page or navigation list is
+/// a navigation impact on the version; changed attributes may change any page that reads
+/// them, which the index cannot say, so they are a gap.
+fn descriptor(
+    gathered: &mut Gathered,
+    base: &DependencySnapshot<'_>,
+    head: &DependencySnapshot<'_>,
+    path: &Path,
+) {
+    let (Some(before), Some(after)) = (base.descriptor(path), head.descriptor(path)) else {
+        return;
+    };
+    let moved = (&before.name, &before.version) != (&after.name, &after.version);
+    if moved {
+        for page in base.version_pages(&before.name, before.version.as_deref()) {
+            lost_referrers(gathered, base, head, &page, path);
+        }
+    }
+    let navigation_changed = moved
+        || before.title != after.title
+        || before.display_version != after.display_version
+        || before.start_page != after.start_page
+        || before.nav != after.nav
+        || before.prerelease != after.prerelease;
+    if navigation_changed {
+        gathered.add(Found {
+            sides: BTreeSet::from([Side::Base, Side::Head]),
+            ..found(
+                ImpactKind::Navigation,
+                path,
+                path,
+                Side::Head,
+                vec![path.to_path_buf()],
+            )
+        });
+    }
+    let attributes = |descriptor: &adoc_antora::ComponentDescriptor| {
+        descriptor
+            .attribute_entries
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry.value.clone(), entry.soft))
+            .collect::<Vec<_>>()
+    };
+    if before.asciidoc_attributes != after.asciidoc_attributes
+        || attributes(before) != attributes(after)
+    {
+        gathered.gaps.push(Gap {
+            reason: "attribute-consumers-not-analysed",
+            detail: format!(
+                "{} changes the version's AsciiDoc attributes; which pages read them is not \
+                 traced",
+                head.display(path)
+            ),
+            affected: vec![head.display(path)],
+        });
+    }
+}
+
+/// The anchors a modified file brought to the pages it is composed into (`pages`, itself
+/// included when it is a page, on either side) that base has and head does not: their
+/// references, from both sides, to review. An xref's fragment names an anchor of the page as
+/// composed, so an anchor counts as on a page when any file composed into it declares it.
 fn removed_anchors(
     gathered: &mut Gathered,
     base: Option<&DependencySnapshot<'_>>,
     head: &DependencySnapshot<'_>,
     path: &Path,
+    pages: &BTreeSet<PathBuf>,
 ) {
     let Some(base) = base else {
         return;
     };
-    let now = head.anchors(path);
-    for id in base.anchors(path).difference(&now) {
-        for (snapshot, side) in [(base, Side::Base), (head, Side::Head)] {
-            for referrer in snapshot.anchor_referrers(path, id) {
-                let still = head
-                    .has(&referrer.path)
-                    .then(|| head.still_writes(&referrer.path, &referrer.written))
-                    .flatten()
-                    .is_some();
-                let status = if still {
-                    ImpactStatus::Broken
-                } else {
-                    ImpactStatus::ResolvedByChange
-                };
-                let mut impact = referrer_impact(snapshot, &referrer, path, path, side, status);
-                impact.kind = ImpactKind::ReferenceIntegrity;
-                impact.anchor = Some(id.clone());
-                gathered.add(impact);
+    let brought = base.composed_anchors(path);
+    if brought.is_empty() {
+        return;
+    }
+    for page in pages {
+        if !base.has(page) || !head.has(page) {
+            continue;
+        }
+        let before = base.composed_anchors(page);
+        let now = head.composed_anchors(page);
+        for id in brought.intersection(&before) {
+            if now.contains(id) {
+                continue;
+            }
+            for (snapshot, side) in [(base, Side::Base), (head, Side::Head)] {
+                for referrer in snapshot.anchor_referrers(page, id) {
+                    let still = head
+                        .has(&referrer.path)
+                        .then(|| {
+                            head.still_writes(&referrer.path, &referrer.written, referrer.ordinal)
+                        })
+                        .flatten()
+                        .is_some();
+                    let status = if still {
+                        ImpactStatus::Broken
+                    } else {
+                        ImpactStatus::ResolvedByChange
+                    };
+                    let mut impact = referrer_impact(snapshot, &referrer, page, path, side, status);
+                    if page != path {
+                        impact.via.insert(0, path.to_path_buf());
+                    }
+                    impact.kind = ImpactKind::ReferenceIntegrity;
+                    impact.anchor = Some(id.clone());
+                    gathered.add(impact);
+                }
             }
         }
     }
@@ -406,9 +611,16 @@ fn now_resolving(
         if referrer.path == path {
             continue;
         }
-        let before = base.and_then(|base| base.resolves(&referrer.path, &referrer.written));
-        if before.as_deref() == Some(path) {
-            continue;
+        // Only a reference base held and could not resolve: not one added with the file, nor
+        // one that led elsewhere before.
+        if let Some(base) = base {
+            let held = base.has(&referrer.path)
+                && base
+                    .still_writes(&referrer.path, &referrer.written, referrer.ordinal)
+                    .is_some();
+            if !held || base.resolves(&referrer.path, &referrer.written).is_some() {
+                continue;
+            }
         }
         let mut impact = referrer_impact(
             head,
@@ -426,8 +638,9 @@ fn now_resolving(
 }
 
 /// A changed navigation file's or descriptor's effect on its component version's navigation:
-/// the pages it lists now and no longer, compared between the sides; and a changed page's
-/// navigation entries.
+/// the file itself, and the pages it lists now and no longer, compared between the sides. A
+/// page's own entries are reported only when it is moved or removed (`moved_or_removed`, as
+/// navigation referrers); a modified page's are not.
 fn navigation(
     gathered: &mut Gathered,
     base: Option<&DependencySnapshot<'_>>,
@@ -452,6 +665,27 @@ fn navigation(
                 navs.extend(snapshot.version_navs(&component, version.as_deref()));
             }
         }
+    }
+    if is_nav {
+        // The file changed, so the navigation it gives (order, hierarchy, labels) may have,
+        // whatever its membership does.
+        let mut sides = BTreeSet::new();
+        if base.is_some_and(|base| base.is_listed_nav(path)) {
+            sides.insert(Side::Base);
+        }
+        if head.is_listed_nav(path) {
+            sides.insert(Side::Head);
+        }
+        gathered.add(Found {
+            sides,
+            ..found(
+                ImpactKind::Navigation,
+                path,
+                path,
+                Side::Head,
+                vec![path.to_path_buf()],
+            )
+        });
     }
     let mut listed_before: BTreeSet<PathBuf> = BTreeSet::new();
     let mut listed_now: BTreeSet<PathBuf> = BTreeSet::new();
@@ -504,9 +738,75 @@ fn navigation(
     }
 }
 
-/// Each publication whose selection holds a page with a render or navigation impact.
+/// What a publication selects on one side, worked out once for every affected page.
+struct Selection<'s> {
+    snapshot: &'s DependencySnapshot<'s>,
+    /// Whether the side holds everything the selection names.
+    known: bool,
+    /// For a navigation profile, the pages its files list on this side.
+    listed: BTreeSet<PathBuf>,
+}
+
+impl<'s> Selection<'s> {
+    fn new(snapshot: &'s DependencySnapshot<'s>, selection: &PublicationSelection) -> Self {
+        let antora = &snapshot.state().antora;
+        let (known, listed) = match selection {
+            PublicationSelection::Page(_) => (true, BTreeSet::new()),
+            PublicationSelection::Component { name, version } => (
+                match version {
+                    Some(version) => antora.component(name, Some(version)).is_some(),
+                    None => !antora.versions_of(name).is_empty(),
+                },
+                BTreeSet::new(),
+            ),
+            PublicationSelection::Navigation(files) => (
+                files.iter().all(|file| snapshot.has(file)),
+                files
+                    .iter()
+                    .flat_map(|file| snapshot.listed_by(file))
+                    .collect(),
+            ),
+        };
+        Self {
+            snapshot,
+            known,
+            listed,
+        }
+    }
+
+    /// Whether the selection holds `page` on this side; `None` when it names content the side
+    /// does not hold, so it may.
+    fn holds(&self, selection: &PublicationSelection, page: &Path) -> Option<bool> {
+        match selection {
+            PublicationSelection::Page(selected) => Some(selected == page),
+            PublicationSelection::Component { name, version } => self.known.then(|| {
+                self.snapshot
+                    .component_version(page)
+                    .is_some_and(|(component, page_version)| {
+                        component == *name
+                            && version
+                                .as_ref()
+                                .is_none_or(|version| page_version.as_ref() == Some(version))
+                    })
+            }),
+            PublicationSelection::Navigation(files) => {
+                // A changed navigation file of the profile is itself an impact on it.
+                let listed = files.iter().any(|file| file == page) || self.listed.contains(page);
+                if self.known || listed {
+                    Some(listed)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Each publication whose selection holds a page with a render or navigation impact, asked of
+/// the side (or sides) whose evidence shows the impact.
 fn publications_of(
     gathered: &mut Gathered,
+    base: Option<&DependencySnapshot<'_>>,
     head: &DependencySnapshot<'_>,
     publications: &[Publication],
 ) {
@@ -523,49 +823,25 @@ fn publications_of(
         })
         .collect();
     for publication in publications {
+        let selection = &publication.selection;
+        let on_head = Selection::new(head, selection);
+        let on_base = base.map(|base| Selection::new(base, selection));
         for (page, origin, sides) in &affected {
-            let selected = match &publication.selection {
-                PublicationSelection::Page(selected) => Some(selected == page),
-                PublicationSelection::Component { name, version } => {
-                    let known = match version {
-                        Some(version) => {
-                            head.state().antora.component(name, Some(version)).is_some()
-                        }
-                        None => !head.state().antora.versions_of(name).is_empty(),
-                    };
-                    known.then(|| {
-                        head.component_version(page)
-                            .is_some_and(|(component, page_version)| {
-                                component == *name
-                                    && version.as_ref().is_none_or(|version| {
-                                        page_version.as_ref() == Some(version)
-                                    })
-                            })
-                    })
-                }
-                PublicationSelection::Navigation(files) => {
-                    let known = files.iter().all(|file| head.has(file));
-                    let listed = files
-                        .iter()
-                        .any(|file| file == page || head.listed_by(file).contains(page));
-                    if known {
-                        Some(listed)
-                    } else if listed {
-                        Some(true)
-                    } else {
-                        None
-                    }
-                }
-            };
-            let (confidence, matched) = match selected {
-                Some(true) => (Confidence::Confirmed, true),
-                Some(false) => (Confidence::Confirmed, false),
+            let answers: Vec<Option<bool>> = sides
+                .iter()
+                .map(|side| match (side, &on_base) {
+                    (Side::Base, Some(on_base)) => on_base.holds(selection, page),
+                    _ => on_head.holds(selection, page),
+                })
+                .collect();
+            let confidence = if answers.contains(&Some(true)) {
+                Confidence::Confirmed
+            } else if answers.contains(&None) {
                 // The selection names content this revision does not hold: it may select it.
-                None => (Confidence::Potential, true),
-            };
-            if !matched {
+                Confidence::Potential
+            } else {
                 continue;
-            }
+            };
             gathered.add(Found {
                 kind: ImpactKind::Publication,
                 confidence,
@@ -637,9 +913,9 @@ fn finish(
                 origin: display(&found.origin),
                 evidence: evidence(&found.sides),
                 via: found.via.iter().map(|path| display(path)).collect(),
-                source: found.source.map(|(path, range)| SourceSpan {
-                    path: display(&path),
-                    range: range.into(),
+                source: found.source.map(|source| SourceSpan {
+                    path: display(&source.path),
+                    range: source.range.into(),
                 }),
                 anchor: found.anchor,
             }
@@ -674,7 +950,21 @@ fn finish(
     }
     let total = impacts.len();
     let truncated = (total > limits.impacts).then(|| {
-        impacts.truncate(limits.impacts);
+        // What needs review is kept first; what is kept stays in the report's order.
+        let review = |kind: ImpactKind| match kind {
+            ImpactKind::ReferenceIntegrity => 0,
+            ImpactKind::Navigation => 1,
+            ImpactKind::Publication => 2,
+            ImpactKind::Render => 3,
+        };
+        let mut order: Vec<usize> = (0..total).collect();
+        order.sort_by_key(|&at| (review(impacts[at].kind), at));
+        let kept: BTreeSet<usize> = order.into_iter().take(limits.impacts).collect();
+        let mut at = 0;
+        impacts.retain(|_| {
+            at += 1;
+            kept.contains(&(at - 1))
+        });
         Truncated {
             shown: limits.impacts,
             total,

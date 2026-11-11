@@ -501,6 +501,7 @@ It holds these fields:
 * `truncated` (`shown` and `total`), present when more than `--max-impacts` impacts were found.
 
 `--max-impacts <n>` limits the impacts listed.
+A cut keeps references to review and navigation before rendered content.
 The default is 1,000.
 Paths are relative to the root and never absolute.
 The output is deterministic, so the same refs give the same report.
@@ -521,8 +522,15 @@ A gap has a stable reason.
 |`asset-consumers-not-analysed`
 |A changed image or attachment. Its users are not traced yet.
 
+|`attribute-consumers-not-analysed`
+|A changed `antora.yml` changes its AsciiDoc attributes. The pages that read them are not traced.
+
+|`include-depth-exceeded`
+|The walk through includes stopped at the depth limit with files left to follow.
+
 |`not-in-catalog`
-|A changed file is in no component version the workspace holds.
+|A changed file a component could hold (AsciiDoc, an `antora.yml`, a playbook, or under a `modules` folder) is in no component version the workspace holds.
+Other files, such as a README, give no gap.
 
 |`outside-every-root`
 |A changed file is outside every root of the workspace.

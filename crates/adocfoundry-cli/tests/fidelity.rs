@@ -623,3 +623,56 @@ fn fidelity_block_structure_matches_asciidoctor() {
     }
     assert!(mismatched.is_empty(), "{}", mismatched.join("\n"));
 }
+
+/// The ids of the headings in Asciidoctor's HTML, in order.
+fn heading_ids(html: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut rest = html;
+    while let Some(start) = rest.find("<h") {
+        rest = &rest[start + 2..];
+        if !rest.starts_with(|character: char| character.is_ascii_digit()) {
+            continue;
+        }
+        let end = rest.find('>').unwrap_or(rest.len());
+        let id = attribute(&rest[..end], "id");
+        if !id.is_empty() {
+            ids.push(decode_entities(id));
+        }
+    }
+    ids
+}
+
+/// The section ids the language features hand out (completion, inserted xrefs, `get_outline`)
+/// are those Asciidoctor generates, with Antora's `idprefix` and `idseparator` and with its own
+/// defaults (#529). Skipped, with a message, when no working `asciidoctor` is on the `PATH`.
+#[test]
+fn generated_section_ids_match_asciidoctor() {
+    if !asciidoctor_available() {
+        eprintln!("skipped: no working `asciidoctor` on the PATH");
+        return;
+    }
+    let page = repository_root().join("tests/fixtures/section-ids/titles.adoc");
+    let text = std::fs::read_to_string(&page).unwrap();
+    let mut index = adoc_index::WorkspaceIndex::new();
+    index.index_source(&page, &text);
+    let document = &index.file(&page).unwrap().document;
+
+    for (style, attributes) in [
+        (
+            adoc_core::IdStyle::Antora,
+            &["-a", "idprefix=", "-a", "idseparator=-"][..],
+        ),
+        (adoc_core::IdStyle::Asciidoctor, &[][..]),
+    ] {
+        let theirs = Command::new("asciidoctor")
+            .args(["-s", "-o", "-"])
+            .args(attributes)
+            .arg(&page)
+            .output()
+            .unwrap();
+        assert!(theirs.status.success());
+        let theirs = heading_ids(&String::from_utf8(theirs.stdout).unwrap());
+        let ours = adoc_core::section_ids(&document.sections, &document.anchors, style);
+        assert_eq!(ours, theirs, "{style:?}");
+    }
+}
