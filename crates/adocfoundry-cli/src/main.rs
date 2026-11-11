@@ -653,9 +653,7 @@ fn audit(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     };
 
     let root = adoc_index::normalize_path(Path::new(root));
-    let mut settings = Settings::load(None, Some(&root)).map_err(|error| error.to_string())?;
-    settings.git.enabled = false;
-    let engine = open_engine_with(&root, settings)?;
+    let engine = open_engine_with(&root, audit_settings(&root)?)?;
     // Opening the workspace reads its settings file again, so the options apply afterwards.
     let quality = &engine.settings().quality;
     let problems = quality.problems.clone();
@@ -706,6 +704,15 @@ fn audit(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         2
     };
     Ok(ExitCode::from(code))
+}
+
+/// The settings `audit` opens the workspace at `root` with: its own settings file, never a
+/// user's, and Git off, as the audit reads nothing of it. Opt-in rather than off, so opening
+/// the workspace, which reads the settings again, does not turn it back on (#508).
+fn audit_settings(root: &Path) -> Result<Settings, String> {
+    Settings::load(None, Some(root))
+        .map(Settings::with_git_opt_in)
+        .map_err(|error| error.to_string())
 }
 
 /// A report for reading: its scope and completeness first, the counts, each finding at its
@@ -1385,4 +1392,23 @@ fn doctor(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         out!(out, "{}", report.to_text());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Opening the workspace reads its settings again, which must leave Git off: the audit
+    /// reads nothing of it, so it neither finds the repository nor waits for its workers (#508).
+    #[test]
+    fn the_audit_looks_at_no_repository() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = adoc_git::testing::TestRepo::init(directory.path());
+        repository.write("page.adoc", "= Page\n");
+        repository.commit_all("page");
+
+        let root = directory.path();
+        let engine = open_engine_with(root, audit_settings(root).unwrap()).unwrap();
+        assert!(engine.git().repositories().is_empty());
+    }
 }
