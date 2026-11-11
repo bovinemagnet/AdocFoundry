@@ -170,6 +170,7 @@ fn a_search_waits_only_for_its_own_results() {
                 case_sensitive: false,
                 whole_word: false,
                 scope: None,
+                all_text_files: false,
             }),
         )
         .unwrap();
