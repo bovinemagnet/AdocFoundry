@@ -11,7 +11,8 @@ use std::{
 
 use adoc_git::Repository;
 
-/// Runs `git` in `dir`, reading no configuration but the repository's own.
+/// Runs `git` in `dir`, reading no configuration but the repository's own. Commits are dated
+/// alike, so the two repositories a test builds hold the same commits however long it takes.
 fn git(dir: &Path, args: &[&str]) -> Output {
     Command::new("git")
         .args(args)
@@ -25,6 +26,8 @@ fn git(dir: &Path, args: &[&str]) -> Output {
         .env("GIT_AUTHOR_EMAIL", "ada@example.com")
         .env("GIT_COMMITTER_NAME", "Ada Writer")
         .env("GIT_COMMITTER_EMAIL", "ada@example.com")
+        .env("GIT_AUTHOR_DATE", "2026-11-11T12:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-11-11T12:00:00Z")
         .output()
         .expect("git runs")
 }
