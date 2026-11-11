@@ -194,7 +194,7 @@ pub enum PdfStandard {
 pub use launch::{file_url_path, launch_targets, workspace_for_file, LaunchTargets};
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
 pub use visual::{EditorMode, VisualArgs, VisualDocument, VisualValue, MODEL_SETTLE};
-pub use workspace::WATCH_DEBOUNCE;
+pub use workspace::{IndexHold, WATCH_DEBOUNCE};
 
 pub use adoc_antora::{
     compare_component_versions, AntoraCoordinate, AntoraResource, AntoraResourceId, NavError,

@@ -59,7 +59,8 @@ pub struct Engine {
     pub(crate) index_generation: u64,
     /// Holds the next whole index's result until its sender is dropped; see
     /// [`Engine::hold_next_index`].
-    pub(crate) index_hold: Option<Receiver<()>>,
+    /// The next whole index's hold: released when its sender is dropped, told it is reached.
+    pub(crate) index_hold: Option<(Receiver<()>, std::sync::mpsc::Sender<()>)>,
     /// Files whose change on disk was applied while a whole index ran, perhaps after it read
     /// them: applied again over its result.
     pub(crate) changed_while_indexing: std::collections::BTreeSet<PathBuf>,

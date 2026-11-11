@@ -751,7 +751,11 @@ fn a_page_changed_on_disk_while_the_workspace_is_indexed_is_not_lost() {
     engine
         .open_workspace(vec![directory.path().to_path_buf()])
         .unwrap();
-    thread::sleep(Duration::from_millis(300));
+    // Not a guess at how long the walk takes: a write before it reads the page is read by it.
+    assert!(
+        hold.wait_until_held(Duration::from_secs(10)),
+        "the index has read the page"
+    );
     fs::write(&page, "= After\n").unwrap();
     assert!(pump_until(&mut engine, |engine| {
         title(engine).as_deref() == Some("After")
