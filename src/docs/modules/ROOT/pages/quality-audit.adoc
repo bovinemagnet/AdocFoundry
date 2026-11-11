@@ -36,8 +36,7 @@ A published page with no document title.
 It is skipped when an include before the first section may supply one.
 
 `quality.image.missing-alt`::
-A block image macro (`image::`) in a page or partial with no alternative text written at all.
-Inline images are not checked.
+A block (`image::`) or inline (`image:`) image macro in a page or partial with no alternative text written at all.
 
 It also reports each component version's navigation coverage: the listed pages out of the pages, with undetermined pages counted.
 
@@ -213,7 +212,7 @@ Every report lists every provider's state: `disabled`, `ran` or `unavailable`.
 * Navigation is read as written.
 A navigation file's `include::` and attribute entries are skipped, not expanded.
 Navigation that only a publishing step produces is not seen.
-* Only block image macros are checked for alternative text, and text given through an attribute counts as present.
+* Text given through an attribute counts as present alternative text, whatever the attribute holds.
 * Folders in `[workspace] ignore` are never audited and are not a gap.
 A folder that could not be read is a gap.
 * Existing diagnostics keep their severity and cannot be turned off by the audit, only excluded resource by resource.
