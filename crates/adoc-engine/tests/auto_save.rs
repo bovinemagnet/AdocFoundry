@@ -297,3 +297,45 @@ fn saving_by_hand_waits_for_an_auto_save_in_flight() {
         "= Page\nFirst.\nSecond.\n"
     );
 }
+
+#[test]
+fn renaming_a_page_waits_for_its_save_in_flight() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = page(dir.path(), "page.adoc");
+    let (mut engine, clock) = workspace_engine(dir.path());
+    let id = engine.open(&path).unwrap();
+    type_text(&mut engine, id, "Edited.\n");
+    // The auto-save is queued behind a write the test holds.
+    let hold = engine.hold_writer();
+    clock.advance(AUTO_SAVE_DELAY);
+    engine.pump();
+    assert!(engine.has_pending(), "the save is queued");
+
+    let renamed = adoc_engine::normalize_path(&dir.path().join("renamed.adoc"));
+    let Ok(adoc_engine::CommandOutcome::Preview(preview)) = engine.invoke(
+        ids::PAGE_RENAME,
+        CommandArgs::Rename {
+            id,
+            new_path: renamed.clone(),
+        },
+    ) else {
+        panic!("no rename preview");
+    };
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        drop(hold);
+    });
+    engine
+        .invoke(
+            ids::WORKSPACE_APPLY_PREVIEW,
+            CommandArgs::Custom(serde_json::json!({ "preview_id": preview.id.get() })),
+        )
+        .unwrap();
+    release.join().unwrap();
+    written(&mut engine);
+
+    assert!(!path.exists(), "the save did not bring the old file back");
+    assert_eq!(engine.document(id).unwrap().path, renamed);
+    assert!(!dirty(&engine, id));
+    assert_eq!(fs::read_to_string(&renamed).unwrap(), "= Page\nEdited.\n");
+}

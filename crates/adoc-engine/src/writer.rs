@@ -146,6 +146,18 @@ impl Engine {
         });
     }
 
+    /// Holds the writer before its next job until the returned sender is dropped, so a test can
+    /// act while a write asked for after this one is still to be made.
+    #[doc(hidden)]
+    pub fn hold_writer(&mut self) -> Sender<()> {
+        let (hold, held) = mpsc::channel::<()>();
+        self.write_later(PathBuf::new(), move || {
+            let _ = held.recv();
+            None
+        });
+        hold
+    }
+
     /// Removes `file` on the writer, after every write asked for before.
     pub(crate) fn remove_later(&mut self, file: PathBuf) {
         self.send_job(Job::Remove(file));
