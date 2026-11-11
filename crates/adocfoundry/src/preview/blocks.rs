@@ -98,7 +98,7 @@ pub fn rows(view: &ViewTree) -> Vec<Row> {
         out.push(Row::Title);
     }
     // `:toc: macro` places the contents at a `toc::[]` block instead.
-    if !view.toc.is_empty() && view.attributes.get("toc").map(String::as_str) != Some("macro") {
+    if !view.toc.is_empty() && !view.toc_at_macro() {
         out.push(Row::Contents);
     }
     let roots: Vec<&ViewBlock> = view.blocks.iter().collect();
@@ -570,7 +570,9 @@ fn block_element(
             .border_dashed()
             .border_color(palette.border)
             .into_any_element(),
-        ViewKind::Toc => toc_element(view, context),
+        // Shown here only when the page places its contents here, as Asciidoctor shows them.
+        ViewKind::Toc if view.toc_at_macro() => toc_element(view, context),
+        ViewKind::Toc => gpui::Empty.into_any_element(),
         ViewKind::Unsupported { name, source } => v_flex()
             .gap_1()
             .p_2()
@@ -764,12 +766,9 @@ fn toc_element(view: &ViewTree, context: &BlockContext<'_>) -> AnyElement {
         .rounded(context.radius)
         .text_sm()
         .child(
-            div().font_weight(FontWeight::BOLD).child(
-                view.attributes
-                    .get("toc-title")
-                    .cloned()
-                    .unwrap_or_else(|| "Table of Contents".to_owned()),
-            ),
+            div()
+                .font_weight(FontWeight::BOLD)
+                .child(view.toc_title().to_owned()),
         )
         .children(view.toc.iter().map(|entry| {
             div()

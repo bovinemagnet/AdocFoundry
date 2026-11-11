@@ -1,0 +1,13 @@
+= Contents Placed by a Macro
+:toc: macro
+:toc-title: On This Page
+
+A preamble before the contents.
+
+toc::[]
+
+== First
+
+=== Nested
+
+== Second

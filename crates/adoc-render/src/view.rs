@@ -1262,6 +1262,22 @@ pub fn block_by_trail<'v>(view: &'v ViewTree, trail: &[usize]) -> Option<&'v Vie
 }
 
 impl ViewTree {
+    /// Whether the page places its table of contents at its `toc::[]` block (`:toc: macro`)
+    /// rather than at the top. As Asciidoctor places it, the contents are shown in one place
+    /// only: at the top unless placed at the macro, and a `toc::[]` shows nothing otherwise.
+    #[must_use]
+    pub fn toc_at_macro(&self) -> bool {
+        ["toc", "toc-placement"]
+            .iter()
+            .any(|name| self.attributes.get(*name).map(String::as_str) == Some("macro"))
+    }
+
+    /// The title of the table of contents: `toc-title`, empty when the page unsets it.
+    #[must_use]
+    pub fn toc_title(&self) -> &str {
+        self.attributes.get("toc-title").map_or("", String::as_str)
+    }
+
     /// Calls `visit` with every block of the tree, depth first, each before the blocks inside
     /// it: those of sections and delimited blocks, list items, description and callout list
     /// entries, and table cells. The one walk of every block, so a container cannot be missed.

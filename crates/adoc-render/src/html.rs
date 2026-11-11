@@ -61,8 +61,8 @@ pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
     if let Some(title) = &view.title {
         let _ = writeln!(out, "<h1>{}</h1>", page_inlines(view, title));
     }
-    if !view.toc.is_empty() {
-        toc(&mut out, view);
+    if !view.toc.is_empty() && !view.toc_at_macro() {
+        toc(&mut out, view, "");
     }
     out.push_str("</div>\n<div id=\"content\">\n");
     for block in &view.blocks {
@@ -89,24 +89,55 @@ pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
 
 const STYLE: &str = "<style>\nbody{font-family:sans-serif;max-width:60em;margin:auto;padding:1em;line-height:1.5}\npre{background:#f6f6f6;padding:.6em;overflow:auto}\n.admonitionblock td.icon{font-weight:bold;padding-right:1em}\n.admonitionblock td.icon i.fa::before{content:attr(title);font-style:normal}\ntable.tableblock{border-collapse:collapse}td.tableblock,th.tableblock{border:1px solid #ccc;padding:.3em}\n.title{font-style:italic}\n.sidebarblock{border:1px solid #ccc;padding:.6em}\n.exampleblock{border:1px solid #ddd;padding:.6em}\n</style>\n";
 
-fn toc(out: &mut String, view: &Page<'_>) {
-    out.push_str("<div id=\"toc\" class=\"toc\">\n<div id=\"toctitle\">Table of Contents</div>\n<ul class=\"sectlevel1\">\n");
+/// The table of contents, as Asciidoctor writes it: a list per level, each inside the entry
+/// it belongs to. `title_class` is the title's own (` class="title"` at a `toc::[]` macro).
+fn toc(out: &mut String, view: &Page<'_>, title_class: &str) {
+    let _ = writeln!(
+        out,
+        "<div id=\"toc\" class=\"toc\">\n<div id=\"toctitle\"{title_class}>{}</div>",
+        escape(view.toc_title())
+    );
+    // The levels of the lists open around the entry being written.
+    let mut open: Vec<u8> = Vec::new();
     for entry in &view.toc {
+        match open.last() {
+            Some(&level) if entry.level > level => {
+                let _ = write!(out, "\n<ul class=\"sectlevel{}\">\n", entry.level);
+                open.push(entry.level);
+            }
+            Some(_) => {
+                out.push_str("</li>\n");
+                while open.len() > 1 && open.last().is_some_and(|&level| entry.level < level) {
+                    out.push_str("</ul>\n</li>\n");
+                    open.pop();
+                }
+            }
+            None => {
+                let _ = writeln!(out, "<ul class=\"sectlevel{}\">", entry.level);
+                open.push(entry.level);
+            }
+        }
         let number = entry
             .number
             .as_deref()
             .map(|number| format!("{number} "))
             .unwrap_or_default();
-        let _ = writeln!(
+        let _ = write!(
             out,
-            "<li class=\"level{}\"><a href=\"#{}\">{}{}</a></li>",
-            entry.level,
+            "<li><a href=\"#{}\">{}{}</a>",
             escape(&entry.id),
             escape(&number),
             escape(&entry.title)
         );
     }
-    out.push_str("</ul>\n</div>\n");
+    if !open.is_empty() {
+        out.push_str("</li>\n");
+        for _ in 1..open.len() {
+            out.push_str("</ul>\n</li>\n");
+        }
+        out.push_str("</ul>\n");
+    }
+    out.push_str("</div>\n");
 }
 
 fn id_attribute(block: &ViewBlock) -> String {
@@ -655,7 +686,10 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
         }
         ViewKind::ThematicBreak => out.push_str("<hr>\n"),
         ViewKind::PageBreak => out.push_str("<div style=\"page-break-after: always;\"></div>\n"),
-        ViewKind::Toc => toc(out, view),
+        ViewKind::Toc if view.toc_at_macro() && !view.toc.is_empty() => {
+            toc(out, view, " class=\"title\"");
+        }
+        ViewKind::Toc => {}
         ViewKind::Unsupported { name, source } => {
             let _ = writeln!(
                 out,

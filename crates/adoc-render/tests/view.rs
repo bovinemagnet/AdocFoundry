@@ -1040,3 +1040,39 @@ fn a_quote_paragraph_has_no_paragraph_inside_but_a_delimited_quote_does() {
     let html = html_of("____\nSaid.\n____\n");
     assert!(html.contains("<p>Said.</p>"), "{html}");
 }
+
+/// `:toc: macro` places the contents at `toc::[]` alone; otherwise they are in the header and
+/// a `toc::[]` writes nothing, as Asciidoctor places them. Either way there is one `id="toc"`.
+#[test]
+fn the_contents_are_written_once_where_the_page_places_them() {
+    let html = html_of("= T\n:toc: macro\n\n== A\n\ntoc::[]\n\ntext\n");
+    assert_eq!(html.matches("id=\"toc\"").count(), 1, "{html}");
+    let header = &html[..html.find("<div id=\"content\">").unwrap()];
+    assert!(!header.contains("id=\"toc\""), "{html}");
+
+    for text in ["= T\n:toc:\n\n== A\n", "= T\n:toc:\n\n== A\n\ntoc::[]\n"] {
+        let html = html_of(text);
+        assert_eq!(html.matches("id=\"toc\"").count(), 1, "{html}");
+        let header = &html[..html.find("<div id=\"content\">").unwrap()];
+        assert!(header.contains("id=\"toc\""), "{html}");
+    }
+}
+
+/// The contents take `toc-title`, empty when unset, and nest a list per level.
+#[test]
+fn the_contents_are_titled_and_nested_as_asciidoctor_writes_them() {
+    let html = html_of("= T\n:toc:\n:toc-title: Contents\n\n== A\n\n=== B\n\n== C\n");
+    assert!(
+        html.contains("<div id=\"toctitle\">Contents</div>"),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "<ul class=\"sectlevel1\">\n<li><a href=\"#_a\">A</a>\n<ul class=\"sectlevel2\">\n\
+             <li><a href=\"#_b\">B</a></li>\n</ul>\n</li>\n<li><a href=\"#_c\">C</a></li>\n</ul>"
+        ),
+        "{html}"
+    );
+    let html = html_of("= T\n:toc:\n:toc-title!:\n\n== A\n");
+    assert!(html.contains("<div id=\"toctitle\"></div>"), "{html}");
+}
