@@ -403,6 +403,45 @@ fn escaping_workspace(page: &str) -> (tempfile::TempDir, PathBuf) {
     (directory, root)
 }
 
+/// A link to a file that does not exist yet, pointing outside the roots, is not a new file
+/// inside them: writing to it would create its target outside (#436).
+#[cfg(unix)]
+#[test]
+fn pdf_export_never_writes_through_a_link() {
+    let (directory, root) = escaping_workspace("= Page\n\nText.\n");
+    let outside = adoc_engine::normalize_path(directory.path());
+    std::os::unix::fs::symlink(outside.join("escaped.pdf"), root.join("out.pdf")).unwrap();
+    std::fs::write(root.join("inside.pdf"), "old").unwrap();
+    std::os::unix::fs::symlink(root.join("inside.pdf"), root.join("inside-link.pdf")).unwrap();
+    let mut client = Client::start(&root, true);
+
+    let result = client.call_result(
+        "export_pdf",
+        json!({ "path": "page.adoc", "output": "out.pdf" }),
+    );
+    assert_eq!(result["isError"], true, "{result}");
+    assert_eq!(
+        result["structuredContent"]["error"]["code"], "outside_workspace",
+        "{result}"
+    );
+    assert!(
+        !outside.join("escaped.pdf").exists(),
+        "nothing is written outside the roots"
+    );
+
+    // A link that stays inside is not written through either.
+    let result = client.call_result(
+        "export_pdf",
+        json!({ "path": "page.adoc", "output": "inside-link.pdf" }),
+    );
+    assert_eq!(result["isError"], true, "{result}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("inside.pdf")).unwrap(),
+        "old"
+    );
+    client.stop();
+}
+
 #[test]
 fn includes_stay_inside_the_roots() {
     let (_directory, root) = escaping_workspace("= Page\n\ninclude::../outside.adoc[]\n");

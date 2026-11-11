@@ -1191,6 +1191,14 @@ impl Server {
     async fn export_pdf(&self, Parameters(args): Parameters<ExportPdfArgs>) -> Answer {
         self.run(move |state| {
             let output = state.confine(&args.output)?;
+            // The name is the client's: a link planted there is refused rather than written
+            // through, as the batch export does.
+            if std::fs::symlink_metadata(&output).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                return Err(Failure::invalid(format!(
+                    "{} is a link, which is not written through",
+                    args.output
+                )));
+            }
             let target = match (&args.path, &args.component) {
                 (Some(path), None) => {
                     let path = state.confine(path)?;
