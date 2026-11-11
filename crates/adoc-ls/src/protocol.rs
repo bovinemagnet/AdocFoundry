@@ -67,12 +67,26 @@ const EXPORT_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// The settings the server runs with: the files the app reads, the user settings file at
 /// `user_file` and the workspace's `.adocfoundry.toml` (which `open_workspace` loads). Git is
-/// opt-in here, and auto-save always off: the client owns its buffers and saves them.
-fn lsp_settings(user_file: Option<&Path>) -> Settings {
-    Settings::load(user_file, None)
-        .unwrap_or_default()
-        .with_git_opt_in()
-        .without_auto_save()
+/// opt-in here, and auto-save always off: the client owns its buffers and saves them. A file
+/// that does not parse gives the defaults, still reading the file, so its correction is picked
+/// up, and the problem to show.
+fn lsp_settings(user_file: Option<&Path>) -> (Settings, Option<String>) {
+    let (settings, problem) = Settings::load_or_default(user_file, None);
+    (
+        settings.with_git_opt_in().without_auto_save(),
+        problem.map(|error| format!("adoc-ls is using the default settings: {error}")),
+    )
+}
+
+/// A `window/showMessage` warning.
+fn warning(message: String) -> Notification {
+    Notification::new(
+        ShowMessage::METHOD.to_owned(),
+        ShowMessageParams {
+            typ: MessageType::WARNING,
+            message,
+        },
+    )
 }
 
 pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
@@ -80,14 +94,16 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
     let initialize_params: InitializeParams = serde_json::from_value(initialize_value)?;
     let encoding = PositionEncoding::negotiate(&initialize_params.capabilities);
     let roots = workspace_roots(&initialize_params);
-    let mut engine = Engine::new(lsp_settings(Settings::default_user_file().as_deref()));
+    let (settings, settings_problem) = lsp_settings(Settings::default_user_file().as_deref());
+    let mut engine = Engine::new(settings);
     engine.enable_spelling();
     let mut server = ProtocolServer::new(
         encoding,
         engine,
         Box::new(BrowserSink::private(SystemLauncher)),
     );
-    server.open_workspace(roots);
+    let mut problems: Vec<String> = settings_problem.into_iter().collect();
+    problems.extend(server.open_workspace(roots));
 
     let result = InitializeResult {
         capabilities: server_capabilities(encoding, server.can_export()),
@@ -105,6 +121,9 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
             .send(message)
             .map_err(|_| ServerError::ChannelClosed)
     };
+    for problem in problems {
+        send(warning(problem).into())?;
+    }
     loop {
         let notifications = match connection.receiver.recv_timeout(TICK) {
             Ok(Message::Request(request)) => {
@@ -169,15 +188,19 @@ impl ProtocolServer {
     }
 
     /// Opens the workspace folders that exist and waits for them to be indexed, so the first
-    /// requests already see every page.
-    pub(crate) fn open_workspace(&mut self, roots: Vec<PathBuf>) {
+    /// requests already see every page. Returns why the workspace could not be opened.
+    pub(crate) fn open_workspace(&mut self, roots: Vec<PathBuf>) -> Option<String> {
         let roots: Vec<PathBuf> = roots.into_iter().filter(|root| root.is_dir()).collect();
-        if roots.is_empty() || self.engine.open_workspace(roots).is_err() {
-            return;
+        if roots.is_empty() {
+            return None;
+        }
+        if let Err(error) = self.engine.open_workspace(roots) {
+            return Some(format!("adoc-ls could not open the workspace: {error}"));
         }
         self.engine.wait_for_workers(INDEX_TIMEOUT);
         // Nothing is open yet, so there is nothing to publish.
         self.events.try_iter().for_each(drop);
+        None
     }
 
     /// Whether this build exports PDF: the engine has Typst.
@@ -2176,7 +2199,7 @@ mod tests {
         let mut server = ProtocolServer::new(
             PositionEncoding::Utf16,
             Engine::with_clock(
-                super::lsp_settings(Some(&user)),
+                super::lsp_settings(Some(&user)).0,
                 std::sync::Arc::new(clock.clone()),
             ),
             Box::new(BrowserSink::new(
@@ -2529,6 +2552,21 @@ mod tests {
         let response = export(&mut server, &page, &folder);
         assert!(response.response_result.is_err(), "{response:?}");
         assert_eq!(server.engine.document_for_path(&page), None);
+    }
+
+    /// A user settings file that does not parse gives the defaults, still reading that file,
+    /// so the watcher picks up its correction, and the problem is reported.
+    #[test]
+    fn a_malformed_user_settings_file_is_kept_and_reported() {
+        let directory = tempfile::tempdir().unwrap();
+        let user = directory.path().join("settings.toml");
+        fs::write(&user, "[spelling\n").unwrap();
+
+        let (settings, problem) = super::lsp_settings(Some(&user));
+
+        assert_eq!(settings.user_file(), Some(user.as_path()));
+        let problem = problem.expect("a problem to show");
+        assert!(problem.contains("settings.toml"), "{problem}");
     }
 
     const LINKING: &str = "= L\n\nSee xref:target.adoc[].\n";

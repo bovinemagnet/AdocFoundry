@@ -457,6 +457,31 @@ fn typing_saving_and_undoing_keeps_the_client_s_text() {
 }
 
 #[test]
+fn a_malformed_workspace_settings_file_is_reported() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(root.join(".adocfoundry.toml"), "[spelling\nlanguage = \n").unwrap();
+    std::fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let mut client = Client::start(Some(&root));
+    // Answered after the message, which follows the answer to `initialize`.
+    client.request("workspace/symbol", json!({ "query": "Page" }));
+
+    let shown: Vec<String> = client
+        .notifications
+        .iter()
+        .filter(|notification| notification.method == "window/showMessage")
+        .filter_map(|notification| notification.params["message"].as_str().map(str::to_owned))
+        .collect();
+    assert!(
+        shown
+            .iter()
+            .any(|message| message.contains(".adocfoundry.toml")),
+        "{shown:?}"
+    );
+    client.shutdown();
+}
+
+#[test]
 fn export_pdf_command_writes_a_file() {
     let directory = tempfile::tempdir().unwrap();
     let page = directory.path().join("page.adoc");

@@ -540,6 +540,23 @@ impl Settings {
         Ok(settings)
     }
 
+    /// As [`Settings::load`], but when a file cannot be read: the defaults, still naming both
+    /// files, so that a reload once the file is corrected reads it, and the problem to report.
+    #[must_use]
+    pub fn load_or_default(
+        user_file: Option<&Path>,
+        workspace_root: Option<&Path>,
+    ) -> (Self, Option<EngineError>) {
+        let mut settings = Self {
+            user_file: user_file.map(Path::to_path_buf),
+            workspace_file: workspace_root.map(|root| root.join(WORKSPACE_SETTINGS_FILE)),
+            ..Self::default()
+        };
+        // A failed reload leaves the settings as they were.
+        let problem = settings.reload().err();
+        (settings, problem)
+    }
+
     /// Re-reads both layers from the files they were loaded from.
     pub fn reload(&mut self) -> Result<(), EngineError> {
         let mut fresh = Self {
