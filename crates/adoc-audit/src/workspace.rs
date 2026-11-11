@@ -78,11 +78,12 @@ pub fn audit(input: &AuditInput<'_>, scope: AuditScope) -> AuditBuilder {
             audit_version(input, &descriptor.name, descriptor.version.as_deref())
         })
         .collect();
-    assemble(
+    put_together(
         input,
         scope,
         files.iter().map(|(path, part)| (path.as_path(), part)),
         &versions,
+        true,
     )
 }
 
@@ -147,6 +148,18 @@ pub fn assemble<'p>(
     files: impl IntoIterator<Item = (&'p Path, &'p FileAudit)>,
     versions: impl IntoIterator<Item = &'p VersionAudit>,
 ) -> AuditBuilder {
+    put_together(input, scope, files, versions, false)
+}
+
+/// [`assemble`], told whether `files` are already those in scope, so that [`audit`], which
+/// chose them, does not look each up in the catalog again.
+fn put_together<'p>(
+    input: &AuditInput<'_>,
+    scope: AuditScope,
+    files: impl IntoIterator<Item = (&'p Path, &'p FileAudit)>,
+    versions: impl IntoIterator<Item = &'p VersionAudit>,
+    files_in_scope: bool,
+) -> AuditBuilder {
     let workspace = input.workspace;
     let mut builder = AuditBuilder::new(
         scope.clone(),
@@ -162,7 +175,7 @@ pub fn assemble<'p>(
         return builder;
     }
     for (path, part) in files {
-        if context.includes_path(path) {
+        if files_in_scope || context.includes_path(path) {
             for finding in &part.findings {
                 builder.finding(finding.clone());
             }
@@ -275,7 +288,6 @@ impl Context<'_> {
     pub(crate) fn relative_paths(&self, message: &str) -> String {
         let mut message = message.to_owned();
         for root in self.input.roots {
-            let root = normalize_path(root);
             let absolute = root.to_string_lossy().into_owned();
             if absolute.is_empty() || !message.contains(&absolute) {
                 continue;
@@ -295,7 +307,7 @@ impl Context<'_> {
                     }
                     // The root on its own, not the start of a longer name such as another
                     // root's (`/work/docs` in `/work/docs-internal`).
-                    None if ends_a_path(rest) => rewritten.push_str(&root_name(&root)),
+                    None if ends_a_path(rest) => rewritten.push_str(&root_name(root)),
                     None => rewritten.push_str(&absolute),
                 }
             }

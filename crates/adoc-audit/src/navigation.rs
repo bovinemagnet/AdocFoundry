@@ -83,6 +83,17 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
         .map(|descriptor| descriptor.nav.len())
         .sum();
 
+    // Each unlisted page's finding names every navigation file looked in.
+    let evidence: Vec<Evidence> = trees
+        .iter()
+        .map(|tree| {
+            let nav = context.location(&tree.path, None);
+            Evidence {
+                message: format!("Not listed in {}", nav.path),
+                location: Some(nav),
+            }
+        })
+        .collect();
     let mut coverage = NavCoverage {
         component: descriptor.name.clone(),
         version: descriptor.version.clone(),
@@ -133,16 +144,7 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
                 location,
             );
             finding.coordinate = Some((&page.coordinate).into());
-            finding.evidence = trees
-                .iter()
-                .map(|tree| {
-                    let nav = context.location(&tree.path, None);
-                    Evidence {
-                        message: format!("Not listed in {}", nav.path),
-                        location: Some(nav),
-                    }
-                })
-                .collect();
+            finding.evidence.clone_from(&evidence);
             finding.remediation = Some(
                 "Add an entry for it to a navigation file, or exclude it under [quality] if it is \
                  meant to be unlisted"
