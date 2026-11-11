@@ -3,7 +3,7 @@
 //! navigation dotted and bowed, links to unresolved targets dash-dot, and a link of one kind
 //! repeated between two files heavier. Every node is labelled with its title.
 
-use std::fmt::Write as _;
+use std::{fmt::Write as _, path::Path, sync::Arc};
 
 use crate::{
     style::{node_radius, Palette},
@@ -264,14 +264,29 @@ pub const EXPORT_SEED: u64 = 7;
 const EXPORT_STEPS: usize = 3000;
 
 /// `snapshot` laid out afresh until it settles, then drawn as [`to_svg`] draws it, for a
-/// drawing with no canvas to take positions from.
+/// drawing with no canvas to take positions from. The layout is seeded from the files' paths
+/// relative to the folder holding them all, so the same files give the same bytes wherever
+/// they are.
 #[must_use]
 pub fn to_svg_laid_out(snapshot: &GraphSnapshot, style: &SvgStyle) -> String {
     let mut layout = crate::Layout::new(EXPORT_SEED);
+    layout.set_roots(common_folder(snapshot));
     layout.sync(snapshot);
     layout.settle(EXPORT_STEPS);
     let positions: Vec<Point> = layout.positions().map(|(_, at)| at).collect();
     to_svg(snapshot, &positions, style)
+}
+
+/// The deepest folder holding every file of `snapshot`, if it has a file.
+fn common_folder(snapshot: &GraphSnapshot) -> Option<Arc<Path>> {
+    let mut files = snapshot.nodes.iter().filter_map(|node| node.key.path());
+    let mut folder = files.next()?.parent()?;
+    for file in files {
+        while !file.starts_with(folder) {
+            folder = folder.parent()?;
+        }
+    }
+    Some(Arc::from(folder))
 }
 
 /// `text` safe inside an element or a quoted attribute.
@@ -459,6 +474,31 @@ mod tests {
         assert!(
             left <= apex.x && apex.x <= right && top <= apex.y && apex.y <= bottom,
             "({left}, {top}, {right}, {bottom})"
+        );
+    }
+
+    #[test]
+    fn a_layout_for_export_is_the_same_wherever_the_files_are() {
+        let moved = |prefix: &str| {
+            let mut snapshot = snapshot();
+            let key = |key: &GraphKey| match key {
+                GraphKey::File(path) => GraphKey::File(Arc::from(
+                    Path::new(prefix).join(path.strip_prefix("/").unwrap()),
+                )),
+                other => other.clone(),
+            };
+            for node in &mut snapshot.nodes {
+                node.key = key(&node.key);
+            }
+            for edge in &mut snapshot.edges {
+                (edge.from, edge.to) = (key(&edge.from), key(&edge.to));
+            }
+            snapshot
+        };
+        let style = SvgStyle::default();
+        assert_eq!(
+            to_svg_laid_out(&moved("/home/a/docs"), &style),
+            to_svg_laid_out(&moved("/builds/ci/project/docs"), &style)
         );
     }
 

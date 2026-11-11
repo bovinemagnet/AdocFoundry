@@ -9,7 +9,7 @@
 //! Only `f32` arithmetic in a fixed order is used, never trigonometry or a hash map's order, so
 //! the same seed and the same calls give the same positions on every platform.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::{GraphKey, GraphSnapshot, GroupBy, Groups};
 
@@ -82,6 +82,8 @@ pub struct Layout {
     /// laid out by force.
     targets: Option<HashMap<GraphKey, Point>>,
     placed_targets: Vec<Option<Point>>,
+    /// The folders a file's key is hashed relative to, for its seeded start.
+    roots: Vec<Arc<Path>>,
 }
 
 impl Layout {
@@ -101,7 +103,16 @@ impl Layout {
             group_count: 0,
             targets: None,
             placed_targets: Vec::new(),
+            roots: Vec::new(),
         }
+    }
+
+    /// Seeds each file's start from its path relative to the first of `roots` holding it, so
+    /// that the same files start in the same places wherever they are: in another checkout, or
+    /// on another platform. A file outside every root is seeded from its whole path. Nodes
+    /// already placed stay where they are.
+    pub fn set_roots(&mut self, roots: impl IntoIterator<Item = Arc<Path>>) {
+        self.roots = roots.into_iter().collect();
     }
 
     /// Eases each node towards its place in `targets` rather than moving it by force, a node
@@ -203,13 +214,14 @@ impl Layout {
             if placed[at].is_some() {
                 continue;
             }
-            let direction = unit(mix(self.seed, &keys[at], 0));
+            let direction = unit(mix(self.seed, &keys[at], &self.roots, 0));
             let start = neighbours[at]
                 .iter()
                 .find_map(|&other| placed[other])
                 .map_or_else(
                     || {
-                        let spread = 0.5 + 0.5 * fraction(mix(self.seed, &keys[at], 1));
+                        let spread =
+                            0.5 + 0.5 * fraction(mix(self.seed, &keys[at], &self.roots, 1));
                         Point::new(direction.x * ring * spread, direction.y * ring * spread)
                     },
                     |next_to| {
@@ -569,13 +581,20 @@ fn ring_radius(nodes: usize) -> f32 {
     REST_LENGTH * (nodes.max(1) as f32).sqrt()
 }
 
-/// A number from the seed and the key, the same on every platform: a path's separators are
-/// taken as `/`, so `docs\page.adoc` on Windows starts where `docs/page.adoc` does elsewhere.
-fn mix(seed: u64, key: &GraphKey, salt: u64) -> u64 {
+/// A number from the seed and the key, the same on every platform and in every place: a path
+/// is taken relative to the first of `roots` holding it, and its separators as `/`, so
+/// `docs\page.adoc` on Windows starts where `docs/page.adoc` does elsewhere.
+fn mix(seed: u64, key: &GraphKey, roots: &[Arc<Path>], salt: u64) -> u64 {
     // FNV-1a over the key's bytes, then SplitMix64.
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ salt;
     let (bytes, path): (&[u8], bool) = match key {
-        GraphKey::File(path) => (path.as_os_str().as_encoded_bytes(), true),
+        GraphKey::File(path) => {
+            let relative = roots
+                .iter()
+                .find_map(|root| path.strip_prefix(root).ok())
+                .unwrap_or(path);
+            (relative.as_os_str().as_encoded_bytes(), true)
+        }
         GraphKey::Unresolved(text) | GraphKey::Group(text) => (text.as_bytes(), false),
     };
     for &byte in bytes {

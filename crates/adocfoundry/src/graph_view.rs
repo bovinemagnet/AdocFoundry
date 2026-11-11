@@ -409,6 +409,13 @@ impl GraphView {
         };
         let recentre = self.local && snapshot.nodes.len() != self.snapshot.nodes.len();
         self.set_snapshot(snapshot);
+        // Seeded from paths within the roots, the same documentation starts alike anywhere.
+        let roots = self.app.read(cx).engine.roots().to_vec();
+        self.layout.set_roots(
+            roots
+                .iter()
+                .map(|root| std::sync::Arc::from(adoc_engine::normalize_path(root))),
+        );
         self.layout.sync(&self.snapshot);
         match (self.arrangement, &self.tree) {
             (GraphLayout::MindMap(style), Some(tree)) => {
