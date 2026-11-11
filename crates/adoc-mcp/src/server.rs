@@ -5,6 +5,7 @@
 //! stalled request answers others with `timeout` or `unavailable` rather than holding them.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -14,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use adoc_core::{DiagnosticSeverity, SourceRange};
+use adoc_core::{DiagnosticSeverity, LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
     DefinitionTarget, Engine, EngineEvent, ExportArgs, ExportTarget, GraphFilter, GraphScope,
@@ -388,6 +389,33 @@ impl State {
     }
 }
 
+/// The 1-based lines of offsets the index holds, each counted in the text the index parsed,
+/// never in the buffer or the file as it is now, and each file read at most once.
+pub(crate) struct Lines<'a> {
+    state: &'a State,
+    files: HashMap<PathBuf, Option<LineIndex>>,
+}
+
+impl<'a> Lines<'a> {
+    pub(crate) fn new(state: &'a State) -> Self {
+        Self {
+            state,
+            files: HashMap::new(),
+        }
+    }
+
+    /// The line of `offset` in `path`, or `None` when the file is not indexed or no longer
+    /// holds the text the index parsed (it changed on disk and is not indexed again yet).
+    pub(crate) fn line(&mut self, path: &Path, offset: usize) -> Option<usize> {
+        let state = self.state;
+        let lines = self.files.entry(path.to_path_buf()).or_insert_with(|| {
+            let file = state.engine.workspace().index.file(path)?;
+            Some(LineIndex::new(&file.text()?))
+        });
+        lines.as_ref().map(|lines| lines.line_column(offset).0 + 1)
+    }
+}
+
 impl Server {
     /// Pumps the engine every [`IDLE_PUMP`] while no tool is using it, so files changed on disk
     /// are applied between calls, and drops the events no tool reads, so neither the watcher's
@@ -698,17 +726,16 @@ impl Server {
             let from = state.confine(&args.from)?;
             Ok(match state.engine.resolve_target(&from, &args.target) {
                 Some(DefinitionTarget::Location(location)) => {
-                    let text = state.text(&location.path).unwrap_or_default();
-                    let line = text[..location.range.start.min(text.len())]
-                        .matches('\n')
-                        .count()
-                        + 1;
-                    json!({
+                    let mut value = json!({
                         "resolves": true,
                         "path": state.shown(&location.path),
-                        "line": line,
                         "resource_id": state.engine.resource_id(&location.path),
-                    })
+                    });
+                    if let Some(line) = Lines::new(state).line(&location.path, location.range.start)
+                    {
+                        value["line"] = json!(line);
+                    }
+                    value
                 }
                 Some(DefinitionTarget::External(path)) => json!({
                     "resolves": true,
@@ -785,19 +812,12 @@ impl Server {
                 args.cursor.as_deref(),
                 args.limit,
             )?;
+            let mut lines = Lines::new(state);
             let symbols: Vec<Value> = page
                 .items
                 .iter()
                 .map(|symbol| {
-                    let line = state
-                        .text(&symbol.path)
-                        .map(|text| {
-                            text[..symbol.range.start.min(text.len())]
-                                .matches('\n')
-                                .count()
-                                + 1
-                        })
-                        .ok();
+                    let line = lines.line(&symbol.path, symbol.range.start);
                     json!({
                         "name": symbol.name,
                         "kind": format!("{:?}", symbol.kind).to_lowercase(),
@@ -1518,6 +1538,68 @@ mod tests {
             .as_ref()
             .map(|value| value["error"]["code"].clone())
             .unwrap_or_default()
+    }
+
+    /// A text about `len` bytes long in which no byte of `offsets` (at most two) falls on a
+    /// character boundary.
+    fn split_inside_characters(offsets: &[usize], len: usize) -> String {
+        (0..3)
+            .map(|lead| format!("{}{}\n", "a".repeat(lead), "€".repeat(len / 3)))
+            .find(|text| offsets.iter().all(|offset| !text.is_char_boundary(*offset)))
+            .unwrap()
+    }
+
+    #[test]
+    fn line_numbers_survive_a_page_rewritten_on_disk_before_it_is_indexed() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_engine::normalize_path(directory.path());
+        let page = root.join("a.adoc");
+        let original = format!(
+            "= Überblick\n\nÄhnlich.\n\n[[target]]\n== Änderung\n\n{}\n",
+            "Größe und Weiß. ".repeat(40)
+        );
+        std::fs::write(&page, &original).unwrap();
+        std::fs::write(root.join("b.adoc"), "= B\n\nxref:a.adoc#target[]\n").unwrap();
+        let mut engine = Engine::new(adoc_engine::Settings::default().with_git_opt_in());
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(Duration::from_secs(30)));
+        let server = Server::new(engine, vec![root], Permissions::default());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        let line_of_symbol = |server: &Server| {
+            let answer = runtime
+                .block_on(server.symbols(Parameters(SymbolsArgs {
+                    query: "Änderung".to_owned(),
+                    cursor: None,
+                    limit: None,
+                })))
+                .unwrap();
+            assert_eq!(answer.is_error, Some(false), "{answer:?}");
+            answer.structured_content.unwrap()["symbols"][0]["line"].clone()
+        };
+        assert_eq!(line_of_symbol(&server), json!(6));
+
+        // Shorter, and each offset the index holds for the page inside a character.
+        let anchor = original.find("[[target]]").unwrap();
+        let section = original.find("== Änderung").unwrap();
+        let rewritten = split_inside_characters(&[anchor, section], section + 40);
+        assert!(rewritten.len() < original.len());
+        std::fs::write(&page, rewritten).unwrap();
+
+        // No line is counted in a text other than the one the index parsed: until the page
+        // is indexed again, none is given (and once it is, the new text's).
+        let line = line_of_symbol(&server);
+        assert!(line.is_null() || line == json!(1), "{line}");
+        let answer = runtime
+            .block_on(server.resolve(Parameters(ResolveArgs {
+                target: "a.adoc#target".to_owned(),
+                from: "b.adoc".to_owned(),
+            })))
+            .unwrap();
+        assert_eq!(answer.is_error, Some(false), "{answer:?}");
     }
 
     #[test]
