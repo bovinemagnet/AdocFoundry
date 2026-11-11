@@ -468,8 +468,9 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
             .unwrap_or(2),
         ordered_depth: 0,
     };
-    let blocks = builder.blocks(&dom.blocks);
+    // The title first, so a footnote in it is listed first, as it is numbered.
     let title = dom.title.as_ref().map(|title| builder.inlines(title));
+    let blocks = builder.blocks(&dom.blocks);
     let toc = if dom.attributes.contains_key("toc") {
         std::mem::take(&mut builder.toc)
     } else {
@@ -658,7 +659,10 @@ impl Builder<'_> {
             return (!caption.is_empty()).then(|| caption.to_owned());
         }
         let (counter, label) = match &block.kind {
-            BlockKind::Image { .. } => (&mut self.figures, &self.figure_caption),
+            // A diagram is an image once drawn, as Asciidoctor Diagram makes it.
+            BlockKind::Image { .. } | BlockKind::Diagram { .. } => {
+                (&mut self.figures, &self.figure_caption)
+            }
             BlockKind::Table { .. } => (&mut self.tables, &self.table_caption),
             // A collapsible block is titled by its summary, as Asciidoctor counts it: unnumbered.
             BlockKind::Example { .. } if block.meta.options.contains("collapsible") => {
@@ -1019,7 +1023,10 @@ impl Builder<'_> {
             Inline::Link { target, text } => ViewInline::Link {
                 url: target.clone(),
                 content: if text.is_empty() {
-                    vec![ViewInline::Text(target.clone())]
+                    // A mail link shows the address without its scheme, as Asciidoctor shows it.
+                    let shown = target.strip_prefix("mailto:").unwrap_or(target);
+                    let shown = shown.split('?').next().unwrap_or(shown);
+                    vec![ViewInline::Text(shown.to_owned())]
                 } else {
                     self.inlines(text)
                 },
@@ -1112,7 +1119,11 @@ impl Builder<'_> {
         } else if fragment.is_none() && self.ids.contains_key(file) {
             // An id the page defines, though it may hold a `.` or a `:` (`fig:overview`).
             Some(file)
-        } else if !file.contains('.') && !file.contains('$') && !file.contains(':') {
+        } else if fragment.is_none()
+            && !file.contains('.')
+            && !file.contains('$')
+            && !file.contains(':')
+        {
             // `<<id>>` arrives as a bare id.
             Some(file)
         } else {
@@ -1330,6 +1341,24 @@ impl ViewBlock {
         let mut children = Vec::new();
         self.each_child_list(&mut |blocks| children.extend(blocks));
         children
+    }
+
+    /// Calls `visit` with each run of inlines the block holds itself, in order: its title, a
+    /// section's or heading's title, a paragraph, and the text of its list items, description
+    /// terms and callouts. The blocks inside it hold their own ([`each_block`]).
+    pub fn each_inline_run<'a>(&'a self, visit: &mut impl FnMut(&'a [ViewInline])) {
+        visit(&self.title);
+        match &self.kind {
+            ViewKind::Section { title, .. } | ViewKind::Heading { title, .. } => visit(title),
+            ViewKind::Paragraph(content) => visit(content),
+            ViewKind::List { items, .. } => items.iter().for_each(|item| visit(&item.content)),
+            ViewKind::DescriptionList(items) => items.iter().for_each(|item| {
+                visit(&item.term);
+                visit(&item.content);
+            }),
+            ViewKind::CalloutList(items) => items.iter().for_each(|item| visit(&item.content)),
+            _ => {}
+        }
     }
 
     /// Calls `visit` with each list of blocks directly inside this one, in order.

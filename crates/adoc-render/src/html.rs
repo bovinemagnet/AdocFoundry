@@ -488,21 +488,34 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
                     page_inlines(view, &block.title)
                 );
             }
-            let total: u32 = table
+            // Asciidoctor reads every width, a percentage too, as a proportion of their sum.
+            let weight = |width: ColumnWidth| match width {
+                ColumnWidth::Proportional(width) | ColumnWidth::Percentage(width) => {
+                    f64::from(width)
+                }
+                ColumnWidth::Auto => 1.0,
+            };
+            let total = table
                 .columns
                 .iter()
-                .map(|column| match column.width {
-                    ColumnWidth::Proportional(width) => width,
-                    _ => 1,
-                })
-                .sum::<u32>()
-                .max(1);
+                .map(|column| weight(column.width))
+                .sum::<f64>();
+            // Without `cols`, a column for each cell of the first row, of equal width.
+            let count = if table.columns.is_empty() {
+                table
+                    .header
+                    .iter()
+                    .chain(&table.rows)
+                    .next()
+                    .map_or(0, |row| row.iter().map(|cell| cell.colspan.max(1)).sum())
+            } else {
+                table.columns.len()
+            };
             out.push_str("<colgroup>\n");
-            for column in &table.columns {
-                let percent = match column.width {
-                    ColumnWidth::Percentage(width) => f64::from(width),
-                    ColumnWidth::Proportional(width) => f64::from(width) * 100.0 / f64::from(total),
-                    ColumnWidth::Auto => 100.0 / table.columns.len().max(1) as f64,
+            for index in 0..count {
+                let percent = match table.columns.get(index) {
+                    Some(column) if total > 0.0 => weight(column.width) * 100.0 / total,
+                    _ => 100.0 / count as f64,
                 };
                 let _ = writeln!(out, "<col style=\"width: {percent:.4}%;\">");
             }
@@ -968,9 +981,11 @@ fn xref_href(target: &str, link: &ResolvedLink, page: Option<&Page<'_>>) -> Opti
         Some((file, fragment)) => (file, Some(fragment)),
         None => (target, None),
     };
-    if let Some(fragment) = &link.fragment {
-        if !file.contains(".adoc") && !file.contains('$') {
-            return Some(format!("#{fragment}"));
+    if let Some(local) = &link.fragment {
+        // A file part with a fragment names another page (`other#frag`).
+        if (file.is_empty() || fragment.is_none()) && !file.contains(".adoc") && !file.contains('$')
+        {
+            return Some(format!("#{local}"));
         }
     }
     let with_fragment = |mut href: String| {
@@ -995,6 +1010,10 @@ fn xref_href(target: &str, link: &ResolvedLink, page: Option<&Page<'_>>) -> Opti
     }
     let file = match file.strip_suffix(".adoc") {
         Some(stem) => format!("{stem}.html"),
+        // A page named without its extension, as `xref:other#frag[]` names one.
+        None if fragment.is_some() && !file.is_empty() && Path::new(file).extension().is_none() => {
+            format!("{file}.html")
+        }
         None => file.to_owned(),
     };
     Some(with_fragment(file))
@@ -1067,9 +1086,15 @@ fn inline_html(out: &mut String, inline: &ViewInline, page: Option<&Page<'_>>) {
             );
         }
         ViewInline::Link { url, content } => {
+            // `bare` where the address is the text, as Asciidoctor marks it.
+            let bare = if ViewInline::plain_text(content) == *url {
+                " class=\"bare\""
+            } else {
+                ""
+            };
             let _ = write!(
                 out,
-                "<a href=\"{}\" class=\"bare\">{}</a>",
+                "<a href=\"{}\"{bare}>{}</a>",
                 escape(url),
                 inlines_with(content, page)
             );

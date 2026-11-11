@@ -219,7 +219,7 @@ mod tests {
     use crate::RenderSafeMode;
     use crate::{RenderError, RenderRequest};
 
-    /// Serializes every test that spawns a process.
+    /// Serialises every test that spawns a process.
     ///
     /// `invokes_a_renderer_directly_with_structured_arguments` writes an executable and then
     /// runs it. A concurrent `fork` in this process inherits the still-open write descriptor,

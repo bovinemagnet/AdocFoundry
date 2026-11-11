@@ -48,22 +48,8 @@ fn all_inlines(view: &ViewTree) -> Vec<ViewInline> {
             }
         }
     }
-    fn walk(blocks: Vec<&adoc_render::ViewBlock>, out: &mut Vec<ViewInline>) {
-        for block in blocks {
-            match &block.kind {
-                ViewKind::Paragraph(content) => collect(content, out),
-                ViewKind::List { items, .. } => {
-                    for item in items {
-                        collect(&item.content, out);
-                    }
-                }
-                _ => {}
-            }
-            walk(block.child_refs(), out);
-        }
-    }
     let mut out = Vec::new();
-    walk(view.blocks.iter().collect(), &mut out);
+    view.each_block(&mut |block| block.each_inline_run(&mut |run| collect(run, &mut out)));
     out
 }
 
@@ -410,7 +396,7 @@ fn html_contains_every_block_kind() {
         "<sup>sup</sup>",
         "<sub>sub</sub>",
         "about Foundry",
-        "<a href=\"https://example.com\" class=\"bare\">a link</a>",
+        "<a href=\"https://example.com\">a link</a>",
         "<code class=\"language-rust\" data-lang=\"rust\">",
         "<b class=\"conum\">(1)</b>",
         "<b>raw</b>",
@@ -827,6 +813,95 @@ fn text_is_what_a_reader_sees() {
         adoc_render::to_text(&view),
         "Guide\n\nInstall\n\nRun this first.\n\n- one\n- two\n\nmake\n\nA | B\n"
     );
+}
+
+/// The text holds a callout item's attached blocks, counts an ordered list from its `start`
+/// (down when reversed), leaves no empty line for a term without text of its own, and names
+/// an admonition by its label.
+#[test]
+fn text_holds_what_lists_and_admonitions_hold() {
+    let text = "----\nx <1>\n----\n<1> One.\n+\nAttached.\n\n[start=4]\n. four\n. five\n\n\
+                [%reversed]\n. two\n. one\n\nTerm::\n* item\n\nIMPORTANT: Mind.\n";
+    let view = view_of(Path::new("/docs/guide.adoc"), text, &LocalResolver);
+    assert_eq!(
+        adoc_render::to_text(&view),
+        "x\n\n(1) One.\n  Attached.\n\n4. four\n5. five\n\n2. two\n1. one\n\nTerm\n\n  - item\n\n\
+         IMPORTANT:\nMind.\n"
+    );
+}
+
+/// Column widths are proportions, a percentage among them, and never overflow; a table
+/// without `cols` has a column for each cell of its first row.
+#[test]
+fn column_widths_are_proportions_that_cannot_overflow() {
+    let html = html_of("[cols=\"20%,1,2\"]\n|===\n|a |b |c\n|===\n");
+    for width in ["86.9565%", "4.3478%", "8.6957%"] {
+        assert!(
+            html.contains(&format!("width: {width};")),
+            "{width}: {html}"
+        );
+    }
+    let html = html_of("[cols=\"4000000000,4000000000\"]\n|===\n|a |b\n|===\n");
+    assert_eq!(html.matches("width: 50.0000%;").count(), 2, "{html}");
+    let html = html_of("|===\n|a |b\n|===\n");
+    assert_eq!(html.matches("<col ").count(), 2, "{html}");
+}
+
+/// Only a link whose text is its address is `bare`; a mail link without text shows the
+/// address without its scheme.
+#[test]
+fn only_a_link_shown_as_its_address_is_bare() {
+    let html = html_of(
+        "link:https://example.com[text] https://example.com mailto:a@b.c[] mailto:a@b.c[Mail]\n",
+    );
+    assert!(
+        html.contains("<a href=\"https://example.com\">text</a>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<a href=\"https://example.com\" class=\"bare\">https://example.com</a>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<a href=\"mailto:a@b.c\">a@b.c</a>"),
+        "{html}"
+    );
+    assert!(html.contains("<a href=\"mailto:a@b.c\">Mail</a>"), "{html}");
+}
+
+/// A target with a fragment is another page, whatever its name, as Asciidoctor reads it.
+#[test]
+fn a_target_with_a_fragment_names_another_page() {
+    let html = html_of("== Other\n\nxref:other#frag[]\n");
+    assert!(html.contains("<a href=\"other.html#frag\""), "{html}");
+}
+
+/// The title's footnote is the first, as it is numbered.
+#[test]
+fn a_footnote_in_the_title_is_listed_first() {
+    let view = view_of(
+        Path::new("page.adoc"),
+        "= Title footnote:[In title]\n\nBody.footnote:[In body]\n",
+        &LocalResolver,
+    );
+    let numbers: Vec<u32> = view.footnotes.iter().map(|note| note.number).collect();
+    assert_eq!(numbers, [1, 2]);
+}
+
+/// A titled diagram is a figure, as Asciidoctor Diagram makes it, and counted with images.
+#[test]
+fn a_titled_diagram_is_a_figure() {
+    let view = view_of(
+        Path::new("page.adoc"),
+        ".A flow\n[mermaid]\n----\ngraph TD\n----\n\n.Pic\nimage::x.png[]\n",
+        &LocalResolver,
+    );
+    let captions: Vec<Option<&str>> = view
+        .blocks
+        .iter()
+        .map(|block| block.caption.as_deref())
+        .collect();
+    assert_eq!(captions, [Some("Figure 1."), Some("Figure 2.")]);
 }
 
 #[test]
