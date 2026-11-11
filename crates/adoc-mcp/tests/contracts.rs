@@ -606,7 +606,13 @@ fn every_listed_resource_uri_reads_back() {
     let (_directory, root) = scratch("references");
     std::fs::write(root.join("release notes.adoc"), "= Release notes\n").unwrap();
     std::fs::write(root.join("überblick.adoc"), "= Überblick\n").unwrap();
-    std::fs::write(root.join("50% off #1?.adoc"), "= Sale\n").unwrap();
+    // `?` cannot be in a file name on Windows; the rest still need encoding there.
+    let sale = if cfg!(windows) {
+        "50% off #1.adoc"
+    } else {
+        "50% off #1?.adoc"
+    };
+    std::fs::write(root.join(sale), "= Sale\n").unwrap();
     let mut client = Client::start(&root, false);
     let (uris, _) = all_resources(&mut client);
     assert_eq!(uris.len(), 6, "{uris:?}");
@@ -625,9 +631,15 @@ fn every_listed_resource_uri_reads_back() {
         .iter()
         .any(|uri| uri.ends_with("/release%20notes.adoc")));
     assert!(uris.iter().any(|uri| uri.ends_with("/%C3%BCberblick.adoc")));
-    assert!(uris
-        .iter()
-        .any(|uri| uri.ends_with("/50%25%20off%20%231%3F.adoc")));
+    let encoded_sale = if cfg!(windows) {
+        "/50%25%20off%20%231.adoc"
+    } else {
+        "/50%25%20off%20%231%3F.adoc"
+    };
+    assert!(
+        uris.iter().any(|uri| uri.ends_with(encoded_sale)),
+        "{uris:?}"
+    );
     let subscribed = client.request(
         "resources/subscribe",
         json!({ "uri": uris.iter().find(|uri| uri.contains("%20")).unwrap() }),

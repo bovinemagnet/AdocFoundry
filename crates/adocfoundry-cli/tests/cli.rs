@@ -1149,8 +1149,16 @@ fn paths_are_read_against_the_current_directory() {
         &repository_root().join("tests/fixtures/pdf/book"),
         &directory.path().join("book"),
     );
-    // As the current directory is read, with any link in the temporary folder's path followed.
-    let book = directory.path().canonicalize().unwrap().join("book");
+    // As the command reads its current directory: on Unix with any link in the temporary
+    // folder's path followed (macOS's `/var` is a link), on Windows as it was set, since
+    // `canonicalize` there gives the `\\?\` form with long names where the temporary folder
+    // may be written with short ones (`RUNNER~1`).
+    let base = if cfg!(windows) {
+        directory.path().to_path_buf()
+    } else {
+        directory.path().canonicalize().unwrap()
+    };
+    let book = base.join("book");
     let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
         .current_dir(directory.path())
         .args(["pdf", "book/guide", "--root", book.to_str().unwrap()])
