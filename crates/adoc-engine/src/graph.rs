@@ -1047,6 +1047,11 @@ impl Engine {
         }
         self.graph.building = None;
         self.graph.adopt(built);
+        // A change reported while the build ran was compared with the shape before it; one
+        // that left the catalog as the build read it needs no other build.
+        if self.graph.full_due && CatalogShape::of(&self.workspace) == self.graph.shape {
+            self.graph.full_due = false;
+        }
     }
 
     pub(crate) fn graph_crashed(&mut self, generation: u64) {
@@ -1083,5 +1088,65 @@ pub(crate) fn register_graph(registry: &mut CommandRegistry) {
                 run: |_, _| Ok(CommandOutcome::Done),
             }))
             .expect("built-in command ids are unique");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, time::Duration};
+
+    use crate::{Engine, Settings};
+
+    fn copy_tree(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for entry in fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
+    use super::*;
+
+    /// A descriptor reported changed again while the full build its change started is running,
+    /// with nothing more changed, as a watcher may report one write twice, builds nothing more
+    /// once that build lands.
+    #[test]
+    fn a_change_reported_again_during_its_build_builds_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_index::normalize_path(&directory.path().join("docs"));
+        copy_tree(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/graph"),
+            &root,
+        );
+        let mut engine = Engine::new(Settings::load(None, None).unwrap().with_git_opt_in());
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
+        engine.pump();
+        let builds = engine.graph_builds();
+
+        let descriptor = root.join("reference/antora.yml");
+        fs::write(
+            &descriptor,
+            "name: reference\ntitle: Reference\nversion: '2.0'\n",
+        )
+        .unwrap();
+        engine.reload_descriptor(&descriptor);
+        assert_eq!(
+            engine.update_due_graph(),
+            1,
+            "a new version starts a full build"
+        );
+        engine.reload_descriptor(&descriptor);
+        assert!(engine.wait_for_workers(Duration::from_secs(10)));
+        assert_eq!(engine.graph_builds(), builds + 1);
+        assert!(
+            !engine.graph.full_due,
+            "the build that landed holds the catalog as it is"
+        );
     }
 }
