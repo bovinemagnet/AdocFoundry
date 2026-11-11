@@ -98,7 +98,9 @@ fn the_report_measures_the_diagram_cache() {
     let cache = directory
         .path()
         .join("docs")
-        .join(".cache/adocfoundry/diagrams");
+        .join(".cache")
+        .join("adocfoundry")
+        .join("diagrams");
     let empty = tempfile::tempdir().unwrap();
     let line = |engine: &Engine| {
         let report = report_for(engine, empty.path());
