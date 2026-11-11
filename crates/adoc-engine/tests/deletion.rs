@@ -1,18 +1,20 @@
 //! Deleting a file from the app (#100): the file is moved aside into the state folder, its tab
-//! closed and the workspace told; Undo Delete puts back the latest deletion. What removing it
+//! closed and the workspace told; Undo Delete puts back the latest deletion, and Restore Deleted
+//! File… any deletion still kept, from this session or an earlier one (#434). What removing it
 //! would break is Inspect Impact's to show first.
 
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use adoc_core::DiagnosticCode;
 use adoc_engine::{
     commands::ids,
     impact::{ImpactKind, ImpactReport},
-    normalize_path, CommandArgs, Engine, EngineEvent, InspectionState, Settings, DELETED_DIR,
+    normalize_path, CommandArgs, CommandOutcome, Engine, EngineError, EngineEvent, InspectionState,
+    KeptDeletion, Settings, DELETED_DIR,
 };
 
 /// A component whose partial is included by three pages, with the app's state folder.
@@ -338,4 +340,210 @@ fn deletions_older_than_the_history_keeps_are_swept() {
         .invoke(ids::FILE_UNDO_DELETE, CommandArgs::None)
         .unwrap();
     assert!(engine.last_deleted().is_none());
+}
+
+fn restore(engine: &mut Engine, deletion: &str) -> Result<CommandOutcome, EngineError> {
+    engine.invoke(
+        ids::FILE_RESTORE_DELETED,
+        CommandArgs::Custom(serde_json::json!({ "deletion": deletion })),
+    )
+}
+
+fn kept_paths(engine: &Engine) -> Vec<PathBuf> {
+    engine
+        .kept_deletions()
+        .into_iter()
+        .map(|kept| kept.path)
+        .collect()
+}
+
+/// #434: a deletion records where the file was, so a later session lists it, newest first, and
+/// restores it, opening a page again.
+#[test]
+fn a_deletion_from_an_earlier_session_is_listed_and_restored() {
+    let setup = Setup::new();
+    let install = setup.file("pages/install.adoc");
+    let upgrade = setup.file("pages/upgrade.adoc");
+    let index = setup.file("pages/index.adoc");
+    let text = fs::read_to_string(&install).unwrap();
+    let before = SystemTime::now() - Duration::from_secs(1);
+    {
+        let mut engine = setup.engine();
+        for file in [&install, &upgrade] {
+            engine
+                .invoke(ids::FILE_DELETE, CommandArgs::Path(file.clone()))
+                .unwrap();
+        }
+    }
+    // The original path is recorded beside the file kept.
+    let folders: Vec<PathBuf> = fs::read_dir(setup.state.join(DELETED_DIR))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(folders.len(), 2);
+    for folder in &folders {
+        let recorded = PathBuf::from(fs::read_to_string(folder.join("path")).unwrap());
+        assert!(recorded == install || recorded == upgrade, "{recorded:?}");
+        assert!(folder.join("file").is_file());
+    }
+
+    let mut engine = setup.engine();
+    assert!(
+        engine.last_deleted().is_none(),
+        "not this session's to undo"
+    );
+    assert!(engine.command_available(ids::FILE_RESTORE_DELETED));
+    let kept: Vec<KeptDeletion> = engine.kept_deletions();
+    assert_eq!(kept_paths(&engine), [upgrade.clone(), install.clone()]);
+    assert!(kept.iter().all(|kept| !kept.occupied));
+    assert!(kept
+        .iter()
+        .all(|kept| kept.deleted >= before && kept.deleted <= SystemTime::now()));
+    assert!(codes_in(&engine, &index).contains(&DiagnosticCode::UnresolvedXrefFile));
+
+    let receiver = engine.subscribe();
+    let outcome = restore(&mut engine, &kept[1].id).unwrap();
+    assert_eq!(fs::read_to_string(&install).unwrap(), text);
+    let opened = engine.document_for_path(&install).expect("a page opens");
+    assert_eq!(outcome, CommandOutcome::Opened(opened));
+    assert_eq!(engine.active(), Some(opened));
+    assert!(events(&receiver).contains(&EngineEvent::FileRestored(install.clone())));
+    assert!(!codes_in(&engine, &index).contains(&DiagnosticCode::UnresolvedXrefFile));
+    assert_eq!(kept_paths(&engine), [upgrade], "no longer kept");
+    assert_eq!(
+        fs::read_dir(setup.state.join(DELETED_DIR)).unwrap().count(),
+        1
+    );
+    // Once restored, it is not there to restore again.
+    assert!(restore(&mut engine, &kept[1].id).is_err());
+}
+
+/// As Undo Delete, restoring never replaces a file made at the path since; a file whose folder
+/// has gone gets its folder back; and a file that is not a page is not opened.
+#[test]
+fn restoring_refuses_a_file_at_the_path_and_makes_missing_folders() {
+    let setup = Setup::new();
+    let upgrade = setup.file("pages/upgrade.adoc");
+    let logo = setup.file("images/logo.png");
+    let mut engine = setup.engine();
+    for file in [&upgrade, &logo] {
+        engine
+            .invoke(ids::FILE_DELETE, CommandArgs::Path(file.clone()))
+            .unwrap();
+    }
+    fs::write(&upgrade, "= New\n").unwrap();
+    fs::remove_dir(setup.file("images")).unwrap();
+    let kept = engine.kept_deletions();
+    assert_eq!(kept_paths(&engine), [logo.clone(), upgrade.clone()]);
+    assert!(!kept[0].occupied);
+    assert!(kept[1].occupied, "a file is at its path now");
+
+    assert!(matches!(
+        restore(&mut engine, &kept[1].id),
+        Err(EngineError::Refused(_))
+    ));
+    assert_eq!(fs::read_to_string(&upgrade).unwrap(), "= New\n");
+    assert_eq!(engine.kept_deletions().len(), 2, "still kept");
+    assert_eq!(
+        engine.last_deleted(),
+        Some(logo.as_path()),
+        "still undoable"
+    );
+
+    assert_eq!(
+        restore(&mut engine, &kept[0].id).unwrap(),
+        CommandOutcome::Done
+    );
+    assert!(logo.is_file());
+    assert!(engine.image_for_path(&logo).is_none(), "only pages open");
+    // Restored by Restore Deleted File…, it is no longer Undo Delete's to put back.
+    assert_eq!(engine.last_deleted(), Some(upgrade.as_path()));
+}
+
+/// The state folder is read as untrusted: a recorded path that is relative, climbs with `..`,
+/// lies outside the workspace or goes through a linked folder is never listed or restored, nor
+/// is an entry with no record, one whose kept file or folder is a link, or one named with a
+/// separator.
+#[test]
+fn restoring_refuses_entries_it_cannot_trust() {
+    let setup = Setup::new();
+    let store = setup.state.join(DELETED_DIR);
+    let entry = |name: &str, path: Option<&str>| {
+        let folder = store.join(name);
+        fs::create_dir_all(&folder).unwrap();
+        if let Some(path) = path {
+            fs::write(folder.join("path"), path).unwrap();
+        }
+        fs::write(folder.join("file"), "= Kept\n").unwrap();
+        folder
+    };
+    let millis = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let pages = setup.file("pages");
+    let outside = setup.state.parent().unwrap().join("outside.adoc");
+    let climbing = format!("{}/../../outside.adoc", pages.display());
+    let mut refused = vec![
+        entry(&format!("{millis}-1-1"), Some("pages/relative.adoc")),
+        entry(&format!("{millis}-1-2"), Some(&climbing)),
+        entry(
+            &format!("{millis}-1-3"),
+            Some(&outside.display().to_string()),
+        ),
+        entry(&format!("{millis}-1-4"), None),
+    ];
+    #[cfg(unix)]
+    {
+        let linked = setup.root.join("linked");
+        std::os::unix::fs::symlink(&pages, &linked).unwrap();
+        refused.push(entry(
+            &format!("{millis}-1-5"),
+            Some(&linked.join("through.adoc").display().to_string()),
+        ));
+        let folder = entry(
+            &format!("{millis}-1-6"),
+            Some(&pages.join("linked-file.adoc").display().to_string()),
+        );
+        fs::remove_file(folder.join("file")).unwrap();
+        std::os::unix::fs::symlink(&outside, folder.join("file")).unwrap();
+        refused.push(folder);
+        let real = entry(
+            "elsewhere",
+            Some(&pages.join("linked-folder.adoc").display().to_string()),
+        );
+        let link = store.join(format!("{millis}-1-7"));
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        refused.push(link);
+    }
+    fs::write(&outside, "= Outside\n").unwrap();
+    let mut engine = setup.engine();
+    assert_eq!(engine.kept_deletions(), []);
+    for folder in refused {
+        let name = folder.file_name().unwrap().to_str().unwrap().to_owned();
+        assert!(restore(&mut engine, &name).is_err(), "{name}");
+    }
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "= Outside\n");
+    for name in ["../state", "a/b", "..", ""] {
+        assert!(restore(&mut engine, name).is_err(), "{name}");
+    }
+    assert!(engine
+        .invoke(ids::FILE_RESTORE_DELETED, CommandArgs::None)
+        .is_err());
+    for page in ["relative", "linked-file", "linked-folder", "through"] {
+        assert!(
+            !setup.file(&format!("pages/{page}.adoc")).exists(),
+            "{page}"
+        );
+    }
+}
+
+#[test]
+fn without_a_state_folder_nothing_is_kept_to_restore() {
+    let setup = Setup::new();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine.open_workspace(vec![setup.root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(30)));
+    assert!(!engine.command_available(ids::FILE_RESTORE_DELETED));
+    assert_eq!(engine.kept_deletions(), []);
 }

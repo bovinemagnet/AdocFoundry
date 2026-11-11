@@ -228,10 +228,17 @@ The app test `impact_ui_drilldown_and_graph_path` in `crates/adocfoundry/src/ui_
 
 == File deletion tests
 
-`crates/adoc-engine/tests/deletion.rs` drives `file.delete` and `file.undo_delete` headlessly.
+`crates/adoc-engine/tests/deletion.rs` drives `file.delete`, `file.undo_delete` and `file.restore_deleted` headlessly.
 It includes `deleting_a_partial_included_by_three_pages_shows_them_first`, the acceptance test of issue #100.
+The restore tests are:
+
+* `a_deletion_from_an_earlier_session_is_listed_and_restored`
+* `restoring_refuses_a_file_at_the_path_and_makes_missing_folders`
+* `restoring_refuses_entries_it_cannot_trust`
+* `without_a_state_folder_nothing_is_kept_to_restore`
 
 The app test `delete_file_lists_what_breaks_and_undo_puts_it_back` in `crates/adocfoundry/src/ui_tests.rs` checks the confirmation's list and that Undo puts the file back.
+The app test `restore_deleted_file_puts_back_an_earlier_sessions_deletion` in the same file checks that the picker restores a deletion from an earlier session.
 
 == Template tests
 

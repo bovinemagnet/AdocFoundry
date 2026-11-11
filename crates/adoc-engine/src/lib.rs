@@ -102,7 +102,7 @@ pub use command::{
     Command, CommandArgs, CommandCategory, CommandContext, CommandId, CommandOutcome,
     CommandRegistry, CommandSpec, RegistryError,
 };
-pub use deletion::DELETED_DIR;
+pub use deletion::{KeptDeletion, DELETED_DIR};
 pub use discovery::{IncomingReference, ReferenceKind, ResourceEntry, ResourceQuery};
 pub use doctor::{Doctor, DoctorLine, DoctorReport, DoctorSection, PROBE_TIMEOUT};
 pub use document::{DocumentId, OpenDocument};

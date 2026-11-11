@@ -5538,6 +5538,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_inspect_impact))
             .on_action(cx.listener(Self::on_delete_file))
             .on_action(cx.listener(Self::on_undo_delete))
+            .on_action(cx.listener(Self::on_restore_deleted_file))
             .on_action(cx.listener(Self::on_compare_revisions))
             .on_action(cx.listener(Self::on_save))
             .on_action(cx.listener(Self::on_save_all))
