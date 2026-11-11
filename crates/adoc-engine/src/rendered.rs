@@ -105,6 +105,8 @@ impl PreviewLayout {
 /// A parsed document kept so a finished diagram can rebuild the view without re-parsing.
 struct Parsed {
     version: u64,
+    /// The job that parsed it.
+    generation: u64,
     path: PathBuf,
     dom: Arc<Dom>,
     /// Every file the page was assembled from, itself included.
@@ -127,6 +129,9 @@ pub(crate) struct PreviewState {
     stale_before: BTreeMap<DocumentId, u64>,
     parsed: BTreeMap<DocumentId, Parsed>,
     published: BTreeMap<DocumentId, Arc<RenderedPreview>>,
+    /// The version of each page whose preview parse crashed, so `render_blocking` stops
+    /// waiting for it.
+    crashed: BTreeMap<DocumentId, u64>,
     diagrams: Option<Arc<Diagrams>>,
     /// The parser previews are built with; acdc unless set otherwise.
     parser: Option<Arc<dyn DocumentParser>>,
@@ -272,17 +277,29 @@ impl Engine {
     }
 
     /// Renders `id` and waits for the result, diagrams included, for front ends without an
-    /// event loop such as the CLI. `None` when it does not finish within `timeout`.
+    /// event loop such as the CLI. `None` when it does not finish within `timeout`. Waits for
+    /// this page only, never for other workers.
     pub fn render_blocking(
         &mut self,
         id: DocumentId,
         timeout: Duration,
     ) -> Option<Arc<RenderedPreview>> {
+        let deadline = Instant::now() + timeout;
+        // Only a parse this render started, or one started after it, will do.
+        let before = self.rendered.next_generation;
         self.render_now(id);
-        let finished = self.wait_for_workers(timeout);
-        let preview = self.rendered_preview(id);
+        let rendered = |engine: &Self| {
+            let parsed = engine.rendered.parsed.get(&id)?;
+            engine
+                .finished_preview(id)
+                .filter(|_| parsed.generation > before)
+        };
+        self.wait_until(deadline, |engine| {
+            rendered(engine).is_some() || engine.preview_crashed_now(id)
+        });
+        let preview = rendered(self);
         self.release_preview(id);
-        preview.filter(|_| finished)
+        preview
     }
 
     /// Requests a preview of `id` and starts rendering it now, not after the settle time.
@@ -303,6 +320,18 @@ impl Engine {
             && parsed.waiting.is_empty()
             && !self.rendered.scheduled.contains_key(&id))
         .then(|| preview.clone())
+    }
+
+    /// Notes that the preview parse of `id` at `version` crashed.
+    pub(crate) fn preview_crashed(&mut self, id: DocumentId, version: u64) {
+        self.rendered.crashed.insert(id, version);
+    }
+
+    /// Whether the preview parse of `id` crashed at the page's current version.
+    fn preview_crashed_now(&self, id: DocumentId) -> bool {
+        self.documents
+            .get(&id)
+            .is_some_and(|document| self.rendered.crashed.get(&id) == Some(&document.version))
     }
 
     pub fn release_preview(&mut self, id: DocumentId) {
@@ -326,6 +355,7 @@ impl Engine {
         state.stale_before.remove(&id);
         state.parsed.remove(&id);
         state.published.remove(&id);
+        state.crashed.remove(&id);
         #[cfg(feature = "typst")]
         self.forget_pdf_preview(id);
     }
@@ -445,7 +475,12 @@ impl Engine {
                     self.rendered.scheduled.insert(*id, now);
                 }
                 // Its parse crashed: the preview keeps the view it had until the page changes.
-                Lookup::Failed => {}
+                Lookup::Failed => {
+                    if let Some(document) = self.documents.get(id) {
+                        let version = document.version;
+                        self.preview_crashed(*id, version);
+                    }
+                }
                 // Its input reads the page's line parse, which is on its way from a worker.
                 Lookup::Missing if !self.line_parse_ready(*id) => {
                     self.rendered.scheduled.insert(*id, now);
@@ -643,6 +678,7 @@ impl Engine {
             id,
             Parsed {
                 version,
+                generation,
                 path,
                 dom,
                 sources,
@@ -771,6 +807,12 @@ impl Engine {
     /// Replaces the diagram renderer, for tests and front ends with their own providers.
     pub fn set_diagrams(&mut self, diagrams: Diagrams) {
         self.rendered.diagrams = Some(Arc::new(diagrams));
+    }
+
+    /// Whether the diagram `checksum` is rendering or waiting to.
+    #[cfg(feature = "typst")]
+    pub(crate) fn diagram_rendering(&self, checksum: &str) -> bool {
+        self.rendered.rendering.contains(checksum)
     }
 
     /// Renders `request` on a worker, or queues it while all [`DIAGRAM_WORKERS`] are busy.

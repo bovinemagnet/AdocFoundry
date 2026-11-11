@@ -285,6 +285,7 @@ The app tests are `build_site_panel_shows_the_log_and_opens_the_site` in `crates
 The render corpus is `tests/fixtures/render/`: `blocks.adoc`, `block-options.adoc`, `inline.adoc` and `tables.adoc`, with a `partials/` directory for includes.
 `crates/adoc-dom/tests/` checks each parser over the corpus, and `crates/adoc-render/tests/view.rs` checks the view tree.
 `crates/adoc-engine/tests/preview.rs` drives the preview service headlessly: the settle time, included-file changes, stale results, diagram completion, following and pinning, history for `navigate.go_to` and `navigate.reveal`, and `render_blocking`.
+`crates/adoc-engine/tests/own_job.rs` and `crates/adoc-mcp/tests/busy.rs` check that `render_blocking`, `export_blocking` and `search` answer promptly while another worker, a held diagram render or a site build, is still running, and that a render whose parse crashes gives up at once.
 
 The fidelity harness, `crates/adocfoundry-cli/tests/fidelity.rs`, renders every corpus page with `adocfoundry-cli render` and with `asciidoctor`.
 It runs Asciidoctor with `-s -a showtitle`, so the document title is compared, and normalises both renderings.

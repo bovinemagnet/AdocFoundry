@@ -361,24 +361,40 @@ impl Engine {
         let deadline = Instant::now() + timeout;
         let job = self.start_export(args, true)?;
         loop {
+            // Waits for this job only, never for other workers.
+            let waited = self.wait_until(deadline, |engine| {
+                engine.export.finished.contains_key(&job)
+                    || !engine.export.jobs.contains_key(&job)
+                    || engine.export_stalled(job)
+            });
             if let Some(result) = self.export.finished.remove(&job) {
                 return result.map_err(EngineError::Refused);
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() || !self.wait_for_workers(remaining) {
+            if !self.export.jobs.contains_key(&job) {
+                return Err(EngineError::Refused("the export stopped".to_owned()));
+            }
+            if !waited {
                 self.export.jobs.remove(&job);
                 return Err(EngineError::Refused(
                     "the export did not finish in time".to_owned(),
                 ));
             }
-            if !self.export.jobs.contains_key(&job) && !self.export.finished.contains_key(&job) {
-                return Err(EngineError::Refused("the export stopped".to_owned()));
-            }
-            if self.workers_running == 0 && self.export.jobs.contains_key(&job) {
-                // Nothing left to wait for: every diagram has reported, so typeset now.
-                self.export_ready(job);
-            }
+            // Nothing left to wait for: every diagram has reported, so typeset now.
+            self.export_ready(job);
         }
+    }
+
+    /// Whether `job` waits for diagrams none of which is still rendering.
+    fn export_stalled(&self, job: u64) -> bool {
+        self.export
+            .jobs
+            .get(&job)
+            .is_some_and(|state| match &state.stage {
+                Stage::Diagrams(waiting) => waiting
+                    .iter()
+                    .all(|checksum| !self.diagram_rendering(checksum)),
+                _ => false,
+            })
     }
 
     /// Exports each of `pages` to `<folder>/<name>.pdf`, one after another; pages named alike
