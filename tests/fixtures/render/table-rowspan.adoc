@@ -1,0 +1,9 @@
+= A row span to the last row
+
+A cell of the row above spans down into the last row, which is written with one cell fewer.
+
+[cols="1,1"]
+|===
+|First .2+|Down to the last row
+|Last row
+|===
