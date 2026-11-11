@@ -246,7 +246,7 @@ pub fn analyse(
             });
         }
     }
-    publications_of(&mut gathered, head, publications);
+    publications_of(&mut gathered, base, head, publications);
     finish(gathered, &changes, base, head, limits)
 }
 
@@ -492,6 +492,27 @@ fn navigation(
             }
         }
     }
+    if is_nav {
+        // The file changed, so the navigation it gives (order, hierarchy, labels) may have,
+        // whatever its membership does.
+        let mut sides = BTreeSet::new();
+        if base.is_some_and(|base| base.is_listed_nav(path)) {
+            sides.insert(Side::Base);
+        }
+        if head.is_listed_nav(path) {
+            sides.insert(Side::Head);
+        }
+        gathered.add(Found {
+            sides,
+            ..found(
+                ImpactKind::Navigation,
+                path,
+                path,
+                Side::Head,
+                vec![path.to_path_buf()],
+            )
+        });
+    }
     let mut listed_before: BTreeSet<PathBuf> = BTreeSet::new();
     let mut listed_now: BTreeSet<PathBuf> = BTreeSet::new();
     for nav in &navs {
@@ -543,9 +564,75 @@ fn navigation(
     }
 }
 
-/// Each publication whose selection holds a page with a render or navigation impact.
+/// What a publication selects on one side, worked out once for every affected page.
+struct Selection<'s> {
+    snapshot: &'s DependencySnapshot<'s>,
+    /// Whether the side holds everything the selection names.
+    known: bool,
+    /// For a navigation profile, the pages its files list on this side.
+    listed: BTreeSet<PathBuf>,
+}
+
+impl<'s> Selection<'s> {
+    fn new(snapshot: &'s DependencySnapshot<'s>, selection: &PublicationSelection) -> Self {
+        let antora = &snapshot.state().antora;
+        let (known, listed) = match selection {
+            PublicationSelection::Page(_) => (true, BTreeSet::new()),
+            PublicationSelection::Component { name, version } => (
+                match version {
+                    Some(version) => antora.component(name, Some(version)).is_some(),
+                    None => !antora.versions_of(name).is_empty(),
+                },
+                BTreeSet::new(),
+            ),
+            PublicationSelection::Navigation(files) => (
+                files.iter().all(|file| snapshot.has(file)),
+                files
+                    .iter()
+                    .flat_map(|file| snapshot.listed_by(file))
+                    .collect(),
+            ),
+        };
+        Self {
+            snapshot,
+            known,
+            listed,
+        }
+    }
+
+    /// Whether the selection holds `page` on this side; `None` when it names content the side
+    /// does not hold, so it may.
+    fn holds(&self, selection: &PublicationSelection, page: &Path) -> Option<bool> {
+        match selection {
+            PublicationSelection::Page(selected) => Some(selected == page),
+            PublicationSelection::Component { name, version } => self.known.then(|| {
+                self.snapshot
+                    .component_version(page)
+                    .is_some_and(|(component, page_version)| {
+                        component == *name
+                            && version
+                                .as_ref()
+                                .is_none_or(|version| page_version.as_ref() == Some(version))
+                    })
+            }),
+            PublicationSelection::Navigation(files) => {
+                // A changed navigation file of the profile is itself an impact on it.
+                let listed = files.iter().any(|file| file == page) || self.listed.contains(page);
+                if self.known || listed {
+                    Some(listed)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
+/// Each publication whose selection holds a page with a render or navigation impact, asked of
+/// the side (or sides) whose evidence shows the impact.
 fn publications_of(
     gathered: &mut Gathered,
+    base: Option<&DependencySnapshot<'_>>,
     head: &DependencySnapshot<'_>,
     publications: &[Publication],
 ) {
@@ -562,49 +649,25 @@ fn publications_of(
         })
         .collect();
     for publication in publications {
+        let selection = &publication.selection;
+        let on_head = Selection::new(head, selection);
+        let on_base = base.map(|base| Selection::new(base, selection));
         for (page, origin, sides) in &affected {
-            let selected = match &publication.selection {
-                PublicationSelection::Page(selected) => Some(selected == page),
-                PublicationSelection::Component { name, version } => {
-                    let known = match version {
-                        Some(version) => {
-                            head.state().antora.component(name, Some(version)).is_some()
-                        }
-                        None => !head.state().antora.versions_of(name).is_empty(),
-                    };
-                    known.then(|| {
-                        head.component_version(page)
-                            .is_some_and(|(component, page_version)| {
-                                component == *name
-                                    && version.as_ref().is_none_or(|version| {
-                                        page_version.as_ref() == Some(version)
-                                    })
-                            })
-                    })
-                }
-                PublicationSelection::Navigation(files) => {
-                    let known = files.iter().all(|file| head.has(file));
-                    let listed = files
-                        .iter()
-                        .any(|file| file == page || head.listed_by(file).contains(page));
-                    if known {
-                        Some(listed)
-                    } else if listed {
-                        Some(true)
-                    } else {
-                        None
-                    }
-                }
-            };
-            let (confidence, matched) = match selected {
-                Some(true) => (Confidence::Confirmed, true),
-                Some(false) => (Confidence::Confirmed, false),
+            let answers: Vec<Option<bool>> = sides
+                .iter()
+                .map(|side| match (side, &on_base) {
+                    (Side::Base, Some(on_base)) => on_base.holds(selection, page),
+                    _ => on_head.holds(selection, page),
+                })
+                .collect();
+            let confidence = if answers.contains(&Some(true)) {
+                Confidence::Confirmed
+            } else if answers.contains(&None) {
                 // The selection names content this revision does not hold: it may select it.
-                None => (Confidence::Potential, true),
-            };
-            if !matched {
+                Confidence::Potential
+            } else {
                 continue;
-            }
+            };
             gathered.add(Found {
                 kind: ImpactKind::Publication,
                 confidence,

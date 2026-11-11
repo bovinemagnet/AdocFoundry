@@ -66,6 +66,18 @@ expression: first
     {
       "kind": "navigation",
       "confidence": "confirmed",
+      "path": "v1/modules/ROOT/nav.adoc",
+      "component": "product",
+      "version": "1.0",
+      "origin": "v1/modules/ROOT/nav.adoc",
+      "evidence": "both",
+      "via": [
+        "v1/modules/ROOT/nav.adoc"
+      ]
+    },
+    {
+      "kind": "navigation",
+      "confidence": "confirmed",
       "status": "listed",
       "path": "v1/modules/ROOT/pages/guide.adoc",
       "resource_id": "1.0@product:ROOT:page$guide.adoc",
@@ -97,7 +109,7 @@ expression: first
   "counts": {
     "render": 2,
     "reference_integrity": 0,
-    "navigation": 2,
+    "navigation": 3,
     "publication": 0
   }
 }

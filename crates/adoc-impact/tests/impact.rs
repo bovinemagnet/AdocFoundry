@@ -201,6 +201,8 @@ fn impact_nav_change_is_version_scoped() {
     assert_eq!(
         listed,
         [
+            // The changed file itself, whose navigation changed.
+            (NAV, None),
             (GUIDE, Some(ImpactStatus::Listed)),
             (INSTALL, Some(ImpactStatus::Unlisted)),
         ]
@@ -470,6 +472,106 @@ fn impact_report_is_deterministic() {
         "no absolute path"
     );
     insta::assert_snapshot!("impact_report", first);
+}
+
+fn book_and_nav_profiles(revisions: &Revisions) -> [Publication; 2] {
+    [
+        Publication {
+            name: "book-1".into(),
+            selection: PublicationSelection::Component {
+                name: "product".into(),
+                version: Some("1.0".into()),
+            },
+        },
+        Publication {
+            name: "nav-book".into(),
+            selection: PublicationSelection::Navigation(vec![revisions.path(NAV)]),
+        },
+    ]
+}
+
+/// Each publication impact as (profile, path).
+fn selected(report: &ImpactReport) -> Vec<(String, String)> {
+    let mut selected: Vec<(String, String)> = of_kind(report, ImpactKind::Publication)
+        .iter()
+        .map(|impact| (impact.publication.clone().unwrap(), impact.path.clone()))
+        .collect();
+    selected.sort();
+    selected.dedup();
+    selected
+}
+
+fn profiles(report: &ImpactReport) -> Vec<String> {
+    let mut names: Vec<String> = selected(report).into_iter().map(|(name, _)| name).collect();
+    names.dedup();
+    names
+}
+
+#[test]
+fn impact_removed_page_selects_its_component_profile() {
+    // #537: the page is gone from head, so whether a profile selected it is base's to say.
+    let revisions = Revisions::new();
+    revisions.remove(GUIDE);
+    let report = revisions.report(
+        &[revisions.change(GUIDE, ChangeKind::Removed)],
+        &book_and_nav_profiles(&revisions),
+    );
+    assert_eq!(
+        selected(&report),
+        [("book-1".to_owned(), GUIDE.to_owned())],
+        "{:#?}",
+        report.impacts
+    );
+}
+
+#[test]
+fn impact_navigation_profile_follows_its_changed_file() {
+    // #537: the file drops an entry, so the profile built from it loses a page.
+    let revisions = Revisions::new();
+    revisions.write(NAV, "* xref:index.adoc[]\n");
+    let report = revisions.report(
+        &[revisions.change(NAV, ChangeKind::Modified)],
+        &book_and_nav_profiles(&revisions),
+    );
+    assert_eq!(profiles(&report), ["book-1", "nav-book"]);
+
+    // Reordered, the same pages listed: the order is the profile's and the navigation's.
+    let revisions = Revisions::new();
+    revisions.write(NAV, "* xref:install.adoc[]\n* xref:index.adoc[]\n");
+    let report = revisions.report(
+        &[revisions.change(NAV, ChangeKind::Modified)],
+        &book_and_nav_profiles(&revisions),
+    );
+    let navigation = of_kind(&report, ImpactKind::Navigation);
+    assert_eq!(paths(&navigation), [NAV], "{navigation:#?}");
+    assert_eq!(navigation[0].evidence, EvidenceSide::Both);
+    assert_eq!(profiles(&report), ["book-1", "nav-book"]);
+}
+
+#[test]
+fn impact_renamed_page_is_selected_on_both_sides() {
+    // #537: selected under its old path in base and its new one in head.
+    let revisions = Revisions::new();
+    let moved = "v1/modules/ROOT/pages/setup.adoc";
+    let text = revisions.read(INSTALL);
+    revisions.remove(INSTALL);
+    revisions.write(moved, &text);
+    let report = revisions.report(
+        &[revisions.change(
+            moved,
+            ChangeKind::Renamed {
+                from: revisions.path(INSTALL),
+            },
+        )],
+        &book_and_nav_profiles(&revisions),
+    );
+    let book: Vec<String> = selected(&report)
+        .into_iter()
+        .filter(|(name, _)| name == "book-1")
+        .map(|(_, path)| path)
+        .collect();
+    assert!(book.contains(&INSTALL.to_owned()), "{book:?}");
+    assert!(book.contains(&moved.to_owned()), "{book:?}");
 }
 
 /// The text `source` spans in the file as it is now.
