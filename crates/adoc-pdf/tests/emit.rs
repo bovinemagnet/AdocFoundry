@@ -754,6 +754,50 @@ fn a_listing_fits_unmeasured_only_where_the_page_holds_it() {
     assert!(small.source.contains("#adoc-code(raw("), "{}", small.source);
 }
 
+#[test]
+fn a_block_in_a_table_cell_is_kept_whole_only_where_its_column_holds_it() {
+    // A block in a cell wraps into more lines than at the page's width: judged at the page's
+    // width, it was kept whole and what did not fit was drawn below the page.
+    let listing = |lines: usize, width: usize| {
+        (0..lines)
+            .map(|n| {
+                format!(
+                    "{:<width$}",
+                    format!("let value = compute(first, second); // note {n}")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let words = "word ".repeat(229);
+    let cases = [
+        format!(
+            "= Page\n\n[cols=\"1,1\"]\n|===\n|Left a|\n----\n{}\n----\n|===\n",
+            listing(38, 63)
+        ),
+        format!(
+            "= Page\n\n[cols=\"1,1,1,1,1\"]\n|===\n|a |b |c |d a|\nNOTE: {words}last\n|===\n"
+        ),
+        format!(
+            "= Page\n\n[cols=\"1,1,1,1,1,1,1,1\"]\n|===\n|a |b |c |d |e |f |g a|\n----\n{}\n----\n|===\n",
+            listing(17, 59)
+        ),
+    ];
+    for (index, case) in cases.iter().enumerate() {
+        let typst = typst_of(case);
+        let pages =
+            adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+                .unwrap_or_else(|error| panic!("{error}"));
+        for page in &pages {
+            let below = page.runs.iter().filter(|run| run.y > page.height).count();
+            assert_eq!(below, 0, "case {index}: runs below the page");
+        }
+        let text: String = pages.iter().map(|page| squeeze(&page.text())).collect();
+        let last = ["note37", "last", "note16"][index];
+        assert!(text.contains(last), "case {index}: {text}");
+    }
+}
+
 /// `text` written as `page.adoc` beside copies of the reference images and `files`, exported
 /// with `theme`: the generated source and every image as it was laid out, page after page.
 fn images_of(

@@ -182,15 +182,21 @@
 // A block asciidoctor-pdf keeps on one page when it fits on one: moved whole to the next page
 // rather than split, and split only when it is taller than a page.
 //
-// Measured at the page's content width: `layout` would give the exact width, but links laid out
-// inside it lose their place in a tagged PDF's structure.
-#let keep(body, fits: false) = if fits {
+// Measured at the page's content width, or in a table cell at the cell's `share` of it less the
+// padding of the `cells` it is in: `layout` would give the exact width, but links laid out
+// inside it lose their place in a tagged PDF's structure. A block in a cell whose width the
+// emitter cannot know (`share: none`) may break.
+#let keep(body, fits: false, share: 1, cells: 0) = if share == none {
+  block(breakable: true, width: 100%, body)
+} else if fits {
   // The emitter could tell from the block's text that it fits on a page: no need to measure.
   block(breakable: false, width: 100%, body)
 } else {
   context {
     let margin = doc.page.margin
-    let height = measure(body, width: doc.page.width - margin.left - margin.right).height
+    let padding = inset(pick("table_cell_padding", default: 2pt))
+    let width = (doc.page.width - margin.left - margin.right) * share - cells * (padding.left + padding.right)
+    let height = measure(body, width: calc.max(width, 1pt)).height
     block(breakable: height > doc.page.height - margin.top - margin.bottom, width: 100%, body)
   }
 }
@@ -201,14 +207,14 @@
 
 // A block with its caption ("Table 1. Title") above or below it, `caption_margin_inside`
 // apart.
-#let adoc-captioned(caption, body, below: false, fits: false) = {
+#let adoc-captioned(caption, body, below: false, fits: false, share: 1, cells: 0) = {
   let inside = pick("caption_margin_inside", default: 4pt)
   let outside = pick("caption_margin_outside", default: 0pt)
   // A paragraph, so it is spaced as Prawn spaces lines of text.
   let caption = align(alignment(pick("caption_text_align", "caption_align", default: "left")),
     par(styled(("caption",), caption)))
   if not below { v(outside, weak: true) }
-  keep(fits: fits, grid(
+  keep(fits: fits, share: share, cells: cells, grid(
     columns: 1fr,
     row-gutter: inside,
     ..if below { (body, caption) } else { (caption, body) },
@@ -329,7 +335,7 @@
 // With `icon` (`icons=font`) the label is the kind's icon from `doc.admonition-icons`, in a
 // column `admonition_label_min_width` or one and a half times the icon's size wide, as
 // asciidoctor-pdf draws it; otherwise the label's text, at least that minimum wide.
-#let adoc-admonition(kind, label, body, fits: false, icon: false) = {
+#let adoc-admonition(kind, label, body, fits: false, icon: false, share: 1, cells: 0) = {
   let padding = inset(pick("admonition_padding", default: (4pt, 12pt, 4pt, 12pt)))
   let label-padding = inset(pick("admonition_label_padding", default: pick("admonition_padding", default: (4pt, 12pt, 4pt, 12pt))))
   let rule = border(pick("admonition_column_rule_width", default: 0.5pt), pick("admonition_column_rule_color", "base_border_color"))
@@ -362,7 +368,7 @@
       context box(width: calc.max(measure(label).width, min-width), align(label-align, label))
     }
   }
-  keep(fits: fits, block(
+  keep(fits: fits, share: share, cells: cells, block(
     width: 100%,
     fill: pick("admonition_background_color"),
     stroke: border(pick("admonition_border_width"), pick("admonition_border_color")),
@@ -380,11 +386,11 @@
 }
 
 // A listing, source or literal block.
-#let adoc-code(body, fits: false) = {
+#let adoc-code(body, fits: false, share: 1, cells: 0) = {
   let size = resolve-size(pick("code_font_size", default: base-size), base-size)
   let ratio = pick("code_line_height", default: 1.2)
   let conum-color = pick("conum_font_color", "codespan_font_color", default: base-color)
-  keep(fits: fits, block(
+  keep(fits: fits, share: share, cells: cells, block(
     width: 100%,
     fill: pick("code_background_color"),
     stroke: border(pick("code_border_width", default: 0.5pt), pick("code_border_color")),
@@ -451,9 +457,9 @@
   par(styled((prefix + "_cite",), [— ] + parts.join(", ")))
 }
 
-#let adoc-quote(body, attribution, citation, prefix: "quote", fits: false) = {
+#let adoc-quote(body, attribution, citation, prefix: "quote", fits: false, share: 1, cells: 0) = {
   let size = resolve-size(pick(prefix + "_font_size", default: base-size), base-size)
-  keep(fits: fits, block(
+  keep(fits: fits, share: share, cells: cells, block(
     width: 100%,
     stroke: (left: border(pick(prefix + "_border_left_width", default: 4pt), pick(prefix + "_border_color", "base_border_color"))),
     inset: inset(pick(prefix + "_padding", default: (3pt, 12pt, 3pt, 14pt))),
@@ -468,7 +474,7 @@
 
 // A sidebar or example: a framed container with an optional title inside (sidebar) or a
 // caption above (example, emitted by the caller).
-#let adoc-container(prefix, title, body, fits: false) = keep(fits: fits, block(
+#let adoc-container(prefix, title, body, fits: false, share: 1, cells: 0) = keep(fits: fits, share: share, cells: cells, block(
   width: 100%,
   fill: pick(prefix + "_background_color"),
   stroke: border(pick(prefix + "_border_width", default: 0.5pt), pick(prefix + "_border_color", "base_border_color")),

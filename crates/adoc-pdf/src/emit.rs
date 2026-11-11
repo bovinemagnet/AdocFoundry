@@ -160,6 +160,11 @@ pub(crate) struct Emitter<'a> {
     /// While a heading's title is written: its anchors and index terms, which go beside the
     /// heading rather than in its body, since the contents and running titles repeat the body.
     markers: Option<String>,
+    /// The share of the page's content width the blocks being written have: less in a table
+    /// cell, `None` in one whose width depends on its content.
+    share: Option<f64>,
+    /// How many table cells the blocks being written are in.
+    cells: usize,
 }
 
 /// What follows each block of a run.
@@ -216,6 +221,8 @@ impl<'a> Emitter<'a> {
             highlighter: Highlighter::new(),
             lead: false,
             markers: None,
+            share: Some(1.0),
+            cells: 0,
         }
     }
 
@@ -466,13 +473,29 @@ impl<'a> Emitter<'a> {
     }
 
     /// `fits: true, ` for a block that its text shows fits on a page, so the template keeps it
-    /// whole without measuring it; empty otherwise, and the block is measured.
-    fn fits_argument(&self, block: &ViewBlock) -> &'static str {
-        if estimated_lines(block).is_some_and(|lines| lines <= self.options.fits_lines) {
-            "fits: true, "
-        } else {
-            ""
+    /// whole without measuring it; empty otherwise, and the block is measured. In a table cell,
+    /// the cell's share of the page's width and how many cells deep it is, for the template to
+    /// measure it at that width; `share: none` where that is not known, and the block may
+    /// break.
+    fn fits_argument(&self, block: &ViewBlock) -> String {
+        let Some(share) = self.share else {
+            return "share: none, ".to_owned();
+        };
+        // Each line holds the share of the characters a line of the page holds.
+        let per_line = ((CHARACTERS_PER_LINE as f64 * share) as usize).max(1);
+        let mut out = String::new();
+        if estimated_lines(block, per_line).is_some_and(|lines| lines <= self.options.fits_lines) {
+            out.push_str("fits: true, ");
         }
+        if self.cells > 0 {
+            let _ = write!(
+                out,
+                "share: {}, cells: {}, ",
+                typst::number(share),
+                self.cells
+            );
+        }
+        out
     }
 
     fn caption_text(&mut self, block: &ViewBlock) -> Option<String> {
@@ -990,22 +1013,54 @@ impl<'a> Emitter<'a> {
             None if autowidth => options.push_str(", width: auto"),
             None => {}
         }
+        let fractions = column_fractions(table, columns.len(), autowidth);
+        // The table's own share of the page: its `width`, else all of it, or its content's.
+        let whole = match width {
+            Some(width) => Some(width.min(100.0) / 100.0),
+            None if autowidth => None,
+            None => Some(1.0),
+        };
+        let shares = |rows: &[Vec<ViewCell>]| -> Vec<Vec<Option<f64>>> {
+            cell_fractions(rows, &fractions)
+                .into_iter()
+                .map(|row| {
+                    row.into_iter()
+                        .map(|fraction| Some(fraction? * whole?))
+                        .collect()
+                })
+                .collect()
+        };
+        let one_row = |cells: Option<&Vec<ViewCell>>| {
+            cells
+                .map(|cells| shares(std::slice::from_ref(cells)).remove(0))
+                .unwrap_or_default()
+        };
+        let (head, body, foot) = (
+            one_row(table.header.as_ref()),
+            shares(&table.rows),
+            one_row(table.footer.as_ref()),
+        );
         let _ = write!(self.out, "#adoc-table(({},), ", columns.join(", "));
-        self.header_or_footer(table.header.as_deref(), true);
+        self.header_or_footer(table.header.as_deref(), true, &head);
         self.push(", (");
-        for row in &table.rows {
-            for cell in row {
-                self.cell(cell, false);
+        for (row, shares) in table.rows.iter().zip(&body) {
+            for (cell, share) in row.iter().zip(shares) {
+                self.cell(cell, false, *share);
                 self.push(", ");
             }
         }
         self.push("), ");
-        self.header_or_footer(table.footer.as_deref(), false);
+        self.header_or_footer(table.footer.as_deref(), false, &foot);
         let _ = writeln!(self.out, "{options})\n");
     }
 
     /// A header or footer row's cells, or `none`.
-    fn header_or_footer(&mut self, cells: Option<&[ViewCell]>, header: bool) {
+    fn header_or_footer(
+        &mut self,
+        cells: Option<&[ViewCell]>,
+        header: bool,
+        shares: &[Option<f64>],
+    ) {
         let Some(cells) = cells else {
             self.push("none");
             return;
@@ -1015,12 +1070,21 @@ impl<'a> Emitter<'a> {
             if index > 0 {
                 self.push(", ");
             }
-            self.cell(cell, header);
+            self.cell(cell, header, shares.get(index).copied().flatten());
         }
         self.push(",)");
     }
 
-    fn cell(&mut self, cell: &ViewCell, header: bool) {
+    /// A cell, its blocks written at `share` of the table's width, when known.
+    fn cell(&mut self, cell: &ViewCell, header: bool, share: Option<f64>) {
+        let outer = (self.share, self.cells);
+        self.share = self.share.zip(share).map(|(outer, share)| outer * share);
+        self.cells += 1;
+        self.cell_content(cell, header);
+        (self.share, self.cells) = outer;
+    }
+
+    fn cell_content(&mut self, cell: &ViewCell, header: bool) {
         let align = match cell.align {
             Align::Start => "left",
             Align::Centre => "center",
@@ -1661,27 +1725,29 @@ fn admonition_label(kind: AdmonitionKind) -> &'static str {
     }
 }
 
+/// The characters `estimated_lines` counts to a line of the page's width.
+const CHARACTERS_PER_LINE: usize = 60;
+
 /// The lines a block can take at most, estimated generously from its text: each line of code
-/// or verse, a line for every 60 characters of a paragraph, and one for the spacing around each
-/// block. `None` when its height cannot be told from its text: images, diagrams, media, tables,
-/// maths, raw and unsupported content.
-fn estimated_lines(block: &ViewBlock) -> Option<usize> {
-    const CHARACTERS_PER_LINE: usize = 60;
-    fn text_lines(text: &str) -> usize {
+/// or verse, a line for every `per_line` characters of a paragraph (`CHARACTERS_PER_LINE` at
+/// the page's width), and one for the spacing around each block. `None` when its height cannot
+/// be told from its text: images, diagrams, media, tables, maths, raw and unsupported content.
+fn estimated_lines(block: &ViewBlock, per_line: usize) -> Option<usize> {
+    let per_line = per_line.max(1);
+    let text_lines = |text: &str| {
         text.lines()
-            .map(|line| 1 + line.chars().count() / CHARACTERS_PER_LINE)
+            .map(|line| 1 + line.chars().count() / per_line)
             .sum::<usize>()
             .max(1)
-    }
-    fn inline_lines(inlines: &[ViewInline]) -> usize {
-        1 + ViewInline::plain_text(inlines).chars().count() / CHARACTERS_PER_LINE
-    }
-    fn blocks_lines(blocks: &[ViewBlock]) -> Option<usize> {
+    };
+    let inline_lines =
+        |inlines: &[ViewInline]| 1 + ViewInline::plain_text(inlines).chars().count() / per_line;
+    let blocks_lines = |blocks: &[ViewBlock]| -> Option<usize> {
         blocks
             .iter()
-            .map(|block| estimated_lines(block).map(|lines| lines + 1))
+            .map(|block| estimated_lines(block, per_line).map(|lines| lines + 1))
             .sum()
-    }
+    };
     match &block.kind {
         ViewKind::Paragraph(content) => Some(inline_lines(content)),
         ViewKind::Heading { title, .. } => Some(inline_lines(title) + 1),
@@ -1717,6 +1783,69 @@ fn estimated_lines(block: &ViewBlock) -> Option<usize> {
         ViewKind::ThematicBreak => Some(1),
         _ => None,
     }
+}
+
+/// Each column's share of a table's width: a proportional column's of what percentage columns
+/// leave, a percentage column's its percentage; `None` for one sized by its content.
+fn column_fractions(table: &ViewTable, count: usize, autowidth: bool) -> Vec<Option<f64>> {
+    if autowidth {
+        return vec![None; count];
+    }
+    if table.columns.is_empty() {
+        return vec![Some(1.0 / count.max(1) as f64); count];
+    }
+    let mut percent = 0.0;
+    let mut parts = 0.0;
+    for column in &table.columns {
+        match column.width {
+            ColumnWidth::Proportional(width) => parts += f64::from(width.max(1)),
+            ColumnWidth::Percentage(width) => percent += f64::from(width),
+            ColumnWidth::Auto => {}
+        }
+    }
+    let left = (1.0 - percent / 100.0).max(0.0);
+    table
+        .columns
+        .iter()
+        .map(|column| match column.width {
+            ColumnWidth::Proportional(width) => Some(left * f64::from(width.max(1)) / parts),
+            ColumnWidth::Percentage(width) => Some(f64::from(width) / 100.0),
+            ColumnWidth::Auto => None,
+        })
+        .collect()
+}
+
+/// Each cell's share of the table's width, as its columns are worked out from the spans before
+/// it, those of row spans from above included; `None` where it cannot be told.
+fn cell_fractions(rows: &[Vec<ViewCell>], fractions: &[Option<f64>]) -> Vec<Vec<Option<f64>>> {
+    // Rows still to cover, per column, of row spans from above.
+    let mut spanned = vec![0usize; fractions.len()];
+    rows.iter()
+        .map(|row| {
+            let mut column = 0;
+            let shares = row
+                .iter()
+                .map(|cell| {
+                    while spanned.get(column).is_some_and(|rows| *rows > 0) {
+                        column += 1;
+                    }
+                    let width = cell.colspan.max(1);
+                    let share = fractions
+                        .get(column..column + width)
+                        .and_then(|columns| columns.iter().copied().sum::<Option<f64>>());
+                    for rows in spanned.iter_mut().skip(column).take(width) {
+                        *rows = cell.rowspan.max(1);
+                    }
+                    column += width;
+                    share
+                })
+                .collect();
+            for rows in &mut spanned {
+                *rows = rows.saturating_sub(1);
+            }
+            shares
+        })
+        .collect()
 }
 
 /// Listing text with each callout's circled number at the end of its line.
