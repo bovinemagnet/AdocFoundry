@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use adoc_antora::{AntoraResource, ResourceFamily};
+use adoc_antora::{AntoraResource, ComponentDescriptor, ResourceFamily};
 use adoc_core::SourceRange;
 use adoc_index::normalize_path;
 use adoc_lang::{graph::LinkKind, WorkspaceState};
@@ -19,14 +19,32 @@ use adoc_lang::{graph::LinkKind, WorkspaceState};
 pub struct DependencySnapshot<'a> {
     state: Cow<'a, WorkspaceState>,
     roots: Vec<PathBuf>,
+    /// The navigation files the component versions' `antora.yml` files list, worked out once.
+    listed_navs: BTreeSet<PathBuf>,
 }
 
-/// A reference that leads to a file: who writes it, where, and its target as written.
+/// A reference that leads to a file: who writes it, where, its target as written, and how many
+/// references (or includes) with that target come before it in the file. The target and the
+/// ordinal identify it on either side, where its range belongs to one side's text alone.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Referrer {
     pub(crate) path: PathBuf,
     pub(crate) range: SourceRange,
     pub(crate) written: String,
+    pub(crate) ordinal: usize,
+}
+
+fn listed_navs(state: &WorkspaceState) -> BTreeSet<PathBuf> {
+    state
+        .antora
+        .components()
+        .flat_map(|component| {
+            component
+                .nav
+                .iter()
+                .map(|nav| normalize_path(&component.root.join(nav)))
+        })
+        .collect()
 }
 
 impl<'a> DependencySnapshot<'a> {
@@ -34,6 +52,7 @@ impl<'a> DependencySnapshot<'a> {
     #[must_use]
     pub fn borrowed(state: &'a WorkspaceState, roots: &[PathBuf]) -> Self {
         Self {
+            listed_navs: listed_navs(state),
             state: Cow::Borrowed(state),
             roots: roots.iter().map(|root| normalize_path(root)).collect(),
         }
@@ -43,6 +62,7 @@ impl<'a> DependencySnapshot<'a> {
     #[must_use]
     pub fn owned(state: WorkspaceState, roots: &[PathBuf]) -> DependencySnapshot<'static> {
         DependencySnapshot {
+            listed_navs: listed_navs(&state),
             state: Cow::Owned(state),
             roots: roots.iter().map(|root| normalize_path(root)).collect(),
         }
@@ -86,9 +106,26 @@ impl<'a> DependencySnapshot<'a> {
         self.state.antora.resource_for_path(path)
     }
 
+    /// A page of the catalog, or, outside every component version's tree (a folder of
+    /// AsciiDoc files with no `antora.yml`), any AsciiDoc file the index holds.
     pub(crate) fn is_page(&self, path: &Path) -> bool {
-        self.resource(path)
-            .is_some_and(|resource| resource.coordinate.family == ResourceFamily::Page)
+        match self.resource(path) {
+            Some(resource) => resource.coordinate.family == ResourceFamily::Page,
+            None => self.state.index.file(path).is_some() && !self.in_component_tree(path),
+        }
+    }
+
+    /// Whether `path` lies under a component version's folder.
+    fn in_component_tree(&self, path: &Path) -> bool {
+        self.state
+            .antora
+            .components()
+            .any(|component| path.starts_with(&component.root))
+    }
+
+    /// Whether the revision has any component version.
+    pub(crate) fn has_components(&self) -> bool {
+        self.state.antora.components().next().is_some()
     }
 
     pub(crate) fn is_asset(&self, path: &Path) -> bool {
@@ -143,12 +180,7 @@ impl<'a> DependencySnapshot<'a> {
 
     /// Whether `path` is a navigation file a component version's `antora.yml` lists.
     pub(crate) fn is_listed_nav(&self, path: &Path) -> bool {
-        self.state.antora.components().any(|component| {
-            component
-                .nav
-                .iter()
-                .any(|nav| normalize_path(&component.root.join(nav)) == path)
-        })
+        self.listed_navs.contains(path)
     }
 
     pub(crate) fn is_descriptor(&self, path: &Path) -> bool {
@@ -158,6 +190,26 @@ impl<'a> DependencySnapshot<'a> {
                 .antora
                 .components()
                 .any(|component| component.root.join("antora.yml") == path)
+    }
+
+    /// The component version whose `antora.yml` is at `path`.
+    pub(crate) fn descriptor(&self, path: &Path) -> Option<&ComponentDescriptor> {
+        self.state
+            .antora
+            .components()
+            .find(|component| component.root.join("antora.yml") == path)
+    }
+
+    /// The pages of a component version, through the catalog's ordered ranges.
+    pub(crate) fn version_pages(&self, component: &str, version: Option<&str>) -> Vec<PathBuf> {
+        let antora = &self.state.antora;
+        antora
+            .modules_of(component, version)
+            .flat_map(|module| {
+                antora.resources_in(component, version, &module.name, ResourceFamily::Page)
+            })
+            .map(|resource| normalize_path(&resource.source_path))
+            .collect()
     }
 
     /// The navigation files a component version's `antora.yml` lists.
@@ -183,6 +235,7 @@ impl<'a> DependencySnapshot<'a> {
                 path: location.path.to_path_buf(),
                 range: location.include.range,
                 written: location.include.target.clone(),
+                ordinal: self.include_ordinal(&location.path, &location.include),
             })
             .collect();
         found.sort();
@@ -194,10 +247,14 @@ impl<'a> DependencySnapshot<'a> {
     pub(crate) fn referrers(&self, path: &Path) -> Vec<Referrer> {
         let mut found: Vec<Referrer> = adoc_lang::references_to(&self.state, path)
             .into_iter()
-            .map(|location| Referrer {
-                written: self.written(&location.path, location.range),
-                path: location.path,
-                range: location.range,
+            .map(|location| {
+                let written = self.written(&location.path, location.range);
+                Referrer {
+                    ordinal: self.reference_ordinal(&location.path, &written, location.range),
+                    written,
+                    path: location.path,
+                    range: location.range,
+                }
             })
             .collect();
         found.sort();
@@ -214,6 +271,11 @@ impl<'a> DependencySnapshot<'a> {
                     path: location.path.to_path_buf(),
                     range: location.reference.range,
                     written: location.reference.target.clone(),
+                    ordinal: self.reference_ordinal(
+                        location.path,
+                        &location.reference.target,
+                        location.reference.range,
+                    ),
                 })
                 .collect();
         found.sort();
@@ -235,6 +297,34 @@ impl<'a> DependencySnapshot<'a> {
             .unwrap_or_default()
     }
 
+    /// How many references of the file at `path` with the target `written` come before the one
+    /// at `range`.
+    fn reference_ordinal(&self, path: &Path, written: &str, range: SourceRange) -> usize {
+        self.state.index.file(path).map_or(0, |file| {
+            file.document
+                .references
+                .iter()
+                .filter(|reference| {
+                    reference.target == written && reference.range.start < range.start
+                })
+                .count()
+        })
+    }
+
+    /// How many include directives of the file at `path` with `include`'s target come before
+    /// it.
+    fn include_ordinal(&self, path: &Path, include: &adoc_core::IncludeDirective) -> usize {
+        self.state.index.file(path).map_or(0, |file| {
+            file.document
+                .includes
+                .iter()
+                .filter(|other| {
+                    other.target == include.target && other.range.start < include.range.start
+                })
+                .count()
+        })
+    }
+
     /// The ids the page at `path` can be reached by: its anchors and its sections' ids.
     pub(crate) fn anchors(&self, path: &Path) -> BTreeSet<String> {
         let Some(file) = self.state.index.file(path) else {
@@ -252,14 +342,33 @@ impl<'a> DependencySnapshot<'a> {
             .collect()
     }
 
-    /// Whether the file at `from` still writes a reference with the target `written`, and where.
-    pub(crate) fn still_writes(&self, from: &Path, written: &str) -> Option<SourceRange> {
+    /// The ids of every file composed into the file at `path`, itself included: the anchors an
+    /// xref to it can name.
+    pub(crate) fn composed_anchors(&self, path: &Path) -> BTreeSet<String> {
+        let mut files =
+            adoc_lang::includes::composed_files(&self.state.index, &self.state.antora, None, path);
+        files.insert(path.to_path_buf());
+        files.iter().flat_map(|file| self.anchors(file)).collect()
+    }
+
+    /// Whether the file at `from` still writes the `ordinal`th reference with the target
+    /// `written`, and where.
+    pub(crate) fn still_writes(
+        &self,
+        from: &Path,
+        written: &str,
+        ordinal: usize,
+    ) -> Option<SourceRange> {
         self.state.index.file(from).and_then(|file| {
-            file.document
+            let mut matching: Vec<SourceRange> = file
+                .document
                 .references
                 .iter()
-                .find(|reference| reference.target == written)
+                .filter(|reference| reference.target == written)
                 .map(|reference| reference.range)
+                .collect();
+            matching.sort_by_key(|range| range.start);
+            matching.get(ordinal).copied()
         })
     }
 
@@ -290,6 +399,8 @@ impl<'a> DependencySnapshot<'a> {
                 adoc_lang::graph::LinkTarget::File(path) => Some(path),
                 adoc_lang::graph::LinkTarget::Unresolved(_) => None,
             })
+            // Only a file this side has, as for `resolves`.
+            .filter(|path| self.has(path))
             .collect()
     }
 }
