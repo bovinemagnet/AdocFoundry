@@ -287,8 +287,14 @@ impl Context<'_> {
     /// named on its own becomes its folder name.
     pub(crate) fn relative_paths(&self, message: &str) -> String {
         let mut message = message.to_owned();
-        for root in self.input.roots {
-            let absolute = root.to_string_lossy().into_owned();
+        // Each root as given and as messages name it, normalised (`C:/docs` is `C:\docs`).
+        let forms = self.input.roots.iter().flat_map(|root| {
+            let given = root.to_string_lossy().into_owned();
+            let shown = normalize_path(root).display().to_string();
+            let shown = (shown != given).then_some(shown);
+            std::iter::once((root, given)).chain(shown.map(|shown| (root, shown)))
+        });
+        for (root, absolute) in forms {
             if absolute.is_empty() || !message.contains(&absolute) {
                 continue;
             }
@@ -419,6 +425,21 @@ mod tests {
         assert_eq!(
             context.relative_paths(&format!("Nothing under {root} is indexed")),
             "Nothing under docs is indexed"
+        );
+        // A root given in another form than messages name it, as `C:/work/docs` is shown
+        // `C:\work\docs` on Windows.
+        let given = [PathBuf::from("/work/./docs")];
+        let input = AuditInput {
+            roots: &given,
+            ..input
+        };
+        let context = Context {
+            input: &input,
+            scope: AuditScope::Workspace,
+        };
+        assert_eq!(
+            context.relative_paths(&format!("`{root}/a/antora.yml` is invalid")),
+            "`a/antora.yml` is invalid"
         );
         assert_eq!(
             context.relative_paths("/elsewhere/x.adoc"),

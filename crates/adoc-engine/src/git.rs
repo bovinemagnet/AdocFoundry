@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use adoc_git::{BlameLine, Change, FileStatus, Head, Hunk, Repository};
+use adoc_git::{BlameLine, Change, FileStatus, Head, HeadText, Hunk, Repository};
 use adoc_index::normalize_path;
 use ropey::Rope;
 
@@ -74,7 +74,7 @@ pub struct GitState {
     pending_hunks: BTreeMap<DocumentId, std::time::Instant>,
     /// The text in `HEAD` of each open document, read once and kept until `HEAD` moves, so a
     /// recomputation only diffs.
-    head_texts: BTreeMap<DocumentId, Arc<str>>,
+    head_texts: BTreeMap<DocumentId, Arc<HeadText>>,
     /// Bumped when `HEAD` moves, so hunks and texts read before are dropped.
     head_generation: u64,
     /// The working trees whose hunks are being computed: one job each at a time.
@@ -798,7 +798,7 @@ struct HunkJob {
     version: u64,
     path: PathBuf,
     text: Rope,
-    head: Option<Arc<str>>,
+    head: Option<Arc<HeadText>>,
 }
 
 pub(crate) struct HunkResult {
@@ -806,7 +806,7 @@ pub(crate) struct HunkResult {
     version: u64,
     hunks: Result<Vec<Hunk>, String>,
     /// The document's text in `HEAD`, when this job read it.
-    head: Option<Arc<str>>,
+    head: Option<Arc<HeadText>>,
 }
 
 /// The hunks of each of `jobs` in the working tree `workdir`, opening the repository once, and
@@ -824,7 +824,10 @@ fn diff_documents(workdir: &Path, jobs: Vec<HunkJob>) -> Vec<HunkResult> {
             };
             let hunks = head
                 .as_ref()
-                .map(|head| adoc_git::line_hunks(head, &job.text.to_string()))
+                .map(|head| {
+                    let text = job.text.to_string();
+                    adoc_git::line_hunks(head.like(&text), &text)
+                })
                 .map_err(Clone::clone);
             HunkResult {
                 id: job.id,
@@ -840,14 +843,14 @@ fn diff_documents(workdir: &Path, jobs: Vec<HunkJob>) -> Vec<HunkResult> {
 fn head_text(
     repo: Option<&Result<Option<Repository>, String>>,
     path: &Path,
-) -> Result<Arc<str>, String> {
+) -> Result<Arc<HeadText>, String> {
     match repo {
         Some(Ok(Some(repo))) => repo
-            .head_text_for_worktree(path)
-            .map(|text| Arc::from(text.unwrap_or_default()))
+            .head_text(path)
+            .map(|text| Arc::new(text.unwrap_or_default()))
             .map_err(|error| error.to_string()),
         Some(Err(error)) => Err(error.clone()),
-        Some(Ok(None)) | None => Ok(Arc::from("")),
+        Some(Ok(None)) | None => Ok(Arc::default()),
     }
 }
 
@@ -896,10 +899,13 @@ impl Engine {
             .ok_or(EngineError::UnknownDocument(id))?;
         let repo = self.repository_of(&document.path)?;
         let head = repo
-            .head_text_for_worktree(&document.path)
+            .head_text(&document.path)
             .map_err(|error| EngineError::InvalidRequest(error.to_string()))?
             .unwrap_or_default();
-        let lines = adoc_core::LineIndex::new(&head);
+        // In the page's own line endings.
+        let text = document.text.to_string();
+        let head = head.like(&text);
+        let lines = adoc_core::LineIndex::new(head);
         let start = |line: usize| lines.offset(line, 0).unwrap_or(head.len());
         Ok(head[start(hunk.head_lines.start)..start(hunk.head_lines.end)].to_owned())
     }
