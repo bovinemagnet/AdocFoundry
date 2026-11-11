@@ -324,7 +324,7 @@ adocfoundry-cli audit <root> [--component [<version>@]<name>] [--format text|jso
     [--output <file>] [--fail-on none|warning|error] [--require-complete]
 adocfoundry-cli symbols <root> <query>
 adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
-adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--link-images] [--parser acdc|asciidoc-parser]
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
