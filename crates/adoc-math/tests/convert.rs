@@ -67,6 +67,37 @@ fn converted_maths_holds_no_code() {
 }
 
 #[test]
+fn calls_short_of_an_argument_are_refused() {
+    // Each would fail Typst's evaluation, and with it the whole document it is in.
+    for (notation, source) in [
+        (Notation::Latex, r"\frac{1}"),
+        (Notation::Latex, r"\binom{n}"),
+        (Notation::Latex, r"\cfrac{1}"),
+        (Notation::Latex, r"\overset{a}"),
+        (Notation::Latex, r"\sqrt"),
+        (Notation::AsciiMath, "frac"),
+        (Notation::AsciiMath, "root(3)"),
+    ] {
+        let error = to_typst(notation, source).expect_err(source);
+        assert!(error.message.contains("argument"), "{source}: {error:?}");
+    }
+    // Calls that fit, an optional argument left out among them.
+    for (notation, source) in [
+        (
+            Notation::Latex,
+            r"\frac{1}{2} + \binom{n}{k} + \sqrt{x} + \sqrt[3]{x}",
+        ),
+        (
+            Notation::Latex,
+            r"\overbrace{a+b}^{n} + \begin{pmatrix} a & b \\ c & d \end{pmatrix}",
+        ),
+        (Notation::AsciiMath, "root(3)(x) + sqrt x + ubrace(a)"),
+    ] {
+        to_typst(notation, source).unwrap_or_else(|error| panic!("{source}: {error:?}"));
+    }
+}
+
+#[test]
 fn half_typed_maths_does_not_panic() {
     for source in [
         "", "x^", "a/", "sqrt(", "[[a,", "text(", "\"", "sum_(", "((((", "))", "|", "_",

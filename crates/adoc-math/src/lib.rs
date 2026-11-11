@@ -4,7 +4,8 @@
 
 use std::{collections::BTreeSet, sync::OnceLock};
 
-use typst_syntax::{SyntaxKind, SyntaxNode};
+use typst_library::foundations::Value;
+use typst_syntax::{ast, SyntaxKind, SyntaxNode};
 
 mod asciimath;
 mod latex;
@@ -150,7 +151,9 @@ pub const HELPERS: &[&str] = &[
 ///
 /// # Errors
 ///
-/// When the source cannot be read, or its conversion uses anything [`is_safe`] refuses.
+/// When the source cannot be read, its conversion uses anything [`is_safe`] refuses, or it calls
+/// a function with fewer or more arguments than the function takes (`\frac{1}`), which Typst
+/// would refuse when it evaluates the formula.
 pub fn to_typst(notation: Notation, source: &str) -> Result<TypstMath, MathError> {
     let converted = match notation {
         Notation::AsciiMath => asciimath::convert(source)?,
@@ -161,7 +164,85 @@ pub fn to_typst(notation: Notation, source: &str) -> Result<TypstMath, MathError
             "the formula uses something other than maths, and is shown as its source",
         ));
     }
+    if let Some(problem) = wrong_arguments(&typst_syntax::parse_math(&converted)) {
+        return Err(MathError::new(format!(
+            "{problem}, and the formula is shown as its source"
+        )));
+    }
     Ok(TypstMath(converted))
+}
+
+/// The first call in `node` given fewer or more positional arguments than its function takes,
+/// as Typst counts a call's arguments when it evaluates it; `None` when every call fits or its
+/// arguments cannot be counted (named, spread or two-dimensional).
+fn wrong_arguments(node: &SyntaxNode) -> Option<String> {
+    if let Some(call) = node.cast::<ast::MathCall>() {
+        if let ast::MathAccess::MathIdent(ident) = call.callee() {
+            let name = ident.get().as_str();
+            let mut count = 0;
+            let mut countable = true;
+            for arg in call.args().arg_items() {
+                match arg.arg {
+                    ast::Arg::Pos(_) if !arg.ends_in_semicolon => count += 1,
+                    ast::Arg::Named(_) => {}
+                    _ => countable = false,
+                }
+            }
+            if let (true, Some((least, most))) = (countable, arity(name)) {
+                if count < least {
+                    return Some(format!("`{name}` is missing an argument"));
+                }
+                if most.is_some_and(|most| count > most) {
+                    return Some(format!("`{name}` is given too many arguments"));
+                }
+            }
+        }
+    }
+    node.children().find_map(wrong_arguments)
+}
+
+/// How many positional arguments the function `name` takes, at least and at most (`None` for
+/// any number); `None` for a name that is not a function: a helper's from its definition in
+/// `adoc-pdf`'s template, any other's from Typst's maths scope.
+fn arity(name: &str) -> Option<(usize, Option<usize>)> {
+    match name {
+        "cfrac" | "dbinom" | "dfrac" | "mitexcolor" | "overset" | "stackrel" | "tbinom"
+        | "tfrac" | "underset" => return Some((2, Some(2))),
+        "Set" | "aligned" | "bcancel" | "big" | "Big" | "bigg" | "Bigg" | "boxed" | "bra"
+        | "braket" | "ket" | "mathbin" | "mathclap" | "mathclose" | "mathinner" | "mathop"
+        | "mathopen" | "mathord" | "mathpunct" | "mathrel" | "middle" | "phantom" | "pmod"
+        | "set" | "underbar" | "xLeftarrow" | "xLeftrightarrow" | "xRightarrow" | "xleftarrow"
+        | "xleftrightarrow" | "xlongequal" | "xmapsto" | "xrightarrow" => {
+            return Some((1, Some(1)))
+        }
+        name if name.starts_with("mitex") => return Some((1, Some(1))),
+        // The matrices and `rcases` take any number; the rest are not functions.
+        name if HELPERS.contains(&name) => return None,
+        _ => {}
+    }
+    let module = typst_library::math::module();
+    let Value::Func(function) = module.scope().get(name)?.read() else {
+        return None;
+    };
+    // Arguments are taken in order, so an optional parameter before a required one takes the
+    // first argument (`root(3)` has no radicand): every parameter up to the last required one
+    // needs an argument.
+    let (mut least, mut most) = (0, Some(0));
+    for (index, param) in function
+        .params()
+        .filter(|param| param.positional())
+        .enumerate()
+    {
+        if param.required() {
+            least = index + 1;
+        }
+        most = if param.variadic() {
+            None
+        } else {
+            most.map(|most| most + 1)
+        };
+    }
+    Some((least, most))
 }
 
 /// Whether `markup` is Typst maths and nothing else: no embedded code (`#`), and no function or
