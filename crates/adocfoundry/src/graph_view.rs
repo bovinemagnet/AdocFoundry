@@ -398,7 +398,7 @@ impl GraphView {
         };
         let snapshot = self.app.read(cx).engine.graph(&scope, &self.filter);
         let snapshot = match (self.arrangement, self.group_by) {
-            (GraphLayout::MindMap(_), _) => self.mind_map_of(snapshot),
+            (GraphLayout::MindMap(_), _) => self.mind_map_of(snapshot, cx),
             (GraphLayout::Force, Some(by)) => snapshot.collapse(by, &self.collapsed),
             (GraphLayout::Force, None) => snapshot,
         };
@@ -578,7 +578,7 @@ impl GraphView {
     /// The tree of `snapshot` from the mind map's root, kept in `tree`, and the snapshot cut
     /// down to the nodes it shows. The root is the one chosen, else the active page, else the
     /// first navigation file, else the first node.
-    fn mind_map_of(&mut self, snapshot: GraphSnapshot) -> GraphSnapshot {
+    fn mind_map_of(&mut self, snapshot: GraphSnapshot, cx: &App) -> GraphSnapshot {
         let centre = self
             .centre
             .as_ref()
@@ -595,7 +595,8 @@ impl GraphView {
                     .or(snapshot.nodes.first())
                     .map(|node| node.key.clone())
             });
-        self.tree = root.and_then(|root| MindMap::build(&snapshot, &root, Some(self.depth)));
+        let engine = &self.app.read(cx).engine;
+        self.tree = root.and_then(|root| engine.mind_map(&snapshot, &root, Some(self.depth)));
         match &self.tree {
             Some(tree) => {
                 let shown = tree.visible(&self.folded);

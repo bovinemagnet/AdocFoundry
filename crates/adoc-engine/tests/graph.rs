@@ -16,7 +16,7 @@ use adoc_core::{
 use adoc_engine::{
     commands::ids, normalize_path, CommandArgs, CommandOutcome, EdgeKind, Engine, EngineEvent,
     GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, GroupBy, Groups, Layout,
-    LinkStyle, ManualClock, MindMap, NavCrumb, NewPage, Settings, TreeStyle, INDEX_SETTLE,
+    LinkStyle, ManualClock, NavCrumb, NewPage, Settings, TreeStyle, INDEX_SETTLE,
 };
 
 fn fixture() -> PathBuf {
@@ -253,7 +253,7 @@ fn mind_map_follows_the_nav_tree() {
     let engine = open(&root, &ManualClock::new());
     let snapshot = engine.graph(&GraphScope::Workspace, &everything());
     let nav = file(&root.join("guide/modules/ROOT/nav.adoc"));
-    let tree = MindMap::build(&snapshot, &nav, Some(1)).unwrap();
+    let tree = engine.mind_map(&snapshot, &nav, Some(1)).unwrap();
     let titles = |keys: Vec<&GraphKey>| -> Vec<String> {
         keys.into_iter()
             .map(|key| snapshot.node(key).unwrap().title.clone())

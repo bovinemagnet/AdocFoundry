@@ -103,7 +103,7 @@ fn time_mind_maps(snapshot: &GraphSnapshot) -> (Duration, Duration) {
     let mut samples: Vec<Duration> = (0..50)
         .map(|_| {
             let started = Instant::now();
-            let tree = MindMap::build(snapshot, &root, Some(u8::MAX)).unwrap();
+            let tree = MindMap::build(snapshot, &root, Some(u8::MAX), &[]).unwrap();
             std::hint::black_box(tree.positions(TreeStyle::Radial, &none));
             started.elapsed()
         })

@@ -19,8 +19,8 @@ use std::{
 
 use adoc_antora::{AntoraCoordinate, NavItem, NavTree, ResourceFamily};
 use adoc_graph::{
-    EdgeKind, GraphFilter, GraphKey, GraphSnapshot, LinkStore, NodeCoordinate, NodeInput, NodeKind,
-    PathStep, StoredLink,
+    EdgeKind, GraphFilter, GraphKey, GraphSnapshot, LinkStore, MindMap, NodeCoordinate, NodeInput,
+    NodeKind, PathStep, StoredLink,
 };
 use adoc_index::{is_asciidoc_path, normalize_path};
 use adoc_lang::{
@@ -488,6 +488,23 @@ impl Engine {
         let built = build(&self.workspace, &self.open_nav_texts());
         self.graph.adopt(built);
         self.graph.dirty.clear();
+    }
+
+    /// The mind map of `snapshot` from `root`, as [`MindMap::build`] makes it, a navigation
+    /// file's from the links that file owns, so another file listing the same pages adds
+    /// nothing to it.
+    #[must_use]
+    pub fn mind_map(
+        &self,
+        snapshot: &GraphSnapshot,
+        root: &GraphKey,
+        depth: Option<u8>,
+    ) -> Option<MindMap> {
+        let owned = match root {
+            GraphKey::File(path) => self.graph.store.owned_by(path),
+            GraphKey::Unresolved(_) | GraphKey::Group(_) => &[],
+        };
+        MindMap::build(snapshot, root, depth, owned)
     }
 
     /// Where the page at `path` sits in each navigation file that lists it, in catalog order

@@ -1,6 +1,6 @@
 //! Mind maps: a spanning tree of a snapshot from one root, and its deterministic tree layouts,
-//! left to right or radial. A navigation file's tree follows its navigation links only, in
-//! their direction, so it is the navigation's own nesting; a page's follows every link both
+//! left to right or radial. A navigation file's tree follows the navigation links it owns
+//! only, in their direction, so it is the navigation's own nesting; a page's follows every link both
 //! ways to a depth. Each node is placed once, at its first and shallowest place; the snapshot's
 //! other links are cross-links, which front ends draw faintly.
 //!
@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::{EdgeKind, GraphKey, GraphSnapshot, NodeKind, Point};
+use crate::{EdgeKind, GraphKey, GraphSnapshot, NodeKind, Point, StoredLink};
 
 /// How a mind map is drawn.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -39,12 +39,20 @@ pub struct MindMap {
 
 impl MindMap {
     /// The tree of `snapshot` from `root`, or `None` when the snapshot does not hold it. From a
-    /// navigation file it follows navigation links in their direction; from anything else every
-    /// link both ways, at most `depth` links out. A node reached by several links is placed
+    /// navigation file it follows, in their direction, the navigation links of `owned`, the
+    /// links the file owns ([`crate::LinkStore::owned_by`]), between nodes the snapshot holds:
+    /// the snapshot's edges no longer say which navigation file made them, and another file
+    /// listing the same page nests its own entries under it. From anything else it follows every
+    /// edge of the snapshot both ways, at most `depth` links out, and `owned` is not read. A node reached by several links is placed
     /// under the parent of the first: navigation links before xrefs before includes, then the
     /// earlier parent, breadth first; siblings are in title order.
     #[must_use]
-    pub fn build(snapshot: &GraphSnapshot, root: &GraphKey, depth: Option<u8>) -> Option<Self> {
+    pub fn build(
+        snapshot: &GraphSnapshot,
+        root: &GraphKey,
+        depth: Option<u8>,
+        owned: &[StoredLink],
+    ) -> Option<Self> {
         let root_node = snapshot.node(root)?;
         let nav = root_node.kind == NodeKind::Nav;
         let depth = if nav { None } else { depth };
@@ -56,18 +64,21 @@ impl MindMap {
             .collect();
         // Each node's neighbours in the tree's sense, with the rank of the link's kind.
         let mut adjacent: Vec<Vec<(usize, u8)>> = vec![Vec::new(); snapshot.nodes.len()];
-        for edge in &snapshot.edges {
-            let (from, to) = (place[&edge.from], place[&edge.to]);
-            let rank = match edge.kind {
-                EdgeKind::Nav => 0,
-                EdgeKind::Xref => 1,
-                EdgeKind::Include => 2,
-            };
-            if nav {
-                if edge.kind == EdgeKind::Nav {
-                    adjacent[from].push((to, rank));
+        if nav {
+            for link in owned.iter().filter(|link| link.kind == EdgeKind::Nav) {
+                let from = place.get(&GraphKey::File(link.from.clone())).copied();
+                if let (Some(from), Some(&to)) = (from, place.get(&link.to)) {
+                    adjacent[from].push((to, 0));
                 }
-            } else {
+            }
+        } else {
+            for edge in &snapshot.edges {
+                let (from, to) = (place[&edge.from], place[&edge.to]);
+                let rank = match edge.kind {
+                    EdgeKind::Nav => 0,
+                    EdgeKind::Xref => 1,
+                    EdgeKind::Include => 2,
+                };
                 adjacent[from].push((to, rank));
                 adjacent[to].push((from, rank));
             }
@@ -350,6 +361,18 @@ mod tests {
         }
     }
 
+    /// The navigation links a navigation file owns.
+    fn nav_links(links: &[(&str, &str)]) -> Vec<StoredLink> {
+        links
+            .iter()
+            .map(|(from, to)| StoredLink {
+                from: Arc::from(Path::new(from)),
+                to: key(to),
+                kind: EdgeKind::Nav,
+            })
+            .collect()
+    }
+
     fn names(keys: Vec<&GraphKey>) -> Vec<String> {
         keys.into_iter()
             .map(|key| key.path().unwrap().display().to_string())
@@ -378,7 +401,7 @@ mod tests {
                 ("e", "a", Xref),
             ],
         );
-        let tree = MindMap::build(&graph, &key("a"), Some(3)).unwrap();
+        let tree = MindMap::build(&graph, &key("a"), Some(3), &[]).unwrap();
         assert_eq!(names(tree.children(&key("a"))), ["b", "c", "e"]);
         assert_eq!(names(tree.children(&key("c"))), ["d"]);
         assert!(tree.children(&key("b")).is_empty());
@@ -398,10 +421,10 @@ mod tests {
         assert_eq!((c.links_out, c.links_in), (0, 2));
 
         // To a depth of one, only the root's own links.
-        let near = MindMap::build(&graph, &key("a"), Some(1)).unwrap();
+        let near = MindMap::build(&graph, &key("a"), Some(1), &[]).unwrap();
         assert_eq!(near.len(), 4);
         assert!(!near.contains(&key("d")));
-        assert!(MindMap::build(&graph, &key("zz"), None).is_none());
+        assert!(MindMap::build(&graph, &key("zz"), None, &[]).is_none());
     }
 
     #[test]
@@ -424,11 +447,59 @@ mod tests {
                 ("home", "stray", Xref),
             ],
         );
-        let tree = MindMap::build(&graph, &key("nav"), Some(1)).unwrap();
+        let tree = MindMap::build(
+            &graph,
+            &key("nav"),
+            Some(1),
+            &nav_links(&[
+                ("nav", "home"),
+                ("nav", "install"),
+                ("install", "configure"),
+            ]),
+        )
+        .unwrap();
         assert_eq!(names(tree.children(&key("nav"))), ["home", "install"]);
         assert_eq!(names(tree.children(&key("install"))), ["configure"]);
         assert!(!tree.contains(&key("stray")));
         assert!(!tree.is_tree_link(&key("home"), &key("configure")));
+    }
+
+    #[test]
+    fn a_navigation_tree_follows_only_its_own_entries() {
+        use EdgeKind::Nav;
+        // Two navigation files list one page, each nesting a child of its own under it.
+        let graph = snapshot(
+            &[
+                ("nav1", NodeKind::Nav),
+                ("nav2", NodeKind::Nav),
+                ("shared", NodeKind::Page),
+                ("one", NodeKind::Page),
+                ("two", NodeKind::Page),
+            ],
+            &[
+                ("nav1", "shared", Nav),
+                ("shared", "one", Nav),
+                ("nav2", "shared", Nav),
+                ("shared", "two", Nav),
+            ],
+        );
+        let first = MindMap::build(
+            &graph,
+            &key("nav1"),
+            None,
+            &nav_links(&[("nav1", "shared"), ("shared", "one")]),
+        )
+        .unwrap();
+        assert_eq!(names(first.children(&key("shared"))), ["one"]);
+        assert!(!first.contains(&key("two")));
+        let second = MindMap::build(
+            &graph,
+            &key("nav2"),
+            None,
+            &nav_links(&[("nav2", "shared"), ("shared", "two")]),
+        )
+        .unwrap();
+        assert_eq!(names(second.children(&key("shared"))), ["two"]);
     }
 
     #[test]
@@ -454,7 +525,7 @@ mod tests {
             .map(|(from, to)| (from.as_str(), to.as_str(), EdgeKind::Xref))
             .collect();
         let graph = snapshot(&node_refs, &edge_refs);
-        let tree = MindMap::build(&graph, &key("root"), Some(3)).unwrap();
+        let tree = MindMap::build(&graph, &key("root"), Some(3), &[]).unwrap();
         for style in [TreeStyle::Horizontal, TreeStyle::Radial] {
             let none = BTreeSet::new();
             let positions = tree.positions(style, &none);
