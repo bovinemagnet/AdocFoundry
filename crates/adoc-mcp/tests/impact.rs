@@ -168,23 +168,17 @@ fn mcp_impact_ref_comparison_uses_two_snapshots() {
         "analyse_impact",
         json!({ "source": { "type": "git_refs", "base": "no-such-branch", "head": head } }),
     );
-    assert_eq!(unknown["structuredContent"]["error"]["code"], "not_found");
+    assert_eq!(unknown["_meta"]["error"]["code"], "not_found");
     let scope = client.call_result(
         "analyse_impact",
         json!({ "source": { "type": "working_tree" }, "version": "1.0" }),
     );
-    assert_eq!(
-        scope["structuredContent"]["error"]["code"],
-        "invalid_argument"
-    );
+    assert_eq!(scope["_meta"]["error"]["code"], "invalid_argument");
     let outside = client.call_result(
         "analyse_impact",
         json!({ "source": { "type": "paths", "paths": ["../elsewhere.adoc"] } }),
     );
-    assert_eq!(
-        outside["structuredContent"]["error"]["code"],
-        "outside_workspace"
-    );
+    assert_eq!(outside["_meta"]["error"]["code"], "outside_workspace");
     client.stop();
 }
 

@@ -49,9 +49,7 @@ fn file<'a>(preview: &'a Value, path: &str) -> &'a Value {
 
 fn error_code(result: &Value) -> &str {
     assert_eq!(result["isError"], true, "{result}");
-    result["structuredContent"]["error"]["code"]
-        .as_str()
-        .unwrap()
+    result["_meta"]["error"]["code"].as_str().unwrap()
 }
 
 #[test]
@@ -114,7 +112,7 @@ fn mcp_preview_does_not_mutate() {
     assert!(refused["content"][0]["text"]
         .as_str()
         .unwrap()
-        .starts_with("operation 1:"));
+        .starts_with("conflict: operation 1:"));
     for (operations, code) in [
         (json!([]), "invalid_argument"),
         (
@@ -223,6 +221,137 @@ fn mcp_apply_rejects_stale_revision() {
     client.stop();
 }
 
+/// The `create_howto` prompt's recipe, run as it says: a page with its text after the title
+/// and its navigation entry, previewed and made as one change.
+#[test]
+fn a_page_with_a_body_is_previewed_and_made_as_the_how_to_prompt_says() {
+    let (_directory, root) = scratch("discovery");
+    let mut client = Client::start(&root, true);
+    let prompt = client.request(
+        "prompts/get",
+        json!({ "name": "create_howto", "arguments": { "component": "product", "topic": "authentication" } }),
+    );
+    let recipe = prompt["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(recipe.contains("`body`"), "{recipe}");
+    assert!(
+        !recipe.contains("`replace` operation on the new page"),
+        "{recipe}"
+    );
+
+    // The recipe it gave before: a `replace` on a page the same preview makes, which cannot
+    // be read yet.
+    let refused = client.call_result(
+        "preview_changes",
+        json!({ "operations": [
+            { "kind": "create_page", "component": "product", "version": "~", "module": "ROOT",
+              "title": "Configuring Authentication" },
+            { "kind": "replace", "path": NEW_PAGE, "old_text": "= Configuring Authentication",
+              "new_text": "= Configuring Authentication\n\nText." },
+        ] }),
+    );
+    assert_eq!(error_code(&refused), "not_found");
+
+    let body = "Turn authentication on in the settings.\n\n== Check it\n\nSign in again.";
+    let preview = client
+        .call(
+            "preview_changes",
+            json!({ "operations": [{
+                "kind": "create_page",
+                "component": "product",
+                "version": "~",
+                "module": "ROOT",
+                "title": "Configuring Authentication",
+                "add_to_navigation": true,
+                "body": body,
+            }] }),
+        )
+        .unwrap();
+    let page = file(&preview, NEW_PAGE);
+    assert_eq!(page["kind"], "create");
+    assert!(
+        page["diff"].as_str().unwrap().contains("+== Check it"),
+        "{page}"
+    );
+    assert!(file(&preview, NAV)["diff"]
+        .as_str()
+        .unwrap()
+        .contains("+* xref:configuring-authentication.adoc[]"));
+    let applied = client
+        .call(
+            "apply_changes",
+            json!({ "preview_id": preview["preview_id"] }),
+        )
+        .unwrap();
+    assert_eq!(applied["changed"], json!([NAV, NEW_PAGE]));
+    assert_eq!(
+        read(&root, NEW_PAGE),
+        format!("= Configuring Authentication\n\n{body}\n")
+    );
+    client.stop();
+}
+
+#[test]
+fn an_idempotency_key_names_one_preview_and_only_a_change_made_is_replayed() {
+    let (_directory, root) = scratch("discovery");
+    let mut client = Client::start(&root, true);
+    let preview = |client: &mut Client, old_text: &str, new_text: &str| {
+        client
+            .call(
+                "preview_changes",
+                json!({ "operations": [
+                    { "kind": "replace", "path": GUIDE, "old_text": old_text, "new_text": new_text },
+                ] }),
+            )
+            .unwrap()["preview_id"]
+            .clone()
+    };
+
+    // Refused before anything changed: the key is not spent, so the corrected retry applies.
+    let stale = preview(&mut client, "= Guide", "= The Guide");
+    std::fs::write(
+        root.join(GUIDE),
+        read(&root, GUIDE).replace("Read", "Do read"),
+    )
+    .unwrap();
+    let refused = client.call_result(
+        "apply_changes",
+        json!({ "preview_id": stale, "idempotency_key": "k" }),
+    );
+    assert_eq!(error_code(&refused), "stale_preview");
+    let fresh = preview(&mut client, "= Guide", "= The Guide");
+    let applied = client
+        .call(
+            "apply_changes",
+            json!({ "preview_id": fresh, "idempotency_key": "k" }),
+        )
+        .unwrap();
+    assert_eq!(applied["applied"], true, "{applied}");
+    assert!(read(&root, GUIDE).starts_with("= The Guide"));
+
+    // The same key with another preview is refused, and that preview is not applied.
+    let other = preview(&mut client, "= The Guide", "= A Guide");
+    let misused = client.call_result(
+        "apply_changes",
+        json!({ "preview_id": other, "idempotency_key": "k" }),
+    );
+    assert_eq!(error_code(&misused), "invalid_argument");
+    assert!(read(&root, GUIDE).starts_with("= The Guide"));
+
+    // Repeated as it was, the first answer comes back without a second change.
+    let before = read(&root, GUIDE);
+    let retried = client
+        .call(
+            "apply_changes",
+            json!({ "preview_id": fresh, "idempotency_key": "k" }),
+        )
+        .unwrap();
+    assert_eq!(retried, applied);
+    assert_eq!(read(&root, GUIDE), before);
+    client.stop();
+}
+
 #[cfg(unix)]
 #[test]
 fn mcp_multi_file_failure_is_reported_and_recoverable() {
@@ -254,7 +383,7 @@ fn mcp_multi_file_failure_is_reported_and_recoverable() {
 
     // Not claimed as a success: what was saved and what was not, and where the rest is.
     assert_eq!(error_code(&failed), "internal_error");
-    let details = &failed["structuredContent"]["error"]["details"];
+    let details = &failed["_meta"]["error"]["details"];
     assert_eq!(details["applied"], true);
     assert_eq!(details["saved"], json!([INSTALL]));
     assert_eq!(details["failed"][0]["path"], GUIDE);

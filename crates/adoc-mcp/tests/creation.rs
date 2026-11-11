@@ -8,7 +8,7 @@ mod common;
 use common::{scratch, Client};
 use serde_json::{json, Value};
 
-const MUTATING: [&str; 8] = [
+const MUTATING: [&str; 9] = [
     "apply_changes",
     "create_module",
     "create_page",
@@ -17,13 +17,12 @@ const MUTATING: [&str; 8] = [
     "edit_page",
     "export_pdf",
     "rename_page",
+    "revert_page",
 ];
 
 fn error_code(result: &Value) -> &str {
     assert_eq!(result["isError"], true, "{result}");
-    result["structuredContent"]["error"]["code"]
-        .as_str()
-        .unwrap()
+    result["_meta"]["error"]["code"].as_str().unwrap()
 }
 
 #[test]
@@ -144,6 +143,30 @@ fn create_page_resolves_and_is_listed_in_its_navigation() {
         let refused = client.call_result("create_page", arguments.clone());
         assert_eq!(error_code(&refused), code, "{arguments}");
     }
+    client.stop();
+}
+
+#[test]
+fn create_page_writes_its_body_after_the_title() {
+    let (_directory, root) = scratch("discovery");
+    let mut client = Client::start(&root, true);
+    let made = client
+        .call(
+            "create_page",
+            json!({
+                "component": "product",
+                "version": "~",
+                "module": "ROOT",
+                "title": "Rotating Keys",
+                "body": "Rotate the keys every month.\n",
+            }),
+        )
+        .unwrap();
+    assert_eq!(made["saved"], true);
+    let page =
+        std::fs::read_to_string(root.join("product/main/modules/ROOT/pages/rotating-keys.adoc"))
+            .unwrap();
+    assert_eq!(page, "= Rotating Keys\n\nRotate the keys every month.\n");
     client.stop();
 }
 

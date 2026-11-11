@@ -1094,6 +1094,9 @@ impl Engine {
         if self.writer.is_saving(id) {
             return; // Our own write, which the save's result settles.
         }
+        if self.states.get(&id).is_some_and(|state| state.client_owned) {
+            return; // The client's buffer, which only the client changes.
+        }
         let Some(document) = self.documents.get(&id) else {
             return;
         };

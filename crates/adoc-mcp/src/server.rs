@@ -5,6 +5,7 @@
 //! stalled request answers others with `timeout` or `unavailable` rather than holding them.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -14,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use adoc_core::{DiagnosticSeverity, SourceRange};
+use adoc_core::{DiagnosticSeverity, LineIndex, SourceRange};
 use adoc_engine::{
     commands::ids, report::display_path, to_svg_laid_out, CommandArgs, CommandOutcome,
     DefinitionTarget, Engine, EngineEvent, ExportArgs, ExportTarget, GraphFilter, GraphScope,
@@ -43,8 +44,9 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 8] = [
+const WRITE_TOOLS: [&str; 9] = [
     "edit_page",
+    "revert_page",
     "rename_page",
     "export_pdf",
     "apply_changes",
@@ -273,6 +275,12 @@ struct EditPageArgs {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct RevertPageArgs {
+    /// The page, absolute or relative to the first root.
+    path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct RenamePageArgs {
     path: String,
     /// The new file name, or a path relative to the page's directory.
@@ -285,7 +293,8 @@ struct ExportPdfArgs {
     path: Option<String>,
     /// Or a component version to export as a book: `name` or `version@name`.
     component: Option<String>,
-    /// The PDF to write, inside a root.
+    /// The PDF to write, inside a root. A file there already is replaced only when it is a
+    /// `.pdf`.
     output: String,
     theme: Option<String>,
     /// `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a`, `pdf-ua-1`.
@@ -385,6 +394,33 @@ impl State {
             "page": page,
             "children": item.children.iter().map(|child| self.nav_item(child)).collect::<Vec<_>>(),
         })
+    }
+}
+
+/// The 1-based lines of offsets the index holds, each counted in the text the index parsed,
+/// never in the buffer or the file as it is now, and each file read at most once.
+pub(crate) struct Lines<'a> {
+    state: &'a State,
+    files: HashMap<PathBuf, Option<LineIndex>>,
+}
+
+impl<'a> Lines<'a> {
+    pub(crate) fn new(state: &'a State) -> Self {
+        Self {
+            state,
+            files: HashMap::new(),
+        }
+    }
+
+    /// The line of `offset` in `path`, or `None` when the file is not indexed or no longer
+    /// holds the text the index parsed (it changed on disk and is not indexed again yet).
+    pub(crate) fn line(&mut self, path: &Path, offset: usize) -> Option<usize> {
+        let state = self.state;
+        let lines = self.files.entry(path.to_path_buf()).or_insert_with(|| {
+            let file = state.engine.workspace().index.file(path)?;
+            Some(LineIndex::new(&file.text()?))
+        });
+        lines.as_ref().map(|lines| lines.line_column(offset).0 + 1)
     }
 }
 
@@ -491,6 +527,10 @@ impl Server {
 
     pub(crate) fn allow_write(&self) -> bool {
         self.permissions.write
+    }
+
+    pub(crate) fn allow_build(&self) -> bool {
+        self.permissions.build
     }
 
     /// Runs `work` with the engine on the runtime's blocking threads, so a long render, search
@@ -617,25 +657,11 @@ impl Server {
     )]
     async fn read_page(&self, Parameters(args): Parameters<ReadPageArgs>) -> Answer {
         self.run(move |state| {
-            let path = match (&args.path, &args.resource_id) {
-                (Some(path), _) => state.confine(path)?,
-                (None, Some(id)) => {
-                    let from = args
-                        .from
-                        .as_deref()
-                        .map(|from| state.confine(from))
-                        .transpose()?;
-                    let path = state
-                        .engine
-                        .resolve_resource_id(id, from.as_deref())
-                        .map_err(|error| match error {
-                            adoc_engine::EngineError::InvalidRequest(_) => Failure::from(error),
-                            _ => Failure::not_found(error.to_string()),
-                        })?;
-                    state.confine(&path.to_string_lossy())?
-                }
-                (None, None) => return Err(Failure::invalid("give a `path` or a `resource_id`")),
-            };
+            let path = state.target(
+                args.path.as_deref(),
+                args.resource_id.as_deref(),
+                args.from.as_deref(),
+            )?;
             let text = state.text(&path)?;
             let file = state.engine.workspace().index.file(&path);
             let document = file.map(|file| &file.document);
@@ -698,17 +724,16 @@ impl Server {
             let from = state.confine(&args.from)?;
             Ok(match state.engine.resolve_target(&from, &args.target) {
                 Some(DefinitionTarget::Location(location)) => {
-                    let text = state.text(&location.path).unwrap_or_default();
-                    let line = text[..location.range.start.min(text.len())]
-                        .matches('\n')
-                        .count()
-                        + 1;
-                    json!({
+                    let mut value = json!({
                         "resolves": true,
                         "path": state.shown(&location.path),
-                        "line": line,
                         "resource_id": state.engine.resource_id(&location.path),
-                    })
+                    });
+                    if let Some(line) = Lines::new(state).line(&location.path, location.range.start)
+                    {
+                        value["line"] = json!(line);
+                    }
+                    value
                 }
                 Some(DefinitionTarget::External(path)) => json!({
                     "resolves": true,
@@ -785,19 +810,12 @@ impl Server {
                 args.cursor.as_deref(),
                 args.limit,
             )?;
+            let mut lines = Lines::new(state);
             let symbols: Vec<Value> = page
                 .items
                 .iter()
                 .map(|symbol| {
-                    let line = state
-                        .text(&symbol.path)
-                        .map(|text| {
-                            text[..symbol.range.start.min(text.len())]
-                                .matches('\n')
-                                .count()
-                                + 1
-                        })
-                        .ok();
+                    let line = lines.line(&symbol.path, symbol.range.start);
                     json!({
                         "name": symbol.name,
                         "kind": format!("{:?}", symbol.kind).to_lowercase(),
@@ -1037,7 +1055,7 @@ impl Server {
     }
 
     #[tool(
-        description = "Edit a page: each edit replaces text that occurs exactly once, or a byte range, through the engine's edit command, in order. With `save`, the page is written to disk.",
+        description = "Edit a page: each edit replaces text that occurs exactly once, or a byte range, through the engine's edit command, in order. With `save`, the page is written to disk. All or nothing: when an edit or the save fails, this call's edits are undone and the page is as it was before the call (a save fails with `conflict` when the file changed on disk; `revert_page` puts the page back to the file).",
         output_schema = schemas::edit_page(),
         annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false)
     )]
@@ -1104,19 +1122,19 @@ impl Server {
                         })?;
                     applied += 1;
                 }
+                if args.save {
+                    state
+                        .engine
+                        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))?;
+                }
                 Ok(())
             })();
             if let Err(error) = result {
-                // All or nothing: the edits already made are undone.
+                // All or nothing, the save included: the edits already made are undone.
                 for _ in 0..applied {
                     state.engine.undo(id);
                 }
                 return Err(error);
-            }
-            if args.save {
-                state
-                    .engine
-                    .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))?;
             }
             let length = state
                 .engine
@@ -1127,6 +1145,32 @@ impl Server {
                 "edits": applied,
                 "saved": args.save,
                 "length": length,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Put a page's buffer back to the file on disk, discarding its unsaved edits, which every session shares: the way out when a save conflicts because the file changed on disk. `reverted` is false when the page had nothing unsaved.",
+        output_schema = schemas::revert_page(),
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn revert_page(&self, Parameters(args): Parameters<RevertPageArgs>) -> Answer {
+        self.run(move |state| {
+            let path = state.confine(&args.path)?;
+            // A page that is not open has no buffer: it reads as its file already.
+            let before = state.text(&path)?;
+            if let Some(id) = state.engine.document_for_path(&path) {
+                state
+                    .engine
+                    .invoke(ids::DOCUMENT_RELOAD, CommandArgs::Document(id))?;
+            }
+            let text = state.text(&path)?;
+            let reverted = text != before;
+            Ok(json!({
+                "path": state.shown(&path),
+                "reverted": reverted,
+                "length": text.len(),
             }))
         })
         .await
@@ -1199,6 +1243,16 @@ impl Server {
                     args.output
                 )));
             }
+            // Only a PDF is replaced: never a page, nor any other file there already.
+            let pdf = output
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+            if (!pdf && output.exists()) || state.engine.workspace().index.file(&output).is_some() {
+                return Err(Failure::invalid(format!(
+                    "{} is there already and is not a PDF; export to a `.pdf` file",
+                    args.output
+                )));
+            }
             let target = match (&args.path, &args.component) {
                 (Some(path), None) => {
                     let path = state.confine(path)?;
@@ -1245,12 +1299,65 @@ impl Server {
 
 /// `file://` URI of `path`.
 fn file_uri(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    if text.starts_with('/') {
-        format!("file://{text}")
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        uri_of(&text.replace('\\', "/"))
     } else {
-        format!("file:///{text}")
+        uri_of(&text)
     }
+}
+
+/// `file://` URI of a path written with `/`: every byte but the unreserved ones, `/` and `:`
+/// percent-encoded (spaces, `%`, `#`, `?`, non-ASCII letters), a Windows drive as `/C:/`.
+fn uri_of(path: &str) -> String {
+    let mut uri = String::from("file://");
+    if !path.starts_with('/') {
+        uri.push('/');
+    }
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/:".contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
+}
+
+/// The path a `file:` URI names, percent-decoded, with `/` between its parts: `/C:/…` read as
+/// the Windows drive `C:/…`; a `localhost` host allowed. `None` when it is not a `file:` URI or
+/// its decoding is not UTF-8.
+fn path_of_uri(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
+    let rest = if rest.starts_with("localhost/") {
+        &rest["localhost".len()..]
+    } else {
+        rest
+    };
+    // What follows `?` or `#` is a query or a fragment, not the path.
+    let rest = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
+    let mut bytes = Vec::with_capacity(rest.len());
+    let mut input = rest.bytes();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let high = char::from(input.next()?).to_digit(16)?;
+            let low = char::from(input.next()?).to_digit(16)?;
+            bytes.push(u8::try_from(high * 16 + low).ok()?);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    let path = String::from_utf8(bytes).ok()?;
+    let drive = path.as_bytes();
+    if drive.len() >= 3
+        && drive[0] == b'/'
+        && drive[1].is_ascii_alphabetic()
+        && drive[2] == b':'
+        && drive.get(3).is_none_or(|next| *next == b'/')
+    {
+        return Some(path[1..].to_owned());
+    }
+    Some(path)
 }
 
 /// The file a resource URI names, `file://` or `antora:`, inside the roots; a path outside them
@@ -1261,8 +1368,11 @@ fn resource_path(state: &State, uri: &str) -> Result<PathBuf, Failure> {
             .engine
             .resolve_resource_id(id, None)
             .map_err(|error| Failure::not_found(error.to_string()))?
-    } else if let Some(path) = uri.strip_prefix("file://") {
-        PathBuf::from(path)
+    } else if uri.starts_with("file://") {
+        PathBuf::from(
+            path_of_uri(uri)
+                .ok_or_else(|| Failure::not_found(format!("unknown resource {uri}")))?,
+        )
     } else {
         return Err(Failure::not_found(format!("unknown resource {uri}")));
     };
@@ -1514,10 +1624,111 @@ mod tests {
 
     fn code(result: &CallToolResult) -> Value {
         result
-            .structured_content
+            .meta
             .as_ref()
-            .map(|value| value["error"]["code"].clone())
+            .map(|meta| meta.0["error"]["code"].clone())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn resource_uris_are_encoded_and_read_back_on_every_platform() {
+        for (path, uri) in [
+            ("/docs/a.adoc", "file:///docs/a.adoc"),
+            (
+                "/docs/release notes.adoc",
+                "file:///docs/release%20notes.adoc",
+            ),
+            ("/docs/überblick.adoc", "file:///docs/%C3%BCberblick.adoc"),
+            ("/docs/50% #1?.adoc", "file:///docs/50%25%20%231%3F.adoc"),
+            ("C:/docs/a b.adoc", "file:///C:/docs/a%20b.adoc"),
+        ] {
+            assert_eq!(uri_of(path), uri);
+            assert_eq!(path_of_uri(uri).as_deref(), Some(path), "{uri}");
+        }
+        // Forms other clients write.
+        assert_eq!(
+            path_of_uri("file://localhost/docs/a.adoc").as_deref(),
+            Some("/docs/a.adoc")
+        );
+        assert_eq!(
+            path_of_uri("file://C:/docs/a.adoc").as_deref(),
+            Some("C:/docs/a.adoc")
+        );
+        assert_eq!(
+            path_of_uri("file:///c:/docs/a.adoc#top").as_deref(),
+            Some("c:/docs/a.adoc")
+        );
+        for bad in [
+            "file:///a%2",
+            "file:///a%zz",
+            "file:///a%FF",
+            "antora:x",
+            "/a",
+        ] {
+            assert_eq!(path_of_uri(bad), None, "{bad}");
+        }
+    }
+
+    /// A text about `len` bytes long in which no byte of `offsets` (at most two) falls on a
+    /// character boundary.
+    fn split_inside_characters(offsets: &[usize], len: usize) -> String {
+        (0..3)
+            .map(|lead| format!("{}{}\n", "a".repeat(lead), "€".repeat(len / 3)))
+            .find(|text| offsets.iter().all(|offset| !text.is_char_boundary(*offset)))
+            .unwrap()
+    }
+
+    #[test]
+    fn line_numbers_survive_a_page_rewritten_on_disk_before_it_is_indexed() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_engine::normalize_path(directory.path());
+        let page = root.join("a.adoc");
+        let original = format!(
+            "= Überblick\n\nÄhnlich.\n\n[[target]]\n== Änderung\n\n{}\n",
+            "Größe und Weiß. ".repeat(40)
+        );
+        std::fs::write(&page, &original).unwrap();
+        std::fs::write(root.join("b.adoc"), "= B\n\nxref:a.adoc#target[]\n").unwrap();
+        let mut engine = Engine::new(adoc_engine::Settings::default().with_git_opt_in());
+        engine.open_workspace(vec![root.clone()]).unwrap();
+        assert!(engine.wait_for_workers(Duration::from_secs(30)));
+        let server = Server::new(engine, vec![root], Permissions::default());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        let line_of_symbol = |server: &Server| {
+            let answer = runtime
+                .block_on(server.symbols(Parameters(SymbolsArgs {
+                    query: "Änderung".to_owned(),
+                    cursor: None,
+                    limit: None,
+                })))
+                .unwrap();
+            assert_eq!(answer.is_error, Some(false), "{answer:?}");
+            answer.structured_content.unwrap()["symbols"][0]["line"].clone()
+        };
+        assert_eq!(line_of_symbol(&server), json!(6));
+
+        // Shorter, and each offset the index holds for the page inside a character.
+        let anchor = original.find("[[target]]").unwrap();
+        let section = original.find("== Änderung").unwrap();
+        let rewritten = split_inside_characters(&[anchor, section], section + 40);
+        assert!(rewritten.len() < original.len());
+        std::fs::write(&page, rewritten).unwrap();
+
+        // No line is counted in a text other than the one the index parsed: until the page
+        // is indexed again, none is given (and once it is, the new text's).
+        let line = line_of_symbol(&server);
+        assert!(line.is_null() || line == json!(1), "{line}");
+        let answer = runtime
+            .block_on(server.resolve(Parameters(ResolveArgs {
+                target: "a.adoc#target".to_owned(),
+                from: "b.adoc".to_owned(),
+            })))
+            .unwrap();
+        assert_eq!(answer.is_error, Some(false), "{answer:?}");
     }
 
     #[test]

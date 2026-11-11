@@ -25,7 +25,8 @@ pub enum Link {
         link: ResolvedLink,
         source: adoc_core::Location,
     },
-    /// An inline image opens in the system's viewer.
+    /// An inline image's file: opened in an image tab, or as text, or a PDF of the workspace in
+    /// the system's viewer (`preview::open_link`).
     File(PathBuf),
 }
 

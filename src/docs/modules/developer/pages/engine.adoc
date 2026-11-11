@@ -1134,7 +1134,8 @@ For an open page the engine calls `adoc_lang::definition_in`, `hover_in` and `co
 `Engine::inspect_attribute` and `Engine::effective_values` (`src/attribute_inspection.rs`) answer Inspect Attribute and the MCP `get_page_context` tool from `adoc_lang::effective`, with the playbook's and the component's `AttributeEntry`s and the page's includes.
 
 `adoc-ls` is a front end of the engine.
-It opens workspace folders with the engine, and keeps client buffers in it with `Engine::open_text(path, text)`, which works for a file that does not exist.
+It opens workspace folders with the engine, and keeps client buffers in it with `Engine::open_client_text(path, text)`, which works for a file that does not exist.
+Such a buffer is the client's: the watcher never replaces it with the file on disk nor reports it changed there, and the engine keeps no undo history for it (`DocumentState::client_owned`).
 Each incremental change becomes one `edit.replace_range`.
 Further engine methods serve it:
 

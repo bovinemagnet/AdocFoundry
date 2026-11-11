@@ -21,10 +21,6 @@ pub enum PreviewError {
     NotRendered(PathBuf),
     Render(RenderError),
     Io(io::Error),
-    LaunchFailed {
-        program: String,
-        status: Option<i32>,
-    },
 }
 
 impl fmt::Display for PreviewError {
@@ -34,10 +30,6 @@ impl fmt::Display for PreviewError {
             Self::NotRendered(path) => write!(formatter, "{} did not render", path.display()),
             Self::Render(error) => error.fmt(formatter),
             Self::Io(error) => error.fmt(formatter),
-            Self::LaunchFailed { program, status } => write!(
-                formatter,
-                "could not open the preview with `{program}` (status {status:?})"
-            ),
         }
     }
 }
@@ -47,7 +39,7 @@ impl std::error::Error for PreviewError {
         match self {
             Self::Render(error) => Some(error),
             Self::Io(error) => Some(error),
-            Self::NotOpen(_) | Self::NotRendered(_) | Self::LaunchFailed { .. } => None,
+            Self::NotOpen(_) | Self::NotRendered(_) => None,
         }
     }
 }
@@ -134,22 +126,29 @@ fn launch_command(platform: Platform) -> (&'static str, &'static [&'static str])
 impl Launcher for SystemLauncher {
     fn launch(&self, path: &Path) -> Result<(), PreviewError> {
         let (program, args) = launch_command(Platform::current());
-
-        let status = process::Command::new(program)
-            .args(args)
-            .arg(path)
-            .status()
-            .map_err(PreviewError::Io)?;
-
-        if status.success() {
-            Ok(())
-        } else {
-            Err(PreviewError::LaunchFailed {
-                program: program.to_owned(),
-                status: status.code(),
-            })
-        }
+        launch_with(program, args, path)
     }
+}
+
+/// Starts `program` with `args` and `path`, detached from the server: its standard streams
+/// are `/dev/null`, since the server's stdin and stdout are the LSP connection, and it is not
+/// waited for, since `xdg-open` may run the browser in the foreground until it closes. A
+/// thread of its own reaps it. Only a failure to start is reported.
+fn launch_with(program: &str, args: &[&str], path: &Path) -> Result<(), PreviewError> {
+    let mut child = process::Command::new(program)
+        .args(args)
+        .arg(path)
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .spawn()?;
+    // Without the thread the child stays a zombie until the server ends, nothing worse.
+    let _ = std::thread::Builder::new()
+        .name("adoc-ls-launcher".to_owned())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+    Ok(())
 }
 
 /// Where a [`BrowserSink`] writes.
@@ -333,6 +332,8 @@ mod tests {
     use super::*;
     use adoc_render::RenderOutput;
     use std::sync::Mutex;
+
+    use crate::spawn_guard;
 
     fn output(html: &str) -> RenderOutput {
         RenderOutput {
@@ -572,6 +573,60 @@ mod tests {
             (program, arguments),
             ("rundll32", &["url.dll,FileProtocolHandler"][..])
         );
+    }
+
+    /// A launcher that prints, notes which of its standard streams are `/dev/null`, and stays
+    /// open as a browser started in the foreground does, returns at once and keeps its
+    /// output out of the server's stdout, which is the LSP connection.
+    #[cfg(unix)]
+    #[test]
+    fn a_launcher_runs_detached_from_the_server_s_streams() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = spawn_guard();
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("streams");
+        let script = directory.path().join("launcher");
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\n\
+                 for fd in 0 1 2; do\n\
+                 if [ /dev/fd/$fd -ef /dev/null ]; then state=null; else state=inherited; fi\n\
+                 echo \"$fd $state\" >> '{marker}.tmp'\n\
+                 done\n\
+                 mv '{marker}.tmp' '{marker}'\n\
+                 echo 'Opening in existing browser session.'\n\
+                 sleep 10\n",
+                marker = marker.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let started = std::time::Instant::now();
+        launch_with(script.to_str().unwrap(), &[], Path::new("/docs/page.html")).expect("launch");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the server waited for the launcher: {:?}",
+            started.elapsed()
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(
+            fs::read_to_string(&marker).expect("the launcher ran"),
+            "0 null\n1 null\n2 null\n"
+        );
+    }
+
+    #[test]
+    fn a_launcher_that_cannot_start_is_reported() {
+        let error = launch_with("/no/such/launcher", &[], Path::new("/docs/page.html"))
+            .expect_err("nothing to start");
+        assert!(matches!(error, PreviewError::Io(_)), "{error:?}");
     }
 
     #[test]

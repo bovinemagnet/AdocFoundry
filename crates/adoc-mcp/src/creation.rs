@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
-    changes::{module_root, plain},
+    changes::{after_title, module_root, plain},
     responses::{ErrorCode, Failure},
     schemas,
     server::{Answer, Server, State},
@@ -41,6 +41,9 @@ struct CreatePageArgs {
     /// Write the page and the navigation file to disk; true by default. The page's file is
     /// made in any case, as New Page makes it.
     save: Option<bool>,
+    /// The page's text after its title (`= Title` and a blank line), written as a second
+    /// undo step; the title alone without it.
+    body: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -132,7 +135,7 @@ fn save_all(state: &mut State, paths: &[std::path::PathBuf]) -> Vec<Value> {
 #[tool_router(router = creation_router, vis = "pub(crate)")]
 impl Server {
     #[tool(
-        description = "Make a page in a component version's module, as the app's New Page does (`page.new`): named from its title, with an entry at the end of the module's navigation file when `add_to_navigation`, as one undo step. Applies at once; to review it first, use `preview_changes` with a `create_page` operation.",
+        description = "Make a page in a component version's module, as the app's New Page does (`page.new`): named from its title, with an entry at the end of the module's navigation file when `add_to_navigation`, as one undo step, and its `body` after the title as a second. Applies at once; to review it first, use `preview_changes` with a `create_page` operation.",
         output_schema = schemas::create_page(),
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
@@ -185,6 +188,24 @@ impl Server {
                 .document(page)
                 .map(|document| document.path.clone())
                 .ok_or_else(|| Failure::internal("the new page is not open"))?;
+            let body = after_title(args.body.as_deref().unwrap_or_default());
+            if !body.is_empty() {
+                let end = state
+                    .engine
+                    .document(page)
+                    .map_or(0, |document| document.text.len());
+                state
+                    .engine
+                    .invoke(
+                        ids::EDIT_INSERT_TEXT,
+                        CommandArgs::Text {
+                            id: page,
+                            range: adoc_core::SourceRange::new(end, end),
+                            text: body,
+                        },
+                    )
+                    .map_err(Failure::from)?;
+            }
             let mut changed = vec![path.clone()];
             changed.extend(nav.clone());
             let save = args.save.unwrap_or(true);
@@ -537,6 +558,7 @@ mod tests {
                 add_to_navigation: true,
                 expected_nav_hash: None,
                 save: Some(false),
+                body: None,
             })))
             .unwrap();
         let made = made.structured_content.unwrap();

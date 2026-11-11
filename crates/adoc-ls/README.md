@@ -8,7 +8,7 @@
 - **Completion** of xref, include and image targets, anchors and attribute names.
 - **Hover**, **Go to Definition** and **references**: on a page, the pages that link to it and the includes that include it; on an anchor or a reference to one, every reference to that anchor.
 - **Document symbols** for the title and sections, with navigation files outlined as their navigation tree, and **workspace symbols** for titles, sections, anchors and attributes.
-- **Renaming**: renaming an `.adoc` file in the editor first rewrites the xrefs and nav entries that name it; renaming an anchor id renames it and its references.
+- **Renaming**: renaming an `.adoc`, `.asciidoc` or `.ad` file in the editor first rewrites the xrefs and nav entries that name it, or answers with the reason it cannot (a file naming it changed on disk and is not read again yet, say), so the file is never moved with its links left behind; renaming an anchor id renames it and its references.
 - **Antora resolution** across components, versions and modules, including aliases.
 - **HTML preview** through code actions, one-off or live (re-rendered on save), opened in the system browser.
 - **PDF export** of a page, or of a component version as a book, in builds with Typst.
@@ -40,6 +40,8 @@ adoc-ls --help       print usage
 ```
 
 The workspace is the client's workspace folders, or its root URI when it sends no folders.
+
+The editor owns the pages it has open: `adoc-ls` works from the buffers the editor sends, and a change to an open page's file on disk never replaces them. A typed change's diagnostics are published once the server has diagnosed the new text, when typing pauses.
 
 ### Zed
 
@@ -74,7 +76,9 @@ The server advertises these through `workspace/executeCommand`; the preview comm
 | `adoc.checkWorkspace` | Publishes the diagnostics of every file in the workspace, open or not, and clears those of a closed file an earlier check reported once they are fixed. |
 | `adoc.exportPdf { uri, component?, output, theme?, standards? }` | Writes a PDF of the page, or of a component version as a book. Only in builds with Typst. |
 
-The preview renders through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, otherwise through the engine, with diagrams and typeset STEM. Preview files are written to a folder of the server's own in the system's temporary directory (`adoc-ls-preview-` and a random suffix, readable only by you on Unix, removed when the server stops), one per page, named after it (letters, digits, `-` and `_` only) and a hash of its path. On Windows they are opened with `rundll32 url.dll,FileProtocolHandler`, never through `cmd.exe`.
+The preview renders through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, otherwise through the engine, with diagrams and typeset STEM. Preview files are written to a folder of the server's own in the system's temporary directory (`adoc-ls-preview-` and a random suffix, readable only by you on Unix, removed when the server stops), one per page, named after it (letters, digits, `-` and `_` only) and a hash of its path. On Windows they are opened with `rundll32 url.dll,FileProtocolHandler`, never through `cmd.exe`. The browser is started apart from the server's standard input and output, which carry the protocol, and the server does not wait for it. A render through Asciidoctor is stopped after 60 seconds.
+
+The spelling commands `adoc.spelling.addToWorkspace` and `adoc.spelling.addToUser`, run from a misspelling's quick fixes, refuse a range that is no longer a misspelt word because the page changed since the fix was offered.
 
 ## Settings
 
@@ -90,6 +94,8 @@ enabled = true        # off in adoc-ls unless the user file turns it on
 [pdf]
 theme = "default"     # a bundled theme, a name in themes_dir, or a .yml file
 ```
+
+A settings file that does not parse, or a workspace that cannot be opened, is reported with a `window/showMessage` warning naming the file; a user settings file that does not parse gives the default settings.
 
 Git is opt-in for `adoc-ls`: it looks for no repository unless the user settings file sets `[git] enabled = true`. `[editor] auto_save` has no effect here: the editor owns its buffers and saves them, and `adoc-ls` never writes a file on its own. The full list of settings is in the [AdocFoundry README](../../README.md#settings).
 

@@ -149,6 +149,10 @@ pub struct Engine {
 /// only once typing pauses this long. Every other command indexes first.
 pub const INDEX_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
+/// The largest file, in bytes, the engine opens as text: far above any real page, so a link
+/// to a huge file cannot exhaust memory.
+pub const MAX_TEXT_FILE: u64 = 32 * 1024 * 1024;
+
 /// The commands typing sends, one keystroke each: a small edit they make is indexed once
 /// typing pauses, and they do not index what earlier typing left pending.
 const TYPING_COMMANDS: [CommandId; 5] = [
@@ -293,21 +297,65 @@ impl Engine {
     }
 
     /// The text of the file at `path`, refusing a file that is not text: one holding NUL bytes,
-    /// or not UTF-8, which is never decoded some other way.
+    /// or not UTF-8, which is never decoded some other way. Only a regular file is read, once
+    /// links are followed, so a pipe or a device never blocks the engine or fills its memory,
+    /// and at most [`MAX_TEXT_FILE`] bytes of it, however it grows while being read.
     pub(crate) fn read_text(&self, path: &Path) -> Result<String, EngineError> {
+        use std::io::Read as _;
+
         let not_text = || {
             EngineError::Refused(format!(
                 "{} is not a text file AdocFoundry can edit (it is binary, or not UTF-8)",
                 path.display()
             ))
         };
-        let text = self
-            .file_access
-            .read_to_string(path)
-            .map_err(|error| match error.kind() {
-                std::io::ErrorKind::InvalidData => not_text(),
-                _ => EngineError::io(path, error),
-            })?;
+        let not_regular = || {
+            EngineError::Refused(format!(
+                "{} is not a regular file AdocFoundry can open as text",
+                path.display()
+            ))
+        };
+        let too_large = || {
+            EngineError::Refused(format!(
+                "{} is too large to open as text (over {} MiB)",
+                path.display(),
+                MAX_TEXT_FILE / (1024 * 1024)
+            ))
+        };
+        if !self.file_access.permits(path) {
+            return Err(EngineError::io(
+                path,
+                std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("{} is outside the workspace roots", path.display()),
+                ),
+            ));
+        }
+        // Checked before opening: opening a pipe waits for a writer.
+        let metadata = fs::metadata(path).map_err(|error| EngineError::io(path, error))?;
+        if !metadata.is_file() {
+            return Err(not_regular());
+        }
+        if metadata.len() > MAX_TEXT_FILE {
+            return Err(too_large());
+        }
+        let file = fs::File::open(path).map_err(|error| EngineError::io(path, error))?;
+        // What was opened, should the path have changed since.
+        if !file
+            .metadata()
+            .map_err(|error| EngineError::io(path, error))?
+            .is_file()
+        {
+            return Err(not_regular());
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_TEXT_FILE + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| EngineError::io(path, error))?;
+        if bytes.len() as u64 > MAX_TEXT_FILE {
+            return Err(too_large());
+        }
+        let text = String::from_utf8(bytes).map_err(|_| not_text())?;
         if text.contains('\0') {
             return Err(not_text());
         }
@@ -337,6 +385,20 @@ impl Engine {
         // Unsaved when it differs from the file, or there is none.
         let saved = fs::read_to_string(&path).unwrap_or_default();
         self.mark_saved(id, &saved);
+        id
+    }
+
+    /// Opens the page at `path` with `text` as a language client's buffer, as
+    /// [`Engine::open_text`] does, and leaves the buffer to the client from then on: a change to
+    /// the file on disk never replaces it nor is reported for it (the client reloads its buffer
+    /// and sends the change, if it does), and the index keeps the buffer's parse until it is
+    /// closed. The engine never hears of the client's saves, so whether the buffer matches the
+    /// file says nothing.
+    pub fn open_client_text(&mut self, path: &Path, text: &str) -> DocumentId {
+        let id = self.open_text(path, text);
+        if let Some(state) = self.states.get_mut(&id) {
+            state.client_owned = true;
+        }
         id
     }
 
@@ -391,6 +453,7 @@ impl Engine {
                 saved_hash: hash_text(text),
                 saved_len: text.len(),
                 changed_on_disk: false,
+                client_owned: false,
             },
         );
         self.emit(EngineEvent::DocumentOpened(id));
@@ -827,6 +890,10 @@ impl Engine {
         };
         let defer = typed.is_some() || (self.typing && is_small(&edits));
         let applied = self.edit_document(id, edits, defer)?;
+        if self.states.get(&id).is_some_and(|state| state.client_owned) {
+            // The client keeps the undo history of its own buffer; nothing would read this one.
+            return Ok(());
+        }
         let now = self.clock.now();
         if let Some((offset, text)) = &typed {
             let coalesced = self.states.get_mut(&id).is_some_and(|state| {
@@ -1107,7 +1174,14 @@ impl Engine {
         if range.end > document.text.len() || range.start > range.end {
             return None;
         }
-        Some(document.text.slice(range.start..range.end).to_string())
+        // A range from a front end may end inside a character: none, never a panic.
+        Some(
+            document
+                .text
+                .try_slice(range.start..range.end)
+                .ok()?
+                .to_string(),
+        )
     }
 }
 

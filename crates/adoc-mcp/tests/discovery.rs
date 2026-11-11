@@ -19,7 +19,7 @@ fn ids(answer: &Value) -> Vec<String> {
 fn code(client: &mut Client, tool: &str, arguments: Value) -> String {
     let result = client.call_result(tool, arguments);
     assert_eq!(result["isError"], true, "{result}");
-    result["structuredContent"]["error"]["code"]
+    result["_meta"]["error"]["code"]
         .as_str()
         .unwrap()
         .to_owned()
