@@ -26,23 +26,33 @@ impl Repository {
     /// The working tree is spelt as `path` spells it (no symbolic links resolved), so paths the
     /// caller builds from its own roots can be compared with it.
     pub fn discover(path: &Path) -> Result<Option<Self>, GitError> {
+        Self::discover_with(path, gix::discover(path))
+    }
+
+    /// The repository `discovered` found from `path`, or `None` when the walk found none.
+    fn discover_with(
+        path: &Path,
+        discovered: Result<gix::Repository, gix::Error>,
+    ) -> Result<Option<Self>, GitError> {
         use gix::discover::upwards::Error as NotFound;
-        if let Err(error) = gix::discover::upwards(path) {
-            let not_found = matches!(
-                error.downcast_any_ref::<NotFound>(),
-                Some(
-                    NotFound::NoGitRepository { .. }
-                        | NotFound::NoGitRepositoryWithinCeiling { .. }
-                        | NotFound::NoGitRepositoryWithinFs { .. }
-                )
-            );
-            return if not_found {
-                Ok(None)
-            } else {
-                Err(GitError::git(error))
-            };
-        }
-        let repo = gix::discover(path).map_err(GitError::git)?;
+        let repo = match discovered {
+            Ok(repo) => repo,
+            Err(error) => {
+                let not_found = matches!(
+                    error.downcast_any_ref::<NotFound>(),
+                    Some(
+                        NotFound::NoGitRepository { .. }
+                            | NotFound::NoGitRepositoryWithinCeiling { .. }
+                            | NotFound::NoGitRepositoryWithinFs { .. }
+                    )
+                );
+                return if not_found {
+                    Ok(None)
+                } else {
+                    Err(GitError::git(error))
+                };
+            }
+        };
         let Some(found) = repo.workdir() else {
             return Ok(None);
         };
@@ -76,12 +86,10 @@ impl Repository {
     /// As [`Repository::discover`], but reading only the repository's own configuration, not
     /// the user's or the system's.
     pub fn discover_isolated(path: &Path) -> Result<Option<Self>, GitError> {
-        let Some(found) = Self::discover(path)? else {
-            return Ok(None);
-        };
-        let repo = gix::open_opts(found.repo.git_dir(), gix::open::Options::isolated())
-            .map_err(GitError::git)?;
-        Ok(Some(Self { repo, ..found }))
+        Self::discover_with(
+            path,
+            gix::discover_opts(path, Default::default(), gix::open::Options::isolated()),
+        )
     }
 
     /// The root of the working tree.
@@ -144,11 +152,15 @@ impl Repository {
                 Item::IndexWorktree(Worktree::Rewrite {
                     source,
                     dirwalk_entry,
+                    copy,
                     ..
                 }) => {
-                    let from = relative_path(source.rela_path());
-                    entry(&mut files, dirwalk_entry.rela_path.as_ref()).worktree =
-                        Change::Renamed(from);
+                    // A copy leaves its source where it was: the new file is only untracked.
+                    entry(&mut files, dirwalk_entry.rela_path.as_ref()).worktree = if copy {
+                        Change::Untracked
+                    } else {
+                        Change::Renamed(relative_path(source.rela_path()))
+                    };
                 }
                 Item::TreeIndex(change) => {
                     use gix::diff::index::Change as Index;
@@ -156,6 +168,11 @@ impl Repository {
                         Index::Addition { location, .. } => (location, Change::Added),
                         Index::Deletion { location, .. } => (location, Change::Deleted),
                         Index::Modification { location, .. } => (location, Change::Modified),
+                        Index::Rewrite {
+                            location,
+                            copy: true,
+                            ..
+                        } => (location, Change::Added),
                         Index::Rewrite {
                             source_location,
                             location,
@@ -178,23 +195,44 @@ impl Repository {
             return Ok(None);
         }
         let tree = self.repo.head_tree().map_err(GitError::git)?;
-        let Some(entry) = tree
-            .lookup_entry_by_path(&relative)
-            .map_err(GitError::git)?
-        else {
+        text_in(&tree, &relative)
+    }
+
+    /// The text of `path` in the `HEAD` commit as a checkout would write it, line endings,
+    /// `ident` and `working-tree-encoding` converted by the repository's attributes and
+    /// configuration (no filter driver is ever run), so it compares line for line with the
+    /// working tree. `None` as for [`Repository::head_content`].
+    pub fn head_text_for_worktree(&self, path: &Path) -> Result<Option<String>, GitError> {
+        use gix::filter::plumbing::pipeline::convert::to_worktree;
+        let relative = self.relative(path)?;
+        let Some(blob) = self.head_content(&relative)? else {
             return Ok(None);
         };
-        if !entry.mode().is_blob() {
-            return Ok(None);
-        }
-        let object = entry.object().map_err(GitError::git)?;
-        Ok(object.data.to_str().ok().map(str::to_owned))
+        let (mut pipeline, mut attributes) = self.to_git_pipeline()?;
+        let entry = attributes
+            .at_path(relative.as_path(), None, &self.repo.objects)
+            .map_err(GitError::git)?;
+        let name = unix_path(&relative);
+        let converted = pipeline
+            .convert_to_worktree(
+                blob.as_bytes(),
+                name.as_ref(),
+                &mut |_, attributes| {
+                    entry.matching_attributes(attributes);
+                },
+                to_worktree::Options::default(),
+            )
+            .map_err(GitError::git)?;
+        Ok(converted
+            .as_bytes()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map(str::to_owned))
     }
 
     /// The line changes of `path` against `HEAD`: of `current` when given, so unsaved edits are
     /// included, else of the file on disk. A file not in `HEAD` is all added lines.
     pub fn line_diff(&self, path: &Path, current: Option<&str>) -> Result<Vec<Hunk>, GitError> {
-        let head = self.head_content(path)?.unwrap_or_default();
+        let head = self.head_text_for_worktree(path)?.unwrap_or_default();
         let on_disk;
         let current = match current {
             Some(text) => text,
@@ -257,21 +295,18 @@ impl Repository {
         let mut reference = reference;
         let commit = reference.peel_to_commit().map_err(GitError::git)?;
         let tree = commit.tree().map_err(GitError::git)?;
-        let Some(entry) = tree.lookup_entry_by_path(path).map_err(GitError::git)? else {
-            return Ok(None);
-        };
-        if !entry.mode().is_blob() {
-            return Ok(None);
-        }
-        let object = entry.object().map_err(GitError::git)?;
-        Ok(object.data.to_str().ok().map(str::to_owned))
+        text_in(&tree, &self.relative(path)?)
     }
 
     /// Who last changed each line of `path`: of `current` when given (lines not in `HEAD` are
     /// not committed), else of the file on disk.
     pub fn blame(&self, path: &Path, current: Option<&str>) -> Result<Vec<BlameLine>, GitError> {
-        let head = self.head_blame(path)?;
-        let head_text = self.head_content(path)?.unwrap_or_default();
+        let head_text = self.head_text_for_worktree(path)?;
+        let head = match head_text {
+            Some(_) => self.blame_in_head(&self.relative(path)?)?,
+            None => Vec::new(),
+        };
+        let head_text = head_text.unwrap_or_default();
         let on_disk;
         let current = match current {
             Some(text) => text,
@@ -288,19 +323,26 @@ impl Repository {
     /// Who last changed each line of `path` as it is in `HEAD`; empty when it is not there.
     pub fn head_blame(&self, path: &Path) -> Result<Vec<BlameLine>, GitError> {
         let relative = self.relative(path)?;
-        if self.head_content(&relative)?.is_none() {
+        if self.repo.head().map_err(GitError::git)?.is_unborn() {
             return Ok(Vec::new());
         }
+        let tree = self.repo.head_tree().map_err(GitError::git)?;
+        let in_head = tree
+            .lookup_entry_by_path(&relative)
+            .map_err(GitError::git)?
+            .is_some_and(|entry| entry.mode().is_blob());
+        if !in_head {
+            return Ok(Vec::new());
+        }
+        self.blame_in_head(&relative)
+    }
+
+    /// The blame of `relative`, a file in `HEAD`.
+    fn blame_in_head(&self, relative: &Path) -> Result<Vec<BlameLine>, GitError> {
         let head = self.repo.head_id().map_err(GitError::git)?.detach();
-        let unix: gix::bstr::BString = relative
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("/")
-            .into();
         let outcome = self
             .repo
-            .blame_file(unix.as_ref(), head, Default::default())
+            .blame_file(unix_path(relative).as_ref(), head, Default::default())
             .map_err(GitError::git)?;
         let mut commits: BTreeMap<gix::ObjectId, (String, i64, String)> = BTreeMap::new();
         let mut lines = Vec::new();
@@ -497,13 +539,19 @@ impl Repository {
         write_changed_index(index)
     }
 
-    /// The name and email commits are made with, from the usual configuration scopes.
+    /// The name and email commits are made with, as Git finds the committer's: from
+    /// `committer.*`, else `user.*`, in the usual configuration scopes, or the
+    /// `GIT_COMMITTER_*` variables. A commit also needs an author, found the same way.
     pub fn identity(&self) -> Result<(String, String), GitError> {
-        let config = self.repo.config_snapshot();
-        let name = config.string("user.name").map(|name| name.to_string());
-        let email = config.string("user.email").map(|email| email.to_string());
-        match (name, email) {
-            (Some(name), Some(email)) if !name.is_empty() && !email.is_empty() => Ok((name, email)),
+        let named = |signature: Option<Result<gix::actor::SignatureRef<'_>, _>>| {
+            signature
+                .and_then(Result::ok)
+                .map(|signature| (signature.name.to_string(), signature.email.to_string()))
+                .filter(|(name, email)| !name.is_empty() && !email.is_empty())
+        };
+        let committer = named(self.repo.committer());
+        match (committer, named(self.repo.author())) {
+            (Some(committer), Some(_)) => Ok(committer),
             _ => Err(GitError::NoIdentity),
         }
     }
@@ -617,14 +665,25 @@ impl Repository {
             return Ok(None);
         };
         let pushed = tracking.peel_to_id().map_err(GitError::git)?.detach();
-        let head = self.repo.head_id().map_err(GitError::git)?.detach();
+        let tip = self
+            .repo
+            .find_reference(format!("refs/heads/{branch}").as_str())
+            .map_err(GitError::git)?
+            .peel_to_id()
+            .map_err(GitError::git)?
+            .detach();
         let walk = self
             .repo
-            .rev_walk([head])
+            .rev_walk([tip])
             .with_hidden([pushed])
             .all()
             .map_err(GitError::git)?;
-        Ok(Some(walk.filter_map(Result::ok).count()))
+        let mut count = 0;
+        for commit in walk {
+            commit.map_err(GitError::git)?;
+            count += 1;
+        }
+        Ok(Some(count))
     }
 
     /// The full id of the commit `HEAD` points at; `None` before the first commit.
@@ -679,6 +738,19 @@ impl Repository {
             .map(Path::to_path_buf)
             .map_err(|_| GitError::OutsideWorkdir(path.to_path_buf()))
     }
+}
+
+/// The text of the file at `relative` in `tree`; `None` when it is not there, is not a file, or
+/// is not UTF-8.
+pub(crate) fn text_in(tree: &gix::Tree<'_>, relative: &Path) -> Result<Option<String>, GitError> {
+    let Some(entry) = tree.lookup_entry_by_path(relative).map_err(GitError::git)? else {
+        return Ok(None);
+    };
+    if !entry.mode().is_blob() {
+        return Ok(None);
+    }
+    let object = entry.object().map_err(GitError::git)?;
+    Ok(object.data.to_str().ok().map(str::to_owned))
 }
 
 /// The status of `path` in `files`, added unmodified when it is not there yet.

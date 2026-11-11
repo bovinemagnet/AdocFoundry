@@ -77,7 +77,7 @@ The tool runs in a process group of its own and is stopped with everything it st
 
 |L2
 |`adoc-git`
-|Git repository discovery, head, status line diffs against HEAD, and branches and file contents at a branch, over `gix` (gitoxide) with no network transports. Nothing runs the `git` executable. `history.rs` gives `Repository::last_changed(paths, limit)`, one walk of `HEAD`'s first-parent history that finds when each path last changed, following moves, as `LastChanges` (a `LastChange` of commit and time for each path, and `cut_short`), with `HISTORY_LIMIT` (10,000 commits). The `test-support` feature provides `adoc_git::testing::TestRepo` for tests, including `commit_all_at(message, seconds)`. The engine depends on it.
+|Git repository discovery, head, status line diffs against HEAD, and branches and file contents at a branch, over `gix` (gitoxide) with no network transports. Nothing runs the `git` executable. `history.rs` gives `Repository::last_changed(paths, limit)`, one walk of `HEAD`'s first-parent history that finds when each path last changed, following moves, as `LastChanges` (a `LastChange` of commit and time for each path, and `cut_short`), with `HISTORY_LIMIT` (10,000 commits); in a shallow clone it stops at the boundary as at the limit. The `test-support` feature provides `adoc_git::testing::TestRepo` for tests, including `commit_all_at(message, seconds)`. The engine depends on it.
 
 |L2
 |`adoc-pdf`
