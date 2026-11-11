@@ -515,15 +515,26 @@ impl Engine {
             self.emit(EngineEvent::PreviewLayoutChanged);
         }
         if document.indexed() {
-            match fs::read_to_string(&document.path) {
+            let path = &document.path;
+            match fs::read_to_string(path) {
+                // The index holds the file's own parse, so nothing it gives changes: only the
+                // text it kept goes. Closing a page unchanged is as cheap as opening it.
+                Ok(text) if self.workspace.index.keep_from_disk(path, &text) => {}
+                // Unsaved text was indexed: the file's goes back, re-diagnosing and auditing
+                // only what it can change, as an edit does.
                 Ok(text) => {
-                    self.workspace.index.index_file(&document.path, &text);
+                    let before = adoc_lang::diagnosed_with(&self.workspace, path);
+                    self.workspace.index.index_file(path, &text);
+                    self.graph_file_changed(path);
+                    self.refresh_diagnosed_with(path, before);
                 }
-                Err(_) => self.workspace.remove_document(&document.path),
+                Err(_) => {
+                    self.workspace.remove_document(path);
+                    self.graph_file_changed(path);
+                    self.refresh_open_diagnostics(None);
+                    self.audit_changed_everywhere();
+                }
             }
-            self.graph_file_changed(&document.path);
-            self.refresh_open_diagnostics(None);
-            self.audit_changed_everywhere();
         }
         if self.active == Some(id) {
             self.active = None;

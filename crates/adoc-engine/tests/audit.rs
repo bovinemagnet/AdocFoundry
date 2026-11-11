@@ -281,6 +281,57 @@ fn audit_changes_are_incremental() {
 }
 
 #[test]
+fn closing_a_clean_page_audits_and_parses_nothing() {
+    let mut copy = Copy::audited();
+    let page = copy.root.join("product/modules/ROOT/pages/orphan.adoc");
+    let id = copy.engine.open(&page).unwrap();
+    assert!(copy.engine.wait_for_workers(Duration::from_secs(10)));
+    copy.engine.pump();
+    let _ = copy.events.try_iter().count();
+    let builds = copy.engine.audit_builds();
+    probe::reset();
+    copy.engine
+        .invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(id))
+        .unwrap();
+    assert!(copy.engine.wait_for_workers(Duration::from_secs(10)));
+    copy.engine.pump();
+    assert_eq!(probe::count(Probe::Parse), 0, "the index's parse is kept");
+    assert_eq!(probe::count(Probe::DiagnoseOpen), 0);
+    assert_eq!(probe::count(Probe::AuditFile), 0);
+    assert_eq!(probe::count(Probe::AuditVersion), 0);
+    assert_eq!(copy.engine.audit_builds(), builds, "no whole audit again");
+    // The index reads the page back from its file, as any page not open.
+    let entry = copy.engine.workspace().index.file(&page).unwrap();
+    assert!(entry.document.text.is_empty());
+    assert_eq!(entry.text().unwrap(), fs::read_to_string(&page).unwrap());
+    copy.checked();
+}
+
+#[test]
+fn closing_an_unsaved_page_puts_its_file_back_in_the_audit() {
+    let mut copy = Copy::audited();
+    copy.replace(
+        "product/modules/ROOT/pages/orphan.adoc",
+        "= Orphan\n",
+        "Orphan\n",
+    );
+    assert!(copy.until_audit_changed());
+    let path = "product/modules/ROOT/pages/orphan.adoc";
+    assert!(paths_with(&copy.kept(), TITLE).contains(&path));
+    let id = copy
+        .engine
+        .document_for_path(&copy.root.join(path))
+        .unwrap();
+    copy.engine
+        .invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(id))
+        .unwrap();
+    assert!(copy.until_audit_changed());
+    assert_eq!(copy.engine.audit_builds(), 1, "no second whole audit");
+    let report = copy.checked();
+    assert!(!paths_with(&report, TITLE).contains(&path));
+}
+
+#[test]
 fn a_navigation_edit_audits_its_own_version_again() {
     let mut copy = Copy::audited();
     probe::reset();
