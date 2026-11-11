@@ -177,6 +177,20 @@ fn audit_cli_strict_mode_fails_incomplete() {
 }
 
 #[test]
+fn audit_of_the_current_directory_reports_as_audit_of_its_path() {
+    // Issue #534: with the root `.`, messages lost their full stops and files their folders.
+    let here = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(repository_root().join(FIXTURE))
+        .args(["audit", ".", "--format", "json"])
+        .output()
+        .unwrap();
+    let there = cli(&["audit", FIXTURE, "--format", "json"]);
+    let findings = json(&there)["findings"].clone();
+    assert!(findings.as_array().is_some_and(|all| !all.is_empty()));
+    assert_eq!(json(&here)["findings"], findings);
+}
+
+#[test]
 fn audit_json_and_sarif_are_deterministic() {
     for format in ["json", "sarif"] {
         let first = cli(&["audit", FIXTURE, "--format", format]);

@@ -275,9 +275,14 @@ impl Context<'_> {
             .iter()
             .enumerate()
             .find_map(|(index, root)| {
-                path.strip_prefix(normalize_path(root))
-                    .ok()
-                    .map(|relative| (index, portable_path(relative)))
+                let root = normalize_path(root);
+                // Beneath the current directory, a relative path is relative to it already.
+                let relative = if root == Path::new(".") {
+                    (path.is_relative() && !path.starts_with("..")).then_some(path.as_path())
+                } else {
+                    path.strip_prefix(root).ok()
+                };
+                relative.map(|relative| (index, portable_path(relative)))
             });
         let (root, relative) = found.unwrap_or_else(|| {
             let name = path
@@ -291,20 +296,39 @@ impl Context<'_> {
 
     /// `message` with every path beneath a root written relative to it with `/` separators, as
     /// the report writes paths, so that no absolute path leaves the machine in a report. A root
-    /// named on its own becomes its folder name.
+    /// named on its own becomes its folder name. Only the root as a whole path counts, not text
+    /// that holds it, and the current directory (`.`), whose paths are already relative, never.
     pub(crate) fn relative_paths(&self, message: &str) -> String {
+        // A character that may continue a path, so the root next to it is part of another.
+        let in_path = |c: char| c.is_alphanumeric() || "/\\._-~".contains(c);
         let mut message = message.to_owned();
         for root in self.input.roots {
             let root = normalize_path(root);
             let absolute = root.to_string_lossy().into_owned();
-            if absolute.is_empty() || !message.contains(&absolute) {
+            if absolute.is_empty() || absolute == "." || !message.contains(&absolute) {
                 continue;
             }
             let mut rewritten = String::with_capacity(message.len());
             let mut rest = message.as_str();
             while let Some(found) = rest.find(&absolute) {
                 rewritten.push_str(&rest[..found]);
+                let starts = rewritten
+                    .chars()
+                    .last()
+                    .is_none_or(|before| !in_path(before));
                 rest = &rest[found + absolute.len()..];
+                let mut after = rest.chars();
+                let ends = match after.next() {
+                    None => true,
+                    Some('/' | '\\') => true,
+                    // A full stop ending a sentence, not a name's extension.
+                    Some('.') => after.next().is_none_or(char::is_whitespace),
+                    Some(next) => !in_path(next),
+                };
+                if !(starts && ends) {
+                    rewritten.push_str(&absolute);
+                    continue;
+                }
                 match rest.strip_prefix(['/', '\\']) {
                     Some(after) => {
                         let end = after
@@ -393,5 +417,41 @@ mod tests {
             context.relative_paths("/elsewhere/x.adoc"),
             "/elsewhere/x.adoc"
         );
+        assert_eq!(
+            context.relative_paths(&format!("See {root}2/x.adoc and /a{root}/y.adoc.")),
+            format!("See {root}2/x.adoc and /a{root}/y.adoc."),
+            "only the root as a whole path"
+        );
+    }
+
+    #[test]
+    fn a_relative_root_keeps_full_stops_and_folders() {
+        // Issue #534: the root `.` matched every full stop, and paths beneath it were named
+        // by their file names alone.
+        let workspace = WorkspaceState::new();
+        let read = |_: &Path| Ok(String::new());
+        for root in [".", "docs"] {
+            let roots = [PathBuf::from(root)];
+            let input = AuditInput {
+                workspace: &workspace,
+                roots: &roots,
+                read: &read,
+            };
+            let context = Context {
+                input: &input,
+                scope: AuditScope::Workspace,
+            };
+            assert_eq!(
+                context.relative_paths("Cannot find missing.adoc. The docs are fine."),
+                "Cannot find missing.adoc. The docs are fine.",
+                "{root}"
+            );
+            let page = Path::new(root).join("modules/ROOT/pages/index.adoc");
+            assert_eq!(
+                context.location(&page, None).path,
+                "modules/ROOT/pages/index.adoc",
+                "{root}"
+            );
+        }
     }
 }
