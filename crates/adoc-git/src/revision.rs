@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 
 use gix::bstr::ByteSlice;
 
-use crate::{repository::relative_path, GitError, Repository};
+use crate::{
+    repository::{relative_path, text_in},
+    GitError, Repository,
+};
 
 /// A commit a revision names, and its tree.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -90,18 +93,7 @@ impl Repository {
     /// `None` when it is not there, or not UTF-8.
     pub fn text_at(&self, revision: &Revision, path: &Path) -> Result<Option<String>, GitError> {
         let relative = self.relative(path)?;
-        let tree = self.tree_of(revision)?;
-        let Some(entry) = tree
-            .lookup_entry_by_path(&relative)
-            .map_err(GitError::git)?
-        else {
-            return Ok(None);
-        };
-        if !entry.mode().is_blob() {
-            return Ok(None);
-        }
-        let object = entry.object().map_err(GitError::git)?;
-        Ok(object.data.to_str().ok().map(str::to_owned))
+        text_in(&self.tree_of(revision)?, &relative)
     }
 
     /// How `head`'s tree differs from `base`'s, file by file, with renames detected as Git

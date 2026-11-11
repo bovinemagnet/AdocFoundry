@@ -195,17 +195,7 @@ impl Repository {
             return Ok(None);
         }
         let tree = self.repo.head_tree().map_err(GitError::git)?;
-        let Some(entry) = tree
-            .lookup_entry_by_path(&relative)
-            .map_err(GitError::git)?
-        else {
-            return Ok(None);
-        };
-        if !entry.mode().is_blob() {
-            return Ok(None);
-        }
-        let object = entry.object().map_err(GitError::git)?;
-        Ok(object.data.to_str().ok().map(str::to_owned))
+        text_in(&tree, &relative)
     }
 
     /// The text of `path` in the `HEAD` commit as a checkout would write it, line endings,
@@ -305,25 +295,18 @@ impl Repository {
         let mut reference = reference;
         let commit = reference.peel_to_commit().map_err(GitError::git)?;
         let tree = commit.tree().map_err(GitError::git)?;
-        let relative = self.relative(path)?;
-        let Some(entry) = tree
-            .lookup_entry_by_path(&relative)
-            .map_err(GitError::git)?
-        else {
-            return Ok(None);
-        };
-        if !entry.mode().is_blob() {
-            return Ok(None);
-        }
-        let object = entry.object().map_err(GitError::git)?;
-        Ok(object.data.to_str().ok().map(str::to_owned))
+        text_in(&tree, &self.relative(path)?)
     }
 
     /// Who last changed each line of `path`: of `current` when given (lines not in `HEAD` are
     /// not committed), else of the file on disk.
     pub fn blame(&self, path: &Path, current: Option<&str>) -> Result<Vec<BlameLine>, GitError> {
-        let head = self.head_blame(path)?;
-        let head_text = self.head_text_for_worktree(path)?.unwrap_or_default();
+        let head_text = self.head_text_for_worktree(path)?;
+        let head = match head_text {
+            Some(_) => self.blame_in_head(&self.relative(path)?)?,
+            None => Vec::new(),
+        };
+        let head_text = head_text.unwrap_or_default();
         let on_disk;
         let current = match current {
             Some(text) => text,
@@ -340,19 +323,26 @@ impl Repository {
     /// Who last changed each line of `path` as it is in `HEAD`; empty when it is not there.
     pub fn head_blame(&self, path: &Path) -> Result<Vec<BlameLine>, GitError> {
         let relative = self.relative(path)?;
-        if self.head_content(&relative)?.is_none() {
+        if self.repo.head().map_err(GitError::git)?.is_unborn() {
             return Ok(Vec::new());
         }
+        let tree = self.repo.head_tree().map_err(GitError::git)?;
+        let in_head = tree
+            .lookup_entry_by_path(&relative)
+            .map_err(GitError::git)?
+            .is_some_and(|entry| entry.mode().is_blob());
+        if !in_head {
+            return Ok(Vec::new());
+        }
+        self.blame_in_head(&relative)
+    }
+
+    /// The blame of `relative`, a file in `HEAD`.
+    fn blame_in_head(&self, relative: &Path) -> Result<Vec<BlameLine>, GitError> {
         let head = self.repo.head_id().map_err(GitError::git)?.detach();
-        let unix: gix::bstr::BString = relative
-            .components()
-            .map(|component| component.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("/")
-            .into();
         let outcome = self
             .repo
-            .blame_file(unix.as_ref(), head, Default::default())
+            .blame_file(unix_path(relative).as_ref(), head, Default::default())
             .map_err(GitError::git)?;
         let mut commits: BTreeMap<gix::ObjectId, (String, i64, String)> = BTreeMap::new();
         let mut lines = Vec::new();
@@ -699,6 +689,19 @@ impl Repository {
             .map(Path::to_path_buf)
             .map_err(|_| GitError::OutsideWorkdir(path.to_path_buf()))
     }
+}
+
+/// The text of the file at `relative` in `tree`; `None` when it is not there, is not a file, or
+/// is not UTF-8.
+pub(crate) fn text_in(tree: &gix::Tree<'_>, relative: &Path) -> Result<Option<String>, GitError> {
+    let Some(entry) = tree.lookup_entry_by_path(relative).map_err(GitError::git)? else {
+        return Ok(None);
+    };
+    if !entry.mode().is_blob() {
+        return Ok(None);
+    }
+    let object = entry.object().map_err(GitError::git)?;
+    Ok(object.data.to_str().ok().map(str::to_owned))
 }
 
 /// The status of `path` in `files`, added unmodified when it is not there yet.
