@@ -1,6 +1,7 @@
 //! Conformance with the `git` executable: `Repository::stage` leaves the index as `git add` does,
-//! or refuses. Each test builds the same repository twice, stages in one with each, and compares
-//! the index entries and `git status`. Skipped when `git` is absent.
+//! or refuses, and `Repository::unstage` as `git restore --staged` does. Each test builds the same
+//! repository twice, stages in one with each, and compares the index entries, `git status` and
+//! `git write-tree`. Skipped when `git` is absent.
 
 use std::{
     fs,
@@ -60,11 +61,12 @@ fn stage(dir: &Path, paths: &[&str]) -> Result<(), String> {
     repo.stage(&borrowed).map_err(|error| error.to_string())
 }
 
-/// The state of the index and the working tree against it, as `git` reads them.
+/// The state of the index and the working tree against it, as `git` reads them, with the tree a
+/// commit would hold: `write-tree` trusts the index's cached trees, so a stale one shows here.
 fn state(dir: &Path) -> (String, String) {
     (
         git_ok(dir, &["ls-files", "--stage"]),
-        git_ok(dir, &["status", "--porcelain"]),
+        git_ok(dir, &["status", "--porcelain"]) + &git_ok(dir, &["write-tree"]),
     )
 }
 
@@ -79,6 +81,24 @@ fn assert_stages_like_git_add(paths: &[&str], setup: impl Fn(&Path)) -> (String,
     let mut add = vec!["add", "--"];
     add.extend_from_slice(paths);
     git_ok(theirs.path(), &add);
+    let expected = state(theirs.path());
+    assert_eq!(state(ours.path()), expected);
+    expected
+}
+
+/// As `assert_stages_like_git_add`, for `Repository::unstage` and `git restore --staged`.
+fn assert_unstages_like_git_restore(paths: &[&str], setup: impl Fn(&Path)) -> (String, String) {
+    let ours = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    setup(ours.path());
+    setup(theirs.path());
+    let repo = Repository::discover_isolated(ours.path()).unwrap().unwrap();
+    let joined: Vec<_> = paths.iter().map(|path| ours.path().join(path)).collect();
+    let borrowed: Vec<&Path> = joined.iter().map(|path| path.as_path()).collect();
+    repo.unstage(&borrowed).unwrap();
+    let mut restore = vec!["restore", "--staged", "--"];
+    restore.extend_from_slice(paths);
+    git_ok(theirs.path(), &restore);
     let expected = state(theirs.path());
     assert_eq!(state(ours.path()), expected);
     expected
@@ -312,6 +332,47 @@ fn a_removed_file_is_staged_as_deleted() {
         commit_all(dir);
         fs::remove_file(dir.join("page.adoc")).unwrap();
     });
+}
+
+#[test]
+fn changes_in_a_folder_are_staged_so_git_sees_them() {
+    if !has_git() {
+        return;
+    }
+    // A commit leaves the index with cached trees, which staging must not leave stale.
+    let (entries, status) = assert_stages_like_git_add(
+        &["docs/page.adoc", "docs/new.adoc", "docs/gone.adoc"],
+        |dir| {
+            init(dir, &[]);
+            fs::create_dir(dir.join("docs")).unwrap();
+            fs::write(dir.join("docs/page.adoc"), "one\n").unwrap();
+            fs::write(dir.join("docs/gone.adoc"), "gone\n").unwrap();
+            commit_all(dir);
+            fs::write(dir.join("docs/page.adoc"), "two\n").unwrap();
+            fs::write(dir.join("docs/new.adoc"), "new\n").unwrap();
+            fs::remove_file(dir.join("docs/gone.adoc")).unwrap();
+        },
+    );
+    assert!(entries.contains("docs/new.adoc"), "{entries}");
+    assert!(status.contains("M  docs/page.adoc"), "{status}");
+}
+
+#[test]
+fn unstaging_in_a_folder_leaves_no_stale_tree() {
+    if !has_git() {
+        return;
+    }
+    let (_, status) = assert_unstages_like_git_restore(&["docs/page.adoc"], |dir| {
+        init(dir, &[]);
+        fs::create_dir(dir.join("docs")).unwrap();
+        fs::write(dir.join("docs/page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        fs::write(dir.join("docs/page.adoc"), "two\n").unwrap();
+        git_ok(dir, &["add", "docs/page.adoc"]);
+        // Caches the staged tree, which unstaging must not leave behind.
+        git_ok(dir, &["write-tree"]);
+    });
+    assert!(status.starts_with(" M docs/page.adoc"), "{status}");
 }
 
 #[cfg(unix)]

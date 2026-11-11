@@ -380,8 +380,7 @@ impl Repository {
                 name.as_ref(),
             );
         }
-        index.sort_entries();
-        index.write(Default::default()).map_err(GitError::git)
+        write_changed_index(index)
     }
 
     /// The conversions `git add` applies, with the attributes they read. Its drivers are dropped:
@@ -490,8 +489,7 @@ impl Repository {
                 name.as_ref(),
             );
         }
-        index.sort_entries();
-        index.write(Default::default()).map_err(GitError::git)
+        write_changed_index(index)
     }
 
     /// The name and email commits are made with, from the usual configuration scopes.
@@ -653,6 +651,15 @@ fn worktree_change(
         EntryStatus::IntentToAdd => Some(Change::Added),
         EntryStatus::NeedsUpdate(_) => None,
     }
+}
+
+/// Writes `index` after its entries changed. Its cached trees (the `TREE` extension) are dropped,
+/// since `gix` writes them as read and Git trusts them: `git write-tree`, `git commit` and
+/// `git status` would see the trees `HEAD` had. Git builds them again on its next commit.
+fn write_changed_index(mut index: gix::index::File) -> Result<(), GitError> {
+    index.sort_entries();
+    index.remove_tree();
+    index.write(Default::default()).map_err(GitError::git)
 }
 
 /// A relative platform path as Git writes it, `/`-separated.
