@@ -6290,6 +6290,72 @@ fn find_references_lists_them_by_file_and_opens_one(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn inspect_attribute_shows_where_its_value_comes_from_and_opens_one(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let write = |path: &str, text: &str| {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write(
+        "docs/antora.yml",
+        "name: guide\nversion: '1.0'\nasciidoc:\n  attributes:\n    edition: Standard@\n",
+    );
+    let text = "= Index\n:edition: Enterprise\n\nThe {edition} edition.\n";
+    write("docs/modules/ROOT/pages/index.adoc", text);
+    let page = root.join("docs/modules/ROOT/pages/index.adoc");
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx.new(|cx| {
+            WorkspaceView::new(
+                app.clone(),
+                Some(root.clone()),
+                vec![page.clone()],
+                window,
+                cx,
+            )
+        });
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| {
+            app.read(cx).engine.active().is_some() && !app.read(cx).engine.is_indexing()
+        })
+    }));
+    source_caret(&workspace, text.find("{edition}").unwrap() + 2, &mut cx);
+
+    cx.dispatch_action(crate::editor::bindings::InspectAttribute);
+    cx.run_until_parked();
+    let rows = cx.update(|_, cx| workspace.read(cx).attribute_for_test(cx));
+    assert_eq!(
+        rows,
+        [
+            "edition is “Enterprise” here",
+            "antora.yml  Standard  soft set, overridden by this page  docs/antora.yml:5",
+            "✓ This page  Enterprise  wins  docs/modules/ROOT/pages/index.adoc:2",
+        ]
+    );
+
+    // A click opens antora.yml at the attribute.
+    click("attribute-row-0", &mut cx);
+    let opened = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .path
+            .clone()
+    });
+    assert!(opened.ends_with("docs/antora.yml"), "{opened:?}");
+}
+
+#[gpui::test]
 fn go_to_symbol_opens_a_section_in_another_component(cx: &mut TestAppContext) {
     init(cx);
     let directory = tempfile::tempdir().unwrap();

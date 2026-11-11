@@ -160,6 +160,24 @@ fn map_includes(
     }
 }
 
+/// Where the include `target`, written in the file at `path` (`document` its parse), leads
+/// while composing a page in Antora context `page`, as [`composed_files`] resolves it.
+pub(crate) fn resolve_in_page(
+    index: &WorkspaceIndex,
+    antora: &AntoraCatalog,
+    page: Option<&AntoraContext>,
+    path: &Path,
+    document: &Document,
+    target: &str,
+) -> Option<PathBuf> {
+    let own = antora.context_for_path(path);
+    let contexts = Contexts {
+        page,
+        file: own.as_ref().or(page),
+    };
+    resolve_target(index, antora, contexts, path, document, target)
+}
+
 fn resolve_target(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,

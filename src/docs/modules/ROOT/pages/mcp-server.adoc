@@ -459,9 +459,21 @@ Each has:
 * `defined_in`, where it is declared.
 * `range`, for an attribute declared in the page.
 
-`effective_values` is `unknown`.
-The value a build sees also depends on the playbook, the command line, soft and hard sets, and the order of declarations.
-These are not yet traced (issue #99), so no effective value is given or invented.
+`effective_values` is `at_header_end`.
+`effective` lists each attribute that the playbook, the component or the page sets, with its value at the end of the page's header, which is its first blank line.
+Each has:
+
+* `name`.
+* `value`, which is null when the attribute is unset.
+* `unset`, true when it is unset.
+* `dynamic`, true when the value contains `+{+`.
+* `source`, which is `playbook`, `component`, `page`, `antora` or `built_in`.
+* `defined_in`, the root-relative path of the file that gives the value, or null.
+* `range`, the byte range of the declaration, or null.
+
+The values follow Antora's rules for soft and hard sets, as Inspect Attribute does: see xref:using-the-editor.adoc#inspect-attribute[Inspect attribute].
+The Antora command line and environment, `ifdef` and `ifeval` around a declaration, and attribute references inside a value are not traced.
+`declared` is unchanged: it lists the declarations as written.
 
 [#quality-audit]
 == Auditing quality

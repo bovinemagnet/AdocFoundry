@@ -10,8 +10,8 @@ use adoc_core::{Document, ReferenceKind, SourceRange};
 use adoc_index::{normalize_path, WorkspaceIndex};
 
 use crate::{
-    attributes::{attribute_definitions, AttributeSource},
     definition::{definition_at_offset, DefinitionTarget},
+    effective::{resolve, Origin},
     images::resolve_image,
 };
 
@@ -115,6 +115,8 @@ pub(crate) fn attribute_reference_at(text: &str, offset: usize) -> Option<(&str,
     Some((name, SourceRange::new(open, close + 1)))
 }
 
+/// The attribute's value at the reference and the step that gives it, resolved as the
+/// effective-context inspector resolves it.
 fn attribute_hover(
     index: &WorkspaceIndex,
     antora: &AntoraCatalog,
@@ -123,24 +125,35 @@ fn attribute_hover(
     name: &str,
     range: SourceRange,
 ) -> Option<HoverContent> {
-    let definition = attribute_definitions(index, antora, current_path, document)
-        .into_iter()
-        .find(|definition| definition.name == name)?;
-    let value = definition.value.unwrap_or_default();
-    let summary = match definition.source {
-        AttributeSource::BuiltIn => format!("`{{{name}}}`: {value}"),
-        _ if value.is_empty() => format!("`{{{name}}}` is set, with no value"),
-        _ => format!("`{{{name}}}` = `{value}`"),
+    let resolution = resolve(index, antora, current_path, document, name, range.start);
+    let step = resolution.winning_step()?;
+    let summary = match (&step.origin, step.value.as_deref()) {
+        (_, None) => format!("`{{{name}}}` is unset"),
+        (Origin::BuiltIn, Some(value)) => format!("`{{{name}}}`: {value}"),
+        (_, Some("")) => format!("`{{{name}}}` is set, with no value"),
+        (_, Some(value)) => format!("`{{{name}}}` = `{value}`"),
     };
-    let origin = match &definition.source {
-        AttributeSource::Document => "Declared in this document".to_owned(),
-        AttributeSource::Included(path) => {
-            format!("Declared in `{}`", display_path(path, current_path))
-        }
-        AttributeSource::Component => "Set in the component's `antora.yml`".to_owned(),
-        AttributeSource::Playbook => "Set in the site's `antora-playbook.yml`".to_owned(),
-        AttributeSource::Antora => "Set by Antora for this page".to_owned(),
-        AttributeSource::BuiltIn => "Asciidoctor built-in".to_owned(),
+    let origin = match &step.origin {
+        Origin::Declaration => match &step.location {
+            Some(location) if normalize_path(&location.path) != normalize_path(current_path) => {
+                format!(
+                    "Declared in `{}`",
+                    display_path(&location.path, current_path)
+                )
+            }
+            _ => "Declared in this document".to_owned(),
+        },
+        Origin::Component => "Set in the component's `antora.yml`".to_owned(),
+        Origin::Playbook => "Set in the site's `antora-playbook.yml`".to_owned(),
+        Origin::Antora => "Set by Antora for this page".to_owned(),
+        Origin::BuiltIn => "Asciidoctor built-in".to_owned(),
+    };
+    let origin = if step.value.is_none() {
+        origin
+            .replacen("Set in", "Unset in", 1)
+            .replacen("Declared in", "Unset in", 1)
+    } else {
+        origin
     };
     Some(HoverContent {
         markdown: format!("{summary}\n\n{origin}"),
@@ -148,7 +161,6 @@ fn attribute_hover(
     })
 }
 
-/// The title of the section `anchor` leads to in the target file.
 fn section_title<'a>(
     index: &'a WorkspaceIndex,
     target: &DefinitionTarget,
@@ -476,6 +488,39 @@ mod tests {
             "{built_in:?}"
         );
         assert!(built_in.markdown.contains("built-in"), "{built_in:?}");
+    }
+
+    #[test]
+    fn a_hard_set_component_value_wins_over_the_page_header() {
+        let root = adoc_index::normalize_path(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures/effective-attributes"),
+        );
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let antora = discover_antora_workspace(std::slice::from_ref(&root))
+            .unwrap()
+            .catalog;
+        let page = root.join("docs/modules/ROOT/pages/index.adoc");
+        let text = std::fs::read_to_string(&page).unwrap();
+
+        let product = hover(&mut index, &antora, &page, &text, "{product}").expect("a hover");
+        assert!(product.markdown.contains("`Guide`"), "{product:?}");
+        assert!(product.markdown.contains("antora.yml"), "{product:?}");
+
+        let unset = hover(
+            &mut index,
+            &antora,
+            &page,
+            "= Index\n:edition!:\n\n{edition}\n",
+            "{edition}",
+        )
+        .expect("a hover");
+        assert!(unset.markdown.contains("is unset"), "{unset:?}");
+        assert!(
+            unset.markdown.contains("Unset in this document"),
+            "{unset:?}"
+        );
     }
 
     #[test]

@@ -159,6 +159,9 @@ pub enum CommandOutcome {
     Preview(EditPreview),
     /// The references to an anchor or a page, in file order.
     References(Vec<crate::SearchMatch>),
+    /// Where the value of the attribute at the offset comes from; None when there is no
+    /// attribute there.
+    Attribute(Option<Box<crate::AttributeInspection>>),
     /// Sections, anchors and page titles to go to.
     Symbols(Vec<crate::SymbolMatch>),
     /// The selection after a visual command, as source offsets.

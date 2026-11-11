@@ -12,7 +12,7 @@ mod resource_id;
 pub use catalog::{
     compare_component_versions, compare_versions, AntoraCatalog, ReloadReport, Resolved,
 };
-pub use component::ComponentDescriptor;
+pub use component::{AttributeEntry, ComponentDescriptor};
 pub use descriptor::{
     check_component_descriptor, parse_component_descriptor, read_component_descriptor,
     DescriptorError, DescriptorErrorKind,

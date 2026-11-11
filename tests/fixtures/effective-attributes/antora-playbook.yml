@@ -1,0 +1,12 @@
+site:
+  title: Effective attributes
+content:
+  sources:
+  - url: .
+    start_path: docs
+asciidoc:
+  attributes:
+    company: Foundry Ltd
+    product: Playbook Product@
+    support: false
+    locked: site

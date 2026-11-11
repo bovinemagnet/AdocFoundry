@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use adoc_core::{LineIndex, SourceRange};
 use adoc_engine::{
-    AntoraCoordinate, DefinitionTarget, DocumentSymbol, DocumentSymbolKind, ReferenceKind,
-    ResourceFamily, ResourceQuery,
+    AntoraCoordinate, AttributeOrigin, DefinitionTarget, DocumentSymbol, DocumentSymbolKind,
+    ReferenceKind, ResourceFamily, ResourceQuery,
 };
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
@@ -352,7 +352,7 @@ impl Server {
     }
 
     #[tool(
-        description = "A page's context without its text: its Antora identity, where its version's navigation lists it, the includes it makes and what they resolve to, how many references of each kind reach it, and the attributes declared for it. Effective attribute values are reported as unknown: a declaration is not proof of the value a build sees.",
+        description = "A page's context without its text: its Antora identity, where its version's navigation lists it, the includes it makes and what they resolve to, how many references of each kind reach it, the attributes declared for it as written, and each attribute's effective value at the end of the page's header with where it comes from (playbook, component or page), following Antora's hard and soft sets and the order of declarations.",
         output_schema = schemas::get_page_context(),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -463,13 +463,38 @@ impl Server {
                         "range": range(attribute.range),
                     }));
                 }
+                let effective: Vec<Value> = engine
+                    .effective_values(&path)
+                    .into_iter()
+                    .map(|found| {
+                        json!({
+                            "name": found.name,
+                            "value": found.value,
+                            "unset": found.value.is_none(),
+                            "dynamic": found.value.as_deref().is_some_and(|value| value.contains('{')),
+                            "source": match found.origin {
+                                AttributeOrigin::BuiltIn => "built_in",
+                                AttributeOrigin::Playbook => "playbook",
+                                AttributeOrigin::Component => "component",
+                                AttributeOrigin::Antora => "antora",
+                                AttributeOrigin::Declaration => "page",
+                            },
+                            "defined_in": found.location.as_ref().map(|location| state.shown(&location.path)),
+                            "range": found.location.as_ref().map_or(Value::Null, |location| range(location.range)),
+                        })
+                    })
+                    .collect();
                 value["attributes"] = json!({
-                    "effective_values": "unknown",
-                    "note": "Each value is as declared. The value a build sees also depends on \
-                             the playbook, the command line, soft and hard sets and the order of \
-                             declarations, which are not yet traced (issue #99), so no \
-                             effective value is given.",
+                    "effective_values": "at_header_end",
+                    "note": "`declared` lists each declaration as written. `effective` gives each \
+                             attribute the playbook, the component or the page sets, with its value \
+                             at the end of the page's header and where that value comes from, \
+                             following Antora's hard and soft sets and the order of declarations. \
+                             Not traced: the command line, conditionals around a declaration, \
+                             include tag filters, and references inside a value, which is given \
+                             as written.",
                     "declared": declared,
+                    "effective": effective,
                 });
             }
             if args.text.unwrap_or(false) {

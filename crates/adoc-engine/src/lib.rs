@@ -5,6 +5,7 @@
 
 mod about;
 mod appearance;
+mod attribute_inspection;
 mod auto_save;
 mod clock;
 mod command;
@@ -85,9 +86,16 @@ pub use about::{About, Notice, Notices, DOCUMENTATION};
 pub use adoc_audit as audit;
 /// The documentation impact analysis, for front ends, which never name the crate.
 pub use adoc_impact as impact;
+pub use adoc_lang::effective::{
+    EffectiveAttribute, IncluderValue, Origin as AttributeOrigin, Outcome as AttributeOutcome,
+    Resolution as AttributeResolution, Step as AttributeStep,
+};
 #[cfg(feature = "typst")]
 pub use adoc_pdf::{PageAnchor, PreviewPage};
 pub use appearance::AppearanceChoice;
+pub use attribute_inspection::{
+    AttributeInspection, EffectiveValue, InspectionRow, InspectionRowKind,
+};
 pub use auto_save::AUTO_SAVE_DELAY;
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use command::{

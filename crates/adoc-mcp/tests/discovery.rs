@@ -340,8 +340,33 @@ fn mcp_page_context_distinguishes_known_and_unknown_attributes() {
     assert_eq!(context["title"], "Product");
     assert!(context.get("text").is_none(), "no text unless asked");
 
-    // What is declared is given as written; what a build would see is not claimed.
-    assert_eq!(context["attributes"]["effective_values"], "unknown");
+    // What is declared is given as written; what a build sees at the end of the header is
+    // traced separately.
+    assert_eq!(context["attributes"]["effective_values"], "at_header_end");
+    let effective = |name: &str| -> Value {
+        context["attributes"]["effective"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|attribute| attribute["name"] == name)
+            .cloned()
+            .unwrap_or_else(|| panic!("no effective {name}: {context}"))
+    };
+    assert_eq!(effective("product-name")["value"], "Widget");
+    assert_eq!(effective("product-name")["source"], "page");
+    assert_eq!(
+        effective("product-name")["defined_in"],
+        "product/main/modules/ROOT/pages/index.adoc"
+    );
+    assert_eq!(effective("company")["value"], "Acme");
+    assert_eq!(effective("company")["source"], "component");
+    assert_eq!(
+        effective("company")["defined_in"],
+        "product/main/antora.yml"
+    );
+    assert!(effective("company")["range"]["start"].as_u64().is_some());
+    assert_eq!(effective("edition")["value"], "{company} Cloud");
+    assert_eq!(effective("edition")["dynamic"], true);
     let product = declared(&context, "product-name");
     assert_eq!(product["value"], "Widget");
     assert_eq!(product["source"], "page");

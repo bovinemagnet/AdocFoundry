@@ -42,6 +42,7 @@ use gpui_component::{
 
 use crate::{
     app::{open_secondary_window, AppState, WindowKind},
+    attribute_view::{AttributeEvent, AttributeView},
     editor::{bindings::*, language, SourceEditorEvent, SourceEditorView},
     graph_view::{GraphMode, GraphView},
     image_view::{ActualSize, FitToWindow, ImageView, ZoomIn, ZoomOut},
@@ -245,6 +246,9 @@ pub struct WorkspaceView {
     /// Find References' results, shown in the search panel's place.
     references: Entity<ReferencesView>,
     show_references: bool,
+    /// Inspect Attribute's result, shown in the search panel's place.
+    attribute: Entity<AttributeView>,
+    show_attribute: bool,
     palette: Entity<CommandState>,
     /// The ☰ application menu in the title bar.
     app_menu: Entity<AppMenu>,
@@ -490,7 +494,8 @@ impl WorkspaceView {
         });
         let workspace = cx.weak_entity();
         let search = cx.new(|cx| SearchView::new(app.clone(), workspace.clone(), window, cx));
-        let references = cx.new(|_| ReferencesView::new(app.clone(), workspace));
+        let references = cx.new(|_| ReferencesView::new(app.clone(), workspace.clone()));
+        let attribute = cx.new(|_| AttributeView::new(app.clone(), workspace));
         // Following the system, the theme changes when the system's appearance does.
         subscriptions.push(cx.observe_window_appearance(window, |this, window, cx| {
             if this.app.read(cx).engine.settings().appearance.mode == ThemePreference::Auto {
@@ -500,6 +505,12 @@ impl WorkspaceView {
         subscriptions.push(cx.subscribe(&references, |this, _, event, cx| match event {
             ReferencesEvent::Close => {
                 this.show_references = false;
+                cx.notify();
+            }
+        }));
+        subscriptions.push(cx.subscribe(&attribute, |this, _, event, cx| match event {
+            AttributeEvent::Close => {
+                this.show_attribute = false;
                 cx.notify();
             }
         }));
@@ -554,6 +565,8 @@ impl WorkspaceView {
             show_search: false,
             references,
             show_references: false,
+            attribute,
+            show_attribute: false,
             palette: cx.new(|cx| CommandState::new(window, cx)),
             app_menu,
             preview,
@@ -3266,9 +3279,46 @@ impl WorkspaceView {
             self.references
                 .update(cx, |references, cx| references.show(found, cx));
             self.show_references = true;
+            self.show_attribute = false;
             self.show_search = false;
             cx.notify();
         }
+    }
+
+    /// Shows where the value of the attribute at the caret comes from, in the panel below the
+    /// editor.
+    fn on_inspect_attribute(
+        &mut self,
+        _: &InspectAttribute,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((id, offset)) = self.caret(cx) else {
+            return;
+        };
+        if let Some(CommandOutcome::Attribute(found)) = self.invoke(
+            ids::NAVIGATE_INSPECT_ATTRIBUTE,
+            CommandArgs::Offset { id, offset },
+            window,
+            cx,
+        ) {
+            let found = found.clone().map(|found| *found);
+            self.attribute
+                .update(cx, |attribute, cx| attribute.show(found, cx));
+            self.show_attribute = true;
+            self.show_references = false;
+            self.show_search = false;
+            cx.notify();
+        }
+    }
+
+    /// The Inspect Attribute panel's rows, as shown.
+    #[cfg(test)]
+    pub fn attribute_for_test(&self, cx: &App) -> Vec<String> {
+        if !self.show_attribute {
+            return Vec::new();
+        }
+        self.attribute.read(cx).rows_for_test()
     }
 
     /// The Find References panel's rows, as shown.
@@ -3345,6 +3395,7 @@ impl WorkspaceView {
     fn on_find(&mut self, _: &FindInWorkspace, window: &mut Window, cx: &mut Context<Self>) {
         self.show_search = true;
         self.show_references = false;
+        self.show_attribute = false;
         self.search
             .update(cx, |search, cx| search.focus(window, cx));
         cx.notify();
@@ -4160,6 +4211,7 @@ impl WorkspaceView {
             self.references
                 .update(cx, |references, cx| references.show(found, cx));
             self.show_references = true;
+            self.show_attribute = false;
             self.show_search = false;
             cx.notify();
         }
@@ -5435,6 +5487,7 @@ impl Render for WorkspaceView {
         let has_tabs = !self.app.read(cx).engine.tab_order().is_empty();
         let show_search = self.show_search;
         let show_references = self.show_references;
+        let show_attribute = self.show_attribute;
         let layout = self.app.read(cx).engine.preview_layout();
         let docked_preview = (layout.visible && !layout.detached).then(|| self.preview.clone());
         let center = v_flex()
@@ -5459,6 +5512,9 @@ impl Render for WorkspaceView {
             })
             .when(show_references, |center| {
                 center.child(div().h(px(280.)).child(self.references.clone()))
+            })
+            .when(show_attribute, |center| {
+                center.child(div().h(px(280.)).child(self.attribute.clone()))
             })
             .into_any_element();
 
@@ -5535,6 +5591,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_replace))
             .on_action(cx.listener(Self::on_rename))
             .on_action(cx.listener(Self::on_find_references))
+            .on_action(cx.listener(Self::on_inspect_attribute))
             .on_action(cx.listener(Self::on_go_to_symbol))
             .on_action(cx.listener(Self::on_go_to_symbol_in_page))
             .on_action(cx.listener(Self::on_rename_anchor))

@@ -927,6 +927,88 @@ Clicking a reference opens that page at the reference, in the preview tab, as cl
 The close button closes the panel, and opening Find in Workspace replaces it.
 
 Find References acts at the caret in the source editor.
+
+[[inspect-attribute]]
+=== Inspect attribute
+
+Inspect Attribute (`navigate.inspect_attribute`) shows the value an attribute has at the caret, and why.
+It is in the Go menu, after Find References, and in the command palette.
+It has no default key binding.
+
+Put the caret on an attribute reference (`+{name}+`), on an attribute entry line (`+:name: value+`, `+:name!:+` or `+:!name:+`), or on a name in `+ifdef::a,b[]+` or `+ifndef::a+b[]+`.
+The result appears in a panel below the editor, in the place of the Find References panel.
+
+The summary line gives the value at the caret, for example `edition is “Enterprise” here`, `edition is unset here` or `edition is not set here`.
+Under it is one row for each place that sets or unsets the attribute, in the order they apply:
+
+. Asciidoctor's default, for a built-in attribute.
+. The playbook (`asciidoc.attributes` in `antora-playbook.yml`).
+. The component version's `antora.yml`.
+. The attributes Antora sets on each page: `page-component-name`, `page-module`, `page-component-version` and the family directories.
+. The attribute entries in the page and in the files it includes.
+An included file's entries count at the place of its `include::` line.
+
+Each row shows the source, the value, a status and `path:line`.
+The status is one of these:
+
+[cols="1,3"]
+|===
+|`wins`
+|This row gives the value at the caret. It is ticked and bold.
+
+|`overridden by <source>`
+|A later source replaces it.
+
+|`ignored: <source> hard sets it`
+|The source named hard sets the attribute, so this declaration has no effect. It reads `hard unsets it` for an unset.
+
+|`after this point`
+|The declaration is after the caret, so it does not affect the value there.
+|===
+
+A playbook or `antora.yml` row also says `soft set`, `hard set`, `soft unset` or `hard unset`.
+The rules are Antora's:
+
+* A value in the playbook or `antora.yml` is hard set unless it ends in `@`, which makes it a soft set.
+* `false` is a soft unset, and `~` is a hard unset.
+* A component's attribute applies only when the playbook does not name it, or names it soft.
+* A declaration in a page applies only when what reaches it from above is soft or absent.
+* Within the page, declarations apply in document order, and the value at the caret is the last that applies before it.
+
+For example, take this `antora.yml`:
+
+[source,yaml]
+----
+asciidoc:
+  attributes:
+    edition: Standard@
+    product: Guide
+----
+
+and this page header:
+
+[source,asciidoc]
+----
+= Overview
+:edition: Enterprise
+:product: Handbook
+----
+
+Inspect Attribute on `edition` gives `edition is “Enterprise” here`.
+The `antora.yml` row says `soft set` and `overridden by this page`, and the page's row `wins`, because a soft set can be replaced.
+On `product` it gives `product is “Guide” here`.
+The `antora.yml` row says `hard set` and `wins`, and the page's row says `ignored: antora.yml hard sets it`.
+
+In a partial, a section headed "In the pages that include this file" lists each page that includes it, directly or through other partials.
+For each it gives the value at the caret in that page and where the value comes from.
+
+Clicking a row opens the file at the place the declaration is written.
+
+Inspect Attribute does not trace the Antora command line or environment, `ifdef` or `ifeval` around a declaration, include tag filters, or attribute references inside a value, which are shown as written.
+
+Hover on an attribute reference and Go to Definition use the same resolution.
+A page header's declaration of an attribute that `antora.yml` hard sets is therefore not shown as the value.
+
 [#go-to-symbol]
 == Go to symbol
 

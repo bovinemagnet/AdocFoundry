@@ -7,6 +7,7 @@ pub mod attributes;
 pub mod completion;
 pub mod definition;
 pub mod diagnostics;
+pub mod effective;
 pub mod graph;
 pub mod hover;
 pub mod images;
@@ -117,57 +118,19 @@ fn is_external(ws: &WorkspaceState, target: &Path) -> bool {
         })
 }
 
-/// Where the attribute referenced at `offset` is declared, if it is declared in a file.
+/// Where the attribute referenced at `offset` gets its value there: the step that wins, as the
+/// effective-context inspector resolves it, when it is written in a file.
 fn attribute_definition(
     ws: &WorkspaceState,
     path: &Path,
     document: &Document,
     offset: usize,
 ) -> Option<Location> {
-    let (name, _) = hover::attribute_reference_at(&document.text, offset)?;
-    let declared_in = |file: &Path, doc: &Document| {
-        doc.attributes
-            .iter()
-            .find(|attribute| attribute.name == name)
-            .map(|attribute| Location {
-                path: normalize_path(file),
-                range: attribute.range,
-            })
-    };
-    if let Some(location) = declared_in(path, document) {
-        return Some(location);
-    }
-    let context = ws.antora.context_for_path(path);
-    for included in includes::composed_files(&ws.index, &ws.antora, context.as_ref(), path) {
-        if let Some(file) = ws.index.file(&included) {
-            if let Some(location) = declared_in(&included, &file.document) {
-                return Some(location);
-            }
-        }
-    }
-    context.as_ref()?;
-    // The same precedence `attributes::attribute_definitions` applies.
-    match attributes::attribute_definitions(&ws.index, &ws.antora, path, document)
-        .into_iter()
-        .find(|definition| definition.name == name)?
-        .source
-    {
-        attributes::AttributeSource::Playbook => ws.antora.playbook().map(|playbook| Location {
-            path: playbook.path.clone(),
-            range: SourceRange::new(0, 0),
-        }),
-        attributes::AttributeSource::Component => {
-            let context = context?;
-            let component = ws
-                .antora
-                .component(&context.component, context.version.as_deref())?;
-            Some(Location {
-                path: component.root.join("antora.yml"),
-                range: SourceRange::new(0, 0),
-            })
-        }
-        _ => None,
-    }
+    let (name, range) = hover::attribute_reference_at(&document.text, offset)?;
+    effective::resolve(&ws.index, &ws.antora, path, document, name, range.start)
+        .winning_step()?
+        .location
+        .clone()
 }
 
 fn contains(range: SourceRange, offset: usize) -> bool {

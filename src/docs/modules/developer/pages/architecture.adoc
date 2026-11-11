@@ -35,7 +35,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L1
 |`adoc-antora`
-|`antora.yml` and playbook parsing, `AntoraCatalog`, resource-ID parsing for `version@component:module:family$path`, the resolver, page aliases, descriptor reload, navigation trees, and the playbook's content sources (`ContentSource`) with the table of versions per branch (`PublishedVersions`).
+|`antora.yml` and playbook parsing, `AntoraCatalog`, resource-ID parsing for `version@component:module:family$path`, the resolver, page aliases, descriptor reload, navigation trees, and the playbook's content sources (`ContentSource`) with the table of versions per branch (`PublishedVersions`). `Playbook` and `ComponentDescriptor` give their `asciidoc.attributes` as `AttributeEntry`s (`attribute_entries`), unsets included, each with the range of its key.
 
 |L1
 |`adoc-index`
@@ -43,7 +43,7 @@ acdc reads line ends as `\n`, so a page or include written with CRLF is given to
 
 |L1
 |`adoc-lang`
-|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it. It also finds references (`references_at`, `page_references`, `includes_of`) and renames anchors (`rename_anchor`), and `graph::links_from` resolves the xrefs and includes of one file for the link graph.
+|Editor-agnostic language features on byte offsets: definition, hover, completion, diagnostics, document and workspace symbols, and attribute resolution. Both `adoc-ls` and `adoc-engine` call it. It also finds references (`references_at`, `page_references`, `includes_of`) and renames anchors (`rename_anchor`), and `graph::links_from` resolves the xrefs and includes of one file for the link graph. Its `effective` module resolves an attribute's value at a place by Antora's rules (`effective_attribute`, `resolve`, and `attribute_name_at` for the name under the caret), and hover and definition use it.
 
 |L1
 |`adoc-math`

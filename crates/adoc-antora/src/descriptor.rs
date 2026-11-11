@@ -4,7 +4,7 @@ use adoc_core::{Diagnostic, DiagnosticCode, DiagnosticSeverity, SourceRange};
 use serde::{de::IgnoredAny, Deserialize};
 use serde_saphyr::Spanned;
 
-use crate::ComponentDescriptor;
+use crate::{AttributeEntry, ComponentDescriptor};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DescriptorErrorKind {
@@ -79,6 +79,7 @@ pub fn parse_component_descriptor(
         start_page: raw.start_page,
         nav: raw.nav.map_or_else(Vec::new, OneOrMany::into_vec),
         asciidoc_attributes,
+        attribute_entries: attribute_entries(source),
         // Antora accepts `true` or a string such as `-beta`, which also marks a prerelease.
         prerelease: match raw.prerelease {
             Some(ScalarValue::Boolean(prerelease)) => prerelease,
@@ -214,6 +215,52 @@ struct AttributesCheck {
 struct AsciidocCheck {
     #[serde(default)]
     attributes: BTreeMap<String, Spanned<ScalarValue>>,
+}
+
+/// Every key under `asciidoc.attributes` in `source`, a component descriptor or a playbook,
+/// with its strength and the range of its name. A list or mapping, which Antora cannot use, is
+/// left out.
+pub(crate) fn attribute_entries(source: &str) -> BTreeMap<String, AttributeEntry> {
+    let attributes = serde_saphyr::from_str::<AttributesCheck>(source)
+        .ok()
+        .and_then(|check| check.asciidoc)
+        .map(|asciidoc| asciidoc.attributes)
+        .unwrap_or_default();
+    attributes
+        .into_iter()
+        .filter_map(|(name, value)| {
+            let at = value_range(source, &value.referenced);
+            let range = key_before(source, &name, at.start).unwrap_or(at);
+            let (value, soft) = match value.value {
+                ScalarValue::Other(_) => return None,
+                ScalarValue::Null => (None, false),
+                ScalarValue::Boolean(false) => (None, true),
+                ScalarValue::Boolean(true) => (Some(String::new()), false),
+                written => {
+                    let written = written.into_string();
+                    match written.strip_suffix('@') {
+                        Some(soft) => (Some(soft.to_owned()), true),
+                        None => (Some(written), false),
+                    }
+                }
+            };
+            Some((name, AttributeEntry { value, soft, range }))
+        })
+        .collect()
+}
+
+/// The range of the mapping key `name` written last before `before`, quoted or not.
+fn key_before(source: &str, name: &str, before: usize) -> Option<SourceRange> {
+    let head = &source[..before.min(source.len())];
+    [
+        format!("{name}:"),
+        format!("\"{name}\":"),
+        format!("'{name}':"),
+    ]
+    .iter()
+    .filter_map(|key| head.rfind(key.as_str()).map(|start| (start, key.len() - 1)))
+    .max_by_key(|(start, _)| *start)
+    .map(|(start, length)| SourceRange::new(start, start + length))
 }
 
 fn diagnostic(
@@ -353,7 +400,32 @@ impl ScalarValue {
 mod tests {
     use std::path::Path;
 
+    use adoc_core::SourceRange;
+
     use super::{check_component_descriptor, parse_component_descriptor, DescriptorErrorKind};
+    use crate::AttributeEntry;
+
+    #[test]
+    fn records_every_attribute_entry_with_its_strength_and_place() {
+        let source = "name: guide\nversion: '1.0'\nasciidoc:\n  attributes:\n    product: Guide\n    edition: pro@\n    draft: false\n    beta: ~\n    flag: true\n";
+        let descriptor = parse_component_descriptor(Path::new("docs"), source).unwrap();
+        let entries = &descriptor.attribute_entries;
+        let key = |name: &str| {
+            let start = source.find(&format!("    {name}:")).unwrap() + 4;
+            SourceRange::new(start, start + name.len())
+        };
+        let entry = |value: Option<&str>, soft: bool, name: &str| AttributeEntry {
+            value: value.map(str::to_owned),
+            soft,
+            range: key(name),
+        };
+        assert_eq!(entries["product"], entry(Some("Guide"), false, "product"));
+        assert_eq!(entries["edition"], entry(Some("pro"), true, "edition"));
+        assert_eq!(entries["draft"], entry(None, true, "draft"));
+        assert_eq!(entries["beta"], entry(None, false, "beta"));
+        assert_eq!(entries["flag"], entry(Some(""), false, "flag"));
+        assert_eq!(entries.len(), 5);
+    }
 
     #[test]
     fn parses_supported_descriptor_fields() {
