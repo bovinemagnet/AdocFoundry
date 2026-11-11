@@ -47,10 +47,7 @@ fn text(engine: &Engine, id: adoc_engine::DocumentId) -> String {
 
 fn html(engine: &mut Engine, id: adoc_engine::DocumentId) -> String {
     let rendered = engine.render_blocking(id, Duration::from_secs(10)).unwrap();
-    adoc_render::to_html(
-        &rendered.view,
-        &adoc_render::HtmlOptions { standalone: false },
-    )
+    adoc_render::to_html(&rendered.view, &adoc_render::HtmlOptions::default())
 }
 
 fn format(

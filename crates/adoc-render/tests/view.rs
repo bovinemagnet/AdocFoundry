@@ -319,7 +319,13 @@ fn resolves_antora_images() {
 #[test]
 fn html_contains_every_block_kind() {
     let (_, _, view) = corpus();
-    let html = to_html(&view, &HtmlOptions { standalone: true });
+    let html = to_html(
+        &view,
+        &HtmlOptions {
+            standalone: true,
+            ..HtmlOptions::default()
+        },
+    );
     for class in [
         "class=\"sect1\"",
         "class=\"sectionbody\"",
@@ -517,7 +523,13 @@ fn html_writes_font_icons_as_asciidoctor_does() {
         "{html}"
     );
     // A standalone page has no icon font: there the title shows in the icon's place.
-    let page = to_html(&view, &HtmlOptions { standalone: true });
+    let page = to_html(
+        &view,
+        &HtmlOptions {
+            standalone: true,
+            ..HtmlOptions::default()
+        },
+    );
     assert!(page.contains("content:attr(title)"), "{page}");
 
     // Without `icons=font`, labels and icons are text.

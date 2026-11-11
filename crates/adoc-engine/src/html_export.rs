@@ -88,19 +88,80 @@ impl Engine {
             .then(|| self.clock.now())
     }
 
+    /// The site's address: `[pdf] site_url`, else the playbook's `site.url`.
+    pub(crate) fn site_url(&self) -> Option<String> {
+        self.settings.pdf.site_url.clone().or_else(|| {
+            self.workspace
+                .antora
+                .playbook()
+                .and_then(|playbook| playbook.site_url.clone())
+        })
+    }
+
+    /// Options for writing a page as HTML: whole, or its content alone, with xrefs to other
+    /// pages leading to their published addresses when the site's address is known, else to
+    /// where each page's own export would sit beside its source.
+    #[must_use]
+    pub fn html_options(&self, standalone: bool) -> HtmlOptions {
+        HtmlOptions {
+            standalone,
+            page_urls: self
+                .site_url()
+                .as_deref()
+                .map(|site| self.page_urls(site))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The published address of every page in the catalogue, as Antora lays out a site:
+    /// `<site>/<component>/<version>/<module>/<page>.html`, without `ROOT` or `~`.
+    pub(crate) fn page_urls(&self, site: &str) -> std::collections::HashMap<PathBuf, String> {
+        let site = site.trim_end_matches('/');
+        self.workspace
+            .antora
+            .resources()
+            .filter(|resource| resource.coordinate.family == crate::ResourceFamily::Page)
+            .map(|resource| {
+                let coordinate = &resource.coordinate;
+                let mut url = format!("{site}/{}", coordinate.component);
+                if let Some(version) = coordinate
+                    .version
+                    .as_deref()
+                    .filter(|version| *version != "~")
+                {
+                    url.push('/');
+                    url.push_str(version);
+                }
+                if coordinate.module != "ROOT" {
+                    url.push('/');
+                    url.push_str(&coordinate.module);
+                }
+                let page = coordinate
+                    .relative_path
+                    .with_extension("html")
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                url.push('/');
+                url.push_str(&page);
+                (resource.source_path.clone(), url)
+            })
+            .collect()
+    }
+
     fn write_html(&mut self, preview: Arc<RenderedPreview>, output: PathBuf) {
         let sender = self.worker_sender.clone();
         self.workers_running += 1;
         let written = output.clone();
+        let options = self.html_options(true);
         let crashed = move |error| WorkerMessage::HtmlExported {
             output: written,
             result: Err(format!("writing the HTML crashed: {error}")),
         };
         crate::worker::spawn(sender, crashed, move |sender| {
-            let html = adoc_render::embed_local_files(&adoc_render::to_html(
-                &preview.view,
-                &HtmlOptions { standalone: true },
-            ));
+            let html =
+                adoc_render::embed_local_files(&adoc_render::to_html(&preview.view, &options));
             let result = std::fs::write(&output, html)
                 .map_err(|error| format!("{}: {error}", output.display()));
             let _ = sender.send(WorkerMessage::HtmlExported { output, result });

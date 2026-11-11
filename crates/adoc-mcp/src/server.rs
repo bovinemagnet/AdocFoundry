@@ -902,10 +902,7 @@ impl Server {
             let preview = rendered
                 .ok_or_else(|| Failure::timeout(format!("{} did not render", args.path)))?;
             let output = if html {
-                adoc_engine::to_html(
-                    &preview.view,
-                    &adoc_engine::HtmlOptions { standalone: true },
-                )
+                adoc_engine::to_html(&preview.view, &state.engine.html_options(true))
             } else {
                 adoc_engine::to_text(&preview.view)
             };

@@ -6,7 +6,7 @@
 //!     [--output <file>] [--fail-on none|warning|error] [--require-complete]
 //! adocfoundry-cli symbols <root> <query>
 //! adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
-//! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+//! adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--link-images] [--parser acdc|asciidoc-parser]
 //! adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
 //!     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
 //!     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
@@ -40,7 +40,7 @@ const USAGE: &str = "usage:
       [--output <file>] [--fail-on none|warning|error] [--require-complete]
   adocfoundry-cli symbols <root> <query>
   adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
-  adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
+  adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--link-images] [--parser acdc|asciidoc-parser]
   adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
       [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
       [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
@@ -821,7 +821,13 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
 
 /// Renders a page to a standalone HTML file, or to standard output, as the preview shows it.
 fn render(arguments: &[String]) -> Result<ExitCode, String> {
-    let (positional, options) = parse_options(arguments, &["root", "output", "parser"])?;
+    let link_images = arguments.iter().any(|argument| argument == "--link-images");
+    let arguments: Vec<String> = arguments
+        .iter()
+        .filter(|argument| *argument != "--link-images")
+        .cloned()
+        .collect();
+    let (positional, options) = parse_options(&arguments, &["root", "output", "parser"])?;
     let [file] = positional.as_slice() else {
         return Err(USAGE.to_owned());
     };
@@ -843,12 +849,16 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
     let preview = engine
         .render_blocking(id, INDEX_TIMEOUT)
         .ok_or_else(|| format!("{} did not render", file.display()))?;
-    let html = adoc_render::to_html(
-        &preview.view,
-        &adoc_render::HtmlOptions { standalone: true },
-    );
+    let html = adoc_render::to_html(&preview.view, &engine.html_options(true));
     match option(&options, "output") {
         Some(output) => {
+            // A file is meant to be moved or published, so it carries its images, as the
+            // app's Export Page to HTML does; `--link-images` keeps their `file://` addresses.
+            let html = if link_images {
+                html
+            } else {
+                adoc_render::embed_local_files(&html)
+            };
             std::fs::write(output, html).map_err(|error| format!("{output}: {error}"))?;
         }
         None => print!("{html}"),
