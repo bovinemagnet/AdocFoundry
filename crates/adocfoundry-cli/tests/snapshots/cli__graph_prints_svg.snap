@@ -2,22 +2,22 @@
 source: crates/adocfoundry-cli/tests/cli.rs
 expression: stdout(&output)
 ---
-<svg xmlns="http://www.w3.org/2000/svg" width="236" height="156" viewBox="-65.3 -131.8 236.2 156.4" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11">
-<rect x="-65.3" y="-131.8" width="236.2" height="156.4" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="236" height="156" viewBox="-77.6 -102.6 236.2 156.3" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="11">
+<rect x="-77.6" y="-102.6" width="236.2" height="156.3" fill="#ffffff"/>
 <g fill="none">
-<path class="edge xref" d="M76.1 -10.2 L11.9 -105.6" stroke="#737373" stroke-opacity="0.55" stroke-width="1"/>
-<path class="edge xref" d="M11.9 -105.6 L-38.5 -2.2" stroke="#737373" stroke-opacity="0.55" stroke-width="2"/>
-<path class="edge xref" d="M-38.5 -2.2 L76.1 -10.2" stroke="#737373" stroke-opacity="0.55" stroke-width="1"/>
-<path class="edge nav" d="M-38.5 -2.2 Q20.0 11.0 76.1 -10.2" stroke="#2563eb" stroke-opacity="0.6" stroke-width="1" stroke-dasharray="1.5 3"/>
+<path class="edge xref" d="M63.9 19.0 L-0.4 -76.3" stroke="#737373" stroke-opacity="0.55" stroke-width="1"/>
+<path class="edge xref" d="M-0.4 -76.3 L-50.8 27.0" stroke="#737373" stroke-opacity="0.55" stroke-width="2"/>
+<path class="edge xref" d="M-50.8 27.0 L63.9 19.0" stroke="#737373" stroke-opacity="0.55" stroke-width="1"/>
+<path class="edge nav" d="M-50.8 27.0 Q7.7 40.2 63.9 19.0" stroke="#2563eb" stroke-opacity="0.6" stroke-width="1" stroke-dasharray="1.5 3"/>
 </g>
 <g stroke-width="2">
-<circle class="node page" cx="76.1" cy="-10.2" r="6.8" fill="#256eb1" stroke="#256eb1"><title>Configure</title></circle>
-<circle class="node page" cx="11.9" cy="-105.6" r="6.3" fill="#256eb1" stroke="#256eb1"><title>Home</title></circle>
-<circle class="node page" cx="-38.5" cy="-2.2" r="6.8" fill="#256eb1" stroke="#256eb1"><title>Install</title></circle>
+<circle class="node page" cx="63.9" cy="19.0" r="6.8" fill="#256eb1" stroke="#256eb1"><title>Configure</title></circle>
+<circle class="node page" cx="-0.4" cy="-76.3" r="6.3" fill="#256eb1" stroke="#256eb1"><title>Home</title></circle>
+<circle class="node page" cx="-50.8" cy="27.0" r="6.8" fill="#256eb1" stroke="#256eb1"><title>Install</title></circle>
 </g>
 <g fill="#0a0a0a">
-<text class="label" x="85.9" y="-6.4">Configure</text>
-<text class="label" x="21.2" y="-101.7">Home</text>
-<text class="label" x="-28.8" y="1.6">Install</text>
+<text class="label" x="73.7" y="22.9">Configure</text>
+<text class="label" x="8.9" y="-72.5">Home</text>
+<text class="label" x="-41.0" y="30.8">Install</text>
 </g>
 </svg>

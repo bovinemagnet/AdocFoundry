@@ -261,7 +261,7 @@ pub fn to_svg(snapshot: &GraphSnapshot, positions: &[Point], style: &SvgStyle) -
 pub const EXPORT_SEED: u64 = 7;
 
 /// How many steps a drawing laid out for export may take to settle.
-const EXPORT_STEPS: usize = 3000;
+pub(crate) const EXPORT_STEPS: usize = 3000;
 
 /// `snapshot` laid out afresh until it settles, then drawn as [`to_svg`] draws it, for a
 /// drawing with no canvas to take positions from. The layout is seeded from the files' paths

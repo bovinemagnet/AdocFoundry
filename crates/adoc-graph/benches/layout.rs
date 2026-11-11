@@ -2,7 +2,8 @@
 //! must take under 8 ms (median), grouped by module or not, and so must building a mind map of
 //! them and laying it out, syncing the layout with a snapshot that changed nothing, collapsing
 //! half their modules, and a shortest path that cannot be found through a navigation file of
-//! 2,000 entries, or the run fails. `BENCH_RECORD=1` records without failing.
+//! 2,000 entries; laying them out until they settle and drawing them for export must take under
+//! 6 s; or the run fails. `BENCH_RECORD=1` records without failing.
 //! The table is appended to `$GITHUB_STEP_SUMMARY` when CI sets it.
 
 use std::{
@@ -14,11 +15,13 @@ use std::{
 };
 
 use adoc_graph::{
-    EdgeKind, GraphEdge, GraphKey, GraphNode, GraphSnapshot, GroupBy, Layout, LinkStore, MindMap,
-    NodeCoordinate, NodeKind, StoredLink, TreeStyle,
+    to_svg_laid_out, EdgeKind, GraphEdge, GraphKey, GraphNode, GraphSnapshot, GroupBy, Layout,
+    LinkStore, MindMap, NodeCoordinate, NodeKind, StoredLink, SvgStyle, TreeStyle,
 };
 
 const BUDGET: Duration = Duration::from_millis(8);
+/// An export lays the graph out until it settles, up to 3,000 steps.
+const EXPORT_BUDGET: Duration = Duration::from_secs(6);
 
 /// Where the bench's pages are: an absolute path of a usual length, as the engine's keys are,
 /// since comparing paths takes longer the more they share.
@@ -132,6 +135,19 @@ fn time(mut run: impl FnMut()) -> (Duration, Duration) {
     (samples[samples.len() / 2], samples[samples.len() - 1])
 }
 
+/// The median and worst of three exports of the whole graph, laid out until it settles.
+fn time_export(snapshot: &GraphSnapshot) -> (Duration, Duration) {
+    let mut samples: Vec<Duration> = (0..3)
+        .map(|_| {
+            let started = Instant::now();
+            std::hint::black_box(to_svg_laid_out(snapshot, &SvgStyle::default()));
+            started.elapsed()
+        })
+        .collect();
+    samples.sort();
+    (samples[1], samples[2])
+}
+
 /// The median and worst of 20 undirected searches for a node no link reaches, through a
 /// navigation file listing `entries` pages, each of which links to the next.
 fn time_unreachable_path(entries: usize) -> (Duration, Duration) {
@@ -186,44 +202,68 @@ fn main() {
         snapshot.nodes.len(),
         snapshot.edges.len()
     );
-    for (name, size, timing) in [
-        ("layout step", size.clone(), time_steps(&snapshot, None)),
+    for (name, size, timing, budget) in [
+        (
+            "layout step",
+            size.clone(),
+            time_steps(&snapshot, None),
+            BUDGET,
+        ),
         (
             "layout step, grouped",
             size.clone(),
             time_steps(&snapshot, Some(GroupBy::Module)),
+            BUDGET,
         ),
         (
             "mind map, built and laid out",
             size.clone(),
             time_mind_maps(&snapshot),
+            BUDGET,
         ),
-        ("layout sync, unchanged", size.clone(), {
-            let mut layout = Layout::new(1);
-            layout.sync(&snapshot);
-            time(|| layout.sync(&snapshot))
-        }),
-        ("collapse half the modules", size.clone(), {
-            let half: std::collections::BTreeSet<String> =
-                (0..10).map(|n| format!("docs:m{n}")).collect();
-            time(|| {
-                std::hint::black_box(snapshot.collapse(GroupBy::Module, &half));
-            })
-        }),
+        (
+            "layout sync, unchanged",
+            size.clone(),
+            {
+                let mut layout = Layout::new(1);
+                layout.sync(&snapshot);
+                time(|| layout.sync(&snapshot))
+            },
+            BUDGET,
+        ),
+        (
+            "collapse half the modules",
+            size.clone(),
+            {
+                let half: std::collections::BTreeSet<String> =
+                    (0..10).map(|n| format!("docs:m{n}")).collect();
+                time(|| {
+                    std::hint::black_box(snapshot.collapse(GroupBy::Module, &half));
+                })
+            },
+            BUDGET,
+        ),
         (
             "shortest path, unreachable",
             "2,000 navigation entries".to_owned(),
             time_unreachable_path(2_000),
+            BUDGET,
+        ),
+        (
+            "export, settled and drawn",
+            size.clone(),
+            time_export(&snapshot),
+            EXPORT_BUDGET,
         ),
     ] {
         let (median, worst) = timing;
-        let this_over = median > BUDGET;
+        let this_over = median > budget;
         over |= this_over;
         table.push_str(&format!(
             "| {name} | {size} | {:.2} ms | {:.2} ms | ≤ {} ms{} |\n",
             median.as_secs_f64() * 1e3,
             worst.as_secs_f64() * 1e3,
-            BUDGET.as_millis(),
+            budget.as_millis(),
             if this_over { " **over**" } else { "" },
         ));
     }

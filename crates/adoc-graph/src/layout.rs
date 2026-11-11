@@ -50,6 +50,8 @@ const COOLING: f32 = 0.977;
 const COLD: f32 = 0.002;
 /// The heat a drag or a change wakes the layout with.
 const WARM: f32 = 0.3;
+/// The steps cooling takes from `WARM` to `COLD`.
+const COOL_DOWN: usize = 216;
 /// With targets: the part of the way to its target a node goes in a step.
 const EASE: f32 = 0.25;
 /// Barnes–Hut's accuracy: a cell is one body when its width over its distance is below this.
@@ -337,9 +339,21 @@ impl Layout {
     }
 
     /// Steps until the layout settles, or `limit` steps have been taken, for a drawing with no
-    /// frames to wait for.
+    /// frames to wait for. It is not cooled as a canvas's layout is, which stops after the same
+    /// few hundred steps however large the graph, part-way through spreading out: it is kept
+    /// at least as warm as a drag leaves it until no node moves further than [`SETTLED`] in a
+    /// step, and only its last steps before `limit` cool it, so a layout that never quite stops
+    /// still comes to rest.
     pub fn settle(&mut self, limit: usize) {
-        for _ in 0..limit {
+        let warm = if self.targets.is_some() {
+            0
+        } else {
+            limit.saturating_sub(COOL_DOWN)
+        };
+        for taken in 0..limit {
+            if taken < warm {
+                self.heat = self.heat.max(WARM);
+            }
             if !self.step(1.0) {
                 break;
             }
@@ -1026,6 +1040,37 @@ mod tests {
         layout.unpin(&pinned);
         layout.step(1.0);
         assert_ne!(layout.position(&pinned), Some(Point::new(500.0, -200.0)));
+    }
+
+    #[test]
+    fn cooling_down_takes_its_steps() {
+        let mut heat = WARM;
+        let mut steps = 0;
+        while heat >= COLD {
+            heat *= COOLING;
+            steps += 1;
+        }
+        assert_eq!(steps, COOL_DOWN);
+    }
+
+    #[test]
+    fn a_settled_layout_has_stopped_moving() {
+        // A few hundred nodes, repelled exactly: above `BARNES_HUT_ABOVE` the approximation's
+        // error keeps a little movement going, which the last steps' cooling brings to rest.
+        let snapshot = graph(300, 3);
+        let mut layout = Layout::new(crate::EXPORT_SEED);
+        layout.sync(&snapshot);
+        layout.settle(crate::svg::EXPORT_STEPS);
+        let before: Vec<Point> = layout.positions().map(|(_, at)| at).collect();
+        // Stepped on, kept warm, no node moves further than a settled step does.
+        layout.wake();
+        layout.step(1.0);
+        let moved = layout
+            .positions()
+            .zip(&before)
+            .map(|((_, at), was)| Point::new(at.x - was.x, at.y - was.y).length())
+            .fold(0.0_f32, f32::max);
+        assert!(moved <= SETTLED, "a node moved {moved}");
     }
 
     #[test]
