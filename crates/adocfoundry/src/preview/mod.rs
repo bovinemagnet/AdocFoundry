@@ -512,22 +512,27 @@ impl PreviewView {
     }
 }
 
-/// How blocks are drawn: the theme's fonts and colours, links that navigate through the engine,
-/// and `on_block` for a click on a block.
-pub(crate) fn block_context<'a>(
-    app: &Entity<AppState>,
-    extents: sync::Extents,
-    list: Option<gpui::ListState>,
-    on_block: blocks::BlockHandler,
-    highlight: blocks::Highlighter<'a>,
-    window: &Window,
-    cx: &App,
-) -> blocks::BlockContext<'a> {
-    let theme = cx.theme();
-    let app = app.clone();
-    let on_link: inlines::LinkHandler = Rc::new(move |link, window, cx| match link {
-        Link::Url(url) => cx.open_url(url),
-        Link::File(path) => cx.open_with_system(path),
+/// Follows a link clicked in a rendered page. A page can name anything, so nothing it names is
+/// run (#495): only web and mail addresses go to the system, and of files only a PDF inside the
+/// workspace; any other file opens here, an image in an image tab and text in a tab, or not at
+/// all.
+pub(crate) fn open_link(app: &Entity<AppState>, link: &Link, window: &mut Window, cx: &mut App) {
+    match link {
+        Link::Url(url) => crate::workspace_view::open_address(url, window, cx),
+        Link::File(path) => {
+            if let Some(file) = app.read(cx).engine.system_viewer_path(path) {
+                crate::files_view::open_externally(&file, cx);
+                return;
+            }
+            let position = NavigationPosition {
+                path: path.clone(),
+                offset: 0,
+            };
+            // A failure, such as a file that is not text, is reported by the window.
+            let _ = app.update(cx, |app, cx| {
+                app.invoke(ids::NAVIGATE_GO_TO, CommandArgs::Position(position), cx)
+            });
+        }
         Link::Xref { link, .. } => match &link.target {
             Some(target) => {
                 let position = NavigationPosition {
@@ -541,7 +546,24 @@ pub(crate) fn block_context<'a>(
             }
             None => window.push_notification("This reference does not resolve.", cx),
         },
-    });
+    }
+}
+
+/// How blocks are drawn: the theme's fonts and colours, links that navigate through the engine,
+/// and `on_block` for a click on a block.
+pub(crate) fn block_context<'a>(
+    app: &Entity<AppState>,
+    extents: sync::Extents,
+    list: Option<gpui::ListState>,
+    on_block: blocks::BlockHandler,
+    highlight: blocks::Highlighter<'a>,
+    window: &Window,
+    cx: &App,
+) -> blocks::BlockContext<'a> {
+    let theme = cx.theme();
+    let app = app.clone();
+    let on_link: inlines::LinkHandler =
+        Rc::new(move |link, window, cx| open_link(&app, link, window, cx));
     blocks::BlockContext {
         extents,
         list,

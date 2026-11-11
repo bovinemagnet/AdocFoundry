@@ -889,7 +889,9 @@ Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+E
 * An `include::` opens the included file.
 * An `+{attribute}+` goes to the place the attribute is defined: the document, an included file, `antora.yml` or the playbook.
 * An `image::` or `image:` opens the image in an image tab; see <<image-viewer>>.
-* An attachment opens in the system's default application.
+* A PDF attachment inside the workspace folders opens in the system's viewer, and a text attachment opens as text in a tab.
+Any other attachment is refused with a message, so following a link never runs a program.
+To open one deliberately, use *Open Externally* in the Files panel's right-click menu.
 
 If the target cannot be resolved, the diagnostic is shown and nothing is opened.
 

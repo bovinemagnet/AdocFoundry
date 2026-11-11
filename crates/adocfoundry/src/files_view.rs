@@ -63,6 +63,24 @@ pub(crate) fn open_externally(path: &Path, cx: &App) {
     cx.open_with_system(path);
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The addresses handed to the system's browser or mail client, in tests.
+    pub static OPENED_URLS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Opens `url` in the system's browser or mail client.
+pub(crate) fn open_url(url: &str, cx: &App) {
+    #[cfg(test)]
+    {
+        let _ = cx;
+        OPENED_URLS.with(|opened| opened.borrow_mut().push(url.to_owned()));
+    }
+    #[cfg(not(test))]
+    cx.open_url(url);
+}
+
 /// What a row stands for.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RowKind {

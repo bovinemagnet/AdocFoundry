@@ -170,10 +170,12 @@ Clicking a link in the preview does the following.
 |It is drawn with a wavy underline in the danger colour. Clicking it shows "This reference does not resolve."
 
 |An external link
-|Opens in the browser.
+|An `http://`, `https://` or `mailto:` address opens in the browser or mail client.
+Any other address (such as `file:`, another program's scheme or a relative address) is not opened: a notification shows the address with a Copy Address button.
 
 |A link to a file
-|Opens in the system's default application.
+|An image opens in an image tab, a PDF inside the workspace folders opens in the system's viewer, and a text file opens as text in a tab.
+Anything else is refused, so a page can never run a program.
 |===
 
 A missing image shows a placeholder that reads "Missing image: " followed by its target.

@@ -94,7 +94,9 @@ This module is the only place the app uses `lsp-types`; see xref:architecture.ad
 
 Link detection under the pointer and modifier-click handling live in the editor module.
 Opening a target activates its tab.
-An image target opens in an image tab, and an external target such as an attachment opens in the system's default application.
+An image target opens in an image tab.
+`navigate.follow_link` returns `CommandOutcome::External` only for a PDF inside a workspace root (`Engine::system_viewer_path` in `crates/adoc-engine/src/external.rs`, which follows links and requires a regular file with an extension in `SYSTEM_VIEWER_EXTENSIONS`).
+Any other file is opened through `open_item` as an image or text tab, or refused.
 
 == Keymap
 
@@ -176,7 +178,8 @@ Detaching sets the layout through `view.detach_preview` and opens a `Preview` wi
 Clicks become commands.
 A click on a block invokes `navigate.reveal` with the position of its source, which may be in a partial that is opened in a tab.
 A click on a resolved xref invokes `navigate.go_to`, so it is recorded in history.
-External links open in the browser and file links in the system's default application.
+The preview's `open_link` (`src/preview/mod.rs`) hands URLs to `workspace_view::open_address`, which opens only addresses `adoc_engine::is_web_address` accepts (the schemes in `WEB_SCHEMES`: `http`, `https` and `mailto`) and otherwise shows a notification with Copy Address.
+Inline image files go through `system_viewer_path`, and otherwise `navigate.go_to`.
 Block lookups use `adoc_render::block_at` and `block_by_trail`, which map between source offsets and a block's index trail.
 When a new preview arrives, the view builds an `adoc_render::BlockIndex`: each file's blocks sorted by where their spans start, each with its nearest enclosing block in the same file.
 `reveal_source` (scroll sync from the caret) finds the caret's block with a binary search and a climb through enclosing blocks, as `block_at` would, without walking the view tree.
