@@ -216,20 +216,22 @@ impl ProtocolServer {
     }
 
     /// The text positions in the file at `path` refer to: its open buffer, else the indexed
-    /// copy, else the file.
+    /// copy, else, for a file the index does not hold, the file. A file changed on disk since
+    /// it was indexed gives no text, so the index's offsets map to no position rather than to
+    /// the wrong one.
     fn file_text(&self, path: &Path) -> String {
         if let Some(id) = self.engine.document_for_path(path) {
             if let Some(document) = self.engine.document(id) {
                 return document.parsed().text.to_string();
             }
         }
-        self.engine
-            .workspace()
-            .index
-            .file(path)
-            .and_then(|file| file.text().map(std::borrow::Cow::into_owned))
-            .or_else(|| fs::read_to_string(path).ok())
-            .unwrap_or_default()
+        match self.engine.workspace().index.file(path) {
+            Some(file) => file
+                .text()
+                .map(std::borrow::Cow::into_owned)
+                .unwrap_or_default(),
+            None => fs::read_to_string(path).unwrap_or_default(),
+        }
     }
 
     fn handle_request(&mut self, request: Request) -> (Response, Vec<Notification>) {
@@ -263,10 +265,20 @@ impl ProtocolServer {
                     server.references_response(&params)
                 }),
             Rename::METHOD => self.rename_response(request),
-            WillRenameFiles::METHOD => self
-                .request_response::<RenameFilesParams, _>(request, |server, params| {
-                    server.will_rename_files_response(&params)
-                }),
+            WillRenameFiles::METHOD => {
+                let id = request.id.clone();
+                match serde_json::from_value::<RenameFilesParams>(request.params) {
+                    Ok(params) => match self.will_rename_files_response(&params) {
+                        Ok(edit) => Response::new_ok(id, edit),
+                        Err(message) => {
+                            Response::new_err(id, ErrorCode::RequestFailed as i32, message)
+                        }
+                    },
+                    Err(error) => {
+                        Response::new_err(id, ErrorCode::InvalidParams as i32, error.to_string())
+                    }
+                }
+            }
             ExecuteCommand::METHOD => return self.execute_command_response(request),
             _ => Response::new_err(
                 request.id,
@@ -1047,8 +1059,9 @@ impl ProtocolServer {
                 self.engine
                     .anchor_rename_edits(document, offset, &params.new_name)
             });
-        match edits {
-            Some(edits) => Response::new_ok(id, self.workspace_edit(&edits)),
+        match edits.map(|edits| self.workspace_edit(&edits)) {
+            Some(Ok(edit)) => Response::new_ok(id, edit),
+            Some(Err(message)) => Response::new_err(id, ErrorCode::RequestFailed as i32, message),
             None => Response::new_err(
                 id,
                 ErrorCode::RequestFailed as i32,
@@ -1060,9 +1073,14 @@ impl ProtocolServer {
     }
 
     /// `workspace/willRenameFiles`: for each page moved, the edits to every xref and nav entry
-    /// that names it. The client moves the files.
-    fn will_rename_files_response(&mut self, params: &RenameFilesParams) -> Option<WorkspaceEdit> {
+    /// that names it. The client moves the files. Refused, with the reason, when the edits
+    /// cannot be worked out, so the client never moves a page leaving its links behind unsaid.
+    fn will_rename_files_response(
+        &mut self,
+        params: &RenameFilesParams,
+    ) -> Result<Option<WorkspaceEdit>, String> {
         let mut edits: Vec<FileEdits> = Vec::new();
+        let mut refused = None;
         for rename in &params.files {
             let from = document_path(&rename.old_uri);
             let to = document_path(&rename.new_uri);
@@ -1072,10 +1090,15 @@ impl ProtocolServer {
             let Ok(page) = self.borrow_document(&from) else {
                 continue;
             };
-            if let Ok(preview) = self.engine.rename_preview(page.id, &to) {
-                let preview_id = preview.id;
-                edits.extend(preview.edits.clone());
-                self.engine.discard_preview(preview_id);
+            match self.engine.rename_preview(page.id, &to) {
+                Ok(preview) => {
+                    let preview_id = preview.id;
+                    edits.extend(preview.edits.clone());
+                    self.engine.discard_preview(preview_id);
+                }
+                Err(error) => {
+                    refused.get_or_insert(error.to_string());
+                }
             }
             if page.opened {
                 let _ = self.engine.close(page.id);
@@ -1083,33 +1106,57 @@ impl ProtocolServer {
         }
         // Opening and closing pages to compute the edits changes nothing the client sees.
         self.events.try_iter().for_each(drop);
-        (!edits.is_empty()).then(|| self.workspace_edit(&edits))
+        if let Some(reason) = refused {
+            return Err(reason);
+        }
+        if edits.is_empty() {
+            return Ok(None);
+        }
+        self.workspace_edit(&edits).map(Some)
     }
 
     // `WorkspaceEdit` is keyed by `Uri`, which clippy counts as mutable; it is never mutated.
+    /// The engine's edits as LSP edits, each file's ranges mapped through `base`, the text they
+    /// are offsets into. Refused, naming the file, when that is not the text the client edits:
+    /// a file changed on disk since it was indexed (whose `base` is then empty), or an open
+    /// buffer the index has not caught up with.
     #[allow(clippy::mutable_key_type)]
-    fn workspace_edit(&self, files: &[FileEdits]) -> WorkspaceEdit {
+    fn workspace_edit(&self, files: &[FileEdits]) -> Result<WorkspaceEdit, String> {
         let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
         for file in files {
             let Some(uri) = path_to_uri(&file.path) else {
                 continue;
             };
-            let text = self.file_text(&file.path);
-            let lines = Lines::new(&text);
-            changes
-                .entry(uri)
-                .or_default()
-                .extend(file.edits.iter().filter_map(|edit| {
+            let buffer_differs = self
+                .engine
+                .document_for_path(&file.path)
+                .and_then(|id| self.engine.document(id))
+                .is_some_and(|document| document.text != file.base.as_str());
+            let lines = Lines::new(&file.base);
+            let mapped: Option<Vec<TextEdit>> = file
+                .edits
+                .iter()
+                .map(|edit| {
                     Some(TextEdit {
                         range: self.encoding.range(&lines, edit.range)?,
                         new_text: edit.replacement.clone(),
                     })
-                }));
+                })
+                .collect();
+            match mapped.filter(|_| !buffer_differs) {
+                Some(edits) => changes.entry(uri).or_default().extend(edits),
+                None => {
+                    return Err(format!(
+                        "{} changed since it was read; try again in a moment",
+                        file.path.display()
+                    ))
+                }
+            }
         }
-        WorkspaceEdit {
+        Ok(WorkspaceEdit {
             changes: Some(changes),
             ..WorkspaceEdit::default()
-        }
+        })
     }
 
     #[allow(deprecated)]
@@ -2482,5 +2529,79 @@ mod tests {
         let response = export(&mut server, &page, &folder);
         assert!(response.response_result.is_err(), "{response:?}");
         assert_eq!(server.engine.document_for_path(&page), None);
+    }
+
+    const LINKING: &str = "= L\n\nSee xref:target.adoc[].\n";
+
+    /// A workspace of `target.adoc` and `linking.adoc`, which links to it, indexed.
+    fn renaming_workspace() -> (tempfile::TempDir, std::path::PathBuf, ProtocolServer) {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_index::normalize_path(directory.path());
+        fs::write(root.join("target.adoc"), "= Target\n").unwrap();
+        fs::write(root.join("linking.adoc"), LINKING).unwrap();
+        let mut server = server();
+        server.open_workspace(vec![root.clone()]);
+        (directory, root, server)
+    }
+
+    /// `workspace/willRenameFiles` for `target.adoc` to `renamed.adoc`.
+    fn will_rename_target(server: &mut ProtocolServer, root: &Path) -> lsp_server::Response {
+        server
+            .handle_request(Request::new(
+                RequestId::from(11),
+                lsp_types::request::WillRenameFiles::METHOD.to_owned(),
+                lsp_types::RenameFilesParams {
+                    files: vec![lsp_types::FileRename {
+                        old_uri: file_uri(&root.join("target.adoc")).as_str().to_owned(),
+                        new_uri: file_uri(&root.join("renamed.adoc")).as_str().to_owned(),
+                    }],
+                },
+            ))
+            .0
+    }
+
+    #[test]
+    fn renaming_a_file_named_by_a_file_changed_on_disk_answers_an_error() {
+        let (_directory, root, mut server) = renaming_workspace();
+        // Rewritten, and not read again yet: the index's offsets name nothing in it.
+        fs::write(root.join("linking.adoc"), format!("= Longer\n\n{LINKING}")).unwrap();
+
+        let response = will_rename_target(&mut server, &root);
+
+        let error = response.response_result.expect_err("refused, not null");
+        assert!(error.message.contains("linking.adoc"), "{error:?}");
+    }
+
+    #[test]
+    fn renaming_a_file_just_after_typing_in_a_page_naming_it_edits_the_typed_text() {
+        let (_directory, root, mut server) = renaming_workspace();
+        let uri = file_uri(&root.join("linking.adoc"));
+        open(&mut server, uri.as_str(), LINKING);
+        server
+            .handle_notification(Notification::new(
+                DidChangeTextDocument::METHOD.to_owned(),
+                DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
+                        range_length: None,
+                        text: "X".to_owned(),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let response = will_rename_target(&mut server, &root);
+
+        let edit: WorkspaceEdit =
+            serde_json::from_value(response.response_result.expect("edits")).unwrap();
+        let edits = &edit.changes.unwrap()[&uri];
+        assert_eq!(edits.len(), 1, "{edits:?}");
+        // `target.adoc` in `XSee xref:target.adoc[].` is on line 2, characters 9 to 20.
+        assert_eq!(
+            edits[0].range,
+            Range::new(Position::new(2, 9), Position::new(2, 20))
+        );
+        assert_eq!(edits[0].new_text, "renamed.adoc");
     }
 }

@@ -665,6 +665,9 @@ impl Engine {
         id: DocumentId,
         new_path: &Path,
     ) -> Result<EditPreview, EngineError> {
+        // The edits' ranges come from the index: typing still waiting to be indexed goes in
+        // first, so they are ranges in the text as typed.
+        self.flush_index();
         let document = self.document(id).ok_or(EngineError::UnknownDocument(id))?;
         if document.untitled {
             return Err(EngineError::InvalidRequest(
