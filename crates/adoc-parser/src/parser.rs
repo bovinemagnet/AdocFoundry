@@ -1201,6 +1201,24 @@ image::diagram.png[Architecture]\n";
         assert!(document.images.is_empty(), "{:?}", document.images);
     }
 
+    /// Every prefix of a page holding the constructs read since the 11 Nov review, as typed one
+    /// character at a time, parses and completes without panicking, and its section ids are
+    /// generated.
+    #[test]
+    fn half_typed_constructs_never_panic() {
+        let source = "\u{feff}= Doc =\n:desc: one \\\ntwo\n\nTitle é\n=======\n\n[[a1]]\n[source#code,ruby]\n--\n<<x>>\n--\n\n\
+                      == What's [[t]] new? [[w,Ref]]\n\nSee <<other.adoc#d,D>>, <<<, a << b, $$<<p>>$$, [#12], \\[[e]], \
+                      [.r#two]#m# and anchor:lab[L] x[#w]#y# **[#z]**b**.\n\nifdef::x[include::p.adoc[]]\nifndef::x[[[a]]]\n\
+                      ====\n== In\n====\n/// c\n|===\n| image::c.png[] | b\n|===\n";
+        for end in (0..=source.len()).filter(|&end| source.is_char_boundary(end)) {
+            let document = parse("file:///doc.adoc", &source[..end]).document;
+            for style in [adoc_core::IdStyle::Antora, adoc_core::IdStyle::Asciidoctor] {
+                let _ = adoc_core::section_ids(&document.sections, &document.anchors, style);
+            }
+            let _ = crate::completion_context(&source[..end], end);
+        }
+    }
+
     #[test]
     fn tolerates_incomplete_constructs() {
         let source = "= Draft\n\nxref:unfinished[\ninclude::partial.adoc[\n<<anchor\n";
