@@ -328,6 +328,43 @@ image::diagram.png[Architecture]\n";
             .collect()
     }
 
+    /// The `#id` shorthand may follow a style or roles, on a block attribute line and inline
+    /// (#522).
+    #[test]
+    fn anchor_shorthand_after_a_style_or_role() {
+        assert_eq!(anchor_ids("[source#code,ruby]\n----\nx\n----\n"), ["code"]);
+        assert_eq!(anchor_ids("[quote#q1]\n____\nHi\n____\n"), ["q1"]);
+        assert_eq!(anchor_ids("[.lead#intro]\nPara.\n"), ["intro"]);
+        assert_eq!(anchor_ids("[%header#tbl.r]\n|===\n|a\n|===\n"), ["tbl"]);
+        assert_eq!(anchor_ids("[.r#two]#marked# here.\n"), ["two"]);
+        // A named attribute first is no shorthand, and neither is a style alone.
+        assert!(anchor_ids("[link=#top]\nPara.\n").is_empty());
+        assert!(anchor_ids("[source,ruby]\n----\nx\n----\n").is_empty());
+    }
+
+    /// `anchor:id[]` and `anchor:id[reftext]` declare an anchor; an escaped one or one whose id
+    /// cannot be an id is text (#522).
+    #[test]
+    fn anchor_macros_are_anchors() {
+        let source =
+            "See anchor:legacy[] and anchor:lab[Label], not \\anchor:esc[] or anchor:9x[].\n";
+        let document = parse("file:///doc.adoc", source).document;
+        let anchors: Vec<_> = document
+            .anchors
+            .iter()
+            .map(|anchor| {
+                (
+                    anchor.id.as_str(),
+                    &source[anchor.range.start..anchor.range.end],
+                )
+            })
+            .collect();
+        assert_eq!(
+            anchors,
+            [("legacy", "anchor:legacy[]"), ("lab", "anchor:lab[Label]")]
+        );
+    }
+
     #[test]
     fn anchor_shorthand_stops_at_role() {
         assert_eq!(anchor_ids("[#intro.lead]\n== Intro\n"), ["intro"]);
@@ -697,7 +734,13 @@ image::diagram.png[Architecture]\n";
                 .map(|r| r.target.as_str())
                 .collect();
             assert_eq!(targets, ["real.adoc"], "{style}");
-            assert!(document.anchors.is_empty(), "{style}");
+            assert!(
+                document
+                    .anchors
+                    .iter()
+                    .all(|anchor| anchor.id != "not-real"),
+                "{style}"
+            );
         }
     }
 

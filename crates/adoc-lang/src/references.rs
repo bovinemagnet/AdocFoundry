@@ -328,7 +328,7 @@ fn fragment_target<'a>(
 }
 
 /// The range of `id` within `text[range]`: after its `#`, or after the opening `[[`, `[#`,
-/// `<<` or `xref:`.
+/// `<<`, `xref:` or `anchor:`.
 fn id_range(text: &str, range: SourceRange, id: &str) -> Option<SourceRange> {
     let source = text.get(range.start..range.end)?;
     let at = match source.find('#') {
@@ -338,7 +338,7 @@ fn id_range(text: &str, range: SourceRange, id: &str) -> Option<SourceRange> {
             let value = source.find("id=")? + 3;
             value + usize::from(source[value..].starts_with(['"', '\'']))
         }
-        _ => ["[[", "<<", "xref:"]
+        _ => ["[[", "<<", "xref:", "anchor:"]
             .iter()
             .filter_map(|opener| source.strip_prefix(opener).map(|_| opener.len()))
             .map(|start| start + (source[start..].len() - source[start..].trim_start().len()))
@@ -379,6 +379,19 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// An anchor macro's id and one given after a style are found for a rename (#522).
+    #[test]
+    fn finds_the_id_in_an_anchor_macro_and_after_a_style() {
+        let text = "See anchor:legacy[Label] here.\n[source#code,ruby]\n";
+        let start = text.find("anchor:").unwrap();
+        let range = id_range(text, SourceRange::new(start, start + 24), "legacy").unwrap();
+        assert_eq!(&text[range.start..range.end], "legacy");
+
+        let start = text.find("[source").unwrap();
+        let range = id_range(text, SourceRange::new(start, text.len() - 1), "code").unwrap();
+        assert_eq!(&text[range.start..range.end], "code");
     }
 
     #[test]

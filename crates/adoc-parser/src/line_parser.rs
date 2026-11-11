@@ -76,6 +76,7 @@ pub(crate) fn find_anchors(line: &str, offset: usize) -> Vec<Anchor> {
 
     anchors.extend(shorthand_anchors(line, offset));
     anchors.extend(id_attribute(line, offset));
+    anchors.extend(anchor_macros(line, offset));
     anchors
 }
 
@@ -108,15 +109,62 @@ fn block_attribute_list(line: &str) -> Option<&str> {
     (!list.starts_with('[') && !list.contains(['[', ']'])).then_some(list)
 }
 
-/// The id the shorthand of an attribute list's first entry gives, `#id` in `[#id.role%option]`
-/// or `[#id,name=value]`. An entry holding a space has no shorthand, as in Asciidoctor.
-fn shorthand_id(list: &str) -> Option<&str> {
-    let first = list.split(',').next()?.trim();
-    if first.contains(char::is_whitespace) {
-        return None;
+/// The style and id of an attribute list's first entry, read as Asciidoctor's shorthand: an
+/// optional style, then any of `#id`, `.role` and `%option` in any order, as in
+/// `[source#code.lead,ruby]`. A named attribute first (`[link=#top]`) has neither, and an entry
+/// holding a space has no shorthand.
+fn shorthand(list: &str) -> (&str, Option<&str>) {
+    let first = list.split(',').next().unwrap_or_default().trim();
+    if first.contains('=') {
+        return ("", None);
     }
-    let id = first.strip_prefix('#')?.split(['.', '%', '#']).next()?;
-    (!id.is_empty()).then_some(id)
+    let style_end = first.find(['#', '.', '%']).unwrap_or(first.len());
+    let style = &first[..style_end];
+    if first.contains(char::is_whitespace) {
+        return (style.trim(), None);
+    }
+    let id = first[style_end..]
+        .split_once('#')
+        .and_then(|(_, rest)| rest.split(['.', '%', '#']).next())
+        .filter(|id| !id.is_empty());
+    (style, id)
+}
+
+/// The id the shorthand of an attribute list's first entry gives.
+fn shorthand_id(list: &str) -> Option<&str> {
+    shorthand(list).1
+}
+
+/// `anchor:id[]` and `anchor:id[reftext]`, the anchor macro, unless escaped. Like Asciidoctor,
+/// the macro needs no word boundary before it.
+fn anchor_macros(line: &str, offset: usize) -> Vec<Anchor> {
+    const PREFIX: &str = "anchor:";
+    let mut anchors = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = line[cursor..].find(PREFIX) {
+        let start = cursor + relative;
+        let id_start = start + PREFIX.len();
+        cursor = id_start;
+        let Some(open_relative) = line[id_start..].find('[') else {
+            break;
+        };
+        let open = id_start + open_relative;
+        let Some(close_relative) = line[open + 1..].find(']') else {
+            break;
+        };
+        let id = &line[id_start..open];
+        if line[..start].ends_with('\\') || !is_anchor_id(id) {
+            continue;
+        }
+        let end = open + 1 + close_relative + 1;
+        anchors.push(Anchor {
+            id: id.to_owned(),
+            range: SourceRange::new(offset + start, offset + end),
+            conditional: false,
+        });
+        cursor = end;
+    }
+    anchors
 }
 
 /// Anchors given by the `#id` shorthand: on a whole block attribute line, or inline in the
@@ -543,20 +591,8 @@ fn is_block_title(line: &str) -> bool {
 /// A block attribute line whose style is `source`, `listing` or `literal`, such as
 /// `[source,ruby]` or `[source#id.role]`.
 fn has_verbatim_style(line: &str) -> bool {
-    let Some(attributes) = line
-        .strip_prefix('[')
-        .and_then(|rest| rest.strip_suffix(']'))
-        .filter(|attributes| !attributes.starts_with('['))
-    else {
-        return false;
-    };
-    let first = attributes.split(',').next().unwrap_or_default();
-    let style = first
-        .split(['#', '.', '%'])
-        .next()
-        .unwrap_or_default()
-        .trim();
-    matches!(style, "source" | "listing" | "literal")
+    block_attribute_list(line)
+        .is_some_and(|list| matches!(shorthand(list).0, "source" | "listing" | "literal"))
 }
 
 fn nonempty(value: &str) -> Option<String> {

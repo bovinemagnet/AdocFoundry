@@ -419,6 +419,21 @@ mod tests {
         assert_eq!(workspace_diagnostics(&index, path), Vec::new());
     }
 
+    /// Ids given after a style or role, and by the anchor macro, resolve (#522).
+    #[test]
+    fn ids_after_a_style_and_anchor_macros_resolve() {
+        let path = Path::new("docs/index.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            path,
+            "[source#code,ruby]\n----\nx\n----\n\n[quote#q1]\n____\nHi\n____\n\n[.lead#intro]\nPara.\n\n\
+             [.r#two]#marked# and anchor:legacy[] and anchor:lab[Label].\n\n\
+             See <<code>>, <<q1>>, <<intro>>, <<two>>, <<legacy>> and <<lab>>.\n",
+        );
+
+        assert_eq!(workspace_diagnostics(&index, path), Vec::new());
+    }
+
     #[test]
     fn shorthand_anchor_with_role_resolves() {
         let path = Path::new("docs/index.adoc");
