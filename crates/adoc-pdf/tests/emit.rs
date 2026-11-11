@@ -523,9 +523,7 @@ fn emits_list_styles_and_table_options() {
         assert!(source.contains(markers), "no {markers} in\n{source}");
     }
     assert!(
-        source.contains(
-            "row-count: 2, frame: \"ends\", grid: \"rows\", stripes: \"even\", width: 50%)"
-        ),
+        source.contains("none, frame: \"ends\", grid: \"rows\", stripes: \"even\", width: 50%)"),
         "{source}"
     );
     assert!(source.contains("#adoc-table((auto,), none,"), "{source}");
@@ -548,6 +546,81 @@ fn emits_list_styles_and_table_options() {
     ] {
         assert!(text.contains(shown), "no {shown} in {text}");
     }
+}
+
+/// Whether `segments`, each a span along one axis, cover `from` to `to` without a gap.
+fn covered(mut segments: Vec<(f64, f64)>, from: f64, to: f64) -> bool {
+    segments.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut reached = from;
+    for (start, end) in segments {
+        if start > reached + 0.5 {
+            return false;
+        }
+        reached = reached.max(end);
+    }
+    reached >= to - 0.5
+}
+
+#[test]
+fn a_cell_spanning_to_the_last_column_or_row_has_the_frame_on_that_side() {
+    let typst = typst_of(
+        "= Page\n\n[cols=\"1,1,1\"]\n|===\n|a |b |c\n3+|across all\n|d 2+|across two\n|g .2+|down |i\n|j |k\n|===\n",
+    );
+    let pages = adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    // The table's lines, not the running content's rules in the margins.
+    let height = pages[0].height;
+    let lines: Vec<_> = pages[0]
+        .lines
+        .iter()
+        .filter(|line| {
+            [line.from.1, line.to.1]
+                .iter()
+                .all(|y| *y > 36.0 && *y < height - 48.0)
+        })
+        .collect();
+    let vertical: Vec<_> = lines
+        .iter()
+        .filter(|line| (line.from.0 - line.to.0).abs() < 0.01)
+        .collect();
+    let horizontal: Vec<_> = lines
+        .iter()
+        .filter(|line| (line.from.1 - line.to.1).abs() < 0.01)
+        .collect();
+    let span = |a: f64, b: f64| (a.min(b), a.max(b));
+    let left = vertical
+        .iter()
+        .map(|line| line.from.0)
+        .fold(f64::MAX, f64::min);
+    let right = vertical
+        .iter()
+        .map(|line| line.from.0)
+        .fold(f64::MIN, f64::max);
+    let top = horizontal
+        .iter()
+        .map(|line| line.from.1)
+        .fold(f64::MAX, f64::min);
+    let bottom = horizontal
+        .iter()
+        .map(|line| line.from.1)
+        .fold(f64::MIN, f64::max);
+    let at = |x: f64| {
+        vertical
+            .iter()
+            .filter(|line| (line.from.0 - x).abs() < 0.5)
+            .map(|line| span(line.from.1, line.to.1))
+            .collect::<Vec<_>>()
+    };
+    assert!(covered(at(left), top, bottom), "left: {lines:?}");
+    assert!(covered(at(right), top, bottom), "right: {lines:?}");
+    let along_bottom: Vec<_> = horizontal
+        .iter()
+        .filter(|line| (line.from.1 - bottom).abs() < 0.5)
+        .map(|line| span(line.from.0, line.to.0))
+        .collect();
+    assert!(covered(along_bottom, left, right), "bottom: {lines:?}");
+    // The frame is the table's, not worked out from a count of the rows written.
+    assert!(!typst.source.contains("row-count"), "{}", typst.source);
 }
 
 #[test]

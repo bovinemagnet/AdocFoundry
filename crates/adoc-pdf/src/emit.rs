@@ -970,11 +970,7 @@ impl<'a> Emitter<'a> {
         } else {
             columns
         };
-        // Every row, the header's and footer's too: the last draws the frame's bottom.
-        let row_count = table.rows.len()
-            + usize::from(table.header.is_some())
-            + usize::from(table.footer.is_some());
-        let mut options = format!(", row-count: {row_count}");
+        let mut options = String::new();
         for name in ["frame", "grid", "stripes"] {
             if let Some(value) = block.attributes.get(name) {
                 let _ = write!(options, ", {name}: {}", string(value));

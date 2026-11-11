@@ -546,7 +546,7 @@
 // bottom (`ends`, `topbot`), the sides (`sides`) or none; `grid` keeps the inner lines between
 // rows and columns (`all`), rows (`rows`), columns (`cols`) or none; `width` is the table's
 // share of the page, or `auto` for its content's.
-#let adoc-table(columns, header, rows, footer, row-count: none, stripes: none, frame: "all", grid: "all", width: 100%) = {
+#let adoc-table(columns, header, rows, footer, stripes: none, frame: "all", grid: "all", width: 100%) = {
   let border-color = pick("table_border_color", "base_border_color", default: luma(200))
   let grid-color = pick("table_grid_color", "table_border_color", "base_border_color", default: luma(200))
   let border-width = pick("table_border_width", default: 0.5pt)
@@ -560,6 +560,7 @@
   let grid-cols = grid in ("all", "cols")
   let outer(on, width, color) = if on { border(width, color) } else { none }
   let column-count = if type(columns) == array { columns.len() } else { columns }
+  let bottom = outer(frame-ends, border-width, border-color)
   let body-fill(y) = {
     let row = y - head-rows
     if y < head-rows { pick("table_head_background_color") }
@@ -575,17 +576,20 @@
       columns: columns,
       inset: inset(pick("table_cell_padding", default: 2pt)),
       fill: (_, y) => body-fill(y),
-      // Each cell draws its top and left edges; the last row and column draw the frame's
-      // bottom and right.
+      // Each cell draws its top and left edges, which a spanning cell starts on. The frame's
+      // right and bottom are the table's own lines: Typst asks a spanning cell for its stroke
+      // by its first column and row, so it could never tell it reaches the last of either.
       stroke: (x, y) => (
         top: if y == 0 { outer(frame-ends, border-width, border-color) } else if y == head-rows and head-rows > 0 { border(head-bottom, grid-color) } else { outer(grid-rows, grid-width, grid-color) },
-        bottom: if y == row-count - 1 { outer(frame-ends, border-width, border-color) } else { none },
         left: if x == 0 { outer(frame-sides, border-width, border-color) } else { outer(grid-cols, grid-width, grid-color) },
-        right: if x == column-count - 1 { outer(frame-sides, border-width, border-color) } else { none },
       ),
+      table.vline(x: column-count, stroke: outer(frame-sides, border-width, border-color)),
       ..if header != none { (table.header(..header.map(cell => [#styled(("table_head",), cell)])),) } else { () },
       ..rows,
-      ..if footer != none { (table.footer(..footer.map(cell => [#styled(("table_foot",), cell)])),) } else { () },
+      // Below the last row: the footer's when there is one.
+      ..if footer != none {
+        (table.footer(..footer.map(cell => [#styled(("table_foot",), cell)]), table.hline(stroke: bottom)),)
+      } else { (table.hline(stroke: bottom),) },
     )
   })
 }
