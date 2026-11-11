@@ -66,10 +66,7 @@ fn assert_unchanged_like_git(dir: &Path) {
         blame.iter().all(|line| line.commit.is_some()),
         "every line is committed: {blame:?}"
     );
-    assert_eq!(
-        repo.head_text_for_worktree(&page).unwrap().as_deref(),
-        Some(CRLF)
-    );
+    assert_eq!(repo.head_text(&page).unwrap().unwrap().like(CRLF), CRLF);
     if let Some(output) = git(dir, &["diff", "HEAD", "--stat"]) {
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "");
@@ -92,6 +89,33 @@ fn a_crlf_checkout_under_an_eol_attribute_has_no_changes() {
         test.write(".gitattributes", "* text=auto eol=crlf\n");
     });
     assert_unchanged_like_git(dir.path());
+}
+
+#[test]
+fn an_lf_file_under_autocrlf_has_no_changes() {
+    // A file written with `\n` after the checkout, as a tool or another editor may: Git converts
+    // the working tree to its own form to compare, so nothing has changed.
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    append_config(dir.path(), "[core]\n\tautocrlf = true\n");
+    test.write("page.adoc", LF);
+    test.commit_all("first");
+    let repo = repo_in(dir.path());
+    let page = dir.path().join("page.adoc");
+    assert_eq!(repo.line_diff(&page, None).unwrap(), Vec::new());
+    assert_eq!(repo.line_diff(&page, Some(LF)).unwrap(), Vec::new());
+    let blame = repo.blame(&page, None).unwrap();
+    assert!(
+        blame.iter().all(|line| line.commit.is_some()),
+        "every line is committed: {blame:?}"
+    );
+    let head = repo.head_text(&page).unwrap().unwrap();
+    assert_eq!(head.like(LF), LF);
+    assert_eq!(head.like(CRLF), CRLF);
+    if let Some(output) = git(dir.path(), &["diff", "HEAD", "--stat"]) {
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    }
 }
 
 #[test]

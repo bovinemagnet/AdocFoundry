@@ -425,6 +425,47 @@ fn a_crlf_checkout_is_compared_with_head_as_checked_out() {
 }
 
 #[test]
+fn an_lf_page_under_autocrlf_is_compared_with_head_as_committed() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    let config = dir.path().join(".git/config");
+    let mut text = fs::read_to_string(&config).unwrap();
+    text.push_str("[core]\n\tautocrlf = true\n");
+    fs::write(&config, text).unwrap();
+    let committed = "line 1\nline 2\nline 3\n";
+    test.write("page.adoc", committed);
+    test.commit_all("first");
+    let mut engine = engine();
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(&dir.path().join("page.adoc")).unwrap();
+    pump_until(&mut engine, |engine| !engine.has_pending());
+    assert!(engine.git().hunks_for(id).is_empty(), "nothing changed");
+    assert!(engine.hunks_now(id).unwrap().is_empty());
+
+    replace(&mut engine, id, "line 2", "line two");
+    assert!(pump_until(&mut engine, |engine| !engine
+        .git()
+        .hunks_for(id)
+        .is_empty()));
+    let hunks = engine.git().hunks_for(id);
+    assert_eq!(hunks.len(), 1, "{hunks:?}");
+    assert_eq!(hunks[0].lines, 1..2);
+
+    // Reverting puts back the line in the page's own line endings.
+    let inside = text_of(&engine, id).find("two").unwrap();
+    engine
+        .invoke(
+            ids::GIT_REVERT_HUNK,
+            CommandArgs::Offset { id, offset: inside },
+        )
+        .unwrap();
+    assert_eq!(text_of(&engine, id), committed);
+}
+
+#[test]
 fn next_change_wraps_around() {
     let dir = tempfile::tempdir().unwrap();
     let (_test, mut engine, id, _) = ten_lines(dir.path());
