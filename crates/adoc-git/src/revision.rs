@@ -139,10 +139,18 @@ impl Repository {
                 }
                 ChangeDetached::Modification {
                     location,
+                    previous_entry_mode,
                     entry_mode,
                     ..
-                } if entry_mode.is_blob() => {
-                    found.push(TreeChange::Modified(relative_path(location.as_bstr())))
+                } => {
+                    // A file that became a link or a submodule is no longer a file, and back.
+                    let path = relative_path(location.as_bstr());
+                    match (previous_entry_mode.is_blob(), entry_mode.is_blob()) {
+                        (true, true) => found.push(TreeChange::Modified(path)),
+                        (true, false) => found.push(TreeChange::Removed(path)),
+                        (false, true) => found.push(TreeChange::Added(path)),
+                        (false, false) => {}
+                    }
                 }
                 ChangeDetached::Rewrite {
                     source_location,
@@ -172,5 +180,44 @@ impl Repository {
         }
         found.sort();
         Ok(found)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::TestRepo;
+    use gix::object::tree::EntryKind;
+
+    /// Commits `HEAD`'s tree with `path` replaced by an entry of `kind` holding `text`.
+    fn commit_with(repo: &Repository, path: &str, kind: EntryKind, text: &str) {
+        let blob = repo.repo.write_blob(text).unwrap().detach();
+        let head_tree = repo.repo.head_tree_id().unwrap().detach();
+        let mut editor = repo.repo.edit_tree(head_tree).unwrap();
+        editor.upsert(path, kind, blob).unwrap();
+        let tree = editor.write().unwrap().detach();
+        let parent = repo.repo.head_id().unwrap().detach();
+        repo.repo.commit("HEAD", "change", tree, [parent]).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_becomes_a_link_is_removed_and_back_added() {
+        let dir = tempfile::tempdir().unwrap();
+        let test = TestRepo::init(dir.path());
+        test.write("page.adoc", "= Page\n");
+        test.commit_all("first");
+        let repo = Repository::discover(dir.path()).unwrap().unwrap();
+        commit_with(&repo, "page.adoc", EntryKind::Link, "other.adoc");
+        commit_with(&repo, "page.adoc", EntryKind::Blob, "= Page again\n");
+        let [file, link, file_again] =
+            ["HEAD~2", "HEAD~1", "HEAD"].map(|spec| repo.resolve_revision(spec).unwrap());
+        assert_eq!(
+            repo.tree_changes(&file, &link).unwrap(),
+            [TreeChange::Removed("page.adoc".into())]
+        );
+        assert_eq!(
+            repo.tree_changes(&link, &file_again).unwrap(),
+            [TreeChange::Added("page.adoc".into())]
+        );
     }
 }
