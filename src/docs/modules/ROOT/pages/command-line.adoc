@@ -127,6 +127,7 @@ adocfoundry-cli audit docs --component 2.0@product --require-complete
 
 The audit covers the whole workspace by default.
 `--component <name>` audits every version of one component, and `--component <version>@<name>` audits one version.
+A versionless component's version is written `~` (`--component '~@guide'`).
 A component or version that is not in the workspace makes the audit unavailable.
 
 The policy is the `[quality]` table of the workspace's own `.adocfoundry.toml`: `fail_on`, `require_complete`, the rule severities and the exclusions.

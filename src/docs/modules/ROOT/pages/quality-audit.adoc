@@ -30,13 +30,23 @@ It adds three rules of its own.
 A published page that no navigation file of its own component version reaches.
 A published page is an `.adoc` file in a `pages` folder whose name and folders do not start with `_` or `.`.
 Aliases count, and the start page counts as listed.
+Entries are read from `*` and `-` list items and `.Title` lines, as an `xref:` macro or the `+<<page.adoc#,text>>+` shorthand.
+An entry naming a partial or an attachment does not list the page of the same name.
+A component version spread over several `antora.yml` files (the same `name` and `version`) is listed in the navigation files of each, each read from its own folder.
 
 `quality.page.missing-title`::
 A published page with no document title.
-It is skipped when an include before the first section may supply one.
+An empty `=` line is no title.
+It is skipped when an include that may be in the header may supply one.
+That is an include before any body content, outside listing, literal and passthrough blocks.
+Only blank lines, comments, attribute entries, block attribute lines and other includes may come before it.
+An include inside a code block, or after the text has begun, cannot supply a title and leaves the finding.
 
 `quality.image.missing-alt`::
-A block (`image::`) or inline (`image:`) image macro in a page or partial with no alternative text written at all.
+A block (`image::`) or inline (`image:`) image macro in a page, a partial or a hidden page with no alternative text written at all.
+A hidden page is a page whose name starts with `_`, which other pages include.
+Alternative text on a block attribute line above a block image counts, as a named `alt` or the first positional attribute (`[alt=Sunset]`, `[A sunset]`).
+A line holding only an id, role or option (`[#fig]`, `[.right]`, `[%interactive]`) gives none.
 
 It also reports each component version's navigation coverage: the listed pages out of the pages, with undetermined pages counted.
 
@@ -58,16 +68,15 @@ A folder could not be read.
 `provider-unavailable`:::
 An enabled provider could not run.
 
-`remote-component-missing`:::
-Reserved.
-It is not detected yet.
-
 Unavailable::
 Nothing in scope could be audited, such as a component that is not checked out.
+Its gap is `remote-component-missing`: the scope's component, or version, is not in the local catalog.
 
 A construct a rule cannot judge is a skip.
 A skip is counted per rule and listed, and it never makes a report partial.
 Examples are a navigation file with an `include::`, an entry that names an `+{attribute}+`, an unreadable navigation file, and a title an include may supply.
+An unreadable navigation file skips only the pages that no readable navigation file of the version lists.
+An `include::` inside a comment or a delimited block is not one, as the navigation does not read it.
 
 [[policy]]
 == The policy
@@ -143,6 +152,7 @@ In the app the Quality panel counts it and lists it with its reason, and Problem
 An excluded finding never fails a gate.
 
 There are no globs and no folder-wide exclusions.
+Findings in a navigation file or an `antora.yml` cannot be excluded, since neither is a resource that a resource ID names.
 
 [[ci]]
 == Using it in CI
@@ -157,6 +167,7 @@ The command-line page has a complete CI example.
 See xref:command-line.adoc#audit[audit] and its _Using it in CI_ section.
 
 SARIF paths are relative to the audited root.
+An unavailable audit is written as an unsuccessful SARIF run (`executionSuccessful` is `false`), so code scanning does not read it as a clean run.
 Audit from the repository root when you upload the report to code scanning.
 
 [[providers]]
