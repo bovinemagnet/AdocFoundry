@@ -246,6 +246,7 @@ These keys are read from the user settings file only; a workspace settings file 
 If a configured path does not exist, the diagram shows its source with the reason, for example "graphviz diagrams need `/opt/homebrew/bin/dot`, which does not exist".
 If the setting is empty and the tool is not on the `PATH`, the reason is "... which was not found on the PATH".
 Changing these settings takes effect when settings reload, and diagrams that failed are tried again.
+A tool that was not found is looked for again a second later, so one installed while the application runs is used the next time the page is previewed.
 Graphviz, PlantUML and D2 run in the page's folder, so a relative `!include` or `image=` path in a diagram resolves against the page, as it does with asciidoctor-diagram.
 
 A Graphviz, PlantUML or D2 process that runs longer than 30 seconds is stopped, and the diagram shows its source with the reason, for example "`dot` did not finish within 30 seconds and was stopped".
@@ -255,6 +256,11 @@ A tool that writes more than 32 MB to standard output or standard error is stopp
 At most four diagrams render at once, and the rest wait in a queue, so a page with fifty diagrams does not start fifty processes.
 The preview, the visual editor and PDF export share this limit.
 If a diagram renderer crashes, the diagram shows its source with the reason "the diagram renderer crashed: ..." followed by what the crash reported.
+
+A diagram that failed is not tried again each time the preview is rebuilt, only when its source or options change.
+To try every failed diagram again, after installing a tool, fixing a file a diagram includes, or when a tool timed out on a busy machine, choose *View › Retry Failed Diagrams* (`preview.retry_diagrams`, also in the command palette).
+It also looks for the diagram tools again, so a tool installed or upgraded since is used.
+The application remembers the reasons for at most 256 failed diagrams beyond those of the pages it is showing; older ones are forgotten when a page is next parsed, and tried again when shown.
 The rest of the page, the preview and exports carry on.
 See xref:settings.adoc[Settings] for the keys.
 

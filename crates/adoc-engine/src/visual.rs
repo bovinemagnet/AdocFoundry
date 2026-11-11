@@ -236,6 +236,7 @@ impl Engine {
         let (id, version, dom) = (parse.id, parse.version, parse.dom.clone());
         let sources = parse.sources.clone();
         let model = Model::build(&path, &parse.text, &dom);
+        self.trim_diagram_failures();
         let (view, waiting) = self.view_of(&path, &dom, true);
         let current = Arc::new(VisualDocument {
             document: id,
@@ -364,7 +365,18 @@ impl Engine {
             .filter(|(_, session)| session.waiting.contains(checksum))
             .map(|(id, _)| *id)
             .collect();
-        for id in waiting {
+        self.rebuild_visual_views(waiting);
+    }
+
+    /// Rebuilds every visual view, so diagrams that failed are tried again.
+    pub(crate) fn refresh_visual_views(&mut self) {
+        let ids: Vec<DocumentId> = self.visual.sessions.keys().copied().collect();
+        self.rebuild_visual_views(ids);
+    }
+
+    /// Builds the views of these visual sessions again from their parses.
+    fn rebuild_visual_views(&mut self, ids: Vec<DocumentId>) {
+        for id in ids {
             let Some(session) = self.visual.sessions.get(&id) else {
                 continue;
             };

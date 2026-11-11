@@ -816,6 +816,153 @@ fn diagrams_are_rendered_for_their_page_s_folder() {
     );
 }
 
+/// A renderer that fails each diagram the first time, as a tool on a loaded machine may, and
+/// draws it every time after.
+struct FailsOnce(Arc<std::sync::atomic::AtomicUsize>);
+
+impl adoc_diagrams::DiagramProvider for FailsOnce {
+    fn kinds(&self) -> &[&str] {
+        &["graphviz"]
+    }
+
+    fn render(
+        &self,
+        request: &adoc_diagrams::DiagramRequest,
+    ) -> Result<String, adoc_diagrams::DiagramError> {
+        if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            return Err(adoc_diagrams::DiagramError::TimedOut {
+                program: "dot".to_owned(),
+                after: Duration::from_secs(30),
+            });
+        }
+        Ok(format!("<svg>{}</svg>", request.source))
+    }
+}
+
+/// The diagrams of the preview of `id`, once it has been brought up to date.
+fn diagrams_shown(engine: &mut Engine, clock: &ManualClock, id: DocumentId) -> Vec<DiagramView> {
+    clock.advance(PREVIEW_SETTLE);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    engine.pump();
+    blocks(engine, id)
+        .into_iter()
+        .filter_map(|block| match block.kind {
+            ViewKind::Diagram(diagram) => Some(diagram),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn retrying_diagrams_renders_one_that_failed() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n\n[graphviz]\n....\ndigraph { a }\n....\n").unwrap();
+    let (mut engine, clock) = engine_with_clock();
+    let renders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    engine.set_diagrams(Diagrams::with_providers(
+        DiagramCache::new(directory.path().join("cache")),
+        vec![Box::new(FailsOnce(renders.clone()))],
+    ));
+    let id = engine.open(&page).unwrap();
+    engine.request_preview(id);
+    let shown = diagrams_shown(&mut engine, &clock, id);
+    assert!(
+        matches!(shown.as_slice(), [DiagramView::Failed { .. }]),
+        "{shown:?}"
+    );
+    assert_eq!(engine.diagram_failures(), 1);
+
+    // Previewing again keeps the failure: it is not tried on every rebuild.
+    engine
+        .invoke(ids::SETTINGS_RELOAD, CommandArgs::None)
+        .unwrap();
+    let shown = diagrams_shown(&mut engine, &clock, id);
+    assert!(
+        matches!(shown.as_slice(), [DiagramView::Failed { .. }]),
+        "{shown:?}"
+    );
+
+    // Asked to, it tries again, with the renderer it was given.
+    engine
+        .invoke(ids::PREVIEW_RETRY_DIAGRAMS, CommandArgs::None)
+        .unwrap();
+    let shown = diagrams_shown(&mut engine, &clock, id);
+    assert!(
+        matches!(shown.as_slice(), [DiagramView::Svg(_)]),
+        "{shown:?}"
+    );
+    assert_eq!(renders.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(engine.diagram_failures(), 0);
+}
+
+/// A renderer that fails every diagram.
+struct AlwaysFails;
+
+impl adoc_diagrams::DiagramProvider for AlwaysFails {
+    fn kinds(&self) -> &[&str] {
+        &["graphviz"]
+    }
+
+    fn render(
+        &self,
+        _: &adoc_diagrams::DiagramRequest,
+    ) -> Result<String, adoc_diagrams::DiagramError> {
+        Err(adoc_diagrams::DiagramError::Failed(
+            "syntax error".to_owned(),
+        ))
+    }
+}
+
+#[test]
+fn remembered_diagram_failures_are_bounded() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n").unwrap();
+    let (mut engine, clock) = engine_with_clock();
+    engine.set_diagrams(Diagrams::with_providers(
+        DiagramCache::new(directory.path().join("cache")),
+        vec![Box::new(AlwaysFails)],
+    ));
+    let id = engine.open(&page).unwrap();
+    engine.request_preview(id);
+    let replace = |engine: &mut Engine, text: String| {
+        let end = engine.document(id).unwrap().text_string().len();
+        engine
+            .invoke(
+                ids::EDIT_REPLACE_RANGE,
+                CommandArgs::Text {
+                    id,
+                    range: SourceRange::new(0, end),
+                    text,
+                },
+            )
+            .unwrap();
+        diagrams_shown(engine, &clock, id)
+    };
+    // Edit after edit leaves a diagram that cannot be drawn, each a new failure.
+    let per_page = 30;
+    let rounds = adoc_engine::MAX_DIAGRAM_FAILURES / per_page + 2;
+    for round in 0..rounds {
+        let source: String = (0..per_page)
+            .map(|number| format!("[graphviz]\n....\ndigraph {{ r{round}n{number} }}\n....\n\n"))
+            .collect();
+        let shown = replace(&mut engine, format!("= Page\n\n{source}"));
+        assert_eq!(shown.len(), per_page);
+        assert!(shown
+            .iter()
+            .all(|diagram| matches!(diagram, DiagramView::Failed { .. })));
+        assert!(
+            engine.diagram_failures() <= adoc_engine::MAX_DIAGRAM_FAILURES + per_page,
+            "{}",
+            engine.diagram_failures()
+        );
+    }
+    replace(&mut engine, "= Page\n\nNo diagrams now.\n".to_owned());
+    assert_eq!(engine.diagram_failures(), adoc_engine::MAX_DIAGRAM_FAILURES);
+}
+
 // --- the pause in typing (#401) ------------------------------------------------------------------
 
 /// A page shown in the preview, its preview up to date, with "Typed." just typed at its end.

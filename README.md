@@ -196,7 +196,7 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 | Toggle theme | Cmd-K Cmd-T | Ctrl-K Ctrl-T |
 | Read-only second window | Cmd-K Cmd-N | Ctrl-K Ctrl-N |
 
-Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the preview's toolbar and commands in the palette. The visual editor's toolbar holds the block-type picker, the marks, Link, the lists, an Insert menu (image, table, code block, admonition) and, in a table cell, the Table menu; every one of them is also in the palette.
+Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the preview's toolbar and commands in the palette. Retry Failed Diagrams (`preview.retry_diagrams`, in the View menu and the palette) forgets the diagrams that failed, looks for Graphviz, PlantUML and D2 again, and renders those diagrams afresh; a tool that was not found is also looked for again a second later on its own, and the engine remembers at most 256 failures beyond those of the pages shown. The visual editor's toolbar holds the block-type picker, the marks, Link, the lists, an Insert menu (image, table, code block, admonition) and, in a table cell, the Table menu; every one of them is also in the palette.
 
 ## Settings
 

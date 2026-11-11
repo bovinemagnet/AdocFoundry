@@ -760,6 +760,7 @@ impl Engine {
             return;
         };
         state.doms = doms;
+        self.trim_diagram_failures();
         let waiting = self.export_views(job).1;
         let Some(state) = self.export.jobs.get_mut(&job) else {
             return;

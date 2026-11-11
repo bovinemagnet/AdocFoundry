@@ -4531,6 +4531,15 @@ impl WorkspaceView {
             })
     }
 
+    fn on_retry_diagrams(
+        &mut self,
+        _: &RetryDiagrams,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invoke(ids::PREVIEW_RETRY_DIAGRAMS, CommandArgs::None, window, cx);
+    }
+
     fn on_pin_preview(&mut self, _: &PinPreview, window: &mut Window, cx: &mut Context<Self>) {
         self.invoke(ids::PREVIEW_PIN, CommandArgs::None, window, cx);
     }
@@ -5649,6 +5658,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_fit_to_window))
             .on_action(cx.listener(Self::on_fit_width))
             .on_action(cx.listener(Self::on_pin_preview))
+            .on_action(cx.listener(Self::on_retry_diagrams))
             .on_action(cx.listener(Self::on_show_source))
             .on_action(cx.listener(Self::on_show_visual))
             .on_action(cx.listener(Self::on_show_split))

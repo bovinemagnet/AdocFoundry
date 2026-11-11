@@ -152,6 +152,9 @@ pub trait DiagramProvider: Send + Sync {
     fn identity(&self, _request: &DiagramRequest) -> String {
         String::new()
     }
+    /// Forgets what the provider found out about its tools, so the next render looks again.
+    /// Nothing by default.
+    fn look_again(&self) {}
 }
 
 /// The providers and the cache the preview renders diagrams through.
@@ -236,6 +239,13 @@ impl Diagrams {
             hasher.update(part.as_bytes());
         }
         hex(&hasher.finalize())
+    }
+
+    /// Has every provider look for its tools again, so one installed or upgraded since is used.
+    pub fn look_for_tools_again(&self) {
+        for provider in &self.providers {
+            provider.look_again();
+        }
     }
 
     /// The cached image for `request`, without rendering.
@@ -587,6 +597,43 @@ mod tests {
         assert_eq!(old.checksum(&request), old.checksum(&request));
         // Mermaid, rendered in process, keeps the key its cached images are named by.
         assert_eq!(old.checksum(&mermaid()), mermaid().checksum());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_installed_after_it_was_missed_is_found() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = spawn_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let tool = dir.path().join("bin").join("dot");
+        let tools = ToolPaths {
+            dot: tool.clone(),
+            ..ToolPaths::default()
+        };
+        let diagrams = Diagrams::with_tools(DiagramCache::new(dir.path().join("cache")), &tools);
+        let request = DiagramRequest::new("graphviz", "a -> b");
+        let missing = diagrams.checksum(&request);
+        assert!(matches!(
+            diagrams.render(&request),
+            Err(DiagramError::ToolMissing { .. })
+        ));
+
+        // Installed: a miss is not remembered beyond a moment, so the key moves on its own.
+        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        std::fs::write(&tool, "#!/bin/sh\nprintf '<svg>%s</svg>' \"$(cat)\"\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::thread::sleep(external::MISS_RECHECK + std::time::Duration::from_millis(50));
+        let found = diagrams.checksum(&request);
+        assert_ne!(found, missing);
+        let svg = diagrams.render(&request).unwrap();
+        assert_eq!(std::fs::read_to_string(svg).unwrap(), "<svg>a -> b</svg>");
+
+        // A tool found is kept until asked to look again, as after an upgrade.
+        std::fs::write(&tool, "#!/bin/sh\nprintf '<svg>upgraded</svg>'\n").unwrap();
+        assert_eq!(diagrams.checksum(&request), found);
+        diagrams.look_for_tools_again();
+        assert_ne!(diagrams.checksum(&request), found);
     }
 
     #[cfg(unix)]

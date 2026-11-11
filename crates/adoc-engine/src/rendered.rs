@@ -135,11 +135,56 @@ pub(crate) struct PreviewState {
     queued: std::collections::VecDeque<(Arc<Diagrams>, String, DiagramRequest)>,
     /// Diagram renders running on workers.
     running: usize,
-    failed: BTreeMap<String, String>,
+    /// Diagrams that could not be rendered, so they are not tried again on every rebuild.
+    failed: FailedDiagrams,
 }
 
 /// The most diagrams rendered at once, however many a page holds.
 pub const DIAGRAM_WORKERS: usize = 4;
+
+/// The most diagram failures remembered from one parse of a page to the next: the oldest are
+/// forgotten first, when a page is parsed afresh, and tried again when next shown. Between
+/// parses the failures of the pages being shown are added, never forgotten, so a view rebuilt
+/// as its other diagrams finish never asks for one again.
+pub const MAX_DIAGRAM_FAILURES: usize = 256;
+
+/// Why each diagram that failed did, by checksum, at most [`MAX_DIAGRAM_FAILURES`] of them.
+#[derive(Default)]
+pub(crate) struct FailedDiagrams {
+    messages: HashMap<String, String>,
+    /// Checksums, oldest first.
+    order: std::collections::VecDeque<String>,
+}
+
+impl FailedDiagrams {
+    fn get(&self, checksum: &str) -> Option<&String> {
+        self.messages.get(checksum)
+    }
+
+    fn insert(&mut self, checksum: String, message: String) {
+        if self.messages.insert(checksum.clone(), message).is_none() {
+            self.order.push_back(checksum);
+        }
+    }
+
+    /// Forgets the oldest failures beyond [`MAX_DIAGRAM_FAILURES`].
+    fn trim(&mut self) {
+        while self.order.len() > MAX_DIAGRAM_FAILURES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.messages.remove(&oldest);
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.messages.clear();
+        self.order.clear();
+    }
+
+    fn len(&self) -> usize {
+        self.messages.len()
+    }
+}
 
 impl PreviewState {
     /// When the next scheduled preview is to start.
@@ -649,6 +694,7 @@ impl Engine {
                 waiting: BTreeSet::new(),
             },
         );
+        self.trim_diagram_failures();
         self.publish_preview(id);
     }
 
@@ -763,9 +809,34 @@ impl Engine {
         };
         if tools(before) != tools(now) {
             self.rendered.diagrams = None;
-            self.rendered.failed.clear();
-            self.preview_workspace_changed();
+            self.retry_diagrams();
         }
+    }
+
+    /// Forgets every diagram that failed, has the renderer look for its tools again, so one
+    /// installed since is used, and shows the previews and visual views again, rendering those
+    /// diagrams afresh: `preview.retry_diagrams`.
+    pub fn retry_diagrams(&mut self) {
+        self.rendered.failed.clear();
+        if let Some(diagrams) = &self.rendered.diagrams {
+            diagrams.look_for_tools_again();
+        }
+        self.preview_workspace_changed();
+        self.refresh_visual_views();
+    }
+
+    /// Forgets the oldest diagram failures beyond [`MAX_DIAGRAM_FAILURES`]. Called only where
+    /// a page has been parsed afresh, before its view is built, never as a view is rebuilt for
+    /// a diagram that finished, which would ask again for a failure just forgotten, and again.
+    pub(crate) fn trim_diagram_failures(&mut self) {
+        self.rendered.failed.trim();
+    }
+
+    /// How many diagram failures are remembered: at most [`MAX_DIAGRAM_FAILURES`] and those
+    /// of the pages shown since they were last parsed.
+    #[must_use]
+    pub fn diagram_failures(&self) -> usize {
+        self.rendered.failed.len()
     }
 
     /// Replaces the diagram renderer, for tests and front ends with their own providers.
@@ -838,7 +909,7 @@ impl Engine {
 struct EngineResolver<'e> {
     workspace: &'e WorkspaceState,
     diagrams: &'e Diagrams,
-    failed: &'e BTreeMap<String, String>,
+    failed: &'e FailedDiagrams,
     /// Whether formulas are rendered as images for this view.
     formulas: bool,
     /// Diagrams to render, gathered while building because the view is built immutably.
