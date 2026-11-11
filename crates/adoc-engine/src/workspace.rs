@@ -159,6 +159,12 @@ pub(crate) enum WorkerMessage {
         workdir: PathBuf,
         result: Result<String, String>,
     },
+    #[cfg(feature = "git")]
+    Committed {
+        workdir: PathBuf,
+        saved: Vec<PathBuf>,
+        result: Result<String, String>,
+    },
     ImpactInspected {
         generation: u64,
         result: Result<Box<adoc_impact::ImpactReport>, String>,
@@ -391,7 +397,13 @@ impl Engine {
         self.roots = roots;
         self.settings
             .set_workspace_root(self.roots.first().map(PathBuf::as_path));
-        self.reload_settings()?;
+        // A settings file that does not parse leaves its settings out, and says so, rather
+        // than leave the engine half way to the new folder, which could then not be opened to
+        // fix it. The watcher reads it again once it changes.
+        self.reload_settings_with(|settings| {
+            settings.reload_skipping_broken_files();
+            Ok(())
+        })?;
         self.open_expansion();
         self.files.clear();
         self.watcher =
@@ -437,6 +449,9 @@ impl Engine {
         self.indexing += 1;
         self.index_generation += 1;
         let generation = self.index_generation;
+        let hold = self.index_hold.take();
+        // This index reads every file as it is from now on.
+        self.changed_while_indexing.clear();
         let crashed = move |error| WorkerMessage::IndexFailed {
             generation,
             error: format!("indexing crashed: {error}"),
@@ -457,6 +472,9 @@ impl Engine {
                     entered.insert(folder.to_path_buf());
                 }
             });
+            if let Some(hold) = hold {
+                let _ = hold.recv();
+            }
             let message = match result {
                 Ok(report) => WorkerMessage::Indexed {
                     generation,
@@ -475,6 +493,15 @@ impl Engine {
             };
             let _ = sender.send(message);
         });
+    }
+
+    /// Holds the next whole index, once it has read the files, until the returned sender is
+    /// dropped, so a test can change files while its result is still to come.
+    #[doc(hidden)]
+    pub fn hold_next_index(&mut self) -> std::sync::mpsc::Sender<()> {
+        let (hold, held) = std::sync::mpsc::channel();
+        self.index_hold = Some(held);
+        hold
     }
 
     /// True while indexing runs or file-system changes wait to be applied.
@@ -667,6 +694,8 @@ impl Engine {
                     self.graph_file_changed(&path);
                     self.workspace.replace_document(path, parsed);
                 }
+                // So are files changed on disk while the worker read them.
+                self.replay_changes_while_indexing();
                 self.emit(EngineEvent::WorkspaceIndexed { roots, files });
                 self.refresh_open_diagnostics(None);
                 self.audit_changed_everywhere();
@@ -780,6 +809,12 @@ impl Engine {
             } => self.page_ages_read(workdir, run, commit, found),
             #[cfg(feature = "git")]
             WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
+            #[cfg(feature = "git")]
+            WorkerMessage::Committed {
+                workdir,
+                saved,
+                result,
+            } => self.committed(workdir, saved, result),
             WorkerMessage::SiteBuildLine { generation, line } => {
                 self.site_build_line(generation, line);
             }
@@ -846,7 +881,7 @@ impl Engine {
                 let path = as_opened(&path, &watcher.aliases);
                 // `.git` is ignored, but its `HEAD`, `index` and `refs` show branch switches,
                 // staging and commits.
-                if is_ignored(&path, &self.settings.workspace.ignore)
+                if is_ignored(&path, &self.roots, &self.settings.workspace.ignore)
                     && !self.git.is_metadata_path(&path)
                 {
                     continue;
@@ -896,11 +931,27 @@ impl Engine {
             })
             .count();
         let burst = closed_pages > FILE_BURST;
+        if self.indexing > 0 {
+            // The whole index may have read them before they changed.
+            self.changed_while_indexing.extend(
+                ready
+                    .iter()
+                    .filter(|(_, change)| *change == Change::File)
+                    .map(|(path, _)| path.clone()),
+            );
+        }
         // Pages not open were indexed again: their dependants are diagnosed once, after all.
         let mut indexed = false;
         // The descriptors of the components whose resources came, went or changed aliases.
         let mut catalogued = BTreeSet::new();
         for (path, change) in &ready {
+            if *change == Change::File && !is_asciidoc_path(path) {
+                // An open file that is not a page (a descriptor, the playbook, a stylesheet)
+                // follows the file too; what reads it is told below.
+                if let Some(id) = self.document_for_path(path) {
+                    self.open_document_changed_on_disk(id, fs::read_to_string(path).ok());
+                }
+            }
             if *change == Change::Directory {
                 reindex = true;
             } else if self.is_settings_file(path) {
@@ -945,6 +996,26 @@ impl Engine {
             self.reindex();
         }
         ready.len()
+    }
+
+    /// Applies again, over a whole index's result, the changes on disk applied while it ran,
+    /// which it may have read before they were made. Open pages are left to the caller, which
+    /// replays their buffers.
+    fn replay_changes_while_indexing(&mut self) {
+        let mut catalogued = BTreeSet::new();
+        for path in std::mem::take(&mut self.changed_while_indexing) {
+            if self.is_settings_file(&path) || self.document_for_path(&path).is_some() {
+                continue;
+            }
+            if path.file_name().is_some_and(|name| name == "antora.yml") {
+                let _ = self.workspace.reload_descriptor(&path);
+                self.graph_catalog_changed();
+            } else if is_asciidoc_path(&path) {
+                self.file_changed_on_disk(&path, &mut catalogued);
+            } else {
+                self.catalog_file_changed(&path, None);
+            }
+        }
     }
 
     pub(crate) fn is_settings_file(&self, path: &Path) -> bool {
@@ -996,48 +1067,7 @@ impl Engine {
     fn file_changed_on_disk(&mut self, path: &Path, catalogued: &mut BTreeSet<PathBuf>) -> bool {
         let on_disk = fs::read_to_string(path).ok();
         if let Some(id) = self.document_for_path(path) {
-            if self.writer.is_saving(id) {
-                return false; // Our own write, which the save's result settles.
-            }
-            if self.states.get(&id).is_some_and(|state| state.client_owned) {
-                return false; // The client's buffer, which only the client changes.
-            }
-            let Some(document) = self.documents.get(&id) else {
-                return false;
-            };
-            let Some(text) = on_disk else {
-                return false; // Deleted underneath an open document: keep the buffer.
-            };
-            if document.text == text.as_str() {
-                return false; // Our own save, or an identical write.
-            }
-            let Some(state) = self.states.get_mut(&id) else {
-                return false;
-            };
-            // What was last saved or read: our own write, though typing went on since.
-            if text.len() == state.saved_len
-                && crate::document::hash_text(&text) == state.saved_hash
-            {
-                return false;
-            }
-            if document.dirty {
-                if !state.changed_on_disk {
-                    state.changed_on_disk = true;
-                    self.emit(EngineEvent::DocumentChangedOnDisk(id));
-                }
-                return false;
-            }
-            // Only what changed is replaced, so carets elsewhere stay and undo keeps only that.
-            let edits: Vec<TextEdit> = crate::edit::minimal(&document.text.to_string(), &text)
-                .into_iter()
-                .collect();
-            let group = self.new_group();
-            if self
-                .apply_edits(id, edits, crate::engine::UndoMode::Group(group))
-                .is_ok()
-            {
-                self.mark_saved(id, &text);
-            }
+            self.open_document_changed_on_disk(id, on_disk);
             return false;
         }
         match &on_disk {
@@ -1058,6 +1088,51 @@ impl Engine {
 }
 
 impl Engine {
+    /// The file of open document `id`, of any type, is `on_disk` now (`None` when it cannot be
+    /// read): a clean buffer follows it, a dirty one is told that it changed underneath.
+    fn open_document_changed_on_disk(&mut self, id: crate::DocumentId, on_disk: Option<String>) {
+        if self.writer.is_saving(id) {
+            return; // Our own write, which the save's result settles.
+        }
+        if self.states.get(&id).is_some_and(|state| state.client_owned) {
+            return; // The client's buffer, which only the client changes.
+        }
+        let Some(document) = self.documents.get(&id) else {
+            return;
+        };
+        let Some(text) = on_disk else {
+            return; // Deleted underneath an open document: keep the buffer.
+        };
+        if document.text == text.as_str() {
+            return; // Our own save, or an identical write.
+        }
+        let Some(state) = self.states.get_mut(&id) else {
+            return;
+        };
+        // What was last saved or read: our own write, though typing went on since.
+        if text.len() == state.saved_len && crate::document::hash_text(&text) == state.saved_hash {
+            return;
+        }
+        if document.dirty {
+            if !state.changed_on_disk {
+                state.changed_on_disk = true;
+                self.emit(EngineEvent::DocumentChangedOnDisk(id));
+            }
+            return;
+        }
+        // Only what changed is replaced, so carets elsewhere stay and undo keeps only that.
+        let edits: Vec<TextEdit> = crate::edit::minimal(&document.text.to_string(), &text)
+            .into_iter()
+            .collect();
+        let group = self.new_group();
+        if self
+            .apply_edits(id, edits, crate::engine::UndoMode::Group(group))
+            .is_ok()
+        {
+            self.mark_saved(id, &text);
+        }
+    }
+
     /// Files the engine made or took away itself that are not pages: the catalog and whatever
     /// reads it follow at once, as they would on the watcher's report, which then finds nothing
     /// left to do.
@@ -1128,8 +1203,17 @@ fn as_opened(path: &Path, aliases: &[(PathBuf, PathBuf)]) -> PathBuf {
         .unwrap_or_else(|| path.to_path_buf())
 }
 
-fn is_ignored(path: &Path, ignore: &[String]) -> bool {
-    path.components().any(|component| {
+/// Whether `path` is in a folder `[workspace] ignore` names, as the index's walk decides: only
+/// the folders beneath the root holding it count, the innermost such root, so a workspace
+/// that itself sits in a folder named `build` is still watched. Outside every root (`.git`
+/// metadata, the user settings folder) the whole path counts.
+fn is_ignored(path: &Path, roots: &[PathBuf], ignore: &[String]) -> bool {
+    let beneath = roots
+        .iter()
+        .filter_map(|root| path.strip_prefix(root).ok())
+        .min_by_key(|rest| rest.components().count())
+        .unwrap_or(path);
+    beneath.components().any(|component| {
         let component = component.as_os_str().to_string_lossy();
         ignore.iter().any(|ignored| *ignored == component)
     })
@@ -1138,6 +1222,43 @@ fn is_ignored(path: &Path, ignore: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_folders_beneath_the_root_are_ignored() {
+        let ignore = vec!["build".to_owned(), "node_modules".to_owned()];
+        let roots = vec![PathBuf::from("/home/ada/build/docs")];
+        assert!(!is_ignored(
+            Path::new("/home/ada/build/docs/modules/ROOT/pages/index.adoc"),
+            &roots,
+            &ignore
+        ));
+        assert!(is_ignored(
+            Path::new("/home/ada/build/docs/build/site/index.html"),
+            &roots,
+            &ignore
+        ));
+        // A root inside another is matched as itself.
+        let nested = vec![
+            PathBuf::from("/home/ada/work"),
+            PathBuf::from("/home/ada/work/node_modules/docs"),
+        ];
+        assert!(!is_ignored(
+            Path::new("/home/ada/work/node_modules/docs/page.adoc"),
+            &nested,
+            &ignore
+        ));
+        assert!(is_ignored(
+            Path::new("/home/ada/work/node_modules/other/page.adoc"),
+            &nested,
+            &ignore
+        ));
+        // Outside every root, the whole path counts.
+        assert!(is_ignored(
+            Path::new("/home/ada/build/settings.toml"),
+            &roots,
+            &ignore
+        ));
+    }
 
     #[test]
     fn a_folder_modified_is_not_a_change_of_the_tree() {

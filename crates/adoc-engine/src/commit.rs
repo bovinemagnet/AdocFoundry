@@ -1,10 +1,16 @@
 //! Staging, committing and pushing a writer's changes. Everything goes through `gix` but the
 //! push, which runs the `git` executable so the user's credential helper and SSH agent work
-//! unchanged (and a commit, when the configuration asks for signed commits).
+//! unchanged (and a commit, when the configuration asks for signed commits). Both run on
+//! workers: signing may wait for a passphrase or a security key, so a signed commit is also
+//! stopped after `[tools] commit_timeout`.
 
 use std::{
+    io::Read as _,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
 };
 
 use adoc_git::{Change, FileStatus, Head, Repository};
@@ -212,6 +218,11 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
         command: ids::GIT_COMMIT,
         expected: "a message, and optionally the paths to commit",
     })?;
+    if engine.git.committing {
+        return Err(EngineError::Refused(
+            "a signed commit is still being made".to_owned(),
+        ));
+    }
     let paths = paths_of(ids::GIT_COMMIT, &args)?;
     let mut saved = Vec::new();
     for path in &paths {
@@ -228,25 +239,116 @@ fn git_commit(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, 
         let borrowed: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
         repo.stage(&borrowed).map_err(git_error)?;
     }
-    let commit = if repo.signs_commits() {
-        // `gix` cannot sign: let the user's Git do it, with their key.
+    if repo.signs_commits() {
+        // `gix` cannot sign: let the user's Git do it, with their key, on a worker, as it may
+        // wait for a passphrase or a touch.
         let git = engine.git_executable().ok_or_else(|| {
             EngineError::Refused(
                 "commits are signed (commit.gpgsign) and need the git executable: set [tools] git"
                     .to_owned(),
             )
         })?;
-        run_git(
-            &git,
-            &workdir,
-            &["commit", "--quiet", "--message", &message],
-        )?;
-        open(&workdir)?.head_commit_id().unwrap_or_default()
-    } else {
-        repo.commit(&message).map_err(git_error)?
-    };
+        let timeout = Duration::from_secs(engine.settings.tools.commit_timeout);
+        engine.git.committing = true;
+        engine.workers_running += 1;
+        let sender = engine.worker_sender.clone();
+        let (failed, unsaved) = (workdir.clone(), saved.clone());
+        let crashed = move |error| WorkerMessage::Committed {
+            workdir: failed,
+            saved: unsaved,
+            result: Err(format!("git commit crashed: {error}")),
+        };
+        let started = saved.clone();
+        crate::worker::spawn(sender, crashed, move |sender| {
+            let result = signed_commit(&git, &workdir, &message, timeout);
+            let _ = sender.send(WorkerMessage::Committed {
+                workdir,
+                saved,
+                result,
+            });
+        });
+        return Ok(CommandOutcome::CommitStarted { saved: started });
+    }
+    let commit = repo.commit(&message).map_err(git_error)?;
     engine.refresh_git(workdir);
     Ok(CommandOutcome::Committed { commit, saved })
+}
+
+/// How often a signed commit's `git` is checked on.
+const POLL: Duration = Duration::from_millis(20);
+
+/// The most of a signed commit's standard error kept for its message.
+const MAX_ERROR: u64 = 64 * 1024;
+
+/// Makes a signed commit of the index in `workdir` with `git commit`, giving the new commit's
+/// id. `git` has no terminal to prompt on: its standard input is empty, Git's own prompts are
+/// off, and it runs in a process group of its own, so a signing program that reads the
+/// terminal is stopped rather than answered. A prompt shown in a window of its own (pinentry,
+/// a security key's touch) can still be answered. Past `timeout`, `git` and everything it
+/// started are stopped.
+fn signed_commit(
+    git: &Path,
+    workdir: &Path,
+    message: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let mut command = Command::new(git);
+    command
+        .current_dir(workdir)
+        .args(["commit", "--quiet", "--message", message])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    adoc_diagrams::process::in_own_group(&mut command);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("could not run {}: {error}", git.display()))?;
+    // Read on a thread, so a hook that writes a lot cannot stall it; not waited for after a
+    // stop, in case a process outside the group still holds the pipe.
+    let (sender, errors) = mpsc::channel();
+    if let Some(pipe) = child.stderr.take() {
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = pipe.take(MAX_ERROR).read_to_end(&mut bytes);
+            let _ = sender.send(String::from_utf8_lossy(&bytes).trim().to_owned());
+        });
+    }
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(POLL),
+            Ok(None) => {
+                adoc_diagrams::process::stop(&mut child);
+                return Err(format!(
+                    "git commit was stopped after {} s ([tools] commit_timeout): signing the \
+                     commit may be waiting for a passphrase or a security key that cannot be \
+                     asked for here",
+                    timeout.as_secs()
+                ));
+            }
+            Err(error) => {
+                adoc_diagrams::process::stop(&mut child);
+                return Err(format!("git commit could not be waited for: {error}"));
+            }
+        }
+    };
+    if status.success() {
+        Ok(open(workdir)
+            .ok()
+            .and_then(|repo| repo.head_commit_id())
+            .unwrap_or_default())
+    } else {
+        let error = errors
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap_or_default();
+        Err(if error.is_empty() {
+            format!("git commit failed ({status})")
+        } else {
+            error
+        })
+    }
 }
 
 /// Saves the document, stages it and offers a commit message for it.
@@ -316,6 +418,23 @@ fn git_push(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, Engin
 }
 
 impl Engine {
+    pub(crate) fn committed(
+        &mut self,
+        workdir: PathBuf,
+        saved: Vec<PathBuf>,
+        result: Result<String, String>,
+    ) {
+        self.git.committing = false;
+        match result {
+            Ok(commit) => self.emit(EngineEvent::GitCommitted { commit, saved }),
+            Err(error) => self.emit(EngineEvent::CommandFailed {
+                command: ids::GIT_COMMIT,
+                error,
+            }),
+        }
+        self.refresh_git(workdir);
+    }
+
     pub(crate) fn pushed(&mut self, workdir: PathBuf, result: Result<String, String>) {
         match result {
             Ok(message) => self.emit(EngineEvent::GitPushed { message }),

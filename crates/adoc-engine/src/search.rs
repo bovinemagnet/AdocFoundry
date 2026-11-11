@@ -546,6 +546,15 @@ impl Engine {
 
     /// Moves a file on disk and everything the engine knows about it.
     pub(crate) fn move_file(&mut self, from: &Path, to: &Path) -> Result<(), EngineError> {
+        if let Some(id) = self.document_for_path(&normalize_path(from)) {
+            // A save in flight would write the old file back, and mark the page saved though
+            // the moved file lacks what it wrote.
+            while self.writer.is_saving(id) {
+                if !self.apply_next_worker_message() {
+                    break;
+                }
+            }
+        }
         if let Some(parent) = to.parent() {
             fs::create_dir_all(parent).map_err(|error| EngineError::io(parent, error))?;
         }

@@ -141,7 +141,14 @@ pub struct ToolSettings {
     pub node: String,
     /// Seconds a site build may run, `npm install` included, before it is stopped.
     pub build_timeout: u64,
+    /// Seconds a signed commit's `git commit` may run, waiting for a passphrase or a security
+    /// key, before it is stopped.
+    pub commit_timeout: u64,
 }
+
+/// How long a signed commit may take unless `[tools] commit_timeout` says: long enough to type
+/// a passphrase or touch a key.
+pub const DEFAULT_COMMIT_TIMEOUT: u64 = 120;
 
 impl Default for ToolSettings {
     fn default() -> Self {
@@ -154,6 +161,7 @@ impl Default for ToolSettings {
             diagram_timeout: adoc_diagrams::DEFAULT_TIMEOUT.as_secs(),
             node: String::new(),
             build_timeout: crate::site_build::DEFAULT_BUILD_TIMEOUT.as_secs(),
+            commit_timeout: DEFAULT_COMMIT_TIMEOUT,
         }
     }
 }
@@ -559,6 +567,18 @@ impl Settings {
 
     /// Re-reads both layers from the files they were loaded from.
     pub fn reload(&mut self) -> Result<(), EngineError> {
+        self.reload_layers(false)
+    }
+
+    /// Re-reads both layers as [`Settings::reload`] does, except that a file that cannot be
+    /// read or does not parse is left out, with the reason in [`Settings::warnings`], rather
+    /// than failing: opening a folder whose settings file is broken must still open it, so the
+    /// file can be fixed.
+    pub fn reload_skipping_broken_files(&mut self) {
+        let _ = self.reload_layers(true);
+    }
+
+    fn reload_layers(&mut self, skip_broken: bool) -> Result<(), EngineError> {
         let mut fresh = Self {
             user_file: self.user_file.clone(),
             workspace_file: self.workspace_file.clone(),
@@ -577,14 +597,21 @@ impl Settings {
             .as_deref()
             .and_then(Path::parent)
             .map(|folder| folder.join("themes"));
-        if let Some(path) = fresh.user_file.clone() {
-            if let Some(table) = read_table(&path)? {
-                fresh.apply(&table, Layer::User, &path);
-            }
-        }
-        if let Some(path) = fresh.workspace_file.clone() {
-            if let Some(table) = read_table(&path)? {
-                fresh.apply(&table, Layer::Workspace, &path);
+        for (file, layer) in [
+            (fresh.user_file.clone(), Layer::User),
+            (fresh.workspace_file.clone(), Layer::Workspace),
+        ] {
+            let Some(path) = file else {
+                continue;
+            };
+            match read_table(&path) {
+                Ok(Some(table)) => fresh.apply(&table, layer, &path),
+                Ok(None) => {}
+                Err(error) if skip_broken => fresh.warnings.push(format!(
+                    "{}\nIts settings are not applied until it is fixed.",
+                    error.to_string().trim_end()
+                )),
+                Err(error) => return Err(error),
             }
         }
         if fresh.git_opt_in && !fresh.git_enabled_set {
@@ -1053,6 +1080,7 @@ impl Settings {
             ("tools", "diagram_timeout") => self.tools.diagram_timeout = positive(value)?.into(),
             ("tools", "node") => self.tools.node = string(value)?,
             ("tools", "build_timeout") => self.tools.build_timeout = positive(value)?.into(),
+            ("tools", "commit_timeout") => self.tools.commit_timeout = positive(value)?.into(),
             ("git", "enabled") => {
                 self.git.enabled = boolean(value)?;
                 self.git_enabled_set = true;
@@ -1342,6 +1370,7 @@ fn is_known(section: &str, key: &str) -> bool {
                     | "diagram_timeout"
                     | "node"
                     | "build_timeout"
+                    | "commit_timeout"
             )
             | (
                 "git",
@@ -1846,15 +1875,17 @@ mod tests {
     fn the_diagram_timeout_is_read_in_seconds() {
         assert_eq!(Settings::default().tools.diagram_timeout, 30);
         assert_eq!(Settings::default().tools.build_timeout, 600);
+        assert_eq!(Settings::default().tools.commit_timeout, 120);
         let directory = tempfile::tempdir().unwrap();
         let user = directory.path().join("adocfoundry.toml");
         fs::write(
             &user,
-            "[tools]\ndiagram_timeout = 5\nbuild_timeout = 90\nnode = \"/opt/node/bin/node\"\n",
+            "[tools]\ndiagram_timeout = 5\nbuild_timeout = 90\ncommit_timeout = 15\nnode = \"/opt/node/bin/node\"\n",
         )
         .unwrap();
         let settings = Settings::load(Some(&user), None).unwrap();
         assert_eq!(settings.tools.build_timeout, 90);
+        assert_eq!(settings.tools.commit_timeout, 15);
         assert_eq!(settings.tools.node, "/opt/node/bin/node");
         assert_eq!(settings.tools.diagram_timeout, 5);
         fs::write(&user, "[tools]\ndiagram_timeout = 0\n").unwrap();

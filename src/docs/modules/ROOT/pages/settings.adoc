@@ -72,6 +72,7 @@ d2 = ""                          # optional absolute path; discovered on PATH if
 diagram_timeout = 30             # seconds a diagram may render (Mermaid included) before it is stopped
 node = ""                        # optional absolute path to node; npm is found beside it, else on PATH (Build Site)
 build_timeout = 600              # seconds Build Site may run, npm install included, before it is stopped
+commit_timeout = 120             # seconds a signed commit may run, waiting for a passphrase or key, before it is stopped
 
 [templates]
 dir = "templates"                # folder of project templates, one per subfolder (also allowed in a workspace file, inside the workspace)
@@ -309,7 +310,7 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |`workspace.ignore`
 |array of strings
 |`[".cache", ".git", ".zed", "node_modules", "build", "target", "dist", ".idea", ".gradle"]`
-|Folder names skipped by indexing, Antora discovery and the file watcher, and hidden in Files unless Show Excluded Files is on. A workspace file's list replaces the default rather than adding to it.
+|Folder names skipped by indexing, Antora discovery and the file watcher, and hidden in Files unless Show Excluded Files is on. A workspace file's list replaces the default rather than adding to it. Only folders beneath a workspace folder count, so a workspace that itself sits in a folder named `build` is indexed and watched as usual.
 
 |`tools.asciidoctor`
 |string
@@ -350,6 +351,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |integer
 |`600`
 |The number of seconds a site build may run, `npm install` included, before it and every process it started are stopped. A build that writes more than 8 MiB of output is also stopped. User file only.
+
+|`tools.commit_timeout`
+|integer
+|`120`
+|The number of seconds a signed commit's `git commit` may run, waiting for a passphrase or a security key, before it and every process it started are stopped. User file only.
 
 |`templates.dir`
 |string
@@ -559,4 +565,7 @@ Problems with settings produce warnings and never stop the application:
 
 Each warning names the file and the key and is shown once.
 
-A file that is not valid TOML at all (for example a missing closing bracket) is reported as a settings error instead.
+A file that is not valid TOML at all (for example a missing closing bracket) does not stop a folder opening.
+The folder opens with the other file's settings and the defaults, and a warning names the file, line and column and ends "Its settings are not applied until it is fixed."
+Fixing the file on disk applies it, and the warning goes.
+A file that stops parsing while the folder is open, or when you choose Reload Settings, is reported as a settings error instead, and the settings already in force are kept.

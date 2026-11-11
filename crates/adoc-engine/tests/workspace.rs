@@ -402,6 +402,54 @@ fn external_change_is_reported_once() {
     );
 }
 
+#[test]
+fn an_open_descriptor_follows_its_file_on_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let descriptor = directory.path().join("antora.yml");
+    fs::write(&descriptor, "name: demo\nversion: ~\n").unwrap();
+    fs::create_dir_all(directory.path().join("modules/ROOT/pages")).unwrap();
+    fs::write(
+        directory.path().join("modules/ROOT/pages/index.adoc"),
+        "= Index\n",
+    )
+    .unwrap();
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    settle(&mut engine);
+    let events = engine.subscribe();
+    let id = engine.open(&descriptor).unwrap();
+    assert!(!engine.document(id).unwrap().asciidoc);
+
+    // Clean, it follows the file.
+    fs::write(&descriptor, "name: demo\nversion: '2.0'\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| engine
+        .document(id)
+        .unwrap()
+        .text
+        .to_string()
+        .contains("2.0")));
+    assert!(!engine.document(id).unwrap().dirty);
+
+    // With unsaved edits, it says the file changed.
+    type_at_start(&mut engine, id, "# mine\n");
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&descriptor, "name: demo\nversion: '3.0'\n").unwrap();
+    let barrier = directory.path().join("modules/ROOT/pages/barrier.adoc");
+    assert_eq!(
+        reports_until_barrier(&mut engine, &events, id, &barrier, || {}),
+        1
+    );
+    assert!(engine
+        .document(id)
+        .unwrap()
+        .text
+        .to_string()
+        .starts_with("# mine\n"));
+}
+
 /// True once the index holds `path`.
 fn indexed(engine: &Engine, path: &Path) -> bool {
     engine.workspace().index.file(path).is_some()
@@ -647,6 +695,79 @@ fn settings_reload_on_external_change() {
 }
 
 #[test]
+fn a_malformed_workspace_settings_file_still_opens_the_folder() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings_file = directory.path().join(adoc_engine::WORKSPACE_SETTINGS_FILE);
+    fs::write(&settings_file, "[editor]\ntab_width = = 4\n").unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n").unwrap();
+    let mut engine = engine_without_user_settings();
+
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert!(
+        engine
+            .workspace()
+            .index
+            .file(&adoc_engine::normalize_path(&page))
+            .is_some(),
+        "the folder is indexed"
+    );
+    // The file's problem is reported where the front end shows settings problems, with the
+    // file and the line.
+    let warnings = engine.settings().warnings.clone();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains(".adocfoundry.toml"), "{warnings:?}");
+    assert!(warnings[0].contains("line 2"), "{warnings:?}");
+    assert_eq!(engine.settings().editor.tab_width, 2, "the defaults apply");
+
+    // Fixing the file on disk clears it.
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&settings_file, "[editor]\ntab_width = 4\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| {
+        engine.settings().editor.tab_width == 4
+    }));
+    assert!(engine.settings().warnings.is_empty());
+}
+
+#[test]
+fn a_page_changed_on_disk_while_the_workspace_is_indexed_is_not_lost() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_engine::normalize_path(&directory.path().join("page.adoc"));
+    fs::write(&page, "= Before\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    let title = |engine: &Engine| {
+        engine
+            .workspace()
+            .index
+            .file(&page)
+            .and_then(|entry| entry.document.title.as_ref())
+            .map(|title| title.text.clone())
+    };
+    // The index reads the page, then waits while it is rewritten and the change applied.
+    let hold = engine.hold_next_index();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    thread::sleep(Duration::from_millis(300));
+    fs::write(&page, "= After\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| {
+        title(engine).as_deref() == Some("After")
+    }));
+
+    drop(hold);
+    assert!(pump_until(&mut engine, |engine| !engine.is_indexing()));
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert_eq!(
+        title(&engine).as_deref(),
+        Some("After"),
+        "the index holds the page as it is on disk"
+    );
+}
+
+#[test]
 fn user_settings_reload_on_external_change() {
     let user = tempfile::tempdir().unwrap();
     // The folder as the watcher reports it: macOS's temporary folder is behind a link, and
@@ -843,6 +964,30 @@ fn a_page_created_on_disk_is_catalogued() {
     assert!(events
         .iter()
         .any(|event| matches!(event, EngineEvent::CatalogChanged { .. })));
+}
+
+#[test]
+fn a_workspace_inside_a_folder_named_like_an_ignored_one_follows_changes_on_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    // `build` is in `[workspace] ignore` by default.
+    let root = directory.path().join("build/docs");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    settle(&mut engine);
+
+    let new = adoc_engine::normalize_path(&root.join("new.adoc"));
+    fs::write(&new, "= New\n").unwrap();
+    assert!(
+        pump_until(&mut engine, |engine| engine
+            .workspace()
+            .index
+            .file(&new)
+            .is_some()),
+        "the page written outside is indexed"
+    );
 }
 
 #[test]

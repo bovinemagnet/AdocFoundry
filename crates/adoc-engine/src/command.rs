@@ -187,6 +187,12 @@ pub enum CommandOutcome {
         commit: String,
         saved: Vec<PathBuf>,
     },
+    /// A signed commit was started on a worker, as `git commit` may wait for a passphrase or a
+    /// security key; these open documents were saved first. `EngineEvent::GitCommitted` or a
+    /// `CommandFailed` for `git.commit` ends it.
+    CommitStarted {
+        saved: Vec<PathBuf>,
+    },
     /// A commit for the front end to offer: the message to start from and the paths staged.
     CommitDraft {
         message: String,

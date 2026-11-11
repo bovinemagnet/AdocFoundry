@@ -55,6 +55,12 @@ pub struct Engine {
     pub(crate) indexing: usize,
     /// The latest whole-workspace index job; results of earlier ones are dropped.
     pub(crate) index_generation: u64,
+    /// Holds the next whole index's result until its sender is dropped; see
+    /// [`Engine::hold_next_index`].
+    pub(crate) index_hold: Option<Receiver<()>>,
+    /// Files whose change on disk was applied while a whole index ran, perhaps after it read
+    /// them: applied again over its result.
+    pub(crate) changed_while_indexing: std::collections::BTreeSet<PathBuf>,
     /// How many times a whole index has replaced the workspace, so a revision taken from the
     /// old index never equals one of the new.
     pub(crate) workspace_replacements: u64,
@@ -207,6 +213,8 @@ impl Engine {
             worker_receiver,
             workers_running: 0,
             indexing: 0,
+            index_hold: None,
+            changed_while_indexing: std::collections::BTreeSet::new(),
             index_generation: 0,
             workspace_replacements: 0,
             workspace_revision: std::cell::Cell::new(((0, 0, 0), 0)),
@@ -1135,10 +1143,19 @@ impl Engine {
     }
 
     pub fn reload_settings(&mut self) -> Result<(), EngineError> {
+        self.reload_settings_with(Settings::reload)
+    }
+
+    /// Re-reads the settings with `reload`, then applies them as [`Engine::reload_settings`]
+    /// does.
+    pub(crate) fn reload_settings_with(
+        &mut self,
+        reload: impl FnOnce(&mut Settings) -> Result<(), EngineError>,
+    ) -> Result<(), EngineError> {
         let git_was_enabled = self.settings.git.enabled;
         let tools_before = self.settings.tools.clone();
         let audit_was_kept = self.audit_enabled();
-        self.settings.reload()?;
+        reload(&mut self.settings)?;
         self.settings_loaded = Some(self.settings_files());
         self.emit(EngineEvent::SettingsChanged);
         self.audit_settings_changed(audit_was_kept);

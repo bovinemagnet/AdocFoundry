@@ -157,6 +157,7 @@ Saving text the history already holds as its latest version keeps nothing, and t
 A page's own folder is pruned when it is saved (`keep_days`, `max_versions`).
 At the first save of a session, and then at most once every `HISTORY_SWEEP_INTERVAL` (1 hour), a save also prunes every page's folder and then removes the oldest versions across all pages until the total is under `max_size_mb` (`history.max_size_mb`).
 * `move_file` in `search.rs` calls `move_history(from, to)`, so a renamed page's history moves with it, joined with any history the new path had, and `recovery_changed(id)`, so its recovery record is rewritten under the new path.
+It first waits for a save of the page still in flight, as Delete File does, so the save cannot write the old path back.
 Renames made by other programs start a new history.
 
 The commands are `document.local_history` (Local History…, context `ActiveDocument`), which takes `CommandArgs::Document(id)` or uses the active page and returns `CommandOutcome::LocalHistory { document, versions }`, and `document.restore_version` (Restore Saved Version), which takes `CommandArgs::Custom({"document": id, "version": id})`, applies the text as one undo group and returns `Done`.
@@ -283,7 +284,7 @@ A `Command` has a `CommandSpec` and a `run` function.
 
 Commands are registered once in a `CommandRegistry`, and registering a duplicate id is an error.
 They are invoked with `Engine::invoke(id, args)`, where `CommandArgs` carries a document, an offset, a text edit, a path or a request.
-They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `External`, `Url`, `Preview`, `Committed` or `CommitDraft`.
+They return a `CommandOutcome`, such as `Done`, `Opened`, `Location`, `Peek`, `External`, `Url`, `Preview`, `Committed`, `CommitStarted` or `CommitDraft`.
 `OpenedImage(ImageId)` reports an image opened instead of a document, and `CommandOutcome::opened(item)` builds either from a `TabItem`.
 `Url(String)` carries an address for the front end to open (`cx.open_url`) or copy, so the engine needs no browser-opening crate.
 
@@ -455,6 +456,9 @@ The engine publishes `EngineEvent` values to subscribers through `std::sync::mps
 
 |`GitPushed`
 |A push finished, with a `message` that reports the result or the error Git gave.
+
+|`GitCommitted`
+|A signed commit finished, with its `commit` and the open documents `saved` before it (the `git` feature only). A failure is `CommandFailed` for `git.commit`, with Git's error.
 
 |`WordCountChanged`
 |The word count of a document changed.
@@ -712,6 +716,7 @@ A folder or file that cannot be read is left out of the index and recorded in `I
 The engine reports the first unreadable path once, as `CommandFailed` for `workspace.reindex`, with a message such as "could not read <path> and N more; the rest of the workspace is indexed".
 The worker returns a finished `WorkspaceState`, which is applied by `pump()`.
 Open documents are newer than the files the worker read, so they are kept.
+Changes on disk applied while the index runs are recorded (`Engine::changed_while_indexing`) and applied again over its result, as the worker may have read those files before they changed; starting a new index clears them, as it reads everything afresh.
 Each index job carries a generation, as preview rendering and Git discovery do, and a result or failure from a job that a newer one has superseded is discarded.
 So a reindex of the same roots that finishes after a later one cannot replace the later index, and a newer workspace always wins over the one a worker was indexing.
 
@@ -737,6 +742,7 @@ Its `WatchMode` is chosen per platform.
 
 * `WatchMode::Roots` puts one recursive watch on each root.
 FSEvents on macOS and `ReadDirectoryChangesW` on Windows keep that without walking the tree, and changes in ignored folders are filtered out.
+Only folders beneath the root holding the path count, as in the index's walk, so a workspace inside a folder named `build` is watched as usual (outside every root the whole path counts).
 * `WatchMode::Folders`, used on Linux, puts a non-recursive watch on each folder the index enters, because inotify watches one folder at a time.
 Ignored folders such as `node_modules` and `.git` are never watched.
 A new folder is watched when the re-index that its creation triggers enters it.
@@ -747,7 +753,7 @@ When the engine applies a current-generation result, it unwatches every folder n
 A result from a superseded job is discarded and changes no watches.
 
 The changes ready in one pump are applied together (`apply_file_changes`).
-An open page follows its file, or is marked changed under unsaved edits, one by one.
+An open file, a page or not, follows its file, or is marked changed under unsaved edits (`DocumentChangedOnDisk`), one by one (`open_document_changed_on_disk`).
 Each changed page that is not open is indexed again (`file_changed_on_disk`).
 That page, and any other file in one of a module's family folders (`pages`, `partials`, `examples`, `images` or `assets/images`, `attachments` or `assets/attachments`), is also catalogued or forgotten (`catalog_file_changed`), without reading the component again.
 A new file is catalogued, a page with the aliases its `:page-aliases:` header attribute lists; a removed file is forgotten together with the aliases it declared; a page whose `page-aliases` changed is catalogued again with the new ones.
@@ -843,7 +849,7 @@ It is refreshed with the status.
 |Stages every file in `changed_writer_files`.
 
 |`git.commit` (Commit)
-|Takes `CommandArgs::Custom` with a `"message"` and optional `"paths"`. With paths, open documents among them that have unsaved edits are saved first and the paths are staged. It returns `CommandOutcome::Committed { commit, saved }`. From the palette, with no arguments, it opens the dialog.
+|Takes `CommandArgs::Custom` with a `"message"` and optional `"paths"`. With paths, open documents among them that have unsaved edits are saved first and the paths are staged. It returns `CommandOutcome::Committed { commit, saved }`; with `commit.gpgsign` it runs on a worker and returns `CommandOutcome::CommitStarted { saved }` at once, the result arriving as `EngineEvent::GitCommitted { commit, saved }` or `CommandFailed`. From the palette, with no arguments, it opens the dialog.
 
 |`git.push` (Push)
 |Pushes the current branch to `[git] remote`. The push runs on a worker thread and publishes `EngineEvent::GitPushed { message }`.
@@ -863,6 +869,11 @@ A link is stored as its target, and `staged_mode` keeps the index's mode where t
 `discover_isolated` opens a repository reading only its own configuration, so that a test can show the no-identity refusal whatever the developer's global identity is.
 
 A commit made with `commit.gpgsign` set, and every push, runs the `git` executable from `[tools] git`, else `git` on `PATH`.
+A signed commit runs on a worker started with `worker::spawn` and reports `WorkerMessage::Committed`, so the engine's thread is never held while Git signs.
+`git` runs with standard input null, `GIT_TERMINAL_PROMPT=0` and in a process group of its own (`adoc_diagrams::process::in_own_group`), so a signing program that tries to read a terminal is stopped rather than prompting.
+After `[tools] commit_timeout` (default 120 s) it is stopped with everything it started (`adoc_diagrams::process::stop`), with an error that names the setting.
+`GitState::committing` refuses a second `git.commit` while one is being made ("a signed commit is still being made").
+A GPG agent's pinentry or an SSH agent runs outside the process group, and may keep its dialog open after the stop.
 A push without one fails with "pushing needs the git executable: install Git or set [tools] git".
 A branch with no upstream is refused before anything is run.
 
@@ -912,6 +923,7 @@ The UI never reads the settings file itself.
 `appearance.save` takes `CommandArgs::Appearance(AppearanceChoice)` and calls `Engine::save_appearance`, which refuses without a user settings file.
 It uses `Settings::write_appearance`, which edits the file with `toml_edit` so that other lines and the comments above existing keys are kept, writes only `mode`, `light_theme` and `dark_theme`, and takes out an `[editor] theme` line.
 The result goes to a temporary file that is renamed over the settings file, and `reload_settings` then announces `SettingsChanged`.
+`open_workspace` reloads through `Settings::reload_skipping_broken_files`, so a settings file that is not valid TOML becomes a settings warning naming the file, line and column and the folder opens without it; a later reload (`Reload Settings`, or the watcher) reports the parse error and keeps the settings in force.
 
 == File access
 

@@ -501,6 +501,7 @@ The commit dialog is `commit_dialog`.
 It holds the message field, the summary count ("Summary: N of 72 characters", in the warning colour past 72) and the files to be committed.
 *Commit* invokes `git.commit` with the message and the paths, and *Commit and Push* then invokes `git.push`.
 It reports the outcome in a notification: `Committed abc1234`, or `Saved N file(s) and committed abc1234`.
+For a signed commit (`CommitStarted`) it shows "Signing the commit…", remembers Commit and Push in `push_after_commit`, and reports and pushes on `EngineEvent::GitCommitted`; a `CommandFailed` for `git.commit` clears it.
 The `CommandOutcome::CommitDraft` from Save and Commit opens it with the message and paths filled in.
 The status bar adds `↑n` from `GitRepository::ahead`.
 

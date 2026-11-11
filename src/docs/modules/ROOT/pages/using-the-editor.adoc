@@ -28,7 +28,7 @@ See xref:settings.adoc[Settings].
 AdocFoundry watches the workspace.
 A file changed on disk is re-indexed, and `antora.yml` is re-read when it changes.
 A page, partial or image added, deleted or renamed outside the app is found by links at once: xrefs to a new page resolve, and xrefs to a deleted one are reported.
-An open page with no unsaved edits follows its file, changing only what differs, so the caret stays where it was and one undo goes back to the text before.
+An open file, a page or any other such as `antora.yml` or the playbook, with no unsaved edits follows its file, changing only what differs, so the caret stays where it was and one undo goes back to the text before.
 A buffer with unsaved edits is never overwritten: you are told that the file changed on disk and your buffer is kept.
 
 Saving a page whose file changed on disk since you opened or last saved it is refused, so an outside change is never written over without asking.
@@ -1969,6 +1969,12 @@ git config --global user.email "you@example.com"
 
 A commit with nothing staged is refused with "nothing is staged to commit".
 When `commit.gpgsign` is `true`, the commit is made with the `git` executable so that it is signed with your key.
+It runs in the background, so the window keeps working while Git signs.
+A notification says "Signing the commit…" and then reports the commit.
+*Commit and Push* pushes once the commit is made, and not if it failed.
+Git has no terminal to ask on, so a passphrase prompt must come in a window of its own, such as pinentry, an SSH agent or a security key waiting for a touch.
+A commit not finished within `tools.commit_timeout` (120 seconds) is stopped, and the error says so.
+See xref:settings.adoc[Settings].
 
 [[pushing]]
 === Pushing
