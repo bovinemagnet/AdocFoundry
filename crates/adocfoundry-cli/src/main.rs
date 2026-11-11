@@ -21,6 +21,7 @@
 //! ```
 
 use std::{
+    io::{self, BufWriter, Write as _},
     path::{Path, PathBuf},
     process::ExitCode,
     time::Duration,
@@ -63,42 +64,103 @@ const USAGE: &str = "usage:
 
 const INDEX_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn main() -> ExitCode {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    match run(&arguments) {
-        Ok(code) => code,
-        Err(message) => {
-            eprintln!("adocfoundry-cli: {message}");
-            ExitCode::from(2)
+/// Writes to standard output through an [`Out`], as `print!` does.
+macro_rules! out {
+    ($out:expr, $($argument:tt)*) => {
+        $out.write(format_args!($($argument)*))
+    };
+}
+
+/// Writes a line to standard output through an [`Out`], as `println!` does.
+macro_rules! outln {
+    ($out:expr, $($argument:tt)*) => {
+        $out.write(format_args!("{}\n", format_args!($($argument)*)))
+    };
+}
+
+/// Standard output, locked and buffered once. A failed write ends the output rather than the
+/// program, as `println!` would by panicking: a reader that has gone (`check docs | head`) is
+/// the end of what anyone reads, and the command exits with the code it earned (#513).
+struct Out {
+    writer: BufWriter<io::StdoutLock<'static>>,
+    /// The first failed write, after which nothing more is written.
+    error: Option<io::Error>,
+}
+
+impl Out {
+    fn new() -> Self {
+        Self {
+            writer: BufWriter::new(io::stdout().lock()),
+            error: None,
         }
+    }
+
+    fn write(&mut self, arguments: std::fmt::Arguments<'_>) {
+        if self.error.is_none() {
+            if let Err(error) = self.writer.write_fmt(arguments) {
+                self.error = Some(error);
+            }
+        }
+    }
+
+    /// Writes what is buffered, and returns the error that stopped the output, unless it was
+    /// only that the reader went.
+    fn finish(mut self) -> Option<io::Error> {
+        if self.error.is_none() {
+            if let Err(error) = self.writer.flush() {
+                self.error = Some(error);
+            }
+        }
+        self.error
+            .take()
+            .filter(|error| error.kind() != io::ErrorKind::BrokenPipe)
     }
 }
 
-fn run(arguments: &[String]) -> Result<ExitCode, String> {
+fn main() -> ExitCode {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let mut out = Out::new();
+    let result = run(&arguments, &mut out);
+    // What was written goes out before any message about it.
+    let unwritten = out.finish();
+    match (result, unwritten) {
+        (Err(message), _) => {
+            eprintln!("adocfoundry-cli: {message}");
+            ExitCode::from(2)
+        }
+        (Ok(_), Some(error)) => {
+            eprintln!("adocfoundry-cli: could not write the output: {error}");
+            ExitCode::from(2)
+        }
+        (Ok(code), None) => code,
+    }
+}
+
+fn run(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let Some((command, rest)) = arguments.split_first() else {
         return Err(USAGE.to_owned());
     };
     match command.as_str() {
         "--version" | "-V" => {
-            println!("adocfoundry-cli {}", env!("CARGO_PKG_VERSION"));
+            outln!(out, "adocfoundry-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
         }
         "--help" | "-h" => {
-            println!("{USAGE}");
+            outln!(out, "{USAGE}");
             Ok(ExitCode::SUCCESS)
         }
-        "check" => check(rest),
-        "audit" => audit(rest),
-        "symbols" => symbols(rest),
-        "follow" => follow(rest),
-        "render" => render(rest),
-        "pdf" => pdf(rest),
-        "git-status" => git_status(rest),
-        "graph" => graph(rest),
-        "doctor" => doctor(rest),
-        "new-module" => new_module(rest),
-        "new-project" => new_project(rest),
-        "impact" => impact(rest),
+        "check" => check(rest, out),
+        "audit" => audit(rest, out),
+        "symbols" => symbols(rest, out),
+        "follow" => follow(rest, out),
+        "render" => render(rest, out),
+        "pdf" => pdf(rest, out),
+        "git-status" => git_status(rest, out),
+        "graph" => graph(rest, out),
+        "doctor" => doctor(rest, out),
+        "new-module" => new_module(rest, out),
+        "new-project" => new_project(rest, out),
+        "impact" => impact(rest, out),
         other => Err(format!("unknown command `{other}`\n{USAGE}")),
     }
 }
@@ -106,7 +168,7 @@ fn run(arguments: &[String]) -> Result<ExitCode, String> {
 /// Makes a module in the component version at `<component-root>` (the folder holding
 /// `antora.yml`) through the engine's `module.new`, as the app's New Module does, and lists the
 /// files it made, relative to the component root.
-fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
+fn new_module(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let nav = !arguments.iter().any(|argument| argument == "--no-nav");
     let arguments: Vec<String> = arguments
         .iter()
@@ -165,10 +227,10 @@ fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
     }
     made.sort();
     for file in made {
-        println!("made {file}");
+        outln!(out, "made {file}");
     }
     if nav {
-        println!("listed modules/{name}/nav.adoc in antora.yml");
+        outln!(out, "listed modules/{name}/nav.adoc in antora.yml");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -176,7 +238,7 @@ fn new_module(arguments: &[String]) -> Result<ExitCode, String> {
 /// Makes an Antora project in `<folder>` (empty, or with `--subfolder` for a code repository)
 /// through the engine's `project.new`, as the app's New Antora Project does, and lists the files
 /// it made, relative to the folder.
-fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
+fn new_project(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let flags = ["--no-git", "--no-readme", "--no-playbook"];
     let has = |flag: &str| arguments.iter().any(|argument| argument == flag);
     let (git, readme, playbook) = (!has("--no-git"), !has("--no-readme"), !has("--no-playbook"));
@@ -236,10 +298,10 @@ fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| error.to_string())?;
     made.sort();
     for file in made {
-        println!("made {file}");
+        outln!(out, "made {file}");
     }
     if !had_repository && root.join(".git").exists() {
-        println!("initialised a Git repository");
+        outln!(out, "initialised a Git repository");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -248,7 +310,7 @@ fn new_project(arguments: &[String]) -> Result<ExitCode, String> {
 /// Git refs, `HEAD` against the working tree, or for paths named, as text or JSON. The exit
 /// code is 0 for a finished analysis, however many impacts; 2 when the source is invalid or
 /// unavailable, or the analysis is partial under `--require-complete`.
-fn impact(arguments: &[String]) -> Result<ExitCode, String> {
+fn impact(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let require_complete = arguments
         .iter()
         .any(|argument| argument == "--require-complete");
@@ -326,7 +388,7 @@ fn impact(arguments: &[String]) -> Result<ExitCode, String> {
     match option(&options, "output") {
         Some(file) => std::fs::write(file, format!("{written}\n"))
             .map_err(|error| format!("{file}: {error}"))?,
-        None => println!("{written}"),
+        None => outln!(out, "{written}"),
     }
     let incomplete = !report.is_complete();
     Ok(ExitCode::from(if require_complete && incomplete {
@@ -495,7 +557,7 @@ fn open_engine_with(root: &Path, settings: Settings) -> Result<Engine, String> {
     Ok(engine)
 }
 
-fn check(arguments: &[String]) -> Result<ExitCode, String> {
+fn check(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format", "fail-on"])?;
     let [root] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -517,12 +579,18 @@ fn check(arguments: &[String]) -> Result<ExitCode, String> {
     let failed = entries.iter().any(|entry| entry.meets(threshold));
     if json {
         let output = serde_json::to_string_pretty(&entries).map_err(|error| error.to_string())?;
-        println!("{output}");
+        outln!(out, "{output}");
     } else {
         for entry in &entries {
-            println!(
+            outln!(
+                out,
                 "{}:{}:{}: {} {} {}",
-                entry.path, entry.line, entry.column, entry.severity, entry.code, entry.message
+                entry.path,
+                entry.line,
+                entry.column,
+                entry.severity,
+                entry.code,
+                entry.message
             );
         }
     }
@@ -539,7 +607,7 @@ fn check(arguments: &[String]) -> Result<ExitCode, String> {
 /// code is the report's verdict (Quality PRD §5.4): 0 below the threshold, 1 at it, and 2 when
 /// the audit is unavailable, partial while completeness is required, or the `[quality]`
 /// settings are invalid. The report is written in full before exiting, whatever the code.
-fn audit(arguments: &[String]) -> Result<ExitCode, String> {
+fn audit(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let require_complete = arguments
         .iter()
         .any(|argument| argument == "--require-complete");
@@ -620,7 +688,7 @@ fn audit(arguments: &[String]) -> Result<ExitCode, String> {
     match option(&options, "output") {
         Some(file) => std::fs::write(file, format!("{written}\n"))
             .map_err(|error| format!("{file}: {error}"))?,
-        None => println!("{written}"),
+        None => outln!(out, "{written}"),
     }
     for problem in &problems {
         eprintln!("adocfoundry-cli: invalid [quality] settings: {problem}");
@@ -738,7 +806,7 @@ fn audit_text(
     lines.join("\n")
 }
 
-fn symbols(arguments: &[String]) -> Result<ExitCode, String> {
+fn symbols(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, _) = parse_options(arguments, &[])?;
     let [root, query] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -748,7 +816,8 @@ fn symbols(arguments: &[String]) -> Result<ExitCode, String> {
     for symbol in engine.workspace_symbols(query) {
         let text = std::fs::read_to_string(&symbol.path).unwrap_or_default();
         let (line, column) = LineIndex::new(&text).line_column(symbol.range.start);
-        println!(
+        outln!(
+            out,
             "{:?} {} {}:{}:{}",
             symbol.kind,
             symbol.name,
@@ -779,7 +848,7 @@ fn default_root(file: &Path) -> PathBuf {
     }
 }
 
-fn follow(arguments: &[String]) -> Result<ExitCode, String> {
+fn follow(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["root"])?;
     let [file, offset] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -802,7 +871,8 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
         Ok(CommandOutcome::Location(location)) => {
             let text = std::fs::read_to_string(&location.path).unwrap_or_default();
             let (line, column) = LineIndex::new(&text).line_column(location.range.start);
-            println!(
+            outln!(
+                out,
                 "{}:{}:{}",
                 display_path(&location.path, &root),
                 line + 1,
@@ -811,7 +881,7 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Ok(CommandOutcome::External(path)) => {
-            println!("external {}", display_path(&path, &root));
+            outln!(out, "external {}", display_path(&path, &root));
             Ok(ExitCode::SUCCESS)
         }
         Ok(other) => Err(format!("unexpected outcome {other:?}")),
@@ -824,7 +894,7 @@ fn follow(arguments: &[String]) -> Result<ExitCode, String> {
 }
 
 /// Renders a page to a standalone HTML file, or to standard output, as the preview shows it.
-fn render(arguments: &[String]) -> Result<ExitCode, String> {
+fn render(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let link_images = arguments.iter().any(|argument| argument == "--link-images");
     let arguments: Vec<String> = arguments
         .iter()
@@ -865,13 +935,13 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
             };
             std::fs::write(output, html).map_err(|error| format!("{output}: {error}"))?;
         }
-        None => print!("{html}"),
+        None => out!(out, "{html}"),
     }
     Ok(ExitCode::SUCCESS)
 }
 
 /// Exports a page, or a component version as a book, to PDF.
-fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
+fn pdf(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(
         arguments,
         &[
@@ -931,7 +1001,7 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
             }
         }
         args.typst = option(&options, "typst").map(PathBuf::from);
-        return report_export(&mut engine, args, &root, fail_on);
+        return report_export(&mut engine, args, &root, fail_on, out);
     }
     let [target] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1002,7 +1072,7 @@ fn pdf(arguments: &[String]) -> Result<ExitCode, String> {
         typst: option(&options, "typst").map(PathBuf::from),
         attributes: Vec::new(),
     };
-    report_export(&mut engine, args, &root, fail_on)
+    report_export(&mut engine, args, &root, fail_on, out)
 }
 
 /// Exports and waits, printing each diagnostic and then the output and its page count. Fails
@@ -1012,6 +1082,7 @@ fn report_export(
     args: ExportArgs,
     root: &Path,
     fail_on: Option<DiagnosticSeverity>,
+    out: &mut Out,
 ) -> Result<ExitCode, String> {
     let output = args.output.clone();
     match engine.export_blocking(args, INDEX_TIMEOUT) {
@@ -1031,7 +1102,7 @@ fn report_export(
                     ),
                 }
             }
-            println!("{} ({} pages)", output.display(), summary.pages);
+            outln!(out, "{} ({} pages)", output.display(), summary.pages);
             let failed = fail_on.is_some_and(|threshold| {
                 summary.diagnostics.iter().any(|diagnostic| {
                     threshold == DiagnosticSeverity::Warning
@@ -1053,7 +1124,7 @@ fn report_export(
 
 /// The branch of the repository holding `root`, and its changed AsciiDoc files with the number
 /// of changed line runs in each.
-fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
+fn git_status(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format"])?;
     let [root] = positional.as_slice() else {
         return Err(USAGE.to_owned());
@@ -1070,14 +1141,14 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| error.to_string())?;
     if json {
         let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-        println!("{output}");
+        outln!(out, "{output}");
     } else {
-        println!("branch {}", report.head);
+        outln!(out, "branch {}", report.head);
         for file in &report.files {
             let hunks = file
                 .hunks
                 .map_or_else(String::new, |count| format!(" ({count} changed)"));
-            println!("{} {}{hunks}", short_status(file), file.path);
+            outln!(out, "{} {}{hunks}", short_status(file), file.path);
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -1085,7 +1156,7 @@ fn git_status(arguments: &[String]) -> Result<ExitCode, String> {
 
 /// The link graph of the workspace at `root`, of a page and its neighbours, or along the
 /// shortest path between two pages, as JSON, DOT or an SVG image.
-fn graph(arguments: &[String]) -> Result<ExitCode, String> {
+fn graph(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     // Flags take no value: take them out before the options.
     let flags = [
         "--no-partials",
@@ -1194,10 +1265,11 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
                 let (snapshot, _) = engine
                     .graph_path_view(&filter, &from, &to, directed)
                     .unwrap_or_default();
-                print!("{}", adoc_engine::to_svg_laid_out(&snapshot, &style));
+                out!(out, "{}", adoc_engine::to_svg_laid_out(&snapshot, &style));
             }
-            "dot" => print!("{}", report.to_dot()),
-            _ => println!(
+            "dot" => out!(out, "{}", report.to_dot()),
+            _ => outln!(
+                out,
                 "{}",
                 serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
             ),
@@ -1218,15 +1290,15 @@ fn graph(arguments: &[String]) -> Result<ExitCode, String> {
             colour_by: engine.settings().graph.colour_by,
             dark: flag("--dark"),
         };
-        print!("{}", engine.graph_svg(&scope, &filter, &style));
+        out!(out, "{}", engine.graph_svg(&scope, &filter, &style));
         return Ok(ExitCode::SUCCESS);
     }
     let report = engine.graph_report(&root, &scope, &filter);
     if format == "dot" {
-        print!("{}", report.to_dot());
+        out!(out, "{}", report.to_dot());
     } else {
         let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-        println!("{output}");
+        outln!(out, "{output}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -1256,7 +1328,7 @@ fn change_letter(name: &str) -> char {
 
 /// The doctor report, for support requests: with the user settings file the app reads, and
 /// `root`'s workspace settings when given.
-fn doctor(arguments: &[String]) -> Result<ExitCode, String> {
+fn doctor(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
     let (positional, options) = parse_options(arguments, &["format"])?;
     let json = match option(&options, "format").unwrap_or("text") {
         "text" => false,
@@ -1279,9 +1351,9 @@ fn doctor(arguments: &[String]) -> Result<ExitCode, String> {
         .run();
     if json {
         let output = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-        println!("{output}");
+        outln!(out, "{output}");
     } else {
-        print!("{}", report.to_text());
+        out!(out, "{}", report.to_text());
     }
     Ok(ExitCode::SUCCESS)
 }

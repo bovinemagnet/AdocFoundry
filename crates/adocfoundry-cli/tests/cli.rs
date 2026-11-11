@@ -931,3 +931,47 @@ fn new_project_scaffolds_a_component_that_checks_clean() {
         "{descriptor}"
     );
 }
+
+/// Output to a pipe whose reader has gone (`check docs | head`) ends the output, not the
+/// program: the exit code is the one the command earned, never a panic's 101 (#513).
+#[test]
+fn a_closed_standard_output_ends_the_output_quietly() {
+    let run = |arguments: &[&str]| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(repository_root())
+            .args(arguments)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // The reader goes before the command writes anything.
+        drop(child.stdout.take());
+        child.wait_with_output().unwrap()
+    };
+    for (arguments, earned) in [
+        (&["check", "tests/fixtures/antora-broken-references"][..], 0),
+        (
+            &[
+                "check",
+                "tests/fixtures/antora-broken-references",
+                "--fail-on",
+                "warning",
+            ][..],
+            1,
+        ),
+        (
+            &["symbols", "tests/fixtures/antora-multi-component", "e"][..],
+            0,
+        ),
+        (&["graph", "tests/fixtures/graph"][..], 0),
+    ] {
+        let output = run(arguments);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(earned),
+            "{arguments:?}: {stderr}"
+        );
+        assert!(!stderr.contains("panicked"), "{arguments:?}: {stderr}");
+    }
+}
