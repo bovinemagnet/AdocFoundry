@@ -112,3 +112,38 @@ fn an_edited_crlf_line_is_one_hunk() {
     let committed: Vec<bool> = blame.iter().map(|line| line.commit.is_some()).collect();
     assert_eq!(committed, [true, true, false]);
 }
+
+#[test]
+fn last_changed_stops_at_a_shallow_clone_s_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = TestRepo::init(dir.path());
+    test.write("old.adoc", "old\n");
+    let first = test.commit_all_at("first", 1_000);
+    test.write("new.adoc", "new\n");
+    let boundary = test.commit_all_at("second", 2_000);
+    test.write("new.adoc", "newer\n");
+    let newest = test.commit_all_at("third", 3_000);
+    // A clone two commits deep: the boundary is recorded and its parent is not there.
+    fs::write(dir.path().join(".git/shallow"), format!("{boundary}\n")).unwrap();
+    fs::remove_file(
+        dir.path()
+            .join(".git/objects")
+            .join(&first[..2])
+            .join(&first[2..]),
+    )
+    .unwrap();
+    if let Some(output) = git(dir.path(), &["log", "--format=%H"]) {
+        assert!(output.status.success(), "git reads the shallow history");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            format!("{newest}\n{boundary}\n")
+        );
+    }
+
+    let repo = repo_in(dir.path());
+    let paths = [Path::new("old.adoc").to_path_buf(), "new.adoc".into()];
+    let found = repo.last_changed(&paths, adoc_git::HISTORY_LIMIT).unwrap();
+    assert_eq!(found.changes.len(), 1, "{found:?}");
+    assert_eq!(found.changes[Path::new("new.adoc")].commit, newest);
+    assert_eq!(found.cut_short, Some(2_000));
+}

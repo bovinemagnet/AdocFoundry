@@ -30,8 +30,9 @@ pub struct LastChanges {
     /// Each file asked for that is in `HEAD` and whose last change was found, by the path as
     /// it was asked for.
     pub changes: HashMap<PathBuf, LastChange>,
-    /// When the walk stopped at its limit with files of `HEAD` still not found: the time of
-    /// the oldest commit read, which those files are at least as old as.
+    /// When the walk stopped at its limit, or at a shallow clone's boundary, with files of
+    /// `HEAD` still not found: the time of the oldest commit read, which those files are at
+    /// least as old as.
     pub cut_short: Option<i64>,
 }
 
@@ -66,6 +67,8 @@ impl Repository {
             .map_err(GitError::git)?;
         let options =
             gix::diff::Options::default().with_rewrites(Some(gix::diff::Rewrites::default()));
+        // A shallow clone's boundary commits have parents that are not there to compare with.
+        let shallow = self.repo.shallow_commits().map_err(GitError::git)?;
         let mut oldest = None;
         for (read, info) in walk.enumerate() {
             if wanted.is_empty() {
@@ -79,6 +82,15 @@ impl Repository {
             let commit = info.object().map_err(GitError::git)?;
             let time = commit.time().map_err(GitError::git)?.seconds;
             oldest = Some(time);
+            let parent_missing = info.parent_ids().next().is_some()
+                && shallow
+                    .as_ref()
+                    .is_some_and(|boundary| boundary.contains(&commit.id));
+            if parent_missing {
+                // As at the limit: what is still looked for is at least as old as this commit.
+                found.cut_short = oldest;
+                break;
+            }
             let tree = commit.tree().map_err(GitError::git)?;
             let parent = match info.parent_ids().next() {
                 Some(parent) => parent
