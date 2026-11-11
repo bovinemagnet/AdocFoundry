@@ -1,6 +1,7 @@
 //! Conformance with the `git` executable: `Repository::stage` leaves the index as `git add` does,
-//! or refuses. Each test builds the same repository twice, stages in one with each, and compares
-//! the index entries and `git status`. Skipped when `git` is absent.
+//! or refuses, and `Repository::unstage` as `git restore --staged` does. Each test builds the same
+//! repository twice, stages in one with each, and compares the index entries, `git status` and
+//! `git write-tree`. Skipped when `git` is absent.
 
 use std::{
     fs,
@@ -60,11 +61,12 @@ fn stage(dir: &Path, paths: &[&str]) -> Result<(), String> {
     repo.stage(&borrowed).map_err(|error| error.to_string())
 }
 
-/// The state of the index and the working tree against it, as `git` reads them.
+/// The state of the index and the working tree against it, as `git` reads them, with the tree a
+/// commit would hold: `write-tree` trusts the index's cached trees, so a stale one shows here.
 fn state(dir: &Path) -> (String, String) {
     (
         git_ok(dir, &["ls-files", "--stage"]),
-        git_ok(dir, &["status", "--porcelain"]),
+        git_ok(dir, &["status", "--porcelain"]) + &git_ok(dir, &["write-tree"]),
     )
 }
 
@@ -79,6 +81,24 @@ fn assert_stages_like_git_add(paths: &[&str], setup: impl Fn(&Path)) -> (String,
     let mut add = vec!["add", "--"];
     add.extend_from_slice(paths);
     git_ok(theirs.path(), &add);
+    let expected = state(theirs.path());
+    assert_eq!(state(ours.path()), expected);
+    expected
+}
+
+/// As `assert_stages_like_git_add`, for `Repository::unstage` and `git restore --staged`.
+fn assert_unstages_like_git_restore(paths: &[&str], setup: impl Fn(&Path)) -> (String, String) {
+    let ours = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    setup(ours.path());
+    setup(theirs.path());
+    let repo = Repository::discover_isolated(ours.path()).unwrap().unwrap();
+    let joined: Vec<_> = paths.iter().map(|path| ours.path().join(path)).collect();
+    let borrowed: Vec<&Path> = joined.iter().map(|path| path.as_path()).collect();
+    repo.unstage(&borrowed).unwrap();
+    let mut restore = vec!["restore", "--staged", "--"];
+    restore.extend_from_slice(paths);
+    git_ok(theirs.path(), &restore);
     let expected = state(theirs.path());
     assert_eq!(state(ours.path()), expected);
     expected
@@ -314,11 +334,299 @@ fn a_removed_file_is_staged_as_deleted() {
     });
 }
 
+#[test]
+fn changes_in_a_folder_are_staged_so_git_sees_them() {
+    if !has_git() {
+        return;
+    }
+    // A commit leaves the index with cached trees, which staging must not leave stale.
+    let (entries, status) = assert_stages_like_git_add(
+        &["docs/page.adoc", "docs/new.adoc", "docs/gone.adoc"],
+        |dir| {
+            init(dir, &[]);
+            fs::create_dir(dir.join("docs")).unwrap();
+            fs::write(dir.join("docs/page.adoc"), "one\n").unwrap();
+            fs::write(dir.join("docs/gone.adoc"), "gone\n").unwrap();
+            commit_all(dir);
+            fs::write(dir.join("docs/page.adoc"), "two\n").unwrap();
+            fs::write(dir.join("docs/new.adoc"), "new\n").unwrap();
+            fs::remove_file(dir.join("docs/gone.adoc")).unwrap();
+        },
+    );
+    assert!(entries.contains("docs/new.adoc"), "{entries}");
+    assert!(status.contains("M  docs/page.adoc"), "{status}");
+}
+
+#[test]
+fn unstaging_in_a_folder_leaves_no_stale_tree() {
+    if !has_git() {
+        return;
+    }
+    let (_, status) = assert_unstages_like_git_restore(&["docs/page.adoc"], |dir| {
+        init(dir, &[]);
+        fs::create_dir(dir.join("docs")).unwrap();
+        fs::write(dir.join("docs/page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        fs::write(dir.join("docs/page.adoc"), "two\n").unwrap();
+        git_ok(dir, &["add", "docs/page.adoc"]);
+        // Caches the staged tree, which unstaging must not leave behind.
+        git_ok(dir, &["write-tree"]);
+    });
+    assert!(status.starts_with(" M docs/page.adoc"), "{status}");
+}
+
+#[test]
+fn unstaging_a_new_file_leaves_it_untracked() {
+    if !has_git() {
+        return;
+    }
+    let (entries, _) = assert_unstages_like_git_restore(&["new.adoc"], |dir| {
+        init(dir, &[]);
+        fs::write(dir.join("page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        fs::write(dir.join("new.adoc"), "new\n").unwrap();
+        git_ok(dir, &["add", "new.adoc"]);
+    });
+    assert!(!entries.contains("new.adoc"), "{entries}");
+}
+
+#[test]
+fn unstaging_a_submodule_keeps_it_a_submodule() {
+    if !has_git() {
+        return;
+    }
+    let (entries, _) = assert_unstages_like_git_restore(&["sub"], |dir| {
+        init(dir, &[]);
+        fs::write(dir.join("page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        let first = git_ok(dir, &["rev-parse", "HEAD"]);
+        let gitlink = format!("160000,{},sub", first.trim());
+        git_ok(dir, &["update-index", "--add", "--cacheinfo", &gitlink]);
+        git_ok(dir, &["commit", "-q", "-m", "second"]);
+        let second = git_ok(dir, &["rev-parse", "HEAD"]);
+        let gitlink = format!("160000,{},sub", second.trim());
+        git_ok(dir, &["update-index", "--cacheinfo", &gitlink]);
+    });
+    assert!(entries.starts_with("100644 "), "{entries}");
+    assert!(entries.contains("160000 "), "{entries}");
+}
+
+#[test]
+fn unstaging_a_folder_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), &[]);
+    fs::create_dir(dir.path().join("docs")).unwrap();
+    fs::write(dir.path().join("docs/page.adoc"), "one\n").unwrap();
+    commit_all(dir.path());
+    fs::write(dir.path().join("docs/page.adoc"), "two\n").unwrap();
+    git_ok(dir.path(), &["add", "docs/page.adoc"]);
+    let before = state(dir.path());
+    let repo = Repository::discover_isolated(dir.path()).unwrap().unwrap();
+    let error = repo
+        .unstage(&[dir.path().join("docs").as_path()])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("folder"), "{error}");
+    assert_eq!(state(dir.path()), before, "nothing is unstaged");
+}
+
+/// `Repository::commit` in `dir`, as the error's text when it refuses.
+fn commit(dir: &Path, message: &str) -> Result<String, String> {
+    let repo = Repository::discover_isolated(dir).unwrap().unwrap();
+    repo.commit(message).map_err(|error| error.to_string())
+}
+
+/// A repository on `main` whose branch `other` changes `page.adoc`, after `main` changed the file
+/// `ours` (the same one for a conflict).
+fn diverged(dir: &Path, ours: &str) {
+    init(
+        dir,
+        &[
+            ("user.name", "Ada Writer"),
+            ("user.email", "ada@example.com"),
+        ],
+    );
+    fs::write(dir.join("page.adoc"), "base\n").unwrap();
+    fs::write(dir.join("other.adoc"), "base\n").unwrap();
+    commit_all(dir);
+    git_ok(dir, &["checkout", "-q", "-b", "other"]);
+    fs::write(dir.join("page.adoc"), "theirs\n").unwrap();
+    git_ok(dir, &["commit", "-q", "-am", "theirs"]);
+    git_ok(dir, &["checkout", "-q", "main"]);
+    fs::write(dir.join(ours), "ours\n").unwrap();
+    git_ok(dir, &["commit", "-q", "-am", "ours"]);
+}
+
+#[test]
+fn a_commit_with_unresolved_conflicts_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path(), "page.adoc");
+    assert!(!git(dir.path(), &["merge", "-q", "other"]).status.success());
+    let head = git_ok(dir.path(), &["rev-parse", "HEAD"]);
+    let error = commit(dir.path(), "oops").unwrap_err();
+    assert!(error.contains("merge"), "{error}");
+    assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
+
+    // Without the merge's state, as `git merge --quit` or a conflicted `git stash pop` leave it.
+    git_ok(dir.path(), &["merge", "--quit"]);
+    let error = commit(dir.path(), "oops").unwrap_err();
+    assert!(error.contains("page.adoc"), "{error}");
+    assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn a_commit_during_a_merge_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path(), "other.adoc");
+    git_ok(
+        dir.path(),
+        &["merge", "-q", "--no-commit", "--no-ff", "other"],
+    );
+    let head = git_ok(dir.path(), &["rev-parse", "HEAD"]);
+    let error = commit(dir.path(), "merge other").unwrap_err();
+    assert!(error.contains("merge"), "{error}");
+    assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn a_commit_during_a_cherry_pick_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path(), "page.adoc");
+    assert!(!git(dir.path(), &["cherry-pick", "other"]).status.success());
+    // Resolved and staged, so only the stopped pick remains.
+    fs::write(dir.path().join("page.adoc"), "resolved\n").unwrap();
+    git_ok(dir.path(), &["add", "page.adoc"]);
+    let head = git_ok(dir.path(), &["rev-parse", "HEAD"]);
+    let error = commit(dir.path(), "pick").unwrap_err();
+    assert!(error.contains("cherry-pick"), "{error}");
+    assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
+}
+
+const IDENTITY: [(&str, &str); 2] = [
+    ("user.name", "Ada Writer"),
+    ("user.email", "ada@example.com"),
+];
+
+/// Builds the repository `setup` makes twice, and checks that `Repository::commit` in one commits
+/// the tree `git commit` does in the other. Returns the tree, as `ls-tree` lists it.
+fn assert_commits_like_git(setup: impl Fn(&Path)) -> String {
+    let ours = tempfile::tempdir().unwrap();
+    let theirs = tempfile::tempdir().unwrap();
+    setup(ours.path());
+    setup(theirs.path());
+    commit(ours.path(), "second").unwrap();
+    git_ok(theirs.path(), &["commit", "-q", "-m", "second"]);
+    let tree = |dir: &Path| git_ok(dir, &["ls-tree", "-r", "-t", "HEAD"]);
+    let expected = tree(theirs.path());
+    assert_eq!(tree(ours.path()), expected);
+    assert_eq!(state(ours.path()), state(theirs.path()));
+    expected
+}
+
+#[test]
+fn an_intent_to_add_file_is_left_out_of_a_commit() {
+    if !has_git() {
+        return;
+    }
+    let tree = assert_commits_like_git(|dir| {
+        init(dir, &IDENTITY);
+        fs::write(dir.join("page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        fs::write(dir.join("draft.adoc"), "draft\n").unwrap();
+        git_ok(dir, &["add", "-N", "draft.adoc"]);
+        fs::write(dir.join("page.adoc"), "two\n").unwrap();
+        git_ok(dir, &["add", "page.adoc"]);
+    });
+    assert!(!tree.contains("draft.adoc"), "{tree}");
+}
+
+#[test]
+fn a_sparse_index_keeps_its_folders_in_a_commit() {
+    if !has_git() {
+        return;
+    }
+    let tree = assert_commits_like_git(|dir| {
+        init(dir, &IDENTITY);
+        for folder in ["docs", "other"] {
+            fs::create_dir(dir.join(folder)).unwrap();
+            fs::write(dir.join(folder).join("page.adoc"), "one\n").unwrap();
+        }
+        commit_all(dir);
+        git_ok(
+            dir,
+            &["sparse-checkout", "set", "--cone", "--sparse-index", "docs"],
+        );
+        let sparse = git_ok(dir, &["ls-files", "--sparse", "--stage"]);
+        assert!(sparse.contains("040000 "), "not a sparse index: {sparse}");
+        fs::write(dir.join("docs/page.adoc"), "two\n").unwrap();
+        git_ok(dir, &["add", "docs/page.adoc"]);
+    });
+    assert!(tree.contains("other/page.adoc"), "{tree}");
+}
+
+#[test]
+fn a_first_commit_with_nothing_staged_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), &IDENTITY);
+    assert!(!git(dir.path(), &["commit", "-q", "-m", "nothing"])
+        .status
+        .success());
+    let error = commit(dir.path(), "nothing").unwrap_err();
+    assert!(error.contains("nothing"), "{error}");
+    assert!(!git(dir.path(), &["rev-parse", "--verify", "-q", "HEAD"])
+        .status
+        .success());
+}
+
 #[cfg(unix)]
 mod unix {
-    use std::os::unix::fs::{symlink, PermissionsExt as _};
+    use std::os::unix::{
+        ffi::OsStrExt as _,
+        fs::{symlink, PermissionsExt as _},
+    };
 
     use super::*;
+
+    #[test]
+    fn a_file_name_that_is_not_utf8_is_committed_as_it_is() {
+        if !has_git() {
+            return;
+        }
+        let tree = assert_commits_like_git(|dir| {
+            init(dir, &IDENTITY);
+            fs::write(dir.join("page.adoc"), "one\n").unwrap();
+            let blob = git_ok(dir, &["hash-object", "-w", "page.adoc"]);
+            // Latin-1, as older repositories hold; not every file system can name a file so.
+            let cacheinfo = [b"100644,", blob.trim().as_bytes(), b",caf\xe9.adoc"].concat();
+            let output = Command::new("git")
+                .args(["update-index", "--add", "--cacheinfo"])
+                .arg(std::ffi::OsStr::from_bytes(&cacheinfo))
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            git_ok(dir, &["add", "page.adoc"]);
+            git_ok(dir, &["commit", "-q", "-m", "first"]);
+            fs::write(dir.join("page.adoc"), "two\n").unwrap();
+            git_ok(dir, &["add", "page.adoc"]);
+        });
+        assert!(tree.contains("\"caf\\351.adoc\""), "{tree}");
+    }
 
     #[test]
     fn a_symlink_to_a_file_is_staged_as_a_link() {
@@ -385,6 +693,39 @@ mod unix {
             fs::write(dir.join("link.adoc"), "other.adoc").unwrap();
         });
         assert!(entries.starts_with("120000 "), "{entries}");
+    }
+
+    #[test]
+    fn unstaging_a_link_keeps_it_a_link() {
+        if !has_git() {
+            return;
+        }
+        let (entries, _) = assert_unstages_like_git_restore(&["link.adoc"], |dir| {
+            init(dir, &[]);
+            fs::write(dir.join("target.adoc"), "target\n").unwrap();
+            symlink("target.adoc", dir.join("link.adoc")).unwrap();
+            commit_all(dir);
+            fs::remove_file(dir.join("link.adoc")).unwrap();
+            symlink("other.adoc", dir.join("link.adoc")).unwrap();
+            stage(dir, &["link.adoc"]).unwrap();
+        });
+        assert!(entries.starts_with("120000 "), "{entries}");
+    }
+
+    #[test]
+    fn unstaging_an_executable_file_keeps_it_executable() {
+        if !has_git() {
+            return;
+        }
+        let (entries, _) = assert_unstages_like_git_restore(&["run.sh"], |dir| {
+            init(dir, &[]);
+            fs::write(dir.join("run.sh"), "#!/bin/sh\n").unwrap();
+            fs::set_permissions(dir.join("run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+            commit_all(dir);
+            fs::write(dir.join("run.sh"), "#!/bin/sh\n# changed\n").unwrap();
+            git_ok(dir, &["add", "run.sh"]);
+        });
+        assert!(entries.starts_with("100755 "), "{entries}");
     }
 
     #[test]

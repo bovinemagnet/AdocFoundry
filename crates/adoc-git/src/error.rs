@@ -19,6 +19,13 @@ pub enum GitError {
         path: PathBuf,
         filter: String,
     },
+    /// Git has stopped part-way through the named operation (`a merge`, `a rebase`,
+    /// `a cherry-pick`, `a revert`, `git am`), which committing would have to conclude.
+    InProgress(&'static str),
+    /// The index holds unresolved conflicts at these paths.
+    Unmerged(Vec<PathBuf>),
+    /// `path` is a folder in `HEAD`, which unstaging takes only a file at a time.
+    Folder(PathBuf),
     /// `spec` names no commit in the repository.
     UnknownRevision {
         spec: String,
@@ -50,6 +57,23 @@ impl fmt::Display for GitError {
             Self::FilterNotRun { path, filter } => write!(
                 formatter,
                 "{} uses Git's `{filter}` filter, which AdocFoundry does not run: stage it with git add",
+                path.display()
+            ),
+            Self::InProgress(operation) => write!(
+                formatter,
+                "a {operation} is in progress: finish or abort it with Git before committing here"
+            ),
+            Self::Unmerged(paths) => {
+                formatter.write_str("resolve the conflicts in ")?;
+                for (n, path) in paths.iter().enumerate() {
+                    let separator = if n == 0 { "" } else { ", " };
+                    write!(formatter, "{separator}{}", path.display())?;
+                }
+                formatter.write_str(" and stage them before committing")
+            }
+            Self::Folder(path) => write!(
+                formatter,
+                "{} is a folder: unstage the files in it one at a time",
                 path.display()
             ),
             Self::UnknownRevision { spec, message } => {

@@ -380,8 +380,7 @@ impl Repository {
                 name.as_ref(),
             );
         }
-        index.sort_entries();
-        index.write(Default::default()).map_err(GitError::git)
+        write_changed_index(index)
     }
 
     /// The conversions `git add` applies, with the attributes they read. Its drivers are dropped:
@@ -455,7 +454,8 @@ impl Repository {
     }
 
     /// Puts `paths` back in the index as they are in `HEAD`, leaving the working tree alone, as
-    /// `git restore --staged` would.
+    /// `git restore --staged` would, a link as a link and a submodule as a submodule. A path that
+    /// is a folder in `HEAD` is refused, and nothing is unstaged unless every path can be.
     pub fn unstage(&self, paths: &[&Path]) -> Result<(), GitError> {
         let mut index = self.index_file()?;
         let head_tree = if self.repo.head().map_err(GitError::git)?.is_unborn() {
@@ -476,10 +476,14 @@ impl Repository {
             else {
                 continue;
             };
-            let mode = if entry.mode().is_executable() {
-                gix::index::entry::Mode::FILE_EXECUTABLE
-            } else {
-                gix::index::entry::Mode::FILE
+            use gix::index::entry::Mode;
+            use gix::object::tree::EntryKind;
+            let mode = match entry.mode().kind() {
+                EntryKind::Blob => Mode::FILE,
+                EntryKind::BlobExecutable => Mode::FILE_EXECUTABLE,
+                EntryKind::Link => Mode::SYMLINK,
+                EntryKind::Commit => Mode::COMMIT,
+                EntryKind::Tree => return Err(GitError::Folder(relative)),
             };
             // A zeroed stat makes the next status compare the file's content.
             index.dangerously_push_entry(
@@ -490,8 +494,7 @@ impl Repository {
                 name.as_ref(),
             );
         }
-        index.sort_entries();
-        index.write(Default::default()).map_err(GitError::git)
+        write_changed_index(index)
     }
 
     /// The name and email commits are made with, from the usual configuration scopes.
@@ -516,45 +519,91 @@ impl Repository {
     }
 
     /// Commits the index on the current branch with `message`, as `git commit` would. Refuses
-    /// without an identity or when nothing is staged. Returns the commit's id.
+    /// without an identity, when nothing is staged, while a conflict is unresolved, and while Git
+    /// is part-way through a merge, rebase, cherry-pick, revert or `git am`, which are left for
+    /// Git to conclude. Returns the commit's id.
     pub fn commit(&self, message: &str) -> Result<String, GitError> {
         self.identity()?;
+        if let Some(operation) = self.operation_in_progress() {
+            return Err(GitError::InProgress(operation));
+        }
         let index = self.index_file()?;
+        let mut unmerged: Vec<PathBuf> = index
+            .entries()
+            .iter()
+            .filter(|entry| entry.stage_raw() != 0)
+            .map(|entry| relative_path(entry.path(&index)))
+            .collect();
+        if !unmerged.is_empty() {
+            unmerged.dedup();
+            return Err(GitError::Unmerged(unmerged));
+        }
         let mut editor = self
             .repo
             .edit_tree(gix::ObjectId::empty_tree(self.repo.object_hash()))
             .map_err(GitError::git)?;
         for entry in index.entries() {
-            use gix::index::entry::Mode;
+            use gix::index::entry::{Flags, Mode};
             use gix::object::tree::EntryKind;
+            if entry.flags.contains(Flags::INTENT_TO_ADD) {
+                continue; // Not staged yet: `git commit` leaves it out too.
+            }
+            let path = entry.path(&index);
             let kind = match entry.mode {
                 Mode::FILE_EXECUTABLE => EntryKind::BlobExecutable,
                 Mode::SYMLINK => EntryKind::Link,
                 Mode::COMMIT => EntryKind::Commit,
                 Mode::FILE => EntryKind::Blob,
-                _ => continue,
+                // A sparse index's folder outside the cone, its tree as it is.
+                Mode::DIR => EntryKind::Tree,
+                mode => {
+                    return Err(GitError::Git(format!(
+                        "{path} has a mode ({:o}) that cannot be committed here",
+                        mode.bits()
+                    )))
+                }
             };
-            let path = entry.path(&index).to_str_lossy().into_owned();
-            editor
-                .upsert(path.as_str(), kind, entry.id)
-                .map_err(GitError::git)?;
+            // A sparse folder's path ends with `/`.
+            let path = path.strip_suffix(b"/").unwrap_or(path).as_bstr();
+            editor.upsert(path, kind, entry.id).map_err(GitError::git)?;
         }
         let tree = editor.write().map_err(GitError::git)?.detach();
         let head = self.repo.head().map_err(GitError::git)?;
-        let parents: Vec<gix::ObjectId> = if head.is_unborn() {
-            Vec::new()
+        let (head_tree, parents) = if head.is_unborn() {
+            (
+                gix::ObjectId::empty_tree(self.repo.object_hash()),
+                Vec::new(),
+            )
         } else {
             let head_tree = self.repo.head_tree_id().map_err(GitError::git)?.detach();
-            if head_tree == tree {
-                return Err(GitError::NothingToCommit);
-            }
-            vec![self.repo.head_id().map_err(GitError::git)?.detach()]
+            let head_id = self.repo.head_id().map_err(GitError::git)?.detach();
+            (head_tree, vec![head_id])
         };
+        if head_tree == tree {
+            return Err(GitError::NothingToCommit);
+        }
         let id = self
             .repo
             .commit("HEAD", message, tree, parents)
             .map_err(GitError::git)?;
         Ok(id.to_string())
+    }
+
+    /// The merge, rebase, cherry-pick, revert or patch series Git has stopped part-way, which a
+    /// commit would have to conclude as Git does; `None` when there is none. A bisection is not
+    /// one: committing during it is ordinary.
+    fn operation_in_progress(&self) -> Option<&'static str> {
+        use gix::state::InProgress;
+        Some(match self.repo.state()? {
+            InProgress::Merge => "a merge",
+            InProgress::Rebase | InProgress::RebaseInteractive | InProgress::ApplyMailboxRebase => {
+                "a rebase"
+            }
+            InProgress::CherryPick | InProgress::CherryPickSequence => "a cherry-pick",
+            InProgress::Revert | InProgress::RevertSequence => "a revert",
+            InProgress::ApplyMailbox => "git am",
+            InProgress::Bisect => return None,
+        })
     }
 
     /// How many commits branch `branch` has that `remote` does not, by its remote-tracking
@@ -653,6 +702,15 @@ fn worktree_change(
         EntryStatus::IntentToAdd => Some(Change::Added),
         EntryStatus::NeedsUpdate(_) => None,
     }
+}
+
+/// Writes `index` after its entries changed. Its cached trees (the `TREE` extension) are dropped,
+/// since `gix` writes them as read and Git trusts them: `git write-tree`, `git commit` and
+/// `git status` would see the trees `HEAD` had. Git builds them again on its next commit.
+fn write_changed_index(mut index: gix::index::File) -> Result<(), GitError> {
+    index.sort_entries();
+    index.remove_tree();
+    index.write(Default::default()).map_err(GitError::git)
 }
 
 /// A relative platform path as Git writes it, `/`-separated.
