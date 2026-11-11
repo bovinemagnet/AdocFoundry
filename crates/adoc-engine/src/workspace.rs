@@ -945,6 +945,13 @@ impl Engine {
         // The descriptors of the components whose resources came, went or changed aliases.
         let mut catalogued = BTreeSet::new();
         for (path, change) in &ready {
+            if *change == Change::File && !is_asciidoc_path(path) {
+                // An open file that is not a page (a descriptor, the playbook, a stylesheet)
+                // follows the file too; what reads it is told below.
+                if let Some(id) = self.document_for_path(path) {
+                    self.open_document_changed_on_disk(id, fs::read_to_string(path).ok());
+                }
+            }
             if *change == Change::Directory {
                 reindex = true;
             } else if self.is_settings_file(path) {
@@ -1060,45 +1067,7 @@ impl Engine {
     fn file_changed_on_disk(&mut self, path: &Path, catalogued: &mut BTreeSet<PathBuf>) -> bool {
         let on_disk = fs::read_to_string(path).ok();
         if let Some(id) = self.document_for_path(path) {
-            if self.writer.is_saving(id) {
-                return false; // Our own write, which the save's result settles.
-            }
-            let Some(document) = self.documents.get(&id) else {
-                return false;
-            };
-            let Some(text) = on_disk else {
-                return false; // Deleted underneath an open document: keep the buffer.
-            };
-            if document.text == text.as_str() {
-                return false; // Our own save, or an identical write.
-            }
-            let Some(state) = self.states.get_mut(&id) else {
-                return false;
-            };
-            // What was last saved or read: our own write, though typing went on since.
-            if text.len() == state.saved_len
-                && crate::document::hash_text(&text) == state.saved_hash
-            {
-                return false;
-            }
-            if document.dirty {
-                if !state.changed_on_disk {
-                    state.changed_on_disk = true;
-                    self.emit(EngineEvent::DocumentChangedOnDisk(id));
-                }
-                return false;
-            }
-            // Only what changed is replaced, so carets elsewhere stay and undo keeps only that.
-            let edits: Vec<TextEdit> = crate::edit::minimal(&document.text.to_string(), &text)
-                .into_iter()
-                .collect();
-            let group = self.new_group();
-            if self
-                .apply_edits(id, edits, crate::engine::UndoMode::Group(group))
-                .is_ok()
-            {
-                self.mark_saved(id, &text);
-            }
+            self.open_document_changed_on_disk(id, on_disk);
             return false;
         }
         match &on_disk {
@@ -1119,6 +1088,48 @@ impl Engine {
 }
 
 impl Engine {
+    /// The file of open document `id`, of any type, is `on_disk` now (`None` when it cannot be
+    /// read): a clean buffer follows it, a dirty one is told that it changed underneath.
+    fn open_document_changed_on_disk(&mut self, id: crate::DocumentId, on_disk: Option<String>) {
+        if self.writer.is_saving(id) {
+            return; // Our own write, which the save's result settles.
+        }
+        let Some(document) = self.documents.get(&id) else {
+            return;
+        };
+        let Some(text) = on_disk else {
+            return; // Deleted underneath an open document: keep the buffer.
+        };
+        if document.text == text.as_str() {
+            return; // Our own save, or an identical write.
+        }
+        let Some(state) = self.states.get_mut(&id) else {
+            return;
+        };
+        // What was last saved or read: our own write, though typing went on since.
+        if text.len() == state.saved_len && crate::document::hash_text(&text) == state.saved_hash {
+            return;
+        }
+        if document.dirty {
+            if !state.changed_on_disk {
+                state.changed_on_disk = true;
+                self.emit(EngineEvent::DocumentChangedOnDisk(id));
+            }
+            return;
+        }
+        // Only what changed is replaced, so carets elsewhere stay and undo keeps only that.
+        let edits: Vec<TextEdit> = crate::edit::minimal(&document.text.to_string(), &text)
+            .into_iter()
+            .collect();
+        let group = self.new_group();
+        if self
+            .apply_edits(id, edits, crate::engine::UndoMode::Group(group))
+            .is_ok()
+        {
+            self.mark_saved(id, &text);
+        }
+    }
+
     /// Files the engine made or took away itself that are not pages: the catalog and whatever
     /// reads it follow at once, as they would on the watcher's report, which then finds nothing
     /// left to do.

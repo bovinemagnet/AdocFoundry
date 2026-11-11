@@ -402,6 +402,54 @@ fn external_change_is_reported_once() {
     );
 }
 
+#[test]
+fn an_open_descriptor_follows_its_file_on_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let descriptor = directory.path().join("antora.yml");
+    fs::write(&descriptor, "name: demo\nversion: ~\n").unwrap();
+    fs::create_dir_all(directory.path().join("modules/ROOT/pages")).unwrap();
+    fs::write(
+        directory.path().join("modules/ROOT/pages/index.adoc"),
+        "= Index\n",
+    )
+    .unwrap();
+    let mut engine = engine_without_user_settings();
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    settle(&mut engine);
+    let events = engine.subscribe();
+    let id = engine.open(&descriptor).unwrap();
+    assert!(!engine.document(id).unwrap().asciidoc);
+
+    // Clean, it follows the file.
+    fs::write(&descriptor, "name: demo\nversion: '2.0'\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| engine
+        .document(id)
+        .unwrap()
+        .text
+        .to_string()
+        .contains("2.0")));
+    assert!(!engine.document(id).unwrap().dirty);
+
+    // With unsaved edits, it says the file changed.
+    type_at_start(&mut engine, id, "# mine\n");
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&descriptor, "name: demo\nversion: '3.0'\n").unwrap();
+    let barrier = directory.path().join("modules/ROOT/pages/barrier.adoc");
+    assert_eq!(
+        reports_until_barrier(&mut engine, &events, id, &barrier, || {}),
+        1
+    );
+    assert!(engine
+        .document(id)
+        .unwrap()
+        .text
+        .to_string()
+        .starts_with("# mine\n"));
+}
+
 /// True once the index holds `path`.
 fn indexed(engine: &Engine, path: &Path) -> bool {
     engine.workspace().index.file(path).is_some()
