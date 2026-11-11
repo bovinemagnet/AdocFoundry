@@ -345,6 +345,7 @@ Files still selects the active page's row if it is already shown.
 Reveal in Files keeps working; see <<_reveal_in_files>>.
 The setting may be set in the user file or the workspace file; see xref:settings.adoc[Settings].
 
+[[how-far-the-trees-open]]
 === How far the trees open
 
 Navigation and Modules open to two levels by default.
@@ -1766,6 +1767,7 @@ Each family is marked `(bundled)`, `(found)` or `(not installed, so a fallback i
 The tools are asked for their versions in the background, so the dialog appears once they have answered.
 See xref:command-line.adoc#doctor[doctor] for the sections and what they mean.
 
+[[themes]]
 == Themes
 
 The theme follows the system by default.

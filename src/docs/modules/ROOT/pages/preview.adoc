@@ -48,6 +48,7 @@ Pin Preview (`preview.pin`) keeps the preview on one page while you edit others.
 This is useful for watching a page that includes the file you are editing.
 Pin again to unpin.
 
+[[pdf-preview]]
 == PDF preview
 
 The preview pane can show the preview target as PDF pages instead of the rendered page.

@@ -464,6 +464,7 @@ It is published only when a new count differs from the last.
 |A PDF export finished, with the output path and either an `ExportSummary` or the error.
 |===
 
+[[the-preview-service]]
 == The preview service
 
 The engine renders the previews that front ends ask for.
@@ -573,6 +574,7 @@ The count is in `crates/adoc-engine/src/words.rs`.
 `adoc_engine::count_words(&str)` counts any text by the same rule, and the app uses it for the selection.
 When a new count differs from the last, the engine publishes `EngineEvent::WordCountChanged(DocumentId)`.
 
+[[the-visual-model-service]]
 == The visual model service
 
 The engine keeps an editable model of each document that is shown visually, and runs the commands that edit it.
@@ -899,6 +901,7 @@ A change to `.git/HEAD` indexes the workspace again, so descriptors and pages ar
 `navigate.open_in_version` (Open in Another Version, Navigate category, no default binding) takes `CommandArgs::Custom` with `{ "document": <id>, "version": "1.0" | null }`.
 It opens the same resource id in the chosen version, in the workspace root that holds it.
 
+[[settings]]
 == Settings
 
 `Settings` loads the user and workspace TOML layers described in xref:ROOT:settings.adoc[Settings].
@@ -1440,6 +1443,7 @@ Both share one cataloguing function, `catalog_component`:
 * Folders named in `ignore` are skipped.
 * The playbook is the first root's.
 
+[[reports-and-inspection]]
 == Reports and inspection
 
 Headless front ends need answers that are not editor features.
