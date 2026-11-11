@@ -634,6 +634,36 @@ fn unsized_raster_image_is_75_percent() {
 }
 
 #[test]
+fn images_named_for_another_format_are_read_by_their_content() {
+    // A PNG named `.jpg` and a JPEG named `.png` are shown, as asciidoctor-pdf and browsers
+    // show them, rather than failing the document.
+    let directory = tempfile::tempdir().unwrap();
+    let fixtures = common::fixtures();
+    std::fs::copy(
+        fixtures.join("pdf/reference/images/wide.png"),
+        directory.path().join("x.jpg"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixtures.join("image-viewer/modules/ROOT/images/screenshot.jpg"),
+        directory.path().join("y.png"),
+    )
+    .unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= Images\n\nimage::x.jpg[X]\n\nimage::y.png[Y]\n").unwrap();
+    let typst = to_typst(
+        &common::article(common::view_of(&page)),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    assert!(typst.missing.is_empty(), "{:?}", typst.missing);
+    let pages = adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let placed: Vec<_> = pages.into_iter().flat_map(|page| page.images).collect();
+    assert_eq!(placed.len(), 2, "{placed:?}");
+}
+
+#[test]
 fn unsized_svg_images_are_sized_as_asciidoctor_pdf_sizes_them() {
     // prawn-svg reads a width without units as points and one in pixels at 0.75pt each, and
     // an SVG with only a view box fills the column.

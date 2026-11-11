@@ -134,6 +134,9 @@ pub(crate) struct Emitter<'a> {
     out: String,
     files: Vec<(String, PathBuf)>,
     file_paths: HashMap<PathBuf, String>,
+    /// The extension of each checked image's format, as its content shows it: Typst decodes a
+    /// file by its path's extension, which may name another format.
+    formats: HashMap<PathBuf, &'static str>,
     map: SourceMap,
     missing: Vec<(String, SourceSpan)>,
     unconverted: Vec<(String, SourceSpan)>,
@@ -189,6 +192,7 @@ impl<'a> Emitter<'a> {
             out: String::new(),
             files: Vec::new(),
             file_paths: HashMap::new(),
+            formats: HashMap::new(),
             map: SourceMap::default(),
             missing: Vec::new(),
             unconverted: Vec::new(),
@@ -806,7 +810,10 @@ impl<'a> Emitter<'a> {
             return None;
         }
         match image_natural_width(path) {
-            Ok(natural) => Some((path, natural)),
+            Ok((natural, extension)) => {
+                self.formats.insert(path.to_path_buf(), extension);
+                Some((path, natural))
+            }
             Err(problem) => {
                 self.missing.push((
                     format!("image could not be read: {} ({problem})", image.target),
@@ -1031,16 +1038,20 @@ impl<'a> Emitter<'a> {
         self.push("]");
     }
 
-    /// The virtual path a file is served at; the same file always gets the same path.
+    /// The virtual path a file is served at; the same file always gets the same path. A checked
+    /// image's path ends in its format's extension, whatever its own name says.
     pub(crate) fn file(&mut self, path: &Path) -> String {
         if let Some(existing) = self.file_paths.get(path) {
             return existing.clone();
         }
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("bin")
-            .to_ascii_lowercase();
+        let extension = match self.formats.get(path) {
+            Some(extension) => (*extension).to_owned(),
+            None => path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("bin")
+                .to_ascii_lowercase(),
+        };
         let virtual_path = format!("/files/{}.{extension}", stable_hash(path));
         self.file_paths
             .insert(path.to_path_buf(), virtual_path.clone());
@@ -1342,19 +1353,22 @@ impl Natural {
     }
 }
 
-/// The width of the image at `path` when nothing sizes it, or why it cannot be shown: decoded
-/// as Typst decodes it when it lays the page out (memoised, so the work is not repeated), where
-/// a failure would fail the whole document.
+/// The width of the image at `path` when nothing sizes it, and the extension of its format as
+/// its content shows it, or why it cannot be shown: decoded as Typst decodes it when it lays the
+/// page out (memoised, so the work is not repeated), where a failure would fail the whole
+/// document.
 ///
 /// asciidoctor-pdf gives a raster image 0.75pt to the pixel (96 dpi), whatever resolution the
 /// file records, where Typst would use that resolution or 72 dpi. An SVG is sized as prawn-svg
 /// sizes it: its `width` in points when it has no unit, at 0.75pt to the pixel in `px`, and the
 /// column's width when it has only a view box.
-fn image_natural_width(path: &Path) -> Result<Natural, String> {
+fn image_natural_width(path: &Path) -> Result<(Natural, &'static str), String> {
     // `::typst`, the crate, not this crate's `typst` module.
     use ::typst::{
         foundations::Bytes,
-        visualize::{ImageFormat, RasterImage, SvgImage, VectorFormat},
+        visualize::{
+            ExchangeFormat, ImageFormat, RasterFormat, RasterImage, SvgImage, VectorFormat,
+        },
     };
     let data = std::fs::read(path).map_err(|error| error.to_string())?;
     let format = ImageFormat::detect(&data);
@@ -1364,13 +1378,23 @@ fn image_natural_width(path: &Path) -> Result<Natural, String> {
     };
     let bytes = Bytes::new(data);
     match format {
-        Some(ImageFormat::Raster(format)) => RasterImage::plain(bytes, format)
-            .map(|image| Natural::Points(f64::from(image.width()) * 0.75))
-            .map_err(|error| error.to_string()),
+        Some(ImageFormat::Raster(format)) => {
+            let extension = match format {
+                RasterFormat::Exchange(ExchangeFormat::Png) => "png",
+                RasterFormat::Exchange(ExchangeFormat::Jpg) => "jpg",
+                RasterFormat::Exchange(ExchangeFormat::Gif) => "gif",
+                RasterFormat::Exchange(ExchangeFormat::Webp) => "webp",
+                // Typst detects no pixel buffer from the bytes alone.
+                RasterFormat::Pixel(_) => return Err("an unrecognised image format".to_owned()),
+            };
+            RasterImage::plain(bytes, format)
+                .map(|image| (Natural::Points(f64::from(image.width()) * 0.75), extension))
+                .map_err(|error| error.to_string())
+        }
         Some(ImageFormat::Vector(VectorFormat::Svg)) => SvgImage::new(bytes)
-            .map(|_| natural)
+            .map(|_| (natural, "svg"))
             .map_err(|error| format!("{error:?}")),
-        Some(ImageFormat::Vector(VectorFormat::Pdf)) => Ok(Natural::Typst),
+        Some(ImageFormat::Vector(VectorFormat::Pdf)) => Ok((Natural::Typst, "pdf")),
         None => Err("an unrecognised image format".to_owned()),
     }
 }
