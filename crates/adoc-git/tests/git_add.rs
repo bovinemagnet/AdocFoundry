@@ -400,6 +400,53 @@ fn a_folder_replaced_by_a_file_leaves_the_index() {
 }
 
 #[test]
+fn a_file_whose_folder_became_a_file_is_staged_as_deleted() {
+    if !has_git() {
+        return;
+    }
+    assert_stages_like_git_add(&["guide/index.adoc"], |dir| {
+        init(dir, &[]);
+        fs::create_dir(dir.join("guide")).unwrap();
+        fs::write(dir.join("guide/index.adoc"), "= Guide\n").unwrap();
+        commit_all(dir);
+        fs::remove_dir_all(dir.join("guide")).unwrap();
+        fs::write(dir.join("guide"), "a file\n").unwrap();
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_that_cannot_be_read_is_not_staged_as_deleted() {
+    use std::os::unix::fs::PermissionsExt as _;
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), &[]);
+    let folder = dir.path().join("locked");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("page.adoc"), "one\n").unwrap();
+    commit_all(dir.path());
+    let before = git_ok(dir.path(), &["ls-files", "--stage"]);
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = fs::symlink_metadata(folder.join("page.adoc")).is_ok();
+    // `git add` says "Permission denied" and leaves the entry as it was.
+    git(dir.path(), &["add", "--", "locked/page.adoc"]);
+    let after_theirs = git_ok(dir.path(), &["ls-files", "--stage"]);
+    let ours = stage(dir.path(), &["locked/page.adoc"]);
+    let after_ours = git_ok(dir.path(), &["ls-files", "--stage"]);
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+    if readable {
+        eprintln!("permissions are not enforced here: skipping");
+        return;
+    }
+    assert_eq!(after_theirs, before, "git add stages nothing");
+    let error = ours.expect_err("stage refuses");
+    assert!(error.contains("page.adoc"), "{error}");
+    assert_eq!(after_ours, before, "nothing is staged");
+}
+
+#[test]
 fn a_file_inside_a_submodule_is_refused_and_the_submodule_kept() {
     if !has_git() {
         return;

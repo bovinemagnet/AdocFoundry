@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    fs,
+    fs, io,
     path::{Component, Path, PathBuf},
 };
 
@@ -420,9 +420,18 @@ impl Repository {
                 });
             }
             let file = self.workdir.join(&relative);
-            let Ok(metadata) = gix::index::fs::Metadata::from_path_no_follow(&file) else {
-                index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
-                continue; // Gone: staged as deleted.
+            let metadata = match gix::index::fs::Metadata::from_path_no_follow(&file) {
+                Ok(metadata) => metadata,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
+                    continue; // Gone: staged as deleted.
+                }
+                Err(source) => return Err(GitError::Io { path: file, source }),
             };
             let in_index = index.entry_by_path(name.as_ref()).map(|entry| entry.mode);
             let bytes = if metadata.is_symlink() {
