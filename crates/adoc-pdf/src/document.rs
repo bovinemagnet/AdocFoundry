@@ -104,14 +104,14 @@ impl Document {
         }
     }
 
-    fn pages(&self) -> Vec<PageView> {
+    fn pages(&self) -> Vec<&PageView> {
         match self {
-            Self::Article(page) => vec![page.clone()],
+            Self::Article(page) => vec![page],
             Self::Book(book) => book
                 .items
                 .iter()
                 .filter_map(|item| match item {
-                    BookItem::Page(page) => Some(page.clone()),
+                    BookItem::Page(page) => Some(page),
                     _ => None,
                 })
                 .collect(),
@@ -192,9 +192,9 @@ pub fn to_typst(document: &Document, theme: &LoadedTheme, options: &PdfOptions) 
     let emit_options = EmitOptions {
         highlight: facts.has("source-highlighter"),
         site_url: options.site_url.clone(),
-        page_urls: options.page_urls.clone(),
+        page_urls: &options.page_urls,
         toc_levels: facts.toc_levels(),
-        access: options.access.clone(),
+        access: &options.access,
         fits_lines: fits_lines(theme, &page_geometry(theme, &attributes)),
         // Font Awesome's glyphs are private-use code points, which PDF/A-2a forbids.
         font_icons: facts.attribute("icons") == Some("font")

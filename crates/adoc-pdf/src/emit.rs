@@ -109,9 +109,9 @@ impl SourceMap {
     }
 }
 
-/// What the emitter needs to know beyond the pages.
-#[derive(Clone, Debug, Default)]
-pub struct EmitOptions {
+/// What the emitter needs to know beyond the pages, borrowed from the export's options.
+#[derive(Clone, Debug)]
+pub struct EmitOptions<'a> {
     /// Highlight source blocks by language.
     pub highlight: bool,
     /// The site cross references out of the document link to, for a book.
@@ -119,9 +119,9 @@ pub struct EmitOptions {
     /// `toclevels`: sections deeper than this are left out of the outline.
     pub toc_levels: u8,
     /// Addresses of pages outside the document, for references to them.
-    pub page_urls: HashMap<PathBuf, String>,
+    pub page_urls: &'a HashMap<PathBuf, String>,
     /// Which image files may be read.
-    pub access: FileAccess,
+    pub access: &'a FileAccess,
     /// The most lines a block may be estimated to take for it to be kept whole without being
     /// measured (`fits_lines`); none is when zero.
     pub fits_lines: usize,
@@ -130,7 +130,7 @@ pub struct EmitOptions {
 }
 
 pub(crate) struct Emitter<'a> {
-    options: &'a EmitOptions,
+    options: &'a EmitOptions<'a>,
     out: String,
     files: Vec<(String, PathBuf)>,
     file_paths: HashMap<PathBuf, String>,
@@ -155,6 +155,8 @@ pub(crate) struct Emitter<'a> {
     ulist_depth: usize,
     olist_depth: usize,
     highlighter: Highlighter,
+    /// The next paragraph is an article's lead.
+    lead: bool,
 }
 
 /// What follows each block of a run.
@@ -178,7 +180,7 @@ pub(crate) fn label_name(key: &str, id: &str) -> String {
 }
 
 impl<'a> Emitter<'a> {
-    pub(crate) fn new(pages: &[PageView], options: &'a EmitOptions) -> Self {
+    pub(crate) fn new(pages: &[&PageView], options: &'a EmitOptions<'a>) -> Self {
         let mut labels = HashSet::new();
         for page in pages {
             labels.insert(label_name(&page.key, ""));
@@ -209,6 +211,7 @@ impl<'a> Emitter<'a> {
             ulist_depth: 0,
             olist_depth: 0,
             highlighter: Highlighter::new(),
+            lead: false,
         }
     }
 
@@ -283,13 +286,10 @@ impl<'a> Emitter<'a> {
             && view.blocks.first().is_some_and(|block| {
                 matches!(block.kind, ViewKind::Paragraph(_)) && block.roles.is_empty()
             });
-        if lead {
-            let mut blocks = view.blocks.clone();
-            blocks[0].roles.push("lead".to_owned());
-            self.blocks(&blocks, Gaps::Flow);
-        } else {
-            self.blocks(&view.blocks, Gaps::Flow);
-        }
+        // The first block is written with the role rather than copying the page to add it.
+        self.lead = lead;
+        self.blocks(&view.blocks, Gaps::Flow);
+        self.lead = false;
     }
 
     /// The page's footnotes, gathered where asciidoctor-pdf puts them.
@@ -513,11 +513,17 @@ impl<'a> Emitter<'a> {
                 );
             }
             ViewKind::Paragraph(content) => {
+                let lead = std::mem::take(&mut self.lead).then(|| "lead".to_owned());
                 let body = self.inlines(content);
-                if block.roles.is_empty() {
+                if block.roles.is_empty() && lead.is_none() {
                     let _ = writeln!(self.out, "{body}\n");
                 } else {
-                    let roles: Vec<String> = block.roles.iter().map(|role| string(role)).collect();
+                    let roles: Vec<String> = block
+                        .roles
+                        .iter()
+                        .chain(lead.as_ref())
+                        .map(|role| string(role))
+                        .collect();
                     let _ = writeln!(
                         self.out,
                         "#adoc-paragraph(({},), [{body}])\n",

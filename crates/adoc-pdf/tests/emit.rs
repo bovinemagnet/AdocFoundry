@@ -717,3 +717,22 @@ fn theme_image_width_sizes_images_without_a_pdf_width() {
     assert!(close(widths[2], column / 2.0), "{widths:?}");
     assert!(close(widths[3], column / 4.0), "{widths:?}");
 }
+
+#[test]
+fn an_article_s_first_paragraph_is_its_lead() {
+    // Written with the role added, without copying the page's blocks; only the first
+    // paragraph is the lead.
+    let typst = typst_of("= Page\n\nIntro.\n\nMore.\n\n== Section\n\nBody.\n");
+    assert_eq!(
+        typst
+            .source
+            .matches("#adoc-paragraph((\"lead\",), ")
+            .count(),
+        1,
+        "{}",
+        typst.source
+    );
+    assert!(typst
+        .source
+        .contains("#adoc-paragraph((\"lead\",), [#\"Intro.\"])"));
+}
