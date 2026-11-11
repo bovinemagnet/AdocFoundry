@@ -144,11 +144,15 @@ impl Repository {
                 Item::IndexWorktree(Worktree::Rewrite {
                     source,
                     dirwalk_entry,
+                    copy,
                     ..
                 }) => {
-                    let from = relative_path(source.rela_path());
-                    entry(&mut files, dirwalk_entry.rela_path.as_ref()).worktree =
-                        Change::Renamed(from);
+                    // A copy leaves its source where it was: the new file is only untracked.
+                    entry(&mut files, dirwalk_entry.rela_path.as_ref()).worktree = if copy {
+                        Change::Untracked
+                    } else {
+                        Change::Renamed(relative_path(source.rela_path()))
+                    };
                 }
                 Item::TreeIndex(change) => {
                     use gix::diff::index::Change as Index;
@@ -156,6 +160,11 @@ impl Repository {
                         Index::Addition { location, .. } => (location, Change::Added),
                         Index::Deletion { location, .. } => (location, Change::Deleted),
                         Index::Modification { location, .. } => (location, Change::Modified),
+                        Index::Rewrite {
+                            location,
+                            copy: true,
+                            ..
+                        } => (location, Change::Added),
                         Index::Rewrite {
                             source_location,
                             location,
