@@ -657,6 +657,47 @@ fn impact_changed_version_attributes_are_not_complete_and_empty() {
     assert_eq!(gaps[0].affected, [DESCRIPTOR]);
 }
 
+const STEPS: &str = "v1/modules/ROOT/partials/steps.adoc";
+const INSTALL_WITH_STEPS: &str =
+    "= Installing\n\ninclude::partial$intro.adoc[]\n\ninclude::partial$steps.adoc[]\n";
+
+#[test]
+fn impact_anchor_moved_into_an_included_partial_is_kept() {
+    // #539: the anchor is still on the page as composed.
+    let revisions = Revisions::new();
+    revisions.write(INSTALL, INSTALL_WITH_STEPS);
+    revisions.write(STEPS, "[#setup]\n== Setting up\n\nSteps.\n");
+    let report = revisions.report(
+        &[
+            revisions.change(INSTALL, ChangeKind::Modified),
+            revisions.change(STEPS, ChangeKind::Added),
+        ],
+        &[],
+    );
+    let references = of_kind(&report, ImpactKind::ReferenceIntegrity);
+    assert!(references.is_empty(), "{references:#?}");
+}
+
+#[test]
+fn impact_anchor_removed_from_an_included_partial_is_reviewed() {
+    // #539: the page the partial is composed into loses the anchor.
+    let mut revisions = Revisions::new();
+    revisions.write(INSTALL, INSTALL_WITH_STEPS);
+    revisions.write(STEPS, "[#setup]\n== Setting up\n\nSteps.\n");
+    revisions.rebase();
+    revisions.write(STEPS, "== Getting ready\n\nSteps.\n");
+    let report = revisions.report(&[revisions.change(STEPS, ChangeKind::Modified)], &[]);
+    let references = of_kind(&report, ImpactKind::ReferenceIntegrity);
+    assert_eq!(paths(&references), [INDEX], "{references:#?}");
+    assert_eq!(references[0].anchor.as_deref(), Some("setup"));
+    assert_eq!(references[0].status, Some(ImpactStatus::Broken));
+    assert_eq!(references[0].origin, STEPS);
+    assert_eq!(
+        spanned(&revisions, references[0]),
+        "xref:install.adoc#setup[setting up]"
+    );
+}
+
 /// The text `source` spans in the file as it is now.
 fn spanned(revisions: &Revisions, impact: &Impact) -> String {
     let source = impact.source.as_ref().expect("a source span");

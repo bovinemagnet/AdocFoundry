@@ -313,6 +313,15 @@ impl<'a> DependencySnapshot<'a> {
             .collect()
     }
 
+    /// The ids of every file composed into the file at `path`, itself included: the anchors an
+    /// xref to it can name.
+    pub(crate) fn composed_anchors(&self, path: &Path) -> BTreeSet<String> {
+        let mut files =
+            adoc_lang::includes::composed_files(&self.state.index, &self.state.antora, None, path);
+        files.insert(path.to_path_buf());
+        files.iter().flat_map(|file| self.anchors(file)).collect()
+    }
+
     /// Whether the file at `from` still writes the `ordinal`th reference with the target
     /// `written`, and where.
     pub(crate) fn still_writes(

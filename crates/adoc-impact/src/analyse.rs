@@ -189,14 +189,15 @@ pub fn analyse(
                 navigation(&mut gathered, base, head, path);
             }
             ChangeKind::Modified => {
+                let mut pages = BTreeSet::new();
                 if let Some(base) = base {
-                    render(&mut gathered, base, path, path, Side::Base, limits);
+                    pages = render(&mut gathered, base, path, path, Side::Base, limits);
                 }
-                render(&mut gathered, head, path, path, Side::Head, limits);
+                pages.extend(render(&mut gathered, head, path, path, Side::Head, limits));
                 if let Some(base) = base {
                     lost_referrers(&mut gathered, base, head, path, path);
                 }
-                removed_anchors(&mut gathered, base, head, path);
+                removed_anchors(&mut gathered, base, head, path, &pages);
                 if let Some(base) = base {
                     descriptor(&mut gathered, base, head, path);
                 }
@@ -275,7 +276,7 @@ fn no_base(head: &DependencySnapshot<'_>, path: &Path, what: &str) -> Gap {
 }
 
 /// The changed file itself, when it is a page, and every page that includes it, transitively,
-/// on `side`: rendered content that may change.
+/// on `side`: rendered content that may change. Returns those pages.
 fn render(
     gathered: &mut Gathered,
     snapshot: &DependencySnapshot<'_>,
@@ -283,11 +284,13 @@ fn render(
     origin: &Path,
     side: Side,
     limits: Limits,
-) {
+) -> BTreeSet<PathBuf> {
+    let mut pages = BTreeSet::new();
     if !snapshot.has(changed) {
-        return;
+        return pages;
     }
     if snapshot.is_page(changed) {
+        pages.insert(changed.to_path_buf());
         gathered.add(found(
             ImpactKind::Render,
             changed,
@@ -310,6 +313,7 @@ fn render(
             let mut next = via.clone();
             next.push(includer.path.clone());
             if snapshot.is_page(&includer.path) {
+                pages.insert(includer.path.clone());
                 let mut impact = found(
                     ImpactKind::Render,
                     &includer.path,
@@ -323,6 +327,7 @@ fn render(
             queue.push_back(next);
         }
     }
+    pages
 }
 
 fn found(kind: ImpactKind, path: &Path, origin: &Path, side: Side, via: Vec<PathBuf>) -> Found {
@@ -502,35 +507,56 @@ fn descriptor(
     }
 }
 
-/// A modified page's anchors that base has and head does not: their references, from both
-/// sides, to review.
+/// The anchors a modified file brought to the pages it is composed into (`pages`, itself
+/// included when it is a page, on either side) that base has and head does not: their
+/// references, from both sides, to review. An xref's fragment names an anchor of the page as
+/// composed, so an anchor counts as on a page when any file composed into it declares it.
 fn removed_anchors(
     gathered: &mut Gathered,
     base: Option<&DependencySnapshot<'_>>,
     head: &DependencySnapshot<'_>,
     path: &Path,
+    pages: &BTreeSet<PathBuf>,
 ) {
     let Some(base) = base else {
         return;
     };
-    let now = head.anchors(path);
-    for id in base.anchors(path).difference(&now) {
-        for (snapshot, side) in [(base, Side::Base), (head, Side::Head)] {
-            for referrer in snapshot.anchor_referrers(path, id) {
-                let still = head
-                    .has(&referrer.path)
-                    .then(|| head.still_writes(&referrer.path, &referrer.written, referrer.ordinal))
-                    .flatten()
-                    .is_some();
-                let status = if still {
-                    ImpactStatus::Broken
-                } else {
-                    ImpactStatus::ResolvedByChange
-                };
-                let mut impact = referrer_impact(snapshot, &referrer, path, path, side, status);
-                impact.kind = ImpactKind::ReferenceIntegrity;
-                impact.anchor = Some(id.clone());
-                gathered.add(impact);
+    let brought = base.composed_anchors(path);
+    if brought.is_empty() {
+        return;
+    }
+    for page in pages {
+        if !base.has(page) || !head.has(page) {
+            continue;
+        }
+        let before = base.composed_anchors(page);
+        let now = head.composed_anchors(page);
+        for id in brought.intersection(&before) {
+            if now.contains(id) {
+                continue;
+            }
+            for (snapshot, side) in [(base, Side::Base), (head, Side::Head)] {
+                for referrer in snapshot.anchor_referrers(page, id) {
+                    let still = head
+                        .has(&referrer.path)
+                        .then(|| {
+                            head.still_writes(&referrer.path, &referrer.written, referrer.ordinal)
+                        })
+                        .flatten()
+                        .is_some();
+                    let status = if still {
+                        ImpactStatus::Broken
+                    } else {
+                        ImpactStatus::ResolvedByChange
+                    };
+                    let mut impact = referrer_impact(snapshot, &referrer, page, path, side, status);
+                    if page != path {
+                        impact.via.insert(0, path.to_path_buf());
+                    }
+                    impact.kind = ImpactKind::ReferenceIntegrity;
+                    impact.anchor = Some(id.clone());
+                    gathered.add(impact);
+                }
             }
         }
     }
