@@ -864,6 +864,36 @@ impl Engine {
         self.rendered.failed.len()
     }
 
+    /// The workspace's diagram cache: under the first root, where the renderer keeps it.
+    pub(crate) fn diagram_cache(&self) -> Option<DiagramCache> {
+        self.roots
+            .first()
+            .map(|root| DiagramCache::for_workspace(root))
+    }
+
+    /// Removes, on a worker, the images in the workspace's diagram cache not read for
+    /// `[history] diagram_cache_days`, keeping every one the renderer has shown (#431).
+    pub(crate) fn prune_diagram_cache(&mut self) {
+        let Some(cache) = self.diagram_cache().filter(|cache| cache.dir().is_dir()) else {
+            return;
+        };
+        let keep = self
+            .rendered
+            .diagrams
+            .as_ref()
+            .map(|diagrams| diagrams.in_use())
+            .unwrap_or_default();
+        let unused_for =
+            Duration::from_secs(u64::from(self.settings.history.diagram_cache_days) * 86_400);
+        let sender = self.worker_sender.clone();
+        self.workers_running += 1;
+        let crashed = |_| WorkerMessage::DiagramCachePruned;
+        worker::spawn(sender, crashed, move |sender| {
+            let _ = cache.prune(unused_for, &keep);
+            let _ = sender.send(WorkerMessage::DiagramCachePruned);
+        });
+    }
+
     /// Replaces the diagram renderer, for tests and front ends with their own providers.
     pub fn set_diagrams(&mut self, diagrams: Diagrams) {
         self.rendered.diagrams = Some(Arc::new(diagrams));

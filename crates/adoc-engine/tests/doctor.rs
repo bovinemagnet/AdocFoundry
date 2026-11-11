@@ -93,6 +93,33 @@ fn the_report_names_the_build_the_system_and_the_settings() {
 }
 
 #[test]
+fn the_report_measures_the_diagram_cache() {
+    let (engine, directory) = engine_with("", "");
+    let cache = directory
+        .path()
+        .join("docs")
+        .join(".cache/adocfoundry/diagrams");
+    let empty = tempfile::tempdir().unwrap();
+    let line = |engine: &Engine| {
+        let report = report_for(engine, empty.path());
+        section(&report, "Settings")
+            .value("Diagram cache")
+            .map(str::to_owned)
+    };
+    assert_eq!(
+        line(&engine),
+        Some(format!("{} (0 files, 0 bytes)", cache.display()))
+    );
+    fs::create_dir_all(&cache).unwrap();
+    fs::write(cache.join("a.svg"), "x".repeat(1000)).unwrap();
+    fs::write(cache.join("b.svg"), "x".repeat(2000)).unwrap();
+    assert_eq!(
+        line(&engine),
+        Some(format!("{} (2 files, 2.9 KB)", cache.display()))
+    );
+}
+
+#[test]
 fn a_front_ends_own_section_follows_the_systems() {
     let (engine, _directory) = engine_with("", "");
     let empty = tempfile::tempdir().unwrap();

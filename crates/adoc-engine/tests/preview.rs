@@ -1046,6 +1046,49 @@ fn a_change_to_a_file_a_diagram_reads_previews_its_page_again() {
     );
 }
 
+#[test]
+fn opening_a_workspace_prunes_diagrams_not_read_for_the_period() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    fs::create_dir_all(&root).unwrap();
+    let user = directory.path().join("adocfoundry.toml");
+    fs::write(&user, "[history]\ndiagram_cache_days = 10\n").unwrap();
+    let day = Duration::from_secs(24 * 60 * 60);
+    let cache = DiagramCache::for_workspace(&root);
+    let set_age = |path: &Path, age: Duration| {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - age)
+            .unwrap();
+    };
+    let entry = |checksum: &str, age: Duration| {
+        let path = cache.put(checksum, "<svg/>").unwrap();
+        set_age(&path, age);
+        path
+    };
+    let old = entry("old", 20 * day);
+    let new = entry("new", 2 * day);
+    let shown = entry("shown", 20 * day);
+
+    let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap().with_git_opt_in());
+    let diagrams = Diagrams::with_providers(
+        DiagramCache::for_workspace(&root),
+        vec![Box::new(MermaidProvider::default())],
+    );
+    // Shown already, so in use, though not read for as long as the old one.
+    assert_eq!(diagrams.cached_at("shown"), Some(shown.clone()));
+    set_age(&shown, 20 * day);
+    engine.set_diagrams(diagrams);
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(WAIT));
+
+    assert!(!old.exists(), "not read for longer than the setting");
+    assert!(new.exists());
+    assert!(shown.exists(), "an image in use is kept");
+}
+
 // --- the pause in typing (#401) ------------------------------------------------------------------
 
 /// A page shown in the preview, its preview up to date, with "Typed." just typed at its end.

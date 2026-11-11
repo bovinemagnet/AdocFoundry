@@ -824,6 +824,7 @@ Settings
   Workspace root:     docs
   Git:                on
   Warnings:           none
+  Diagram cache:      docs/.cache/adocfoundry/diagrams (214 files, 3.1 MB)
 ----
 
 The sections, in order, are as follows.
@@ -848,6 +849,7 @@ A tool that does not answer within 15 seconds is reported as not answering.
 
 Settings::
 The paths of the user and workspace settings files, each marked `(not found)` when missing, the workspace roots, whether Git is on or off, and each settings warning, or `Warnings: none`.
+With a workspace, `Diagram cache` gives the folder of rendered diagrams and formulas, how many files it holds and their size together.
 
 `--format json` prints one object of sections, each a title and its labelled lines.
 

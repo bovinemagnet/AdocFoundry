@@ -13,7 +13,7 @@ use std::{
     sync::Mutex,
 };
 
-pub use cache::DiagramCache;
+pub use cache::{CacheUsage, DiagramCache, MARK_READ_AFTER};
 pub use external::{
     find_program, is_path, ExternalProvider, ToolPaths, DEFAULT_TIMEOUT, MAX_OUTPUT,
 };
@@ -245,6 +245,22 @@ impl Diagrams {
             hasher.update(part.as_bytes());
         }
         hex(&hasher.finalize())
+    }
+
+    /// The cache the images are kept in.
+    #[must_use]
+    pub fn cache(&self) -> &DiagramCache {
+        &self.cache
+    }
+
+    /// The checksums of the images this renderer has found or put in its cache: those shown
+    /// since it was made, which pruning the cache keeps.
+    #[must_use]
+    pub fn in_use(&self) -> HashSet<String> {
+        self.present
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
 
     /// The local files `request` names for its renderer to read ([`DiagramProvider::inputs`]):

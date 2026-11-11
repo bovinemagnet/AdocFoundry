@@ -431,6 +431,11 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |`256`
 |The history of every page together is kept under this many megabytes. The oldest versions of any page are removed first.
 
+|`history.diagram_cache_days`
+|positive integer
+|`30`
+|Rendered diagrams and formulas not read for this many days are removed from the workspace's cache, `.cache/adocfoundry/diagrams`, when the workspace opens. Those the open window is showing are kept. See xref:preview.adoc#diagrams[Diagrams].
+
 |`spelling.enabled`
 |boolean
 |`true`
