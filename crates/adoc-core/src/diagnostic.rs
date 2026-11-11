@@ -89,6 +89,16 @@ pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
     pub message: String,
     pub range: SourceRange,
+    /// Other places in the same file the problem involves, such as the first declaration of a
+    /// duplicate anchor, for a front end to link to.
+    pub related: Vec<Related>,
+}
+
+/// A place in the same file that a [`Diagnostic`] involves.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Related {
+    pub message: String,
+    pub range: SourceRange,
 }
 
 #[cfg(test)]

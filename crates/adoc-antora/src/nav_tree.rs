@@ -186,6 +186,7 @@ fn build_tree(
                     Err(message) => {
                         if !message.is_empty() {
                             diagnostics.push(Diagnostic {
+                                related: Vec::new(),
                                 code: DiagnosticCode::AntoraNavUnresolved,
                                 severity: DiagnosticSeverity::Warning,
                                 message: format!(

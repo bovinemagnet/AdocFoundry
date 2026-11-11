@@ -307,6 +307,7 @@ fn push_unique(
 ) {
     if seen.insert((code, range)) {
         diagnostics.push(Diagnostic {
+            related: Vec::new(),
             code,
             severity: DiagnosticSeverity::Warning,
             message,

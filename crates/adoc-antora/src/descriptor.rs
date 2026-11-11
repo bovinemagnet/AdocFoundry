@@ -270,6 +270,7 @@ fn diagnostic(
     range: SourceRange,
 ) -> Diagnostic {
     Diagnostic {
+        related: Vec::new(),
         code,
         severity,
         message,

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use adoc_core::{
     Anchor, Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle,
-    IncludeDirective, Section, SourceRange,
+    IncludeDirective, Related, Section, SourceRange,
 };
 
 use crate::line_parser::{
@@ -145,32 +145,51 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         offset += line.len();
     }
 
-    document.diagnostics = duplicate_anchors(&document.anchors);
+    document.diagnostics = duplicate_anchors(text, &document.anchors);
     ParseResult { document }
 }
 
-/// A warning for each anchor whose id an earlier one declared. Anchors inside conditionals
-/// are left out: two branches commonly declare the same id, and only one is ever built.
-fn duplicate_anchors(anchors: &[Anchor]) -> Vec<Diagnostic> {
+/// A warning for each anchor whose id an earlier one declared, naming the first by its line and
+/// column and relating it, for a front end to link to. Anchors inside conditionals are left
+/// out: two branches commonly declare the same id, and only one is ever built.
+fn duplicate_anchors(text: &str, anchors: &[Anchor]) -> Vec<Diagnostic> {
     let mut first = HashMap::<&str, SourceRange>::new();
     let mut diagnostics = Vec::new();
     for anchor in anchors.iter().filter(|anchor| !anchor.conditional) {
         match first.get(anchor.id.as_str()) {
-            Some(first_range) => diagnostics.push(Diagnostic {
-                code: DiagnosticCode::DuplicateAnchor,
-                severity: DiagnosticSeverity::Warning,
-                message: format!(
-                    "duplicate anchor `{}`; first declared at byte {}",
-                    anchor.id, first_range.start
-                ),
-                range: anchor.range,
-            }),
+            Some(first_range) => {
+                let (line, column) = line_and_column(text, first_range.start);
+                diagnostics.push(Diagnostic {
+                    code: DiagnosticCode::DuplicateAnchor,
+                    severity: DiagnosticSeverity::Warning,
+                    message: format!(
+                        "duplicate anchor `{}`; first declared at line {line}, column {column}",
+                        anchor.id
+                    ),
+                    range: anchor.range,
+                    related: vec![Related {
+                        message: format!("`{}` is first declared here", anchor.id),
+                        range: *first_range,
+                    }],
+                });
+            }
             None => {
                 first.insert(&anchor.id, anchor.range);
             }
         }
     }
     diagnostics
+}
+
+/// The line and the character on it of `offset` in `text`, both counted from 1.
+fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
+    let offset = text.floor_char_boundary(offset.min(text.len()));
+    let before = &text[..offset];
+    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    (
+        before.matches('\n').count() + 1,
+        before[line_start..].chars().count() + 1,
+    )
 }
 
 #[cfg(test)]
@@ -551,6 +570,25 @@ image::diagram.png[Architecture]\n";
         assert_eq!(result.document.sections.len(), 2);
         assert_eq!(result.diagnostics().len(), 1);
         assert!(result.diagnostics()[0].message.contains("duplicate anchor"));
+    }
+
+    #[test]
+    fn a_duplicate_anchor_names_the_first_by_line_and_column_and_relates_it() {
+        let source = "= Guide\n\nSee é [[same]] here.\n\n[[same]]\n== Second\n";
+        let result = parse("file:///duplicates.adoc", source);
+        let duplicate = &result.diagnostics()[0];
+
+        assert_eq!(
+            duplicate.message,
+            "duplicate anchor `same`; first declared at line 3, column 7"
+        );
+        let first = source.find("[[same]]").unwrap();
+        assert_eq!(duplicate.related.len(), 1);
+        assert_eq!(duplicate.related[0].range.start, first);
+        assert_eq!(
+            duplicate.related[0].message,
+            "`same` is first declared here"
+        );
     }
 
     fn reference_targets(text: &str) -> Vec<String> {

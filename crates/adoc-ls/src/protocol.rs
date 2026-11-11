@@ -26,14 +26,15 @@ use lsp_types::{
     },
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse, Command,
     CompletionItem, CompletionItemKind, CompletionList, CompletionParams, CompletionResponse,
-    CompletionTextEdit, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    InitializeParams, InitializeResult, Location, MarkupContent, MarkupKind, MessageType,
-    NumberOrString, PublishDiagnosticsParams, ReferenceParams, RenameFilesParams, RenameParams,
-    ServerInfo, ShowMessageParams, SymbolInformation, SymbolKind, TextDocumentContentChangeEvent,
-    TextEdit, Uri, WorkspaceEdit, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, InitializeParams, InitializeResult, Location, MarkupContent, MarkupKind,
+    MessageType, NumberOrString, PublishDiagnosticsParams, ReferenceParams, RenameFilesParams,
+    RenameParams, ServerInfo, ShowMessageParams, SymbolInformation, SymbolKind,
+    TextDocumentContentChangeEvent, TextEdit, Uri, WorkspaceEdit, WorkspaceSymbolParams,
+    WorkspaceSymbolResponse,
 };
 
 use crate::{
@@ -415,6 +416,21 @@ impl ProtocolServer {
                     code: Some(NumberOrString::String(diagnostic.code.as_str().to_owned())),
                     source: Some("adoc-ls".to_owned()),
                     message: diagnostic.message.clone(),
+                    related_information: (!diagnostic.related.is_empty()).then(|| {
+                        diagnostic
+                            .related
+                            .iter()
+                            .filter_map(|related| {
+                                Some(DiagnosticRelatedInformation {
+                                    location: Location::new(
+                                        uri.clone(),
+                                        self.encoding.range(&lines, related.range)?,
+                                    ),
+                                    message: related.message.clone(),
+                                })
+                            })
+                            .collect()
+                    }),
                     ..Diagnostic::default()
                 })
             })
@@ -1309,6 +1325,14 @@ mod tests {
 
         assert_eq!(duplicate.severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(duplicate.range.start.line, 5);
+        // The first declaration, for the client to link to.
+        let related = duplicate
+            .related_information
+            .as_ref()
+            .expect("the first declaration is related");
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].location.uri, uri);
+        assert_eq!(related[0].location.range.start.line, 2);
 
         client_connection
             .sender
