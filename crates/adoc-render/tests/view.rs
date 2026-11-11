@@ -316,6 +316,51 @@ fn resolves_antora_images() {
     );
 }
 
+/// An `imagesdir` that is a URL makes the page's images remote, at that address; an absolute
+/// target, a URL or a `data:` URI, is used as it is.
+#[test]
+fn a_url_imagesdir_makes_images_remote() {
+    let view = view_of(
+        Path::new("/docs/page.adoc"),
+        ":imagesdir: https://example.com/img/\n\nimage::a.png[]\n\n\
+         An image:b.png[] image:https://x.org/c.png[] image:data:image/png;base64,AAAA[d]\n",
+        &LocalResolver,
+    );
+    let ViewKind::Image(block) = &view.blocks[0].kind else {
+        panic!("{:?}", view.blocks[0].kind);
+    };
+    let inline: Vec<_> = all_inlines(&view)
+        .into_iter()
+        .filter_map(|inline| match inline {
+            ViewInline::Image(image) => Some(image),
+            _ => None,
+        })
+        .collect();
+    let urls: Vec<Option<&str>> = std::iter::once(block)
+        .chain(&inline)
+        .map(|image| image.url.as_deref())
+        .collect();
+    assert_eq!(
+        urls,
+        [
+            Some("https://example.com/img/a.png"),
+            Some("https://example.com/img/b.png"),
+            Some("https://x.org/c.png"),
+            Some("data:image/png;base64,AAAA"),
+        ]
+    );
+    assert!(block.path.is_none() && !block.is_missing());
+    let html = to_html(&view, &HtmlOptions::default());
+    assert!(
+        html.contains("<img src=\"https://example.com/img/a.png\" alt=\"a\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<img src=\"https://example.com/img/b.png\" alt=\"b\">"),
+        "{html}"
+    );
+}
+
 #[test]
 fn html_contains_every_block_kind() {
     let (_, _, view) = corpus();

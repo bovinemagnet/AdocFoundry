@@ -945,7 +945,9 @@ impl Builder<'_> {
         self.image_in(target, alt, width, height, self.imagesdir.as_deref())
     }
 
-    /// An image found in `imagesdir`, or beside the page without one.
+    /// An image found in `imagesdir`, or beside the page without one. An absolute target (a URL
+    /// or a `data:` URI) is remote as it is; a relative one in an `imagesdir` that is a URL is
+    /// remote at that address, as Asciidoctor joins them.
     fn image_in(
         &self,
         target: &str,
@@ -954,13 +956,24 @@ impl Builder<'_> {
         height: Option<String>,
         imagesdir: Option<&str>,
     ) -> ViewImage {
-        let remote = target.contains("://") || target.starts_with("data:");
+        let url = if target.contains("://") || target.starts_with("data:") {
+            Some(target.to_owned())
+        } else {
+            imagesdir.filter(|dir| dir.contains("://")).map(|dir| {
+                format!(
+                    "{}/{}",
+                    dir.trim_end_matches('/'),
+                    target.trim_start_matches('/')
+                )
+            })
+        };
         ViewImage {
             target: target.to_owned(),
-            path: (!remote)
+            path: url
+                .is_none()
                 .then(|| self.resolver.image(&self.source, target, imagesdir))
                 .flatten(),
-            url: remote.then(|| target.to_owned()),
+            url,
             alt: if alt.is_empty() {
                 image_alt(target)
             } else {
