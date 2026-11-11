@@ -303,7 +303,10 @@ impl Context<'_> {
                         rewritten.push_str(&after[..end].replace('\\', "/"));
                         rest = &after[end..];
                     }
-                    None => rewritten.push_str(&root_name(&root)),
+                    // The root on its own, not the start of a longer name such as another
+                    // root's (`/work/docs` in `/work/docs-internal`).
+                    None if ends_a_path(rest) => rewritten.push_str(&root_name(&root)),
+                    None => rewritten.push_str(&absolute),
                 }
             }
             rewritten.push_str(rest);
@@ -318,6 +321,17 @@ impl Context<'_> {
             .antora
             .resource_for_path(path)
             .map(|resource| Coordinate::from(&resource.coordinate))
+    }
+}
+
+/// Whether a path named in a message ends where `rest` begins: at the end of the message,
+/// whitespace, a quote or punctuation, or a full stop ending a sentence.
+fn ends_a_path(rest: &str) -> bool {
+    let mut characters = rest.chars();
+    match characters.next() {
+        None => true,
+        Some('.') => characters.next().is_none_or(char::is_whitespace),
+        Some(next) => next.is_whitespace() || "`'\",;:)]".contains(next),
     }
 }
 
@@ -382,6 +396,34 @@ mod tests {
         assert_eq!(
             context.relative_paths("/elsewhere/x.adoc"),
             "/elsewhere/x.adoc"
+        );
+    }
+
+    #[test]
+    fn a_root_is_a_prefix_of_a_path_not_of_text() {
+        let workspace = WorkspaceState::new();
+        let roots = [
+            normalize_path(Path::new("/work/docs")),
+            normalize_path(Path::new("/work/docs-internal")),
+        ];
+        let read = |_: &Path| Ok(String::new());
+        let input = AuditInput {
+            workspace: &workspace,
+            roots: &roots,
+            read: &read,
+        };
+        let context = Context {
+            input: &input,
+            scope: AuditScope::Workspace,
+        };
+        let internal = roots[1].display().to_string();
+        assert_eq!(
+            context.relative_paths(&format!("see {internal}/a.adoc")),
+            "see a.adoc"
+        );
+        assert_eq!(
+            context.relative_paths(&format!("Nothing under {internal}.")),
+            "Nothing under docs-internal."
         );
     }
 }
