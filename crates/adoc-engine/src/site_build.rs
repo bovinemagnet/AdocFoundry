@@ -24,6 +24,7 @@ use std::{
 };
 
 use adoc_diagrams::find_program;
+use adoc_index::normalize_path;
 
 use crate::{
     commands::{ids, register, spec},
@@ -45,6 +46,9 @@ const POLL: Duration = Duration::from_millis(20);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SiteBuild {
     pub playbook: PathBuf,
+    /// Where Antora writes the site: the playbook's `output.dir`, else `build/site`, beside
+    /// the playbook.
+    pub output_dir: PathBuf,
     /// Each line the build wrote to either output, and before each step the command it runs
     /// (`$ npm run build`).
     pub log: Vec<String>,
@@ -54,8 +58,8 @@ pub struct SiteBuild {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SiteBuildState {
     Running,
-    /// Every step succeeded; `site` is `build/site/index.html` beside the playbook, when the
-    /// build wrote it.
+    /// Every step succeeded; `site` is `index.html` in the output folder
+    /// ([`SiteBuild::output_dir`]), when the build wrote it.
     Built {
         site: Option<PathBuf>,
     },
@@ -230,12 +234,12 @@ fn build_site(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, Eng
             EngineError::NotFound(blocker.to_string())
         });
     }
-    let (Some(playbook), Some(npm)) = (
+    let (Some((playbook, output_dir)), Some(npm)) = (
         engine
             .workspace
             .antora
             .playbook()
-            .map(|playbook| playbook.path.clone()),
+            .map(|playbook| (playbook.path.clone(), playbook.output_dir.clone())),
         engine.npm_executable(),
     ) else {
         return Err(EngineError::NotFound(
@@ -243,11 +247,14 @@ fn build_site(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, Eng
         ));
     };
     let folder = playbook.parent().map(Path::to_path_buf).unwrap_or_default();
+    // Antora reads `output.dir` from the playbook's folder.
+    let output_dir = normalize_path(&folder.join(output_dir.as_deref().unwrap_or("build/site")));
     let timeout = Duration::from_secs(engine.settings.tools.build_timeout);
     engine.site_build_generation += 1;
     let generation = engine.site_build_generation;
     engine.site_build = Some(SiteBuild {
         playbook: playbook.clone(),
+        output_dir: output_dir.clone(),
         log: Vec::new(),
         state: SiteBuildState::Running,
     });
@@ -259,18 +266,25 @@ fn build_site(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutcome, Eng
         result: Err(format!("the site build crashed: {error}")),
     };
     crate::worker::spawn(sender, crashed, move |sender| {
-        let result = run_build(&npm, &playbook, &folder, timeout, sender, generation);
+        let result = run_build(
+            &npm,
+            &playbook,
+            (&folder, &output_dir),
+            timeout,
+            sender,
+            generation,
+        );
         let _ = sender.send(WorkerMessage::SiteBuilt { generation, result });
     });
     Ok(CommandOutcome::Done)
 }
 
-/// Runs each step of the build in `folder`, all within `timeout`, the site's index page the
-/// result when the build wrote one.
+/// Runs each step of the build in `folder`, all within `timeout`, the site's index page in
+/// `output_dir` the result when the build wrote one.
 fn run_build(
     npm: &Path,
     playbook: &Path,
-    folder: &Path,
+    (folder, output_dir): (&Path, &Path),
     timeout: Duration,
     sender: &crate::worker::WorkerSender,
     generation: u64,
@@ -298,7 +312,7 @@ fn run_build(
             generation,
         )?;
     }
-    let site = folder.join("build/site/index.html");
+    let site = output_dir.join("index.html");
     Ok(site.is_file().then_some(site))
 }
 

@@ -213,3 +213,55 @@ fn a_new_project_s_playbook_is_the_site_s_until_undone() {
         Some(SiteBuildBlocker::NoPlaybook)
     );
 }
+
+/// Antora writes the site to the playbook's `output.dir`, which the build reports and looks
+/// for the site in.
+#[cfg(unix)]
+#[test]
+fn build_site_finds_the_site_in_the_playbook_s_output_dir() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tools = tempfile::tempdir().unwrap();
+    let node = tools.path().join("node");
+    let npm = tools.path().join("npm");
+    let guard = SPAWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    fs::write(&node, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(
+        &npm,
+        "#!/bin/sh\nmkdir -p node_modules public && echo '<html></html>' > public/index.html\n",
+    )
+    .unwrap();
+    for tool in [&node, &npm] {
+        fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let (_project, root, mut engine) = project(&node, 20);
+    let playbook = root.join("antora-playbook.yml");
+    let text = fs::read_to_string(&playbook).unwrap();
+    assert!(text.contains("  dir: build/site\n"), "{text}");
+    fs::write(
+        &playbook,
+        text.replace("  dir: build/site\n", "  dir: ./public\n"),
+    )
+    .unwrap();
+    // Opened again, so the catalog reads the playbook as it is now.
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+
+    engine
+        .invoke(ids::PROJECT_BUILD_SITE, CommandArgs::None)
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(20)));
+    drop(guard);
+    let build = engine.site_build().unwrap();
+    assert_eq!(build.output_dir, root.join("public"));
+    assert_eq!(
+        build.state,
+        SiteBuildState::Built {
+            site: Some(root.join("public/index.html"))
+        },
+        "{:?}",
+        build.log
+    );
+}

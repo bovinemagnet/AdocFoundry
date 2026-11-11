@@ -36,6 +36,9 @@ pub struct Playbook {
     /// `site.start_page`, a page's resource id naming its component, and where its value is
     /// written in the playbook.
     pub start_page: Option<(String, adoc_core::SourceRange)>,
+    /// `output.dir` as written: where Antora writes the site, relative to the playbook's
+    /// folder; `./build/site` when absent.
+    pub output_dir: Option<String>,
 }
 
 /// One of the playbook's content sources: a repository and the branches Antora takes from it.
@@ -179,6 +182,12 @@ struct RawPlaybook {
     site: Option<RawSite>,
     asciidoc: Option<RawAsciidoc>,
     content: Option<RawContent>,
+    output: Option<RawOutput>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawOutput {
+    dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -318,6 +327,10 @@ pub fn parse_playbook(path: &Path, source: &str) -> Result<Playbook, DescriptorE
         site_url: site_url.filter(|url| !url.trim().is_empty()),
         site_title,
         start_page,
+        output_dir: raw
+            .output
+            .and_then(|output| output.dir)
+            .filter(|dir| !dir.trim().is_empty()),
     })
 }
 
@@ -401,6 +414,15 @@ mod tests {
         assert_eq!(&source[range.start..range.end], "'demo::index.adoc'");
         let none = parse_playbook(Path::new("p.yml"), "site:\n  title: x\n").unwrap();
         assert_eq!(none.start_page, None);
+    }
+
+    #[test]
+    fn playbook_reads_its_output_dir() {
+        let source = "site:\n  title: Docs\noutput:\n  dir: ./public\n";
+        let playbook = parse_playbook(Path::new("p.yml"), source).unwrap();
+        assert_eq!(playbook.output_dir.as_deref(), Some("./public"));
+        let none = parse_playbook(Path::new("p.yml"), "site:\n  title: x\n").unwrap();
+        assert_eq!(none.output_dir, None);
     }
 
     fn versions_fixture() -> Playbook {
