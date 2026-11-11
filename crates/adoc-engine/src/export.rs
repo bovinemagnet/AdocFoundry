@@ -949,15 +949,13 @@ impl Engine {
                 standards.push(*standard);
             }
         }
-        let site_url = self.site_url();
-        let page_urls = site_url
-            .as_deref()
-            .map(|site| self.page_urls(site))
+        let page_urls = self
+            .site_url()
+            .map(|site| self.page_urls(&site))
             .unwrap_or_default();
         PdfOptions {
             standards,
             fonts_dirs,
-            site_url,
             page_urls,
             date: None,
             access: self.file_access.clone(),

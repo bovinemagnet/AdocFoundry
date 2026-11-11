@@ -5,7 +5,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
 };
 
 use adoc_core::FileAccess;
@@ -46,6 +46,9 @@ pub(crate) struct PdfWorld {
     book: LazyHash<FontBook>,
     /// Virtual path to the file it stands for.
     files: HashMap<FileId, PathBuf>,
+    /// Each file as first read: Typst asks for a file each time it uses it (a logo in running
+    /// content on every page), and one compile must not see two versions of a file.
+    read: Mutex<HashMap<FileId, FileResult<Bytes>>>,
     today: Option<Datetime>,
     access: FileAccess,
 }
@@ -69,6 +72,7 @@ impl PdfWorld {
                 .iter()
                 .map(|(virtual_path, path)| (file_id(virtual_path), path.clone()))
                 .collect(),
+            read: Mutex::default(),
             today,
             access,
         }
@@ -107,7 +111,12 @@ impl World for PdfWorld {
         if !self.access.permits(path) {
             return Err(FileError::AccessDenied);
         }
-        read(path)
+        self.read
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(id)
+            .or_insert_with(|| read(path))
+            .clone()
     }
 
     fn font(&self, index: usize) -> Option<Font> {
@@ -123,4 +132,31 @@ fn read(path: &Path) -> FileResult<Bytes> {
     std::fs::read(path)
         .map(Bytes::new)
         .map_err(|error| FileError::from_io(error, path))
+}
+
+#[cfg(test)]
+mod tests {
+    use adoc_core::FileAccess;
+    use typst::World as _;
+
+    use super::{file_id, PdfWorld};
+
+    #[test]
+    fn a_compile_reads_each_file_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("logo.svg");
+        std::fs::write(&path, "first").unwrap();
+        let world = PdfWorld::new(
+            String::new(),
+            crate::fonts::bundled_set(),
+            &[("/files/logo.svg".to_owned(), path.clone())],
+            None,
+            FileAccess::Any,
+        );
+        let id = file_id("/files/logo.svg");
+        assert_eq!(world.file(id).unwrap().as_slice(), b"first");
+        // Changed on disk while the compile runs, it is still the version first read.
+        std::fs::write(&path, "second").unwrap();
+        assert_eq!(world.file(id).unwrap().as_slice(), b"first");
+    }
 }

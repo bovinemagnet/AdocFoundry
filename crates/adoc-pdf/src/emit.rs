@@ -114,8 +114,6 @@ impl SourceMap {
 pub struct EmitOptions<'a> {
     /// Highlight source blocks by language.
     pub highlight: bool,
-    /// The site cross references out of the document link to, for a book.
-    pub site_url: Option<String>,
     /// `toclevels`: sections deeper than this are left out of the outline.
     pub toc_levels: u8,
     /// Addresses of pages outside the document, for references to them.
@@ -571,35 +569,32 @@ impl<'a> Emitter<'a> {
                 if block.roles.is_empty() && lead.is_none() {
                     let _ = writeln!(self.out, "{body}\n");
                 } else {
-                    let roles: Vec<String> = block
+                    let roles = block
                         .roles
                         .iter()
                         .chain(lead.as_ref())
-                        .map(|role| string(role))
-                        .collect();
+                        .map(|role| string(role));
                     let _ = writeln!(
                         self.out,
-                        "#adoc-paragraph(({},), [{body}])\n",
-                        roles.join(", ")
+                        "#adoc-paragraph({}, [{body}])\n",
+                        typst::array(roles)
                     );
                 }
             }
             ViewKind::List { kind, items } => {
-                let (markers, depth): (Vec<String>, _) = match kind {
+                let markers: Vec<String> = match kind {
                     ListKind::Ordered => {
                         self.olist_depth += 1;
-                        let depth = self.olist_depth;
                         let style = block.style.as_deref().unwrap_or("arabic");
-                        let markers = ordered_numbers(block, items.len())
+                        ordered_numbers(block, items.len())
                             .into_iter()
                             .map(|number| typst::text(&ordered_marker(style, number)))
-                            .collect();
-                        (markers, depth)
+                            .collect()
                     }
                     ListKind::Unordered | ListKind::Checklist => {
                         self.ulist_depth += 1;
                         let depth = self.ulist_depth;
-                        let markers = items
+                        items
                             .iter()
                             .map(|item| {
                                 let marker = match item.checked {
@@ -609,14 +604,11 @@ impl<'a> Emitter<'a> {
                                 };
                                 typst::text(marker)
                             })
-                            .collect();
-                        (markers, depth)
+                            .collect()
                     }
                 };
-                let _ = depth;
-                let markers: Vec<String> =
-                    markers.iter().map(|marker| format!("[{marker}]")).collect();
-                let _ = write!(self.out, "#adoc-list(({},), (", markers.join(", "));
+                let markers = markers.iter().map(|marker| format!("[{marker}]"));
+                let _ = write!(self.out, "#adoc-list({}, (", typst::array(markers));
                 for (index, item) in items.iter().enumerate() {
                     if index > 0 {
                         self.push(", ");
@@ -635,10 +627,9 @@ impl<'a> Emitter<'a> {
                 let qanda = block.style.as_deref() == Some("qanda");
                 match block.style.as_deref() {
                     Some("qanda") => {
-                        let markers: Vec<String> = (1..=items.len())
-                            .map(|number| format!("[{}]", text(&format!("{number}."))))
-                            .collect();
-                        let _ = write!(self.out, "#adoc-list(({},), (", markers.join(", "));
+                        let markers = (1..=items.len())
+                            .map(|number| format!("[{}]", text(&format!("{number}."))));
+                        let _ = write!(self.out, "#adoc-list({}, (", typst::array(markers));
                     }
                     Some("horizontal") => self.push("#adoc-hlist(("),
                     _ => self.push("#adoc-dlist(("),
@@ -670,7 +661,7 @@ impl<'a> Emitter<'a> {
                     if index > 0 {
                         self.push(", ");
                     }
-                    let _ = write!(self.out, "({}, [", item.number);
+                    let _ = write!(self.out, "({}, [", string(&circled(item.number)));
                     self.item_body(&item.content, &item.blocks, Gaps::Items);
                     self.push("])");
                 }
@@ -810,12 +801,27 @@ impl<'a> Emitter<'a> {
             }
             ViewKind::Diagram(diagram) => match diagram {
                 DiagramView::Svg(path) => {
-                    let path = self.file(path);
-                    let _ = writeln!(
-                        self.out,
-                        "#adoc-image(image({}, alt: \"Diagram\"))\n",
-                        string(&path)
-                    );
+                    // Checked as an image is: one Typst cannot read is a warning, not a failed
+                    // document.
+                    let image = ViewImage {
+                        target: path.display().to_string(),
+                        path: Some(path.clone()),
+                        url: None,
+                        alt: "Diagram".to_owned(),
+                        width: None,
+                        height: None,
+                    };
+                    match self.usable_image(&image, &block.span) {
+                        Some((path, _)) => {
+                            let path = self.file(path);
+                            let _ = writeln!(
+                                self.out,
+                                "#adoc-image(image({}, alt: \"Diagram\"))\n",
+                                string(&path)
+                            );
+                        }
+                        None => self.push("#adoc-missing-image(\"Diagram\")\n\n"),
+                    }
                 }
                 DiagramView::Pending { source, .. } | DiagramView::Failed { source, .. } => {
                     let _ = writeln!(
@@ -933,10 +939,10 @@ impl<'a> Emitter<'a> {
             string(&path),
             string(&alt_text(image))
         );
-        // `link=` makes the image a link, as asciidoctor-pdf does.
+        // `link=` makes the image a link, as asciidoctor-pdf does; one Typst refuses, none.
         let shown = match block.attributes.get("link") {
-            Some(link) => format!("link({}, {shown})", string(link)),
-            None => shown,
+            Some(link) if typst::linkable(link) => format!("link({}, {shown})", string(link)),
+            _ => shown,
         };
         let _ = writeln!(self.out, "#adoc-image({shown}{align}{natural})\n");
     }
@@ -1055,7 +1061,7 @@ impl<'a> Emitter<'a> {
             shares(&table.rows),
             one_row(table.footer.as_ref()),
         );
-        let _ = write!(self.out, "#adoc-table(({},), ", columns.join(", "));
+        let _ = write!(self.out, "#adoc-table({}, ", typst::array(&columns));
         self.header_or_footer(table.header.as_deref(), true, &head);
         self.push(", (");
         for (row, shares) in table.rows.iter().zip(&body) {
@@ -1082,12 +1088,10 @@ impl<'a> Emitter<'a> {
         };
         self.push("(");
         for (index, cell) in cells.iter().enumerate() {
-            if index > 0 {
-                self.push(", ");
-            }
             self.cell(cell, header, shares.get(index).copied().flatten());
+            self.push(if index == 0 { "," } else { ", " });
         }
-        self.push(",)");
+        self.push(")");
     }
 
     /// A cell, its blocks written at `share` of the table's width, when known.
@@ -1220,7 +1224,12 @@ impl<'a> Emitter<'a> {
                 } else {
                     self.inlines(content)
                 };
-                let _ = write!(out, "#adoc-link({}, [{inner}])", string(url));
+                // A link Typst refuses is its text alone.
+                if typst::linkable(url) {
+                    let _ = write!(out, "#adoc-link({}, [{inner}])", string(url));
+                } else {
+                    out.push_str(&inner);
+                }
             }
             ViewInline::Xref {
                 target,
@@ -1278,10 +1287,11 @@ impl<'a> Emitter<'a> {
                 let _ = write!(out, "#adoc-footnote-ref({number}, {label})");
             }
             ViewInline::LineBreak => out.push_str("#linebreak()"),
-            ViewInline::Keyboard(keys) => {
-                let keys: Vec<String> = keys.iter().map(|key| string(key)).collect();
-                let _ = write!(out, "#adoc-kbd(({},))", keys.join(", "));
+            ViewInline::Keyboard(keys) if !keys.is_empty() => {
+                let keys = keys.iter().map(|key| string(key));
+                let _ = write!(out, "#adoc-kbd({})", typst::array(keys));
             }
+            ViewInline::Keyboard(_) => {}
             ViewInline::Button(label) => {
                 let _ = write!(out, "#adoc-button({})", string(label));
             }
@@ -1296,7 +1306,9 @@ impl<'a> Emitter<'a> {
                     .filter(|item| !item.is_empty())
                     .map(string)
                     .collect();
-                let _ = write!(out, "#adoc-menu(({},))", items.join(", "));
+                if !items.is_empty() {
+                    let _ = write!(out, "#adoc-menu({})", typst::array(items));
+                }
             }
             ViewInline::Stem { latex, source, .. } => match self.stem(*latex, source, false) {
                 Some(call) => out.push_str(&call),
@@ -1306,11 +1318,19 @@ impl<'a> Emitter<'a> {
             },
             ViewInline::IndexTerm { terms, content } => {
                 let inner = self.inlines(content);
-                let terms: Vec<String> = terms.iter().map(|term| string(term)).collect();
-                // The marker the index finds the term and its page by.
                 out.push_str(&inner);
-                let marker = format!("#metadata(({},))<adoc-index-term>", terms.join(", "));
-                self.marker(out, &marker);
+                // The marker the index finds the term and its page by: its terms down to the
+                // first with no text, which the index could not file; none without a term.
+                let terms: Vec<String> = terms
+                    .iter()
+                    .map(|term| term.trim())
+                    .take_while(|term| !term.is_empty())
+                    .map(string)
+                    .collect();
+                if !terms.is_empty() {
+                    let marker = format!("#metadata({})<adoc-index-term>", typst::array(terms));
+                    self.marker(out, &marker);
+                }
             }
         }
     }
@@ -1345,31 +1365,18 @@ impl<'a> Emitter<'a> {
             }
             return None;
         }
-        if let Some(url) = link
+        // A page of the site, at the address the site gives it; any other reference stays
+        // text rather than lead to an address worked out from its name.
+        let mut url = link
             .target
             .as_ref()
-            .and_then(|location| self.options.page_urls.get(&location.path))
-        {
-            let mut url = url.clone();
-            if let Some(fragment) = &fragment {
-                url.push('#');
-                url.push_str(fragment);
-            }
-            return Some(string(&url));
-        }
-        let site = self.options.site_url.as_deref()?;
-        let file = target.split('#').next().unwrap_or(target);
-        let file = file
-            .rsplit(['$', ':'])
-            .next()
-            .unwrap_or(file)
-            .replace(".adoc", ".html");
-        let mut url = format!("{}/{file}", site.trim_end_matches('/'));
-        if let Some(fragment) = fragment {
+            .and_then(|location| self.options.page_urls.get(&location.path))?
+            .clone();
+        if let Some(fragment) = &fragment {
             url.push('#');
-            url.push_str(&fragment);
+            url.push_str(fragment);
         }
-        Some(string(&url))
+        typst::linkable(&url).then(|| string(&url))
     }
 }
 
@@ -1876,7 +1883,7 @@ fn with_callouts(text: &str, callouts: &[adoc_render::Callout]) -> String {
         out.push_str(line.trim_end());
         for callout in callouts.iter().filter(|callout| callout.line == index) {
             out.push(' ');
-            out.push(circled(callout.number));
+            out.push_str(&circled(callout.number));
         }
     }
     out
@@ -1952,12 +1959,16 @@ fn run(text: &str, style: &Style) -> String {
     )
 }
 
-/// The circled digit for a callout number, as asciidoctor-pdf's `circled` glyphs.
-fn circled(number: usize) -> char {
-    match number {
-        1..=20 => char::from_u32(0x2460 + number as u32 - 1).unwrap_or('?'),
-        _ => '?',
-    }
+/// The circled number for a callout, as asciidoctor-pdf's `circled` glyphs give it: ① to ⑳,
+/// ㉑ to ㉟ and ㊱ to ㊿; the number itself past 50, where they end.
+fn circled(number: usize) -> String {
+    let glyph = match number {
+        1..=20 => char::from_u32(0x2460 + number as u32 - 1),
+        21..=35 => char::from_u32(0x3251 + number as u32 - 21),
+        36..=50 => char::from_u32(0x32B1 + number as u32 - 36),
+        _ => None,
+    };
+    glyph.map_or_else(|| number.to_string(), String::from)
 }
 
 /// An image size attribute as a Typst length: a percentage, or pixels at 96 dpi. Only a number

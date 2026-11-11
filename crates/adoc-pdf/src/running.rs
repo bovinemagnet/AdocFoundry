@@ -252,7 +252,6 @@ fn static_attribute(name: &str, attributes: &BTreeMap<String, String>) -> Option
                 .unwrap_or_default(),
         ),
         "doctitle" => title(),
-        "page-layout" => Some("portrait".to_owned()),
         _ => None,
     }
 }
@@ -329,12 +328,17 @@ fn plain(text: &str) -> String {
         let _ = write!(out, "#ctx.at({})", string(&after[..close]));
         rest = after.get(close + CLOSE.len_utf8()..).unwrap_or("");
     }
-    out.push_str(&text_or_empty(rest));
+    out.push_str(&typst::text(rest));
     out
 }
 
-fn text_or_empty(value: &str) -> String {
-    text(value)
+/// A version number without the `v` before its first digit, as asciidoctor-pdf drops it:
+/// `v2.0` is `2.0`, but `vNext` keeps its `v`.
+fn without_v(number: &str) -> &str {
+    number
+        .strip_prefix(['v', 'V'])
+        .filter(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+        .unwrap_or(number)
 }
 
 /// The title page's parts, as a call to the template's `adoc-title-page`.
@@ -375,7 +379,7 @@ impl TitlePage<'_> {
             let parts: Vec<String> = [
                 attributes
                     .get("revnumber")
-                    .map(|number| format!("{label} {}", number.trim_start_matches(['v', 'V']))),
+                    .map(|number| format!("{label} {}", without_v(number))),
                 attributes.get("revdate").cloned(),
             ]
             .into_iter()

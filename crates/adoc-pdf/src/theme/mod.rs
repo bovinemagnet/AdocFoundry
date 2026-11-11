@@ -626,7 +626,7 @@ impl Loader {
                         base.join(format!("{extend}-theme.yml"))
                     };
                     let dir = file.parent().map(Path::to_path_buf);
-                    (ThemeFile::Path(lexical(&file)), dir)
+                    (ThemeFile::Path(adoc_core::lexical(&file)), dir)
                 };
                 if let ThemeFile::Path(file) = &target {
                     if !file.is_file() {
@@ -919,23 +919,6 @@ fn font_file(path: &str) -> FontFile {
         Some(name) => FontFile::Bundled(name.to_owned()),
         None => FontFile::Path(PathBuf::from(path)),
     }
-}
-
-/// Removes `.` and `..` components without touching the file system.
-fn lexical(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !out.pop() {
-                    out.push("..");
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// Quotes hex colour values so YAML reads them as text, as asciidoctor-pdf does line by line:

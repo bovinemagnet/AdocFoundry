@@ -411,7 +411,7 @@
       set text(size: size)
       show raw: set text(font: families(pick("code_font_family", "codespan_font_family")), size: size)
       show raw: it => {
-        show regex("[\u{2460}-\u{2473}]"): set text(fill: conum-color, font: families(pick("conum_font_family", "codespan_font_family")))
+        show regex("[\u{2460}-\u{2473}\u{3251}-\u{325F}\u{32B1}-\u{32BF}]"): set text(fill: conum-color, font: families(pick("conum_font_family", "codespan_font_family")))
         it
       }
       if pick("code_font_color") != none { text(fill: pick("code_font_color"), body) } else { body }
@@ -437,9 +437,10 @@
   body
 }
 
+// Each item is its circled number, as the listing shows it, and its body.
 #let adoc-callouts(items) = context {
   let color = pick("conum_font_color", "codespan_font_color", default: base-color)
-  let markers = items.map(((number, _)) => text(fill: color, font: families(pick("conum_font_family", "codespan_font_family")), str.from-unicode(0x245F + number)))
+  let markers = items.map(((glyph, _)) => text(fill: color, font: families(pick("conum_font_family", "codespan_font_family")), glyph))
   // Closer to the listing above than a block margin, as the theme asks.
   v(pick("callout_list_margin_top_after_code", default: 0pt))
   grid(
@@ -507,8 +508,7 @@
 }
 
 // A block image; the body passes the `image` itself, so an error loading it points at the
-// AsciiDoc that named it.
-// A block image. `natural` is its width when the document gives it none (`pdfwidth` or
+// AsciiDoc that named it. `natural` is its width when the document gives it none (`pdfwidth` or
 // `scaledwidth` set the image's own width, and `natural` is `none`): the theme's `image_width`
 // when it sets one, else this length held to the column, or this share of it; `auto` leaves the
 // size to Typst.

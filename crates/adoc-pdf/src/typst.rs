@@ -35,6 +35,32 @@ pub(crate) fn text(text: &str) -> String {
     }
 }
 
+/// `items`, already Typst values, as an array: `()` when there are none, and a trailing comma,
+/// so that one item is an array too.
+pub(crate) fn array<I, S>(items: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut out = String::from("(");
+    for item in items {
+        out.push_str(item.as_ref());
+        out.push_str(", ");
+    }
+    if out.len() > 1 {
+        out.truncate(out.len() - 2);
+        out.push(',');
+    }
+    out.push(')');
+    out
+}
+
+/// Whether Typst takes `url` as a link's destination: it refuses an empty one and one longer
+/// than 8,000 bytes.
+pub(crate) fn linkable(url: &str) -> bool {
+    !url.trim().is_empty() && url.len() <= 8000
+}
+
 /// A number as Typst reads it.
 pub(crate) fn number(value: f64) -> String {
     if value.is_finite() {

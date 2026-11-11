@@ -70,8 +70,10 @@ impl FileAccess {
     }
 }
 
-/// `path` with `.` and `..` resolved lexically, as `adoc_index::normalize_path` does.
-fn lexical(path: &Path) -> PathBuf {
+/// `path` with `.` and `..` resolved lexically, without touching the file system, as
+/// `adoc_index::normalize_path` does.
+#[must_use]
+pub fn lexical(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {

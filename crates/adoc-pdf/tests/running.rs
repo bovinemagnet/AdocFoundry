@@ -741,3 +741,93 @@ fn running_content_starts_at_the_title_or_the_contents() {
     let pages = pages_of(&article(":toc:"), &theme);
     assert_eq!(printed(footer(&pages[0])), "1");
 }
+
+#[test]
+fn page_sizes_prawn_names_are_known_and_others_are_reported() {
+    let export = |size: &str| {
+        let view = common::view_of_text(
+            Path::new("/doc/page.adoc"),
+            &format!("= Page\n:pdf-page-size: {size}\n\nText.\n"),
+        );
+        adoc_pdf::export(
+            &common::article(view),
+            &common::default_theme(),
+            &PdfOptions::default(),
+        )
+        .unwrap()
+    };
+    let pages = |size: &str| {
+        let view = common::view_of_text(
+            Path::new("/doc/page.adoc"),
+            &format!("= Page\n:pdf-page-size: {size}\n\nText.\n"),
+        );
+        pages_of_view(view)
+    };
+    for (size, width) in [
+        ("C5", 459.21),
+        ("B6", 354.33),
+        ("SRA4", 637.80),
+        ("4A0", 4767.87),
+    ] {
+        assert!((pages(size)[0].width - width).abs() < 0.01, "{size}");
+        assert!(export(size).diagnostics.is_empty(), "{size}");
+    }
+    let unknown = export("Postcard");
+    assert!(
+        unknown
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Postcard")),
+        "{:?}",
+        unknown.diagnostics
+    );
+}
+
+fn pages_of_view(view: adoc_render::ViewTree) -> Vec<TypesetPage> {
+    let typst = to_typst(
+        &common::article(view),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    typeset_pages(&typst, &common::default_theme(), &PdfOptions::default()).unwrap()
+}
+
+#[test]
+fn page_layout_in_running_content_follows_the_page() {
+    let (_dir, theme) = theme_with(
+        "footer:\n  recto:\n    center:\n      content: 'layout {page-layout}'\n  verso:\n    center:\n      content: 'layout {page-layout}'\n",
+    );
+    for (layout, expected) in [
+        ("landscape", "layout landscape"),
+        ("portrait", "layout portrait"),
+    ] {
+        let pages = pages_of(
+            &format!("= Page\n:pdf-page-layout: {layout}\n\nText.\n"),
+            &theme,
+        );
+        let text: String = footer(&pages[0])
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect();
+        assert!(text.contains(expected), "{layout}: {text:?}");
+    }
+}
+
+#[test]
+fn only_a_v_before_a_digit_is_taken_from_the_version() {
+    for (number, expected) in [
+        ("v2.0", "Version 2.0"),
+        ("vNext", "Version vNext"),
+        ("V3", "Version 3"),
+    ] {
+        let pages = pages_of(
+            &format!("= Handbook\n:title-page:\n:revnumber: {number}\n\nText.\n"),
+            &common::default_theme(),
+        );
+        assert!(
+            pages[0].text().contains(expected),
+            "{number}: {}",
+            pages[0].text()
+        );
+    }
+}

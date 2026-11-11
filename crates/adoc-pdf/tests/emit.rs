@@ -955,3 +955,85 @@ fn an_article_s_first_paragraph_is_its_lead() {
         .source
         .contains("#adoc-paragraph((\"lead\",), [#\"Intro.\"])"));
 }
+
+#[test]
+fn odd_input_still_exports() {
+    // Each failed the whole export: an empty menu or key list, an index term with no text, an
+    // empty link and one longer than Typst takes.
+    let long = format!("https://example.com/{}", "a".repeat(8001));
+    for page in [
+        "= Page\n:experimental:\n\nChoose menu:,[] now and kbd:[] too.\n".to_owned(),
+        "= Page\n\nA ((())) term and indexterm:[ ] another.\n\n[index]\n== Index\n".to_owned(),
+        format!("= Page\n\nSee {long}[the long one].\n"),
+    ] {
+        let typst = typst_of(&page);
+        adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+            .unwrap_or_else(|error| panic!("{page}: {error}"));
+    }
+    let (_, placed) = images_of(
+        "= Page\n\nimage::wide.png[Linked,link=\"\"]\n",
+        &[],
+        &common::default_theme(),
+    );
+    assert_eq!(placed.len(), 1);
+}
+
+#[test]
+fn callouts_above_twenty_are_circled_as_asciidoctor_pdf_circles_them() {
+    let lines: String = (1..=21).map(|n| format!("line <{n}>\n")).collect();
+    let items: String = (1..=21).map(|n| format!("<{n}> Item {n}.\n")).collect();
+    let typst = typst_of(&format!("= Page\n\n----\n{lines}----\n{items}"));
+    let text: String = typeset_text(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"))
+        .concat();
+    // 21 is U+3251 in the listing and in the list below it, never `?` or `⑴`.
+    assert_eq!(text.matches('\u{3251}').count(), 2, "{text}");
+    assert!(!text.contains('\u{2474}'), "{text}");
+    assert!(!text.contains("line ?"), "{text}");
+}
+
+#[test]
+fn a_diagram_typst_cannot_read_is_a_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    let svg = directory.path().join("diagram.svg");
+    std::fs::write(&svg, "<svg this is not").unwrap();
+    let mut view = common::view_of_text(Path::new("/doc/page.adoc"), "= Page\n\nBefore.\n");
+    view.blocks[0].kind = ViewKind::Diagram(adoc_render::DiagramView::Svg(svg));
+    let typst = to_typst(
+        &common::article(view),
+        &common::default_theme(),
+        &PdfOptions::default(),
+    );
+    assert_eq!(typst.missing.len(), 1, "{:?}", typst.missing);
+    adoc_pdf::typeset_pages(&typst, &common::default_theme(), &PdfOptions::default())
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn a_book_page_is_in_the_contents_as_a_section_at_its_level_would_be() {
+    let page = |key: &str, depth: u8| {
+        adoc_pdf::BookItem::Page(PageView {
+            key: key.to_owned(),
+            view: common::view_of_text(
+                Path::new(&format!("/doc/{key}.adoc")),
+                &format!("= Page {key}\n\nText.\n"),
+            ),
+            depth,
+        })
+    };
+    let book = adoc_pdf::Document::Book(adoc_pdf::Book {
+        title: "Book".to_owned(),
+        items: vec![page("p0", 1), page("p1", 2), page("p2", 3)],
+        ..adoc_pdf::Book::default()
+    });
+    let typst = to_typst(&book, &common::default_theme(), &PdfOptions::default());
+    // `toclevels` is 2: a page three levels down is left out, as a section there would be.
+    for (level, outlined) in [(2, true), (3, true), (4, false)] {
+        let heading = format!("#heading(level: {level}, outlined: {outlined}, bookmarked: true)");
+        assert!(
+            typst.source.contains(&heading),
+            "{heading} in {}",
+            typst.source
+        );
+    }
+}

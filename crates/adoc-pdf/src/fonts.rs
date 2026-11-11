@@ -315,7 +315,7 @@ pub(crate) fn line_gaps(
     gaps
 }
 
-/// `hhea.lineGap / head.unitsPerEm` of the first font in `data`.
+/// `hhea.lineGap / head.unitsPerEm` of the first font in `data`, a font file or a collection.
 fn line_gap(data: &[u8]) -> Option<f64> {
     let u16_at = |offset: usize| -> Option<u16> {
         Some(u16::from_be_bytes([
@@ -328,10 +328,17 @@ fn line_gap(data: &[u8]) -> Option<f64> {
             data.get(offset..offset + 4)?.try_into().ok()?,
         ))
     };
+    // A collection (`ttcf`) gives where its first font's table directory is; its tables'
+    // offsets, as a single font's, are from the start of the file.
+    let directory = if data.starts_with(b"ttcf") {
+        usize::try_from(u32_at(12)?).ok()?
+    } else {
+        0
+    };
     let table = |tag: &[u8; 4]| -> Option<usize> {
-        let count = usize::from(u16_at(4)?);
+        let count = usize::from(u16_at(directory + 4)?);
         (0..count).find_map(|index| {
-            let record = 12 + 16 * index;
+            let record = directory + 12 + 16 * index;
             (data.get(record..record + 4)? == tag)
                 .then(|| u32_at(record + 8).map(|offset| offset as usize))?
         })
@@ -399,4 +406,37 @@ fn read(path: &Path, access: &FileAccess) -> Option<Font> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(path.to_owned(), (modified, len, font.clone()));
     font
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{line_gap, BUNDLED};
+
+    /// `font` as the one font of a collection: a `ttcf` header before it, and its tables'
+    /// offsets moved by the header's length, as they are from the start of the file.
+    fn collection(font: &[u8]) -> Vec<u8> {
+        const HEADER: u32 = 16;
+        let mut out = b"ttcf".to_vec();
+        out.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+        out.extend_from_slice(&1u32.to_be_bytes());
+        out.extend_from_slice(&HEADER.to_be_bytes());
+        let mut font = font.to_vec();
+        let count = usize::from(u16::from_be_bytes([font[4], font[5]]));
+        for index in 0..count {
+            let at = 12 + 16 * index + 8;
+            let offset = u32::from_be_bytes(font[at..at + 4].try_into().unwrap());
+            font[at..at + 4].copy_from_slice(&(offset + HEADER).to_be_bytes());
+        }
+        out.extend_from_slice(&font);
+        out
+    }
+
+    #[test]
+    fn a_collection_s_line_gap_is_its_first_font_s() {
+        let (name, font) = BUNDLED
+            .iter()
+            .find(|(_, data)| line_gap(data).is_some_and(|gap| gap > 0.0))
+            .expect("a bundled font with a line gap");
+        assert_eq!(line_gap(&collection(font)), line_gap(font), "{name}");
+    }
 }

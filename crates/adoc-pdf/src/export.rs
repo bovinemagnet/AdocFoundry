@@ -580,6 +580,12 @@ fn typeset(
         hints: Vec::new(),
         source: None,
     }));
+    diagnostics.extend(typst.warnings.iter().map(|message| PdfDiagnostic {
+        severity: PdfSeverity::Warning,
+        message: message.clone(),
+        hints: Vec::new(),
+        source: None,
+    }));
     diagnostics.extend(typst.missing.iter().map(|(message, span)| PdfDiagnostic {
         severity: PdfSeverity::Warning,
         message: message.clone(),
