@@ -193,6 +193,9 @@ pub fn analyse(
                     render(&mut gathered, base, path, path, Side::Base, limits);
                 }
                 render(&mut gathered, head, path, path, Side::Head, limits);
+                if let Some(base) = base {
+                    lost_referrers(&mut gathered, base, head, path, path);
+                }
                 removed_anchors(&mut gathered, base, head, path);
                 navigation(&mut gathered, base, head, path);
             }
@@ -390,6 +393,42 @@ fn moved_or_removed(
             },
         };
         let mut impact = referrer_impact(base, &referrer, old, old, Side::Base, status);
+        impact.sides.insert(side);
+        impact.source = Some(Source {
+            range,
+            side,
+            ..Source::of(&referrer, side)
+        });
+        gathered.add(impact);
+    }
+}
+
+/// The references that led to the file at `path` in base and no longer do in head, though the
+/// file is still there (a dropped `page-aliases` entry, say): broken when head still writes
+/// them, resolved by the change when it does not. A reference that would still lead there is
+/// not one to review, whether or not head still writes it.
+fn lost_referrers(
+    gathered: &mut Gathered,
+    base: &DependencySnapshot<'_>,
+    head: &DependencySnapshot<'_>,
+    path: &Path,
+    origin: &Path,
+) {
+    for referrer in base.referrers(path) {
+        if referrer.path == path
+            || head.resolves(&referrer.path, &referrer.written).as_deref() == Some(path)
+        {
+            continue;
+        }
+        let still = head
+            .has(&referrer.path)
+            .then(|| head.still_writes(&referrer.path, &referrer.written, referrer.ordinal))
+            .flatten();
+        let (status, side, range) = match still {
+            Some(range) => (ImpactStatus::Broken, Side::Head, range),
+            None => (ImpactStatus::ResolvedByChange, Side::Base, referrer.range),
+        };
+        let mut impact = referrer_impact(base, &referrer, path, origin, Side::Base, status);
         impact.sides.insert(side);
         impact.source = Some(Source {
             range,

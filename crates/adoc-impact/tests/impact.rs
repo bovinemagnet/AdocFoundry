@@ -574,6 +574,33 @@ fn impact_renamed_page_is_selected_on_both_sides() {
     assert!(book.contains(&moved.to_owned()), "{book:?}");
 }
 
+#[test]
+fn impact_dropped_page_alias_breaks_its_references() {
+    // #540: the page stays where it is, and the name a reference used is gone.
+    let mut revisions = Revisions::new();
+    let text = revisions.read(INSTALL);
+    revisions.write(
+        INSTALL,
+        &text.replacen(
+            "= Installing\n",
+            "= Installing\n:page-aliases: old-install.adoc\n",
+            1,
+        ),
+    );
+    revisions.write(GUIDE, "= Guide\n\nRead xref:old-install.adoc[] first.\n");
+    revisions.rebase();
+    revisions.write(INSTALL, &text);
+    let report = revisions.report(&[revisions.change(INSTALL, ChangeKind::Modified)], &[]);
+    let references = of_kind(&report, ImpactKind::ReferenceIntegrity);
+    assert_eq!(paths(&references), [GUIDE], "{references:#?}");
+    assert_eq!(references[0].status, Some(ImpactStatus::Broken));
+    assert_eq!(references[0].evidence, EvidenceSide::Both);
+    assert_eq!(
+        spanned(&revisions, references[0]),
+        "xref:old-install.adoc[]"
+    );
+}
+
 /// The text `source` spans in the file as it is now.
 fn spanned(revisions: &Revisions, impact: &Impact) -> String {
     let source = impact.source.as_ref().expect("a source span");
