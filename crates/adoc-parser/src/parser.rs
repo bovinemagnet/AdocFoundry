@@ -8,7 +8,7 @@ use adoc_core::{
 use crate::line_parser::{
     conditional_directive, content, find_anchors, find_images, find_includes, find_references,
     is_block_metadata, is_dynamic_id, mask_passthroughs, parse_attribute, parse_heading,
-    trailing_anchor, Conditional, Verbatim, VerbatimBlocks,
+    trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +47,9 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut document = Document::new(uri, text);
     let mut verbatim = VerbatimBlocks::default();
     let mut pending_anchor: Option<String> = None;
+    // The last line read as text: where it starts, its content and the anchor before it, for
+    // a two-line title whose underline follows.
+    let mut previous: Option<(usize, &str, Option<String>)> = None;
     // How many `ifdef`, `ifndef` and `ifeval` blocks are open.
     let mut conditionals = 0_usize;
     // Asciidoctor drops a leading byte order mark; ranges still count it.
@@ -83,6 +86,28 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 
         match verbatim.line(trimmed) {
             Verbatim::No => {}
+            Verbatim::Underline(marker_level) => {
+                if let Some((start, title_line, pending)) = previous.take() {
+                    let raw_title = title_line.trim_end();
+                    let title = raw_title.trim_start();
+                    let selection_start = start + raw_title.len() - title.len();
+                    add_heading(
+                        &mut document,
+                        &Heading {
+                            marker_level,
+                            title,
+                            range: SourceRange::new(start, offset + line_content.trim_end().len()),
+                            selection_range: SourceRange::new(
+                                selection_start,
+                                selection_start + title.len(),
+                            ),
+                        },
+                        pending,
+                    );
+                }
+                offset += line.len();
+                continue;
+            }
             Verbatim::Delimiter => {
                 // A comment block between an anchor and its block is no content.
                 if !trimmed.starts_with('/') {
@@ -110,6 +135,8 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             continue;
         }
 
+        previous = Some((offset, line_content, pending_anchor.clone()));
+
         // Inline extraction sees passthroughs blanked out; includes are whole-line directives.
         let inline = mask_passthroughs(line);
         let anchors = find_anchors(&inline, offset);
@@ -124,34 +151,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         }
 
         if let Some(heading) = parse_heading(line, offset) {
-            if heading.marker_level == 1 && document.title.is_none() {
-                document.title = Some(DocumentTitle {
-                    text: heading.title.to_owned(),
-                    range: heading.range,
-                    selection_range: heading.selection_range,
-                });
-                pending_anchor = None;
-            } else {
-                // An anchor before the heading wins over one ending its line.
-                let (title, id) = match pending_anchor.take() {
-                    Some(id) => (heading.title, Some(id)),
-                    None => trailing_anchor(heading.title)
-                        .map_or((heading.title, None), |(title, id)| {
-                            (title, Some(id.to_owned()))
-                        }),
-                };
-                let selection_start = heading.selection_range.start;
-                document.sections.push(Section {
-                    level: heading.marker_level.saturating_sub(1),
-                    title: title.to_owned(),
-                    id,
-                    range: heading.range,
-                    selection_range: SourceRange::new(
-                        selection_start,
-                        selection_start + title.len(),
-                    ),
-                });
-            }
+            add_heading(&mut document, &heading, pending_anchor.take());
         } else if let Some(attribute) = parse_attribute(line, offset) {
             document.attributes.push(attribute);
         } else if !trimmed.is_empty() && !anchor_only && !is_block_metadata(trimmed) {
@@ -166,6 +166,34 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 
     document.diagnostics = duplicate_anchors(text, &document.anchors);
     ParseResult { document }
+}
+
+/// Records `heading`: the document's title, when it is the first at level 0, else a section
+/// whose id is `pending`, the anchor before it, or one ending its title.
+fn add_heading(document: &mut Document, heading: &Heading<'_>, pending: Option<String>) {
+    if heading.marker_level == 1 && document.title.is_none() {
+        document.title = Some(DocumentTitle {
+            text: heading.title.to_owned(),
+            range: heading.range,
+            selection_range: heading.selection_range,
+        });
+        return;
+    }
+    // An anchor before the heading wins over one ending its line.
+    let (title, id) = match pending {
+        Some(id) => (heading.title, Some(id)),
+        None => trailing_anchor(heading.title).map_or((heading.title, None), |(title, id)| {
+            (title, Some(id.to_owned()))
+        }),
+    };
+    let selection_start = heading.selection_range.start;
+    document.sections.push(Section {
+        level: heading.marker_level.saturating_sub(1),
+        title: title.to_owned(),
+        id,
+        range: heading.range,
+        selection_range: SourceRange::new(selection_start, selection_start + title.len()),
+    });
 }
 
 /// A warning for each anchor whose id an earlier one declared, naming the first by its line and
@@ -868,6 +896,61 @@ image::diagram.png[Architecture]\n";
         let document = parse("file:///demo.adoc", source).document;
 
         assert_eq!(document.references.len(), 2);
+    }
+
+    /// A two-line title is a title, not the opening of a listing block that hides the rest of
+    /// the page (#526).
+    #[test]
+    fn two_line_titles_are_titles() {
+        let source = "Title\n=====\n\nSection\n-------\n\n[[real]]\nText xref:other.adoc[] and <<real>>.\n\n\
+                      Sub\n~~~\n\nDeep\n^^^^\n\n[[five]]\nDeeper\n+++++\n";
+        let document = parse("file:///doc.adoc", source).document;
+
+        let title = document.title.expect("a title");
+        assert_eq!(title.text, "Title");
+        assert_eq!(
+            &source[title.selection_range.start..title.selection_range.end],
+            "Title"
+        );
+        let sections: Vec<_> = document
+            .sections
+            .iter()
+            .map(|section| (section.level, section.title.as_str(), section.id.as_deref()))
+            .collect();
+        assert_eq!(
+            sections,
+            [
+                (1, "Section", None),
+                (2, "Sub", None),
+                (3, "Deep", None),
+                (4, "Deeper", Some("five")),
+            ]
+        );
+        let section = &document.sections[0];
+        assert_eq!(
+            &source[section.range.start..section.range.end],
+            "Section\n-------"
+        );
+        assert_eq!(document.anchors.len(), 2);
+        assert_eq!(document.references.len(), 2);
+    }
+
+    /// A delimiter under a blank line or a block attribute line, under a paragraph's second line,
+    /// or two characters longer or shorter than the line above, still opens its block.
+    #[test]
+    fn delimiters_that_underline_nothing_still_open_blocks() {
+        for source in [
+            "Text\n\n----\n<<hidden>>\n----\n",
+            "[source]\n----\n<<hidden>>\n----\n",
+            "Para one\nPara two\n--------\n<<hidden>>\n--------\n",
+            "Abcd\n------\n<<hidden>>\n------\n",
+            "Abcdefgh\n------\n<<hidden>>\n------\n",
+            ".Title\n----\n<<hidden>>\n----\n",
+        ] {
+            let document = parse("file:///doc.adoc", source).document;
+            assert!(document.sections.is_empty(), "{source:?}");
+            assert!(document.references.is_empty(), "{source:?}");
+        }
     }
 
     #[test]

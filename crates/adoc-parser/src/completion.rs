@@ -76,7 +76,7 @@ fn block_state(text: &str, line_start: usize) -> BlockState {
     match verbatim.next() {
         Verbatim::Comment => BlockState::Comment,
         Verbatim::Content => BlockState::Verbatim,
-        Verbatim::No | Verbatim::Delimiter => BlockState::Body,
+        Verbatim::No | Verbatim::Delimiter | Verbatim::Underline(_) => BlockState::Body,
     }
 }
 
@@ -275,6 +275,15 @@ mod tests {
         let text = "\u{feff}----\nSee xref:get";
 
         assert_eq!(completion_context(text, text.len()), None);
+    }
+
+    /// A two-line title's underline opens no listing block (#526).
+    #[test]
+    fn completes_after_a_two_line_title() {
+        let text = "Section\n-------\n\nSee xref:get";
+        let context = completion_context(text, text.len()).expect("a context");
+
+        assert_eq!(context.kind, CompletionKind::XrefTarget);
     }
 
     #[test]

@@ -502,6 +502,9 @@ pub(crate) enum Verbatim {
     Content,
     /// Content of a comment block, where nothing is.
     Comment,
+    /// The underline of a two-line title, whose text is the line before; the heading's marker
+    /// level, 1 for `=` to 5 for `+`.
+    Underline(u8),
 }
 
 /// Follows the verbatim blocks line by line (each line trimmed).
@@ -513,13 +516,19 @@ pub(crate) struct VerbatimBlocks<'a> {
     styled: bool,
     /// Inside a verbatim-styled paragraph.
     paragraph: bool,
+    /// Inside a block of text, so a line does not begin a block.
+    in_text: bool,
+    /// The line before, when it began a block of text and could be a two-line title.
+    title: Option<&'a str>,
 }
 
 impl<'a> VerbatimBlocks<'a> {
     pub(crate) fn line(&mut self, trimmed: &'a str) -> Verbatim {
+        let title = self.title.take();
         if let Some(close) = self.open {
             if trimmed == close {
                 self.open = None;
+                self.in_text = false;
                 return Verbatim::Delimiter;
             }
             return if close.starts_with('/') {
@@ -535,9 +544,16 @@ impl<'a> VerbatimBlocks<'a> {
             }
             return Verbatim::Content;
         }
+        // Asciidoctor reads a two-line title before a delimiter, so `Section` over `-------`
+        // is a section, not the start of a listing block.
+        if let Some(level) = title.and_then(|title| setext_level(title, trimmed)) {
+            self.in_text = false;
+            return Verbatim::Underline(level);
+        }
         if let Some(close) = verbatim_delimiter(trimmed) {
             self.open = Some(close);
             self.styled = false;
+            self.in_text = false;
             return Verbatim::Delimiter;
         }
         if self.styled {
@@ -555,10 +571,32 @@ impl<'a> VerbatimBlocks<'a> {
                 self.paragraph = true;
                 return Verbatim::Content;
             }
+            self.in_text = false;
             return Verbatim::No;
         }
         self.styled = has_verbatim_style(trimmed);
+        self.follow_text(trimmed);
         Verbatim::No
+    }
+
+    /// Follows where blocks of text begin and end, keeping a block's first line as a possible
+    /// two-line title. Block metadata (attribute lines, anchors, titles, comments and
+    /// attribute entries) before a block leaves its start where it is.
+    fn follow_text(&mut self, trimmed: &'a str) {
+        if trimmed.is_empty()
+            || is_compound_delimiter(trimmed)
+            || parse_heading(trimmed, 0).is_some()
+        {
+            self.in_text = false;
+        } else if !self.in_text
+            && !(trimmed.starts_with('[') && trimmed.ends_with(']'))
+            && !trimmed.starts_with("//")
+            && !is_block_title(trimmed)
+            && parse_attribute(trimmed, 0).is_none()
+        {
+            self.in_text = true;
+            self.title = Some(trimmed);
+        }
     }
 
     /// What a line of text typed next would be.
@@ -570,6 +608,31 @@ impl<'a> VerbatimBlocks<'a> {
             None => Verbatim::No,
         }
     }
+}
+
+/// The marker level of the two-line title whose text is `title` and whose underline may be
+/// `underline`: a run of one of `=`, `-`, `~`, `^` or `+` (levels 1 to 5) within one character
+/// of the title's length, under a title that does not start with `.` and holds a word
+/// character, as Asciidoctor reads them.
+fn setext_level(title: &str, underline: &str) -> Option<u8> {
+    let first = underline.chars().next()?;
+    let level = match first {
+        '=' => 1,
+        '-' => 2,
+        '~' => 3,
+        '^' => 4,
+        '+' => 5,
+        _ => return None,
+    };
+    let titled = !title.starts_with('.')
+        && title
+            .chars()
+            .any(|character| character.is_alphanumeric() || character == '_');
+    (underline.len() >= 2
+        && underline.chars().all(|character| character == first)
+        && titled
+        && title.chars().count().abs_diff(underline.len()) < 2)
+        .then_some(level)
 }
 
 /// The line that closes the verbatim block `line` opens: a run of four or more of one of
