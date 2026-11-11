@@ -1287,9 +1287,26 @@ A `Change` is a `path` and a `ChangeKind`: `Added`, `Modified`, `Removed` or `Re
 The rules are:
 
 * *Render.* The changed page and every page including it, transitively through partials. The walk is breadth-first with a visited set, so cycles end, and it has a depth limit.
+  Outside every component version's tree (a folder of AsciiDoc files with no `antora.yml`) every AsciiDoc file the index holds counts as a page, so a plain folder's include consumers are reported.
+  When the walk reaches `Limits::depth` with includers left, the gap `include-depth-exceeded` names the file it stopped at.
 * *Reference integrity.* For a removed or moved file, its xref referrers come from the base revision. A referrer is `broken` when the head revision still writes the reference and it no longer leads there. It is `resolved_by_alias` when it now resolves to the moved page through `page-aliases`, and `resolved_by_change` otherwise. For a modified page, an anchor in base and not in head makes its referrers, from both sides, reviews. An added file's referrers that now resolve are `now_resolves`. Ordinary prose changes never reach xref referrers.
+  A consumer's include or reference is identified across the two sides by its file, its target as written and its ordinal among those with that target in the file, never by byte offset.
+  The same one found on both sides is one impact with `evidence: both`, and its span is head's whenever head has it.
+  Two references with one target in a file are two impacts.
+  For a modified page, the references that led to it in base and no longer do in head (a dropped `page-aliases` entry, say) are reviewed: `broken` when head still writes them, `resolved_by_change` when not.
+  Removed anchors are compared per composed page: an anchor counts as on a page when any file composed into it declares it, as the diagnostics count it.
+  So an anchor moved into an included partial is not reported, and one removed from a partial reviews the references to every page that includes it.
+  `now_resolves` reports only a reference base held and could not resolve.
 * *Navigation.* A changed navigation file listed in `antora.yml`, or a changed `antora.yml`, compares the pages its component version's navigation lists between base and head (`listed`, `unlisted`). A navigation entry naming a moved or removed page is a navigation impact.
+  A changed navigation file is itself a navigation impact, as its order, hierarchy or labels may have changed whatever its membership does.
+  A changed `antora.yml` is compared beyond its listings.
+  A new `name` or `version` reviews the references that led to the version's pages by the old coordinate.
+  A new `name`, `version`, `title`, `display_version`, `start_page`, `nav` list or `prerelease` is a navigation impact on the descriptor.
+  Changed `asciidoc.attributes` give the gap `attribute-consumers-not-analysed`, since the index cannot say which pages read an attribute.
 * *Publication.* Each `Publication { name, selection }` whose selection holds a page with a render or navigation impact is affected. A selection is `PublicationSelection::Page`, `Component { name, version }` or `Navigation(files)`. The impact is `potential` when the selection names content the head revision does not hold.
+  Whether a selection holds an affected page is asked of the side (or sides) whose evidence shows the impact, so a removed page is tested against base's catalog and navigation.
+  Each publication's selection is worked out once per side.
+  A navigation profile is affected by any change to one of its files.
 
 Every impact has a `kind`, a `confidence` (`confirmed` or `potential`), a `status`, the affected `path`, `resource_id`, `component`, `version` and `publication`, and the changed file it comes from (`origin`).
 `evidence` says which side shows it (`base`, `head` or `both`).
@@ -1302,11 +1319,14 @@ It is sorted, its paths are relative to a root and use `/`, and none is absolute
 
 * `no-base-revision`: a removed or moved path with no base.
 * `asset-consumers-not-analysed`: a changed image or attachment. The pages that show or link it are not traced yet, as the index has no reverse map of images.
-* `not-in-catalog`: a file in no component version the workspace holds.
+* `attribute-consumers-not-analysed`: a changed `antora.yml` changes its `asciidoc.attributes`. The pages that read them are not traced, as the index cannot say which do.
+* `include-depth-exceeded`: the walk through includes stopped at `Limits::depth` with includers left. It names the file it stopped at.
+* `not-in-catalog`: a file a component could hold (an AsciiDoc file, an `antora.yml`, a playbook, or anything under a `modules` folder) that is in no component version, in a workspace that has components. Other files, such as a README or CI file, and every file of a workspace with no components, give no gap.
 * `outside-every-root`.
 
 `counts` by kind are counted before `Limits { depth, impacts }` cuts the list.
 `truncated: { shown, total }` then says how much was cut.
+A cut keeps reference-integrity impacts, then navigation, then publication impacts before render ones, the kept ones staying in the report's order.
 
 [[impact-change-sources]]
 === Change sources and revision snapshots
