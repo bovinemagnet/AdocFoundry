@@ -514,6 +514,52 @@ fn two_single_replaces_in_one_page_both_change_it(cx: &mut TestAppContext) {
     assert_eq!(text, "= Page\n\nomega-long alpha omega-long\n");
 }
 
+/// A result's Replace acts on the search that found it, not on whatever the query box holds
+/// since.
+#[gpui::test]
+fn a_result_is_replaced_as_the_search_that_found_it(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let path = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    std::fs::write(&path, "= Page\n\nalpha beta\n").unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.run_until_parked();
+    let search = cx.update(|_, cx| workspace.read(cx).search_view_for_test().clone());
+    cx.update(|window, cx| {
+        search.update(cx, |search, cx| {
+            search.set_replacement_for_test("omega", window, cx);
+            search.run_query("alpha", window, cx);
+        });
+    });
+    assert_eq!(search_results(&app, &search, &mut cx), Some(1));
+    // The query is edited, but not searched for.
+    cx.update(|window, cx| {
+        search.update(cx, |search, cx| {
+            search.type_query("beta", window, cx);
+            search.replace_result(0, window, cx);
+        });
+    });
+    cx.run_until_parked();
+    assert!(
+        cx.update(gpui_component::WindowExt::has_active_dialog),
+        "the replace is previewed"
+    );
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let text = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        let id = engine.document_for_path(&path).unwrap();
+        engine.document(id).unwrap().text.to_string()
+    });
+    assert_eq!(text, "= Page\n\nomega beta\n");
+}
+
 /// IME composition reaches the editor through GPUI's input handler: marked (provisional) text is
 /// replaced as the user composes, then committed. The engine must end up with exactly the
 /// committed text, with nothing of the provisional stages left behind.
