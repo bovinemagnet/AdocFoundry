@@ -355,10 +355,12 @@ adocfoundry-cli doctor [<root>] [--format text|json]
 
 - Diagnostics (the same codes and severities as the Problems panel, republished for every open page a change affects), definition, hover, completion, and document and workspace symbols.
 - References: on a page, the pages that link to it and the includes that include it; on an anchor or a reference to one, every reference to that anchor.
-- Renaming: renaming an `.adoc` file in the editor first rewrites the xrefs and nav entries that name it (`workspace/willRenameFiles`); renaming an anchor id renames it and its references.
-- Commands: `adoc.renderPreview`, `adoc.renderLivePreview` and `adoc.stopLivePreview` open an HTML preview, through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, else through the engine, with diagrams and typeset STEM; `adoc.checkWorkspace` publishes every file's diagnostics; `adoc.exportPdf { uri, component?, output, theme?, standards? }` writes a PDF, in builds with Typst.
+- Renaming: renaming an `.adoc`, `.asciidoc` or `.ad` file in the editor first rewrites the xrefs and nav entries that name it (`workspace/willRenameFiles`), or answers with the reason it cannot, such as a file naming it that changed on disk and is not read again yet; renaming an anchor id renames it and its references.
+- Commands: `adoc.renderPreview`, `adoc.renderLivePreview` and `adoc.stopLivePreview` open an HTML preview, through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH` (stopped after 60 seconds), else through the engine, with diagrams and typeset STEM; `adoc.checkWorkspace` publishes every file's diagnostics; `adoc.exportPdf { uri, component?, output, theme?, standards? }` writes a PDF, in builds with Typst.
 
-Settings come from the files the app reads: the user settings file and the workspace's `.adocfoundry.toml`. Git is off unless the user settings file sets `[git] enabled = true`.
+The editor owns the pages it has open: a change to one on disk never replaces the server's copy, and a typed change's diagnostics are published once the engine has diagnosed the new text.
+
+Settings come from the files the app reads: the user settings file and the workspace's `.adocfoundry.toml`. Git is off unless the user settings file sets `[git] enabled = true`. A settings file that does not parse, or a workspace that cannot be opened, is reported with `window/showMessage`; a user settings file that does not parse gives the default settings.
 
 The [`adoc-ls` README](crates/adoc-ls/README.md) covers installation, editor set-up, the commands, settings and diagnostic codes.
 

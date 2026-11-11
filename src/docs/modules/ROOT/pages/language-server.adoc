@@ -20,11 +20,14 @@ Its capabilities are a superset of before.
 The server keeps an engine instead of its own state.
 
 * Workspace folders from `initialize` are opened in the engine. The server answers `initialize` once indexing finishes, after at most 120 seconds.
-* `didOpen` opens the client's buffer in the engine. The file need not exist.
+* `didOpen` opens the client's buffer in the engine. The file need not exist. The buffer is the client's from then on: a change to the file on disk never replaces it (the editor reloads its buffer and sends the change, if it does), and the engine keeps no undo history for it.
 * Each incremental change becomes one edit to the engine document.
 * `didClose` closes the engine document, which reverts to the file on disk.
+* If the user settings file or the workspace's `.adocfoundry.toml` does not parse, or the workspace cannot be opened, the server says so with a `window/showMessage` warning naming the file, after answering `initialize`. A user settings file that does not parse gives the default settings.
 
-Between messages the server lets the engine catch up every 50 ms and publishes what changed, such as the results of workers and the file watcher.
+The server lets the engine catch up whenever the connection has been quiet for 50 ms.
+It also does so between messages once something the engine keeps is due, or a worker or the file watcher has sent it something, and publishes what changed.
+The diagnostics of a typed change are published once the engine has diagnosed the new text, after typing pauses, never the previous text's diagnostics under the new version.
 
 == Features
 
@@ -37,7 +40,7 @@ Between messages the server lets the engine catch up every 50 ms and publishes w
 * Rename an anchor (`textDocument/rename`).
 * Update links when a file is renamed (`workspace/willRenameFiles`).
 * Spelling hints and quick fixes, described below.
-* Code actions and commands, described below.
+* Code actions and commands, described below. Code actions honour the kinds the client asks for (`context.only`): the spelling fixes are quick fixes, and the preview actions have the empty kind.
 
 Hover, definition, completion and symbols behave as before.
 
@@ -55,9 +58,11 @@ Rename on an anchor id renames the anchor and every reference to it.
 Anywhere else the server refuses with an error.
 To rename a page, rename its file.
 
-The server registers `workspace/willRenameFiles` for `+**/*.adoc+` files.
+The server registers `workspace/willRenameFiles` for `+**/*.{adoc,asciidoc,ad}+` files.
 It returns the edits to the xrefs, nav entries and includes that name the file, and the client moves the file.
 Includes written through an attribute are left as written.
+The edits are worked out from the text as typed, typing not yet indexed included.
+When the edits cannot be worked out, for example because a file that names the page changed on disk and has not been read again yet, the server answers with an error naming the reason, so the client does not move the file and leave its links behind.
 
 == Commands
 
@@ -65,6 +70,8 @@ Includes written through an attribute are left as written.
 They render through Asciidoctor whenever `tools.asciidoctor` is set in the user settings file or `asciidoctor` is on `PATH`.
 Otherwise they render through the engine's view tree, with diagrams and, in builds with Typst, typeset STEM.
 See xref:settings.adoc[the settings].
+A render through Asciidoctor is stopped after 60 seconds.
+The system browser is started apart from the server's standard input and output, which carry the protocol, and the server does not wait for it.
 
 `adoc.checkWorkspace` publishes the diagnostics of every file with problems, open or not.
 A later check clears the problems of a file that is not open once they are fixed.
@@ -72,10 +79,12 @@ It returns `{ files, problems }`.
 
 `adoc.exportPdf` exports a page to PDF, or with `component: true` its component version as a book.
 It takes `{ uri, component?, output, theme?, standards? }` and reports with `window/showMessage`.
+A page the client does not have open is opened only for the export and closed afterwards.
 It is advertised only when the server is built with Typst.
 
 `adoc.spelling.addToWorkspace` and `adoc.spelling.addToUser` add a word to the workspace dictionary (`.adocfoundry-words.txt`) or the user dictionary (`spelling-words.txt` beside the user settings file).
 Each takes `[uri, start, end]`, the page and the byte offsets of the word.
+A range that is no longer a misspelt word, because the page changed since the action was listed, is refused with an error and nothing is added.
 
 == Spelling
 
@@ -87,6 +96,7 @@ See xref:using-the-editor.adoc#spelling[Spelling] for what is checked and for th
 == Settings
 
 The server reads the same files as the application: the user settings file and the workspace's `.adocfoundry.toml`.
+If either file does not parse, the server warns, as described in <<_how_it_works,How it works>>.
 Git is off unless the user settings file sets `[git] enabled = true`.
 `editor.auto_save` has no effect in the server, which never saves a file; the editor saves.
 

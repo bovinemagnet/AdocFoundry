@@ -375,6 +375,112 @@ fn anchor_rename_updates_references() {
     client.shutdown();
 }
 
+/// The names of `uri`'s top-level document symbols.
+fn symbol_names(client: &mut Client, uri: &str) -> Vec<String> {
+    let response = client.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    let symbols: Vec<lsp_types::DocumentSymbol> =
+        serde_json::from_value(response.response_result.unwrap()).unwrap();
+    symbols.into_iter().map(|symbol| symbol.name).collect()
+}
+
+const LINKING: &str = "= Page\n\nSee xref:other.adoc[].\n";
+
+/// Past the watcher's debounce, writes `other.adoc`, which the page links to, and waits for the
+/// page's warning to go: the watcher has then applied the changes written before.
+fn write_other_and_wait(client: &mut Client, directory: &Path, uri: &str) {
+    std::thread::sleep(adoc_engine::WATCH_DEBOUNCE * 4);
+    std::fs::write(directory.join("other.adoc"), "= Other\n").unwrap();
+    client.diagnostics(uri, |params| params.diagnostics.is_empty());
+}
+
+#[test]
+fn a_rewritten_file_leaves_the_client_s_buffer_alone() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    std::fs::write(&page, LINKING).unwrap();
+    let mut client = Client::start(Some(&root));
+    let uri = client.open(&page, LINKING);
+    let first = client.diagnostics(&uri, |_| true);
+    assert_eq!(codes(&first), ["adoc.unresolved-xref-file"]);
+
+    // A checkout or a formatter rewrites the file; the editor keeps its buffer.
+    std::fs::write(&page, "= Rewritten\n\nSee xref:other.adoc[].\n").unwrap();
+    write_other_and_wait(&mut client, &root, &uri);
+
+    assert_eq!(symbol_names(&mut client, &uri), ["Page"]);
+    client.shutdown();
+}
+
+#[test]
+fn typing_saving_and_undoing_keeps_the_client_s_text() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let page = root.join("page.adoc");
+    std::fs::write(&page, LINKING).unwrap();
+    let mut client = Client::start(Some(&root));
+    let uri = client.open(&page, LINKING);
+    client.diagnostics(&uri, |_| true);
+    let at_title_end = json!({
+        "start": { "line": 0, "character": 6 }, "end": { "line": 0, "character": 6 },
+    });
+    let over_x = json!({
+        "start": { "line": 0, "character": 6 }, "end": { "line": 0, "character": 7 },
+    });
+
+    client.notify(
+        "textDocument/didChange",
+        json!({
+            "textDocument": { "uri": uri, "version": 2 },
+            "contentChanges": [{ "range": at_title_end, "text": "X" }],
+        }),
+    );
+    std::fs::write(&page, LINKING.replacen("Page", "PageX", 1)).unwrap();
+    client.notify(
+        "textDocument/didSave",
+        json!({ "textDocument": { "uri": uri } }),
+    );
+    client.notify(
+        "textDocument/didChange",
+        json!({
+            "textDocument": { "uri": uri, "version": 3 },
+            "contentChanges": [{ "range": over_x, "text": "" }],
+        }),
+    );
+    write_other_and_wait(&mut client, &root, &uri);
+
+    assert_eq!(symbol_names(&mut client, &uri), ["Page"]);
+    client.shutdown();
+}
+
+#[test]
+fn a_malformed_workspace_settings_file_is_reported() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(root.join(".adocfoundry.toml"), "[spelling\nlanguage = \n").unwrap();
+    std::fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let mut client = Client::start(Some(&root));
+    // Answered after the message, which follows the answer to `initialize`.
+    client.request("workspace/symbol", json!({ "query": "Page" }));
+
+    let shown: Vec<String> = client
+        .notifications
+        .iter()
+        .filter(|notification| notification.method == "window/showMessage")
+        .filter_map(|notification| notification.params["message"].as_str().map(str::to_owned))
+        .collect();
+    assert!(
+        shown
+            .iter()
+            .any(|message| message.contains(".adocfoundry.toml")),
+        "{shown:?}"
+    );
+    client.shutdown();
+}
+
 #[test]
 fn export_pdf_command_writes_a_file() {
     let directory = tempfile::tempdir().unwrap();
