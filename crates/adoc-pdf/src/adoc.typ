@@ -594,16 +594,35 @@
 
 // Footnotes, gathered at the end of the document as asciidoctor-pdf places them. Every item has
 // the item spacing below it, the last one too, and it is that margin that meets the page's
-// bottom margin, as asciidoctor-pdf aligns the block.
+// bottom margin, as asciidoctor-pdf aligns the block. A float cannot break across pages, so a
+// list taller than a page follows the content instead, a block per note, and breaks.
 #let adoc-footnotes(items) = {
   if items.len() == 0 { return }
   let spacing = pick("footnotes_item_spacing", default: 3pt)
-  place(bottom, float: true, clearance: block-bottom, {
+  let style(body) = {
     set text(size: resolve-size(pick("footnotes_font_size", default: base-size * 0.75), base-size), fill: pick("footnotes_font_color", default: base-color))
     set par(justify: false)
-    stack(spacing: spacing, ..items.map(((number, dest, body)) => [#adoc-link(dest, [\[#number\]]) #body]))
+    body
+  }
+  let notes = items.map(((number, dest, body)) => [#adoc-link(dest, [\[#number\]]) #body])
+  let list = style({
+    stack(spacing: spacing, ..notes)
     v(spacing)
   })
+  context {
+    // Measured, as `keep` measures, at the page's content width.
+    let margin = doc.page.margin
+    let height = measure(list, width: doc.page.width - margin.left - margin.right).height
+    if height + block-bottom <= doc.page.height - margin.top - margin.bottom {
+      place(bottom, float: true, clearance: block-bottom, list)
+    } else {
+      v(block-bottom)
+      style(for note in notes {
+        block(width: 100%, note)
+        v(spacing)
+      })
+    }
+  }
 }
 
 // The index: every term the document marks, grouped by first letter, each with the body pages

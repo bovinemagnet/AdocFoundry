@@ -191,6 +191,27 @@ fn footnotes_sit_where_asciidoctor_pdf_puts_them() {
     );
 }
 
+#[test]
+fn footnotes_taller_than_a_page_flow_onto_the_next() {
+    // A float cannot break across pages: a page of notes and more was drawn past the bottom
+    // edge and lost.
+    let notes: String = (1..=140)
+        .map(|number| format!("Point.footnote:[MARK{number} a note of one line.] "))
+        .collect();
+    let pages = pages_of(&format!("= Notes\n\n{notes}\n"), &common::default_theme());
+    for page in &pages {
+        let below: Vec<_> = page.runs.iter().filter(|run| run.y > page.height).collect();
+        assert!(below.is_empty(), "{} runs below the page", below.len());
+    }
+    let text: String = pages.iter().map(TypesetPage::text).collect();
+    for number in 1..=140 {
+        assert!(
+            text.contains(&format!("MARK{number} ")),
+            "note {number} is on no page"
+        );
+    }
+}
+
 /// The label a PDF viewer shows for each page, from the catalogue's `/PageLabels`.
 fn page_labels(bytes: &[u8], pages: usize) -> Vec<String> {
     use hayro_syntax::object::{Array, Dict, Name, Object, String as PdfString};
