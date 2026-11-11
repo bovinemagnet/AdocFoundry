@@ -50,5 +50,6 @@ pub use report::{
 pub use rules::{Category, FindingCode, RuleId, RuleSpec, RULES};
 pub use sarif::{to_sarif, Region};
 pub use workspace::{
-    assemble, audit, audit_file, audit_version, audited_files, AuditInput, FileAudit, VersionAudit,
+    assemble, audit, audit_file, audit_version, audited_files, file_at, locate, AuditInput,
+    FileAudit, VersionAudit,
 };

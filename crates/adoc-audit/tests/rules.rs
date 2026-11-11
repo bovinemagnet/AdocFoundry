@@ -296,6 +296,23 @@ fn a_component_scope_reports_only_that_component_version() {
 }
 
 #[test]
+fn a_scope_names_the_versionless_version_as_tilde() {
+    let report = run(
+        &workspace(),
+        AuditScope::Component {
+            name: "guide".to_owned(),
+            version: Some("~".to_owned()),
+        },
+    );
+    assert!(report.completeness().is_complete(), "{report:#?}");
+    assert_eq!(report.coverage().len(), 1);
+    assert_eq!(
+        skipped(&report, UNLISTED),
+        ["guide/modules/ROOT/pages/extra.adoc"]
+    );
+}
+
+#[test]
 fn a_component_not_in_the_catalog_is_unavailable() {
     let report = run(
         &workspace(),
@@ -396,5 +413,283 @@ fn existing_messages_name_files_relative_to_their_root() {
     assert!(
         !text.contains(&*root.to_string_lossy()),
         "an absolute path in {text}"
+    );
+}
+
+/// The report of a workspace made of `files`, each a path from the root and its text.
+fn audit_files(files: &[(&str, &str)], scope: AuditScope) -> AuditReport {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    for (path, text) in files {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    let mut workspace = WorkspaceState::new();
+    workspace.index_roots(std::slice::from_ref(&root)).unwrap();
+    let roots = [root];
+    let read = |path: &Path| fs::read_to_string(path);
+    let input = AuditInput {
+        workspace: &workspace,
+        roots: &roots,
+        read: &read,
+    };
+    audit(&input, scope).finish(&Policy::default())
+}
+
+#[test]
+fn a_missing_navigation_file_leaves_what_the_others_list_listed() {
+    let report = audit_files(
+        &[
+            (
+                "docs/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n- modules/admin/nav.adoc\n",
+            ),
+            (
+                "docs/modules/ROOT/nav.adoc",
+                "* xref:a.adoc[A]\n* xref:b.adoc[B]\n",
+            ),
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            ("docs/modules/ROOT/pages/a.adoc", "= A\n"),
+            ("docs/modules/ROOT/pages/b.adoc", "= B\n"),
+            ("docs/modules/ROOT/pages/c.adoc", "= C\n"),
+            ("docs/modules/admin/pages/x.adoc", "= X\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    let coverage = coverage(&report, "docs", None);
+    assert_eq!(
+        (coverage.pages, coverage.listed, coverage.undetermined),
+        (5, 3, 2)
+    );
+    assert_eq!(
+        skipped(&report, UNLISTED),
+        [
+            "docs/modules/ROOT/pages/c.adoc",
+            "docs/modules/admin/pages/x.adoc"
+        ]
+    );
+    assert!(found(&report, UNLISTED).is_empty());
+}
+
+#[test]
+fn dash_items_and_the_xref_shorthand_list_their_pages() {
+    let report = audit_files(
+        &[
+            (
+                "docs/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n",
+            ),
+            (
+                "docs/modules/ROOT/nav.adoc",
+                "* xref:a.adoc[A]\n* <<shorthand.adoc#,Shorthand>>\n- xref:dash.adoc[Dash]\n",
+            ),
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            ("docs/modules/ROOT/pages/a.adoc", "= A\n"),
+            ("docs/modules/ROOT/pages/shorthand.adoc", "= Shorthand\n"),
+            ("docs/modules/ROOT/pages/dash.adoc", "= Dash\n"),
+            ("docs/modules/ROOT/pages/orphan.adoc", "= Orphan\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    assert_eq!(
+        found(&report, UNLISTED),
+        ["docs/modules/ROOT/pages/orphan.adoc"]
+    );
+    let coverage = coverage(&report, "docs", None);
+    assert_eq!((coverage.pages, coverage.listed), (5, 4));
+}
+
+#[test]
+fn a_version_in_two_descriptors_reads_both_navigations() {
+    let report = audit_files(
+        &[
+            (
+                "one/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/one/nav.adoc\n",
+            ),
+            ("one/modules/one/nav.adoc", "* xref:page-one.adoc[]\n"),
+            ("one/modules/one/pages/page-one.adoc", "= One\n"),
+            (
+                "two/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/two/nav.adoc\n",
+            ),
+            ("two/modules/two/nav.adoc", "* xref:page-two.adoc[]\n"),
+            ("two/modules/two/pages/page-two.adoc", "= Two\n"),
+            ("two/modules/ROOT/pages/index.adoc", "= Docs\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    assert!(
+        found(&report, UNLISTED).is_empty(),
+        "{:#?}",
+        report.findings()
+    );
+    assert_eq!(report.coverage().len(), 1);
+    let coverage = coverage(&report, "docs", None);
+    assert_eq!(
+        (coverage.navigation_files, coverage.pages, coverage.listed),
+        (2, 3, 3)
+    );
+}
+
+const DOCS: (&str, &str) = ("docs/antora.yml", "name: docs\nversion: ~\n");
+
+#[test]
+fn alternative_text_on_the_block_attribute_line_counts() {
+    let report = audit_files(
+        &[
+            DOCS,
+            (
+                "docs/modules/ROOT/pages/index.adoc",
+                "= Images\n\n[alt=\"A sunset\"]\nimage::a.png[]\n\n[A sunset over the sea]\nimage::b.png[]\n\n.Caption\n[#fig,alt=Sunset]\nimage::c.png[]\n\n[.right]\nimage::d.png[]\n\n[#fig2]\n[%interactive]\nimage::e.png[]\n",
+            ),
+        ],
+        AuditScope::Workspace,
+    );
+    let reported: Vec<String> = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.code == ALT)
+        .map(|finding| finding.message.clone())
+        .collect();
+    assert_eq!(
+        reported,
+        [
+            "The image `d.png` has no alternative text",
+            "The image `e.png` has no alternative text"
+        ],
+        "an id, role or option line gives no text"
+    );
+}
+
+#[test]
+fn a_title_comes_only_from_an_include_before_the_body() {
+    let report = audit_files(
+        &[
+            DOCS,
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            (
+                "docs/modules/ROOT/pages/untitled-listing.adoc",
+                "Some text.\n\n[source,java]\n----\ninclude::example$Demo.java[]\n----\n",
+            ),
+            (
+                "docs/modules/ROOT/pages/untitled-footer.adoc",
+                "Some text.\n\nMore text.\n\ninclude::partial$snippet.adoc[]\n",
+            ),
+            (
+                "docs/modules/ROOT/pages/header-include.adoc",
+                "include::partial$header.adoc[]\n\nSome text.\n",
+            ),
+            ("docs/modules/ROOT/partials/header.adoc", "= Header\n"),
+            ("docs/modules/ROOT/partials/snippet.adoc", "Snippet.\n"),
+            ("docs/modules/ROOT/examples/Demo.java", "class Demo {}\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    assert_eq!(
+        found(&report, TITLE),
+        [
+            "docs/modules/ROOT/pages/untitled-footer.adoc",
+            "docs/modules/ROOT/pages/untitled-listing.adoc"
+        ]
+    );
+    assert_eq!(
+        skipped(&report, TITLE),
+        ["docs/modules/ROOT/pages/header-include.adoc"]
+    );
+}
+
+#[test]
+fn an_empty_title_line_is_no_title() {
+    let report = audit_files(
+        &[
+            DOCS,
+            ("docs/modules/ROOT/pages/index.adoc", "= \n\nText.\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    let messages: Vec<&str> = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.code == TITLE)
+        .map(|finding| finding.message.as_str())
+        .collect();
+    assert_eq!(messages, ["The page has no document title"]);
+}
+
+#[test]
+fn images_in_hidden_pages_are_checked_as_partials_are() {
+    let report = audit_files(
+        &[
+            DOCS,
+            (
+                "docs/modules/ROOT/pages/index.adoc",
+                "= Docs\n\ninclude::_fragment.adoc[]\n",
+            ),
+            (
+                "docs/modules/ROOT/pages/_fragment.adoc",
+                "image::shot.png[]\n",
+            ),
+        ],
+        AuditScope::Workspace,
+    );
+    assert_eq!(
+        found(&report, ALT),
+        ["docs/modules/ROOT/pages/_fragment.adoc"]
+    );
+    assert!(found(&report, TITLE).is_empty(), "a hidden page needs none");
+}
+
+#[test]
+fn an_entry_naming_a_partial_does_not_list_the_page_of_its_name() {
+    let report = audit_files(
+        &[
+            (
+                "docs/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n",
+            ),
+            (
+                "docs/modules/ROOT/nav.adoc",
+                "* xref:partial$snippet.adoc[]\n",
+            ),
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            ("docs/modules/ROOT/pages/snippet.adoc", "= Snippet\n"),
+            ("docs/modules/ROOT/partials/snippet.adoc", "Snippet.\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    assert_eq!(
+        found(&report, UNLISTED),
+        ["docs/modules/ROOT/pages/snippet.adoc"]
+    );
+}
+
+#[test]
+fn an_include_the_navigation_does_not_read_hides_nothing() {
+    let report = audit_files(
+        &[
+            (
+                "docs/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n",
+            ),
+            (
+                "docs/modules/ROOT/nav.adoc",
+                "* xref:a.adoc[]\n////\ninclude::partial$more-nav.adoc[]\n////\n----\ninclude::partial$more-nav.adoc[]\n----\n",
+            ),
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            ("docs/modules/ROOT/pages/a.adoc", "= A\n"),
+            ("docs/modules/ROOT/pages/orphan.adoc", "= Orphan\n"),
+            (
+                "docs/modules/ROOT/partials/more-nav.adoc",
+                "* xref:orphan.adoc[]\n",
+            ),
+        ],
+        AuditScope::Workspace,
+    );
+    assert!(skipped(&report, UNLISTED).is_empty());
+    assert_eq!(
+        found(&report, UNLISTED),
+        ["docs/modules/ROOT/pages/orphan.adoc"]
     );
 }

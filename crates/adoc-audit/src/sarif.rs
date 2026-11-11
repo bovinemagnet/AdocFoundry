@@ -131,7 +131,9 @@ pub fn to_sarif(
             "originalUriBaseIds": base_ids,
             "columnKind": "unicodeCodePoints",
             "invocations": [{
-                "executionSuccessful": true,
+                // An unavailable audit checked nothing: a service reading a successful run
+                // with no results would close the alerts it had.
+                "executionSuccessful": status != "unavailable",
                 "toolExecutionNotifications": notifications,
             }],
             "results": results,
@@ -208,6 +210,28 @@ fn uri(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AuditBuilder, AuditScope, Gap, GapReason, Policy, Revision};
+
+    #[test]
+    fn an_unavailable_audit_is_not_a_successful_run() {
+        let run = |unavailable: bool| {
+            let mut builder =
+                AuditBuilder::new(AuditScope::Workspace, Revision::default(), Vec::new());
+            if unavailable {
+                builder.unavailable(Gap {
+                    reason: GapReason::RemoteComponentMissing,
+                    detail: "Component `nope` is not in the local catalog".to_owned(),
+                    affected: vec!["nope".to_owned()],
+                });
+            }
+            let report = builder.finish(&Policy::default());
+            to_sarif(&report, "0.0.0", &|_| None)["runs"][0]["invocations"][0]
+                ["executionSuccessful"]
+                .clone()
+        };
+        assert_eq!(run(true), json!(false));
+        assert_eq!(run(false), json!(true));
+    }
 
     #[test]
     fn regions_count_lines_and_characters_from_one() {

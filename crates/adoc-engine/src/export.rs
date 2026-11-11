@@ -739,7 +739,10 @@ impl Engine {
 
     /// The page a nav entry links to.
     fn nav_page(&self, item: &NavItem) -> Option<PathBuf> {
-        let id = item.target.as_ref()?;
+        let id = item
+            .target
+            .as_ref()
+            .filter(|id| id.family == Some(crate::ResourceFamily::Page))?;
         let coordinate = crate::AntoraCoordinate {
             component: id.component.clone()?,
             version: id.version.clone(),
