@@ -125,6 +125,8 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                 })
         };
 
+        // Whether a `#` heading on this line begins a block, judged before the line is read.
+        let heading = parse_heading(line, offset).filter(|heading| verbatim.begins_block(heading));
         match verbatim.line(trimmed) {
             Verbatim::No => {}
             Verbatim::Underline(marker_level) => {
@@ -146,6 +148,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                                 selection_start,
                                 selection_start + title.len(),
                             ),
+                            markdown: false,
                         },
                         pending,
                     );
@@ -217,8 +220,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         let line_includes: Vec<_> = includes(line, offset, body).collect();
         let mut header_line = metadata || !line_includes.is_empty();
 
-        if let Some(heading) = parse_heading(line, offset).filter(|_| !verbatim.in_compound_block())
-        {
+        if let Some(heading) = heading.filter(|_| !verbatim.in_compound_block()) {
             if heading.marker_level == 1 && document.title.is_none() {
                 header_line = true;
             }
@@ -1279,6 +1281,32 @@ image::diagram.png[Architecture]\n";
             .map(|section| &source[section.selection_range.start..section.selection_range.end])
             .collect();
         assert_eq!(titles, ["Title", "Tabbed", "Uneven ==="]);
+    }
+
+    /// Markdown-style `#` markers are headings where Asciidoctor 2.0 reads them: at the start of
+    /// a block, from `#` to `######`, a closing marker dropped. Mid-paragraph, without a space,
+    /// with seven markers or in a listing block, a `#` line is text (#548).
+    #[test]
+    fn markdown_heading_markers_are_headings_at_a_block_start() {
+        let source = "# Markdown Title\n\nIntro.\n\n## Section One\n\nPara.\n# not a heading\n\n\
+                      ### Sub ###\n\n#nospace\n\n----\n# shell comment\n----\n\n\
+                      ####### Seven\n\n== Mixed level 1\n";
+        let document = parse("file:///doc.adoc", source).document;
+        let title = document.title.expect("a title");
+        assert_eq!(title.text, "Markdown Title");
+        assert_eq!(
+            &source[title.selection_range.start..title.selection_range.end],
+            "Markdown Title"
+        );
+        let sections: Vec<_> = document
+            .sections
+            .iter()
+            .map(|section| (section.level, section.title.as_str()))
+            .collect();
+        assert_eq!(
+            sections,
+            [(1, "Section One"), (2, "Sub"), (1, "Mixed level 1")]
+        );
     }
 
     /// A line comment is `//` not followed by a third `/` (#532).
