@@ -295,6 +295,7 @@ fn write_tools_need_allow_write() {
         "edit_page",
         "export_pdf",
         "rename_page",
+        "revert_page",
     ]);
     expected.sort_unstable();
     assert_eq!(client.tool_names(), expected);
@@ -345,6 +346,64 @@ fn edit_page_applies_through_commands() {
     assert!(std::fs::read_to_string(root.join("index.adoc"))
         .unwrap()
         .starts_with("= Start"));
+    client.stop();
+}
+
+#[test]
+fn a_failed_save_leaves_the_page_as_it_was_and_revert_page_clears_a_conflict() {
+    let (_directory, root) = scratch("references");
+    let page = root.join("index.adoc");
+    let mut client = Client::start(&root, true);
+    let text = |client: &mut Client| {
+        client
+            .call("read_page", json!({ "path": "index.adoc" }))
+            .unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+
+    // An unsaved edit, then the file changes on disk under it.
+    client
+        .call(
+            "edit_page",
+            json!({ "path": "index.adoc", "edits": [{ "old_text": "= Index", "new_text": "= Home" }] }),
+        )
+        .unwrap();
+    let on_disk = "= Changed elsewhere\n\nNew text.\n";
+    std::fs::write(&page, on_disk).unwrap();
+
+    // The save conflicts: the call's own edits are undone, so the page is as before the call.
+    let failed = client.call_result(
+        "edit_page",
+        json!({ "path": "index.adoc", "edits": [{ "old_text": "= Home", "new_text": "= Start" }], "save": true }),
+    );
+    assert_eq!(failed["isError"], true, "{failed}");
+    assert_eq!(failed["_meta"]["error"]["code"], "conflict", "{failed}");
+    assert!(text(&mut client).starts_with("= Home"));
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), on_disk);
+
+    // Reverting the page puts its buffer back to the file, and a retry then saves.
+    let reverted = client
+        .call("revert_page", json!({ "path": "index.adoc" }))
+        .unwrap();
+    assert_eq!(reverted["reverted"], true, "{reverted}");
+    assert_eq!(text(&mut client), on_disk);
+    client
+        .call(
+            "edit_page",
+            json!({ "path": "index.adoc", "edits": [{ "old_text": "New text.", "new_text": "Newer." }], "save": true }),
+        )
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&page).unwrap(),
+        "= Changed elsewhere\n\nNewer.\n"
+    );
+    // A page with nothing unsaved has nothing to revert.
+    let again = client
+        .call("revert_page", json!({ "path": "index.adoc" }))
+        .unwrap();
+    assert_eq!(again["reverted"], false, "{again}");
     client.stop();
 }
 
@@ -421,7 +480,7 @@ fn pdf_export_never_writes_through_a_link() {
     );
     assert_eq!(result["isError"], true, "{result}");
     assert_eq!(
-        result["structuredContent"]["error"]["code"], "outside_workspace",
+        result["_meta"]["error"]["code"], "outside_workspace",
         "{result}"
     );
     assert!(
@@ -439,6 +498,27 @@ fn pdf_export_never_writes_through_a_link() {
         std::fs::read_to_string(root.join("inside.pdf")).unwrap(),
         "old"
     );
+    client.stop();
+}
+
+#[test]
+fn pdf_export_never_replaces_a_page_or_another_file() {
+    let (_directory, root) = scratch("references");
+    std::fs::write(root.join("notes.txt"), "keep me").unwrap();
+    let before = common::snapshot(&root);
+    let mut client = Client::start(&root, true);
+    for output in ["other.adoc", "notes.txt"] {
+        let result = client.call_result(
+            "export_pdf",
+            json!({ "path": "index.adoc", "output": output }),
+        );
+        assert_eq!(result["isError"], true, "{output}: {result}");
+        assert_eq!(
+            result["_meta"]["error"]["code"], "invalid_argument",
+            "{output}: {result}"
+        );
+    }
+    assert_eq!(common::snapshot(&root), before, "nothing replaced");
     client.stop();
 }
 

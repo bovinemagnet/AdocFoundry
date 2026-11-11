@@ -505,6 +505,8 @@ The tests are:
 * `edit_page_applies_through_commands`
 * `rename_page_updates_xrefs`
 * `paths_outside_the_roots_are_refused`
+* `a_failed_save_leaves_the_page_as_it_was_and_revert_page_clears_a_conflict`
+* `pdf_export_never_replaces_a_page_or_another_file`
 
 `crates/adoc-mcp/tests/http.rs` starts the binary with `--http 127.0.0.1:0` and a token in `ADOC_MCP_TOKEN`, and speaks HTTP/1.1 to it over a plain socket, so the tests bring no HTTP client into the tree.
 It reads the address the server prints, then posts JSON-RPC and reads the response as JSON or server-sent events.
@@ -523,6 +525,8 @@ The tests are:
 * `mcp_resources_cursor_stable_and_bounded`, which lists 1,208 files in pages of at most 500, each once, in a stable order
 * `mcp_cursor_rejects_stale_index_revision`, where a page added on disk makes an old cursor stale
 * `check_pages_its_diagnostics_with_a_cursor`
+* `an_error_result_gives_its_code_in_the_text_and_no_structured_content`, where a failing call of each tool gives `code: message` as its text and `_meta.error`, with no structured content, for a 2025-06-18 and a 2025-03-26 session
+* `every_listed_resource_uri_reads_back`, with pages whose names hold a space, a non-ASCII letter, `%`, `#` and `?`
 
 `crates/adoc-mcp/tests/subscriptions.rs` checks resource subscriptions over stdio.
 The test is `mcp_resource_change_notifications_are_revision_scoped`.
@@ -604,12 +608,15 @@ The tests are:
 * `mcp_multi_file_failure_is_reported_and_recoverable` (Unix), where a read-only folder makes one save fail, the answer lists what was and was not saved, and saving later keeps the change
 * `mcp_symlink_escape_is_rejected_at_apply` (Unix), where a folder is replaced by a link out of the workspace between preview and apply
 * `mcp_document_instructions_cannot_grant_permissions`
+* `a_page_with_a_body_is_previewed_and_made_as_the_how_to_prompt_says`
+* `an_idempotency_key_names_one_preview_and_only_a_change_made_is_replayed`
 
 `crates/adoc-mcp/tests/creation.rs` drives `create_page` and `create_partial` over stdio.
 The tests are:
 
-* `mcp_write_denied_by_default`, where every mutating tool (`apply_changes`, `create_module`, `create_page`, `create_partial`, `edit_page`, `export_pdf` and `rename_page`) is unlisted and refused with `permission_denied` without `--allow-write`, and no file beneath the root is made, changed or removed. All are offered with it.
+* `mcp_write_denied_by_default`, where every mutating tool (`apply_changes`, `create_module`, `create_page`, `create_partial`, `edit_page`, `export_pdf`, `rename_page` and `revert_page`) is unlisted and refused with `permission_denied` without `--allow-write`, and no file beneath the root is made, changed or removed. All are offered with it.
 * `create_page_resolves_and_is_listed_in_its_navigation`, which checks the resource id, the entry in the navigation file, and that `get_page_context` finds the page in navigation once the engine has applied it. Collisions, ambiguous versions, bad names and a mismatched `expected_nav_hash` are refused.
+* `create_page_writes_its_body_after_the_title`
 * `create_partial_gives_the_include_that_names_it`
 * `mcp_create_module_reuses_engine_command`, which checks that `create_module` makes the module through `module.new`, and answers with `module`, `path`, `made`, `descriptor` and `index_page`
 
@@ -628,13 +635,16 @@ In the engine, `crates/adoc-engine/tests/staging.rs` checks that:
 
 A unit test in `crates/adoc-mcp/src/server.rs`, `mcp_timeout_does_not_block_other_clients_forever`, holds the engine's lock from another thread.
 It checks that a tool answers `timeout` within the shortened wait, that a full queue answers `unavailable`, and that the tool works once the lock is free.
+`line_numbers_survive_a_page_rewritten_on_disk_before_it_is_indexed` checks symbols and resolve on a page rewritten on disk with multi-byte text, before it is indexed again.
+`resource_uris_are_encoded_and_read_back_on_every_platform` checks the encoding of resource URIs and that they decode again.
 
-`crates/adoc-mcp/src/responses.rs` has unit tests for the error code names, the cursors and the protocol-version rule.
+`crates/adoc-mcp/src/responses.rs` has unit tests for the error code names, the error text and its details, the cursors and the protocol-version rule.
 
 `crates/adoc-mcp/tests/publication.rs` drives `validate_publication` and the prompts.
 The tests are:
 
 * `validate_publication_reports_what_the_engine_checks`, which checks the start pages by default, the navigation files, the coverage, a ready profile and a broken one, the `not_ready` and `ready` outcomes, and a scope error
+* `the_prompts_and_reports_name_no_offered_tool_as_unavailable`
 * `the_prompts_are_recipes_that_grant_nothing`, which checks the four prompts, each naming its tools and saying that the server decides, that the tools are unchanged, and that a missing argument and an unknown prompt are refused
 * `mcp_build_not_enabled_by_allow_write`, which checks that `build_site` is absent with `--allow-write` alone, refused with `permission_denied` when called, and listed, without any write tool, with `--allow-build`
 

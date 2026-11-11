@@ -48,7 +48,13 @@ fn whole_report(client: &mut Client, arguments: &Value, limit: usize) -> Value {
     let mut report = first.unwrap();
     assert_eq!(report["findings_total"], findings.len());
     for finding in &mut findings {
-        finding.as_object_mut().unwrap().remove("region");
+        // Every page gives the region of each of its findings with a range.
+        let region = finding.as_object_mut().unwrap().remove("region");
+        assert_eq!(
+            region.is_some(),
+            !finding["location"]["range"].is_null(),
+            "{finding}"
+        );
     }
     report["findings"] = Value::Array(findings);
     for field in ADDED {
@@ -206,10 +212,7 @@ fn mcp_analysis_pagination_does_not_hide_incomplete() {
         json!({ "limit": 1, "cursor": cursor, "require_complete": true }),
     ] {
         let refused = client.call_result("quality_audit", arguments);
-        assert_eq!(
-            refused["structuredContent"]["error"]["code"],
-            "invalid_argument"
-        );
+        assert_eq!(refused["_meta"]["error"]["code"], "invalid_argument");
     }
     for (arguments, code) in [
         (json!({ "version": "3.0" }), "invalid_argument"),
@@ -223,10 +226,7 @@ fn mcp_analysis_pagination_does_not_hide_incomplete() {
         (json!({ "fail_on": "always" }), "invalid_argument"),
     ] {
         let refused = client.call_result("quality_audit", arguments.clone());
-        assert_eq!(
-            refused["structuredContent"]["error"]["code"], code,
-            "{arguments}"
-        );
+        assert_eq!(refused["_meta"]["error"]["code"], code, "{arguments}");
     }
     client.stop();
 }

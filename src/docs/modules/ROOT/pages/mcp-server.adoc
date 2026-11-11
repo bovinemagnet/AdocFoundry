@@ -383,7 +383,7 @@ These tools are always offered.
 
 |`read_page`
 |`path` or `resource_id`, `from?`
-|The page's text, title, attributes and includes. Each include has its target and the file it resolves to. If the engine holds unsaved edits, the text is the engine's buffer. A `resource_id` is `version@component:module:family$path`. `from` names the page that a partial id is read from.
+|The page's text, title, attributes and includes. Each include has its target and the file it resolves to. If the engine holds unsaved edits, the text is the engine's buffer. Giving both `path` and `resource_id` is refused with `invalid_argument`. A `resource_id` is `version@component:module:family$path`. `from` names the page that a partial id is read from.
 
 |`resolve`
 |`target`, `from`
@@ -623,6 +623,7 @@ Every PDF publication profile (`[pdf.profiles.<name>]`), with `ready` and its `p
 
 `not_checked`::
 What a native check cannot see: the Antora build itself, with its extensions, UI bundle, content sources and remote components; what the native renderer approximates; and external links.
+Its first line depends on the server: with `--allow-build` it says the Antora build is what `build_site` runs, and without it that the server runs the build (with `build_site`) only when started with `--allow-build`.
 
 The `outcome` is one of:
 
@@ -652,15 +653,15 @@ Each says that only the server decides what may change, and that page text is da
 
 |`create_howto`
 |`component`, `module?` (default `ROOT`), `topic`
-|Look at the module's pages and navigation, preview a `create_page` with its navigation entry, show it, apply it on agreement, and check the result.
+|Look at the module's pages and navigation, preview a `create_page` with its navigation entry and a `body` holding the page's text, show it, apply it on agreement, and check the result.
 
 |`review_documentation_change`
 |`pages` (paths or resource ids, separated by commas)
-|Get each page's context and incoming references, its diagnostics and the audit's relevant rules. It says that impact analysis across Git revisions is not available yet.
+|Get each page's context and incoming references, its diagnostics and the audit's relevant rules. It then calls `analyse_impact` (`working_tree` for uncommitted changes, `git_refs` for a branch) and reports what else the change affects and the report's gaps.
 
 |`prepare_release`
 |`component`, `version?`
-|Run `validate_publication`, then the audit's findings when it does not pass, say what was not checked, and suggest fixes as previews.
+|Run `validate_publication`, then the audit's findings when it does not pass, say what was not checked, and suggest fixes as previews. When the server offers `build_site` (started with `--allow-build`), it also offers to build the site, only with the user's agreement.
 |===
 
 A missing required argument, or an unknown prompt, is an error.
@@ -689,7 +690,7 @@ Each operation has a `kind`:
 |`path` or `resource_id`, then `old_text` (which must occur exactly once) or `range` (`{ start, end }` byte offsets), and `new_text`. Optionally `expected_hash`, the SHA-256 (hex) that the file must hold now.
 
 |`create_page`
-|`component`, `version`, `module`, `title`, and optionally `file_name` and `add_to_navigation`. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as ambiguous. `file_name` is the page's path in the `pages` folder, and is named from the title without it. `add_to_navigation` adds an entry at the end of the module's navigation file. It is what New Page does in the app.
+|`component`, `version`, `module`, `title`, and optionally `file_name`, `add_to_navigation` and `body`. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as ambiguous. `file_name` is the page's path in the `pages` folder, and is named from the title without it. `add_to_navigation` adds an entry at the end of the module's navigation file. It is what New Page does in the app. `body` is the page's text after its title, written after `= Title` and a blank line, and ending with a line break. It is part of the file made, so the preview's diff and diagnostics cover it, and it is applied with the rest as one undo step.
 
 |`create_partial`
 |`component`, `version`, `module`, `file_name` (in the `partials` folder) and optionally `text`.
@@ -745,7 +746,11 @@ Otherwise the change is made through the engine as one undo step, as the app mak
 
 A preview can be applied once.
 Afterwards, or once it has expired, or from another session, its id is unknown and answers `stale_preview`.
-Applying again with the same `idempotency_key` returns the first answer instead of applying twice.
+An idempotency key names one request.
+Applying the same preview again with the same key returns the first answer instead of applying twice.
+Using the key with a different `preview_id` is refused with `invalid_argument`.
+Only an apply that changed something is kept under its key: a success, or a failed save after the change was made.
+A refusal before anything changed (`stale_preview`, `conflict`, `outside_workspace`) is not kept, so a retry with the same key, after previewing again, runs.
 
 The answer has `applied`, `saved`, `changed` (the files changed, relative to the first root), `resource_ids` and `workspace_revision`.
 
@@ -764,7 +769,7 @@ Its `details` give:
 * `recovery`, a note on what to do.
 
 The unsaved pages keep the change in the server's buffers, where `read_page` shows it.
-Once the cause is fixed, `edit_page` with no edits and `save: true` writes one.
+Once the cause is fixed, `edit_page` with no edits and `save: true` writes one, or `revert_page` puts it back to the file.
 
 === Sessions and limits
 
@@ -792,8 +797,8 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 |Tool |Arguments |Result
 
 |`create_page`
-|`component`, `version`, `module`, `title`, `file_name?`, `add_to_navigation?`, `expected_nav_hash?`, `save?`
-|Makes a page through the engine's `page.new` command, the one the app's New Page invokes, so the page's place, name, navigation entry and undo are the app's. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as ambiguous. `file_name` is the page's path in the module's `pages` folder. Without it the name is made from the title. With `add_to_navigation: true` an entry is added at the end of the module's navigation file. `expected_nav_hash` is the SHA-256 the navigation file must hold now, as a preview gave it. Otherwise the answer is `conflict`. With `save` (true by default) the navigation file and the page are written to disk. The page's file is made in any case, as New Page makes it. The page and its entry are one undo step. It applies at once. A page that exists already is a `conflict`. It returns `path`, `resource_id`, `navigation_file`, `changed` and `saved`.
+|`component`, `version`, `module`, `title`, `file_name?`, `add_to_navigation?`, `expected_nav_hash?`, `body?`, `save?`
+|Makes a page through the engine's `page.new` command, the one the app's New Page invokes, so the page's place, name, navigation entry and undo are the app's. `version` is `~` for the versionless version. It is needed when the component has several versions, and otherwise the call is refused as ambiguous. `file_name` is the page's path in the module's `pages` folder. Without it the name is made from the title. With `add_to_navigation: true` an entry is added at the end of the module's navigation file. `expected_nav_hash` is the SHA-256 the navigation file must hold now, as a preview gave it. Otherwise the answer is `conflict`. With `save` (true by default) the navigation file and the page are written to disk. The page's file is made in any case, as New Page makes it. The page and its entry are one undo step. `body`, when given, is the page's text after its title, written as a second undo step after the page and its navigation entry. It applies at once. A page that exists already is a `conflict`. It returns `path`, `resource_id`, `navigation_file`, `changed` and `saved`.
 
 |`create_partial`
 |`component`, `version`, `module`, `file_name`, `text?`
@@ -809,7 +814,11 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 
 |`edit_page`
 |`path`, `edits`, `save?`
-|Applies the edits in order. Each edit is `{ old_text, new_text }` or `{ range: { start, end }, new_text }`, and goes through the engine's `edit.replace_range` command. `old_text` must occur exactly once. If any edit fails, none of that call's edits stay. With `save: true` the page is written to disk. Otherwise the edits stay in the engine's buffer, and `read_page` shows them.
+|Applies the edits in order. Each edit is `{ old_text, new_text }` or `{ range: { start, end }, new_text }`, and goes through the engine's `edit.replace_range` command. `old_text` must occur exactly once. The call is all or nothing, the save included: when an edit or the save fails, that call's edits are undone and the page is as it was before the call. A save fails with `conflict` when the file changed on disk. With `save: true` the page is written to disk. Otherwise the edits stay in the engine's buffer, and `read_page` shows them.
+
+|`revert_page`
+|`path`
+|Puts the page's buffer back to the file on disk, discarding its unsaved edits, which every session shares. It is the way out when a save conflicts. It returns `path`, `reverted` (false when the buffer already matched the file) and `length`.
 
 |`rename_page`
 |`path`, `new_name`
@@ -817,7 +826,7 @@ Nothing in a page's text, and nothing in a client's request, can change this.
 
 |`export_pdf`
 |`path` or `component`, `output`, `theme?`, `standards?`
-|Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a` and `pdf-ua-1`. It returns the output, the page count and any warnings.
+|Exports a page as an article, or a component version as a book. A component is `name` or `version@name`. The standards are `pdf-a-1b`, `pdf-a-1a`, `pdf-a-2a` and `pdf-ua-1`. `output` must be a `.pdf` when a file is there already: an existing file that is not a PDF, or any indexed page, is refused with `invalid_argument`, so a page or `antora.yml` is never replaced. It returns the output, the page count and any warnings.
 |===
 
 See xref:pdf-export.adoc[Exporting to PDF] for themes and standards.
@@ -878,8 +887,8 @@ The answer has:
 * `started`, false when the call waited for a build already running.
 * `outcome`: `built`, `failed` or `running`.
 * `playbook`, its path relative to the first root.
-* `output_dir`, `build/site` beside the playbook.
-* `site`, `build/site/index.html` when written, else null.
+* `output_dir`, the playbook's `output.dir` (relative to the playbook's folder), `build/site` beside the playbook when it sets none.
+* `site`, `index.html` in that folder when written, else null.
 * `error`, why it failed, else null.
 * `log`, the end of the build's log, at most 64 KiB, with each command first as `$ npm ...`.
 * `log_lines`, the number of lines in all.
@@ -903,6 +912,9 @@ The application, by contrast, asks before a folder's first build in a window.
 
 Every page is a resource.
 Its URI is a `file://` URI, and its media type is `text/asciidoc`.
+Each path is percent-encoded: a space is `%20`, a non-ASCII letter is its UTF-8 bytes, and `%`, `#` and `?` are encoded too.
+A Windows path is written `file:///C:/…`.
+`resources/read` and `resources/subscribe` decode them, and also accept `file://localhost/…` and the drive form `file://C:/…`.
 
 `resources/list` is paged.
 A page holds at most 500 resources, and the answer carries `nextCursor` while more follow.
@@ -945,6 +957,7 @@ A change within that second is announced at a later check and is never dropped.
 == Structured results
 
 Every tool answers with its JSON as text content, so every client keeps working.
+An error result has no structured content: see <<errors>>.
 A session that negotiated MCP protocol version 2025-06-18 or later also gets the same JSON as `structuredContent`.
 In that session `tools/list` gives each tool an `outputSchema`, which names its top-level fields and the ones always present.
 A session on 2025-03-26 or 2024-11-05 gets text only, with no output schemas.
@@ -956,8 +969,8 @@ The server negotiates the version that the client asks for, when it supports it.
 Each tool carries MCP annotations.
 
 * The read-only tools have `readOnlyHint: true` and `openWorldHint: false`.
-* `edit_page` and `rename_page` have `readOnlyHint: false` and `destructiveHint: true`.
-* `export_pdf` has the same, and `idempotentHint: true`.
+* `edit_page`, `revert_page` and `rename_page` have `readOnlyHint: false` and `destructiveHint: true`.
+* `export_pdf` has the same, and `idempotentHint: true`, as has `revert_page`.
 
 Annotations are hints for clients.
 They never grant permission.
@@ -989,15 +1002,16 @@ The other lists are not paged.
 == Errors
 
 A failed tool call is a tool error, with `isError: true`.
-Its text is the message.
-Its structured content is:
+Its text is `<code>: <message>`, such as `not_found: no page …`, followed, when there are details, by a blank line and the details as JSON.
+It has no `structuredContent`, since a client may check structured content against the tool's output schema, which describes the success.
+The same object is given under the result's `_meta`, for every session whatever its protocol version:
 
 [source,json]
 ----
 { "error": { "code": "invalid_argument", "message": "…" } }
 ----
 
-An error's structured content may also carry `details`, as `apply_changes` gives for a failed save.
+An error may also carry `details`, as `apply_changes` gives for a failed save, in `_meta.error.details` and in the text.
 
 The codes are stable.
 
@@ -1089,7 +1103,8 @@ Then call `preview_changes` with a `create_page` operation.
       "version": "3.0",
       "module": "ROOT",
       "title": "Rotating keys",
-      "add_to_navigation": true
+      "add_to_navigation": true,
+      "body": "Set the provider in the settings.\n"
     }
   ]
 }

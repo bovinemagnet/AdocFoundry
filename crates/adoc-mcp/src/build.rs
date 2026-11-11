@@ -106,14 +106,13 @@ fn report(state: &State, started: bool) -> Result<(Value, bool), Failure> {
         SiteBuildState::Built { site } => ("built", site.as_deref(), None),
         SiteBuildState::Failed(error) => ("failed", None, Some(error.as_str())),
     };
-    let folder = build.playbook.parent().unwrap_or(&build.playbook);
     let (log, cut) = log_end(&build.log);
     let report = json!({
         "schema_version": SCHEMA_VERSION,
         "started": started,
         "outcome": outcome,
         "playbook": state.shown(&build.playbook),
-        "output_dir": state.shown(&folder.join("build/site")),
+        "output_dir": state.shown(&build.output_dir),
         "site": site.map(|site| state.shown(site)),
         "error": error,
         "log": log,
@@ -146,6 +145,16 @@ mod tests {
 
     use super::*;
     use crate::server::Permissions;
+
+    /// Held while a fake tool is written and the engine runs it, so no other test forks while one
+    /// is open for writing (`ETXTBSY`), as `adoc-render`'s `spawn_guard` does there.
+    static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn spawn_guard() -> std::sync::MutexGuard<'static, ()> {
+        SPAWN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     /// A server with `--allow-build` on a project `project.new` made, whose npm is a stand-in
     /// that waits far longer than `[tools] build_timeout` (2 s) while `slow` exists.
@@ -202,6 +211,7 @@ mod tests {
 
     #[test]
     fn mcp_build_site_returns_logs_and_output_paths() {
+        let _spawning = spawn_guard();
         let directory = tempfile::tempdir().unwrap();
         let (server, _root) = server(directory.path());
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -234,6 +244,7 @@ mod tests {
     /// stops it at `[tools] build_timeout`.
     #[test]
     fn mcp_stalled_build_times_out_without_blocking_other_clients() {
+        let _spawning = spawn_guard();
         let directory = tempfile::tempdir().unwrap();
         let (server, root) = server(directory.path());
         fs::create_dir(root.join("node_modules")).unwrap();
@@ -286,6 +297,7 @@ mod tests {
 
     #[test]
     fn mcp_build_site_without_node_is_unavailable() {
+        let _spawning = spawn_guard();
         let directory = tempfile::tempdir().unwrap();
         let (server, _root) = server(directory.path());
         fs::remove_file(directory.path().join("tools/npm")).unwrap();
@@ -297,7 +309,10 @@ mod tests {
             .block_on(server.build_site(Parameters(BuildSiteArgs { wait_seconds: None })))
             .unwrap();
         assert_eq!(refused.is_error, Some(true));
-        assert_eq!(structured(&refused)["error"]["code"], "unavailable");
+        assert_eq!(
+            refused.meta.as_ref().unwrap().0["error"]["code"],
+            "unavailable"
+        );
     }
 
     #[test]

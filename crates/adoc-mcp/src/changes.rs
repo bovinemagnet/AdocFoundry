@@ -64,7 +64,15 @@ struct Stored {
 #[derive(Default)]
 pub(crate) struct Previews {
     stored: HashMap<String, Stored>,
-    answered: HashMap<String, (Instant, Result<Value, Failure>)>,
+    answered: HashMap<String, Answered>,
+}
+
+/// What an apply that changed something answered, under its idempotency key.
+struct Answered {
+    when: Instant,
+    /// The preview the key was used with; the key names that request alone.
+    preview_id: String,
+    answer: Result<Value, Failure>,
 }
 
 impl Previews {
@@ -72,7 +80,7 @@ impl Previews {
         self.stored
             .retain(|_, stored| now.duration_since(stored.made) < PREVIEW_TTL);
         self.answered
-            .retain(|_, (when, _)| now.duration_since(*when) < PREVIEW_TTL);
+            .retain(|_, answered| now.duration_since(answered.when) < PREVIEW_TTL);
     }
 
     fn bytes(&self) -> usize {
@@ -149,6 +157,9 @@ enum Operation {
         file_name: Option<String>,
         #[serde(default)]
         add_to_navigation: bool,
+        /// The page's text after its title (`= Title` and a blank line); the title alone
+        /// without it.
+        body: Option<String>,
     },
     /// Make a partial in a module's `partials` folder.
     CreatePartial {
@@ -180,8 +191,10 @@ struct PreviewArgs {
 struct ApplyArgs {
     /// The `preview_id` `preview_changes` gave, in this session.
     preview_id: String,
-    /// A key of the client's choosing: applying again with it gives the first answer rather
-    /// than applying twice.
+    /// A key of the client's choosing that names this one request: applying the same preview
+    /// again with it gives the first answer rather than applying twice, and using it with
+    /// another preview is refused. A refusal that changed nothing is not kept under the key,
+    /// so a retry with it runs.
     idempotency_key: Option<String>,
     /// Write every changed page to disk; true by default. Otherwise the change stays in the
     /// server's buffers, where `read_page` shows it.
@@ -230,6 +243,19 @@ pub(crate) fn module_root(
                 version.as_deref().unwrap_or("~")
             ))
         })
+}
+
+/// What follows a new page's `= Title` line for `body`: a blank line and the body, ending with
+/// a line break; nothing for an empty body.
+pub(crate) fn after_title(body: &str) -> String {
+    if body.is_empty() {
+        return String::new();
+    }
+    let mut text = format!("\n{body}");
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text
 }
 
 /// A plain relative file name, with no `..`, root or drive.
@@ -322,13 +348,14 @@ fn stage(state: &mut State, operation: &Operation) -> Result<ChangeSet, Failure>
             title,
             file_name,
             add_to_navigation,
+            body,
         } => {
             let root = module_root(state, component, version.as_deref(), module)?;
             let file = file_name.as_deref().map(plain).transpose()?;
             if let Some(file) = &file {
                 state.confine(&root.join("pages").join(file).to_string_lossy())?;
             }
-            state
+            let mut changes = state
                 .engine
                 .stage_new_page(&NewPage {
                     module: root,
@@ -336,7 +363,12 @@ fn stage(state: &mut State, operation: &Operation) -> Result<ChangeSet, Failure>
                     add_to_nav: *add_to_navigation,
                     file,
                 })
-                .map_err(engine_failure)
+                .map_err(engine_failure)?;
+            // The page is the one file made; its text is part of what is made and checked.
+            if let (Some(body), Some(page)) = (body, changes.creates.first_mut()) {
+                page.text.push_str(&after_title(body));
+            }
+            Ok(changes)
         }
         Operation::CreatePartial {
             component,
@@ -522,8 +554,16 @@ impl Server {
                 let mut previews = crate::server::lock_previews(&previews);
                 previews.expire(now);
                 if let Some(key) = &args.idempotency_key {
-                    if let Some((_, answered)) = previews.answered.get(key) {
-                        return answered.clone();
+                    if let Some(answered) = previews.answered.get(key) {
+                        // A key names one request: the same preview gets its answer again,
+                        // another preview is refused rather than taken as applied.
+                        if answered.preview_id != args.preview_id {
+                            return Err(Failure::invalid(format!(
+                                "idempotency key `{key}` was used with another preview; give \
+                                 each change a key of its own"
+                            )));
+                        }
+                        return answered.answer.clone();
                     }
                 }
                 previews.stored.remove(&args.preview_id)
@@ -535,11 +575,18 @@ impl Server {
                      in another session; preview the change again",
                 ));
             };
-            let answer = apply(state, &stored, args.save.unwrap_or(true));
-            if let Some(key) = args.idempotency_key {
-                crate::server::lock_previews(&previews)
-                    .answered
-                    .insert(key, (now, answer.clone()));
+            let (answer, made) = apply(state, &stored, args.save.unwrap_or(true));
+            // Only a call that changed something is kept: a refusal changed nothing, so its
+            // retry under the same key runs.
+            if let (Some(key), true) = (args.idempotency_key, made) {
+                crate::server::lock_previews(&previews).answered.insert(
+                    key,
+                    Answered {
+                        when: now,
+                        preview_id: args.preview_id,
+                        answer: answer.clone(),
+                    },
+                );
             }
             answer
         })
@@ -547,8 +594,18 @@ impl Server {
     }
 }
 
-/// Checks `stored` against the workspace as it is now, then applies and saves it.
-fn apply(state: &mut State, stored: &Stored, save: bool) -> Result<Value, Failure> {
+/// Checks `stored` against the workspace as it is now, then applies and saves it; and whether
+/// it changed anything (a refusal before the change was made did not).
+fn apply(state: &mut State, stored: &Stored, save: bool) -> (Result<Value, Failure>, bool) {
+    if let Err(failure) = make(state, stored) {
+        return (Err(failure), false);
+    }
+    (save_made(state, stored, save), true)
+}
+
+/// Checks `stored` against the workspace as it is now and makes it in the engine, all or
+/// nothing.
+fn make(state: &mut State, stored: &Stored) -> Result<(), Failure> {
     // Every path again, now: a folder may have become a link out of the roots since.
     for path in stored.changes.paths() {
         state.confine(&path.to_string_lossy())?;
@@ -595,6 +652,11 @@ fn apply(state: &mut State, stored: &Stored, save: bool) -> Result<Value, Failur
             EngineError::InvalidRequest(_) => Failure::new(ErrorCode::Conflict, error.to_string()),
             other => Failure::from(other),
         })?;
+    Ok(())
+}
+
+/// What a change made by [`make`] changed, each page saved with `save`.
+fn save_made(state: &mut State, stored: &Stored, save: bool) -> Result<Value, Failure> {
     let mut changed: Vec<PathBuf> = stored
         .changes
         .creates

@@ -4,6 +4,8 @@
 //! scope and policy as the command line does, filters and pages the findings, and says plainly
 //! when a passing report covers less than everything.
 
+use std::{collections::HashMap, path::PathBuf};
+
 use adoc_engine::{
     audit::{
         AuditReport, AuditScope, Completeness, FailOn, FindingCode, Policy, Region, Severity,
@@ -220,19 +222,30 @@ impl Server {
                 policy.fail_on,
                 policy.require_complete,
             );
-            let findings: Vec<Value> = report
+            let findings: Vec<_> = report
                 .findings()
                 .iter()
                 .zip(value["findings"].as_array().cloned().unwrap_or_default())
                 .filter(|(finding, _)| codes.is_empty() || codes.contains(&finding.code))
                 .filter(|(finding, _)| floor.is_none_or(|floor| finding.severity >= floor))
+                .collect();
+            let page = page(findings, &query, revision, args.cursor.as_deref(), args.limit)?;
+            // Regions for the page's findings alone, each file read once.
+            let mut texts: HashMap<PathBuf, Option<String>> = HashMap::new();
+            let findings: Vec<Value> = page
+                .items
+                .into_iter()
                 .map(|(finding, mut json)| {
                     let location = &finding.location;
                     if let (Some(range), Some(root)) =
                         (location.range, state.roots.get(location.root))
                     {
-                        if let Ok(text) = state.text(&root.join(&location.path)) {
-                            let region = Region::of(&text, range);
+                        let path = root.join(&location.path);
+                        let text = texts
+                            .entry(path)
+                            .or_insert_with_key(|path| state.text(path).ok());
+                        if let Some(text) = text {
+                            let region = Region::of(text, range);
                             json["region"] = json!({
                                 "start_line": region.start_line,
                                 "start_column": region.start_column,
@@ -244,12 +257,12 @@ impl Server {
                     json
                 })
                 .collect();
-            let page = page(findings, &query, revision, args.cursor.as_deref(), args.limit)?;
-            value["findings"] = json!(page.items);
+            let shown = findings.len();
+            value["findings"] = json!(findings);
             value["findings_total"] = json!(page.total);
             value["next_cursor"] = json!(page.next_cursor);
             if page.next_cursor.is_some() {
-                value["truncated"] = json!({ "shown": page.items.len(), "total": page.total });
+                value["truncated"] = json!({ "shown": shown, "total": page.total });
             }
             if !include_excluded {
                 if let Some(object) = value.as_object_mut() {

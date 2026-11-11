@@ -1,11 +1,11 @@
 //! What a tool answers: its JSON as text, as every client reads it, and the same JSON as
 //! structured content for a session whose protocol version has it (2025-06-18 on); a failure's
-//! message as text, with a stable [`ErrorCode`] in its structured content. And the cursors that
+//! stable [`ErrorCode`], message and details as text and under `_meta`. And the cursors that
 //! page long lists: opaque, bound to one query and one workspace revision, refused when either
 //! differs, so a page never mixes two states of the workspace.
 
 use adoc_engine::EngineError;
-use rmcp::model::{CallToolResult, ContentBlock, ProtocolVersion};
+use rmcp::model::{CallToolResult, ContentBlock, MetaObject, ProtocolVersion};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -81,13 +81,25 @@ impl Failure {
         Self::new(ErrorCode::InternalError, message)
     }
 
-    /// The failure as structured content.
+    /// The failure as JSON: `{ "error": { code, message, details? } }`.
     pub fn to_value(&self) -> Value {
         let mut error = json!({ "code": self.code, "message": self.message });
         if let Some(details) = &self.details {
             error["details"] = details.clone();
         }
         json!({ "error": error })
+    }
+
+    /// The failure as text every client reads: `code: message`, and the details as JSON after
+    /// a blank line when there are any.
+    pub fn to_text(&self) -> String {
+        let code = serde_json::to_value(self.code).unwrap_or_default();
+        let mut text = format!("{}: {}", code.as_str().unwrap_or_default(), self.message);
+        if let Some(details) = &self.details {
+            text.push_str("\n\n");
+            text.push_str(&serde_json::to_string_pretty(details).unwrap_or_default());
+        }
+        text
     }
 }
 
@@ -112,9 +124,11 @@ impl From<EngineError> for Failure {
     }
 }
 
-/// A tool's answer: on success the JSON as text and as structured content, on failure the
-/// message as text and the code and message as structured content. [`for_session`] takes the
-/// structured content away again for a session that cannot read it.
+/// A tool's answer: on success the JSON as text and as structured content, which
+/// [`for_session`] takes away again for a session that cannot read it. On failure the code,
+/// message and details as text ([`Failure::to_text`]), and as JSON under `_meta`'s `error`, for
+/// every session; never as structured content, which a client may hold against the tool's
+/// output schema, and that describes the success.
 pub fn answer(result: Result<Value, Failure>) -> CallToolResult {
     match result {
         Ok(value) => {
@@ -125,8 +139,10 @@ pub fn answer(result: Result<Value, Failure>) -> CallToolResult {
             result
         }
         Err(failure) => {
-            let mut result = CallToolResult::error(vec![ContentBlock::text(&failure.message)]);
-            result.structured_content = Some(failure.to_value());
+            let mut result = CallToolResult::error(vec![ContentBlock::text(failure.to_text())]);
+            if let Value::Object(meta) = failure.to_value() {
+                result.meta = Some(MetaObject(meta));
+            }
             result
         }
     }
@@ -394,9 +410,31 @@ mod tests {
 
         let failed = answer(Err(Failure::not_found("no such page")));
         assert_eq!(failed.is_error, Some(true));
+        assert_eq!(failed.structured_content, None);
         assert_eq!(
-            failed.structured_content,
-            Some(json!({ "error": { "code": "not_found", "message": "no such page" } }))
+            failed.content[0].as_text().unwrap().text,
+            "not_found: no such page"
+        );
+        assert_eq!(
+            serde_json::to_value(failed.meta).unwrap(),
+            json!({ "error": { "code": "not_found", "message": "no such page" } })
+        );
+    }
+
+    #[test]
+    fn a_failure_text_gives_its_code_and_details() {
+        let failure = Failure::internal("2 of 3 pages could not be saved")
+            .with_details(json!({ "applied": true, "saved": ["a.adoc"] }));
+        let text = answer(Err(failure)).content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .clone();
+        let (head, details) = text.split_once("\n\n").unwrap();
+        assert_eq!(head, "internal_error: 2 of 3 pages could not be saved");
+        assert_eq!(
+            serde_json::from_str::<Value>(details).unwrap(),
+            json!({ "applied": true, "saved": ["a.adoc"] })
         );
     }
 }
