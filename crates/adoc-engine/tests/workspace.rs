@@ -647,6 +647,44 @@ fn settings_reload_on_external_change() {
 }
 
 #[test]
+fn a_malformed_workspace_settings_file_still_opens_the_folder() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings_file = directory.path().join(adoc_engine::WORKSPACE_SETTINGS_FILE);
+    fs::write(&settings_file, "[editor]\ntab_width = = 4\n").unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n").unwrap();
+    let mut engine = engine_without_user_settings();
+
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    assert!(
+        engine
+            .workspace()
+            .index
+            .file(&adoc_engine::normalize_path(&page))
+            .is_some(),
+        "the folder is indexed"
+    );
+    // The file's problem is reported where the front end shows settings problems, with the
+    // file and the line.
+    let warnings = engine.settings().warnings.clone();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains(".adocfoundry.toml"), "{warnings:?}");
+    assert!(warnings[0].contains("line 2"), "{warnings:?}");
+    assert_eq!(engine.settings().editor.tab_width, 2, "the defaults apply");
+
+    // Fixing the file on disk clears it.
+    thread::sleep(Duration::from_millis(100));
+    fs::write(&settings_file, "[editor]\ntab_width = 4\n").unwrap();
+    assert!(pump_until(&mut engine, |engine| {
+        engine.settings().editor.tab_width == 4
+    }));
+    assert!(engine.settings().warnings.is_empty());
+}
+
+#[test]
 fn user_settings_reload_on_external_change() {
     let user = tempfile::tempdir().unwrap();
     // The folder as the watcher reports it: macOS's temporary folder is behind a link, and

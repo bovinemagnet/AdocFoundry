@@ -550,6 +550,18 @@ impl Settings {
 
     /// Re-reads both layers from the files they were loaded from.
     pub fn reload(&mut self) -> Result<(), EngineError> {
+        self.reload_layers(false)
+    }
+
+    /// Re-reads both layers as [`Settings::reload`] does, except that a file that cannot be
+    /// read or does not parse is left out, with the reason in [`Settings::warnings`], rather
+    /// than failing: opening a folder whose settings file is broken must still open it, so the
+    /// file can be fixed.
+    pub fn reload_skipping_broken_files(&mut self) {
+        let _ = self.reload_layers(true);
+    }
+
+    fn reload_layers(&mut self, skip_broken: bool) -> Result<(), EngineError> {
         let mut fresh = Self {
             user_file: self.user_file.clone(),
             workspace_file: self.workspace_file.clone(),
@@ -568,14 +580,21 @@ impl Settings {
             .as_deref()
             .and_then(Path::parent)
             .map(|folder| folder.join("themes"));
-        if let Some(path) = fresh.user_file.clone() {
-            if let Some(table) = read_table(&path)? {
-                fresh.apply(&table, Layer::User, &path);
-            }
-        }
-        if let Some(path) = fresh.workspace_file.clone() {
-            if let Some(table) = read_table(&path)? {
-                fresh.apply(&table, Layer::Workspace, &path);
+        for (file, layer) in [
+            (fresh.user_file.clone(), Layer::User),
+            (fresh.workspace_file.clone(), Layer::Workspace),
+        ] {
+            let Some(path) = file else {
+                continue;
+            };
+            match read_table(&path) {
+                Ok(Some(table)) => fresh.apply(&table, layer, &path),
+                Ok(None) => {}
+                Err(error) if skip_broken => fresh.warnings.push(format!(
+                    "{}\nIts settings are not applied until it is fixed.",
+                    error.to_string().trim_end()
+                )),
+                Err(error) => return Err(error),
             }
         }
         if fresh.git_opt_in && !fresh.git_enabled_set {

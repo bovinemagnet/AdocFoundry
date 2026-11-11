@@ -397,7 +397,13 @@ impl Engine {
         self.roots = roots;
         self.settings
             .set_workspace_root(self.roots.first().map(PathBuf::as_path));
-        self.reload_settings()?;
+        // A settings file that does not parse leaves its settings out, and says so, rather
+        // than leave the engine half way to the new folder, which could then not be opened to
+        // fix it. The watcher reads it again once it changes.
+        self.reload_settings_with(|settings| {
+            settings.reload_skipping_broken_files();
+            Ok(())
+        })?;
         self.open_expansion();
         self.files.clear();
         self.watcher =
