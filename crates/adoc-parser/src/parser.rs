@@ -7,8 +7,8 @@ use adoc_core::{
 
 use crate::line_parser::{
     conditional_directive, content, find_anchors, find_images, find_includes, find_references,
-    is_dynamic_id, mask_passthroughs, parse_attribute, parse_heading, Conditional, Verbatim,
-    VerbatimBlocks,
+    is_block_metadata, is_dynamic_id, mask_passthroughs, parse_attribute, parse_heading,
+    trailing_anchor, Conditional, Verbatim, VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,7 +84,10 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         match verbatim.line(trimmed) {
             Verbatim::No => {}
             Verbatim::Delimiter => {
-                pending_anchor = None;
+                // A comment block between an anchor and its block is no content.
+                if !trimmed.starts_with('/') {
+                    pending_anchor = None;
+                }
                 offset += line.len();
                 continue;
             }
@@ -94,15 +97,15 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                 // use of the `example$` family. Everything else in the block is content.
                 if kind == Verbatim::Content {
                     document.includes.extend(includes(line, offset));
+                    pending_anchor = None;
                 }
-                pending_anchor = None;
                 offset += line.len();
                 continue;
             }
         }
 
+        // A line comment, like the block metadata below, leaves an anchor for the next block.
         if trimmed.starts_with("//") {
-            pending_anchor = None;
             offset += line.len();
             continue;
         }
@@ -111,7 +114,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         let inline = mask_passthroughs(line);
         let anchors = find_anchors(&inline, offset);
         let anchor_only = anchors.len() == 1
-            && anchors[0].range == SourceRange::new(offset, offset + line_content.len());
+            && anchors[0].range == SourceRange::new(offset, offset + line_content.trim_end().len());
         for mut anchor in anchors {
             anchor.conditional = conditional;
             if anchor_only {
@@ -129,18 +132,29 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                 });
                 pending_anchor = None;
             } else {
+                // An anchor before the heading wins over one ending its line.
+                let (title, id) = match pending_anchor.take() {
+                    Some(id) => (heading.title, Some(id)),
+                    None => trailing_anchor(heading.title)
+                        .map_or((heading.title, None), |(title, id)| {
+                            (title, Some(id.to_owned()))
+                        }),
+                };
+                let selection_start = heading.selection_range.start;
                 document.sections.push(Section {
                     level: heading.marker_level.saturating_sub(1),
-                    title: heading.title.to_owned(),
-                    id: pending_anchor.take(),
+                    title: title.to_owned(),
+                    id,
                     range: heading.range,
-                    selection_range: heading.selection_range,
+                    selection_range: SourceRange::new(
+                        selection_start,
+                        selection_start + title.len(),
+                    ),
                 });
             }
         } else if let Some(attribute) = parse_attribute(line, offset) {
             document.attributes.push(attribute);
-            pending_anchor = None;
-        } else if !trimmed.is_empty() && !anchor_only {
+        } else if !trimmed.is_empty() && !anchor_only && !is_block_metadata(trimmed) {
             pending_anchor = None;
         }
 
@@ -239,6 +253,85 @@ image::diagram.png[Architecture]\n";
         assert_eq!(document.includes[0].target, "partials/setup.adoc");
         assert_eq!(document.images[0].target, "diagram.png");
         assert!(document.diagnostics.is_empty());
+    }
+
+    fn section_ids_and_titles(source: &str) -> Vec<(Option<String>, String)> {
+        parse("file:///doc.adoc", source)
+            .document
+            .sections
+            .into_iter()
+            .map(|section| (section.id, section.title))
+            .collect()
+    }
+
+    fn section(id: Option<&str>, title: &str) -> (Option<String>, String) {
+        (id.map(str::to_owned), title.to_owned())
+    }
+
+    /// An anchor reaches its section past block attribute lines, block titles, comments,
+    /// attribute entries and blank lines, as Asciidoctor carries block metadata (#527).
+    #[test]
+    fn an_anchor_reaches_its_section_past_metadata() {
+        let source = "[[app-a]]\n[appendix]\n== Appendix A\n\n[[trail]] \n== Trailing\n\n\
+                      [[c]]\n// note\n== Commented\n\n[[x1]]\n.Block title\n[.role]\n== Mixed\n\n\
+                      [[attr]]\n:foo: bar\n== After Attr\n\n[[c2]]\n////\nblock comment\n////\n== After Block Comment\n\n\
+                      [[blank]]\n\n== After Blank\n";
+        assert_eq!(
+            section_ids_and_titles(source),
+            [
+                section(Some("app-a"), "Appendix A"),
+                section(Some("trail"), "Trailing"),
+                section(Some("c"), "Commented"),
+                section(Some("x1"), "Mixed"),
+                section(Some("attr"), "After Attr"),
+                section(Some("c2"), "After Block Comment"),
+                section(Some("blank"), "After Blank"),
+            ]
+        );
+    }
+
+    /// A block attribute line giving an id replaces an anchor before it; content clears it.
+    #[test]
+    fn a_later_block_id_replaces_an_anchor_and_content_clears_it() {
+        assert_eq!(
+            section_ids_and_titles("[[a1]]\n[#b1]\n== Replaced\n\n[[gone]]\nText.\n== Plain\n"),
+            [section(Some("b1"), "Replaced"), section(None, "Plain")]
+        );
+    }
+
+    /// A `[[id]]` ending the title line is the section's id, and leaves the title, unless an
+    /// anchor before the heading gives one (#527).
+    #[test]
+    fn a_trailing_anchor_on_a_heading_is_its_id() {
+        assert_eq!(
+            section_ids_and_titles(
+                "== Title [[custom]]\n\n== Y [[z,Ref]]\n\n[[t]]\n== X [[y]]\n\n== Not [[ok]] end\n"
+            ),
+            [
+                section(Some("custom"), "Title"),
+                section(Some("z"), "Y"),
+                section(Some("t"), "X [[y]]"),
+                section(None, "Not [[ok]] end"),
+            ]
+        );
+        let source = "== Title [[custom]]\n";
+        let section = &parse("file:///doc.adoc", source).document.sections[0];
+        assert_eq!(
+            &source[section.selection_range.start..section.selection_range.end],
+            "Title"
+        );
+    }
+
+    /// With the explicit id kept, a repeated title is numbered as Asciidoctor numbers it.
+    #[test]
+    fn a_discrete_heading_keeps_its_anchor() {
+        assert_eq!(
+            section_ids_and_titles("[[first]]\n[discrete]\n== Overview\n\n== Overview\n"),
+            [
+                section(Some("first"), "Overview"),
+                section(None, "Overview")
+            ]
+        );
     }
 
     /// A byte order mark is dropped, as Asciidoctor drops it, and every range still points

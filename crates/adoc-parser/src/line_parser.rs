@@ -96,6 +96,25 @@ fn is_anchor_id(id: &str) -> bool {
         })
 }
 
+/// The title and id of a section title ending in an anchor, `Title [[id]]` or
+/// `Title [[id,reftext]]`, which Asciidoctor takes as the section's id.
+pub(crate) fn trailing_anchor(title: &str) -> Option<(&str, &str)> {
+    let inside = title.strip_suffix("]]")?;
+    let open = inside.rfind("[[")?;
+    let before = &title[..open];
+    if !before.ends_with(' ') {
+        return None;
+    }
+    let id = inside[open + 2..].split(',').next()?;
+    is_anchor_id(id).then(|| (before.trim_end(), id))
+}
+
+/// A block attribute line or a block title, which Asciidoctor carries to the next block with
+/// any anchor before it.
+pub(crate) fn is_block_metadata(trimmed: &str) -> bool {
+    block_attribute_list(trimmed).is_some() || is_block_title(trimmed)
+}
+
 /// Whether `id` is made with an attribute reference, so it cannot be compared before the
 /// attribute is substituted.
 pub(crate) fn is_dynamic_id(id: &str) -> bool {
