@@ -81,50 +81,193 @@ fn find_matches(regex: &Regex, path: &Path, text: &str, limit: usize, out: &mut 
     }
 }
 
-impl Engine {
-    /// The text of every indexed file in `scope`, open buffers included, in path order.
-    fn searchable_files(&self, scope: Option<&Path>) -> Vec<(&Path, Cow<'_, str>)> {
-        let scope = scope.map(normalize_path);
-        let mut files: Vec<(&Path, Cow<'_, str>)> = self
-            .workspace
-            .index
-            .files()
-            .filter(|file| {
-                scope
-                    .as_ref()
-                    .is_none_or(|scope| file.path.starts_with(scope))
+/// The folders a search of all text files walks: each root, or the scope where it lies inside
+/// one.
+fn walked_folders(roots: &[PathBuf], scope: Option<&Path>) -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = roots
+        .iter()
+        .map(|root| normalize_path(root))
+        .filter_map(|root| match scope {
+            None => Some(root),
+            Some(scope) if scope.starts_with(&root) => Some(scope.to_path_buf()),
+            Some(scope) if root.starts_with(scope) => Some(root),
+            Some(_) => None,
+        })
+        .collect();
+    folders.sort();
+    folders.dedup();
+    folders
+}
+
+/// Adds to `out` every file beneath `folder`, never entering a folder named in `ignore` or a
+/// link, and stopping once `cancelled` says so.
+fn collect_files(
+    folder: &Path,
+    ignore: &[String],
+    cancelled: &dyn Fn() -> bool,
+    out: &mut Vec<PathBuf>,
+) {
+    if cancelled() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            let ignored = entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| ignore.iter().any(|ignored| ignored == name));
+            if !ignored {
+                collect_files(&entry.path(), ignore, cancelled, out);
+            }
+        } else if file_type.is_file() {
+            out.push(normalize_path(&entry.path()));
+        }
+    }
+}
+
+/// Whether `path` is a file the walk of `folders` reaches: beneath one of them, in no folder
+/// named in `ignore`, and not a link.
+fn is_walked(path: &Path, folders: &[PathBuf], ignore: &[String]) -> bool {
+    let reached = folders.iter().any(|folder| {
+        path.strip_prefix(folder).is_ok_and(|rest| {
+            rest.parent().is_none_or(|parent| {
+                parent.components().all(|component| {
+                    let component = component.as_os_str().to_string_lossy();
+                    !ignore.iter().any(|ignored| *ignored == component)
+                })
             })
-            .filter_map(|file| Some((file.path.as_path(), file.text()?)))
-            .collect();
-        files.sort_by(|left, right| left.0.cmp(right.0));
-        files
+        })
+    });
+    reached && fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file())
+}
+
+/// How much of a file is read to tell whether it is text before the rest is read.
+const TEXT_SNIFF: u64 = 8 * 1024;
+
+/// The text of the file at `path`, or `None` when it cannot be read or is binary or not UTF-8,
+/// as the engine refuses to open it. A file whose start shows it is not text is read no
+/// further.
+fn read_text_file(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    let not_text = |bytes: &[u8]| {
+        bytes.contains(&0)
+            || std::str::from_utf8(bytes).is_err_and(|error| error.error_len().is_some())
+    };
+    let mut file = fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    (&mut file).take(TEXT_SNIFF).read_to_end(&mut bytes).ok()?;
+    if not_text(&bytes) {
+        return None;
+    }
+    file.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8(bytes).ok()?;
+    (!text.contains('\0')).then_some(text)
+}
+
+impl Engine {
+    /// The text of every file `request` searches, open buffers included, in path order: the
+    /// indexed files in its scope, or every text file the engine can open there for a search
+    /// of all text files. With `selected`, a search of all text files reads only the selected
+    /// files.
+    fn searchable_files(
+        &self,
+        request: &SearchRequest,
+        selected: Option<&[(PathBuf, SourceRange)]>,
+    ) -> Vec<(PathBuf, Cow<'_, str>)> {
+        let scope = request.scope.as_deref().map(normalize_path);
+        if !request.all_text_files {
+            let mut files: Vec<(PathBuf, Cow<'_, str>)> = self
+                .workspace
+                .index
+                .files()
+                .filter(|file| {
+                    scope
+                        .as_ref()
+                        .is_none_or(|scope| file.path.starts_with(scope))
+                })
+                .filter_map(|file| Some((file.path.clone(), file.text()?)))
+                .collect();
+            files.sort_by(|left, right| left.0.cmp(&right.0));
+            return files;
+        }
+        let ignore = &self.settings.workspace.ignore;
+        let folders = walked_folders(&self.roots, scope.as_deref());
+        let mut paths: Vec<PathBuf> = match selected {
+            Some(selected) => selected
+                .iter()
+                .map(|(path, _)| normalize_path(path))
+                .filter(|path| is_walked(path, &folders, ignore))
+                .collect(),
+            None => {
+                let mut paths = Vec::new();
+                for folder in &folders {
+                    collect_files(folder, ignore, &|| false, &mut paths);
+                }
+                paths
+            }
+        };
+        paths.sort();
+        paths.dedup();
+        paths
+            .into_iter()
+            .filter_map(|path| {
+                let text = match self.document_for_path(&path) {
+                    Some(id) => self.documents[&id].text.to_string(),
+                    None => self.read_text(&path).ok()?,
+                };
+                Some((path, Cow::Owned(text)))
+            })
+            .collect()
     }
 
     /// Starts a workspace search on a worker thread, which reads the files there: an open
     /// page's buffer, else the file. Results arrive as `SearchResults` events, applied by
     /// [`Engine::pump`], in batches with `done: false` and then one with `done: true`. It stops
     /// at [`SEARCH_MATCH_LIMIT`] matches, saying `limited`, and as soon as another search
-    /// starts.
+    /// starts. A search of all text files walks the roots on the worker too.
     pub fn search(&mut self, request: SearchRequest) -> Result<SearchId, EngineError> {
         let regex = build_regex(&request)?;
         let scope = request.scope.as_deref().map(normalize_path);
-        let open: BTreeMap<&Path, String> = self
+        let all_text_files = request.all_text_files;
+        let mut open: BTreeMap<PathBuf, String> = self
             .documents
             .values()
-            .filter(|document| document.indexed())
-            .map(|document| (document.path.as_path(), document.text.to_string()))
-            .collect();
-        let mut files: Vec<(PathBuf, Option<String>)> = self
-            .workspace
-            .index
-            .files()
-            .filter(|file| {
-                scope
-                    .as_ref()
-                    .is_none_or(|scope| file.path.starts_with(scope))
+            .filter(|document| {
+                if all_text_files {
+                    !document.untitled
+                } else {
+                    document.indexed()
+                }
             })
-            .map(|file| (file.path.clone(), open.get(file.path.as_path()).cloned()))
+            .map(|document| (document.path.clone(), document.text.to_string()))
             .collect();
+        // Either the files to search, or the folders to walk for them.
+        let (mut files, walk): (Vec<(PathBuf, Option<String>)>, _) = if all_text_files {
+            let folders = walked_folders(&self.roots, scope.as_deref());
+            (
+                Vec::new(),
+                Some((folders, self.settings.workspace.ignore.clone())),
+            )
+        } else {
+            let files = self
+                .workspace
+                .index
+                .files()
+                .filter(|file| {
+                    scope
+                        .as_ref()
+                        .is_none_or(|scope| file.path.starts_with(scope))
+                })
+                .map(|file| (file.path.clone(), open.remove(&file.path)))
+                .collect();
+            (files, None)
+        };
         files.sort_by(|left, right| left.0.cmp(&right.0));
         let id = SearchId(self.next_search);
         self.next_search += 1;
@@ -143,11 +286,30 @@ impl Engine {
             let mut batch = Vec::new();
             let mut found = 0;
             let mut sent = Instant::now();
+            let cancelled = || latest.load(Ordering::Relaxed) != id.get();
+            let read: fn(&Path) -> Option<String> = if let Some((folders, ignore)) = walk {
+                let mut paths = Vec::new();
+                for folder in &folders {
+                    collect_files(folder, &ignore, &cancelled, &mut paths);
+                }
+                paths.sort();
+                paths.dedup();
+                files = paths
+                    .into_iter()
+                    .map(|path| {
+                        let text = open.remove(&path);
+                        (path, text)
+                    })
+                    .collect();
+                read_text_file
+            } else {
+                |path| fs::read_to_string(path).ok()
+            };
             for (path, text) in files {
-                if latest.load(Ordering::Relaxed) != id.get() {
+                if cancelled() {
                     break;
                 }
-                let Some(text) = text.or_else(|| fs::read_to_string(&path).ok()) else {
+                let Some(text) = text.or_else(|| read(&path)) else {
                     continue;
                 };
                 let before = batch.len();
@@ -216,7 +378,7 @@ impl Engine {
     ) -> Result<EditPreview, EngineError> {
         let regex = build_regex(request)?;
         let mut edits = Vec::new();
-        for (path, text) in self.searchable_files(request.scope.as_deref()) {
+        for (path, text) in self.searchable_files(request, selected) {
             let mut file_edits = Vec::new();
             for captures in regex.captures_iter(&text) {
                 let Some(found) = captures.get(0).filter(|found| !found.is_empty()) else {
@@ -225,7 +387,7 @@ impl Engine {
                 let range = SourceRange::new(found.start(), found.end());
                 if selected.is_some_and(|selected| {
                     !selected.iter().any(|(selected_path, selected_range)| {
-                        normalize_path(selected_path) == *path && *selected_range == range
+                        normalize_path(selected_path) == path && *selected_range == range
                     })
                 }) {
                     continue;
@@ -240,7 +402,7 @@ impl Engine {
             }
             if !file_edits.is_empty() {
                 edits.push(FileEdits {
-                    path: path.to_path_buf(),
+                    path,
                     edits: file_edits,
                     base: text.into_owned(),
                 });
@@ -1000,5 +1162,29 @@ mod tests {
             ..SearchRequest::default()
         })
         .is_err());
+    }
+
+    #[test]
+    fn reads_only_text_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = directory.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            read_text_file(&path)
+        };
+        assert_eq!(file("plain.txt", b"text\n").as_deref(), Some("text\n"));
+        assert_eq!(file("nul.bin", b"te\0xt"), None);
+        assert_eq!(file("latin1.txt", b"\xe9t\xe9"), None);
+        // A character cut in two at the end of the start read is still text.
+        let mut split = "a".repeat(TEXT_SNIFF as usize - 1).into_bytes();
+        split.extend_from_slice("é".as_bytes());
+        assert!(file("split.txt", &split).is_some());
+        // What only the rest of the file shows is found once it is read.
+        let mut late = "a".repeat(TEXT_SNIFF as usize + 10).into_bytes();
+        late.push(0xff);
+        assert_eq!(file("late.txt", &late), None);
+        late.pop();
+        late.push(0);
+        assert_eq!(file("late-nul.txt", &late), None);
     }
 }

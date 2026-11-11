@@ -1251,3 +1251,146 @@ fn apply_preview_diagnoses_once() {
         "each page's diagnostics are updated once"
     );
 }
+
+/// A component with the word `needle` in its page, its `antora.yml`, an example, a binary file,
+/// a file that is not UTF-8, and a folder the settings ignore.
+fn text_files_workspace() -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("docs"));
+    write_files(
+        &root,
+        &[
+            (".adocfoundry.toml", "[workspace]\nignore = [\"skipped\"]\n"),
+            ("antora.yml", "name: needle\nversion: ~\n"),
+            ("modules/ROOT/pages/index.adoc", "= A needle\n"),
+            ("modules/ROOT/examples/code.rb", "puts 'needle'\n"),
+            ("skipped/notes.txt", "a needle the settings ignore\n"),
+        ],
+    );
+    fs::create_dir_all(root.join("modules/ROOT/images")).unwrap();
+    fs::write(root.join("modules/ROOT/images/blob.bin"), b"needle\0needle").unwrap();
+    fs::write(root.join("latin1.txt"), b"needle \xe9t\xe9\n").unwrap();
+    (directory, root)
+}
+
+/// The files, relative to `root`, in which `request` finds something.
+fn found_files(engine: &mut Engine, request: SearchRequest, root: &Path) -> Vec<String> {
+    let events = engine.subscribe();
+    engine.search(request).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let mut files: Vec<String> = events
+        .try_iter()
+        .filter_map(|event| match event {
+            EngineEvent::SearchResults { results, .. } => Some(results),
+            _ => None,
+        })
+        .flatten()
+        .map(|found| relative(&found.path, root))
+        .collect();
+    files.dedup();
+    files
+}
+
+#[test]
+fn searching_all_text_files_reaches_beyond_the_index() {
+    let (_directory, root) = text_files_workspace();
+    let mut engine = open_workspace(&root);
+    let needle = |all_text_files| SearchRequest {
+        query: "needle".to_owned(),
+        all_text_files,
+        ..SearchRequest::default()
+    };
+    assert_eq!(
+        found_files(&mut engine, needle(false), &root),
+        ["modules/ROOT/pages/index.adoc"],
+        "by default only indexed pages are searched"
+    );
+    assert_eq!(
+        found_files(&mut engine, needle(true), &root),
+        [
+            "antora.yml",
+            "modules/ROOT/examples/code.rb",
+            "modules/ROOT/pages/index.adoc"
+        ],
+        "every text file, but no binary or non-UTF-8 file and nothing ignored"
+    );
+
+    // An open file's unsaved text is what is searched.
+    let example = root.join("modules/ROOT/examples/code.rb");
+    let id = engine.open(&example).unwrap();
+    engine
+        .invoke(
+            ids::EDIT_REPLACE_RANGE,
+            CommandArgs::Text {
+                id,
+                range: adoc_core::SourceRange::new(0, 13),
+                text: "puts 'thread'".to_owned(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        found_files(&mut engine, needle(true), &root),
+        ["antora.yml", "modules/ROOT/pages/index.adoc"]
+    );
+
+    // A scope narrows the walk.
+    let scoped = SearchRequest {
+        scope: Some(root.join("modules")),
+        ..needle(true)
+    };
+    assert_eq!(
+        found_files(&mut engine, scoped, &root),
+        ["modules/ROOT/pages/index.adoc"]
+    );
+}
+
+#[test]
+fn replacing_in_all_text_files_edits_what_the_engine_can_open() {
+    let (_directory, root) = text_files_workspace();
+    let mut engine = open_workspace(&root);
+    let request = serde_json::json!({ "query": "needle", "all_text_files": true });
+    let every = preview(
+        engine
+            .invoke(
+                ids::WORKSPACE_REPLACE,
+                CommandArgs::Custom(serde_json::json!({
+                    "request": request,
+                    "replacement": "pin",
+                })),
+            )
+            .unwrap(),
+    );
+    let mut files: Vec<String> = every
+        .edits
+        .iter()
+        .map(|file| relative(&file.path, &root))
+        .collect();
+    files.sort();
+    assert_eq!(
+        files,
+        [
+            "antora.yml",
+            "modules/ROOT/examples/code.rb",
+            "modules/ROOT/pages/index.adoc"
+        ]
+    );
+    engine.discard_preview(every.id);
+
+    // One selected match, in `antora.yml`.
+    let manifest = root.join("antora.yml");
+    let one = preview(
+        engine
+            .invoke(
+                ids::WORKSPACE_REPLACE,
+                CommandArgs::Custom(serde_json::json!({
+                    "request": request,
+                    "replacement": "pin",
+                    "matches": [{ "path": manifest, "start": 6, "end": 12 }],
+                })),
+            )
+            .unwrap(),
+    );
+    assert_eq!(one.edits.len(), 1);
+    apply(&mut engine, &one).unwrap();
+    assert_eq!(current_text(&engine, &manifest), "name: pin\nversion: ~\n");
+}
