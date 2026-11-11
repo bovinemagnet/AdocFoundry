@@ -5532,6 +5532,168 @@ fn following_an_image_link_shows_the_image(cx: &mut TestAppContext) {
     );
 }
 
+/// An Antora component whose page links to a PDF, a script and a program, with the window open
+/// on it and the page shown.
+fn links_workspace(
+    cx: &mut TestAppContext,
+) -> (
+    tempfile::TempDir,
+    PathBuf,
+    Entity<AppState>,
+    Entity<WorkspaceView>,
+    VisualTestContext,
+) {
+    init(cx);
+    crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow_mut().clear());
+    crate::files_view::OPENED_URLS.with(|opened| opened.borrow_mut().clear());
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    std::fs::write(root.join("antora.yml"), "name: docs\nversion: ~\n").unwrap();
+    let pages = root.join("modules/ROOT/pages");
+    let attachments = root.join("modules/ROOT/attachments");
+    std::fs::create_dir_all(&pages).unwrap();
+    std::fs::create_dir_all(&attachments).unwrap();
+    std::fs::write(
+        pages.join("index.adoc"),
+        "= Downloads\n\nxref:attachment$guide.pdf[Guide]\n\n\
+         xref:attachment$run.sh[Script]\n\nxref:attachment$setup.exe[Installer]\n",
+    )
+    .unwrap();
+    std::fs::write(attachments.join("guide.pdf"), b"%PDF-1.7\n").unwrap();
+    std::fs::write(attachments.join("run.sh"), "#!/bin/sh\necho hello\n").unwrap();
+    std::fs::write(attachments.join("setup.exe"), b"MZ\x90\x00\x03\x00\xff\xff").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view = cx
+            .new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), Vec::new(), window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| {
+        cx.update(|_, cx| !app.read(cx).engine.has_pending())
+    }));
+    open_path(
+        &workspace,
+        &pages.join("index.adoc"),
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    (directory, attachments, app, workspace, cx)
+}
+
+#[gpui::test]
+fn following_a_link_hands_the_system_only_a_pdf_of_the_workspace(cx: &mut TestAppContext) {
+    let (_directory, attachments, app, _workspace, mut cx) = links_workspace(cx);
+    let page = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let follow = |name: &str, cx: &mut VisualTestContext| {
+        let offset = cx.update(|_, cx| {
+            let engine = &app.read(cx).engine;
+            engine
+                .document(page)
+                .unwrap()
+                .text_string()
+                .find(name)
+                .unwrap()
+                + 2
+        });
+        cx.update(|window, cx| {
+            crate::workspace_view::follow_link(app.clone(), page, offset, window, cx);
+        });
+        cx.run_until_parked();
+    };
+    let opened = || crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
+
+    follow("setup.exe", &mut cx);
+    follow("run.sh", &mut cx);
+    assert!(
+        opened().is_empty(),
+        "handed to the system: {opened:?}",
+        opened = opened()
+    );
+    // The script opened as text instead.
+    let active = cx.update(|_, cx| {
+        let engine = &app.read(cx).engine;
+        engine
+            .document(engine.active().unwrap())
+            .unwrap()
+            .path
+            .clone()
+    });
+    assert!(active.ends_with("attachments/run.sh"), "{active:?}");
+
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let _ = app.invoke(ids::NAVIGATE_BACK, CommandArgs::None, cx);
+        })
+    });
+    follow("guide.pdf", &mut cx);
+    assert_eq!(
+        opened(),
+        [std::fs::canonicalize(attachments.join("guide.pdf")).unwrap()]
+    );
+}
+
+#[gpui::test]
+fn a_preview_link_opens_only_web_and_mail_addresses(cx: &mut TestAppContext) {
+    let (_directory, _attachments, app, _workspace, mut cx) = links_workspace(cx);
+    let click = |url: &str, cx: &mut VisualTestContext| {
+        let link = crate::preview::Link::Url(url.to_owned());
+        cx.update(|window, cx| crate::preview::open_link(&app, &link, window, cx));
+        cx.run_until_parked();
+    };
+    let opened = || crate::files_view::OPENED_URLS.with(|opened| opened.borrow().clone());
+    let notifications = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len())
+    };
+
+    for refused in [
+        "file:///etc/passwd",
+        "vscode://file/tmp/x",
+        "smb://server/share",
+        "ms-settings:privacy",
+        "../setup.exe",
+    ] {
+        let before = notifications(&mut cx);
+        click(refused, &mut cx);
+        assert!(opened().is_empty(), "{refused} was opened");
+        assert_eq!(notifications(&mut cx), before + 1, "{refused} said nothing");
+    }
+    click("https://example.com/", &mut cx);
+    click("mailto:someone@example.com", &mut cx);
+    assert_eq!(
+        opened(),
+        ["https://example.com/", "mailto:someone@example.com"]
+    );
+}
+
+#[gpui::test]
+fn a_preview_click_on_an_inline_image_naming_a_program_runs_nothing(cx: &mut TestAppContext) {
+    let (_directory, attachments, app, _workspace, mut cx) = links_workspace(cx);
+    let click = |path: PathBuf, cx: &mut VisualTestContext| {
+        let link = crate::preview::Link::File(path);
+        cx.update(|window, cx| crate::preview::open_link(&app, &link, window, cx));
+        cx.run_until_parked();
+    };
+    let opened = || crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
+
+    click(attachments.join("setup.exe"), &mut cx);
+    click(attachments.join("run.sh"), &mut cx);
+    assert!(
+        opened().is_empty(),
+        "handed to the system: {opened:?}",
+        opened = opened()
+    );
+
+    click(attachments.join("guide.pdf"), &mut cx);
+    assert_eq!(
+        opened(),
+        [std::fs::canonicalize(attachments.join("guide.pdf")).unwrap()]
+    );
+}
+
 #[gpui::test]
 fn diagnostics_show_the_report_and_copy_it(cx: &mut TestAppContext) {
     init(cx);

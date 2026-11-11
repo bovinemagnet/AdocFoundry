@@ -99,8 +99,27 @@ impl Engine {
             .path
             .clone();
         match self.definition(id, offset) {
-            Some(DefinitionTarget::External(path)) if is_image_path(&path) => {
-                let image = self.open_image_as(&path, OpenDisposition::Preview)?;
+            Some(DefinitionTarget::External(path)) => {
+                // Only a PDF of the workspace goes to the system; anything else opens here, an
+                // image in an image tab and text in a tab, or not at all, so a link never runs
+                // a program (#495).
+                if !is_image_path(&path) {
+                    if let Some(file) = self.system_viewer_path(&path) {
+                        return Ok(CommandOutcome::External(file));
+                    }
+                }
+                let item = self
+                    .open_item(&path, OpenDisposition::Preview)
+                    .map_err(|error| match error {
+                        EngineError::Refused(_) => EngineError::Refused(format!(
+                            "{} was not opened: a link opens images and text in AdocFoundry \
+                             and only PDFs inside the workspace in the system's viewer. Use \
+                             Open Externally in the Files panel to open it another way.",
+                            path.display()
+                        )),
+                        other => other,
+                    })?;
+                self.activate(item);
                 self.history
                     .back
                     .push(NavigationPosition { path: from, offset });
@@ -110,9 +129,8 @@ impl Engine {
                     offset: 0,
                 });
                 self.emit(EngineEvent::NavigationChanged);
-                Ok(CommandOutcome::OpenedImage(image))
+                Ok(CommandOutcome::opened(item))
             }
-            Some(DefinitionTarget::External(path)) => Ok(CommandOutcome::External(path)),
             Some(DefinitionTarget::Location(location)) => {
                 let target = self.open_as(&location.path, OpenDisposition::Preview)?;
                 self.history

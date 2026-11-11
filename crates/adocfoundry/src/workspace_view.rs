@@ -63,7 +63,8 @@ mod new_project;
 mod theme_picker;
 
 /// Follows the link at `offset` in `document`: the engine opens and activates the target, and the
-/// workspace view reacts to that. Images and attachments open in the system's default app.
+/// workspace view reacts to that. Images open in an image tab and attachments as text; the
+/// engine hands back only a PDF inside the workspace for the system's viewer.
 pub fn follow_link(
     app: Entity<AppState>,
     document: DocumentId,
@@ -83,8 +84,34 @@ pub fn follow_link(
     });
     // A failure is reported by the window, through `EngineEvent::CommandFailed`.
     if let Ok(CommandOutcome::External(path)) = outcome {
-        cx.open_with_system(&path);
+        crate::files_view::open_externally(&path, cx);
     }
+}
+
+/// Opens `url` in the system's browser or mail client when it is a web or mail address
+/// (`adoc_engine::is_web_address`); anything else (`file:`, another program's scheme, a
+/// relative address) is not opened, and a notification shows it with a button to copy it.
+pub fn open_address(url: &str, window: &mut Window, cx: &mut App) {
+    if adoc_engine::is_web_address(url) {
+        crate::files_view::open_url(url, cx);
+        return;
+    }
+    let copied = url.to_owned();
+    window.push_notification(
+        Notification::new()
+            .message(format!(
+                "Only web and mail addresses open from a page; {url} was not opened."
+            ))
+            .action(move |_, _, _| {
+                let copied = copied.clone();
+                Button::new("copy-address")
+                    .label("Copy Address")
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone()));
+                    })
+            }),
+        cx,
+    );
 }
 
 /// How long typing must pause before the outline and problems list are rebuilt.
@@ -3656,7 +3683,7 @@ impl WorkspaceView {
 
     fn on_open_on_remote(&mut self, _: &OpenOnRemote, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(url) = self.remote_link(ids::NAVIGATE_OPEN_ON_REMOTE, window, cx) {
-            cx.open_url(&url);
+            open_address(&url, window, cx);
         }
     }
 

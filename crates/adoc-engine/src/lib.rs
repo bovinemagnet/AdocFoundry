@@ -22,6 +22,7 @@ mod error;
 mod event;
 mod expansion;
 mod export;
+mod external;
 mod files;
 mod font_sets;
 mod format_table;
@@ -112,6 +113,7 @@ pub use error::EngineError;
 pub use event::EngineEvent;
 pub use expansion::{Branch, SidebarPanel, EXPANSION_SAVE_SETTLE, EXPANSION_STATE_FILE};
 pub use export::{ExportArgs, ExportDiagnostic, ExportSummary, ExportTarget};
+pub use external::{is_web_address, SYSTEM_VIEWER_EXTENSIONS, WEB_SCHEMES};
 pub use files::{DirectoryEntry, DirectoryError, EntryKind, Listing};
 pub use font_sets::{built_in_font_sets, FontSet, Fonts, DEFAULT_FONT_SET};
 #[cfg(feature = "git")]
