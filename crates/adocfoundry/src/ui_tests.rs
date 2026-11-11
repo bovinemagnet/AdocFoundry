@@ -1834,6 +1834,48 @@ fn gutter_marks_follow_hunks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn revert_change_in_visual_mode_reverts_the_change_at_the_visual_caret(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (app, workspace, mut cx) = ten_line_repository(dir.path(), cx);
+    replace_in(&app, "line 2\n", "line two\n", &mut cx);
+    replace_in(&app, "line 9\n", "line nine\n", &mut cx);
+    settle_engine(&app, &mut cx);
+    cx.simulate_keystrokes("secondary-k w");
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| app.read(cx).engine.active().unwrap());
+    let visual = cx
+        .update(|_, cx| workspace.read(cx).visual_for_test(id).cloned())
+        .expect("a visual editor");
+    // The hidden source caret stays at the top; the visual caret goes into the second change.
+    let nine = text_of(&app, id, &mut cx).find("nine").unwrap();
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.place_caret(nine, cx)));
+    cx.run_until_parked();
+
+    cx.dispatch_action(crate::editor::bindings::RevertChange);
+    cx.run_until_parked();
+    let text = text_of(&app, id, &mut cx);
+    assert!(text.contains("line two\n"), "{text}");
+    assert!(text.contains("line 9\n"), "{text}");
+}
+
+#[gpui::test]
+fn find_references_in_visual_mode_uses_the_visual_caret(cx: &mut TestAppContext) {
+    let text = "= Page\n\n== First\n\nSee <<_second>>.\n\n== Second\n\nText.\n";
+    let (_app, workspace, visual, _id, mut cx) = visual_workspace(text, cx);
+    let heading = text.find("== Second").unwrap() + 4;
+    cx.update(|_, cx| visual.update(cx, |visual, cx| visual.place_caret(heading, cx)));
+    cx.run_until_parked();
+
+    cx.dispatch_action(crate::editor::bindings::FindReferences);
+    cx.run_until_parked();
+    let rows = cx.update(|_, cx| workspace.read(cx).references_for_test(cx));
+    assert!(
+        rows.iter().any(|row| row.contains("<<_second>>")),
+        "{rows:#?}"
+    );
+}
+
+#[gpui::test]
 fn clicking_a_mark_shows_head_text_and_reverts(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let (app, workspace, mut cx) = ten_line_repository(dir.path(), cx);

@@ -3298,8 +3298,8 @@ impl WorkspaceView {
     }
 
     fn on_follow_link(&mut self, _: &FollowLink, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(editor) = self.active_editor().cloned() {
-            editor.update(cx, |editor, cx| editor.follow_link_at_caret(window, cx));
+        if let Some((id, offset)) = self.caret(window, cx) {
+            follow_link(self.app.clone(), id, offset, window, cx);
         }
     }
 
@@ -3320,7 +3320,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((id, offset)) = self.caret(cx) else {
+        let Some((id, offset)) = self.caret(window, cx) else {
             return;
         };
         if let Some(CommandOutcome::References(found)) = self.invoke(
@@ -3347,7 +3347,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((id, offset)) = self.caret(cx) else {
+        let Some((id, offset)) = self.caret(window, cx) else {
             return;
         };
         if let Some(CommandOutcome::Attribute(found)) = self.invoke(
@@ -3393,12 +3393,8 @@ impl WorkspaceView {
     }
 
     fn on_peek_include(&mut self, _: &PeekInclude, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editor) = self.active_editor().cloned() else {
+        let Some((id, offset)) = self.caret(window, cx) else {
             return;
-        };
-        let (id, offset) = {
-            let editor = editor.read(cx);
-            (editor.document(), editor.cursor(cx))
         };
         let Some(CommandOutcome::Peek { location, text }) = self.invoke(
             ids::NAVIGATE_PEEK_INCLUDE,
@@ -3461,7 +3457,7 @@ impl WorkspaceView {
 
     /// F2: renames the anchor at the caret when there is one, else the page.
     fn on_rename(&mut self, _: &RenamePage, window: &mut Window, cx: &mut Context<Self>) {
-        let anchor = self.caret(cx).and_then(|(id, offset)| {
+        let anchor = self.caret(window, cx).and_then(|(id, offset)| {
             let current = self.app.read(cx).engine.anchor_at(id, offset)?;
             Some((id, offset, current))
         });
@@ -3473,7 +3469,7 @@ impl WorkspaceView {
     }
 
     fn on_rename_anchor(&mut self, _: &RenameAnchor, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((id, offset)) = self.caret(cx) else {
+        let Some((id, offset)) = self.caret(window, cx) else {
             return;
         };
         match self.app.read(cx).engine.anchor_at(id, offset) {
@@ -3610,14 +3606,21 @@ impl WorkspaceView {
         self.invoke(ids::GIT_REFRESH, CommandArgs::None, window, cx);
     }
 
-    /// The active document and the source caret, for commands that act at the caret.
-    fn caret(&self, cx: &App) -> Option<(DocumentId, usize)> {
+    /// The active document and the caret the user is working with, for commands that act at
+    /// the caret: the visual editor's in Visual mode, or in Split mode while it has focus,
+    /// otherwise the source editor's.
+    fn caret(&self, window: &Window, cx: &App) -> Option<(DocumentId, usize)> {
         let editor = self.active_editor()?.read(cx);
-        Some((editor.document(), editor.cursor(cx)))
+        let id = editor.document();
+        let offset = match self.caret_visual(id, window, cx) {
+            Some(visual) => visual.read(cx).selection().head,
+            None => editor.cursor(cx),
+        };
+        Some((id, offset))
     }
 
     fn on_revert_change(&mut self, _: &RevertChange, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((id, offset)) = self.caret(cx) else {
+        let Some((id, offset)) = self.caret(window, cx) else {
             return;
         };
         self.invoke(
@@ -3629,7 +3632,7 @@ impl WorkspaceView {
     }
 
     fn on_format_table(&mut self, _: &FormatTable, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((id, offset)) = self.caret(cx) else {
+        let Some((id, offset)) = self.caret(window, cx) else {
             return;
         };
         self.invoke(
@@ -3659,7 +3662,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((id, offset)) = self.caret(cx) else {
+        let Some((id, offset)) = self.caret(window, cx) else {
             return;
         };
         if let Some(CommandOutcome::Location(location)) =
@@ -3706,7 +3709,7 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        let (id, offset) = self.caret(cx)?;
+        let (id, offset) = self.caret(window, cx)?;
         match self.invoke(command, CommandArgs::Offset { id, offset }, window, cx)? {
             CommandOutcome::Url(url) => Some(url),
             _ => None,

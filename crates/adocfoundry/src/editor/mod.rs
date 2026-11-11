@@ -770,12 +770,6 @@ impl SourceEditorView {
             .update(cx, |state, cx| state.insert(text.to_owned(), window, cx));
     }
 
-    /// Follows the link under the caret.
-    pub fn follow_link_at_caret(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let offset = self.cursor(cx);
-        crate::workspace_view::follow_link(self.app.clone(), self.document, offset, window, cx);
-    }
-
     /// Runs the engine's `edit.undo` or `edit.redo` for this document.
     pub fn undo(&mut self, redo: bool, cx: &mut Context<Self>) {
         let document = self.document;
