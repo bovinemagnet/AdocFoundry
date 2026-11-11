@@ -28,8 +28,9 @@ pub struct SearchView {
     whole_word: bool,
     /// Searches every text file in the roots, not only the indexed AsciiDoc files.
     all_text_files: bool,
-    /// A search has been run, so changing an option runs it again.
-    searched: bool,
+    /// The search the results listed come from, which a result's Replace acts on whatever the
+    /// query box holds since; changing an option runs a search again.
+    searched: Option<SearchRequest>,
     pending: Option<SearchId>,
     results: Vec<SearchMatch>,
     /// The search stopped at the engine's limit, with more to find.
@@ -93,7 +94,7 @@ impl SearchView {
             case_sensitive: false,
             whole_word: false,
             all_text_files: false,
-            searched: false,
+            searched: None,
             pending: None,
             results: Vec::new(),
             limited: false,
@@ -110,6 +111,14 @@ impl SearchView {
             input.set_value(query.to_owned(), window, cx)
         });
         self.search(cx);
+    }
+
+    /// Types `query` into the query box without searching.
+    #[cfg(test)]
+    pub fn type_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.query.update(cx, |input, cx| {
+            input.set_value(query.to_owned(), window, cx)
+        });
     }
 
     #[cfg(test)]
@@ -164,7 +173,7 @@ impl SearchView {
         if request.query.is_empty() {
             return;
         }
-        self.searched = true;
+        self.searched = Some(request.clone());
         let result = self.app.update(cx, |app, _| app.engine.search(request));
         match result {
             Ok(id) => {
@@ -189,7 +198,7 @@ impl SearchView {
             SearchOption::AllTextFiles => &mut self.all_text_files,
         };
         *flag = checked;
-        if self.searched {
+        if self.searched.is_some() {
             self.search(cx);
         } else {
             cx.notify();
@@ -204,7 +213,15 @@ impl SearchView {
     /// applied the search runs again, since the results' ranges in the files it changed are
     /// out of date.
     fn replace(&mut self, only: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
-        let request = self.request(cx);
+        // A result is replaced as the search that found it, whatever the query box holds since;
+        // Replace All replaces what the query box asks for, previewed before anything changes.
+        let request = match only {
+            Some(_) => match self.searched.clone() {
+                Some(request) => request,
+                None => return,
+            },
+            None => self.request(cx),
+        };
         if request.query.is_empty() {
             return;
         }
