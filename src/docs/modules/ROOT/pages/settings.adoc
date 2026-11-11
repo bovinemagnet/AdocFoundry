@@ -434,7 +434,7 @@ These settings never affect PDF export (`pdf.theme`), HTML or the Antora site.
 |`history.diagram_cache_days`
 |positive integer
 |`30`
-|Rendered diagrams and formulas not read for this many days are removed from the workspace's cache, `.cache/adocfoundry/diagrams`, when the workspace opens. Those the open window is showing are kept. See xref:preview.adoc#diagrams[Diagrams].
+|Rendered diagrams and formulas not read for this many days are removed from the workspace's cache, `.cache/adocfoundry/diagrams`, when the workspace opens. Those the open window is showing are kept. See xref:preview.adoc#_diagrams[Diagrams].
 
 |`spelling.enabled`
 |boolean
