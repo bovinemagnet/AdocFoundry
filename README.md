@@ -13,7 +13,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - Opens a folder and discovers every `antora.yml` beneath it, so several components and versions live in one workspace. Plain AsciiDoc folders work too, with relative-path resolution.
 - Resolves Antora resource IDs in all five coordinates (`version@component:module:family$path`) following Antora 3.2: a component without a version means its latest version (the versionless `~` version first, then released versions above `prerelease` ones); a component without a module means its `ROOT` module.
 - Honours `:page-aliases:`: an xref to an alias resolves to the page and carries an information diagnostic suggesting the current id.
-- Re-reads `antora.yml` when it changes, and re-indexes files changed on disk. An open page with no unsaved edits follows its file, replacing only what changed, so the caret stays put and one Undo goes back; a buffer with unsaved edits is never overwritten; you are told the file changed. Saving it then asks whether to reload the file's version (Undo brings your edits back) or overwrite it with yours, rather than silently writing over the change. Saves go through a temporary file, so a failed write never leaves a truncated page.
+- Re-reads `antora.yml` when it changes, and re-indexes files changed on disk, including those changed while the workspace is being indexed. A workspace inside a folder named like an ignored one (`build`, `dist`, `target`) is watched as usual. An open file (a page, `antora.yml`, the playbook or any other) with no unsaved edits follows its file, replacing only what changed, so the caret stays put and one Undo goes back; a buffer with unsaved edits is never overwritten; you are told the file changed. Saving it then asks whether to reload the file's version (Undo brings your edits back) or overwrite it with yours, rather than silently writing over the change. Saves go through a temporary file, so a failed write never leaves a truncated page.
 
 **Sidebar**
 
@@ -91,7 +91,7 @@ The project is built in phases: (1) a source editor with Antora support and link
 - A Changes panel in the sidebar lists the changed pages and Antora resource files under the roots; clicking one opens it at its first change.
 - Branch-aware Antora versions: the status bar and the Navigation panel show the page's version and branch (`product@2.0 · main`). The playbook's content sources and each matching branch's `antora.yml`, read from the repository without checking anything out, say which branch publishes which version; an xref to a version published from another branch warns (`adoc.antora.version-not-on-branch`). Checking out another branch in the same folder re-indexes without a restart, and Open in Another Version opens the same page in another version's checkout in the workspace.
 - Toggle Blame shows who last changed each line beside the editor (`abc1234 Paul Snow, 3 days ago`, or `Not committed`), and with `blame_on_hover` resting on the gutter shows the commit's summary too. Open on Remote and Copy Remote Link give the caret's line on GitHub, GitLab, Bitbucket or Azure DevOps (self-hosted sites named under `[git.hosts]`).
-- Staging and committing from the Changes panel: a box per file stages it, Stage All stages them all, and Commit… opens a message dialog (Commit, or Commit and Push). Save and Commit saves the page, stages it and starts the message as `docs: update <title>`. The status bar shows `↑n` for commits not yet pushed. Staging follows `.gitattributes` and your line-ending settings as `git add` does and stages a link as a link; a file under a named filter such as Git LFS is refused, and needs `git add`. Pushing runs your `git` (so credential helpers and SSH keys work), never forces and never sets an upstream; everything else goes through `gix`. No merge, rebase or history: use a Git client for those (epic [#2](https://github.com/bovinemagnet/AdocFoundry/issues/2)).
+- Staging and committing from the Changes panel: a box per file stages it, Stage All stages them all, and Commit… opens a message dialog (Commit, or Commit and Push). Save and Commit saves the page, stages it and starts the message as `docs: update <title>`. The status bar shows `↑n` for commits not yet pushed. Staging follows `.gitattributes` and your line-ending settings as `git add` does and stages a link as a link; a file under a named filter such as Git LFS is refused, and needs `git add`. Pushing runs your `git` (so credential helpers and SSH keys work), never forces and never sets an upstream; so does a signed commit (`commit.gpgsign`), in the background so the window keeps working while you type a passphrase or touch a key, stopped after `[tools] commit_timeout` (120 s); everything else goes through `gix`. No merge, rebase or history: use a Git client for those (epic [#2](https://github.com/bovinemagnet/AdocFoundry/issues/2)).
 
 **PDF export**
 
@@ -200,7 +200,7 @@ Pin Preview, Detach Preview and Toggle Preview Scroll Sync are buttons on the pr
 
 ## Settings
 
-Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*`, `workspace.ignore`, `pdf.*` and `quality.*` in `.adocfoundry.toml` at its root. Saving either file applies it, in the app or in another editor while a workspace is open. Unknown keys produce a warning, never an error.
+Settings are TOML. The user file is `adocfoundry/adocfoundry.toml` in the platform configuration directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); Open Settings creates it. A workspace may override `editor.*`, `workspace.ignore`, `pdf.*` and `quality.*` in `.adocfoundry.toml` at its root. Saving either file applies it, in the app or in another editor while a workspace is open. Unknown keys produce a warning, never an error, and a file that is not valid TOML when a folder is opened is left out with a warning naming its line, so the folder still opens and the file can be fixed.
 
 ```toml
 [editor]
@@ -242,6 +242,7 @@ d2 = ""                          # discovered on PATH if empty
 diagram_timeout = 30             # seconds a diagram may render before it is stopped
 node = ""                        # Node.js's node, beside which Build Site finds npm; npm on PATH if empty
 build_timeout = 600              # seconds a site build may run, npm install included
+commit_timeout = 120             # seconds a signed commit may wait for a passphrase or a key
 
 [templates]
 # dir = "templates"              # New Antora Project's own templates; beside this file by default

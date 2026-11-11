@@ -37,6 +37,8 @@ It checks that resources are listed in coordinate order and resumed, that naviga
 It also checks that incoming references are exact, and that outlines carry section ids.
 
 `adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula, ChildRefs, InlineLayout, QuickOpenItem, DiagnoseOpen, GraphNode, AuditFile, AuditVersion, ListResource, IndexWalk, Watch, PreviewTypeset}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
+Two `#[doc(hidden)]` hooks hold the engine's workers still: `Engine::hold_writer()` returns a `Sender<()>` and the writer waits before its next job until it is dropped, and `Engine::hold_next_index()` makes the next whole index wait, after reading the files and before reporting, until its sender is dropped.
+`renaming_a_page_waits_for_its_save_in_flight` (`tests/auto_save.rs`) and `a_page_changed_on_disk_while_the_workspace_is_indexed_is_not_lost` (`tests/workspace.rs`) use them.
 Tests that check work happens on a worker rather than the caller's thread (opening a workspace, the PDF preview) assert these counts are 0 on the test thread, rather than timing the call, so they hold however busy the machine is.
 They count only with adoc-core's `probe` feature, which the dev-dependencies of the engine, `adoc-model` and the application turn on; in a normal build `hit` does nothing.
 `tests/keystroke.rs` asserts them: `one_keystroke_parses_at_most_once`, `typing_never_hashes_the_document`, `completion_during_typing_does_not_reparse` and `only_typing_inside_something_that_completes_asks_for_completions`.
@@ -281,6 +283,8 @@ The tests are:
 The last runs on Unix only.
 It uses stand-in `node` and `npm` shell scripts named through `[tools] node` in a user settings file, and a 1 s `build_timeout`.
 It checks the log, the site path, `site_build_plan`, that `node_modules` skips `npm install`, and the timeout.
+
+Signed commits are tested the same way in `crates/adoc-engine/tests/git.rs` (Unix only): `a_signed_commit_runs_off_the_engine_thread` and `a_signed_commit_that_outlasts_its_timeout_is_stopped` use a stand-in `git` script named through `[tools] git`, and a short `commit_timeout`, in a user settings file.
 
 The unit test `steps_install_once_and_prefer_the_build_script` in `crates/adoc-engine/src/site_build.rs` checks which steps are run.
 
