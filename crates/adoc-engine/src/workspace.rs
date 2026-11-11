@@ -569,6 +569,14 @@ impl Engine {
         self.indexing > 0
     }
 
+    /// Why the last whole index failed (Antora discovery could not read a folder, or the
+    /// worker crashed), leaving the workspace unindexed, until an index succeeds. For front ends
+    /// without an event loop, which never see the `CommandFailed` event that reports it.
+    #[must_use]
+    pub fn index_failure(&self) -> Option<&str> {
+        self.index_failure.as_deref()
+    }
+
     /// Applies results from worker threads and debounced file-system changes. Returns the number
     /// applied. A front end calls this at [`Engine::next_due`] and when its waker is called
     /// ([`Engine::set_waker`]), or on a timer while [`Engine::has_pending`] is true.
@@ -663,6 +671,7 @@ impl Engine {
                     return; // A newer index, of these roots or others, replaced this one.
                 }
                 self.watched(entered.as_ref());
+                self.index_failure = None;
                 self.unreadable = unreadable.iter().map(|path| normalize_path(path)).collect();
                 if let Some(first) = unreadable.first() {
                     let more = match unreadable.len() - 1 {
@@ -841,6 +850,7 @@ impl Engine {
                 if generation != self.index_generation {
                     return;
                 }
+                self.index_failure = Some(error.clone());
                 self.emit(EngineEvent::CommandFailed {
                     command: crate::commands::ids::WORKSPACE_REINDEX,
                     error,
@@ -1433,5 +1443,33 @@ mod tests {
 
         assert!(!engine.is_indexing());
         assert!(events.try_iter().next().is_none());
+        assert_eq!(engine.index_failure(), None);
+    }
+
+    /// A front end without an event loop asks how the index ended, rather than collecting
+    /// events (#505).
+    #[test]
+    fn an_index_failure_is_kept_until_an_index_succeeds() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("page.adoc"), "= Page\n").unwrap();
+        let mut engine = Engine::new(crate::Settings::default().with_git_opt_in());
+        engine.index_generation = 1;
+        engine.workers_running = 1;
+        engine.indexing = 1;
+        engine
+            .worker_sender
+            .send(WorkerMessage::IndexFailed {
+                generation: 1,
+                error: "indexing failed: gone".to_owned(),
+            })
+            .unwrap();
+        engine.pump();
+        assert_eq!(engine.index_failure(), Some("indexing failed: gone"));
+
+        engine
+            .open_workspace(vec![directory.path().to_path_buf()])
+            .unwrap();
+        assert!(engine.wait_for_workers(Duration::from_secs(30)));
+        assert_eq!(engine.index_failure(), None);
     }
 }

@@ -246,10 +246,29 @@ impl Engine {
     }
 
     /// Every diagnostic in the workspace, of files beneath `scope` when given, with paths
-    /// relative to `root`.
+    /// relative to `root`, in order of path. A folder or file the last whole index could not
+    /// read is an error, `adoc.unreadable`, as nothing in it was checked.
     #[must_use]
     pub fn check_report(&self, root: &Path, scope: Option<&Path>) -> Vec<CheckEntry> {
         let mut entries = Vec::new();
+        for path in &self.unreadable {
+            if scope.is_some_and(|scope| !path.starts_with(scope) && !scope.starts_with(path)) {
+                continue;
+            }
+            entries.push((
+                path.clone(),
+                CheckEntry {
+                    path: display_path(path, root),
+                    range: CheckRange { start: 0, end: 0 },
+                    line: 1,
+                    column: 1,
+                    severity: severity_name(DiagnosticSeverity::Error),
+                    code: "adoc.unreadable",
+                    message: "Could not be read, so nothing in it was checked".to_owned(),
+                    level: DiagnosticSeverity::Error,
+                },
+            ));
+        }
         for (path, diagnostics) in self.workspace_diagnostics() {
             if scope.is_some_and(|scope| !path.starts_with(scope)) {
                 continue;
@@ -264,22 +283,27 @@ impl Engine {
             let lines = LineIndex::new(&text);
             for diagnostic in diagnostics {
                 let (line, column) = lines.line_column(diagnostic.range.start);
-                entries.push(CheckEntry {
-                    path: display_path(&path, root),
-                    range: CheckRange {
-                        start: diagnostic.range.start,
-                        end: diagnostic.range.end,
+                entries.push((
+                    path.clone(),
+                    CheckEntry {
+                        path: display_path(&path, root),
+                        range: CheckRange {
+                            start: diagnostic.range.start,
+                            end: diagnostic.range.end,
+                        },
+                        line: line + 1,
+                        column: column + 1,
+                        severity: severity_name(diagnostic.severity),
+                        code: diagnostic.code.as_str(),
+                        message: diagnostic.message,
+                        level: diagnostic.severity,
                     },
-                    line: line + 1,
-                    column: column + 1,
-                    severity: severity_name(diagnostic.severity),
-                    code: diagnostic.code.as_str(),
-                    message: diagnostic.message,
-                    level: diagnostic.severity,
-                });
+                ));
             }
         }
-        entries
+        // Stable, so each file's diagnostics stay in the order of their places.
+        entries.sort_by(|(one, _), (other, _)| one.cmp(other));
+        entries.into_iter().map(|(_, entry)| entry).collect()
     }
 }
 

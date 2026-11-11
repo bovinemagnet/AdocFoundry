@@ -554,6 +554,10 @@ fn open_engine_with(root: &Path, settings: Settings) -> Result<Engine, String> {
     if !engine.wait_for_workers(INDEX_TIMEOUT) {
         return Err("indexing did not finish".to_owned());
     }
+    // A workspace that could not be indexed has nothing to report, which is not a pass.
+    if let Some(error) = engine.index_failure() {
+        return Err(error.to_owned());
+    }
     Ok(engine)
 }
 

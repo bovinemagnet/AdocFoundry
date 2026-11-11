@@ -992,3 +992,68 @@ fn follow_prints_an_image_target() {
     );
     assert_eq!(stdout(&output).trim(), "external media/present.svg");
 }
+
+/// What could not be read was not checked, so `check` says so rather than passing it in
+/// silence: a folder the index left out is an error in the report, and an index that failed
+/// is a runtime error (#505).
+#[cfg(unix)]
+#[test]
+fn check_reports_what_it_could_not_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    copy_tree(
+        &repository_root().join("tests/fixtures/antora-broken-references"),
+        &root,
+    );
+    let notes = root.join("notes");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(notes.join("note.adoc"), "= Note\n\nxref:nope.adoc[]\n").unwrap();
+    let lock = |folder: &Path, mode| {
+        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    let check = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+            .current_dir(directory.path())
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+
+    lock(&notes, 0o000);
+    let readable = std::fs::read_dir(&notes).is_ok();
+    let text = check(&["check", "docs"]);
+    let json = check(&["check", "docs", "--format", "json"]);
+    lock(&notes, 0o755);
+    if readable {
+        // Running with the rights to read anything (as root), so nothing is unreadable.
+        return;
+    }
+    assert_eq!(text.status.code(), Some(1), "an error by default");
+    assert!(
+        stdout(&text)
+            .lines()
+            .any(|line| line.starts_with("notes:1:1: error adoc.unreadable ")),
+        "{}",
+        stdout(&text)
+    );
+    let entries: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert!(
+        entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "notes" && entry["code"] == "adoc.unreadable"),
+        "{entries}"
+    );
+
+    // A module's family folder that cannot be read fails Antora discovery, and the index.
+    let pages = root.join("modules/ROOT/pages");
+    lock(&pages, 0o000);
+    let failed = check(&["check", "docs"]);
+    lock(&pages, 0o755);
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert_eq!(failed.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("indexing failed"), "{stderr}");
+}
