@@ -273,6 +273,28 @@ pub fn open_main_window(
     }
 }
 
+/// Opens `paths`, handed over by the system while the app runs, in the main window: a folder
+/// as the workspace, and files in tabs, opening the workspace they belong to when none is open.
+/// With the main window gone, as macOS allows, opens one for them.
+pub fn open_paths(app: &Entity<AppState>, paths: Vec<PathBuf>, cx: &mut App) {
+    if paths.is_empty() {
+        return;
+    }
+    let main = app
+        .read(cx)
+        .main
+        .as_ref()
+        .and_then(|(handle, workspace)| Some((*handle, workspace.upgrade()?)));
+    let Some((handle, workspace)) = main else {
+        let launch = adoc_engine::launch_targets(paths);
+        return open_main_window(app.clone(), launch.folder, launch.files, cx);
+    };
+    let _ = handle.update(cx, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| workspace.open_paths(paths, window, cx));
+        window.activate_window();
+    });
+}
+
 /// The actions that belong to the app rather than a window: Quit, from any window, the
 /// keymap, the palette or a menu; on macOS, hiding, and the app menu in the menu bar.
 pub fn bind_app_actions(app: &Entity<AppState>, cx: &mut App) {

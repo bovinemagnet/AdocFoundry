@@ -71,6 +71,7 @@ pub struct PreviewView {
     /// Focused by a click on the PDF pages, so the zoom keys reach them.
     focus_handle: gpui::FocusHandle,
     _subscription: Subscription,
+    _release: Subscription,
 }
 
 impl PreviewView {
@@ -110,6 +111,8 @@ impl PreviewView {
             pdf: pdf::PdfPages::default(),
             focus_handle: cx.focus_handle(),
             _subscription: subscription,
+            // The GPU keeps the PDF pages drawn until told to let them go.
+            _release: cx.on_release(|this, cx| this.pdf.release(cx)),
         };
         view.refresh(cx);
         view
@@ -223,10 +226,10 @@ impl PreviewView {
         (self.pdf.zoom, self.pdf.scale())
     }
 
-    /// The PDF pages drawn sharper for the zoom, and the scale of each.
+    /// The PDF pages drawn, and the scale of each.
     #[cfg(test)]
-    pub fn pdf_sharp_pages(&self) -> Vec<(usize, f32)> {
-        self.pdf.sharp_pages()
+    pub fn pdf_drawn_pages(&self) -> Vec<(usize, f32)> {
+        self.pdf.drawn_pages()
     }
 
     /// Zooms the PDF pages, as the zoom keys, menus and palette do (#420).

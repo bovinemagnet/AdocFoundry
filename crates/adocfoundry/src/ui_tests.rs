@@ -2009,6 +2009,37 @@ fn changes_panel_lists_changed_adoc_files_only(cx: &mut TestAppContext) {
     );
 }
 
+/// Issue #502: a changed page clicked in the Changes panel opens, once, with the caret on its
+/// first change.
+#[gpui::test]
+fn a_change_opens_its_page_at_the_first_change(cx: &mut TestAppContext) {
+    init(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let test = adoc_git::testing::TestRepo::init(dir.path());
+    test.write("page.adoc", "= Page\n\nOne.\n\nTwo.\n");
+    test.commit_all("first");
+    test.write("page.adoc", "= Page\n\nOne.\n\nTwo, changed.\n");
+    let mut engine = Engine::new(Settings::default());
+    engine
+        .open_workspace(vec![dir.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    settle_engine(&app, &mut cx);
+    let page = dir.path().join("page.adoc");
+    cx.update(|window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_first_change(&page, window, cx)
+        })
+    });
+    cx.run_until_parked();
+    let editor = cx.update(|_, cx| workspace.read(cx).active_editor_for_test().unwrap().clone());
+    let caret = cx.update(|_, cx| editor.read(cx).cursor(cx));
+    assert_eq!(caret, "= Page\n\nOne.\n\n".len());
+    assert_eq!(cx.update(|_, cx| app.read(cx).engine.tab_order().len()), 1);
+}
+
 #[gpui::test]
 fn blame_column_toggles_and_hover_shows_the_commit(cx: &mut TestAppContext) {
     init(cx);
@@ -5002,6 +5033,42 @@ fn reveal_in_files_opens_the_way_to_the_active_page(cx: &mut TestAppContext) {
         focused,
         "the editor keeps focus"
     );
+}
+
+/// A reveal that can never finish, here of a file beneath a linked folder, is given up once
+/// the folders above it are listed, so it does not take the selection back on every rebuild.
+#[cfg(unix)]
+#[gpui::test]
+fn an_unfinishable_reveal_leaves_the_selection_alone(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, files, mut cx) = files_workspace(cx);
+    std::os::unix::fs::symlink(root.join("docs"), root.join("linked")).unwrap();
+    cx.update(|_, cx| files.update(cx, |files, cx| files.refresh(cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx).contains(&"  linked →".to_owned())
+    }));
+    let beneath = root.join("linked/modules/ROOT/pages/index.adoc");
+    // Each folder listed again is a rebuild of the tree.
+    let settle = |cx: &mut VisualTestContext| {
+        for _ in 0..40 {
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    cx.update(|_, cx| files.update(cx, |files, cx| files.reveal(&beneath, cx)));
+    settle(&mut cx);
+    let selected =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| files.read(cx).selected_for_test(cx));
+    // The nearest row, the link, is selected once, and the reveal given up.
+    assert_eq!(selected(&mut cx), Some(root.join("linked")));
+    assert!(!cx.update(|_, cx| files.read(cx).reveal_pending_for_test()));
+
+    click_files_row(&files, "blob.bin", 1, &mut cx);
+    assert_eq!(selected(&mut cx), Some(root.join("blob.bin")));
+    // Listing the folders again rebuilds the tree; the user's selection stays.
+    cx.update(|_, cx| files.update(cx, |files, cx| files.refresh(cx)));
+    settle(&mut cx);
+    assert_eq!(selected(&mut cx), Some(root.join("blob.bin")));
 }
 
 #[gpui::test]
@@ -9276,6 +9343,56 @@ fn as_main_window(
     crate::app::QUIT_ASKED.with(|asked| asked.set(false));
 }
 
+/// A file the system hands over (Finder's open event on macOS) opens in a tab of the main
+/// window, with the workspace it belongs to when none is open; a second keeps that workspace.
+#[gpui::test]
+fn files_handed_over_by_the_system_open_in_the_main_window(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let pages = root.join("docs/modules/ROOT/pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    std::fs::write(root.join("antora-playbook.yml"), "site:\n  title: Docs\n").unwrap();
+    std::fs::write(root.join("docs/antora.yml"), "name: docs\nversion: ~\n").unwrap();
+    std::fs::write(pages.join("index.adoc"), "= Index\n").unwrap();
+    std::fs::write(pages.join("guide.adoc"), "= Guide\n").unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    let open = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let engine = &app.read(cx).engine;
+            let paths: Vec<PathBuf> = engine
+                .documents()
+                .map(|document| document.path.clone())
+                .collect();
+            (engine.roots().to_vec(), paths)
+        })
+    };
+
+    let url = format!("file://{}", pages.join("index.adoc").display());
+    let path = adoc_engine::file_url_path(&url).unwrap();
+    cx.cx
+        .update(|cx| crate::app::open_paths(&app, vec![path], cx));
+    cx.run_until_parked();
+    assert_eq!(
+        open(&mut cx),
+        (vec![root.clone()], vec![pages.join("index.adoc")])
+    );
+
+    cx.cx
+        .update(|cx| crate::app::open_paths(&app, vec![pages.join("guide.adoc")], cx));
+    cx.run_until_parked();
+    let (roots, mut paths) = open(&mut cx);
+    paths.sort();
+    assert_eq!(roots, vec![root]);
+    assert_eq!(
+        paths,
+        vec![pages.join("guide.adoc"), pages.join("index.adoc")]
+    );
+}
+
 fn quit_asked() -> bool {
     crate::app::QUIT_ASKED.with(std::cell::Cell::get)
 }
@@ -9331,6 +9448,68 @@ fn quit_can_discard_unsaved_pages(cx: &mut TestAppContext) {
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
     // Closed without saving, so recovery has nothing to offer back.
     assert_eq!(unsaved(&app, &mut cx), 0);
+}
+
+/// Quit, Don't Save: the session written before the pages close keeps their tabs, and the
+/// app's quitting afterwards does not write it again with none.
+#[gpui::test]
+fn quit_without_saving_keeps_the_session_s_tabs(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&pages.path().join("page.adoc"));
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::Quit);
+    cx.run_until_parked();
+    click_selector("close-window-discard", gpui::MouseButton::Left, &mut cx);
+    assert!(quit_asked());
+    // The app quits, running its quit observers with the window still there.
+    cx.cx.quit();
+
+    let mut engine = Engine::new(settings_in(config.path()));
+    engine.enable_sessions();
+    engine.restore_session();
+    let restored: Vec<PathBuf> = engine
+        .documents()
+        .map(|document| document.path.clone())
+        .collect();
+    assert_eq!(restored, vec![page]);
+}
+
+/// Don't Save closes pinned pages too, so their unsaved text is not kept for recovery.
+#[gpui::test]
+fn closing_without_saving_discards_pinned_pages(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&pages.path().join("page.adoc"));
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            app.invoke(ids::DOCUMENT_PIN_TAB, CommandArgs::Document(id), cx)
+                .unwrap();
+        });
+    });
+    assert!(!cx.simulate_close());
+    cx.run_until_parked();
+    click_selector("close-window-discard", gpui::MouseButton::Left, &mut cx);
+    assert!(!window_is_open(&mut cx));
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
+    // Closed, so its recovery record went with it and none is written at quitting.
+    let open = cx.cx.update(|cx| app.read(cx).engine.documents().count());
+    assert_eq!(open, 0, "no page left open");
 }
 
 /// With nothing unsaved Quit quits at once, from the workspace window or any other; with the
@@ -10644,15 +10823,15 @@ fn the_pdf_preview_zooms(cx: &mut TestAppContext) {
     let (mode, scale) = zoom(&mut cx);
     assert!(matches!(mode, PdfZoom::Scale(_)) && scale > 1.1, "{scale}");
 
-    // At 400% the pages in view are drawn again, sharper, once the zoom settles; at 100% those
-    // drawings are let go.
-    let sharp = |cx: &mut VisualTestContext| {
+    // At 400% the pages in view are drawn again, sharper, once the zoom settles; at 100% they
+    // are drawn again for that, with fewer pixels.
+    let drawn = |cx: &mut VisualTestContext| {
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(500));
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
-        cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_sharp_pages())
+        cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_drawn_pages())
     };
     workspace.update_in(&mut cx, |workspace, _, cx| {
         workspace.preview().update(cx, |preview, cx| {
@@ -10660,18 +10839,101 @@ fn the_pdf_preview_zooms(cx: &mut TestAppContext) {
         });
     });
     let scale_factor = cx.update(|window, _| window.scale_factor());
-    let drawn = sharp(&mut cx);
-    assert!(!drawn.is_empty(), "no page was drawn sharper");
-    // Sharper than the first rasterisation, about 2.4 pixels to the point, and no more than the
-    // zoom and the display ask for (or a page's pixels allow).
+    let sharp = drawn(&mut cx);
+    assert!(!sharp.is_empty(), "no page was drawn");
+    // As the zoom and the display ask for (or a page's pixels allow).
     assert!(
-        drawn
+        sharp
             .iter()
             .all(|(_, scale)| *scale > 2.5 && *scale <= 4.0 * scale_factor + 0.01),
-        "{drawn:?}"
+        "{sharp:?}"
     );
     cx.dispatch_action(crate::image_view::ActualSize);
-    assert_eq!(sharp(&mut cx), [], "let go at 100%");
+    let actual = drawn(&mut cx);
+    assert!(
+        !actual.is_empty()
+            && actual
+                .iter()
+                .all(|(_, scale)| (*scale - scale_factor).abs() < 0.01),
+        "{actual:?}"
+    );
+}
+
+/// Issue #499: of many pages only those near the view are drawn, at the scale the view needs,
+/// and closing the PDF's window lets the GPU go of them.
+#[gpui::test]
+fn the_pdf_preview_draws_only_the_pages_near_the_view(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let mut text = "= Page\n\nFirst paragraph.\n".to_owned();
+    for _ in 0..11 {
+        text.push_str("\n<<<\n\nAnother paragraph.\n");
+    }
+    std::fs::write(&page, text).unwrap();
+    let (app, workspace, mut cx) = previewing(vec![page], cx);
+    cx.dispatch_action(crate::editor::bindings::TogglePdfPreview);
+    let typeset = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .preview()
+                .read(cx)
+                .pdf_shown()
+                .and_then(|shown| shown.pages.as_ref().ok().map(Vec::len))
+                == Some(12)
+        })
+    };
+    assert!(drain_until(&app, &mut cx, typeset), "the pages are shown");
+    let drawn = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_drawn_pages())
+    };
+    let first = drawn(&mut cx);
+    let indices: Vec<usize> = first.iter().map(|(index, _)| *index).collect();
+    assert!(
+        !indices.is_empty() && indices.len() <= 3 && indices[0] == 0,
+        "only the first pages, in view: {first:?}"
+    );
+    let (_, scale) = cx.update(|_, cx| workspace.read(cx).preview().read(cx).pdf_zoom());
+    let scale_factor = cx.update(|window, _| window.scale_factor());
+    assert!(
+        first
+            .iter()
+            .all(|(_, drawn)| (drawn - scale * scale_factor).abs() < 0.01),
+        "drawn for the view, not larger: {first:?} at {scale}"
+    );
+
+    // Detached, the PDF's own window draws its pages; closing it lets them go.
+    crate::preview::pdf::RELEASED.with(|released| released.set(0));
+    let press = |selector: &'static str, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        click(selector, cx);
+    };
+    press("title-pdf-window", &mut cx);
+    let detached_drawn = |cx: &mut VisualTestContext| {
+        cx.cx.update(|cx| {
+            for window in cx.windows() {
+                let _ = window.update(cx, |_, window, cx| window.draw(cx).clear(cx));
+            }
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            workspace
+                .read(cx)
+                .detached_preview()
+                .is_some_and(|preview| !preview.read(cx).pdf_drawn_pages().is_empty())
+        })
+    };
+    assert!(drain_until(&app, &mut cx, detached_drawn));
+    press("title-pdf-window", &mut cx);
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| workspace.read(cx).detached_preview().is_none()));
+    assert!(
+        crate::preview::pdf::RELEASED.with(std::cell::Cell::get) > 0,
+        "the closed window's pages were let go"
+    );
 }
 
 /// A long page name shortens in the preview's header rather than pushing its buttons, the
@@ -10701,4 +10963,130 @@ fn the_preview_header_keeps_its_close_button_in_view(cx: &mut TestAppContext) {
     );
     click("preview-close", &mut cx);
     assert!(!cx.update(|_, cx| app.read(cx).engine.preview_layout().visible));
+}
+
+/// Issue #502: Fit Width from a menu or the palette reaches the active image, as the other zoom
+/// actions do.
+#[gpui::test]
+fn fit_width_from_the_workspace_reaches_the_image(cx: &mut TestAppContext) {
+    let (_directory, images, app, workspace, mut cx) = image_workspace(cx);
+    open_path(
+        &workspace,
+        &images.join("logo.png"),
+        adoc_engine::OpenDisposition::Persistent,
+        &mut cx,
+    );
+    image_settled(&app, &workspace, &mut cx);
+    let view = cx.update(|_, cx| workspace.read(cx).active_image_view().unwrap().clone());
+    // Focus away from the viewer, as a menu or the palette leaves it.
+    cx.update(|window, cx| {
+        let focus = gpui::Focusable::focus_handle(workspace.read(cx), cx);
+        window.focus(&focus, cx);
+    });
+    cx.dispatch_action(crate::image_view::FitWidth);
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).zoom()),
+        crate::image_view::Zoom::FitWidth
+    );
+}
+
+/// Issue #502: a sidebar link dropped on a read-only editor, the mirror window's, edits nothing.
+#[gpui::test]
+fn a_link_dropped_on_a_read_only_editor_edits_nothing(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&directory.path().join("page.adoc"));
+    let other = adoc_index::normalize_path(&directory.path().join("other.adoc"));
+    std::fs::write(&page, "= Page\n\nText.\n").unwrap();
+    std::fs::write(&other, "= Other\n").unwrap();
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine
+        .open_workspace(vec![directory.path().to_path_buf()])
+        .unwrap();
+    assert!(engine.wait_for_workers(std::time::Duration::from_secs(10)));
+    let app = app_with(engine, cx);
+    let id = cx.update(|cx| app.update(cx, |app, _| app.engine.open(&page).unwrap()));
+    let linkable = cx.update(|cx| app.read(cx).engine.xref_to(id, &other, None).is_some());
+    assert!(linkable, "the page can link to the other");
+    let mut editor = None;
+    let window = cx.open_window(size(px(600.), px(400.)), |window, cx| {
+        let view = cx.new(|cx| SourceEditorView::new(app.clone(), id, true, window, cx));
+        editor = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let editor = editor.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+    let link = crate::sidebar::DraggedLink {
+        path: other,
+        section: None,
+        label: "Other".into(),
+    };
+    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.drop_link(&link, window, cx)));
+    cx.run_until_parked();
+    assert_eq!(document_text(&app, &mut cx), "= Page\n\nText.\n");
+}
+
+/// Issue #502: Cut that the engine refuses, here across a comment, leaves the clipboard as it
+/// was.
+#[gpui::test]
+fn a_refused_cut_leaves_the_clipboard_alone(cx: &mut TestAppContext) {
+    let text = "= Page\n\nFirst para\n\n// A note.\n\nSecond para\n";
+    let (app, _, visual, id, mut cx) = visual_workspace(text, cx);
+    cx.update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string("kept".to_owned())));
+    let start = text.find("para").unwrap();
+    let end = text.rfind("para").unwrap();
+    select_in_visual(&visual, start, end, &mut cx);
+    cx.dispatch_action(crate::visual::input::Cut);
+    cx.run_until_parked();
+    assert_eq!(text_of(&app, id, &mut cx), text, "refused");
+    let clipboard = cx.update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(clipboard.as_deref(), Some("kept"));
+}
+
+/// Issue #502: clicking read-only text in the visual editor again shows the one notice, not
+/// another beside it.
+#[gpui::test]
+fn clicking_read_only_text_again_shows_one_notice(cx: &mut TestAppContext) {
+    let text = "= Page\n\n[subs=none]\nSome *literal stars* here.\n";
+    let (_, _, visual, _, mut cx) = visual_workspace(text, cx);
+    draw_visual(&visual, &mut cx);
+    let notifications = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| gpui_component::WindowExt::notifications(window, cx).len())
+    };
+    let before = notifications(&mut cx);
+    // The read-only paragraph, the second node, clicked three times.
+    for _ in 0..3 {
+        cx.update(|window, cx| {
+            visual.update(cx, |visual, cx| {
+                visual.mouse_down(&[1], gpui::Point::default(), false, 1, window, cx);
+            });
+        });
+        cx.run_until_parked();
+    }
+    assert_eq!(notifications(&mut cx), before + 1);
+}
+
+/// Issue #502: a linked file's row does not offer Open Externally: where it leads is not the
+/// system's to open.
+#[cfg(unix)]
+#[gpui::test]
+fn a_linked_file_is_not_offered_to_the_system(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, files, mut cx) = files_workspace(cx);
+    std::os::unix::fs::symlink(root.join("README.md"), root.join("readme-link.md")).unwrap();
+    cx.update(|_, cx| files.update(cx, |files, cx| files.refresh(cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx).contains(&"  readme-link.md →".to_owned())
+    }));
+    crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow_mut().clear());
+    let index = files_row(&files, "readme-link.md →", &mut cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let selector: &'static str = Box::leak(format!("files-row-{index}").into_boxed_str());
+    click_selector(selector, gpui::MouseButton::Right, &mut cx);
+    // The second item: Open Externally for a file, the next one for a link.
+    cx.simulate_keystrokes("down down enter");
+    cx.run_until_parked();
+    let opened = crate::files_view::OPENED_EXTERNALLY.with(|opened| opened.borrow().clone());
+    assert!(opened.is_empty(), "{opened:?}");
 }

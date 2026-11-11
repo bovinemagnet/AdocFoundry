@@ -40,6 +40,7 @@ mod index_settle;
 mod git;
 mod inspect;
 mod language;
+mod launch;
 mod line_diff;
 mod links;
 mod local_history;
@@ -190,6 +191,7 @@ pub enum PdfStandard {
     /// PDF/UA-1: accessible.
     Ua1,
 }
+pub use launch::{file_url_path, launch_targets, workspace_for_file, LaunchTargets};
 pub use undo::{UndoEntry, UndoGroup, UndoStack, COALESCE_WINDOW};
 pub use visual::{EditorMode, VisualArgs, VisualDocument, VisualValue, MODEL_SETTLE};
 pub use workspace::WATCH_DEBOUNCE;

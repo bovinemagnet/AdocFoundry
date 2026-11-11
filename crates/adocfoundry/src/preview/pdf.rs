@@ -2,9 +2,10 @@
 //! SVG on a background task and drawn one under another at the zoom chosen (#420). A click on a
 //! page reveals the source of the line of text under it.
 //!
-//! Each page is rasterised once at [`SVG_LONG_SIDE`] pixels on its longer side, which is sharp
-//! up to about 240% of its size in points. Pages near the view are drawn again, sharper, when the
-//! zoom and the display ask for more, and those drawings are let go once the pages leave it.
+//! Only the pages near the view are drawn, at the scale the zoom and the display ask for (at
+//! most [`SHARP_PIXELS`] each); a page is drawn again when that scale changes, and let go once it
+//! leaves the view (#499). A new typesetting reuses the drawing of each page whose SVG did not
+//! change. The view lets the GPU go of every drawing when it goes.
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
@@ -20,7 +21,7 @@ use gpui_component::{
     h_flex, v_flex, ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _,
 };
 
-use crate::image_decode::{decode, svg_to_bgra, Limits, SVG_LONG_SIDE};
+use crate::image_decode::svg_to_bgra;
 
 /// Space around and between the pages, in pixels at any zoom.
 pub(crate) const PAGE_PADDING: f32 = 16.0;
@@ -36,8 +37,9 @@ const MAX_ZOOM: f32 = 4.0;
 /// The most pixels a page is drawn at for the GPU, so zooming in on a large page cannot take
 /// gigabytes: 64 MB of pixels, an A4 page at about 5.6 pixels to the point.
 const SHARP_PIXELS: f32 = 16.0 * 1024.0 * 1024.0;
-/// How long the zoom and the scroll position stay still before pages are drawn sharper.
-const SHARPEN_AFTER: Duration = Duration::from_millis(120);
+/// How long the zoom and the scroll position stay still before pages already drawn are drawn
+/// again at the new scale.
+const REDRAW_AFTER: Duration = Duration::from_millis(120);
 
 /// How the pages are scaled.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -52,6 +54,7 @@ pub enum PdfZoom {
 }
 
 /// A page drawn for the GPU, at `scale` pixels to the point.
+#[derive(Clone)]
 struct Drawn {
     image: Arc<RenderImage>,
     scale: f32,
@@ -60,22 +63,20 @@ struct Drawn {
 /// The PDF pages on screen and those being rasterised.
 #[derive(Default)]
 pub(crate) struct PdfPages {
-    /// The typeset preview the images show.
+    /// The typeset preview the pages show.
     pub(crate) shown: Option<Arc<PdfPreview>>,
-    /// Each page as first rasterised.
-    images: Vec<Drawn>,
-    /// Pages near the view drawn sharper than their first rasterisation, by index.
-    sharp: HashMap<usize, Drawn>,
+    /// The pages near the view, drawn, by index.
+    drawn: HashMap<usize, Drawn>,
     generation: u64,
-    _rasterising: Option<Task<()>>,
-    /// The sharper drawings asked for, and the task making them.
-    sharpening: Vec<(usize, f32)>,
-    _sharpening: Option<Task<()>>,
+    _typeset: Option<Task<()>>,
+    /// The drawings asked for, and the task making them.
+    drawing: Vec<(usize, f32)>,
+    _drawing: Option<Task<()>>,
+    /// The display's pixels to a pixel of the view, as last drawn.
+    display: Option<f32>,
     pub(crate) zoom: PdfZoom,
     pub(crate) scroll: ScrollHandle,
 }
-
-type Rasterised = Result<Vec<Drawn>, String>;
 
 /// The key context of the PDF preview, where the zoom keys work.
 pub const PDF_CONTEXT: &str = "PdfPreview";
@@ -96,7 +97,8 @@ pub(crate) enum Focus {
 }
 
 impl PdfPages {
-    /// Rasterises `latest` on a background task, unless it is already shown; `finish` shows it.
+    /// Draws the pages of `latest` near the view on a background task, unless it is already
+    /// shown, reusing the drawing of each page whose SVG did not change; `finish` shows it.
     pub(crate) fn update<V: 'static>(
         &mut self,
         latest: Option<Arc<PdfPreview>>,
@@ -114,20 +116,40 @@ impl PdfPages {
         self.generation += 1;
         let generation = self.generation;
         let Some(latest) = latest else {
-            self.show(None, Ok(Vec::new()), cx);
+            self.show(None, HashMap::new(), cx);
             return;
         };
-        let pages: Vec<String> = match &latest.pages {
-            Ok(pages) => pages.iter().map(|page| page.svg.clone()).collect(),
-            Err(_) => Vec::new(),
+        let Ok(pages) = &latest.pages else {
+            self.show(Some(latest), HashMap::new(), cx);
+            return;
         };
-        let task = cx.background_spawn(async move { rasterise(&pages) });
-        self._rasterising = Some(cx.spawn(async move |this, cx| {
-            let images = task.await;
+        // The pages in view are shown whole when the new ones are: drawn here, not after.
+        let scale = scale_of(self.zoom, self.viewport(), pages);
+        let wanted = scale * self.display.unwrap_or(1.0);
+        let mut kept = HashMap::new();
+        let mut jobs = Vec::new();
+        for index in self.near(pages, scale) {
+            let page = &pages[index];
+            let target = draw_scale(page, wanted);
+            let unchanged = self
+                .pages()
+                .get(index)
+                .is_some_and(|old| old.svg == page.svg);
+            match self.drawn.get(&index) {
+                Some(drawn) if unchanged && same_scale(drawn.scale, target) => {
+                    kept.insert(index, drawn.clone());
+                }
+                _ => jobs.push((index, page.svg.clone(), target)),
+            }
+        }
+        let task = cx.background_spawn(async move { draw(jobs) });
+        self._typeset = Some(cx.spawn(async move |this, cx| {
+            let drawn = task.await;
             let _ = this.update(cx, |view, cx| {
                 let pages = finish(view);
                 if pages.generation == generation {
-                    pages.show(Some(latest), images, cx);
+                    kept.extend(drawn);
+                    pages.show(Some(latest), kept, cx);
                 }
             });
         }));
@@ -136,21 +158,38 @@ impl PdfPages {
     fn show<V: 'static>(
         &mut self,
         preview: Option<Arc<PdfPreview>>,
-        images: Rasterised,
+        drawn: HashMap<usize, Drawn>,
         cx: &mut Context<V>,
     ) {
-        let images = images.unwrap_or_default();
-        for old in std::mem::replace(&mut self.images, images) {
-            cx.drop_image(old.image, None);
+        for (index, old) in std::mem::replace(&mut self.drawn, drawn) {
+            let kept = self
+                .drawn
+                .get(&index)
+                .is_some_and(|new| Arc::ptr_eq(&new.image, &old.image));
+            if !kept {
+                cx.drop_image(old.image, None);
+            }
         }
-        // Drawn from the pages replaced; the next frame asks for the new ones.
-        for (_, old) in self.sharp.drain() {
-            cx.drop_image(old.image, None);
-        }
-        self.sharpening.clear();
-        self._sharpening = None;
+        self.drawing.clear();
+        self._drawing = None;
         self.shown = preview;
         cx.notify();
+    }
+
+    /// Lets the GPU go of every page drawn, as the view showing them goes.
+    pub(crate) fn release(&mut self, cx: &mut gpui::App) {
+        #[cfg(test)]
+        RELEASED.with(|released| released.set(released.get() + self.drawn.len()));
+        for (_, drawn) in self.drawn.drain() {
+            cx.drop_image(drawn.image, None);
+        }
+    }
+
+    /// The pages of `pages` near the view at `scale`.
+    fn near(&self, pages: &[PreviewPage], scale: f32) -> Vec<usize> {
+        let (_, height) = self.viewport();
+        let top = -f32::from(self.scroll.offset().y);
+        near_pages(pages, scale, top, height)
     }
 
     /// The pages shown, if they were typeset.
@@ -172,16 +211,16 @@ impl PdfPages {
         scale_of(self.zoom, self.viewport(), self.pages())
     }
 
-    /// The pages drawn sharper than their first rasterisation, and the scale of each.
+    /// The pages drawn, and the scale of each.
     #[cfg(test)]
-    pub(crate) fn sharp_pages(&self) -> Vec<(usize, f32)> {
-        let mut sharp: Vec<_> = self
-            .sharp
+    pub(crate) fn drawn_pages(&self) -> Vec<(usize, f32)> {
+        let mut drawn: Vec<_> = self
+            .drawn
             .iter()
             .map(|(index, drawn)| (*index, drawn.scale))
             .collect();
-        sharp.sort_by_key(|(index, _)| *index);
-        sharp
+        drawn.sort_by_key(|(index, _)| *index);
+        drawn
     }
 
     /// The scale as a percentage, as the toolbar shows it.
@@ -237,9 +276,10 @@ impl PdfPages {
         self.set_zoom(PdfZoom::Scale(scale), Focus::At(at - origin), cx);
     }
 
-    /// Asks for sharper drawings of the pages near the view where the scale and the display
-    /// need them, after [`SHARPEN_AFTER`], and lets go of those of pages that left it.
-    fn sharpen<V: 'static>(
+    /// Asks for drawings of the pages near the view at the scale the zoom and the display ask
+    /// for: at once for a page not drawn yet, after [`REDRAW_AFTER`] for one drawn at another
+    /// scale. Lets go of the drawings of pages that left the view.
+    fn draw_near<V: 'static>(
         &mut self,
         scale: f32,
         window: &Window,
@@ -252,60 +292,42 @@ impl PdfPages {
         let Ok(pages) = &shown.pages else {
             return;
         };
-        let (_, height) = self.viewport();
-        let top = -f32::from(self.scroll.offset().y);
-        let near = near_pages(pages, scale, top, height);
+        let near = self.near(pages, scale);
         let wanted = scale * window.scale_factor();
         let mut plan = Vec::new();
         for (index, page) in pages.iter().enumerate() {
-            let sharp = self.sharp.get(&index).map(|drawn| drawn.scale);
-            let target = near
-                .contains(&index)
-                .then(|| sharp_scale(page, wanted))
-                .flatten();
-            match (target, sharp) {
-                (Some(target), Some(scale)) if (scale / target - 1.0).abs() < 0.05 => {}
+            let drawn = self.drawn.get(&index).map(|drawn| drawn.scale);
+            let target = near.contains(&index).then(|| draw_scale(page, wanted));
+            match (target, drawn) {
+                (Some(target), Some(scale)) if same_scale(scale, target) => {}
                 (Some(target), _) => plan.push((index, target)),
                 (None, Some(_)) => {
-                    if let Some(old) = self.sharp.remove(&index) {
+                    if let Some(old) = self.drawn.remove(&index) {
                         cx.drop_image(old.image, None);
                     }
                 }
                 (None, None) => {}
             }
         }
-        if plan == self.sharpening {
+        if plan == self.drawing {
             return;
         }
-        self.sharpening = plan.clone();
+        self.drawing = plan.clone();
         if plan.is_empty() {
-            self._sharpening = None;
+            self._drawing = None;
             return;
         }
+        let redrawing = plan.iter().all(|(index, _)| self.drawn.contains_key(index));
         let jobs: Vec<(usize, String, f32)> = plan
             .iter()
             .map(|&(index, scale)| (index, pages[index].svg.clone(), scale))
             .collect();
-        let timer = cx.background_executor().timer(SHARPEN_AFTER);
-        self._sharpening = Some(cx.spawn(async move |this, cx| {
-            timer.await;
-            let drawn = cx
-                .background_spawn(async move {
-                    jobs.into_iter()
-                        .filter_map(|(index, svg, scale)| {
-                            let pixels = svg_to_bgra(&svg, scale, SHARP_PIXELS).ok()?;
-                            let image = RenderImage::new(vec![image::Frame::new(pixels)]);
-                            Some((
-                                index,
-                                Drawn {
-                                    image: Arc::new(image),
-                                    scale,
-                                },
-                            ))
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .await;
+        let timer = redrawing.then(|| cx.background_executor().timer(REDRAW_AFTER));
+        self._drawing = Some(cx.spawn(async move |this, cx| {
+            if let Some(timer) = timer {
+                timer.await;
+            }
+            let drawn = cx.background_spawn(async move { draw(jobs) }).await;
             let _ = this.update(cx, |view, cx| {
                 let pages = finish(view);
                 if !pages
@@ -316,11 +338,11 @@ impl PdfPages {
                     return;
                 }
                 for (index, drawn) in drawn {
-                    if let Some(old) = pages.sharp.insert(index, drawn) {
+                    if let Some(old) = pages.drawn.insert(index, drawn) {
                         cx.drop_image(old.image, None);
                     }
                 }
-                pages.sharpening.clear();
+                pages.drawing.clear();
                 cx.notify();
             });
         }));
@@ -343,6 +365,8 @@ impl PdfPages {
                 .text_color(cx.theme().muted_foreground)
                 .child(SharedString::from(text))
         };
+        // Known before the first pages come, so they are drawn for the display at once.
+        self.display = Some(window.scale_factor());
         let scale = self.scale();
         let content = match self.shown.clone().as_ref().map(|shown| &shown.pages) {
             None => message(
@@ -358,48 +382,46 @@ impl PdfPages {
                 message(format!("The page cannot be typeset: {error}"), cx).into_any_element()
             }
             Some(Ok(pages)) => {
-                self.sharpen(scale, window, cx, finish);
+                self.draw_near(scale, window, cx, finish);
                 let tops = page_tops(pages, scale);
                 let scroll = self.scroll.clone();
                 v_flex()
                     .p(px(PAGE_PADDING))
                     .gap(px(PAGE_GAP))
                     .items_center()
-                    .children(pages.iter().zip(&self.images).enumerate().map(
-                        |(index, (page, base))| {
-                            let image = self.sharp.get(&index).unwrap_or(base).image.clone();
-                            let anchors = page.anchors.clone();
-                            let top = tops[index];
-                            let scroll = scroll.clone();
-                            let on_click = on_click.clone();
-                            div()
-                                .id(("pdf-page", index))
-                                .flex_none()
-                                .w(px(page.width as f32 * scale))
-                                .h(px(page.height as f32 * scale))
-                                .bg(gpui::white())
-                                .border_1()
-                                .border_color(cx.theme().border)
-                                .child(img(image).size_full())
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(
-                                        move |view, event: &gpui::MouseDownEvent, window, cx| {
-                                            let container = scroll.bounds();
-                                            let y = event.position.y
-                                                - container.origin.y
-                                                - scroll.offset().y
-                                                - px(top);
-                                            if let Some((path, offset)) =
-                                                anchor_at(&anchors, f32::from(y) / scale)
-                                            {
-                                                on_click(view, path, offset, window, cx);
-                                            }
-                                        },
-                                    ),
-                                )
-                        },
-                    ))
+                    .children(pages.iter().enumerate().map(|(index, page)| {
+                        let image = self.drawn.get(&index).map(|drawn| drawn.image.clone());
+                        let anchors = page.anchors.clone();
+                        let top = tops[index];
+                        let scroll = scroll.clone();
+                        let on_click = on_click.clone();
+                        div()
+                            .id(("pdf-page", index))
+                            .flex_none()
+                            .w(px(page.width as f32 * scale))
+                            .h(px(page.height as f32 * scale))
+                            .bg(gpui::white())
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .when_some(image, |page, image| page.child(img(image).size_full()))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(
+                                    move |view, event: &gpui::MouseDownEvent, window, cx| {
+                                        let container = scroll.bounds();
+                                        let y = event.position.y
+                                            - container.origin.y
+                                            - scroll.offset().y
+                                            - px(top);
+                                        if let Some((path, offset)) =
+                                            anchor_at(&anchors, f32::from(y) / scale)
+                                        {
+                                            on_click(view, path, offset, window, cx);
+                                        }
+                                    },
+                                ),
+                            )
+                    }))
                     .into_any_element()
             }
         };
@@ -544,21 +566,26 @@ impl PdfPages {
     }
 }
 
-/// Each page's SVG drawn for the GPU, as BGRA pixels, at [`SVG_LONG_SIDE`] on its longer side.
-fn rasterise(pages: &[String]) -> Rasterised {
-    pages
-        .iter()
-        .map(|svg| {
-            let decoded = decode(svg.as_bytes(), "svg", Limits::DEFAULT)
-                .map_err(|error| error.to_string())?;
-            let scale = decoded
-                .info
-                .intrinsic
-                .map_or(1.0, |(width, _)| decoded.info.width as f32 / width);
-            Ok(Drawn {
-                image: Arc::new(RenderImage::new(vec![image::Frame::new(decoded.pixels)])),
-                scale,
-            })
+#[cfg(test)]
+thread_local! {
+    /// How many drawn pages views let go of as they went, in a test.
+    pub(crate) static RELEASED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Each `(index, svg, scale)` drawn for the GPU, as BGRA pixels; a page that cannot be drawn is
+/// left out, and shows blank.
+fn draw(jobs: Vec<(usize, String, f32)>) -> HashMap<usize, Drawn> {
+    jobs.into_iter()
+        .filter_map(|(index, svg, scale)| {
+            let pixels = svg_to_bgra(&svg, scale, SHARP_PIXELS).ok()?;
+            let image = RenderImage::new(vec![image::Frame::new(pixels)]);
+            Some((
+                index,
+                Drawn {
+                    image: Arc::new(image),
+                    scale,
+                },
+            ))
         })
         .collect()
 }
@@ -693,14 +720,17 @@ fn near_pages(pages: &[PreviewPage], scale: f32, top: f32, height: f32) -> Vec<u
         .collect()
 }
 
-/// The scale to draw `page` at for `wanted` pixels to the point, when its first rasterisation
-/// has fewer than that, at most [`SHARP_PIXELS`] in all.
-fn sharp_scale(page: &PreviewPage, wanted: f32) -> Option<f32> {
+/// The scale to draw `page` at for `wanted` pixels to the point, at most [`SHARP_PIXELS`] in
+/// all.
+fn draw_scale(page: &PreviewPage, wanted: f32) -> f32 {
     let (width, height) = (page.width as f32, page.height as f32);
-    let first = SVG_LONG_SIDE / width.max(height);
-    let most = (SHARP_PIXELS / (width * height)).sqrt();
-    let scale = wanted.min(most);
-    (scale > first * 1.05).then_some(scale)
+    let most = (SHARP_PIXELS / (width * height).max(1.0)).sqrt();
+    wanted.min(most)
+}
+
+/// Whether a drawing at `drawn` pixels to the point will do for `wanted`.
+fn same_scale(drawn: f32, wanted: f32) -> bool {
+    (drawn / wanted - 1.0).abs() < 0.05
 }
 
 /// The source of the line of text at `y` points down a page: the line it falls in, else the
@@ -833,16 +863,18 @@ mod tests {
     }
 
     #[test]
-    fn only_pages_near_the_view_are_drawn_sharper_and_never_too_large() {
-        let pages = a4(10);
+    fn only_pages_near_the_view_are_drawn_and_never_too_large() {
+        let pages = a4(50);
         let tops = page_tops(&pages, 1.0);
-        // Scrolled to the fifth page, 600 high: the fourth to the sixth.
+        // Scrolled to the fifth page, 600 high: the fourth to the sixth, of fifty.
         assert_eq!(near_pages(&pages, 1.0, tops[4], 600.0), [3, 4, 5]);
-        // The first rasterisation, about 2.43 to the point, is enough for 2.
-        assert_eq!(sharp_scale(&pages[0], 2.0), None);
-        assert_eq!(sharp_scale(&pages[0], 4.0), Some(4.0));
+        assert_eq!(near_pages(&pages, 1.0, 0.0, 600.0), [0, 1]);
+        // Drawn at the scale asked for, however small.
+        assert_eq!(draw_scale(&pages[0], 0.75), 0.75);
+        assert_eq!(draw_scale(&pages[0], 4.0), 4.0);
         // 400% on a display of two: capped by the pixels allowed.
-        let capped = sharp_scale(&pages[0], 8.0).unwrap();
+        let capped = draw_scale(&pages[0], 8.0);
         assert!(capped < 8.0 && 595.0 * 842.0 * capped * capped <= SHARP_PIXELS * 1.001);
+        assert!(same_scale(2.0, 2.04) && !same_scale(2.0, 2.2));
     }
 }

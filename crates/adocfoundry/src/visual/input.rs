@@ -291,8 +291,11 @@ pub fn actions(view: Stateful<gpui::Div>, cx: &mut Context<VisualView>) -> State
     }))
     .on_action(cx.listener(|this, _: &Cut, window, cx| {
         if !this.selection.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(this.selected_text()));
-            this.run(ids::VISUAL_DELETE_BACKWARD, VisualValue::None, window, cx);
+            // Only what was cut goes to the clipboard: the engine may refuse the delete.
+            let text = this.selected_text();
+            if this.run(ids::VISUAL_DELETE_BACKWARD, VisualValue::None, window, cx) {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
         }
     }))
     .on_action(cx.listener(|this, _: &Paste, window, cx| {

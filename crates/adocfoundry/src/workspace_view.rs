@@ -45,7 +45,7 @@ use crate::{
     attribute_view::{AttributeEvent, AttributeView},
     editor::{bindings::*, language, SourceEditorEvent, SourceEditorView},
     graph_view::{GraphMode, GraphView},
-    image_view::{ActualSize, FitToWindow, ImageView, ZoomIn, ZoomOut},
+    image_view::{ActualSize, FitToWindow, FitWidth, ImageView, ZoomIn, ZoomOut},
     menus::AppMenu,
     preview::{PreviewEvent, PreviewView},
     references_view::{ReferencesEvent, ReferencesView},
@@ -509,9 +509,12 @@ impl WorkspaceView {
                 }
             }),
             // The session is kept for the next launch, whether the app quits or the window
-            // closes first.
+            // closes first. A window that asked about unsaved pages wrote it before closing
+            // them, so it is not written again with them gone.
             cx.on_app_quit(|this, cx| {
-                this.write_session(cx);
+                if !this.closing {
+                    this.write_session(cx);
+                }
                 async {}
             }),
         ];
@@ -1885,10 +1888,9 @@ impl WorkspaceView {
             .ok()
             .and_then(|hunks| hunks.first().map(|hunk| hunk.range.start))
             .unwrap_or(0);
-        self.open_at(
-            path,
+        self.show_opened(
+            TabItem::Document(id),
             SourceRange::new(first, first),
-            OpenDisposition::Preview,
             window,
             cx,
         );
@@ -2420,6 +2422,32 @@ impl WorkspaceView {
         );
     }
 
+    /// Opens `paths` handed over by the system: a folder as the workspace, and files in tabs,
+    /// opening the workspace the first belongs to when no folder is open.
+    pub(crate) fn open_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let launch = adoc_engine::launch_targets(paths);
+        let folder_given = launch.files.is_empty();
+        if let Some(folder) = launch.folder {
+            if folder_given || self.app.read(cx).engine.roots().is_empty() {
+                self.open_folder(folder, window, cx);
+            }
+        }
+        for file in launch.files {
+            self.open_at(
+                &file,
+                SourceRange::default(),
+                OpenDisposition::Persistent,
+                window,
+                cx,
+            );
+        }
+    }
+
     /// Opens `path` as `disposition` says and selects `range` in it: a page in a source tab, an
     /// image in an image tab, as the engine decides. Browsing shows it in the preview tab.
     pub fn open_at(
@@ -2442,13 +2470,25 @@ impl WorkspaceView {
             CommandOutcome::OpenedImage(id) => TabItem::Image(id),
             _ => return None,
         };
+        self.show_opened(item, range, window, cx);
+        Some(item)
+    }
+
+    /// Shows `item`, just opened, as the active tab, with `range` selected in a page.
+    fn show_opened(
+        &mut self,
+        item: TabItem,
+        range: SourceRange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.app.update(cx, |app, cx| {
             app.engine.activate(item);
             app.drain(cx);
         });
         self.follow_active(window, cx);
         let TabItem::Document(id) = item else {
-            return Some(item);
+            return;
         };
         if let Some(editor) = self.active_editor().cloned() {
             editor.update(cx, |editor, cx| editor.reveal(range, window, cx));
@@ -2457,7 +2497,6 @@ impl WorkspaceView {
             visual.update(cx, |visual, cx| visual.go_to(range.start, cx));
             self.focus_active_editor(window, cx);
         }
-        Some(item)
     }
 
     /// Shows a multi-file change for confirmation; applying it is one undo step.
@@ -3139,11 +3178,16 @@ impl WorkspaceView {
                 self.write_session(cx);
             }
             CloseAnswer::Discard => {
-                // The session keeps the tabs; closing them without saving drops their
-                // recovery records.
+                // The session keeps the tabs; closing every page without saving, pinned ones
+                // too, drops their recovery records.
                 self.write_session(cx);
                 self.app.update(cx, |app, cx| {
                     let _ = app.invoke(ids::DOCUMENT_CLOSE_ALL, CommandArgs::None, cx);
+                    let left: Vec<DocumentId> =
+                        app.engine.documents().map(|document| document.id).collect();
+                    for id in left {
+                        let _ = app.invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(id), cx);
+                    }
                 });
             }
         }
@@ -5664,6 +5708,9 @@ impl Render for WorkspaceView {
             }))
             .on_action(cx.listener(|this, _: &FitToWindow, window, cx| {
                 this.zoom_active_image(Box::new(FitToWindow), window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FitWidth, window, cx| {
+                this.zoom_active_image(Box::new(FitWidth), window, cx);
             }))
             .on_action(cx.listener(Self::on_expand_sidebar))
             .on_action(cx.listener(Self::on_collapse_sidebar))

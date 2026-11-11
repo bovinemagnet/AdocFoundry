@@ -175,10 +175,12 @@ Pass `--workspace` or `-p <crate>` when you build or test anything else.
 
 [source,sh]
 ----
-adocfoundry [folder [file...]]
+adocfoundry [folder] [file...]
 ----
 
 `adocfoundry` opens a folder as the workspace and any files you list in tabs.
+Given files and no folder, it opens the workspace the first file belongs to: the nearest folder above it holding an Antora playbook or `.adocfoundry.toml`, else the nearest holding an `antora.yml`, else the file's own folder.
+So opening an AsciiDoc file from a file manager, or from Finder on macOS, opens it in its project; while the app is running, the file opens in a tab of its window.
 Open Folder (kbd:[Cmd+Shift+O] or kbd:[Ctrl+Shift+O]) does the same from inside the application.
 Launched with no folder or file, the app reopens the last session; see xref:using-the-editor.adoc#restoring-the-session[Restoring the last session].
 
