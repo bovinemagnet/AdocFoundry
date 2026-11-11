@@ -48,22 +48,8 @@ fn all_inlines(view: &ViewTree) -> Vec<ViewInline> {
             }
         }
     }
-    fn walk(blocks: Vec<&adoc_render::ViewBlock>, out: &mut Vec<ViewInline>) {
-        for block in blocks {
-            match &block.kind {
-                ViewKind::Paragraph(content) => collect(content, out),
-                ViewKind::List { items, .. } => {
-                    for item in items {
-                        collect(&item.content, out);
-                    }
-                }
-                _ => {}
-            }
-            walk(block.child_refs(), out);
-        }
-    }
     let mut out = Vec::new();
-    walk(view.blocks.iter().collect(), &mut out);
+    view.each_block(&mut |block| block.each_inline_run(&mut |run| collect(run, &mut out)));
     out
 }
 
@@ -316,6 +302,51 @@ fn resolves_antora_images() {
     );
 }
 
+/// An `imagesdir` that is a URL makes the page's images remote, at that address; an absolute
+/// target, a URL or a `data:` URI, is used as it is.
+#[test]
+fn a_url_imagesdir_makes_images_remote() {
+    let view = view_of(
+        Path::new("/docs/page.adoc"),
+        ":imagesdir: https://example.com/img/\n\nimage::a.png[]\n\n\
+         An image:b.png[] image:https://x.org/c.png[] image:data:image/png;base64,AAAA[d]\n",
+        &LocalResolver,
+    );
+    let ViewKind::Image(block) = &view.blocks[0].kind else {
+        panic!("{:?}", view.blocks[0].kind);
+    };
+    let inline: Vec<_> = all_inlines(&view)
+        .into_iter()
+        .filter_map(|inline| match inline {
+            ViewInline::Image(image) => Some(image),
+            _ => None,
+        })
+        .collect();
+    let urls: Vec<Option<&str>> = std::iter::once(block)
+        .chain(&inline)
+        .map(|image| image.url.as_deref())
+        .collect();
+    assert_eq!(
+        urls,
+        [
+            Some("https://example.com/img/a.png"),
+            Some("https://example.com/img/b.png"),
+            Some("https://x.org/c.png"),
+            Some("data:image/png;base64,AAAA"),
+        ]
+    );
+    assert!(block.path.is_none() && !block.is_missing());
+    let html = to_html(&view, &HtmlOptions::default());
+    assert!(
+        html.contains("<img src=\"https://example.com/img/a.png\" alt=\"a\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<img src=\"https://example.com/img/b.png\" alt=\"b\">"),
+        "{html}"
+    );
+}
+
 #[test]
 fn html_contains_every_block_kind() {
     let (_, _, view) = corpus();
@@ -365,7 +396,7 @@ fn html_contains_every_block_kind() {
         "<sup>sup</sup>",
         "<sub>sub</sub>",
         "about Foundry",
-        "<a href=\"https://example.com\" class=\"bare\">a link</a>",
+        "<a href=\"https://example.com\">a link</a>",
         "<code class=\"language-rust\" data-lang=\"rust\">",
         "<b class=\"conum\">(1)</b>",
         "<b>raw</b>",
@@ -602,6 +633,49 @@ fn html_renders_list_styles_and_asciidoc_cells() {
     assert!(html.contains("File&#160;&#8250; Save"), "{html}");
 }
 
+/// A cell is written in its column's style, as Asciidoctor writes it.
+#[test]
+fn html_writes_cells_in_their_style() {
+    let html = html_of("[cols=\"e,s,m,h,l\"]\n|===\n|a |b |c |d |e\n|===\n");
+    for cell in [
+        "valign-top\"><p class=\"tableblock\"><em>a</em></p></td>",
+        "valign-top\"><p class=\"tableblock\"><strong>b</strong></p></td>",
+        "valign-top\"><p class=\"tableblock\"><code>c</code></p></td>",
+        "<th class=\"tableblock halign-left valign-top\"><p class=\"tableblock\">d</p></th>",
+        "valign-top\"><div class=\"literal\"><pre>e</pre></div></td>",
+    ] {
+        assert!(html.contains(cell), "{cell}: {html}");
+    }
+}
+
+/// Hosted videos are embedded from their host, and a video or audio block keeps its
+/// attributes and options.
+#[test]
+fn html_writes_videos_as_asciidoctor_does() {
+    let html = html_of(
+        "video::rPQoq7ThGAU[youtube]\n\nvideo::67480300[vimeo]\n\n\
+         video::clip.mp4[poster=p.png,width=640,height=480,start=10,end=20,opts=\"autoplay,loop,muted,nocontrols\"]\n\n\
+         audio::a.mp3[opts=\"autoplay,loop\"]\n",
+    );
+    for element in [
+        "<iframe src=\"https://www.youtube.com/embed/rPQoq7ThGAU?rel=0\" frameborder=\"0\" allowfullscreen>",
+        "<iframe src=\"https://player.vimeo.com/video/67480300\" frameborder=\"0\" allowfullscreen>",
+        "<video src=\"clip.mp4#t=10,20\" width=\"640\" height=\"480\" poster=\"p.png\" autoplay muted loop>",
+        "<audio src=\"a.mp3\" autoplay controls loop>",
+    ] {
+        assert!(html.contains(element), "{element}: {html}");
+    }
+}
+
+#[test]
+fn html_writes_a_callout_list_title() {
+    let html = html_of("----\nputs 1 <1>\n----\n.Notes\n<1> Prints.\n");
+    assert!(
+        html.contains("<div class=\"colist arabic\">\n<div class=\"title\">Notes</div>"),
+        "{html}"
+    );
+}
+
 #[test]
 fn file_urls_are_absolute_for_relative_paths() {
     // A page opened by a relative path resolves images and diagrams relative to the working
@@ -741,6 +815,95 @@ fn text_is_what_a_reader_sees() {
     );
 }
 
+/// The text holds a callout item's attached blocks, counts an ordered list from its `start`
+/// (down when reversed), leaves no empty line for a term without text of its own, and names
+/// an admonition by its label.
+#[test]
+fn text_holds_what_lists_and_admonitions_hold() {
+    let text = "----\nx <1>\n----\n<1> One.\n+\nAttached.\n\n[start=4]\n. four\n. five\n\n\
+                [%reversed]\n. two\n. one\n\nTerm::\n* item\n\nIMPORTANT: Mind.\n";
+    let view = view_of(Path::new("/docs/guide.adoc"), text, &LocalResolver);
+    assert_eq!(
+        adoc_render::to_text(&view),
+        "x\n\n(1) One.\n  Attached.\n\n4. four\n5. five\n\n2. two\n1. one\n\nTerm\n\n  - item\n\n\
+         IMPORTANT:\nMind.\n"
+    );
+}
+
+/// Column widths are proportions, a percentage among them, and never overflow; a table
+/// without `cols` has a column for each cell of its first row.
+#[test]
+fn column_widths_are_proportions_that_cannot_overflow() {
+    let html = html_of("[cols=\"20%,1,2\"]\n|===\n|a |b |c\n|===\n");
+    for width in ["86.9565%", "4.3478%", "8.6957%"] {
+        assert!(
+            html.contains(&format!("width: {width};")),
+            "{width}: {html}"
+        );
+    }
+    let html = html_of("[cols=\"4000000000,4000000000\"]\n|===\n|a |b\n|===\n");
+    assert_eq!(html.matches("width: 50.0000%;").count(), 2, "{html}");
+    let html = html_of("|===\n|a |b\n|===\n");
+    assert_eq!(html.matches("<col ").count(), 2, "{html}");
+}
+
+/// Only a link whose text is its address is `bare`; a mail link without text shows the
+/// address without its scheme.
+#[test]
+fn only_a_link_shown_as_its_address_is_bare() {
+    let html = html_of(
+        "link:https://example.com[text] https://example.com mailto:a@b.c[] mailto:a@b.c[Mail]\n",
+    );
+    assert!(
+        html.contains("<a href=\"https://example.com\">text</a>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<a href=\"https://example.com\" class=\"bare\">https://example.com</a>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<a href=\"mailto:a@b.c\">a@b.c</a>"),
+        "{html}"
+    );
+    assert!(html.contains("<a href=\"mailto:a@b.c\">Mail</a>"), "{html}");
+}
+
+/// A target with a fragment is another page, whatever its name, as Asciidoctor reads it.
+#[test]
+fn a_target_with_a_fragment_names_another_page() {
+    let html = html_of("== Other\n\nxref:other#frag[]\n");
+    assert!(html.contains("<a href=\"other.html#frag\""), "{html}");
+}
+
+/// The title's footnote is the first, as it is numbered.
+#[test]
+fn a_footnote_in_the_title_is_listed_first() {
+    let view = view_of(
+        Path::new("page.adoc"),
+        "= Title footnote:[In title]\n\nBody.footnote:[In body]\n",
+        &LocalResolver,
+    );
+    let numbers: Vec<u32> = view.footnotes.iter().map(|note| note.number).collect();
+    assert_eq!(numbers, [1, 2]);
+}
+
+/// A titled diagram is a figure, as Asciidoctor Diagram makes it, and counted with images.
+#[test]
+fn a_titled_diagram_is_a_figure() {
+    let view = view_of(
+        Path::new("page.adoc"),
+        ".A flow\n[mermaid]\n----\ngraph TD\n----\n\n.Pic\nimage::x.png[]\n",
+        &LocalResolver,
+    );
+    let captions: Vec<Option<&str>> = view
+        .blocks
+        .iter()
+        .map(|block| block.caption.as_deref())
+        .collect();
+    assert_eq!(captions, [Some("Figure 1."), Some("Figure 2.")]);
+}
+
 #[test]
 fn special_sections_are_numbered_as_asciidoctor_numbers_them() {
     let text = "= Book\n:doctype: book\n:sectnums:\n:toc:\n\n[preface]\n== Preface\n\nBefore.\n\n=== In the Preface\n\nMore.\n\n== Chapter One\n\nBody.\n\n=== A Section\n\nMore.\n\n== Chapter Two\n\nBody.\n\n[appendix]\n== Extra Material\n\nAfter.\n\n=== In the Appendix\n\nMore.\n\n[appendix]\n== More Material\n\nAfter.\n\n[glossary]\n== Glossary\n\nTerms.\n\n[bibliography]\n== References\n\nBooks.\n";
@@ -783,6 +946,49 @@ fn special_sections_are_numbered_as_asciidoctor_numbers_them() {
         panic!("{:?}", view.blocks[1].kind);
     };
     assert_eq!(number.as_deref(), Some("Annex A:"));
+}
+
+/// The headings of a page's sections, numbers included, as its HTML writes them.
+fn headings_of(text: &str) -> Vec<String> {
+    let html = html_of(text);
+    html.split("<h")
+        .skip(1)
+        .filter(|tag| tag.starts_with(['2', '3', '4']))
+        .filter_map(|tag| {
+            let text = &tag[tag.find('>')? + 1..];
+            Some(text[..text.find("</h")?].to_owned())
+        })
+        .collect()
+}
+
+/// An appendix is lettered and captioned whether or not sections are numbered; its own
+/// sections are numbered only when they are.
+#[test]
+fn an_appendix_is_captioned_without_sectnums() {
+    assert_eq!(
+        headings_of("= T\n\n== One\n\n[appendix]\n== Extra\n\n=== Sub\n"),
+        ["One", "Appendix A: Extra", "Sub"]
+    );
+}
+
+/// A section is numbered by `sectnums` where it starts, so a page can leave some sections
+/// unnumbered; `numbered` is its older name.
+#[test]
+fn sectnums_is_read_where_each_section_starts() {
+    assert_eq!(
+        headings_of(
+            "= T\n:sectnums:\n\n== One\n\n:sectnums!:\n\n== Two\n\n:sectnums:\n\n== Three\n"
+        ),
+        ["1. One", "Two", "2. Three"]
+    );
+    assert_eq!(
+        headings_of("= T\n\n== One\n\n:sectnums:\n\n== Two\n\n:sectnums!:\n"),
+        ["One", "1. Two"]
+    );
+    assert_eq!(
+        headings_of("= T\n:numbered:\n\n== One\n\n=== Sub\n"),
+        ["1. One", "1.1. Sub"]
+    );
 }
 
 #[test]
@@ -944,6 +1150,42 @@ fn a_cross_reference_to_a_paragraph_finds_its_anchor() {
     assert_eq!(shown, ["[target]", "the first"]);
 }
 
+/// An id may hold a `.` or a `:` (`fig:`, `sec.1`): one the page defines is a local reference,
+/// not another page, as Asciidoctor reads it.
+#[test]
+fn a_cross_reference_to_an_id_with_a_dot_or_a_colon_is_local() {
+    let html = html_of(
+        "[[fig:overview]]\n.Overview\nimage::x.png[]\n\nSee <<fig:overview>> and <<sec.1>>.\n\n\
+         [[sec.1]]\n== One\n\nAn [[a:b]]anchor, and <<a:b>>.\n",
+    );
+    assert!(
+        html.contains("<a href=\"#fig:overview\">Overview</a>"),
+        "{html}"
+    );
+    assert!(html.contains("<a href=\"#sec.1\">One</a>"), "{html}");
+    assert!(html.contains("<a href=\"#a:b\">[a:b]</a>"), "{html}");
+    assert!(!html.contains("unresolved"), "{html}");
+}
+
+/// Anchors are found wherever inlines are: list items, description terms, bibliography
+/// entries, block titles, formatted text and table cells.
+#[test]
+fn a_cross_reference_finds_anchors_outside_paragraphs() {
+    let html = html_of(
+        "* [[item]]First\n\nTerm [[t1]]:: def\n\n.Title [[bt]]here\n----\nx\n----\n\n\
+         Para *bold [[inb]]x*.\n\n|===\n|cell [[incell]]x\n|===\n\n\
+         See <<item>>, <<t1>>, <<bt>>, <<inb>>, <<incell>> and <<pp>>.\n\n\
+         [bibliography]\n== Refs\n\n* [[[pp]]] Pragmatic.\n",
+    );
+    for id in ["item", "t1", "bt", "inb", "incell", "pp"] {
+        assert!(
+            html.contains(&format!("<a href=\"#{id}\">[{id}]</a>")),
+            "{id}: {html}"
+        );
+    }
+    assert!(!html.contains("unresolved"), "{html}");
+}
+
 #[test]
 fn a_discrete_heading_has_a_generated_id_or_its_own() {
     let html = html_of("[discrete]\n== A Heading\n\n[discrete#own]\n== Another\n");
@@ -1003,4 +1245,40 @@ fn a_quote_paragraph_has_no_paragraph_inside_but_a_delimited_quote_does() {
     assert!(html.contains("Said."), "{html}");
     let html = html_of("____\nSaid.\n____\n");
     assert!(html.contains("<p>Said.</p>"), "{html}");
+}
+
+/// `:toc: macro` places the contents at `toc::[]` alone; otherwise they are in the header and
+/// a `toc::[]` writes nothing, as Asciidoctor places them. Either way there is one `id="toc"`.
+#[test]
+fn the_contents_are_written_once_where_the_page_places_them() {
+    let html = html_of("= T\n:toc: macro\n\n== A\n\ntoc::[]\n\ntext\n");
+    assert_eq!(html.matches("id=\"toc\"").count(), 1, "{html}");
+    let header = &html[..html.find("<div id=\"content\">").unwrap()];
+    assert!(!header.contains("id=\"toc\""), "{html}");
+
+    for text in ["= T\n:toc:\n\n== A\n", "= T\n:toc:\n\n== A\n\ntoc::[]\n"] {
+        let html = html_of(text);
+        assert_eq!(html.matches("id=\"toc\"").count(), 1, "{html}");
+        let header = &html[..html.find("<div id=\"content\">").unwrap()];
+        assert!(header.contains("id=\"toc\""), "{html}");
+    }
+}
+
+/// The contents take `toc-title`, empty when unset, and nest a list per level.
+#[test]
+fn the_contents_are_titled_and_nested_as_asciidoctor_writes_them() {
+    let html = html_of("= T\n:toc:\n:toc-title: Contents\n\n== A\n\n=== B\n\n== C\n");
+    assert!(
+        html.contains("<div id=\"toctitle\">Contents</div>"),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "<ul class=\"sectlevel1\">\n<li><a href=\"#_a\">A</a>\n<ul class=\"sectlevel2\">\n\
+             <li><a href=\"#_b\">B</a></li>\n</ul>\n</li>\n<li><a href=\"#_c\">C</a></li>\n</ul>"
+        ),
+        "{html}"
+    );
+    let html = html_of("= T\n:toc:\n:toc-title!:\n\n== A\n");
+    assert!(html.contains("<div id=\"toctitle\"></div>"), "{html}");
 }

@@ -67,11 +67,23 @@ fn block_text(block: &ViewBlock, indent: &str, out: &mut String) {
         ViewKind::Heading { title, .. } => paragraph(&ViewInline::plain_text(title), indent, out),
         ViewKind::Paragraph(content) => paragraph(&ViewInline::plain_text(content), indent, out),
         ViewKind::List { kind, items } => {
-            for (number, item) in items.iter().enumerate() {
+            // An ordered list counts from its `start`, down when it is reversed.
+            let reversed = block.options.contains("reversed");
+            let start = block
+                .attributes
+                .get("start")
+                .and_then(|start| start.trim().parse::<i64>().ok())
+                .unwrap_or(if reversed { items.len() as i64 } else { 1 });
+            for (index, item) in items.iter().enumerate() {
+                let number = if reversed {
+                    start - index as i64
+                } else {
+                    start + index as i64
+                };
                 let marker = match (kind, item.checked) {
                     (_, Some(true)) => "[x] ".to_owned(),
                     (_, Some(false)) => "[ ] ".to_owned(),
-                    (ListKind::Ordered, None) => format!("{}. ", number + 1),
+                    (ListKind::Ordered, None) => format!("{number}. "),
                     _ => "- ".to_owned(),
                 };
                 out.push_str(indent);
@@ -89,7 +101,9 @@ fn block_text(block: &ViewBlock, indent: &str, out: &mut String) {
             for item in items {
                 paragraph(&ViewInline::plain_text(&item.term), indent, out);
                 let nested = format!("{indent}  ");
-                paragraph(&ViewInline::plain_text(&item.content), &nested, out);
+                if !item.content.is_empty() {
+                    paragraph(&ViewInline::plain_text(&item.content), &nested, out);
+                }
                 for child in &item.blocks {
                     block_text(child, &nested, out);
                 }
@@ -102,14 +116,17 @@ fn block_text(block: &ViewBlock, indent: &str, out: &mut String) {
                     item.number,
                     ViewInline::plain_text(&item.content)
                 ));
+                let nested = format!("{indent}  ");
+                for child in &item.blocks {
+                    block_text(child, &nested, out);
+                }
             }
-            out.push('\n');
+            if !out.ends_with("\n\n") {
+                out.push('\n');
+            }
         }
         ViewKind::Admonition { kind, blocks } => {
-            out.push_str(&format!(
-                "{indent}{}:\n",
-                format!("{kind:?}").to_uppercase()
-            ));
+            out.push_str(&format!("{indent}{}:\n", kind.label().to_uppercase()));
             for child in blocks {
                 block_text(child, indent, out);
             }

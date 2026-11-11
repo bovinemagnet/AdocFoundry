@@ -1,0 +1,14 @@
+= Styled Columns
+
+[cols="e,s,m,h,l",options="header"]
+|===
+|Emphasis |Strong |Monospace |Header |Literal
+|an option |required |--verbose |Name |kept  as written
+|===
+
+[source,ruby]
+----
+puts 'hi' <1>
+----
+.Notes
+<1> Prints a greeting.

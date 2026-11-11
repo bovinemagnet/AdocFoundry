@@ -210,6 +210,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
         resolved,
         verbatim: std::cell::Cell::new(false),
         heading_ids: std::cell::RefCell::default(),
+        sectnums: std::cell::Cell::new(None),
     };
     converter.document()
 }
@@ -573,6 +574,9 @@ struct Converter<'p> {
     verbatim: std::cell::Cell<bool>,
     /// The section and discrete heading ids so far, for a discrete heading's generated id.
     heading_ids: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// Whether the last attribute entry in the body naming `sectnums` (or `numbered`) set it;
+    /// `None` before any, for [`BlockMeta::sectnums`].
+    sectnums: std::cell::Cell<Option<bool>>,
 }
 
 impl Converter<'_> {
@@ -752,6 +756,7 @@ impl Converter<'_> {
                 let id = section.id().into_owned();
                 self.heading_ids.borrow_mut().insert(id.clone());
                 meta.id = Some(id);
+                meta.sectnums = self.sectnums.get();
                 Block {
                     meta,
                     kind: BlockKind::Section {
@@ -884,8 +889,18 @@ impl Converter<'_> {
                 meta: self.meta(&toc.location, Some(&toc.metadata), &[]),
                 kind: BlockKind::Toc,
             },
-            // Attribute entries and comments produce no output.
-            acdc::Block::DocumentAttribute(_) | acdc::Block::Comment(_) => return None,
+            // Attribute entries and comments produce no output; an entry for `sectnums` numbers
+            // the sections after it, or not.
+            acdc::Block::DocumentAttribute(entry) => {
+                if matches!(entry.name.as_ref(), "sectnums" | "numbered") {
+                    self.sectnums.set(Some(matches!(
+                        entry.assignment(),
+                        acdc::DocumentAttributeAssignment::Set(_)
+                    )));
+                }
+                return None;
+            }
+            acdc::Block::Comment(_) => return None,
             other => Block {
                 meta: self.meta(other.location(), None, &[]),
                 kind: BlockKind::Unsupported {

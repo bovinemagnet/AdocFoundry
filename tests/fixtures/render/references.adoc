@@ -1,0 +1,20 @@
+= Local References
+
+[[fig:overview]]
+.Overview
+====
+A titled block whose id holds a colon.
+====
+
+* [[item]]A list item with an anchor.
+
+Term [[term-anchor]]:: A description.
+
+Text in *bold with an [[in-bold]]anchor* inside it.
+
+See <<fig:overview>>, <<sec.1>>, <<item>>, <<term-anchor>> and <<in-bold>>.
+
+[[sec.1]]
+== One
+
+A section whose id holds a dot.

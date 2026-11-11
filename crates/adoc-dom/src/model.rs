@@ -43,6 +43,10 @@ pub struct BlockMeta {
     pub attributes: BTreeMap<String, String>,
     /// Options, `%collapsible` or `opts=autowidth`.
     pub options: std::collections::BTreeSet<String>,
+    /// For a section after an attribute entry in the body that set or unset `sectnums` (or its
+    /// older name `numbered`): whether it was set where the section starts. `None` where only
+    /// the header's value applies.
+    pub sectnums: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -61,8 +61,8 @@ pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
     if let Some(title) = &view.title {
         let _ = writeln!(out, "<h1>{}</h1>", page_inlines(view, title));
     }
-    if !view.toc.is_empty() {
-        toc(&mut out, view);
+    if !view.toc.is_empty() && !view.toc_at_macro() {
+        toc(&mut out, view, "");
     }
     out.push_str("</div>\n<div id=\"content\">\n");
     for block in &view.blocks {
@@ -89,24 +89,55 @@ pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
 
 const STYLE: &str = "<style>\nbody{font-family:sans-serif;max-width:60em;margin:auto;padding:1em;line-height:1.5}\npre{background:#f6f6f6;padding:.6em;overflow:auto}\n.admonitionblock td.icon{font-weight:bold;padding-right:1em}\n.admonitionblock td.icon i.fa::before{content:attr(title);font-style:normal}\ntable.tableblock{border-collapse:collapse}td.tableblock,th.tableblock{border:1px solid #ccc;padding:.3em}\n.title{font-style:italic}\n.sidebarblock{border:1px solid #ccc;padding:.6em}\n.exampleblock{border:1px solid #ddd;padding:.6em}\n</style>\n";
 
-fn toc(out: &mut String, view: &Page<'_>) {
-    out.push_str("<div id=\"toc\" class=\"toc\">\n<div id=\"toctitle\">Table of Contents</div>\n<ul class=\"sectlevel1\">\n");
+/// The table of contents, as Asciidoctor writes it: a list per level, each inside the entry
+/// it belongs to. `title_class` is the title's own (` class="title"` at a `toc::[]` macro).
+fn toc(out: &mut String, view: &Page<'_>, title_class: &str) {
+    let _ = writeln!(
+        out,
+        "<div id=\"toc\" class=\"toc\">\n<div id=\"toctitle\"{title_class}>{}</div>",
+        escape(view.toc_title())
+    );
+    // The levels of the lists open around the entry being written.
+    let mut open: Vec<u8> = Vec::new();
     for entry in &view.toc {
+        match open.last() {
+            Some(&level) if entry.level > level => {
+                let _ = write!(out, "\n<ul class=\"sectlevel{}\">\n", entry.level);
+                open.push(entry.level);
+            }
+            Some(_) => {
+                out.push_str("</li>\n");
+                while open.len() > 1 && open.last().is_some_and(|&level| entry.level < level) {
+                    out.push_str("</ul>\n</li>\n");
+                    open.pop();
+                }
+            }
+            None => {
+                let _ = writeln!(out, "<ul class=\"sectlevel{}\">", entry.level);
+                open.push(entry.level);
+            }
+        }
         let number = entry
             .number
             .as_deref()
             .map(|number| format!("{number} "))
             .unwrap_or_default();
-        let _ = writeln!(
+        let _ = write!(
             out,
-            "<li class=\"level{}\"><a href=\"#{}\">{}{}</a></li>",
-            entry.level,
+            "<li><a href=\"#{}\">{}{}</a>",
             escape(&entry.id),
             escape(&number),
             escape(&entry.title)
         );
     }
-    out.push_str("</ul>\n</div>\n");
+    if !open.is_empty() {
+        out.push_str("</li>\n");
+        for _ in 1..open.len() {
+            out.push_str("</ul>\n</li>\n");
+        }
+        out.push_str("</ul>\n");
+    }
+    out.push_str("</div>\n");
 }
 
 fn id_attribute(block: &ViewBlock) -> String {
@@ -286,6 +317,7 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
                 "<div{id} class=\"{}\">",
                 classes("colist arabic", block)
             );
+            block_title(out, view, block);
             out.push_str("<ol>\n");
             for item in items {
                 let _ = write!(out, "<li><p>{}</p>", page_inlines(view, &item.content));
@@ -456,21 +488,34 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
                     page_inlines(view, &block.title)
                 );
             }
-            let total: u32 = table
+            // Asciidoctor reads every width, a percentage too, as a proportion of their sum.
+            let weight = |width: ColumnWidth| match width {
+                ColumnWidth::Proportional(width) | ColumnWidth::Percentage(width) => {
+                    f64::from(width)
+                }
+                ColumnWidth::Auto => 1.0,
+            };
+            let total = table
                 .columns
                 .iter()
-                .map(|column| match column.width {
-                    ColumnWidth::Proportional(width) => width,
-                    _ => 1,
-                })
-                .sum::<u32>()
-                .max(1);
+                .map(|column| weight(column.width))
+                .sum::<f64>();
+            // Without `cols`, a column for each cell of the first row, of equal width.
+            let count = if table.columns.is_empty() {
+                table
+                    .header
+                    .iter()
+                    .chain(&table.rows)
+                    .next()
+                    .map_or(0, |row| row.iter().map(|cell| cell.colspan.max(1)).sum())
+            } else {
+                table.columns.len()
+            };
             out.push_str("<colgroup>\n");
-            for column in &table.columns {
-                let percent = match column.width {
-                    ColumnWidth::Percentage(width) => f64::from(width),
-                    ColumnWidth::Proportional(width) => f64::from(width) * 100.0 / f64::from(total),
-                    ColumnWidth::Auto => 100.0 / table.columns.len().max(1) as f64,
+            for index in 0..count {
+                let percent = match table.columns.get(index) {
+                    Some(column) if total > 0.0 => weight(column.width) * 100.0 / total,
+                    _ => 100.0 / count as f64,
                 };
                 let _ = writeln!(out, "<col style=\"width: {percent:.4}%;\">");
             }
@@ -521,17 +566,43 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
                         let _ = writeln!(out, "</{tag}>");
                         continue;
                     }
+                    // A header row's cells are plain; a literal cell keeps its text as written.
+                    if cell.style == CellStyle::Literal && !header {
+                        let text: Vec<String> = cell
+                            .blocks
+                            .iter()
+                            .map(|block| match &block.kind {
+                                ViewKind::Paragraph(content) => ViewInline::plain_text(content),
+                                ViewKind::Literal(text) => text.clone(),
+                                _ => String::new(),
+                            })
+                            .collect();
+                        let _ = writeln!(
+                            out,
+                            "<div class=\"literal\"><pre>{}</pre></div></{tag}>",
+                            escape(&text.join("\n\n"))
+                        );
+                        continue;
+                    }
+                    let wrap = match cell.style {
+                        _ if header => None,
+                        CellStyle::Emphasis => Some("em"),
+                        CellStyle::Strong => Some("strong"),
+                        CellStyle::Monospace => Some("code"),
+                        _ => None,
+                    };
                     for block in &cell.blocks {
                         match &block.kind {
-                            ViewKind::Paragraph(content) if tag == "th" => {
+                            ViewKind::Paragraph(content) if header => {
                                 out.push_str(&page_inlines(view, content));
                             }
                             ViewKind::Paragraph(content) => {
-                                let _ = write!(
-                                    out,
-                                    "<p class=\"tableblock\">{}</p>",
-                                    page_inlines(view, content)
-                                );
+                                let content = page_inlines(view, content);
+                                let content = match wrap {
+                                    Some(wrap) => format!("<{wrap}>{content}</{wrap}>"),
+                                    None => content,
+                                };
+                                let _ = write!(out, "<p class=\"tableblock\">{content}</p>");
                             }
                             _ => render_block(out, view, block),
                         }
@@ -585,11 +656,10 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
             };
             let _ = writeln!(out, "<div{id} class=\"{}\">", classes(class, block));
             block_title(out, view, block);
-            let source = targets.first().map(String::as_str).unwrap_or("");
             let _ = writeln!(
                 out,
-                "<div class=\"content\">\n<{tag} src=\"{}\" controls></{tag}>\n</div>\n</div>",
-                escape(source)
+                "<div class=\"content\">\n{}\n</div>\n</div>",
+                media_element(*kind, tag, targets, block)
             );
         }
         ViewKind::Diagram(diagram) => match diagram {
@@ -655,7 +725,10 @@ fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
         }
         ViewKind::ThematicBreak => out.push_str("<hr>\n"),
         ViewKind::PageBreak => out.push_str("<div style=\"page-break-after: always;\"></div>\n"),
-        ViewKind::Toc => toc(out, view),
+        ViewKind::Toc if view.toc_at_macro() && !view.toc.is_empty() => {
+            toc(out, view, " class=\"title\"");
+        }
+        ViewKind::Toc => {}
         ViewKind::Unsupported { name, source } => {
             let _ = writeln!(
                 out,
@@ -719,6 +792,114 @@ fn file_url(path: &std::path::Path) -> String {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     url::Url::from_file_path(&absolute)
         .map_or_else(|()| format!("file://{}", absolute.display()), String::from)
+}
+
+/// A video or audio block's player, as Asciidoctor writes it: a YouTube or Vimeo video
+/// (`video::id[youtube]`) embedded from its host, any other a `<video>` or `<audio>` with the
+/// block's `width`, `height`, `poster`, `start` and `end` and its options.
+fn media_element(kind: MediaKind, tag: &str, targets: &[String], block: &ViewBlock) -> String {
+    let attribute = |name: &str| block.attributes.get(name).map(String::as_str);
+    let option = |name: &str| block.options.contains(name);
+    // The host is the first positional attribute, which may also be named `poster`.
+    let host = ["youtube", "vimeo"]
+        .into_iter()
+        .find(|host| block.attributes.contains_key(*host) || attribute("poster") == Some(host))
+        .filter(|_| kind == MediaKind::Video);
+    let mut size = String::new();
+    for name in ["width", "height"] {
+        if let Some(value) = attribute(name) {
+            let _ = write!(size, " {name}=\"{}\"", escape(value));
+        }
+    }
+    let fullscreen = if option("nofullscreen") {
+        ""
+    } else {
+        " allowfullscreen"
+    };
+    match host {
+        Some("youtube") => {
+            let video = targets.first().map(String::as_str).unwrap_or("");
+            let mut query = format!("rel={}", u8::from(option("related")));
+            for name in ["start", "end"] {
+                if let Some(value) = attribute(name) {
+                    let _ = write!(query, "&{name}={value}");
+                }
+            }
+            for (name, parameter) in [
+                ("autoplay", "&autoplay=1"),
+                ("loop", "&loop=1"),
+                ("muted", "&mute=1"),
+                ("nocontrols", "&controls=0"),
+            ] {
+                if option(name) {
+                    query.push_str(parameter);
+                }
+            }
+            // More videos, or a loop, play as a playlist.
+            if targets.len() > 1 || option("loop") {
+                let _ = write!(query, "&playlist={}", targets.join(","));
+            }
+            if option("nofullscreen") {
+                query.push_str("&fs=0");
+            }
+            format!(
+                "<iframe{size} src=\"{}\" frameborder=\"0\"{fullscreen}></iframe>",
+                escape(&format!("https://www.youtube.com/embed/{video}?{query}"))
+            )
+        }
+        Some(_) => {
+            let video = targets.first().map(String::as_str).unwrap_or("");
+            let parameters: Vec<&str> = [
+                ("autoplay", "autoplay=1"),
+                ("loop", "loop=1"),
+                ("muted", "muted=1"),
+            ]
+            .into_iter()
+            .filter(|(name, _)| option(name))
+            .map(|(_, parameter)| parameter)
+            .collect();
+            let mut address = format!("https://player.vimeo.com/video/{video}");
+            if !parameters.is_empty() {
+                let _ = write!(address, "?{}", parameters.join("&"));
+            }
+            if let Some(start) = attribute("start") {
+                let _ = write!(address, "#at={start}");
+            }
+            format!(
+                "<iframe{size} src=\"{}\" frameborder=\"0\"{fullscreen}></iframe>",
+                escape(&address)
+            )
+        }
+        None => {
+            let mut source = targets.first().cloned().unwrap_or_default();
+            let (start, end) = (attribute("start"), attribute("end"));
+            if start.is_some() || end.is_some() {
+                let _ = write!(source, "#t={}", start.unwrap_or(""));
+                if let Some(end) = end {
+                    let _ = write!(source, ",{end}");
+                }
+            }
+            let mut element = format!("<{tag} src=\"{}\"", escape(&source));
+            if kind == MediaKind::Video {
+                element.push_str(&size);
+                if let Some(poster) = attribute("poster").filter(|poster| !poster.is_empty()) {
+                    let _ = write!(element, " poster=\"{}\"", escape(poster));
+                }
+            }
+            for (name, shown) in [
+                ("autoplay", option("autoplay")),
+                ("muted", kind == MediaKind::Video && option("muted")),
+                ("controls", !option("nocontrols")),
+                ("loop", option("loop")),
+            ] {
+                if shown {
+                    let _ = write!(element, " {name}");
+                }
+            }
+            let _ = write!(element, "></{tag}>");
+            element
+        }
+    }
 }
 
 /// An ordered list's `class`, `type`, `start` and `reversed`, as Asciidoctor writes them.
@@ -800,9 +981,11 @@ fn xref_href(target: &str, link: &ResolvedLink, page: Option<&Page<'_>>) -> Opti
         Some((file, fragment)) => (file, Some(fragment)),
         None => (target, None),
     };
-    if let Some(fragment) = &link.fragment {
-        if !file.contains(".adoc") && !file.contains('$') {
-            return Some(format!("#{fragment}"));
+    if let Some(local) = &link.fragment {
+        // A file part with a fragment names another page (`other#frag`).
+        if (file.is_empty() || fragment.is_none()) && !file.contains(".adoc") && !file.contains('$')
+        {
+            return Some(format!("#{local}"));
         }
     }
     let with_fragment = |mut href: String| {
@@ -827,6 +1010,10 @@ fn xref_href(target: &str, link: &ResolvedLink, page: Option<&Page<'_>>) -> Opti
     }
     let file = match file.strip_suffix(".adoc") {
         Some(stem) => format!("{stem}.html"),
+        // A page named without its extension, as `xref:other#frag[]` names one.
+        None if fragment.is_some() && !file.is_empty() && Path::new(file).extension().is_none() => {
+            format!("{file}.html")
+        }
         None => file.to_owned(),
     };
     Some(with_fragment(file))
@@ -899,9 +1086,15 @@ fn inline_html(out: &mut String, inline: &ViewInline, page: Option<&Page<'_>>) {
             );
         }
         ViewInline::Link { url, content } => {
+            // `bare` where the address is the text, as Asciidoctor marks it.
+            let bare = if ViewInline::plain_text(content) == *url {
+                " class=\"bare\""
+            } else {
+                ""
+            };
             let _ = write!(
                 out,
-                "<a href=\"{}\" class=\"bare\">{}</a>",
+                "<a href=\"{}\"{bare}>{}</a>",
                 escape(url),
                 inlines_with(content, page)
             );

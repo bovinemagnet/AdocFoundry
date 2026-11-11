@@ -437,7 +437,10 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
         resolver,
         ids: collect_ids(dom),
         imagesdir: dom.attributes.get("imagesdir").cloned(),
-        numbered: dom.attributes.contains_key("sectnums"),
+        // `numbered` is the older name Asciidoctor still accepts.
+        numbered: ["sectnums", "numbered"]
+            .iter()
+            .any(|name| dom.attributes.contains_key(*name)),
         counters: Vec::new(),
         numbering: Numbering::Numbered,
         saved_counters: None,
@@ -465,8 +468,9 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
             .unwrap_or(2),
         ordered_depth: 0,
     };
-    let blocks = builder.blocks(&dom.blocks);
+    // The title first, so a footnote in it is listed first, as it is numbered.
     let title = dom.title.as_ref().map(|title| builder.inlines(title));
+    let blocks = builder.blocks(&dom.blocks);
     let toc = if dom.attributes.contains_key("toc") {
         std::mem::take(&mut builder.toc)
     } else {
@@ -499,14 +503,31 @@ pub fn build_view(source: &Path, dom: &Dom, resolver: &dyn ViewResolver) -> View
 /// Every id in the document — sections, blocks and inline anchors — with the span and title of
 /// what it identifies, for local references.
 fn collect_ids(dom: &Dom) -> HashMap<String, (SourceSpan, Option<String>)> {
+    /// The inline anchors of a run of inlines, formatted text included.
     fn inline_anchors(
         inlines: &[Inline],
         span: &SourceSpan,
         out: &mut HashMap<String, (SourceSpan, Option<String>)>,
     ) {
         for inline in inlines {
-            if let Inline::Anchor { id } = inline {
-                out.entry(id.clone()).or_insert((span.clone(), None));
+            match inline {
+                Inline::Anchor { id } => {
+                    out.entry(id.clone()).or_insert((span.clone(), None));
+                }
+                Inline::Bold(content)
+                | Inline::Italic(content)
+                | Inline::Monospace(content)
+                | Inline::Highlight(content)
+                | Inline::Superscript(content)
+                | Inline::Subscript(content)
+                | Inline::Span { content, .. }
+                | Inline::Link { text: content, .. }
+                | Inline::Xref { text: content, .. }
+                | Inline::Footnote { content, .. }
+                | Inline::IndexTerm {
+                    visible: content, ..
+                } => inline_anchors(content, span, out),
+                _ => {}
             }
         }
     }
@@ -523,8 +544,32 @@ fn collect_ids(dom: &Dom) -> HashMap<String, (SourceSpan, Option<String>)> {
             ids.entry(id.clone())
                 .or_insert((block.meta.span.clone(), title));
         }
-        if let BlockKind::Paragraph { inlines } = &block.kind {
-            inline_anchors(inlines, &block.meta.span, &mut ids);
+        // Every run of inlines the block holds itself; those of the blocks inside it come with
+        // them, table cells' included.
+        let span = &block.meta.span;
+        inline_anchors(&block.meta.title, span, &mut ids);
+        match &block.kind {
+            BlockKind::Section { title, .. } | BlockKind::Heading { title, .. } => {
+                inline_anchors(title, span, &mut ids);
+            }
+            BlockKind::Paragraph { inlines } => inline_anchors(inlines, span, &mut ids),
+            BlockKind::List { items, .. } => {
+                for item in items {
+                    inline_anchors(&item.content, &item.span, &mut ids);
+                }
+            }
+            BlockKind::DescriptionList { items } => {
+                for item in items {
+                    inline_anchors(&item.term, &item.span, &mut ids);
+                    inline_anchors(&item.content, &item.span, &mut ids);
+                }
+            }
+            BlockKind::CalloutList { items } => {
+                for item in items {
+                    inline_anchors(&item.content, &item.span, &mut ids);
+                }
+            }
+            _ => {}
         }
     }
     ids
@@ -614,7 +659,10 @@ impl Builder<'_> {
             return (!caption.is_empty()).then(|| caption.to_owned());
         }
         let (counter, label) = match &block.kind {
-            BlockKind::Image { .. } => (&mut self.figures, &self.figure_caption),
+            // A diagram is an image once drawn, as Asciidoctor Diagram makes it.
+            BlockKind::Image { .. } | BlockKind::Diagram { .. } => {
+                (&mut self.figures, &self.figure_caption)
+            }
             BlockKind::Table { .. } => (&mut self.tables, &self.table_caption),
             // A collapsible block is titled by its summary, as Asciidoctor counts it: unnumbered.
             BlockKind::Example { .. } if block.meta.options.contains("collapsible") => {
@@ -633,14 +681,21 @@ impl Builder<'_> {
     /// The number of a section at `level` with block style `style`, and how the sections inside
     /// it are numbered, as Asciidoctor numbers them: special sections (a preface, glossary,
     /// bibliography and the like) and what they hold are not numbered, and an appendix is
-    /// lettered (`Appendix A:`, then `A.1.`) outside the count of the other sections. Past
+    /// lettered (`Appendix A:`, then `A.1.`) outside the count of the other sections, whether
+    /// or not they are numbered (`numbered`: `sectnums` where the section starts). Past
     /// `sectnumlevels` a section is counted but shows no number.
-    fn section_number(&mut self, level: u8, style: Option<&str>) -> (Option<String>, Numbering) {
-        if !self.numbered || level == 0 {
+    fn section_number(
+        &mut self,
+        level: u8,
+        style: Option<&str>,
+        numbered: bool,
+    ) -> (Option<String>, Numbering) {
+        if level == 0 {
             return (None, self.numbering);
         }
         match self.numbering {
             Numbering::Unnumbered => return (None, Numbering::Unnumbered),
+            Numbering::Appendix { .. } if !numbered => return (None, self.numbering),
             Numbering::Appendix { letter, level: top } => {
                 let depth = usize::from(level.saturating_sub(top));
                 self.counters.resize(depth.max(1), 0);
@@ -652,6 +707,7 @@ impl Builder<'_> {
             Numbering::Numbered => {}
         }
         match style {
+            // An appendix is lettered whether or not sections are numbered.
             Some("appendix") => {
                 let letter = char::from(b'A' + (self.appendices % 26) as u8);
                 self.appendices += 1;
@@ -665,6 +721,7 @@ impl Builder<'_> {
                 (Some(number), Numbering::Appendix { letter, level })
             }
             Some(style) if SPECIAL_SECTIONS.contains(&style) => (None, Numbering::Unnumbered),
+            _ if !numbered => (None, Numbering::Numbered),
             _ => {
                 let depth = usize::from(level);
                 self.counters.resize(depth, 0);
@@ -696,7 +753,10 @@ impl Builder<'_> {
                 title,
                 blocks,
             } => {
-                let (number, inside) = self.section_number(*level, block.meta.style.as_deref());
+                // `sectnums` where the section starts, else the header's.
+                let numbered = block.meta.sectnums.unwrap_or(self.numbered);
+                let (number, inside) =
+                    self.section_number(*level, block.meta.style.as_deref(), numbered);
                 let title = self.inlines(title);
                 if *level <= self.toc_levels {
                     if let Some(id) = &block.meta.id {
@@ -904,7 +964,9 @@ impl Builder<'_> {
         self.image_in(target, alt, width, height, self.imagesdir.as_deref())
     }
 
-    /// An image found in `imagesdir`, or beside the page without one.
+    /// An image found in `imagesdir`, or beside the page without one. An absolute target (a URL
+    /// or a `data:` URI) is remote as it is; a relative one in an `imagesdir` that is a URL is
+    /// remote at that address, as Asciidoctor joins them.
     fn image_in(
         &self,
         target: &str,
@@ -913,13 +975,24 @@ impl Builder<'_> {
         height: Option<String>,
         imagesdir: Option<&str>,
     ) -> ViewImage {
-        let remote = target.contains("://") || target.starts_with("data:");
+        let url = if target.contains("://") || target.starts_with("data:") {
+            Some(target.to_owned())
+        } else {
+            imagesdir.filter(|dir| dir.contains("://")).map(|dir| {
+                format!(
+                    "{}/{}",
+                    dir.trim_end_matches('/'),
+                    target.trim_start_matches('/')
+                )
+            })
+        };
         ViewImage {
             target: target.to_owned(),
-            path: (!remote)
+            path: url
+                .is_none()
                 .then(|| self.resolver.image(&self.source, target, imagesdir))
                 .flatten(),
-            url: remote.then(|| target.to_owned()),
+            url,
             alt: if alt.is_empty() {
                 image_alt(target)
             } else {
@@ -950,7 +1023,10 @@ impl Builder<'_> {
             Inline::Link { target, text } => ViewInline::Link {
                 url: target.clone(),
                 content: if text.is_empty() {
-                    vec![ViewInline::Text(target.clone())]
+                    // A mail link shows the address without its scheme, as Asciidoctor shows it.
+                    let shown = target.strip_prefix("mailto:").unwrap_or(target);
+                    let shown = shown.split('?').next().unwrap_or(shown);
+                    vec![ViewInline::Text(shown.to_owned())]
                 } else {
                     self.inlines(text)
                 },
@@ -961,7 +1037,9 @@ impl Builder<'_> {
                     let title = link.title.clone().unwrap_or_else(|| {
                         if link.unresolved {
                             target.clone()
-                        } else if !target.contains(['/', ':', '$', '#']) {
+                        } else if !target.contains(['/', ':', '$', '#'])
+                            || link.fragment.as_deref() == Some(target.as_str())
+                        {
                             // An anchor with no title or reference text, as Asciidoctor shows it.
                             format!("[{target}]")
                         } else {
@@ -1038,7 +1116,14 @@ impl Builder<'_> {
             .map_or((target, None), |(file, fragment)| (file, Some(fragment)));
         let local_id = if file.is_empty() {
             fragment
-        } else if !file.contains('.') && !file.contains('$') && !file.contains(':') {
+        } else if fragment.is_none() && self.ids.contains_key(file) {
+            // An id the page defines, though it may hold a `.` or a `:` (`fig:overview`).
+            Some(file)
+        } else if fragment.is_none()
+            && !file.contains('.')
+            && !file.contains('$')
+            && !file.contains(':')
+        {
             // `<<id>>` arrives as a bare id.
             Some(file)
         } else {
@@ -1216,6 +1301,22 @@ pub fn block_by_trail<'v>(view: &'v ViewTree, trail: &[usize]) -> Option<&'v Vie
 }
 
 impl ViewTree {
+    /// Whether the page places its table of contents at its `toc::[]` block (`:toc: macro`)
+    /// rather than at the top. As Asciidoctor places it, the contents are shown in one place
+    /// only: at the top unless placed at the macro, and a `toc::[]` shows nothing otherwise.
+    #[must_use]
+    pub fn toc_at_macro(&self) -> bool {
+        ["toc", "toc-placement"]
+            .iter()
+            .any(|name| self.attributes.get(*name).map(String::as_str) == Some("macro"))
+    }
+
+    /// The title of the table of contents: `toc-title`, empty when the page unsets it.
+    #[must_use]
+    pub fn toc_title(&self) -> &str {
+        self.attributes.get("toc-title").map_or("", String::as_str)
+    }
+
     /// Calls `visit` with every block of the tree, depth first, each before the blocks inside
     /// it: those of sections and delimited blocks, list items, description and callout list
     /// entries, and table cells. The one walk of every block, so a container cannot be missed.
@@ -1240,6 +1341,24 @@ impl ViewBlock {
         let mut children = Vec::new();
         self.each_child_list(&mut |blocks| children.extend(blocks));
         children
+    }
+
+    /// Calls `visit` with each run of inlines the block holds itself, in order: its title, a
+    /// section's or heading's title, a paragraph, and the text of its list items, description
+    /// terms and callouts. The blocks inside it hold their own ([`each_block`]).
+    pub fn each_inline_run<'a>(&'a self, visit: &mut impl FnMut(&'a [ViewInline])) {
+        visit(&self.title);
+        match &self.kind {
+            ViewKind::Section { title, .. } | ViewKind::Heading { title, .. } => visit(title),
+            ViewKind::Paragraph(content) => visit(content),
+            ViewKind::List { items, .. } => items.iter().for_each(|item| visit(&item.content)),
+            ViewKind::DescriptionList(items) => items.iter().for_each(|item| {
+                visit(&item.term);
+                visit(&item.content);
+            }),
+            ViewKind::CalloutList(items) => items.iter().for_each(|item| visit(&item.content)),
+            _ => {}
+        }
     }
 
     /// Calls `visit` with each list of blocks directly inside this one, in order.

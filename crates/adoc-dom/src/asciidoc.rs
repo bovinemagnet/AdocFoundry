@@ -242,6 +242,7 @@ impl Converter<'_> {
                 .attrlist()
                 .map(|attrlist| attrlist.options().into_iter().map(str::to_owned).collect())
                 .unwrap_or_default(),
+            sectnums: None,
         }
     }
 

@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{ViewBlock, ViewInline, ViewKind, ViewTree};
+use crate::{ViewInline, ViewTree};
 
 /// The size of type an inline formula is rendered at, in points.
 pub const INLINE_FORMULA_POINTS: f32 = 13.0;
@@ -42,13 +42,14 @@ pub fn with_baseline(svg: &str, baseline: f64) -> String {
 /// size or a baseline.
 #[must_use]
 pub fn formula_image(path: &Path) -> Option<FormulaImage> {
-    let mut head = String::new();
+    // Read as bytes: the head may end inside a character.
+    let mut head = Vec::new();
     std::fs::File::open(path)
         .ok()?
         .take(HEAD)
-        .read_to_string(&mut head)
+        .read_to_end(&mut head)
         .ok()?;
-    let (width, height, baseline) = measures(&head)?;
+    let (width, height, baseline) = measures(&String::from_utf8_lossy(&head))?;
     Some(FormulaImage {
         path: path.to_path_buf(),
         width,
@@ -80,55 +81,13 @@ impl ViewTree {
         if let Some(title) = &self.title {
             formulas_in(title, &mut out);
         }
-        blocks_formulas(&self.blocks, &mut out);
+        self.each_block(&mut |block| {
+            block.each_inline_run(&mut |inlines| formulas_in(inlines, &mut out));
+        });
         for footnote in &self.footnotes {
             formulas_in(&footnote.content, &mut out);
         }
         out
-    }
-}
-
-fn blocks_formulas(blocks: &[ViewBlock], out: &mut HashMap<String, FormulaImage>) {
-    for block in blocks {
-        formulas_in(&block.title, out);
-        match &block.kind {
-            ViewKind::Section { title, blocks, .. } => {
-                formulas_in(title, out);
-                blocks_formulas(blocks, out);
-            }
-            ViewKind::Heading { title, .. } => formulas_in(title, out),
-            ViewKind::Paragraph(content) => formulas_in(content, out),
-            ViewKind::List { items, .. } => {
-                for item in items {
-                    formulas_in(&item.content, out);
-                    blocks_formulas(&item.blocks, out);
-                }
-            }
-            ViewKind::DescriptionList(items) => {
-                for item in items {
-                    formulas_in(&item.term, out);
-                    formulas_in(&item.content, out);
-                    blocks_formulas(&item.blocks, out);
-                }
-            }
-            ViewKind::Table(table) => {
-                for cell in table
-                    .header
-                    .iter()
-                    .flatten()
-                    .chain(table.rows.iter().flatten())
-                    .chain(table.footer.iter().flatten())
-                {
-                    blocks_formulas(&cell.blocks, out);
-                }
-            }
-            ViewKind::Admonition { blocks, .. }
-            | ViewKind::Quote { blocks, .. }
-            | ViewKind::Sidebar(blocks)
-            | ViewKind::Example(blocks)
-            | ViewKind::Open(blocks) => blocks_formulas(blocks, out),
-            _ => {}
-        }
     }
 }
 
@@ -160,6 +119,7 @@ fn formulas_in(inlines: &[ViewInline], out: &mut HashMap<String, FormulaImage>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ViewBlock, ViewKind};
 
     const TYPST: &str = r#"<svg class="typst-doc" viewBox="0 0 14.6854 12.2" width="14.6854pt" height="12.2pt" xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>"#;
 
@@ -221,6 +181,57 @@ mod tests {
             tree.inline_formulas(),
             HashMap::from([("x^2".to_owned(), image)])
         );
+    }
+
+    /// A formula in a callout item is found too.
+    #[test]
+    fn inline_formulas_are_found_in_callout_items() {
+        let image = FormulaImage {
+            path: PathBuf::from("/cache/x.svg"),
+            width: 1.0,
+            height: 2.0,
+            baseline: 1.5,
+        };
+        let tree = ViewTree {
+            source: PathBuf::from("/page.adoc"),
+            blocks: vec![crate::ViewBlock {
+                span: crate::SourceSpan::default(),
+                id: None,
+                roles: Vec::new(),
+                style: None,
+                title: Vec::new(),
+                caption: None,
+                attributes: std::collections::BTreeMap::new(),
+                options: std::collections::BTreeSet::new(),
+                kind: crate::ViewKind::CalloutList(vec![crate::ViewCallout {
+                    span: crate::SourceSpan::default(),
+                    number: 1,
+                    content: vec![ViewInline::Stem {
+                        latex: false,
+                        source: "x".to_owned(),
+                        rendered: Some(image.clone()),
+                    }],
+                    blocks: Vec::new(),
+                }]),
+            }],
+            ..ViewTree::default()
+        };
+        assert_eq!(
+            tree.inline_formulas(),
+            HashMap::from([("x".to_owned(), image)])
+        );
+    }
+
+    /// The head read may end inside a character, which leaves the root element readable.
+    #[test]
+    fn a_head_ending_inside_a_character_is_read() {
+        let svg = with_baseline(TYPST, 9.541);
+        let padding = HEAD as usize - svg.len() - 1;
+        let svg = format!("{svg}{}\u{e9}", " ".repeat(padding));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("formula.svg");
+        std::fs::write(&path, &svg).unwrap();
+        assert!(formula_image(&path).is_some());
     }
 
     #[test]
