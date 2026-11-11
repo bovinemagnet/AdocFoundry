@@ -606,3 +606,32 @@ fn an_entry_naming_a_partial_does_not_list_the_page_of_its_name() {
         ["docs/modules/ROOT/pages/snippet.adoc"]
     );
 }
+
+#[test]
+fn an_include_the_navigation_does_not_read_hides_nothing() {
+    let report = audit_files(
+        &[
+            (
+                "docs/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n",
+            ),
+            (
+                "docs/modules/ROOT/nav.adoc",
+                "* xref:a.adoc[]\n////\ninclude::partial$more-nav.adoc[]\n////\n----\ninclude::partial$more-nav.adoc[]\n----\n",
+            ),
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            ("docs/modules/ROOT/pages/a.adoc", "= A\n"),
+            ("docs/modules/ROOT/pages/orphan.adoc", "= Orphan\n"),
+            (
+                "docs/modules/ROOT/partials/more-nav.adoc",
+                "* xref:orphan.adoc[]\n",
+            ),
+        ],
+        AuditScope::Workspace,
+    );
+    assert!(skipped(&report, UNLISTED).is_empty());
+    assert_eq!(
+        found(&report, UNLISTED),
+        ["docs/modules/ROOT/pages/orphan.adoc"]
+    );
+}

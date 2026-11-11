@@ -9,7 +9,7 @@ use std::{
 use adoc_core::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Location, SourceRange};
 
 use crate::{
-    parse_nav, parse_resource_id, AntoraCatalog, AntoraResourceId, ResolutionError, ResourceFamily,
+    parse_nav_and_includes, parse_resource_id, AntoraCatalog, AntoraResourceId, ResolutionError,
 };
 
 /// The navigation of one nav file of a component version.
@@ -22,6 +22,24 @@ pub struct NavTree {
     pub items: Vec<NavItem>,
     /// `adoc.antora.nav-unresolved` for each entry whose target does not resolve.
     pub diagnostics: Vec<Diagnostic>,
+    /// What only the build can follow, in the file's order: each `include::` line read as
+    /// navigation (outside comments and delimited blocks) and each entry naming an attribute.
+    pub unfollowed: Vec<Unfollowed>,
+}
+
+/// A line of a navigation file whose entries cannot be known without the build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Unfollowed {
+    pub range: SourceRange,
+    pub kind: UnfollowedKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnfollowedKind {
+    /// An `include::` line, which the navigation parser does not follow.
+    Include,
+    /// An entry whose target names an attribute.
+    Attribute,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -167,7 +185,30 @@ fn build_tree(
 ) -> NavTree {
     let context = catalog.context_for_path(&path);
     let mut diagnostics = Vec::new();
-    let flat: Vec<(u8, NavItem)> = parse_nav(text)
+    let (entries, includes) = parse_nav_and_includes(text);
+    let mut unfollowed: Vec<Unfollowed> = includes
+        .into_iter()
+        .map(|range| Unfollowed {
+            range,
+            kind: UnfollowedKind::Include,
+        })
+        .collect();
+    unfollowed.extend(
+        entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .target
+                    .as_deref()
+                    .is_some_and(|target| target.contains('{'))
+            })
+            .map(|entry| Unfollowed {
+                range: SourceRange::new(entry.start, entry.end),
+                kind: UnfollowedKind::Attribute,
+            }),
+    );
+    unfollowed.sort_by_key(|unfollowed| unfollowed.range);
+    let flat: Vec<(u8, NavItem)> = entries
         .into_iter()
         .map(|entry| {
             let range = SourceRange::new(entry.start, entry.end);
@@ -243,6 +284,7 @@ fn build_tree(
         path,
         items: nest(&flat, &mut position, None),
         diagnostics,
+        unfollowed,
     }
 }
 

@@ -1,5 +1,7 @@
 //! The structure of an Antora navigation file.
 
+use adoc_core::SourceRange;
+
 /// One entry of a navigation file: a `.Title` line or a list item.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NavEntry {
@@ -20,7 +22,16 @@ pub struct NavEntry {
 /// Comments and the contents of delimited blocks are skipped: they hold no navigation.
 #[must_use]
 pub fn parse_nav(text: &str) -> Vec<NavEntry> {
+    parse_nav_and_includes(text).0
+}
+
+/// The entries of a navigation file as [`parse_nav`] reads them, and the range of each
+/// `include::` line it passes over outside comments and delimited blocks, whose entries only the
+/// build can know.
+#[must_use]
+pub fn parse_nav_and_includes(text: &str) -> (Vec<NavEntry>, Vec<SourceRange>) {
     let mut entries = Vec::new();
+    let mut includes = Vec::new();
     let mut open_delimiter: Option<&str> = None;
     let mut offset = 0;
 
@@ -41,6 +52,10 @@ pub fn parse_nav(text: &str) -> Vec<NavEntry> {
             continue;
         }
         if trimmed.starts_with("//") {
+            continue;
+        }
+        if trimmed.starts_with("include::") {
+            includes.push(SourceRange::new(start, start + content.len()));
             continue;
         }
 
@@ -69,7 +84,7 @@ pub fn parse_nav(text: &str) -> Vec<NavEntry> {
             entries.push(linked(level, item));
         }
     }
-    entries
+    (entries, includes)
 }
 
 /// A run of four or more of the same delimiter character, opening or closing a block.
@@ -184,6 +199,20 @@ mod tests {
                 (1, "bare.adoc", Some("bare.adoc")),
                 (1, "<<anchor,Not a page>>", None),
             ]
+        );
+    }
+
+    #[test]
+    fn reports_only_the_includes_it_reads_past() {
+        let text = "include::partial$a.adoc[]\n////\ninclude::partial$b.adoc[]\n////\n----\ninclude::partial$c.adoc[]\n----\n// include::partial$d.adoc[]\n";
+        let (_, includes) = super::parse_nav_and_includes(text);
+
+        assert_eq!(
+            includes
+                .iter()
+                .map(|range| &text[range.start..range.end])
+                .collect::<Vec<_>>(),
+            ["include::partial$a.adoc[]"]
         );
     }
 

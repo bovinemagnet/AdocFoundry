@@ -14,10 +14,9 @@
 use std::collections::BTreeSet;
 
 use adoc_antora::{
-    nav_tree_each, parse_nav, parse_resource_id, ComponentDescriptor, NavError, NavItem, NavTree,
-    ResourceFamily,
+    nav_tree_each, parse_resource_id, ComponentDescriptor, NavError, NavItem, ResourceFamily,
+    UnfollowedKind,
 };
-use adoc_core::SourceRange;
 
 use crate::{
     portable_path, workspace::published_page, workspace::Context, Evidence, Finding, FindingCode,
@@ -53,13 +52,17 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
     }
 
     for tree in &trees {
-        let dynamic = dynamic_entries(context, tree);
-        if let Some(first) = dynamic.first() {
+        // What the navigation parser read past, as it read it: an include in a comment or a
+        // listing block is not one.
+        if let Some(first) = tree.unfollowed.first() {
+            let what = match first.kind {
+                UnfollowedKind::Include => "includes another file",
+                UnfollowedKind::Attribute => "has an entry naming an attribute",
+            };
             unknown.get_or_insert(Unknown {
                 reason: format!(
-                    "{} {}, so what it lists is not known",
+                    "{} {what}, so what it lists is not known",
                     context.location(&tree.path, None).path,
-                    first.1
                 ),
             });
         }
@@ -170,41 +173,6 @@ fn unreadable(context: &Context<'_>, error: &NavError) -> String {
         ),
         NavError::UnknownComponent { .. } => "Its navigation could not be read".to_owned(),
     }
-}
-
-/// The entries of `tree` whose targets cannot be known without the build: an `include::`
-/// line, which the navigation parser does not follow, or an entry naming an attribute. Each is
-/// its line's range and a description.
-fn dynamic_entries(context: &Context<'_>, tree: &NavTree) -> Vec<(SourceRange, &'static str)> {
-    let Ok(text) = (context.input.read)(&tree.path) else {
-        return Vec::new();
-    };
-    let mut found = Vec::new();
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        let content = line.trim_end_matches(['\r', '\n']);
-        if content.trim_start().starts_with("include::") {
-            found.push((
-                SourceRange::new(offset, offset + content.len()),
-                "includes another file",
-            ));
-        }
-        offset += line.len();
-    }
-    for entry in parse_nav(&text) {
-        if entry
-            .target
-            .as_deref()
-            .is_some_and(|target| target.contains('{'))
-        {
-            found.push((
-                SourceRange::new(entry.start, entry.end),
-                "has an entry naming an attribute",
-            ));
-        }
-    }
-    found.sort_by_key(|(range, _)| *range);
-    found
 }
 
 /// Every `(module, path)` of this component version an entry of `items` reaches.
