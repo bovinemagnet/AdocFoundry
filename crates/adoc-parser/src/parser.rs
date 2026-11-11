@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use adoc_core::{
     Anchor, Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle,
-    IncludeDirective, Related, Section, SourceRange,
+    IncludeDirective, LineIndex, Related, Section, SourceRange,
 };
 
 use crate::line_parser::{
@@ -159,10 +159,11 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 fn duplicate_anchors(text: &str, anchors: &[Anchor]) -> Vec<Diagnostic> {
     let mut first = HashMap::<&str, SourceRange>::new();
     let mut diagnostics = Vec::new();
+    let mut lines = None;
     for anchor in anchors.iter().filter(|anchor| !anchor.conditional) {
         match first.get(anchor.id.as_str()) {
             Some(first_range) => {
-                let (line, column) = line_and_column(text, first_range.start);
+                let (line, column) = line_and_column(text, &mut lines, first_range.start);
                 diagnostics.push(Diagnostic {
                     code: DiagnosticCode::DuplicateAnchor,
                     severity: DiagnosticSeverity::Warning,
@@ -185,15 +186,14 @@ fn duplicate_anchors(text: &str, anchors: &[Anchor]) -> Vec<Diagnostic> {
     diagnostics
 }
 
-/// The line and the character on it of `offset` in `text`, both counted from 1.
-fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
+/// The line and the character on it of `offset` in `text`, both counted from 1. The line index
+/// is built once, by the first duplicate, so each is placed by counting within its own line.
+fn line_and_column(text: &str, lines: &mut Option<LineIndex>, offset: usize) -> (usize, usize) {
     let offset = text.floor_char_boundary(offset.min(text.len()));
-    let before = &text[..offset];
-    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
-    (
-        before.matches('\n').count() + 1,
-        before[line_start..].chars().count() + 1,
-    )
+    let lines = lines.get_or_insert_with(|| LineIndex::new(text));
+    let (line, column) = lines.line_column(offset);
+    let line_start = offset - column;
+    (line + 1, text[line_start..offset].chars().count() + 1)
 }
 
 #[cfg(test)]
@@ -720,6 +720,37 @@ image::diagram.png[Architecture]\n";
         assert_eq!(
             duplicate.related[0].message,
             "`same` is first declared here"
+        );
+    }
+
+    /// Reporting duplicates late in a long page costs about what reporting nothing does: each
+    /// is placed without scanning the page from its start again (#530).
+    #[test]
+    fn duplicate_anchors_late_in_a_long_page_are_placed_in_linear_time() {
+        let prose =
+            "A line of prose that runs on for a while to make the page long.\n".repeat(20_000);
+        let distinct: String = (0..4_000).map(|n| format!("[[a{n}]]\n")).collect();
+        let doubled: String = (0..2_000)
+            .map(|n| format!("[[a{n}]]\n[[a{n}]]\n"))
+            .collect();
+        let fastest = |source: &str| {
+            (0..3)
+                .map(|_| {
+                    let started = std::time::Instant::now();
+                    let result = parse("file:///long.adoc", source);
+                    (started.elapsed(), result.diagnostics().len())
+                })
+                .min()
+                .unwrap()
+        };
+
+        let (without, none) = fastest(&format!("{prose}{distinct}"));
+        let (with, reported) = fastest(&format!("{prose}{doubled}"));
+
+        assert_eq!((none, reported), (0, 2_000));
+        assert!(
+            with < without * 3 + std::time::Duration::from_millis(100),
+            "{with:?} with duplicates against {without:?} without"
         );
     }
 
