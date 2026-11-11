@@ -102,7 +102,7 @@ A published page that no navigation file of its own component version lists. The
 A page with no document title.
 
 `quality.image.missing-alt`::
-A block image macro with no alternative text written at all.
+A block or inline image macro with no alternative text written at all.
 
 See xref:settings.adoc[Settings] for the rules' severities.
 

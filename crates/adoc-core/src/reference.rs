@@ -30,4 +30,6 @@ pub struct ImageDirective {
     pub target: String,
     pub attributes: Option<String>,
     pub range: SourceRange,
+    /// An inline `image:target[]` rather than a block `image::target[]`.
+    pub inline: bool,
 }

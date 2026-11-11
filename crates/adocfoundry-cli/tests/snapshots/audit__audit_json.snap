@@ -50,7 +50,7 @@ expression: "serde_json::to_string_pretty(&report).unwrap()"
   },
   "counts": {
     "info": 1,
-    "warning": 6,
+    "warning": 7,
     "error": 0,
     "excluded": 0,
     "skipped": 2
@@ -127,6 +127,27 @@ expression: "serde_json::to_string_pretty(&report).unwrap()"
         "path": "images.adoc"
       },
       "remediation": "Describe the image in the macro's first attribute: `image::a.png[What it shows]`"
+    },
+    {
+      "code": "quality.image.missing-alt",
+      "severity": "warning",
+      "message": "The image `c.png` has no alternative text",
+      "location": {
+        "root": 0,
+        "path": "product/modules/ROOT/pages/images.adoc",
+        "range": {
+          "start": 66,
+          "end": 87
+        }
+      },
+      "coordinate": {
+        "component": "product",
+        "version": "3.0",
+        "module": "ROOT",
+        "family": "page",
+        "path": "images.adoc"
+      },
+      "remediation": "Describe the image in the macro's first attribute: `image:c.png[What it shows]`"
     },
     {
       "code": "quality.navigation.unlisted-page",

@@ -147,7 +147,7 @@ See <<the-files-view>>.
 
 Problems::
 Workspace diagnostics grouped by file, with a count in the tab title.
-Once the quality audit has run, the audit's own findings are listed too: pages in no navigation file, pages with no title and block images with no alternative text.
+Once the quality audit has run, the audit's own findings are listed too: pages in no navigation file, pages with no title and images with no alternative text.
 Each finding appears once, because the existing diagnostics the audit includes are not listed twice.
 A finding about a whole page (an unlisted page, a missing title) shows no line and column and opens the page at its start.
 Any other finding opens the file with its range selected.
@@ -887,7 +887,7 @@ Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+E
 * An `xref:` opens the target page and places the caret on the anchor, if there is one.
 * An `include::` opens the included file.
 * An `+{attribute}+` goes to the place the attribute is defined: the document, an included file, `antora.yml` or the playbook.
-* An `image::` opens the image in an image tab; see <<image-viewer>>.
+* An `image::` or `image:` opens the image in an image tab; see <<image-viewer>>.
 * An attachment opens in the system's default application.
 
 If the target cannot be resolved, the diagnostic is shown and nothing is opened.

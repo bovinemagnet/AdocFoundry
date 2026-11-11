@@ -8252,10 +8252,10 @@ fn audit_overview_counts_filter_problems(cx: &mut TestAppContext) {
         filter
     };
 
-    let filter = open("quality.image.missing-alt: 2", &mut cx);
+    let filter = open("quality.image.missing-alt: 3", &mut cx);
     assert_eq!(filter.code, Some(alt));
     let rows = shown(&mut cx);
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 3);
     assert_eq!(rows, expected(&|finding| finding.code == alt));
 
     let filter = open("product 3.0: 7 of 8 pages listed", &mut cx);
@@ -8297,7 +8297,7 @@ fn problem_filter_choices_clear_one_by_one(cx: &mut TestAppContext) {
     let shown = |cx: &mut VisualTestContext| {
         cx.update(|_, cx| workspace.read(cx).problem_entries_for_test(cx).len())
     };
-    assert_eq!(shown(&mut cx), 2);
+    assert_eq!(shown(&mut cx), 3);
     // The severity's button comes first; then the rule's is first.
     click_drawn("problems-filter-clear-0".to_owned(), &mut cx);
     let filter = cx.update(|_, cx| workspace.read(cx).problem_filter_for_test().0.clone());

@@ -384,6 +384,20 @@ mod tests {
     }
 
     #[test]
+    fn follows_inline_images_externally() {
+        let ws = workspace("images");
+        let path = fixture("images/guide.adoc");
+        let text = ":imagesdir: media\n\nClick image:present.svg[] or image:missing.svg[].\n";
+        let offset = text.find("image:present").unwrap() + 8;
+        assert!(matches!(
+            definition_at_offset(&ws, &path, text, offset),
+            Some(DefinitionTarget::External(target)) if target.ends_with("media/present.svg")
+        ));
+        let missing = text.find("image:missing").unwrap() + 8;
+        assert_eq!(definition_at_offset(&ws, &path, text, missing), None);
+    }
+
+    #[test]
     fn follows_attribute_references_to_their_declaration() {
         let ws = WorkspaceState::new();
         let path = Path::new("/docs/page.adoc");

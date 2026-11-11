@@ -420,6 +420,31 @@ mod tests {
     }
 
     #[test]
+    fn describes_an_inline_image() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/images");
+        let mut index = WorkspaceIndex::new();
+        index.index_roots(std::slice::from_ref(&root)).unwrap();
+        let text = "= Guide\n:imagesdir: media\n\nClick image:present.svg[Present] here.\n";
+
+        let content = hover(
+            &mut index,
+            &AntoraCatalog::new(),
+            &root.join("guide.adoc"),
+            text,
+            "image:present",
+        )
+        .expect("a hover");
+
+        assert!(
+            content.markdown.contains("`media/present.svg`"),
+            "{content:?}"
+        );
+        let start = text.find("image:present").unwrap();
+        assert_eq!(content.range.start, start);
+        assert_eq!(content.range.end, text.find(" here").unwrap());
+    }
+
+    #[test]
     fn gives_an_attribute_s_value_and_where_it_is_declared() {
         let mut index = WorkspaceIndex::new();
         let text = ":product: Widget\n\nVersion {product}.\n";

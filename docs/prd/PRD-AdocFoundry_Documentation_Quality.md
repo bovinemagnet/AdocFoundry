@@ -259,6 +259,7 @@ Existing repository issues mentioned above remain independent and must not be si
 - **Missing title.** Checked on published pages. An empty `=` line is reported, and no title at all is reported unless a `doctitle` attribute gives one. An include before the first section may supply the title, so that case is a skip.
 - **Missing alt text.**
   - Checked on the block image macros of published pages and of partials. The parser records block images only, so inline images are not checked; recording them would change `adoc-parser`, which runs on every keystroke and feeds the editor's own image diagnostics.
+  - Since #428 the parser records inline images as well (`ImageDirective::inline`), so inline images are checked too, their remedy written as `image:target[What it shows]`.
   - Text counts as written in any form: a first positional attribute, a named `alt`, an attribute reference, or text quoted empty (`[""]`), the author's sign of a decorative image. Only a macro with no text at all is reported. Other decorative or generated images are left to exclusions.
 - **Unavailable scope.** A component or version not in the catalog makes the audit unavailable (`remote-component-missing`).
 
@@ -323,7 +324,7 @@ Existing repository issues mentioned above remain independent and must not be si
 - **Documentation.** The user guide's new *The quality audit* page covers the rules, completeness, the policy, exclusions, CI, the providers and the scope limitations. The limitations are:
   - remote sources are not detected;
   - navigation is read as written, so a nav file's includes and attribute entries are skipped rather than expanded;
-  - inline images are not checked;
+  - inline images are not checked (lifted by #428);
   - ignored folders are not gaps;
   - existing diagnostics keep their severity;
   - there is no score.

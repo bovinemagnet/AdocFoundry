@@ -799,6 +799,32 @@ mod tests {
     }
 
     #[test]
+    fn judges_inline_antora_images_as_block_ones() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nSee image:architecture.svg[] and image:missing.svg[Missing].\n",
+            ),
+            vec![DiagnosticCode::UnresolvedImage]
+        );
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nAn image:{icon}[] icon, image:nowhere:a.svg[] and `+image:x.svg[]+`.\n",
+            ),
+            vec![DiagnosticCode::AntoraUnknownModule],
+            "a dynamic target and a literal are left alone"
+        );
+    }
+
+    #[test]
     fn reports_an_unknown_module_but_not_an_absent_component_for_images() {
         let (mut index, antora, root) = antora_single_component();
         let home = root.join("modules/ROOT/pages/index.adoc");

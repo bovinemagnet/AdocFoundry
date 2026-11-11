@@ -133,9 +133,9 @@ fn mcp_quality_reports_skips_separately_from_coverage() {
             json!({ "rules": ["quality.image.missing-alt"] }),
         )
         .unwrap();
-    assert_eq!(titled["findings_total"], 2);
+    assert_eq!(titled["findings_total"], 3);
     assert_eq!(
-        titled["counts"]["warning"], 6,
+        titled["counts"]["warning"], 7,
         "counts are the whole report's"
     );
     let region = &titled["findings"][0]["region"];
@@ -144,7 +144,7 @@ fn mcp_quality_reports_skips_separately_from_coverage() {
         .call("quality_audit", json!({ "severity": "warning" }))
         .unwrap();
     assert_eq!(
-        warnings["findings_total"], 6,
+        warnings["findings_total"], 7,
         "the information finding left out"
     );
     assert!(
@@ -179,7 +179,7 @@ fn mcp_analysis_pagination_does_not_hide_incomplete() {
             page["completeness"]["gaps"][0]["reason"],
             "provider-unavailable"
         );
-        assert_eq!(page["counts"]["warning"], 6);
+        assert_eq!(page["counts"]["warning"], 7);
         assert_eq!(page["outcome"], "pass_partial", "never a plain pass");
         assert_eq!(page["exit_code"], 0);
         match page["next_cursor"].as_str() {
@@ -190,7 +190,7 @@ fn mcp_analysis_pagination_does_not_hide_incomplete() {
             None => break,
         }
     }
-    assert_eq!(pages, 7, "one finding a page");
+    assert_eq!(pages, 8, "one finding a page");
 
     let strict = client
         .call("quality_audit", json!({ "require_complete": true }))

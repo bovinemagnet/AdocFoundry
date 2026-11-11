@@ -393,8 +393,13 @@ fn audit_findings_listed_once_in_problems() {
     );
 
     let alt = copy.problems_with(IMAGES, ALT);
-    assert_eq!(alt.len(), 1);
+    assert_eq!(alt.len(), 2, "the block image and the inline one");
     assert_eq!((alt[0].line, alt[0].column), (3, 1), "where the image is");
+    assert_eq!(
+        (alt[1].line, alt[1].column),
+        (7, 11),
+        "where the inline image is"
+    );
     assert_eq!(alt[0].severity, DiagnosticSeverity::Warning);
     let unlisted = copy.problems_with("product/modules/ROOT/pages/orphan.adoc", UNLISTED);
     assert!(unlisted[0].whole_file, "about the page, not a place in it");
@@ -433,7 +438,7 @@ fn excluded_findings_are_not_problems() {
         .problems_with("product/modules/ROOT/pages/orphan.adoc", UNLISTED)
         .is_empty());
     assert_eq!(copy.kept().counts().excluded, 1, "counted in the report");
-    assert_eq!(copy.problems_with(IMAGES, ALT).len(), 1);
+    assert_eq!(copy.problems_with(IMAGES, ALT).len(), 2);
 
     fs::write(
         &user,
@@ -488,6 +493,7 @@ fn problems_filter_by_severity_code_and_place() {
             ..ProblemFilter::default()
         }),
         [
+            (IMAGES.to_owned(), ALT),
             (IMAGES.to_owned(), ALT),
             ("product/modules/ROOT/partials/snippet.adoc".to_owned(), ALT),
         ]
