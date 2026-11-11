@@ -836,7 +836,7 @@ fn head_text(
 ) -> Result<Arc<str>, String> {
     match repo {
         Some(Ok(Some(repo))) => repo
-            .head_content(path)
+            .head_text_for_worktree(path)
             .map(|text| Arc::from(text.unwrap_or_default()))
             .map_err(|error| error.to_string()),
         Some(Err(error)) => Err(error.clone()),
@@ -889,7 +889,7 @@ impl Engine {
             .ok_or(EngineError::UnknownDocument(id))?;
         let repo = self.repository_of(&document.path)?;
         let head = repo
-            .head_content(&document.path)
+            .head_text_for_worktree(&document.path)
             .map_err(|error| EngineError::InvalidRequest(error.to_string()))?
             .unwrap_or_default();
         let lines = adoc_core::LineIndex::new(&head);

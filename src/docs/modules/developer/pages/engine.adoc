@@ -869,6 +869,7 @@ It reads the `filter` attribute first and refuses a file with a named filter, su
 A link is stored as its target, and `staged_mode` keeps the index's mode where the file system cannot show a link or an executable file (`core.symlinks=false`, `core.filemode=false`).
 `crates/adoc-git/tests/git_add.rs` checks conformance with the `git` executable by building the same repository twice and comparing `git ls-files --stage` and `git status --porcelain`.
 `discover_isolated` opens a repository reading only its own configuration, so that a test can show the no-identity refusal whatever the developer's global identity is.
+Reading goes the other way: `Repository::head_text_for_worktree` converts a page's text in `HEAD` to its working tree form through the to-worktree pipeline, drivers removed, and change markers, blame and Revert Change all compare with that, so a checkout with `core.autocrlf=true` or an `eol=crlf` attribute shows no changes and a revert puts back the page's own line endings.
 
 A commit made with `commit.gpgsign` set, and every push, runs the `git` executable from `[tools] git`, else `git` on `PATH`.
 A signed commit runs on a worker started with `worker::spawn` and reports `WorkerMessage::Committed`, so the engine's thread is never held while Git signs.

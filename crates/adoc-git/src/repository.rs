@@ -191,10 +191,41 @@ impl Repository {
         Ok(object.data.to_str().ok().map(str::to_owned))
     }
 
+    /// The text of `path` in the `HEAD` commit as a checkout would write it, line endings,
+    /// `ident` and `working-tree-encoding` converted by the repository's attributes and
+    /// configuration (no filter driver is ever run), so it compares line for line with the
+    /// working tree. `None` as for [`Repository::head_content`].
+    pub fn head_text_for_worktree(&self, path: &Path) -> Result<Option<String>, GitError> {
+        use gix::filter::plumbing::pipeline::convert::to_worktree;
+        let relative = self.relative(path)?;
+        let Some(blob) = self.head_content(&relative)? else {
+            return Ok(None);
+        };
+        let (mut pipeline, mut attributes) = self.to_git_pipeline()?;
+        let entry = attributes
+            .at_path(relative.as_path(), None, &self.repo.objects)
+            .map_err(GitError::git)?;
+        let name = unix_path(&relative);
+        let converted = pipeline
+            .convert_to_worktree(
+                blob.as_bytes(),
+                name.as_ref(),
+                &mut |_, attributes| {
+                    entry.matching_attributes(attributes);
+                },
+                to_worktree::Options::default(),
+            )
+            .map_err(GitError::git)?;
+        Ok(converted
+            .as_bytes()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map(str::to_owned))
+    }
+
     /// The line changes of `path` against `HEAD`: of `current` when given, so unsaved edits are
     /// included, else of the file on disk. A file not in `HEAD` is all added lines.
     pub fn line_diff(&self, path: &Path, current: Option<&str>) -> Result<Vec<Hunk>, GitError> {
-        let head = self.head_content(path)?.unwrap_or_default();
+        let head = self.head_text_for_worktree(path)?.unwrap_or_default();
         let on_disk;
         let current = match current {
             Some(text) => text,
@@ -271,7 +302,7 @@ impl Repository {
     /// not committed), else of the file on disk.
     pub fn blame(&self, path: &Path, current: Option<&str>) -> Result<Vec<BlameLine>, GitError> {
         let head = self.head_blame(path)?;
-        let head_text = self.head_content(path)?.unwrap_or_default();
+        let head_text = self.head_text_for_worktree(path)?.unwrap_or_default();
         let on_disk;
         let current = match current {
             Some(text) => text,
