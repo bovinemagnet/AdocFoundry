@@ -16,7 +16,7 @@ use adoc_core::{
 use adoc_engine::{
     commands::ids, normalize_path, CommandArgs, CommandOutcome, EdgeKind, Engine, EngineEvent,
     GraphFilter, GraphKey, GraphNodeKind, GraphScope, GraphSnapshot, GroupBy, Groups, Layout,
-    LinkStyle, ManualClock, MindMap, NavCrumb, NewPage, Settings, TreeStyle, INDEX_SETTLE,
+    LinkStyle, ManualClock, NavCrumb, NewPage, Settings, TreeStyle, INDEX_SETTLE,
 };
 
 fn fixture() -> PathBuf {
@@ -253,7 +253,7 @@ fn mind_map_follows_the_nav_tree() {
     let engine = open(&root, &ManualClock::new());
     let snapshot = engine.graph(&GraphScope::Workspace, &everything());
     let nav = file(&root.join("guide/modules/ROOT/nav.adoc"));
-    let tree = MindMap::build(&snapshot, &nav, Some(1)).unwrap();
+    let tree = engine.mind_map(&snapshot, &nav, Some(1)).unwrap();
     let titles = |keys: Vec<&GraphKey>| -> Vec<String> {
         keys.into_iter()
             .map(|key| snapshot.node(key).unwrap().title.clone())
@@ -1004,4 +1004,38 @@ fn neighbours_merge_kinds_per_page() {
         .find(|neighbour| neighbour.key == configure)
         .unwrap();
     assert_eq!(to_configure.kinds, [EdgeKind::Xref]);
+}
+
+/// Given the workspace's colour groups, a local graph colours each page as the whole graph
+/// does, though it holds fewer modules.
+#[test]
+fn a_page_keeps_its_colour_in_a_local_graph() {
+    let root = fixture();
+    let engine = open(&root, &ManualClock::new());
+    let by = adoc_engine::GraphColour::Module;
+    let groups = engine.graph_colour_groups(by);
+    assert_eq!(groups, ["guide:ROOT", "guide:admin", "reference:ROOT"]);
+    let api = root.join("reference/modules/ROOT/pages/api.adoc");
+    let whole = engine.graph(&GraphScope::Workspace, &everything());
+    let local = engine.graph(
+        &GraphScope::Local {
+            path: api.clone(),
+            depth: 1,
+        },
+        &everything(),
+    );
+    let colour = |snapshot: &GraphSnapshot, palette: &adoc_engine::Palette| {
+        palette
+            .colour(snapshot.node(&file(&api)).unwrap(), false)
+            .map(|hsl| hsl.to_hex())
+    };
+    let everywhere = colour(&whole, &adoc_engine::Palette::of(&whole, by));
+    assert!(everywhere.is_some());
+    // Alone, the local graph's two modules would rank Reference second rather than third.
+    assert_ne!(
+        colour(&local, &adoc_engine::Palette::of(&local, by)),
+        everywhere
+    );
+    let palette = adoc_engine::Palette::of(&local, by).with_groups(groups);
+    assert_eq!(colour(&local, &palette), everywhere);
 }

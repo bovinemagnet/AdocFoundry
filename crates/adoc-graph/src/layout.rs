@@ -9,7 +9,7 @@
 //! Only `f32` arithmetic in a fixed order is used, never trigonometry or a hash map's order, so
 //! the same seed and the same calls give the same positions on every platform.
 
-use std::collections::{BTreeMap, HashMap};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::{GraphKey, GraphSnapshot, GroupBy, Groups};
 
@@ -50,6 +50,8 @@ const COOLING: f32 = 0.977;
 const COLD: f32 = 0.002;
 /// The heat a drag or a change wakes the layout with.
 const WARM: f32 = 0.3;
+/// The steps cooling takes from `WARM` to `COLD`.
+const COOL_DOWN: usize = 216;
 /// With targets: the part of the way to its target a node goes in a step.
 const EASE: f32 = 0.25;
 /// Barnes–Hut's accuracy: a cell is one body when its width over its distance is below this.
@@ -64,9 +66,10 @@ const GROUP_REPULSION: f32 = 6.0 * REPULSION;
 #[derive(Clone, Debug)]
 pub struct Layout {
     seed: u64,
-    /// The nodes, sorted, and each one's place in the tables below.
+    /// The nodes, sorted, and each one's place in the tables below, hashed: paths compare
+    /// component by component, too slowly to look thousands up on every change.
     keys: Vec<GraphKey>,
-    index: BTreeMap<GraphKey, usize>,
+    index: HashMap<GraphKey, usize>,
     positions: Vec<Point>,
     velocities: Vec<Point>,
     pinned: Vec<bool>,
@@ -81,6 +84,8 @@ pub struct Layout {
     /// laid out by force.
     targets: Option<HashMap<GraphKey, Point>>,
     placed_targets: Vec<Option<Point>>,
+    /// The folders a file's key is hashed relative to, for its seeded start.
+    roots: Vec<Arc<Path>>,
 }
 
 impl Layout {
@@ -89,7 +94,7 @@ impl Layout {
         Self {
             seed,
             keys: Vec::new(),
-            index: BTreeMap::new(),
+            index: HashMap::new(),
             positions: Vec::new(),
             velocities: Vec::new(),
             pinned: Vec::new(),
@@ -100,7 +105,16 @@ impl Layout {
             group_count: 0,
             targets: None,
             placed_targets: Vec::new(),
+            roots: Vec::new(),
         }
+    }
+
+    /// Seeds each file's start from its path relative to the first of `roots` holding it, so
+    /// that the same files start in the same places wherever they are: in another checkout, or
+    /// on another platform. A file outside every root is seeded from its whole path. Nodes
+    /// already placed stay where they are.
+    pub fn set_roots(&mut self, roots: impl IntoIterator<Item = Arc<Path>>) {
+        self.roots = roots.into_iter().collect();
     }
 
     /// Eases each node towards its place in `targets` rather than moving it by force, a node
@@ -165,7 +179,7 @@ impl Layout {
     /// they are. A new node starts next to a neighbour already placed, or at a seeded place on
     /// a ring. Wakes the layout if anything changed.
     pub fn sync(&mut self, snapshot: &GraphSnapshot) {
-        let old: BTreeMap<GraphKey, (Point, Point, bool)> = self
+        let old: HashMap<GraphKey, (Point, Point, bool)> = self
             .keys
             .drain(..)
             .zip(self.positions.drain(..))
@@ -173,7 +187,7 @@ impl Layout {
             .map(|((key, position), (velocity, pinned))| (key, (position, velocity, pinned)))
             .collect();
         let keys: Vec<GraphKey> = snapshot.nodes.iter().map(|node| node.key.clone()).collect();
-        let index: BTreeMap<GraphKey, usize> = keys
+        let index: HashMap<GraphKey, usize> = keys
             .iter()
             .enumerate()
             .map(|(at, key)| (key.clone(), at))
@@ -202,13 +216,14 @@ impl Layout {
             if placed[at].is_some() {
                 continue;
             }
-            let direction = unit(mix(self.seed, &keys[at], 0));
+            let direction = unit(mix(self.seed, &keys[at], &self.roots, 0));
             let start = neighbours[at]
                 .iter()
                 .find_map(|&other| placed[other])
                 .map_or_else(
                     || {
-                        let spread = 0.5 + 0.5 * fraction(mix(self.seed, &keys[at], 1));
+                        let spread =
+                            0.5 + 0.5 * fraction(mix(self.seed, &keys[at], &self.roots, 1));
                         Point::new(direction.x * ring * spread, direction.y * ring * spread)
                     },
                     |next_to| {
@@ -324,9 +339,21 @@ impl Layout {
     }
 
     /// Steps until the layout settles, or `limit` steps have been taken, for a drawing with no
-    /// frames to wait for.
+    /// frames to wait for. It is not cooled as a canvas's layout is, which stops after the same
+    /// few hundred steps however large the graph, part-way through spreading out: it is kept
+    /// at least as warm as a drag leaves it until no node moves further than [`SETTLED`] in a
+    /// step, and only its last steps before `limit` cool it, so a layout that never quite stops
+    /// still comes to rest.
     pub fn settle(&mut self, limit: usize) {
-        for _ in 0..limit {
+        let warm = if self.targets.is_some() {
+            0
+        } else {
+            limit.saturating_sub(COOL_DOWN)
+        };
+        for taken in 0..limit {
+            if taken < warm {
+                self.heat = self.heat.max(WARM);
+            }
             if !self.step(1.0) {
                 break;
             }
@@ -568,13 +595,20 @@ fn ring_radius(nodes: usize) -> f32 {
     REST_LENGTH * (nodes.max(1) as f32).sqrt()
 }
 
-/// A number from the seed and the key, the same on every platform: a path's separators are
-/// taken as `/`, so `docs\page.adoc` on Windows starts where `docs/page.adoc` does elsewhere.
-fn mix(seed: u64, key: &GraphKey, salt: u64) -> u64 {
+/// A number from the seed and the key, the same on every platform and in every place: a path
+/// is taken relative to the first of `roots` holding it, and its separators as `/`, so
+/// `docs\page.adoc` on Windows starts where `docs/page.adoc` does elsewhere.
+fn mix(seed: u64, key: &GraphKey, roots: &[Arc<Path>], salt: u64) -> u64 {
     // FNV-1a over the key's bytes, then SplitMix64.
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ salt;
     let (bytes, path): (&[u8], bool) = match key {
-        GraphKey::File(path) => (path.as_os_str().as_encoded_bytes(), true),
+        GraphKey::File(path) => {
+            let relative = roots
+                .iter()
+                .find_map(|root| path.strip_prefix(root).ok())
+                .unwrap_or(path);
+            (relative.as_os_str().as_encoded_bytes(), true)
+        }
         GraphKey::Unresolved(text) | GraphKey::Group(text) => (text.as_bytes(), false),
     };
     for &byte in bytes {
@@ -609,6 +643,9 @@ fn unit(bits: u64) -> Point {
 /// Cells of a quadtree over the bodies, for Barnes–Hut.
 struct QuadTree {
     cells: Vec<Cell>,
+    /// For each body in a leaf of bodies too close to part, the next body in that leaf, else
+    /// `u32::MAX`.
+    next: Vec<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -622,6 +659,9 @@ struct Cell {
     children: u32,
     /// The body in a leaf with one, else `u32::MAX`.
     body: u32,
+    /// The first body in a leaf of several too close to part, the rest following through
+    /// [`QuadTree::next`], else `u32::MAX`.
+    first: u32,
 }
 
 impl Cell {
@@ -633,6 +673,7 @@ impl Cell {
             sum: Point::default(),
             children: 0,
             body: u32::MAX,
+            first: u32::MAX,
         }
     }
 }
@@ -649,6 +690,7 @@ impl QuadTree {
         let centre = Point::new((low.x + high.x) / 2.0, (low.y + high.y) / 2.0);
         let mut tree = Self {
             cells: Vec::with_capacity(positions.len() * 2),
+            next: vec![u32::MAX; positions.len()],
         };
         tree.cells.push(Cell::new(centre, half));
         for (body, &position) in positions.iter().enumerate() {
@@ -674,8 +716,16 @@ impl QuadTree {
                     return;
                 }
                 if depth >= MAX_TREE_DEPTH || current.body == u32::MAX {
-                    // Bodies too close to part stay together in one leaf.
-                    self.cells[cell].body = u32::MAX;
+                    // Bodies too close to part stay together in one leaf, listed so that each
+                    // is pushed by the others as in the exact sum.
+                    let leaf = &mut self.cells[cell];
+                    for member in [leaf.body, body] {
+                        if member != u32::MAX {
+                            self.next[member as usize] = leaf.first;
+                            leaf.first = member;
+                        }
+                    }
+                    leaf.body = u32::MAX;
                     return;
                 }
                 // Split the leaf, moving its one body down.
@@ -718,28 +768,35 @@ impl QuadTree {
             if current.children == 0 && current.body == body as u32 {
                 continue;
             }
+            if current.children == 0 && current.body == u32::MAX {
+                // A leaf of bodies too close to part, perhaps this one among them: each pushes
+                // on its own, so bodies in one place are parted by their indices.
+                let mut member = current.first;
+                while member != u32::MAX {
+                    if member as usize != body {
+                        let push =
+                            repel(at, positions[member as usize], 1.0, body, member as usize);
+                        force.x += push.x;
+                        force.y += push.y;
+                    }
+                    member = self.next[member as usize];
+                }
+                continue;
+            }
             let centre = Point::new(current.sum.x / current.mass, current.sum.y / current.mass);
             let (dx, dy) = (at.x - centre.x, at.y - centre.y);
             let squared = dx * dx + dy * dy;
             let width = current.half * 2.0;
             if current.children == 0 || width * width < THETA * THETA * squared {
+                // A leaf of one other body, or a cell far enough to count as one.
                 let other = if current.body == u32::MAX {
                     usize::MAX
                 } else {
                     current.body as usize
                 };
-                let mass = if current.children == 0 && current.body == u32::MAX {
-                    // A leaf of bodies in one place, perhaps this one among them.
-                    let inside = (at.x - centre.x).abs() < 1e-3 && (at.y - centre.y).abs() < 1e-3;
-                    current.mass - if inside { 1.0 } else { 0.0 }
-                } else {
-                    current.mass
-                };
-                if mass > 0.0 {
-                    let push = repel(at, centre, mass, body, other);
-                    force.x += push.x;
-                    force.y += push.y;
-                }
+                let push = repel(at, centre, current.mass, body, other);
+                force.x += push.x;
+                force.y += push.y;
             } else {
                 for child in 0..4 {
                     stack.push(current.children as usize + child);
@@ -937,6 +994,38 @@ mod tests {
     }
 
     #[test]
+    fn nodes_in_one_place_part_whatever_the_layouts_size() {
+        for size in [100, BARNES_HUT_ABOVE + 100] {
+            // No links, so only the push between them can part the two.
+            let snapshot = graph(size, 0);
+            let mut layout = Layout::new(1);
+            layout.sync(&snapshot);
+            let start = Point::new(5.0, 5.0);
+            let (first, second) = (&snapshot.nodes[7].key, &snapshot.nodes[8].key);
+            layout.pin(first, start);
+            layout.pin(second, start);
+            layout.step(1.0);
+            layout.unpin(first);
+            layout.unpin(second);
+            for _ in 0..100 {
+                layout.wake();
+                layout.step(1.0);
+            }
+            let (a, b) = (
+                layout.position(first).unwrap(),
+                layout.position(second).unwrap(),
+            );
+            let apart = Point::new(a.x - b.x, a.y - b.y).length();
+            assert!(apart > 1.0, "{size} nodes: {a:?} and {b:?}");
+            // Flung apart by a push no distance limits, but within the layout's reach.
+            for at in [a, b] {
+                let away = Point::new(at.x - start.x, at.y - start.y).length();
+                assert!(away < 2.0 * ring_radius(size), "{size} nodes: {at:?}");
+            }
+        }
+    }
+
+    #[test]
     fn pinned_nodes_stay_put() {
         let snapshot = graph(20, 2);
         let mut layout = Layout::new(3);
@@ -951,6 +1040,37 @@ mod tests {
         layout.unpin(&pinned);
         layout.step(1.0);
         assert_ne!(layout.position(&pinned), Some(Point::new(500.0, -200.0)));
+    }
+
+    #[test]
+    fn cooling_down_takes_its_steps() {
+        let mut heat = WARM;
+        let mut steps = 0;
+        while heat >= COLD {
+            heat *= COOLING;
+            steps += 1;
+        }
+        assert_eq!(steps, COOL_DOWN);
+    }
+
+    #[test]
+    fn a_settled_layout_has_stopped_moving() {
+        // A few hundred nodes, repelled exactly: above `BARNES_HUT_ABOVE` the approximation's
+        // error keeps a little movement going, which the last steps' cooling brings to rest.
+        let snapshot = graph(300, 3);
+        let mut layout = Layout::new(crate::EXPORT_SEED);
+        layout.sync(&snapshot);
+        layout.settle(crate::svg::EXPORT_STEPS);
+        let before: Vec<Point> = layout.positions().map(|(_, at)| at).collect();
+        // Stepped on, kept warm, no node moves further than a settled step does.
+        layout.wake();
+        layout.step(1.0);
+        let moved = layout
+            .positions()
+            .zip(&before)
+            .map(|((_, at), was)| Point::new(at.x - was.x, at.y - was.y).length())
+            .fold(0.0_f32, f32::max);
+        assert!(moved <= SETTLED, "a node moved {moved}");
     }
 
     #[test]

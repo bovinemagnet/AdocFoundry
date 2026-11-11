@@ -1325,6 +1325,7 @@ fn graph(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
                 let style = SvgStyle {
                     colour_by: engine.settings().graph.colour_by,
                     dark: flag("--dark"),
+                    groups: engine.graph_colour_groups(engine.settings().graph.colour_by),
                 };
                 let (snapshot, _) = engine
                     .graph_path_view(&filter, &from, &to, directed)
@@ -1353,6 +1354,7 @@ fn graph(arguments: &[String], out: &mut Out) -> Result<ExitCode, String> {
         let style = SvgStyle {
             colour_by: engine.settings().graph.colour_by,
             dark: flag("--dark"),
+            groups: engine.graph_colour_groups(engine.settings().graph.colour_by),
         };
         out!(out, "{}", engine.graph_svg(&scope, &filter, &style));
         return Ok(ExitCode::SUCCESS);

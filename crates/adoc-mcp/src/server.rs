@@ -952,10 +952,14 @@ impl Server {
             };
             let svg = match args.format.as_deref().unwrap_or("json") {
                 "json" => None,
-                "svg" => Some(SvgStyle {
-                    colour_by: state.engine.settings().graph.colour_by,
-                    dark: args.dark.unwrap_or(false),
-                }),
+                "svg" => {
+                    let colour_by = state.engine.settings().graph.colour_by;
+                    Some(SvgStyle {
+                        colour_by,
+                        dark: args.dark.unwrap_or(false),
+                        groups: state.engine.graph_colour_groups(colour_by),
+                    })
+                }
                 other => return Err(Failure::invalid(format!("unknown format `{other}`"))),
             };
             let not_indexed = |state: &State, page: &Path| {

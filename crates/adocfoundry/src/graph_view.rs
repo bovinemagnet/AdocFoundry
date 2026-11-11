@@ -398,7 +398,7 @@ impl GraphView {
         };
         let snapshot = self.app.read(cx).engine.graph(&scope, &self.filter);
         let snapshot = match (self.arrangement, self.group_by) {
-            (GraphLayout::MindMap(_), _) => self.mind_map_of(snapshot),
+            (GraphLayout::MindMap(_), _) => self.mind_map_of(snapshot, cx),
             (GraphLayout::Force, Some(by)) => snapshot.collapse(by, &self.collapsed),
             (GraphLayout::Force, None) => snapshot,
         };
@@ -409,6 +409,13 @@ impl GraphView {
         };
         let recentre = self.local && snapshot.nodes.len() != self.snapshot.nodes.len();
         self.set_snapshot(snapshot);
+        // Seeded from paths within the roots, the same documentation starts alike anywhere.
+        let roots = self.app.read(cx).engine.roots().to_vec();
+        self.layout.set_roots(
+            roots
+                .iter()
+                .map(|root| std::sync::Arc::from(adoc_engine::normalize_path(root))),
+        );
         self.layout.sync(&self.snapshot);
         match (self.arrangement, &self.tree) {
             (GraphLayout::MindMap(style), Some(tree)) => {
@@ -578,7 +585,7 @@ impl GraphView {
     /// The tree of `snapshot` from the mind map's root, kept in `tree`, and the snapshot cut
     /// down to the nodes it shows. The root is the one chosen, else the active page, else the
     /// first navigation file, else the first node.
-    fn mind_map_of(&mut self, snapshot: GraphSnapshot) -> GraphSnapshot {
+    fn mind_map_of(&mut self, snapshot: GraphSnapshot, cx: &App) -> GraphSnapshot {
         let centre = self
             .centre
             .as_ref()
@@ -595,7 +602,8 @@ impl GraphView {
                     .or(snapshot.nodes.first())
                     .map(|node| node.key.clone())
             });
-        self.tree = root.and_then(|root| MindMap::build(&snapshot, &root, Some(self.depth)));
+        let engine = &self.app.read(cx).engine;
+        self.tree = root.and_then(|root| engine.mind_map(&snapshot, &root, Some(self.depth)));
         match &self.tree {
             Some(tree) => {
                 let shown = tree.visible(&self.folded);
@@ -1152,7 +1160,7 @@ impl GraphView {
 
     /// The graph as it is shown, its scope, filters, colours and every node where the layout
     /// has it, pinned or not, drawn as SVG on a light or dark background.
-    pub(crate) fn to_svg(&self, dark: bool) -> String {
+    pub(crate) fn to_svg(&self, dark: bool, cx: &App) -> String {
         let positions: Vec<LayoutPoint> = self
             .snapshot
             .nodes
@@ -1165,6 +1173,7 @@ impl GraphView {
             &adoc_engine::SvgStyle {
                 colour_by: self.colour_by,
                 dark,
+                groups: self.app.read(cx).engine.graph_colour_groups(self.colour_by),
             },
         )
     }
@@ -1201,7 +1210,9 @@ impl GraphView {
                     .path()
                     .is_some_and(|path| path.to_string_lossy().to_lowercase().contains(&self.query))
         };
-        let palette = Palette::of(&self.snapshot, self.colour_by);
+        // Ranked among the workspace's groups, so a group keeps its colour in any part of it.
+        let groups = self.app.read(cx).engine.graph_colour_groups(self.colour_by);
+        let palette = Palette::of(&self.snapshot, self.colour_by).with_groups(groups);
         let stale_before = self.stale_before(cx);
         // Stale pages are ringed while the colours or the filter are about age.
         let ring_stale = self.colour_by == GraphColour::Age || self.stale_only;

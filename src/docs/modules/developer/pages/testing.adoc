@@ -113,6 +113,7 @@ The ignored timing and memory probes in `crates/adoc-engine/tests/perf.rs` and `
 They are for investigating a path, not for guarding it.
 
 `cargo bench -p adoc-graph` times one layout step for 2,000 nodes and 6,000 edges against a budget of 8 ms.
+The same budget of 8 ms holds syncing the layout with an unchanged snapshot, collapsing half the modules, and a shortest path that cannot be found through a navigation file of 2,000 entries; an export of 2,000 nodes, laid out until it settles, has a budget of 6 s.
 `graph_build` in `cargo bench -p adoc-engine` builds the graph of 5,000 pages against a budget of 500 ms, and `graph_snapshot` is recorded only.
 
 === Typing frame times

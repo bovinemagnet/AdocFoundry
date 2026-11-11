@@ -1,7 +1,7 @@
 //! How nodes look, shared by every drawing of the graph: their size, and their colour by
 //! component, module, family or age, so the app's canvas and an exported image agree.
 
-use crate::{GraphNode, GraphSnapshot, LastChanged};
+use crate::{GraphNode, GraphSnapshot, LastChanged, NodeCoordinate};
 
 /// What colours the nodes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -50,7 +50,8 @@ pub fn node_radius(links: usize) -> f32 {
 }
 
 /// The colours of one snapshot's nodes: each colour group's place, in name order
-/// (components, modules or families), or the span of its nodes' ages.
+/// (components, modules or families), among the snapshot's groups and any others it is given,
+/// or the span of its nodes' ages.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Palette {
     by: ColourBy,
@@ -94,13 +95,23 @@ impl Palette {
         Self { by, groups, ages }
     }
 
+    /// The palette with `groups` ranked among the snapshot's own: a part of the graph given
+    /// the whole's groups ([`colour_groups`]) colours each group as the whole does.
+    #[must_use]
+    pub fn with_groups(mut self, groups: impl IntoIterator<Item = String>) -> Self {
+        self.groups.extend(groups);
+        self.groups.sort();
+        self.groups.dedup();
+        self
+    }
+
     #[must_use]
     pub fn by(&self) -> ColourBy {
         self.by
     }
 
     /// A node's colour: its group's place in a palette of hues that also differ in lightness,
-    /// or by age a scale from green (recent) through amber to red (old), set for a light
+    /// muted past the palette's sixteen colours with hues of their own, or by age a scale from green (recent) through amber to red (old), set for a light
     /// background or a dark one. `None` for nodes outside Antora, unresolved targets and, by
     /// age, nodes with no history, which are drawn grey.
     #[must_use]
@@ -125,8 +136,21 @@ impl Palette {
     }
 }
 
+/// The groups that colour `snapshot`'s nodes, in name order: give them to the palette of a part
+/// of it ([`Palette::with_groups`]) and each group keeps its colour there.
+#[must_use]
+pub fn colour_groups(snapshot: &GraphSnapshot, by: ColourBy) -> Vec<String> {
+    Palette::of(snapshot, by).groups
+}
+
 fn group_of(node: &GraphNode, by: ColourBy) -> Option<String> {
-    let coordinate = node.coordinate.as_ref()?;
+    colour_group(node.coordinate.as_ref()?, by)
+}
+
+/// The colour group of a node at `coordinate`: its component, `component:module` or family;
+/// `None` by age.
+#[must_use]
+pub fn colour_group(coordinate: &NodeCoordinate, by: ColourBy) -> Option<String> {
     match by {
         ColourBy::Component => Some(coordinate.component.clone()),
         ColourBy::Module => Some(format!("{}:{}", coordinate.component, coordinate.module)),
@@ -137,20 +161,29 @@ fn group_of(node: &GraphNode, by: ColourBy) -> Option<String> {
 
 fn node_colour(node: &GraphNode, groups: &[String], by: ColourBy, dark: bool) -> Option<Hsl> {
     const HUES: [f32; 8] = [0.58, 0.08, 0.36, 0.92, 0.15, 0.75, 0.48, 0.0];
+    /// The golden ratio's fractional part, which spreads hues evenly however many there are.
+    const GOLDEN: f32 = 0.618_034;
     let group = group_of(node, by)?;
-    let place = groups.iter().position(|known| *known == group).unwrap_or(0);
-    let lighter = (place / HUES.len()) % 2 == 1;
+    let place = groups.binary_search(&group).unwrap_or(0);
+    let palette = 2 * HUES.len();
+    // The first sixteen: eight hues, darker then lighter. Past them, muted, so none repeats one
+    // of the sixteen, each with a hue of its own, alternately darker and lighter.
+    let (h, s, lighter) = if place < palette {
+        (HUES[place % HUES.len()], 0.65, place >= HUES.len())
+    } else {
+        (
+            (HUES[0] + place as f32 * GOLDEN).fract(),
+            0.35,
+            place % 2 == 1,
+        )
+    };
     let l = match (dark, lighter) {
         (false, false) => 0.42,
         (false, true) => 0.58,
         (true, false) => 0.62,
         (true, true) => 0.76,
     };
-    Some(Hsl {
-        h: HUES[place % HUES.len()],
-        s: 0.65,
-        l,
-    })
+    Some(Hsl { h, s, l })
 }
 
 #[cfg(test)]
@@ -194,6 +227,68 @@ mod tests {
             Palette::of(&snapshot, ColourBy::Module).colour(&snapshot.nodes[0], false),
             None
         );
+    }
+
+    /// A snapshot of one page in each of `modules` modules.
+    fn modules(modules: usize) -> GraphSnapshot {
+        let mut nodes: Vec<GraphNode> = (0..modules)
+            .map(|n| GraphNode {
+                key: GraphKey::File(Arc::from(Path::new(&format!("m{n}/index.adoc")))),
+                title: format!("m{n}"),
+                kind: NodeKind::Page,
+                coordinate: Some(crate::NodeCoordinate {
+                    component: "docs".to_owned(),
+                    version: None,
+                    module: format!("m{n}"),
+                    family: "page".to_owned(),
+                }),
+                links_out: 0,
+                links_in: 0,
+                last_changed: None,
+            })
+            .collect();
+        nodes.sort_by(|left, right| left.key.cmp(&right.key));
+        GraphSnapshot {
+            revision: 1,
+            nodes,
+            edges: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_group_keeps_its_colour_in_part_of_the_graph() {
+        let whole = modules(21);
+        let groups = colour_groups(&whole, ColourBy::Module);
+        let m1 = GraphKey::File(Arc::from(Path::new("m1/index.adoc")));
+        let colour = |snapshot: &GraphSnapshot, palette: &Palette| {
+            palette
+                .colour(snapshot.node(&m1).unwrap(), false)
+                .unwrap()
+                .to_hex()
+        };
+        let everywhere = colour(&whole, &Palette::of(&whole, ColourBy::Module));
+        let part = whole.restrict(|key| {
+            key.path()
+                .is_some_and(|path| path.starts_with("m1") || path.starts_with("m2"))
+        });
+        let palette = Palette::of(&part, ColourBy::Module).with_groups(groups);
+        assert_eq!(colour(&part, &palette), everywhere);
+    }
+
+    #[test]
+    fn groups_past_the_palettes_size_have_colours_of_their_own() {
+        for count in [17, 40] {
+            let snapshot = modules(count);
+            for dark in [false, true] {
+                let palette = Palette::of(&snapshot, ColourBy::Module);
+                let colours: std::collections::BTreeSet<String> = snapshot
+                    .nodes
+                    .iter()
+                    .map(|node| palette.colour(node, dark).unwrap().to_hex())
+                    .collect();
+                assert_eq!(colours.len(), count, "{count} groups, dark {dark}");
+            }
+        }
     }
 
     #[test]

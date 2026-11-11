@@ -214,6 +214,26 @@ fn graph_prints_svg() {
     insta::assert_snapshot!(stdout(&output));
 }
 
+/// The same documentation in two places, here two temporary folders at different depths, is
+/// laid out and drawn alike: the layout's start does not depend on the folders above it.
+#[test]
+fn graph_svg_is_the_same_wherever_the_files_are() {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = repository_root().join("tests/fixtures/graph");
+    let (near, far) = (
+        directory.path().join("docs"),
+        directory.path().join("elsewhere/checkout/docs"),
+    );
+    copy_tree(&fixture, &near);
+    copy_tree(&fixture, &far);
+    let svg = |root: &Path| {
+        let output = cli(&["graph", root.to_str().unwrap(), "--format", "svg"]);
+        assert!(output.status.success());
+        stdout(&output)
+    };
+    assert_eq!(svg(&near), svg(&far));
+}
+
 #[test]
 fn graph_prints_the_path_between_two_pages() {
     let pages = "tests/fixtures/graph/guide/modules/ROOT/pages";

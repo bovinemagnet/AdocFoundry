@@ -34,15 +34,17 @@ pub struct StoredLink {
 ///
 /// The reverse maps are only ever looked up, never walked in order, so they are hashed: a
 /// path compares component by component, too slowly for a full build's many insertions. The
-/// owners in each are few, kept in a small list.
+/// owners in each are few, kept in a small list; the links reaching a target are found by their
+/// places in their owners' lists, as a navigation file owns a link to each of its many pages.
 #[derive(Clone, Debug, Default)]
 pub struct LinkStore {
     /// Each owner's links, sorted.
     out: BTreeMap<Arc<Path>, Vec<StoredLink>>,
     /// The owners of the links leaving each file.
     outgoing: HashMap<Arc<Path>, Vec<Arc<Path>>>,
-    /// The owners of the links reaching each target.
-    incoming: HashMap<GraphKey, Vec<Arc<Path>>>,
+    /// The owners of the links reaching each target, by path, each with the places of those
+    /// links in its list.
+    incoming: HashMap<GraphKey, Vec<OwnedPlaces>>,
     revision: u64,
 }
 
@@ -78,12 +80,16 @@ impl LinkStore {
         }
         self.forget(&owner);
         if !links.is_empty() {
-            for link in &links {
+            for (at, link) in links.iter().enumerate() {
                 add_owner(
                     self.outgoing.entry(Arc::clone(&link.from)).or_default(),
                     &owner,
                 );
-                add_owner(self.incoming.entry(link.to.clone()).or_default(), &owner);
+                let owners = self.incoming.entry(link.to.clone()).or_default();
+                match owners.binary_search_by(|(known, _)| known.cmp(&owner)) {
+                    Ok(found) => owners[found].1.push(at),
+                    Err(found) => owners.insert(found, (Arc::clone(&owner), vec![at])),
+                }
             }
             self.out.insert(owner, links);
         }
@@ -112,7 +118,7 @@ impl LinkStore {
                 }
             }
             if let Some(owners) = self.incoming.get_mut(&link.to) {
-                owners.retain(|known| **known != *owner);
+                owners.retain(|(known, _)| **known != *owner);
                 if owners.is_empty() {
                     self.incoming.remove(&link.to);
                 }
@@ -124,7 +130,11 @@ impl LinkStore {
     /// The files owning a link to `key`, in path order: those whose links change if `key`
     /// comes or goes.
     pub fn linking_to(&self, key: &GraphKey) -> impl Iterator<Item = &Arc<Path>> {
-        self.incoming.get(key).into_iter().flatten()
+        self.incoming
+            .get(key)
+            .into_iter()
+            .flatten()
+            .map(|(owner, _)| owner)
     }
 
     /// The links `owner` made, sorted.
@@ -143,21 +153,33 @@ impl LinkStore {
         self.out.values().flatten()
     }
 
-    /// The links leaving `key`, whoever owns them.
+    /// The links leaving `key`, whoever owns them: in each owner's sorted list, the run of
+    /// links from `key`.
     pub fn links_from<'a>(&'a self, key: &'a GraphKey) -> impl Iterator<Item = &'a StoredLink> {
         key.path()
-            .and_then(|path| self.outgoing.get(path))
+            .and_then(|path| Some((path, self.outgoing.get(path)?)))
             .into_iter()
-            .flatten()
-            .flat_map(move |owner| self.owned_by(owner))
-            .filter(move |link| key.path() == Some(&*link.from))
+            .flat_map(move |(path, owners)| {
+                owners.iter().flat_map(move |owner| {
+                    let links = self.owned_by(owner);
+                    let start = links.partition_point(|link| *link.from < *path);
+                    let end = start + links[start..].partition_point(|link| *link.from == *path);
+                    &links[start..end]
+                })
+            })
     }
 
-    /// The links reaching `key`, whoever owns them.
+    /// The links reaching `key`, whoever owns them, found by their places in their owners'
+    /// lists.
     pub fn links_to<'a>(&'a self, key: &'a GraphKey) -> impl Iterator<Item = &'a StoredLink> {
-        self.linking_to(key)
-            .flat_map(move |owner| self.owned_by(owner))
-            .filter(move |link| link.to == *key)
+        self.incoming
+            .get(key)
+            .into_iter()
+            .flatten()
+            .flat_map(move |(owner, places)| {
+                let links = self.owned_by(owner);
+                places.iter().map(move |&at| &links[at])
+            })
     }
 
     /// Whether any link leaves or reaches `key`.
@@ -227,14 +249,16 @@ impl LinkStore {
         if !enter(from) || !enter(to) {
             return None;
         }
-        // Each node reached, with the node it was reached from and whether backwards.
-        let mut reached: BTreeMap<GraphKey, Option<(GraphKey, bool)>> =
-            BTreeMap::from([(from.clone(), None)]);
+        // Each node reached, with the node it was reached from and whether backwards; only
+        // looked up, so hashed, as paths compare slowly. The frontier is sorted, so the first
+        // to reach a node is the lowest.
+        let mut reached: HashMap<GraphKey, Option<(GraphKey, bool)>> =
+            HashMap::from([(from.clone(), None)]);
         let mut frontier = vec![from.clone()];
         while !frontier.is_empty() && !reached.contains_key(to) {
             let mut next = BTreeSet::new();
             for node in &frontier {
-                let mut ends: BTreeMap<GraphKey, bool> = BTreeMap::new();
+                let mut ends: HashMap<GraphKey, bool> = HashMap::new();
                 for link in self.links_from(node).filter(|link| follow(link)) {
                     ends.insert(link.to.clone(), false);
                 }
@@ -289,6 +313,9 @@ impl LinkStore {
         self.revision
     }
 }
+
+/// An owner of links reaching one target, and the places of those links in its list.
+type OwnedPlaces = (Arc<Path>, Vec<usize>);
 
 /// Adds `owner` to `owners`, kept sorted and without repeats.
 fn add_owner(owners: &mut Vec<Arc<Path>>, owner: &Arc<Path>) {
@@ -474,6 +501,53 @@ mod tests {
         let from_a: Vec<_> = store.links_from(&file("a")).map(|link| link.kind).collect();
         assert_eq!(from_a, [EdgeKind::Nav]);
         assert!(store.is_linked(&file("a")));
+    }
+
+    #[test]
+    fn links_from_and_to_a_page_are_found_among_a_navigation_files_many() {
+        let link = |from: &str, to: &str, kind| StoredLink {
+            from: path(from),
+            to: file(to),
+            kind,
+        };
+        let mut store = LinkStore::new();
+        store.set_owned_links(
+            path("nav"),
+            vec![
+                link("nav", "a", EdgeKind::Nav),
+                link("nav", "c", EdgeKind::Nav),
+                link("a", "b", EdgeKind::Nav),
+                link("a", "c", EdgeKind::Nav),
+                link("c", "b", EdgeKind::Nav),
+            ],
+        );
+        store.set_links(path("c"), vec![(file("b"), EdgeKind::Xref)]);
+        let ends = |links: Vec<&StoredLink>| -> Vec<String> {
+            links
+                .into_iter()
+                .map(|link| {
+                    format!(
+                        "{}>{}",
+                        link.from.display(),
+                        link.to.path().unwrap().display()
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(ends(store.links_from(&file("a")).collect()), ["a>b", "a>c"]);
+        assert_eq!(ends(store.links_from(&file("c")).collect()), ["c>b", "c>b"]);
+        assert_eq!(
+            ends(store.links_to(&file("b")).collect()),
+            ["c>b", "a>b", "c>b"]
+        );
+        assert_eq!(ends(store.links_to(&file("c")).collect()), ["a>c", "nav>c"]);
+        assert!(store.links_from(&file("b")).next().is_none());
+
+        // Replaced, the navigation's links are found at their new places.
+        store.set_owned_links(path("nav"), vec![link("nav", "c", EdgeKind::Nav)]);
+        assert_eq!(ends(store.links_to(&file("c")).collect()), ["nav>c"]);
+        assert_eq!(ends(store.links_to(&file("b")).collect()), ["c>b"]);
+        assert!(store.links_from(&file("a")).next().is_none());
     }
 
     #[test]
