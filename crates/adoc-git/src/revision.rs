@@ -204,6 +204,9 @@ mod tests {
         let test = TestRepo::init(dir.path());
         test.write("page.adoc", "= Page\n");
         test.commit_all("first");
+        // Commits made through a repository opened anew need an identity of its own, whatever
+        // the machine's configuration holds.
+        test.set_identity("Test Writer", "writer@example.com");
         let repo = Repository::discover(dir.path()).unwrap().unwrap();
         commit_with(&repo, "page.adoc", EntryKind::Link, "other.adoc");
         commit_with(&repo, "page.adoc", EntryKind::Blob, "= Page again\n");

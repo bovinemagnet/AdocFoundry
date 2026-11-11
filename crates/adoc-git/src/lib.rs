@@ -23,7 +23,7 @@ pub use diff::line_hunks;
 pub use error::GitError;
 pub use history::{LastChange, LastChanges, HISTORY_LIMIT};
 pub use remote::{remote_link_for_line, HostKind};
-pub use repository::Repository;
+pub use repository::{HeadText, Repository};
 pub use revision::{Revision, TreeChange};
 
 /// What `HEAD` points at.

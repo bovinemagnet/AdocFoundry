@@ -11,6 +11,29 @@ use crate::{
     Hunk,
 };
 
+/// A file's text in `HEAD`, as committed and as a checkout writes it.
+/// The default is an empty file, as for one not in `HEAD`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeadText {
+    committed: String,
+    /// `None` when a checkout writes it as committed.
+    checked_out: Option<String>,
+}
+
+impl HeadText {
+    /// The text to compare with `current` line for line: as checked out when `current` has the
+    /// `\r\n` endings a checkout gives it (under `core.autocrlf` or an `eol` attribute), else as
+    /// committed. Git compares a working tree file in its committed form, so a file written
+    /// either way shows no changes; the offsets of the hunks stay those of `current`.
+    #[must_use]
+    pub fn like(&self, current: &str) -> &str {
+        match &self.checked_out {
+            Some(checked_out) if current.contains("\r\n") => checked_out,
+            _ => &self.committed,
+        }
+    }
+}
+
 /// A Git repository with a working tree.
 pub struct Repository {
     pub(crate) repo: gix::Repository,
@@ -206,21 +229,33 @@ impl Repository {
         text_in(&tree, &relative)
     }
 
-    /// The text of `path` in the `HEAD` commit as a checkout would write it, line endings,
-    /// `ident` and `working-tree-encoding` converted by the repository's attributes and
-    /// configuration (no filter driver is ever run), so it compares line for line with the
-    /// working tree. `None` as for [`Repository::head_content`].
-    pub fn head_text_for_worktree(&self, path: &Path) -> Result<Option<String>, GitError> {
-        use gix::filter::plumbing::pipeline::convert::to_worktree;
+    /// The text of `path` in the `HEAD` commit, as committed and as a checkout would write it,
+    /// so that [`HeadText::like`] compares it line for line with the working tree. `None` as for
+    /// [`Repository::head_content`].
+    pub fn head_text(&self, path: &Path) -> Result<Option<HeadText>, GitError> {
         let relative = self.relative(path)?;
-        let Some(blob) = self.head_content(&relative)? else {
+        let Some(committed) = self.head_content(&relative)? else {
             return Ok(None);
         };
+        let checked_out = self
+            .checked_out(&relative, &committed)?
+            .filter(|checked_out| *checked_out != committed);
+        Ok(Some(HeadText {
+            committed,
+            checked_out,
+        }))
+    }
+
+    /// `blob` of `relative` as a checkout would write it, line endings, `ident` and
+    /// `working-tree-encoding` converted by the repository's attributes and configuration (no
+    /// filter driver is ever run); `None` when that is not UTF-8.
+    fn checked_out(&self, relative: &Path, blob: &str) -> Result<Option<String>, GitError> {
+        use gix::filter::plumbing::pipeline::convert::to_worktree;
         let (mut pipeline, mut attributes) = self.to_git_pipeline()?;
         let entry = attributes
-            .at_path(relative.as_path(), None, &self.repo.objects)
+            .at_path(relative, None, &self.repo.objects)
             .map_err(GitError::git)?;
-        let name = unix_path(&relative)?;
+        let name = unix_path(relative)?;
         let converted = pipeline
             .convert_to_worktree(
                 blob.as_bytes(),
@@ -240,7 +275,7 @@ impl Repository {
     /// The line changes of `path` against `HEAD`: of `current` when given, so unsaved edits are
     /// included, else of the file on disk. A file not in `HEAD` is all added lines.
     pub fn line_diff(&self, path: &Path, current: Option<&str>) -> Result<Vec<Hunk>, GitError> {
-        let head = self.head_text_for_worktree(path)?.unwrap_or_default();
+        let head = self.head_text(path)?;
         let on_disk;
         let current = match current {
             Some(text) => text,
@@ -254,7 +289,8 @@ impl Repository {
                 &on_disk
             }
         };
-        Ok(line_hunks(&head, current))
+        let head = head.as_ref().map_or("", |head| head.like(current));
+        Ok(line_hunks(head, current))
     }
 
     /// The local branches, then the remote-tracking ones, each in name order.
@@ -309,12 +345,11 @@ impl Repository {
     /// Who last changed each line of `path`: of `current` when given (lines not in `HEAD` are
     /// not committed), else of the file on disk.
     pub fn blame(&self, path: &Path, current: Option<&str>) -> Result<Vec<BlameLine>, GitError> {
-        let head_text = self.head_text_for_worktree(path)?;
+        let head_text = self.head_text(path)?;
         let head = match head_text {
             Some(_) => self.blame_in_head(&self.relative(path)?)?,
             None => Vec::new(),
         };
-        let head_text = head_text.unwrap_or_default();
         let on_disk;
         let current = match current {
             Some(text) => text,
@@ -324,7 +359,8 @@ impl Repository {
                 &on_disk
             }
         };
-        let hunks = line_hunks(&head_text, current);
+        let head_text = head_text.as_ref().map_or("", |head| head.like(current));
+        let hunks = line_hunks(head_text, current);
         Ok(blame_through(&head, &hunks, current.lines().count()))
     }
 

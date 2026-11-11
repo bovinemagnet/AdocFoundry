@@ -472,8 +472,9 @@ impl Engine {
                     entered.insert(folder.to_path_buf());
                 }
             });
-            if let Some(hold) = hold {
-                let _ = hold.recv();
+            if let Some((held, reached)) = hold {
+                let _ = reached.send(());
+                let _ = held.recv();
             }
             let message = match result {
                 Ok(report) => WorkerMessage::Indexed {
@@ -495,13 +496,17 @@ impl Engine {
         });
     }
 
-    /// Holds the next whole index, once it has read the files, until the returned sender is
+    /// Holds the next whole index, once it has read the files, until the returned hold is
     /// dropped, so a test can change files while its result is still to come.
     #[doc(hidden)]
-    pub fn hold_next_index(&mut self) -> std::sync::mpsc::Sender<()> {
-        let (hold, held) = std::sync::mpsc::channel();
-        self.index_hold = Some(held);
-        hold
+    pub fn hold_next_index(&mut self) -> IndexHold {
+        let (release, held) = std::sync::mpsc::channel();
+        let (reached, held_now) = std::sync::mpsc::channel();
+        self.index_hold = Some((held, reached));
+        IndexHold {
+            _release: release,
+            reached: held_now,
+        }
     }
 
     /// True while indexing runs or file-system changes wait to be applied.
@@ -1229,6 +1234,23 @@ fn is_ignored(path: &Path, roots: &[PathBuf], ignore: &[String]) -> bool {
             root.join(folder).join("antora.yml").is_file()
         }),
         None => adoc_core::is_ignored_beneath(path, ignore, |_| false),
+    }
+}
+
+/// A whole index held once it has read the files ([`Engine::hold_next_index`]); dropping it lets
+/// the index go on.
+#[doc(hidden)]
+pub struct IndexHold {
+    _release: std::sync::mpsc::Sender<()>,
+    reached: std::sync::mpsc::Receiver<()>,
+}
+
+impl IndexHold {
+    /// Waits at most `timeout` for the index to have read the files, and so placed its watches,
+    /// and stopped; true once it has.
+    #[must_use]
+    pub fn wait_until_held(&self, timeout: std::time::Duration) -> bool {
+        self.reached.recv_timeout(timeout).is_ok()
     }
 }
 
