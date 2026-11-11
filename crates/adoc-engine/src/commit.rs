@@ -52,12 +52,7 @@ impl Engine {
             let path = PathBuf::from(configured);
             return path.is_file().then_some(path);
         }
-        let name = if cfg!(windows) { "git.exe" } else { "git" };
-        std::env::var_os("PATH").and_then(|paths| {
-            std::env::split_paths(&paths)
-                .map(|directory| directory.join(name))
-                .find(|candidate| candidate.is_file())
-        })
+        adoc_diagrams::find_program(Path::new("git"))
     }
 
     fn repository_for_paths(

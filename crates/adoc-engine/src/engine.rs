@@ -518,15 +518,26 @@ impl Engine {
             self.emit(EngineEvent::PreviewLayoutChanged);
         }
         if document.indexed() {
-            match fs::read_to_string(&document.path) {
+            let path = &document.path;
+            match fs::read_to_string(path) {
+                // The index holds the file's own parse, so nothing it gives changes: only the
+                // text it kept goes. Closing a page unchanged is as cheap as opening it.
+                Ok(text) if self.workspace.index.keep_from_disk(path, &text) => {}
+                // Unsaved text was indexed: the file's goes back, re-diagnosing and auditing
+                // only what it can change, as an edit does.
                 Ok(text) => {
-                    self.workspace.index.index_file(&document.path, &text);
+                    let before = adoc_lang::diagnosed_with(&self.workspace, path);
+                    self.workspace.index.index_file(path, &text);
+                    self.graph_file_changed(path);
+                    self.refresh_diagnosed_with(path, before);
                 }
-                Err(_) => self.workspace.remove_document(&document.path),
+                Err(_) => {
+                    self.workspace.remove_document(path);
+                    self.graph_file_changed(path);
+                    self.refresh_open_diagnostics(None);
+                    self.audit_changed_everywhere();
+                }
             }
-            self.graph_file_changed(&document.path);
-            self.refresh_open_diagnostics(None);
-            self.audit_changed_everywhere();
         }
         if self.active == Some(id) {
             self.active = None;
@@ -1208,11 +1219,19 @@ pub(crate) fn write_replacing(path: &Path, text: &str) -> std::io::Result<()> {
         _ => path.to_path_buf(),
     };
     let directory = target.parent().unwrap_or_else(|| Path::new("."));
-    let mut temporary = tempfile::Builder::new()
-        .prefix(".adocfoundry-save-")
-        .tempfile_in(directory)?;
+    let existing = fs::metadata(&target).ok();
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".adocfoundry-save-");
+    // A new file gets what `File::create` would give it, 0o666 less the umask, rather than the
+    // temporary file's owner-only mode, so others (a container building the site) can read it.
+    #[cfg(unix)]
+    if existing.is_none() {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    let mut temporary = builder.tempfile_in(directory)?;
     temporary.write_all(text.as_bytes())?;
-    if let Ok(metadata) = fs::metadata(&target) {
+    if let Some(metadata) = existing {
         temporary
             .as_file()
             .set_permissions(metadata.permissions())?;
@@ -1221,4 +1240,30 @@ pub(crate) fn write_replacing(path: &Path, text: &str) -> std::io::Result<()> {
     // Dropping a temporary file that was not persisted removes it.
     temporary.persist(&target).map_err(|error| error.error)?;
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::*;
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn a_new_file_gets_the_mode_file_create_gives_and_a_replaced_one_keeps_its_own() {
+        let directory = tempfile::tempdir().unwrap();
+        let created = directory.path().join("created.adoc");
+        fs::File::create(&created).unwrap();
+        let written = directory.path().join("written.adoc");
+        write_replacing(&written, "= New\n").unwrap();
+        assert_eq!(mode(&written), mode(&created));
+
+        fs::set_permissions(&written, fs::Permissions::from_mode(0o640)).unwrap();
+        write_replacing(&written, "= Again\n").unwrap();
+        assert_eq!(mode(&written), 0o640);
+        assert_eq!(fs::read_to_string(&written).unwrap(), "= Again\n");
+    }
 }

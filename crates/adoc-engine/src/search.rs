@@ -460,21 +460,43 @@ impl Engine {
         applied
     }
 
-    fn apply_previewed(&mut self, preview: &EditPreview) -> Result<UndoGroup, EngineError> {
-        // Open everything and check every edit before changing anything: each file must still
-        // hold the text its edits were computed against.
-        let mut targets: Vec<(DocumentId, Vec<TextEdit>)> = Vec::new();
-        for file in &preview.edits {
-            let document = self.open_unshown(&file.path)?;
-            let text = &self.documents[&document].text;
+    /// Each file of `files` opened, unshown, with its edits validated, once every file has been
+    /// checked to still hold the text its edits were computed against (`PreviewStale`
+    /// otherwise): its open buffer's, else the file's on disk. Nothing is opened until every
+    /// check has passed, so a refusal leaves open only what was.
+    pub(crate) fn open_checked(
+        &mut self,
+        files: &[FileEdits],
+    ) -> Result<Vec<(DocumentId, Vec<TextEdit>)>, EngineError> {
+        let mut checked = Vec::with_capacity(files.len());
+        for file in files {
+            let path = normalize_path(&file.path);
+            let read;
+            let text = match self.document_for_path(&path) {
+                Some(id) => &self.documents[&id].text,
+                None => {
+                    read = ropey::Rope::from_str(&self.read_text(&path)?);
+                    &read
+                }
+            };
             if *text != file.base.as_str() {
                 return Err(EngineError::PreviewStale {
                     path: file.path.clone(),
                 });
             }
             let edits = edit::validate(text, file.edits.clone())?;
-            targets.push((document, edits));
+            checked.push((path, edits));
         }
+        let mut targets = Vec::with_capacity(checked.len());
+        for (path, edits) in checked {
+            targets.push((self.open_unshown(&path)?, edits));
+        }
+        Ok(targets)
+    }
+
+    fn apply_previewed(&mut self, preview: &EditPreview) -> Result<UndoGroup, EngineError> {
+        // Check every edit before opening or changing anything.
+        let targets = self.open_checked(&preview.edits)?;
         let group = self.new_group();
         if let Err(error) = self.apply_group(group, targets, &preview.moves) {
             self.roll_back(group);

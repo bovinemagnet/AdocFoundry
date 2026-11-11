@@ -162,6 +162,35 @@ fn a_change_against_text_since_changed_is_refused_whole() {
 }
 
 #[test]
+fn a_refused_change_leaves_no_page_open() {
+    let (_directory, root, mut engine) = workspace();
+    let pages = module(&root).join("pages");
+    let mut changes = engine
+        .stage_edits(
+            &pages.join("index.adoc"),
+            vec![TextEdit::new(SourceRange::new(0, 0), "// one\n")],
+        )
+        .unwrap();
+    changes.edits.extend(
+        engine
+            .stage_edits(
+                &pages.join("install.adoc"),
+                vec![TextEdit::new(SourceRange::new(0, 0), "// two\n")],
+            )
+            .unwrap()
+            .edits,
+    );
+    // The last file the change edits is rewritten after it was staged.
+    let last = changes.edits.last().unwrap().path.clone();
+    fs::write(&last, "Rewritten.\n").unwrap();
+    let tabs = engine.tab_order().to_vec();
+    let error = engine.apply_staged(&changes).unwrap_err();
+    assert!(matches!(error, EngineError::PreviewStale { .. }), "{error}");
+    assert_eq!(engine.tab_order(), tabs);
+    assert_eq!(engine.documents().count(), 0);
+}
+
+#[test]
 fn a_staged_rename_moves_the_page_and_rewrites_what_names_it() {
     let (_directory, root, mut engine) = workspace();
     let install = module(&root).join("pages/install.adoc");

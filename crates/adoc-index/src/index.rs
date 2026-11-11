@@ -282,6 +282,21 @@ impl WorkspaceIndex {
         self.insert(path, Parsed::without_text(document))
     }
 
+    /// Lets the entry for `path` drop the text it keeps, when its parse is of `text`, the file's
+    /// on disk: a page closed unchanged keeps its parse, its text read back like any file's,
+    /// without being parsed again. False, changing nothing, when the parse is of other text or
+    /// there is no entry.
+    pub fn keep_from_disk(&mut self, path: &Path, text: &str) -> bool {
+        let Some(entry) = self.files.get_mut(normalize_path(path).as_path()) else {
+            return false;
+        };
+        if entry.text_len != text.len() || entry.text_hash != hash_text(text) {
+            return false;
+        }
+        entry.document.text = Arc::default();
+        true
+    }
+
     /// The path the index shares between the tables of the file at `path`, to prepare its next
     /// entry with ([`PreparedFile::new`]).
     #[must_use]

@@ -123,6 +123,9 @@ pub(crate) struct PreviewState {
     shown: Option<DocumentId>,
     requests: BTreeMap<DocumentId, usize>,
     scheduled: BTreeMap<DocumentId, Instant>,
+    /// Previews due that wait for a parse on a worker. They have no deadline, since the
+    /// worker's message wakes the front end, and are due again once any message is applied.
+    held: BTreeSet<DocumentId>,
     next_generation: u64,
     /// The newest job started for each document.
     latest: BTreeMap<DocumentId, u64>,
@@ -193,6 +196,14 @@ impl FailedDiagrams {
 }
 
 impl PreviewState {
+    /// A worker's message may be the parse a held preview waits for: each is due at `now`,
+    /// unless an edit has scheduled it already.
+    pub(crate) fn release_held(&mut self, now: Instant) {
+        for id in std::mem::take(&mut self.held) {
+            self.scheduled.entry(id).or_insert(now);
+        }
+    }
+
     /// When the next scheduled preview is to start.
     pub(crate) fn next_scheduled(&self) -> Option<std::time::Instant> {
         self.scheduled.values().min().copied()
@@ -364,7 +375,8 @@ impl Engine {
         let preview = self.rendered.published.get(&id)?;
         (preview.version == version
             && parsed.waiting.is_empty()
-            && !self.rendered.scheduled.contains_key(&id))
+            && !self.rendered.scheduled.contains_key(&id)
+            && !self.rendered.held.contains(&id))
         .then(|| preview.clone())
     }
 
@@ -397,6 +409,7 @@ impl Engine {
         }
         state.requests.remove(&id);
         state.scheduled.remove(&id);
+        state.held.remove(&id);
         state.latest.remove(&id);
         state.stale_before.remove(&id);
         state.parsed.remove(&id);
@@ -527,7 +540,7 @@ impl Engine {
                 }
                 // Being parsed for another consumer: the preview waits for that parse.
                 Lookup::Running => {
-                    self.rendered.scheduled.insert(*id, now);
+                    self.rendered.held.insert(*id);
                 }
                 // Its parse crashed: the preview keeps the view it had until the page changes.
                 Lookup::Failed => {
@@ -538,7 +551,7 @@ impl Engine {
                 }
                 // Its input reads the page's line parse, which is on its way from a worker.
                 Lookup::Missing if !self.line_parse_ready(*id) => {
-                    self.rendered.scheduled.insert(*id, now);
+                    self.rendered.held.insert(*id);
                 }
                 Lookup::Missing => {
                     if let Some(snapshot) = self.preview_snapshot(*id) {

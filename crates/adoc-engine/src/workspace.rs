@@ -637,6 +637,7 @@ impl Engine {
     }
 
     pub(crate) fn apply_worker_message(&mut self, message: WorkerMessage) {
+        self.rendered.release_held(self.clock.now());
         if !matches!(
             message,
             WorkerMessage::Search { done: false, .. } | WorkerMessage::SiteBuildLine { .. }

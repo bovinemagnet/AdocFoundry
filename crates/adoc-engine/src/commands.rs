@@ -667,17 +667,29 @@ fn document_save_all(engine: &mut Engine, _: CommandArgs) -> Result<CommandOutco
         .filter(|document| document.dirty && !document.untitled)
         .map(|document| document.id)
         .collect();
-    // A file changed outside is left for the user to decide about; the rest are saved.
-    let mut conflict = None;
-    for id in dirty {
-        match engine.save(id) {
-            Err(error @ EngineError::SaveConflict { .. }) => {
-                conflict.get_or_insert(error);
-            }
-            result => result?,
-        }
+    // A file changed outside is left for the user to decide about, and one that cannot be
+    // written is reported; every other page is saved all the same.
+    let mut failed: Vec<EngineError> = dirty
+        .into_iter()
+        .filter_map(|id| engine.save(id).err())
+        .collect();
+    // A conflict is returned before any other failure, for the front end to ask about; the
+    // others are reported as the command's failures.
+    let Some(first) = failed
+        .iter()
+        .position(|error| matches!(error, EngineError::SaveConflict { .. }))
+        .or((!failed.is_empty()).then_some(0))
+    else {
+        return Ok(CommandOutcome::Done);
+    };
+    let returned = failed.remove(first);
+    for error in failed {
+        engine.emit(crate::EngineEvent::CommandFailed {
+            command: ids::DOCUMENT_SAVE_ALL,
+            error: error.to_string(),
+        });
     }
-    conflict.map_or(Ok(CommandOutcome::Done), Err)
+    Err(returned)
 }
 
 fn document_close(engine: &mut Engine, args: CommandArgs) -> Result<CommandOutcome, EngineError> {
