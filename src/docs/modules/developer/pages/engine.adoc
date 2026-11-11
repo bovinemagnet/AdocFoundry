@@ -732,6 +732,7 @@ include::example$event-pump.mmd[]
 Unlike `wait_for_workers`, it waits for nothing else, so `render_blocking` (the parse it started and its page's diagrams), `export_blocking` (its own export job) and the MCP server's `search` tool (its own last batch of results) use it, and a long-running worker such as a site build holds none of them up.
 `next_due()` says when `pump` next has something to do of its own accord: the earliest deadline of every settle the engine keeps, at or before now for work that waits only for the next pump.
 `None` means nothing will happen until a worker or the watcher sends something, or the engine is called; work a running worker holds up has no deadline, as its result wakes the front end.
+A preview whose parse, or whose line parse, is still on a worker is held with no deadline (`PreviewState::held`, due again once any worker message is applied), and a page's line changes waiting for their working tree's job are likewise left out (`GitState::waiting_hunks`, due again when that job's `GitHunks` arrives), so the front end does not pump at every tick while a worker runs.
 `has_pending()` is `workers_running > 0 || next_due().is_some()`.
 `set_waker(f)` gives the engine a function to call, from any thread, whenever a worker, the writer or the file watcher sends it something, so a front end can sleep until `next_due` rather than poll; only the first waker is kept.
 
@@ -781,11 +782,12 @@ The check and the write run on the <<writer>>.
 `save` and `overwrite` first wait for any auto-save of that page already being written, then queue theirs and wait for it, so they still return their result.
 While a save of a page is being written, the watcher ignores changes to that page's file, because the save's result settles them.
 `Engine::save` returns `EngineError::SaveConflict { path }` when the file's contents differ from the hash of what the engine last read or wrote (`saved_hash`), and writes nothing.
-`save_all` saves the other documents and reports the conflict, and `git.save_and_commit` stops at it.
+`save_all` tries every dirty page; it returns a conflict before any other failure, and each other failure is emitted as `EngineEvent::CommandFailed` for `document.save_all`; `git.save_and_commit` still stops at a conflict.
 `Engine::overwrite` and `Engine::reload` are the two explicit choices, behind the `document.overwrite` and `document.reload` commands: `overwrite` writes the buffer regardless, and `reload` replaces only what differs between the buffer and the file (`edit::minimal`, which keeps the common prefix and suffix) as one undo step and leaves the document clean.
 A clean document changed on disk, and restoring a local history version or recovering unsaved changes, use the same minimal edit, so `DocumentChanged.edits` is exact and views keep their carets by mapping.
 A file that no longer exists is written again by `save`.
 Every write goes to a temporary file in the same directory and is renamed over the page, keeping the file's permissions; a symbolic link has its target written and the link kept.
+A new file gets the mode `File::create` would give it (0o666 less the umask on Unix) rather than the temporary file's owner-only mode (`write_replacing`).
 The command-line tool and the MCP server return the conflict's message to their caller.
 
 [[git]]
@@ -942,6 +944,7 @@ The application, `adocfoundry-cli` and `adoc-ls` leave it at `Any`.
 
 Multi-file changes are computed first as an `EditPreview`: a list of file moves and per-file edits.
 Nothing is changed until `workspace.apply_preview` is invoked with the preview's id.
+`open_checked` first checks every file's `base` against its open buffer, else the file read from disk, and validates its edits, opening nothing until every check passes, so a refused preview (`workspace.apply_preview` or `apply_staged`) leaves the tabs and open documents as they were.
 The engine opens a preview's pages with `open_unshown`, which neither makes them active nor adds a recent-file entry, and sets `applying` while it applies the group.
 While `applying` is set, `insert_document` and `edit_document` diagnose nothing, and the one `refresh_open_diagnostics` at the end covers the open pages.
 
@@ -1083,7 +1086,8 @@ It has a `Display` text, which the menu hint uses.
 
 Running starts a worker through `worker::spawn`.
 It runs each step with a deadline from `[tools] build_timeout` (`DEFAULT_BUILD_TIMEOUT`, 600 s) and an output cap (`MAX_BUILD_OUTPUT`, 8 MiB).
-Both pipes are read line by line on threads.
+Both pipes are read on threads in chunks, each byte counted against `MAX_BUILD_OUTPUT` as it is read; a line ends at `\n`, `\r` or `\r\n`, and one longer than `MAX_LINE` (16 KiB) is sent in pieces cut where a character ends.
+When a step exits, its readers get `READERS_GRACE` (1 s) to reach the end of the pipes; if a process the step left behind still holds them, the step's process group is stopped and the readers are not waited for, as on a timeout.
 Each line is a `WorkerMessage::SiteBuildLine`, which, like a partial search result, does not count as the worker finishing.
 The end is `WorkerMessage::SiteBuilt`.
 A generation number drops the late lines of a stopped build.
@@ -1193,8 +1197,9 @@ After that the audit follows the problems.
 The files `diagnosed_with` gives for an edit are audited again at the next `pump`.
 A version is audited again only when the text of one of its own navigation files changed.
 A new catalog revision audits every version's navigation again, which reads only the navigation files.
-A change to the whole workspace (indexing, files changed on disk, a rename or replace, closing a page, a restored session, a version change) builds it all again on a worker.
+A change to the whole workspace (indexing, files changed on disk, a rename or replace, a restored session, a version change) builds it all again on a worker.
 Opening a page changes no parse and leaves the audit alone.
+Closing a page whose index entry is the parse of its file on disk changes no parse either (`WorkspaceIndex::keep_from_disk` only drops the text the entry kept), so it re-parses, re-diagnoses and audits nothing; closing one with unsaved text indexes the file again and refreshes only what `diagnosed_with` gives, as an edit does.
 Changes made while a build runs wait for its result, and a newer build's generation drops an older result.
 
 `Engine::audit_report(&scope)` puts the kept parts in a scope together (`adoc_audit::assemble`) under the current `[quality]` policy, and is `None` until the first build arrives.

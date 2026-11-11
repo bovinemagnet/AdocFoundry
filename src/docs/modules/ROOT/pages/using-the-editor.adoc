@@ -33,6 +33,7 @@ A buffer with unsaved edits is never overwritten: you are told that the file cha
 
 Saving a page whose file changed on disk since you opened or last saved it is refused, so an outside change is never written over without asking.
 Save All still saves every other page and reports the conflict, and Save and Commit stops in the same way.
+A page that cannot be written, in a read-only folder or on a full disk, is reported too, and every other page is still saved (Save and Commit still stops as before).
 A dialog titled "<file> changed on disk" explains that the file changed since you opened or last saved it, and offers two buttons:
 
 Reload from Disk::
@@ -1423,7 +1424,10 @@ The folder of `[tools] node` is put first on the build's `PATH`, so npm's script
 
 `[tools] build_timeout` (seconds, 600 by default) covers the whole build, `npm install` included.
 A build that writes more than 8 MiB of output is stopped.
+Output written with carriage returns, such as a progress bar, shows as a line each, and a line longer than 16 KiB is shown in pieces.
 Stopping a build stops every process it started: its process group on macOS and Linux, and its process tree on Windows.
+A step is finished when its own process exits.
+Anything it leaves running that still holds its output, such as a server started in the background, is given a second and then stopped with the step, so the build still finishes.
 
 === The Build tab
 
