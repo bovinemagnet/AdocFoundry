@@ -2,14 +2,16 @@
 //!
 //! Titles are checked on published pages (an `.adoc` file whose name does not begin with `_` or
 //! `.`). An empty `=` line is reported; no title line at all
-//! is reported unless a `doctitle` attribute gives one, and skipped when an include before the
-//! first section may supply it.
+//! is reported unless a `doctitle` attribute gives one, and skipped when an include that may be
+//! in the header (before any body content, outside verbatim blocks) may supply it.
 //!
 //! Alternative text is checked on the block (`image::`) and inline (`image:`) image macros of
 //! published pages and of partials, which pages include. Text counts as the author's whenever
 //! it is written: a first positional attribute (`image::a.png[What it shows]`,
 //! `image:a.png[What it shows]`), a named `alt`, an attribute reference, or text explicitly
-//! quoted empty (`[""]`), the author's statement that an image is decorative. Only a
+//! quoted empty (`[""]`), the author's statement that an image is decorative. A block image's
+//! attribute lines above it count as its macro's do (`[alt=Sunset]`, `[A sunset]`), except a
+//! first attribute that is only an id, role or option shorthand (`[#fig]`, `[.right]`). Only a
 //! macro with no text at all, whose alternative text Asciidoctor would make from the file name,
 //! is reported. A decorative image without quotes, or a generated one, is left to an exclusion.
 
@@ -73,11 +75,9 @@ fn title(context: &Context<'_>, path: &Path, document: &Document, part: &mut Fil
     if titled_by_attribute {
         return;
     }
-    let first_section = document.sections.first().map(|section| section.range.start);
-    let header_include = document
-        .includes
-        .iter()
-        .find(|include| first_section.is_none_or(|start| include.range.start < start));
+    // Only an include that may be in the header can give the title: one before any body
+    // content and outside every verbatim block.
+    let header_include = document.includes.iter().find(|include| include.before_body);
     match header_include {
         Some(include) => part.skips.push(Skip {
             location: context.location(path, Some(include.range)),
@@ -111,13 +111,27 @@ fn images(context: &Context<'_>, path: &Path, document: &Document, part: &mut Fi
     }
 }
 
-/// Whether the macro's attributes give alternative text, in any form the author wrote.
+/// Whether the macro's attributes, or a block attribute line above a block image, give
+/// alternative text, in any form the author wrote.
 fn has_alt(image: &ImageDirective) -> bool {
-    let attributes = image.attributes.as_deref().unwrap_or("");
+    gives_alt(image.attributes.as_deref().unwrap_or(""), false)
+        || image
+            .block_attributes
+            .iter()
+            .any(|line| gives_alt(line, true))
+}
+
+/// Whether an attribute list gives alternative text: a first positional attribute or a named
+/// `alt`. On a block attribute line (`block`), a first positional attribute that is only an
+/// id, role or option shorthand (`#fig`, `.right`, `%interactive`) gives none.
+fn gives_alt(attributes: &str, block: bool) -> bool {
     let items = split_attributes(attributes);
-    let positional = items
-        .first()
-        .is_some_and(|first| first.starts_with('"') || (!first.is_empty() && !is_named(first)));
+    let positional = items.first().is_some_and(|first| {
+        first.starts_with('"')
+            || (!first.is_empty()
+                && !is_named(first)
+                && !(block && first.starts_with(['#', '.', '%'])))
+    });
     let named = items.iter().any(|item| {
         item.split_once('=').is_some_and(|(name, value)| {
             name.trim() == "alt" && {
@@ -172,6 +186,7 @@ mod tests {
             attributes: attributes.map(str::to_owned),
             range: SourceRange::new(0, 0),
             inline: false,
+            block_attributes: Vec::new(),
         }
     }
 
@@ -188,6 +203,30 @@ mod tests {
             "alt=\"\"",
         ] {
             assert!(has_alt(&image(Some(written))), "{written:?}");
+        }
+    }
+
+    #[test]
+    fn block_attribute_lines_give_text_unless_only_shorthand() {
+        let with_lines = |lines: &[&str]| ImageDirective {
+            block_attributes: lines.iter().map(|line| (*line).to_owned()).collect(),
+            ..image(None)
+        };
+        for written in [
+            &["alt=\"A sunset\""][..],
+            &["A sunset over the sea"],
+            &["#fig,alt=Sunset"],
+            &[".right", "A sunset"],
+        ] {
+            assert!(has_alt(&with_lines(written)), "{written:?}");
+        }
+        for unwritten in [
+            &["#fig"][..],
+            &[".right"],
+            &["%interactive"],
+            &["#fig.right%interactive", "width=20"],
+        ] {
+            assert!(!has_alt(&with_lines(unwritten)), "{unwritten:?}");
         }
     }
 

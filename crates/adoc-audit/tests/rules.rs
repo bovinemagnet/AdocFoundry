@@ -515,3 +515,70 @@ fn a_version_in_two_descriptors_reads_both_navigations() {
         (2, 3, 3)
     );
 }
+
+const DOCS: (&str, &str) = ("docs/antora.yml", "name: docs\nversion: ~\n");
+
+#[test]
+fn alternative_text_on_the_block_attribute_line_counts() {
+    let report = audit_files(
+        &[
+            DOCS,
+            (
+                "docs/modules/ROOT/pages/index.adoc",
+                "= Images\n\n[alt=\"A sunset\"]\nimage::a.png[]\n\n[A sunset over the sea]\nimage::b.png[]\n\n.Caption\n[#fig,alt=Sunset]\nimage::c.png[]\n\n[.right]\nimage::d.png[]\n\n[#fig2]\n[%interactive]\nimage::e.png[]\n",
+            ),
+        ],
+        AuditScope::Workspace,
+    );
+    let reported: Vec<String> = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.code == ALT)
+        .map(|finding| finding.message.clone())
+        .collect();
+    assert_eq!(
+        reported,
+        [
+            "The image `d.png` has no alternative text",
+            "The image `e.png` has no alternative text"
+        ],
+        "an id, role or option line gives no text"
+    );
+}
+
+#[test]
+fn a_title_comes_only_from_an_include_before_the_body() {
+    let report = audit_files(
+        &[
+            DOCS,
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            (
+                "docs/modules/ROOT/pages/untitled-listing.adoc",
+                "Some text.\n\n[source,java]\n----\ninclude::example$Demo.java[]\n----\n",
+            ),
+            (
+                "docs/modules/ROOT/pages/untitled-footer.adoc",
+                "Some text.\n\nMore text.\n\ninclude::partial$snippet.adoc[]\n",
+            ),
+            (
+                "docs/modules/ROOT/pages/header-include.adoc",
+                "include::partial$header.adoc[]\n\nSome text.\n",
+            ),
+            ("docs/modules/ROOT/partials/header.adoc", "= Header\n"),
+            ("docs/modules/ROOT/partials/snippet.adoc", "Snippet.\n"),
+            ("docs/modules/ROOT/examples/Demo.java", "class Demo {}\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    assert_eq!(
+        found(&report, TITLE),
+        [
+            "docs/modules/ROOT/pages/untitled-footer.adoc",
+            "docs/modules/ROOT/pages/untitled-listing.adoc"
+        ]
+    );
+    assert_eq!(
+        skipped(&report, TITLE),
+        ["docs/modules/ROOT/pages/header-include.adoc"]
+    );
+}
