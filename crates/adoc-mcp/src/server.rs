@@ -840,23 +840,25 @@ impl Server {
                     scope,
                 }),
             )?;
-            // The search runs on one worker, which reports its matches in batches.
-            if !state.engine.wait_for_workers(TIMEOUT) {
-                return Err(Failure::timeout("the search did not finish"));
-            }
+            // The search runs on one worker, which reports its matches in batches; this waits
+            // for its last, not for other workers such as a site build.
             let mut matches = Vec::new();
             let mut done = false;
-            for event in state.events.try_iter() {
-                if let EngineEvent::SearchResults {
-                    results,
-                    done: finished,
-                    ..
-                } = event
-                {
-                    matches.extend(results);
-                    done |= finished;
+            let events = &state.events;
+            state.engine.wait_until(Instant::now() + TIMEOUT, |_| {
+                for event in events.try_iter() {
+                    if let EngineEvent::SearchResults {
+                        results,
+                        done: finished,
+                        ..
+                    } = event
+                    {
+                        matches.extend(results);
+                        done |= finished;
+                    }
                 }
-            }
+                done
+            });
             if !done {
                 return Err(Failure::timeout("the search did not finish"));
             }

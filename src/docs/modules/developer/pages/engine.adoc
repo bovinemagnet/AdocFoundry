@@ -489,7 +489,7 @@ It never draws anything: it publishes a framework-free view tree, and each front
 |100 ms. A render starts this long after the last edit to the document or to any file it includes.
 
 |`render_blocking(id, timeout)`
-|Renders a document once and waits for its diagrams. The command-line `render` uses it because it has no event loop to pump.
+|Renders a document once and waits for its diagrams. The command-line `render` uses it because it has no event loop to pump. It waits for that page alone, not for other workers.
 
 |`set_document_parser(parser)`
 |Chooses the `DocumentParser`. `acdc` is the default.
@@ -721,6 +721,8 @@ include::example$event-pump.mmd[]
 
 `pump()` applies worker results and debounced file-system changes and returns the number of events applied.
 `has_pending()` tells a front end whether it should keep pumping, and `wait_for_workers(timeout)` blocks until workers finish, which the command-line checker uses.
+`wait_until(deadline, done)` applies worker results until `done` holds or `deadline` passes, and says whether it held.
+Unlike `wait_for_workers`, it waits for nothing else, so `render_blocking` (the parse it started and its page's diagrams), `export_blocking` (its own export job) and the MCP server's `search` tool (its own last batch of results) use it, and a long-running worker such as a site build holds none of them up.
 `next_due()` says when `pump` next has something to do of its own accord: the earliest deadline of every settle the engine keeps, at or before now for work that waits only for the next pump.
 `None` means nothing will happen until a worker or the watcher sends something, or the engine is called; work a running worker holds up has no deadline, as its result wakes the front end.
 `has_pending()` is `workers_running > 0 || next_due().is_some()`.
