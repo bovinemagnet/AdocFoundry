@@ -77,7 +77,7 @@ Untitled pages are kept too.
 The copy is removed as soon as the page is saved, closed without saving, or its edits are undone back to the saved text.
 
 If the app ends without saving, the next launch opens the Recover Unsaved Changes dialog.
-This happens when the app crashes, is killed, the machine loses power, the system quits the app with pages unsaved, you choose Don't Save when quitting, or you close the window with pages unsaved and choose Save with untitled pages open (see xref:#closing-the-window[closing the window]).
+This happens when the app crashes, is killed, the machine loses power, the system quits the app with pages unsaved, or you close the window with pages unsaved and choose Save with untitled pages open (see xref:#closing-the-window[closing the window]).
 The dialog lists each page, with untitled pages marked "(untitled)", and when it was edited.
 Beside the list it shows the lines the unsaved text changes compared with the file on disk now.
 Removed lines are red and start with `-`, added lines are green and start with `+`, and three unchanged lines are shown around each change.
@@ -501,7 +501,7 @@ If one of them changed on disk, the usual "<file> changed on disk" dialog appear
 Untitled pages have no file to save to, so Save keeps them for xref:#crash-recovery[Recover Unsaved Changes] the next time AdocFoundry opens; the dialog says so when there are any.
 
 Don't Save::
-Closes the pages without saving, so nothing is offered back by recovery.
+Closes the pages without saving, pinned ones too, so nothing is offered back by recovery.
 The session still reopens the tabs, with each file's saved text.
 
 Cancel::

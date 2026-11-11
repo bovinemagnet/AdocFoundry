@@ -5004,6 +5004,32 @@ fn reveal_in_files_opens_the_way_to_the_active_page(cx: &mut TestAppContext) {
     );
 }
 
+/// A reveal that can never finish, here of a file beneath a linked folder, is given up once
+/// the folders above it are listed, so it does not take the selection back on every rebuild.
+#[cfg(unix)]
+#[gpui::test]
+fn an_unfinishable_reveal_leaves_the_selection_alone(cx: &mut TestAppContext) {
+    let (_directory, root, app, _workspace, files, mut cx) = files_workspace(cx);
+    std::os::unix::fs::symlink(root.join("docs"), root.join("linked")).unwrap();
+    cx.update(|_, cx| files.update(cx, |files, cx| files.refresh(cx)));
+    assert!(drain_until(&app, &mut cx, |cx| {
+        files_rows(&files, cx).contains(&"  linked →".to_owned())
+    }));
+    let beneath = root.join("linked/modules/ROOT/pages/index.adoc");
+    cx.update(|_, cx| files.update(cx, |files, cx| files.reveal(&beneath, cx)));
+    cx.run_until_parked();
+
+    click_files_row(&files, "blob.bin", 1, &mut cx);
+    let selected =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| files.read(cx).selected_for_test(cx));
+    assert_eq!(selected(&mut cx), Some(root.join("blob.bin")));
+    // Listing the folders again rebuilds the tree; the user's selection stays.
+    cx.update(|_, cx| files.update(cx, |files, cx| files.refresh(cx)));
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert_eq!(selected(&mut cx), Some(root.join("blob.bin")));
+}
+
 #[gpui::test]
 fn files_menu_copies_paths_and_collapses(cx: &mut TestAppContext) {
     let (_directory, root, app, workspace, files, mut cx) = files_workspace(cx);
@@ -9331,6 +9357,68 @@ fn quit_can_discard_unsaved_pages(cx: &mut TestAppContext) {
     assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
     // Closed without saving, so recovery has nothing to offer back.
     assert_eq!(unsaved(&app, &mut cx), 0);
+}
+
+/// Quit, Don't Save: the session written before the pages close keeps their tabs, and the
+/// app's quitting afterwards does not write it again with none.
+#[gpui::test]
+fn quit_without_saving_keeps_the_session_s_tabs(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&pages.path().join("page.adoc"));
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    cx.dispatch_action(crate::editor::bindings::Quit);
+    cx.run_until_parked();
+    click_selector("close-window-discard", gpui::MouseButton::Left, &mut cx);
+    assert!(quit_asked());
+    // The app quits, running its quit observers with the window still there.
+    cx.cx.quit();
+
+    let mut engine = Engine::new(settings_in(config.path()));
+    engine.enable_sessions();
+    engine.restore_session();
+    let restored: Vec<PathBuf> = engine
+        .documents()
+        .map(|document| document.path.clone())
+        .collect();
+    assert_eq!(restored, vec![page]);
+}
+
+/// Don't Save closes pinned pages too, so their unsaved text is not kept for recovery.
+#[gpui::test]
+fn closing_without_saving_discards_pinned_pages(cx: &mut TestAppContext) {
+    init(cx);
+    let config = tempfile::tempdir().unwrap();
+    let pages = tempfile::tempdir().unwrap();
+    let page = adoc_index::normalize_path(&pages.path().join("page.adoc"));
+    std::fs::write(&page, "= Page\n").unwrap();
+    let app = app_with(Engine::new(settings_in(config.path())), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page.clone()], cx);
+    cx.run_until_parked();
+    cx.simulate_input("x");
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            let id = app.engine.active().unwrap();
+            app.invoke(ids::DOCUMENT_PIN_TAB, CommandArgs::Document(id), cx)
+                .unwrap();
+        });
+    });
+    assert!(!cx.simulate_close());
+    cx.run_until_parked();
+    click_selector("close-window-discard", gpui::MouseButton::Left, &mut cx);
+    assert!(!window_is_open(&mut cx));
+    assert_eq!(std::fs::read_to_string(&page).unwrap(), "= Page\n");
+    // Closed, so its recovery record went with it and none is written at quitting.
+    let open = cx.cx.update(|cx| app.read(cx).engine.documents().count());
+    assert_eq!(open, 0, "no page left open");
 }
 
 /// With nothing unsaved Quit quits at once, from the workspace window or any other; with the

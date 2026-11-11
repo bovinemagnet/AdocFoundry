@@ -509,9 +509,12 @@ impl WorkspaceView {
                 }
             }),
             // The session is kept for the next launch, whether the app quits or the window
-            // closes first.
+            // closes first. A window that asked about unsaved pages wrote it before closing
+            // them, so it is not written again with them gone.
             cx.on_app_quit(|this, cx| {
-                this.write_session(cx);
+                if !this.closing {
+                    this.write_session(cx);
+                }
                 async {}
             }),
         ];
@@ -3139,11 +3142,16 @@ impl WorkspaceView {
                 self.write_session(cx);
             }
             CloseAnswer::Discard => {
-                // The session keeps the tabs; closing them without saving drops their
-                // recovery records.
+                // The session keeps the tabs; closing every page without saving, pinned ones
+                // too, drops their recovery records.
                 self.write_session(cx);
                 self.app.update(cx, |app, cx| {
                     let _ = app.invoke(ids::DOCUMENT_CLOSE_ALL, CommandArgs::None, cx);
+                    let left: Vec<DocumentId> =
+                        app.engine.documents().map(|document| document.id).collect();
+                    for id in left {
+                        let _ = app.invoke(ids::DOCUMENT_CLOSE, CommandArgs::Document(id), cx);
+                    }
                 });
             }
         }
