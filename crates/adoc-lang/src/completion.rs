@@ -140,6 +140,8 @@ fn anchor_candidates(
 
     let mut candidates: Vec<Candidate> = crate::xref::section_ids(antora, path, document)
         .into_iter()
+        // A title with no letter or digit has the empty id, which nothing can name.
+        .filter(|label| !label.is_empty())
         .map(|label| candidate(label, range))
         .collect();
 
@@ -525,6 +527,24 @@ mod tests {
                 .collect();
 
         assert_eq!(labels, ["_parameters", "_parameters_2"]);
+    }
+
+    #[test]
+    fn a_section_whose_id_is_empty_is_not_offered() {
+        // Issue #533: `== ???` has the empty id.
+        let path = Path::new("/docs/guide.adoc");
+        let text = "== ???\n\n== Parameters\n\nSee <<";
+        let mut index = WorkspaceIndex::new();
+        index.index_source(path, text);
+        let document = parse("file:///docs/guide.adoc", text).document;
+
+        let labels: Vec<_> =
+            completion_at_offset(&index, &AntoraCatalog::new(), path, &document, text.len())
+                .into_iter()
+                .map(|candidate| candidate.label)
+                .collect();
+
+        assert_eq!(labels, ["_parameters"]);
     }
 
     #[test]

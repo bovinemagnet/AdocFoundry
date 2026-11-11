@@ -47,12 +47,17 @@ pub fn xref_to(
 ) -> Option<XrefLink> {
     let from = normalize_path(from);
     let to = normalize_path(to);
-    let section = section.and_then(|at| {
-        target
-            .sections
-            .iter()
-            .position(|section| section.selection_range == at)
-    });
+    let mut ids = section_ids(&ws.antora, &to, target);
+    // A title with no letter or digit has the empty id, which no link can name: the page is
+    // linked instead.
+    let section = section
+        .and_then(|at| {
+            target
+                .sections
+                .iter()
+                .position(|section| section.selection_range == at)
+        })
+        .filter(|&section| !ids[section].is_empty());
     let page_title = || target.title.as_ref().map(|title| title.text.clone());
     let Some(section) = section else {
         if from == to {
@@ -63,7 +68,7 @@ pub fn xref_to(
             text: page_title(),
         });
     };
-    let id = section_ids(&ws.antora, &to, target).swap_remove(section);
+    let id = ids.swap_remove(section);
     let section = &target.sections[section];
     let target = if from == to {
         id
@@ -180,6 +185,22 @@ mod tests {
             target: target.to_owned(),
             text: Some(text.to_owned()),
         })
+    }
+
+    #[test]
+    fn a_section_whose_id_is_empty_is_linked_as_its_page() {
+        // Issue #533: `== ???` has the empty id, which made a link ending in `#`.
+        let mut ws = WorkspaceState::new();
+        let from = Path::new("/docs/index.adoc");
+        let to = Path::new("/docs/other.adoc");
+        ws.index.index_source(from, "= Home\n");
+        ws.index.index_source(to, "= Other\n\n== ???\n");
+        let target = ws.index.file(to).unwrap().document.clone();
+        let at = target.sections[0].selection_range;
+        assert_eq!(
+            xref_to(&ws, from, to, &target, Some(at)),
+            xref("other.adoc", "Other")
+        );
     }
 
     #[test]

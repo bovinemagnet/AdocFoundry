@@ -23,8 +23,8 @@ impl Section {
             generated_id(&self.title, "_", '_'),
             alphanumeric_id(&self.title),
         ];
-        ids.retain(|id| !id.is_empty());
-        ids.dedup();
+        let mut seen = HashSet::new();
+        ids.retain(|id| !id.is_empty() && seen.insert(id.clone()));
         ids
     }
 }
@@ -196,6 +196,15 @@ mod tests {
         assert_eq!(
             section_ids(&sections, &anchors, IdStyle::Antora),
             ["parameters", "parameters-2", "notes"]
+        );
+    }
+
+    #[test]
+    fn implicit_ids_hold_each_form_once() {
+        // Issue #533: `dedup` removed neighbours only.
+        assert_eq!(
+            section("parameters", None, 0).implicit_ids(),
+            ["parameters", "_parameters"]
         );
     }
 

@@ -81,6 +81,8 @@ impl Document {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LineIndex {
     line_starts: Vec<usize>,
+    /// Where each line's content ends, before its `\n` or `\r\n`.
+    line_ends: Vec<usize>,
     text_len: usize,
 }
 
@@ -88,13 +90,21 @@ impl LineIndex {
     #[must_use]
     pub fn new(text: &str) -> Self {
         let mut line_starts = vec![0];
-        line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+        let mut line_ends = Vec::new();
+        for (offset, _) in text.match_indices('\n') {
+            line_starts.push(offset + 1);
+            let crlf = text[..offset].ends_with('\r');
+            line_ends.push(if crlf { offset - 1 } else { offset });
+        }
+        line_ends.push(text.len());
         Self {
             line_starts,
+            line_ends,
             text_len: text.len(),
         }
     }
 
+    /// The 0-based line and column of `offset`, the column in bytes.
     #[must_use]
     pub fn line_column(&self, offset: usize) -> (usize, usize) {
         let offset = offset.min(self.text_len);
@@ -102,15 +112,12 @@ impl LineIndex {
         (line, offset - self.line_starts[line])
     }
 
+    /// The offset of 0-based `line` and `column`, the column in bytes, clamped to the end of the
+    /// line's content; `None` past the last line.
     #[must_use]
     pub fn offset(&self, line: usize, column: usize) -> Option<usize> {
         let start = *self.line_starts.get(line)?;
-        let line_end = self
-            .line_starts
-            .get(line + 1)
-            .copied()
-            .unwrap_or(self.text_len);
-        Some((start + column).min(line_end))
+        Some((start + column).min(self.line_ends[line]))
     }
 }
 
@@ -126,5 +133,14 @@ mod tests {
         assert_eq!(index.line_column(5), (1, 1));
         assert_eq!(index.offset(1, 2), Some(6));
         assert_eq!(index.offset(9, 0), None);
+    }
+
+    #[test]
+    fn a_column_past_the_end_of_a_line_is_its_end() {
+        // Issue #533: not the start of the next line.
+        assert_eq!(LineIndex::new("one\ntwo\n").offset(0, 99), Some(3));
+        assert_eq!(LineIndex::new("one\r\ntwo\r\n").offset(0, 99), Some(3));
+        assert_eq!(LineIndex::new("one\ntwo").offset(1, 99), Some(7));
+        assert_eq!(LineIndex::new("one\n").offset(1, 5), Some(4));
     }
 }

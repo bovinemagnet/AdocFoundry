@@ -35,11 +35,16 @@ impl FileAccess {
             return false;
         };
         let normal = normalize_path(&given);
-        let Some(root) = roots.iter().find(|root| {
-            std::path::absolute(root).is_ok_and(|root| normal.starts_with(normalize_path(&root)))
-        }) else {
+        let mut holding = roots
+            .iter()
+            .filter(|root| {
+                std::path::absolute(root)
+                    .is_ok_and(|root| normal.starts_with(normalize_path(&root)))
+            })
+            .peekable();
+        if holding.peek().is_none() {
             return false;
-        };
+        }
         // The path as given, not its lexical form: the system resolves a `..` after a link
         // from where the link leads.
         let mut existing = given.as_path();
@@ -51,10 +56,13 @@ impl FileAccess {
                 None => return false,
             }
         }
-        match (fs::canonicalize(existing), fs::canonicalize(root)) {
-            (Ok(real), Ok(real_root)) => real.starts_with(real_root),
-            _ => false,
-        }
+        let Ok(real) = fs::canonicalize(existing) else {
+            return false;
+        };
+        // Any root holding the path both ways: a linked folder inside a root may be a root of
+        // its own.
+        holding
+            .any(|root| fs::canonicalize(root).is_ok_and(|real_root| real.starts_with(real_root)))
     }
 
     /// Reads `path`, or refuses with `PermissionDenied` when it is not permitted.
@@ -179,6 +187,31 @@ mod tests {
         assert!(here.permits(Path::new("src/lib.rs")));
         assert!(!here.permits(Path::new("../../src/lib.rs")));
         assert!(!here.permits(Path::new("../outside.pdf")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn any_root_holding_the_path_both_ways_permits_it() {
+        // Issue #533: a linked folder inside a root is a root of its own, whatever the order.
+        let directory = tempfile_dir();
+        let workspace = directory.join("ws");
+        let elsewhere = directory.join("elsewhere");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(elsewhere.join("page.adoc"), "linked").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, workspace.join("linked")).unwrap();
+        let page = workspace.join("linked/page.adoc");
+        for roots in [
+            vec![workspace.clone(), workspace.join("linked")],
+            vec![workspace.join("linked"), workspace.clone()],
+        ] {
+            assert!(
+                FileAccess::Within(roots.clone()).permits(&page),
+                "{roots:?}"
+            );
+        }
+        assert!(!FileAccess::Within(vec![workspace.clone()]).permits(&page));
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     /// A fresh directory under the system's temporary directory; `adoc-core` has no dependencies,
