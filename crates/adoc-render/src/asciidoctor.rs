@@ -1,7 +1,9 @@
 use std::{
-    io::{self, Write},
+    io::{self, Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
 use crate::{RenderError, RenderOutput, RenderRequest};
@@ -10,9 +12,13 @@ pub trait Renderer: Send + Sync {
     fn render(&self, request: &RenderRequest) -> Result<RenderOutput, RenderError>;
 }
 
+/// How long Asciidoctor may take to render a page before it is stopped.
+pub const ASCIIDOCTOR_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Clone, Debug)]
 pub struct SystemAsciidoctor {
     executable: PathBuf,
+    timeout: Duration,
 }
 
 impl Default for SystemAsciidoctor {
@@ -26,8 +32,27 @@ impl SystemAsciidoctor {
     pub fn new(executable: impl Into<PathBuf>) -> Self {
         Self {
             executable: executable.into(),
+            timeout: ASCIIDOCTOR_TIMEOUT,
         }
     }
+
+    /// Stops a render that takes longer than `timeout`, rather than [`ASCIIDOCTOR_TIMEOUT`].
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+}
+
+/// Everything `pipe` gives until it closes, read on a thread of its own.
+fn read_all(pipe: Option<impl Read + Send + 'static>) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
 }
 
 impl Renderer for SystemAsciidoctor {
@@ -84,25 +109,51 @@ impl Renderer for SystemAsciidoctor {
             }
         })?;
 
-        if let Some(source) = &request.source_text {
-            child
-                .stdin
-                .take()
-                .expect("piped stdin must be present for source overlays")
-                .write_all(source.as_bytes())
+        // Written and read on threads of their own, so a renderer that stops reading or writing
+        // holds up this thread no longer than the time limit.
+        let writer = request
+            .source_text
+            .clone()
+            .zip(child.stdin.take())
+            .map(|(source, mut stdin)| thread::spawn(move || stdin.write_all(source.as_bytes())));
+        let stdout = read_all(child.stdout.take());
+        let stderr = read_all(child.stderr.take());
+        let deadline = Instant::now() + self.timeout;
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(RenderError::Io)? {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RenderError::Io(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!(
+                        "Asciidoctor did not finish within {} seconds",
+                        self.timeout.as_secs_f32()
+                    ),
+                )));
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        if let Some(writer) = writer {
+            writer
+                .join()
+                .unwrap_or_else(|_| Err(io::Error::other("writing the source failed")))
                 .map_err(RenderError::Io)?;
         }
-        let output = child.wait_with_output().map_err(RenderError::Io)?;
-        if !output.status.success() {
+        let stdout = stdout.join().unwrap_or_default();
+        let stderr = stderr.join().unwrap_or_default();
+        if !status.success() {
             return Err(RenderError::ProcessFailed {
-                status: output.status.code(),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                status: status.code(),
+                stderr: String::from_utf8_lossy(&stderr).trim().to_owned(),
             });
         }
 
         Ok(RenderOutput {
-            html: String::from_utf8_lossy(&output.stdout).into_owned(),
-            warnings: stderr_lines(&output.stderr),
+            html: String::from_utf8_lossy(&stdout).into_owned(),
+            warnings: stderr_lines(&stderr),
         })
     }
 }
@@ -171,6 +222,32 @@ mod tests {
 
         assert_eq!(output.html, "<h1>Guide</h1>");
         assert!(output.warnings.is_empty());
+    }
+
+    /// A renderer that never finishes is stopped at the time limit, so whoever waits for it
+    /// (the language server's one thread) goes on.
+    #[cfg(unix)]
+    #[test]
+    fn a_renderer_that_hangs_is_stopped() {
+        use std::{fs, os::unix::fs::PermissionsExt, time::Duration, time::Instant};
+
+        let _guard = spawn_guard();
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("hanging-asciidoctor");
+        fs::write(&executable, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let started = Instant::now();
+
+        let error = SystemAsciidoctor::new(&executable)
+            .with_timeout(Duration::from_millis(300))
+            .render(&RenderRequest::from_source("guide.adoc", "= Guide"))
+            .unwrap_err();
+
+        assert!(
+            matches!(&error, RenderError::Io(error) if error.kind() == std::io::ErrorKind::TimedOut),
+            "{error:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     #[test]

@@ -47,7 +47,8 @@ pub(crate) fn server_capabilities(
         filters: vec![FileOperationFilter {
             scheme: Some("file".to_owned()),
             pattern: FileOperationPattern {
-                glob: "**/*.adoc".to_owned(),
+                // The extensions `adoc_index::is_asciidoc_path` takes.
+                glob: "**/*.{adoc,asciidoc,ad}".to_owned(),
                 matches: Some(FileOperationPatternKind::File),
                 options: None,
             },
@@ -156,6 +157,28 @@ mod tests {
             capabilities.hover_provider,
             Some(lsp_types::HoverProviderCapability::Simple(true))
         );
+    }
+
+    /// Every extension `is_asciidoc_path` takes, so renaming any page rewrites its links.
+    #[test]
+    fn will_rename_covers_every_asciidoc_extension() {
+        let capabilities = server_capabilities(PositionEncoding::Utf16, false);
+        let filters = capabilities
+            .workspace
+            .and_then(|workspace| workspace.file_operations)
+            .and_then(|operations| operations.will_rename)
+            .expect("willRenameFiles")
+            .filters;
+        let globs: Vec<&str> = filters
+            .iter()
+            .map(|filter| filter.pattern.glob.as_str())
+            .collect();
+        assert_eq!(globs, ["**/*.{adoc,asciidoc,ad}"]);
+        for extension in ["adoc", "asciidoc", "ad"] {
+            assert!(adoc_index::is_asciidoc_path(std::path::Path::new(
+                &format!("page.{extension}")
+            )));
+        }
     }
 
     #[test]

@@ -3,7 +3,11 @@ use std::{
     fs,
     path::{Path, PathBuf},
     str::FromStr,
-    time::Duration,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
 };
 
 use adoc_core::{DiagnosticSeverity as CoreDiagnosticSeverity, SourceRange};
@@ -125,7 +129,7 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
         send(warning(problem).into())?;
     }
     loop {
-        let notifications = match connection.receiver.recv_timeout(TICK) {
+        let mut notifications = match connection.receiver.recv_timeout(TICK) {
             Ok(Message::Request(request)) => {
                 if connection.handle_shutdown(&request)? {
                     return Ok(());
@@ -142,6 +146,11 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
             Err(RecvTimeoutError::Timeout) => server.tick(),
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         };
+        // A steady stream of messages never leaves the connection quiet for a tick: what is
+        // due is applied between them.
+        if server.due(Instant::now()) {
+            notifications.extend(server.tick());
+        }
         for notification in notifications {
             send(notification.into())?;
         }
@@ -167,6 +176,8 @@ pub(crate) struct ProtocolServer {
     /// Closed files the last `adoc.checkWorkspace` published problems for, cleared by the
     /// next check once they have none.
     checked: BTreeSet<PathBuf>,
+    /// Set from any thread when a worker or the watcher sends the engine something to apply.
+    woken: Arc<AtomicBool>,
 }
 
 impl ProtocolServer {
@@ -176,6 +187,9 @@ impl ProtocolServer {
         sink: Box<dyn PreviewSink>,
     ) -> Self {
         let events = engine.subscribe();
+        let woken = Arc::new(AtomicBool::new(false));
+        let wake = Arc::clone(&woken);
+        engine.set_waker(move || wake.store(true, Ordering::Relaxed));
         Self {
             engine,
             events,
@@ -184,6 +198,7 @@ impl ProtocolServer {
             sink,
             live_previews: BTreeSet::new(),
             checked: BTreeSet::new(),
+            woken,
         }
     }
 
@@ -211,6 +226,7 @@ impl ProtocolServer {
     /// Lets the engine apply worker results and settled changes, and publishes the
     /// diagnostics that changed.
     pub(crate) fn tick(&mut self) -> Vec<Notification> {
+        self.woken.store(false, Ordering::Relaxed);
         self.engine.pump();
         // Also what changed while a request was answered: a command that indexes typing left
         // pending diagnoses the page, and its publish waits for nothing else.
@@ -226,6 +242,12 @@ impl ProtocolServer {
         }
         let id = self.engine.open(path)?;
         Ok(Borrowed { id, opened: true })
+    }
+
+    /// Whether the engine has something to do at `now`: a deadline it keeps has passed, or a
+    /// worker or the watcher has sent it something since the last tick.
+    pub(crate) fn due(&self, now: Instant) -> bool {
+        self.woken.load(Ordering::Relaxed) || self.engine.next_due().is_some_and(|due| due <= now)
     }
 
     fn id_for(&self, uri: &str) -> Option<DocumentId> {
@@ -290,7 +312,7 @@ impl ProtocolServer {
             Rename::METHOD => self.rename_response(request),
             WillRenameFiles::METHOD => {
                 let id = request.id.clone();
-                match serde_json::from_value::<RenameFilesParams>(request.params) {
+                let response = match serde_json::from_value::<RenameFilesParams>(request.params) {
                     Ok(params) => match self.will_rename_files_response(&params) {
                         Ok(edit) => Response::new_ok(id, edit),
                         Err(message) => {
@@ -300,7 +322,9 @@ impl ProtocolServer {
                     Err(error) => {
                         Response::new_err(id, ErrorCode::InvalidParams as i32, error.to_string())
                     }
-                }
+                };
+                // Reading a page that changed on disk can change other open pages' diagnostics.
+                return (response, self.published(None));
             }
             ExecuteCommand::METHOD => return self.execute_command_response(request),
             _ => Response::new_err(
@@ -377,7 +401,8 @@ impl ProtocolServer {
     }
 
     /// Each change becomes one `edit.replace_range`, its range mapped through the text as the
-    /// previous changes left it.
+    /// previous changes left it, which is kept here as they are applied rather than copied from
+    /// the engine for each.
     fn did_change(
         &mut self,
         params: DidChangeTextDocumentParams,
@@ -385,12 +410,12 @@ impl ProtocolServer {
         let Some(id) = self.id_for(params.text_document.uri.as_str()) else {
             return Ok(Vec::new());
         };
+        let mut text = self
+            .engine
+            .document(id)
+            .map(adoc_engine::OpenDocument::text_string)
+            .unwrap_or_default();
         for change in params.content_changes {
-            let text = self
-                .engine
-                .document(id)
-                .map(adoc_engine::OpenDocument::text_string)
-                .unwrap_or_default();
             // A change that cannot be applied is reported and skipped: one bad notification
             // never ends the server, and LSP offers no way to ask for the whole text again.
             let applied =
@@ -401,16 +426,20 @@ impl ProtocolServer {
                             CommandArgs::Text {
                                 id,
                                 range,
-                                text: replacement,
+                                text: replacement.clone(),
                             },
                         )
-                        .map_err(|error| ServerError::InvalidChange(error.to_string()))
+                        .map_err(|error| ServerError::InvalidChange(error.to_string()))?;
+                    Ok((range, replacement))
                 });
-            if let Err(error) = applied {
-                eprintln!(
+            match applied {
+                Ok((range, replacement)) => {
+                    text.replace_range(range.start..range.end, &replacement)
+                }
+                Err(error) => eprintln!(
                     "adoc-ls: skipped a change to {}: {error}",
                     params.text_document.uri.as_str()
-                );
+                ),
             }
         }
         if let Some((_, version)) = self.open.get_mut(&id) {
@@ -493,35 +522,7 @@ impl ProtocolServer {
         let mut diagnostics: Vec<Diagnostic> = document
             .diagnostics
             .iter()
-            .filter_map(|diagnostic| {
-                Some(Diagnostic {
-                    range: self.encoding.range(&lines, diagnostic.range)?,
-                    severity: Some(match diagnostic.severity {
-                        CoreDiagnosticSeverity::Information => DiagnosticSeverity::INFORMATION,
-                        CoreDiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
-                        CoreDiagnosticSeverity::Error => DiagnosticSeverity::ERROR,
-                    }),
-                    code: Some(NumberOrString::String(diagnostic.code.as_str().to_owned())),
-                    source: Some("adoc-ls".to_owned()),
-                    message: diagnostic.message.clone(),
-                    related_information: (!diagnostic.related.is_empty()).then(|| {
-                        diagnostic
-                            .related
-                            .iter()
-                            .filter_map(|related| {
-                                Some(DiagnosticRelatedInformation {
-                                    location: Location::new(
-                                        uri.clone(),
-                                        self.encoding.range(&lines, related.range)?,
-                                    ),
-                                    message: related.message.clone(),
-                                })
-                            })
-                            .collect()
-                    }),
-                    ..Diagnostic::default()
-                })
-            })
+            .filter_map(|diagnostic| self.lsp_diagnostic(&uri, &lines, diagnostic))
             .collect();
         diagnostics.extend(
             self.engine
@@ -544,6 +545,43 @@ impl ProtocolServer {
             PublishDiagnostics::METHOD.to_owned(),
             PublishDiagnosticsParams::new(uri, diagnostics, Some(*version)),
         ))
+    }
+
+    /// `diagnostic`, in the file at `uri` whose text is `lines`, as LSP has it; none when its
+    /// range is not in that text.
+    fn lsp_diagnostic(
+        &self,
+        uri: &Uri,
+        lines: &Lines<'_>,
+        diagnostic: &adoc_core::Diagnostic,
+    ) -> Option<Diagnostic> {
+        Some(Diagnostic {
+            range: self.encoding.range(lines, diagnostic.range)?,
+            severity: Some(match diagnostic.severity {
+                CoreDiagnosticSeverity::Information => DiagnosticSeverity::INFORMATION,
+                CoreDiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
+                CoreDiagnosticSeverity::Error => DiagnosticSeverity::ERROR,
+            }),
+            code: Some(NumberOrString::String(diagnostic.code.as_str().to_owned())),
+            source: Some("adoc-ls".to_owned()),
+            message: diagnostic.message.clone(),
+            related_information: (!diagnostic.related.is_empty()).then(|| {
+                diagnostic
+                    .related
+                    .iter()
+                    .filter_map(|related| {
+                        Some(DiagnosticRelatedInformation {
+                            location: Location::new(
+                                uri.clone(),
+                                self.encoding.range(lines, related.range)?,
+                            ),
+                            message: related.message.clone(),
+                        })
+                    })
+                    .collect()
+            }),
+            ..Diagnostic::default()
+        })
     }
 
     pub(crate) fn document_symbol_response(
@@ -634,6 +672,22 @@ impl ProtocolServer {
                 ..CodeAction::default()
             })
         }));
+        // Only the kinds asked for: an action of kind `a.b` is one of `a`.
+        if let Some(only) = &params.context.only {
+            actions.retain(|action| {
+                let kind = match action {
+                    CodeActionOrCommand::CodeAction(action) => action.kind.as_ref(),
+                    CodeActionOrCommand::Command(_) => None,
+                }
+                .map_or("", CodeActionKind::as_str);
+                only.iter().any(|wanted| {
+                    kind == wanted.as_str()
+                        || kind.strip_prefix(wanted.as_str()).is_some_and(|rest| {
+                            !wanted.as_str().is_empty() && rest.starts_with('.')
+                        })
+                })
+            });
+        }
         actions
     }
 
@@ -980,21 +1034,8 @@ impl ProtocolServer {
             let lines = Lines::new(&text);
             problems += diagnostics.len();
             let diagnostics = diagnostics
-                .into_iter()
-                .filter_map(|diagnostic| {
-                    Some(Diagnostic {
-                        range: self.encoding.range(&lines, diagnostic.range)?,
-                        severity: Some(match diagnostic.severity {
-                            CoreDiagnosticSeverity::Information => DiagnosticSeverity::INFORMATION,
-                            CoreDiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
-                            CoreDiagnosticSeverity::Error => DiagnosticSeverity::ERROR,
-                        }),
-                        code: Some(NumberOrString::String(diagnostic.code.as_str().to_owned())),
-                        source: Some("adoc-ls".to_owned()),
-                        message: diagnostic.message,
-                        ..Diagnostic::default()
-                    })
-                })
+                .iter()
+                .filter_map(|diagnostic| self.lsp_diagnostic(&uri, &lines, diagnostic))
                 .collect();
             notifications.push(Notification::new(
                 PublishDiagnostics::METHOD.to_owned(),
@@ -1031,36 +1072,50 @@ impl ProtocolServer {
         let offset = self.encoding.offset(self.text_of(id)?, position.position)?;
         let location = match self.engine.definition(id, offset)? {
             DefinitionTarget::Location(location) => location,
-            // An image or attachment: the file itself.
-            DefinitionTarget::External(path) => adoc_engine::Location {
-                path,
-                range: adoc_core::SourceRange::default(),
-            },
+            // An image or attachment: the file itself, at its start, which needs no reading.
+            DefinitionTarget::External(path) => {
+                return Some(GotoDefinitionResponse::Scalar(Location::new(
+                    path_to_uri(&path)?,
+                    lsp_types::Range::default(),
+                )))
+            }
         };
         Some(GotoDefinitionResponse::Scalar(
-            self.lsp_location(&location)?,
+            self.lsp_locations(std::slice::from_ref(&location)).pop()?,
         ))
     }
 
-    fn lsp_location(&self, location: &adoc_engine::Location) -> Option<Location> {
-        let text = self.file_text(&location.path);
-        Some(Location::new(
-            path_to_uri(&location.path)?,
-            self.encoding.range(&Lines::new(&text), location.range)?,
-        ))
+    /// `locations` as LSP has them, each file's text read once; a location whose range is not
+    /// in its file's text is left out.
+    fn lsp_locations(&self, locations: &[adoc_engine::Location]) -> Vec<Location> {
+        let texts: HashMap<&Path, String> = locations
+            .iter()
+            .map(|location| location.path.as_path())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|path| (path, self.file_text(path)))
+            .collect();
+        let lines: HashMap<&Path, Lines<'_>> = texts
+            .iter()
+            .map(|(path, text)| (*path, Lines::new(text)))
+            .collect();
+        locations
+            .iter()
+            .filter_map(|location| {
+                Some(Location::new(
+                    path_to_uri(&location.path)?,
+                    self.encoding
+                        .range(lines.get(location.path.as_path())?, location.range)?,
+                ))
+            })
+            .collect()
     }
 
     fn references_response(&self, params: &ReferenceParams) -> Option<Vec<Location>> {
         let position = &params.text_document_position;
         let id = self.id_for(position.text_document.uri.as_str())?;
         let offset = self.encoding.offset(self.text_of(id)?, position.position)?;
-        Some(
-            self.engine
-                .references(id, offset)
-                .iter()
-                .filter_map(|location| self.lsp_location(location))
-                .collect(),
-        )
+        Some(self.lsp_locations(&self.engine.references(id, offset)))
     }
 
     /// `textDocument/rename` on an anchor: the anchor and every reference to it.
@@ -1127,8 +1182,6 @@ impl ProtocolServer {
                 let _ = self.engine.close(page.id);
             }
         }
-        // Opening and closing pages to compute the edits changes nothing the client sees.
-        self.events.try_iter().for_each(drop);
         if let Some(reason) = refused {
             return Err(reason);
         }
@@ -1311,9 +1364,14 @@ fn change_range(
     Ok((adoc_core::SourceRange::new(start, end), change.text))
 }
 
+/// The workspace folders the client sends, else its root URI, else its root path.
 #[allow(deprecated)]
 fn workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
-    if let Some(folders) = &params.workspace_folders {
+    if let Some(folders) = params
+        .workspace_folders
+        .as_ref()
+        .filter(|folders| !folders.is_empty())
+    {
         return folders
             .iter()
             .filter_map(|folder| uri_to_path(&folder.uri))
@@ -2641,5 +2699,142 @@ mod tests {
             Range::new(Position::new(2, 9), Position::new(2, 20))
         );
         assert_eq!(edits[0].new_text, "renamed.adoc");
+    }
+
+    /// Opening the page to rename reads it as it is on disk now, which can change other open
+    /// pages' diagnostics: they are published, not dropped.
+    #[test]
+    fn renaming_a_file_publishes_what_reading_it_changed() {
+        let (_directory, root, mut server) = renaming_workspace();
+        fs::write(root.join("target.adoc"), "= Target\n\n[[part]]\n== Part\n").unwrap();
+        server.engine.reindex();
+        assert!(server
+            .engine
+            .wait_for_workers(std::time::Duration::from_secs(10)));
+        let uri = file_uri(&root.join("linking.adoc"));
+        open(
+            &mut server,
+            uri.as_str(),
+            "= L\n\nSee xref:target.adoc#part[].\n",
+        );
+        // The anchor goes on disk, and nothing has read the file again yet.
+        fs::write(root.join("target.adoc"), "= Target\n").unwrap();
+
+        let (_, notifications) = server.handle_request(Request::new(
+            RequestId::from(11),
+            lsp_types::request::WillRenameFiles::METHOD.to_owned(),
+            lsp_types::RenameFilesParams {
+                files: vec![lsp_types::FileRename {
+                    old_uri: file_uri(&root.join("target.adoc")).as_str().to_owned(),
+                    new_uri: file_uri(&root.join("renamed.adoc")).as_str().to_owned(),
+                }],
+            },
+        ));
+
+        assert_eq!(
+            publishes(notifications),
+            [(
+                uri.as_str().to_owned(),
+                vec!["adoc.unresolved-anchor".to_owned()]
+            )]
+        );
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn an_empty_list_of_workspace_folders_falls_back_to_the_root_uri() {
+        let root = std::env::temp_dir().join("docs");
+        let params = InitializeParams {
+            workspace_folders: Some(Vec::new()),
+            root_uri: Some(file_uri(&root)),
+            ..InitializeParams::default()
+        };
+
+        assert_eq!(super::workspace_roots(&params), [root]);
+    }
+
+    /// The engine is pumped after a message once something it keeps is due, not only after
+    /// the connection has been quiet for a tick.
+    #[test]
+    fn the_engine_is_due_once_typing_settles() {
+        use adoc_engine::Clock as _;
+
+        let clock = adoc_engine::ManualClock::new();
+        let mut server = ProtocolServer::new(
+            PositionEncoding::Utf16,
+            Engine::with_clock(Settings::default(), std::sync::Arc::new(clock.clone())),
+            Box::new(BrowserSink::new(
+                std::env::temp_dir().join("adoc-ls-test-previews"),
+                Unopened,
+            )),
+        );
+        open(&mut server, PAGE, "= Guide\n");
+        server.tick();
+        assert!(!server.due(clock.now()));
+        server
+            .handle_notification(Notification::new(
+                DidChangeTextDocument::METHOD.to_owned(),
+                DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier::new(PAGE.parse().unwrap(), 2),
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: Some(Range::new(Position::new(0, 0), Position::new(0, 0))),
+                        range_length: None,
+                        text: "X".to_owned(),
+                    }],
+                },
+            ))
+            .unwrap();
+        assert!(!server.due(clock.now()), "typing has not settled");
+
+        clock.advance(adoc_engine::INDEX_SETTLE * 2);
+
+        assert!(server.due(clock.now()));
+    }
+
+    use lsp_types::CodeActionKind;
+
+    /// The titles of the code actions offered on line 2 of `text` for `only`.
+    fn code_action_titles(text: &str, only: Option<Vec<CodeActionKind>>) -> Vec<String> {
+        let (_directory, _root, uri, server) = checked_page(text);
+        server
+            .code_action_response(&CodeActionParams {
+                text_document: TextDocumentIdentifier { uri },
+                range: Range::new(Position::new(2, 3), Position::new(2, 3)),
+                context: CodeActionContext {
+                    only,
+                    ..CodeActionContext::default()
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+            .into_iter()
+            .filter_map(|action| match action {
+                CodeActionOrCommand::CodeAction(action) => Some(action.title),
+                CodeActionOrCommand::Command(command) => Some(command.title),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn code_actions_are_only_of_the_kinds_asked_for() {
+        let text = "= Page\n\nWe recieve it.\n";
+        let all = code_action_titles(text, None);
+        assert!(all.iter().any(|title| title.contains("preview")), "{all:?}");
+        assert!(all.contains(&"Change to 'receive'".to_owned()), "{all:?}");
+
+        let fixes = code_action_titles(text, Some(vec![CodeActionKind::QUICKFIX]));
+        assert!(
+            fixes.contains(&"Change to 'receive'".to_owned()),
+            "{fixes:?}"
+        );
+        assert!(
+            !fixes.iter().any(|title| title.contains("preview")),
+            "{fixes:?}"
+        );
+
+        assert_eq!(
+            code_action_titles(text, Some(vec![CodeActionKind::REFACTOR])),
+            Vec::<String>::new()
+        );
     }
 }
