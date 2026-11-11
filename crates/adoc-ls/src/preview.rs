@@ -9,6 +9,7 @@ use std::{
     fmt, fs, io,
     path::{Path, PathBuf},
     process,
+    sync::OnceLock,
 };
 
 use adoc_render::{RenderError, RenderOutput};
@@ -63,15 +64,6 @@ impl From<io::Error> for PreviewError {
     }
 }
 
-/// Directory for rewritten copies of included files.
-///
-/// Separate from the artefact directory so preview output stays browsable without
-/// intermediate files mixed in.
-#[must_use]
-pub fn scratch_directory() -> PathBuf {
-    std::env::temp_dir().join("adoc-ls-preview-includes")
-}
-
 /// Whether a preview is a one-off or is expected to keep up with the buffer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PreviewMode {
@@ -93,6 +85,10 @@ pub trait PreviewSink: Send + Sync {
 
     /// Update an artefact already on screen, without presenting it again.
     fn refresh(&self, output: &RenderOutput, source: &Path) -> Result<PathBuf, PreviewError>;
+
+    /// Where rewritten copies of included files go: apart from the artefacts, so the preview
+    /// folder stays browsable without them mixed in.
+    fn scratch_directory(&self) -> Result<PathBuf, PreviewError>;
 }
 
 /// Opens a written artefact. Separated from [`BrowserSink`] so tests never open a browser.
@@ -104,15 +100,40 @@ pub trait Launcher: Send + Sync {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemLauncher;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Platform {
+    Mac,
+    Windows,
+    Other,
+}
+
+impl Platform {
+    fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Mac
+        } else if cfg!(target_os = "windows") {
+            Self::Windows
+        } else {
+            Self::Other
+        }
+    }
+}
+
+/// The program that opens a file with its default handler, and the arguments before the
+/// file. Never `cmd /C start` on Windows: `cmd.exe` reads `&`, `^` and `%NAME%` in the path
+/// as its own syntax, so a page named `a&calc&b.adoc` would run `calc`. `rundll32` takes the
+/// path as one argument and reads nothing in it.
+fn launch_command(platform: Platform) -> (&'static str, &'static [&'static str]) {
+    match platform {
+        Platform::Mac => ("open", &[]),
+        Platform::Windows => ("rundll32", &["url.dll,FileProtocolHandler"]),
+        Platform::Other => ("xdg-open", &[]),
+    }
+}
+
 impl Launcher for SystemLauncher {
     fn launch(&self, path: &Path) -> Result<(), PreviewError> {
-        let (program, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
-            ("open", &[])
-        } else if cfg!(target_os = "windows") {
-            ("cmd", &["/C", "start", ""])
-        } else {
-            ("xdg-open", &[])
-        };
+        let (program, args) = launch_command(Platform::current());
 
         let status = process::Command::new(program)
             .args(args)
@@ -131,18 +152,60 @@ impl Launcher for SystemLauncher {
     }
 }
 
+/// Where a [`BrowserSink`] writes.
+#[derive(Debug)]
+enum Folder {
+    /// A folder given, as tests give one.
+    Given(PathBuf),
+    /// A folder of this session's own, made on first use in the temporary directory with an
+    /// unpredictable name and, on Unix, mode `0700`, and removed when the server ends. Never a
+    /// fixed, shared name: in `/tmp` another user could make it first and plant links in it,
+    /// and read every page previewed.
+    Private(OnceLock<Result<tempfile::TempDir, String>>),
+}
+
 /// Writes HTML to a directory and opens it outside the editor.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct BrowserSink<L: Launcher> {
-    directory: PathBuf,
+    folder: Folder,
     launcher: L,
 }
 
 impl<L: Launcher> BrowserSink<L> {
     pub fn new(directory: impl Into<PathBuf>, launcher: L) -> Self {
         Self {
-            directory: directory.into(),
+            folder: Folder::Given(directory.into()),
             launcher,
+        }
+    }
+
+    /// A sink writing to a folder of this session's own (see [`Folder::Private`]).
+    pub fn private(launcher: L) -> Self {
+        Self {
+            folder: Folder::Private(OnceLock::new()),
+            launcher,
+        }
+    }
+
+    /// The folder artefacts are written to, made if it is not there.
+    fn directory(&self) -> Result<PathBuf, PreviewError> {
+        match &self.folder {
+            Folder::Given(directory) => {
+                fs::create_dir_all(directory)?;
+                Ok(directory.clone())
+            }
+            Folder::Private(made) => made
+                .get_or_init(|| {
+                    let mut builder = tempfile::Builder::new();
+                    builder.prefix("adoc-ls-preview-");
+                    // Made so from the start, never loosened then tightened.
+                    #[cfg(unix)]
+                    builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+                    builder.tempdir().map_err(|error| error.to_string())
+                })
+                .as_ref()
+                .map(|directory| directory.path().to_path_buf())
+                .map_err(|error| PreviewError::Io(io::Error::other(error.clone()))),
         }
     }
 
@@ -151,21 +214,32 @@ impl<L: Launcher> BrowserSink<L> {
         &self.launcher
     }
 
-    /// Artefact path for `source`: its stem and a hash of its whole path, so pages with the
+    /// Artefact name for `source`: its stem and a hash of its whole path, so pages with the
     /// same name in different folders (every module's `index.adoc`) keep their own. Stable
-    /// across renders and runs, so the browser tab can be reloaded.
-    fn artefact_path(&self, source: &Path) -> PathBuf {
+    /// across renders, so the browser tab can be reloaded. Of the stem, only ASCII letters,
+    /// digits, `-` and `_` are kept, the rest written `_`, so no shell or program reads the
+    /// name as anything but a name.
+    fn artefact_name(source: &Path) -> String {
         use sha2::{Digest, Sha256};
-        let stem = source
+        let stem: String = source
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .unwrap_or("preview");
+            .unwrap_or("preview")
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         let digest = Sha256::digest(source.as_os_str().as_encoded_bytes());
         let hash: String = digest[..8]
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        self.directory.join(format!("{stem}-{hash}.html"))
+        format!("{stem}-{hash}.html")
     }
 }
 
@@ -176,13 +250,17 @@ impl<L: Launcher> BrowserSink<L> {
         source: &Path,
         mode: PreviewMode,
     ) -> Result<PathBuf, PreviewError> {
-        fs::create_dir_all(&self.directory)?;
-        let artefact = self.artefact_path(source);
+        let directory = self.directory()?;
+        let artefact = directory.join(Self::artefact_name(source));
         let html = match mode {
             PreviewMode::Static => output.html.clone(),
             PreviewMode::Live => with_reloader(&output.html),
         };
-        fs::write(&artefact, html)?;
+        // Written beside and renamed over the name, which replaces whatever is there, a link
+        // included, and never writes into what a link leads to.
+        let mut file = tempfile::NamedTempFile::new_in(&directory)?;
+        io::Write::write_all(&mut file, html.as_bytes())?;
+        file.persist(&artefact).map_err(|error| error.error)?;
         Ok(artefact)
     }
 }
@@ -203,6 +281,20 @@ impl<L: Launcher> PreviewSink for BrowserSink<L> {
         // Always live: only a live preview is ever refreshed, and the reloader has to
         // survive the rewrite or the page stops keeping up after the first save.
         self.write(output, source, PreviewMode::Live)
+    }
+
+    fn scratch_directory(&self) -> Result<PathBuf, PreviewError> {
+        let includes = match &self.folder {
+            Folder::Given(directory) => directory.with_file_name(format!(
+                "{}-includes",
+                directory
+                    .file_name()
+                    .map_or("adoc-ls-preview".into(), |name| name.to_string_lossy())
+            )),
+            Folder::Private(_) => self.directory()?.join("includes"),
+        };
+        fs::create_dir_all(&includes)?;
+        Ok(includes)
     }
 }
 
@@ -444,6 +536,102 @@ mod tests {
             name.starts_with("preview-") && name.ends_with(".html"),
             "{name}"
         );
+    }
+
+    #[test]
+    fn an_artefact_name_holds_nothing_a_shell_would_read() {
+        let dir = tempdir("shell-safe-name");
+        let sink = BrowserSink::new(dir, RecordingLauncher::default());
+
+        let artefact = sink
+            .deliver(
+                &output("<p>x</p>"),
+                Path::new("/docs/a&calc&b %PATH%^x,y;z=w é.adoc"),
+                PreviewMode::Static,
+            )
+            .expect("deliver");
+
+        let name = artefact.file_name().unwrap().to_str().unwrap();
+        assert!(
+            name.chars()
+                .all(|character| character.is_ascii_alphanumeric()
+                    || matches!(character, '-' | '_' | '.')),
+            "{name}"
+        );
+        assert!(name.starts_with("a_calc_b_"), "{name}");
+    }
+
+    #[test]
+    fn windows_opens_the_artefact_without_cmd() {
+        let (program, arguments) = launch_command(Platform::Windows);
+        assert_ne!(
+            program, "cmd",
+            "cmd.exe reads & ^ % in a path as its own syntax"
+        );
+        assert_eq!(
+            (program, arguments),
+            ("rundll32", &["url.dll,FileProtocolHandler"][..])
+        );
+    }
+
+    #[test]
+    fn a_private_folder_is_the_session_s_own() {
+        let first = BrowserSink::private(RecordingLauncher::default());
+        let second = BrowserSink::private(RecordingLauncher::default());
+        let source = Path::new("/docs/guide.adoc");
+
+        let artefact = first
+            .deliver(&output("<p>x</p>"), source, PreviewMode::Static)
+            .expect("deliver");
+        let other = second
+            .deliver(&output("<p>y</p>"), source, PreviewMode::Static)
+            .expect("deliver");
+
+        let folder = artefact.parent().unwrap().to_path_buf();
+        assert_ne!(folder, other.parent().unwrap(), "no folder is shared");
+        assert_ne!(folder, std::env::temp_dir().join("adoc-ls-preview"));
+        // The same name within the session, so the browser's tab reloads it.
+        let again = first.refresh(&output("<p>z</p>"), source).expect("refresh");
+        assert_eq!(artefact, again);
+        let includes = first.scratch_directory().expect("includes");
+        assert!(includes.starts_with(&folder), "{includes:?}");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&folder).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "only its user may enter: {mode:o}");
+        }
+
+        drop(first);
+        assert!(!folder.exists(), "the folder goes with the session");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_at_an_artefact_s_name_is_replaced_not_written_through() {
+        let dir = tempdir("link-at-artefact");
+        let victim = dir.join("victim.txt");
+        fs::write(&victim, "keep").unwrap();
+        let sink = BrowserSink::new(dir.join("previews"), RecordingLauncher::default());
+        let source = Path::new("/docs/guide.adoc");
+        let artefact = sink
+            .deliver(&output("<p>one</p>"), source, PreviewMode::Static)
+            .expect("deliver");
+        fs::remove_file(&artefact).unwrap();
+        std::os::unix::fs::symlink(&victim, &artefact).unwrap();
+
+        sink.refresh(&output("<p>two</p>"), source)
+            .expect("refresh");
+
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(!fs::symlink_metadata(&artefact)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(fs::read_to_string(&artefact)
+            .unwrap()
+            .contains("<p>two</p>"));
     }
 
     /// A directory unique to one test: these run in parallel and share a filename.

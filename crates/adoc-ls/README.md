@@ -74,7 +74,7 @@ The server advertises these through `workspace/executeCommand`; the preview comm
 | `adoc.checkWorkspace` | Publishes the diagnostics of every file in the workspace, open or not, and clears those of a closed file an earlier check reported once they are fixed. |
 | `adoc.exportPdf { uri, component?, output, theme?, standards? }` | Writes a PDF of the page, or of a component version as a book. Only in builds with Typst. |
 
-The preview renders through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, otherwise through the engine, with diagrams and typeset STEM. Preview files are written to `adoc-ls-preview` in the system's temporary directory, one per page, named after it and a hash of its path.
+The preview renders through Asciidoctor when `tools.asciidoctor` is set or `asciidoctor` is on `PATH`, otherwise through the engine, with diagrams and typeset STEM. Preview files are written to a folder of the server's own in the system's temporary directory (`adoc-ls-preview-` and a random suffix, readable only by you on Unix, removed when the server stops), one per page, named after it (letters, digits, `-` and `_` only) and a hash of its path. On Windows they are opened with `rundll32 url.dll,FileProtocolHandler`, never through `cmd.exe`.
 
 ## Settings
 
