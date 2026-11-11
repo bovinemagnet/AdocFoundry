@@ -881,7 +881,7 @@ impl Engine {
                 let path = as_opened(&path, &watcher.aliases);
                 // `.git` is ignored, but its `HEAD`, `index` and `refs` show branch switches,
                 // staging and commits.
-                if is_ignored(&path, &self.settings.workspace.ignore)
+                if is_ignored(&path, &self.roots, &self.settings.workspace.ignore)
                     && !self.git.is_metadata_path(&path)
                 {
                     continue;
@@ -1189,8 +1189,17 @@ fn as_opened(path: &Path, aliases: &[(PathBuf, PathBuf)]) -> PathBuf {
         .unwrap_or_else(|| path.to_path_buf())
 }
 
-fn is_ignored(path: &Path, ignore: &[String]) -> bool {
-    path.components().any(|component| {
+/// Whether `path` is in a folder `[workspace] ignore` names, as the index's walk decides: only
+/// the folders beneath the root holding it count, the innermost such root, so a workspace
+/// that itself sits in a folder named `build` is still watched. Outside every root (`.git`
+/// metadata, the user settings folder) the whole path counts.
+fn is_ignored(path: &Path, roots: &[PathBuf], ignore: &[String]) -> bool {
+    let beneath = roots
+        .iter()
+        .filter_map(|root| path.strip_prefix(root).ok())
+        .min_by_key(|rest| rest.components().count())
+        .unwrap_or(path);
+    beneath.components().any(|component| {
         let component = component.as_os_str().to_string_lossy();
         ignore.iter().any(|ignored| *ignored == component)
     })
@@ -1199,6 +1208,43 @@ fn is_ignored(path: &Path, ignore: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_folders_beneath_the_root_are_ignored() {
+        let ignore = vec!["build".to_owned(), "node_modules".to_owned()];
+        let roots = vec![PathBuf::from("/home/ada/build/docs")];
+        assert!(!is_ignored(
+            Path::new("/home/ada/build/docs/modules/ROOT/pages/index.adoc"),
+            &roots,
+            &ignore
+        ));
+        assert!(is_ignored(
+            Path::new("/home/ada/build/docs/build/site/index.html"),
+            &roots,
+            &ignore
+        ));
+        // A root inside another is matched as itself.
+        let nested = vec![
+            PathBuf::from("/home/ada/work"),
+            PathBuf::from("/home/ada/work/node_modules/docs"),
+        ];
+        assert!(!is_ignored(
+            Path::new("/home/ada/work/node_modules/docs/page.adoc"),
+            &nested,
+            &ignore
+        ));
+        assert!(is_ignored(
+            Path::new("/home/ada/work/node_modules/other/page.adoc"),
+            &nested,
+            &ignore
+        ));
+        // Outside every root, the whole path counts.
+        assert!(is_ignored(
+            Path::new("/home/ada/build/settings.toml"),
+            &roots,
+            &ignore
+        ));
+    }
 
     #[test]
     fn a_folder_modified_is_not_a_change_of_the_tree() {

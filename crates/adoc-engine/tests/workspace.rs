@@ -919,6 +919,30 @@ fn a_page_created_on_disk_is_catalogued() {
 }
 
 #[test]
+fn a_workspace_inside_a_folder_named_like_an_ignored_one_follows_changes_on_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    // `build` is in `[workspace] ignore` by default.
+    let root = directory.path().join("build/docs");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("page.adoc"), "= Page\n").unwrap();
+    let mut engine = engine_without_user_settings();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    settle(&mut engine);
+
+    let new = adoc_engine::normalize_path(&root.join("new.adoc"));
+    fs::write(&new, "= New\n").unwrap();
+    assert!(
+        pump_until(&mut engine, |engine| engine
+            .workspace()
+            .index
+            .file(&new)
+            .is_some()),
+        "the page written outside is indexed"
+    );
+}
+
+#[test]
 fn a_page_deleted_on_disk_leaves_the_catalog() {
     let (directory, mut engine, events, index) = linked_component();
     let old = directory.path().join("modules/guide/pages/old.adoc");
