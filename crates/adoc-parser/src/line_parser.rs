@@ -19,12 +19,21 @@ pub(crate) fn content(line: &str) -> &str {
 pub(crate) fn parse_heading(line: &str, offset: usize) -> Option<Heading<'_>> {
     let line = content(line);
     let marker_len = line.bytes().take_while(|byte| *byte == b'=').count();
-    if !(1..=6).contains(&marker_len) || line.as_bytes().get(marker_len) != Some(&b' ') {
+    if !(1..=6).contains(&marker_len)
+        || !matches!(line.as_bytes().get(marker_len), Some(b' ' | b'\t'))
+    {
         return None;
     }
 
     let raw_title = &line[marker_len + 1..];
-    let title = raw_title.trim();
+    let mut title = raw_title.trim();
+    // `== Title ==`: a closing marker as long as the opening one, after a space, is no part of
+    // the title.
+    if let Some(before) = title.strip_suffix(&line[..marker_len]) {
+        if before.ends_with([' ', '\t']) && !before.trim().is_empty() {
+            title = before.trim_end();
+        }
+    }
     if title.is_empty() {
         return None;
     }
@@ -39,16 +48,28 @@ pub(crate) fn parse_heading(line: &str, offset: usize) -> Option<Heading<'_>> {
     })
 }
 
+/// An attribute entry, `:name: value`, as Asciidoctor matches one: the name starts with a word
+/// character (after a `!` that unsets it), and a space or the end of the line follows its
+/// second colon, so `:a:b` and `:30:00 is the time` are text.
 pub(crate) fn parse_attribute(line: &str, offset: usize) -> Option<AttributeDeclaration> {
     let line = content(line);
     let rest = line.strip_prefix(':')?;
     let separator = rest.find(':')?;
     let name = &rest[..separator];
-    if name.is_empty() || name.chars().any(char::is_whitespace) {
+    let starts_a_name = name
+        .trim_start_matches('!')
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_alphanumeric() || first == '_');
+    let after = &rest[separator + 1..];
+    if !starts_a_name
+        || name.chars().any(char::is_whitespace)
+        || !(after.is_empty() || after.starts_with([' ', '\t']))
+    {
         return None;
     }
 
-    let value = rest[separator + 1..].trim();
+    let value = after.trim();
     Some(AttributeDeclaration {
         name: name.to_owned(),
         value: (!value.is_empty()).then(|| value.to_owned()),
@@ -403,7 +424,8 @@ pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
         .into_iter()
         .filter(|mac| {
             let before = line[..mac.range.start - offset].trim_end();
-            before.is_empty() || before.ends_with('|')
+            let ends_the_line = line[mac.range.end - offset..].trim().is_empty();
+            (before.is_empty() && ends_the_line) || before.ends_with('|')
         })
         .map(|mac| ImageDirective {
             target: mac.target.to_owned(),
@@ -561,7 +583,7 @@ impl<'a> VerbatimBlocks<'a> {
             // attribute lines.
             if trimmed.is_empty()
                 || trimmed.starts_with('[')
-                || trimmed.starts_with("//")
+                || is_line_comment(trimmed)
                 || is_block_title(trimmed)
             {
                 return Verbatim::No;
@@ -590,7 +612,7 @@ impl<'a> VerbatimBlocks<'a> {
             self.in_text = false;
         } else if !self.in_text
             && !(trimmed.starts_with('[') && trimmed.ends_with(']'))
-            && !trimmed.starts_with("//")
+            && !is_line_comment(trimmed)
             && !is_block_title(trimmed)
             && parse_attribute(trimmed, 0).is_none()
         {
@@ -663,6 +685,11 @@ fn is_run(line: &str, character: char) -> bool {
     line.len() >= 4 && line.chars().all(|c| c == character)
 }
 
+/// A line comment: `//`, not followed by a third `/`.
+pub(crate) fn is_line_comment(trimmed: &str) -> bool {
+    trimmed.starts_with("//") && !trimmed.starts_with("///")
+}
+
 /// A `.Title` line.
 fn is_block_title(line: &str) -> bool {
     line.strip_prefix('.')
@@ -704,12 +731,16 @@ fn find_macros<'a>(line: &'a str, prefix: &str, offset: usize) -> Vec<Macro<'a>>
             break;
         };
         let open = target_start + open_relative;
-        let target = line[target_start..open].trim();
+        let target = &line[target_start..open];
         let Some(close_relative) = line[open + 1..].find(']') else {
             break;
         };
         let close = open + 1 + close_relative;
-        if !target.is_empty() {
+        // A target neither starts nor ends with a space: `include:: foo.adoc[]` is text.
+        if !target.is_empty()
+            && !target.starts_with(char::is_whitespace)
+            && !target.ends_with(char::is_whitespace)
+        {
             found.push(Macro {
                 target,
                 attributes: &line[open + 1..close],

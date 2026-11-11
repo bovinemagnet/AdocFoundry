@@ -7,8 +7,8 @@ use adoc_core::{
 
 use crate::line_parser::{
     conditional_directive, content, find_anchors, find_images, find_includes, find_references,
-    is_block_metadata, is_dynamic_id, mask_passthroughs, parse_attribute, parse_heading,
-    trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
+    is_block_metadata, is_dynamic_id, is_line_comment, mask_passthroughs, parse_attribute,
+    parse_heading, trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,6 +52,8 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut previous: Option<(usize, &str, Option<String>)> = None;
     // How many `ifdef`, `ifndef` and `ifeval` blocks are open.
     let mut conditionals = 0_usize;
+    // The last attribute entry's value ended in ` \`, so the next line continues it.
+    let mut continuing = false;
     // Asciidoctor drops a leading byte order mark; ranges still count it.
     let (body, mut offset) = match text.strip_prefix('\u{feff}') {
         Some(body) => (body, '\u{feff}'.len_utf8()),
@@ -73,6 +75,18 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                 offset += line.len();
                 continue;
             }
+        }
+        if continuing {
+            if let Some(attribute) = document.attributes.last_mut() {
+                let (more, again) = without_continuation(trimmed);
+                let value = attribute.value.take().unwrap_or_default();
+                let joined = [value.as_str(), more].join(" ");
+                attribute.value = Some(joined.trim().to_owned()).filter(|value| !value.is_empty());
+                attribute.range.end = offset + line_content.len();
+                continuing = again;
+            }
+            offset += line.len();
+            continue;
         }
         let conditional = conditionals > 0;
         let includes = |line: &str, offset: usize| {
@@ -130,7 +144,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         }
 
         // A line comment, like the block metadata below, leaves an anchor for the next block.
-        if trimmed.starts_with("//") {
+        if is_line_comment(trimmed) {
             offset += line.len();
             continue;
         }
@@ -152,7 +166,12 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 
         if let Some(heading) = parse_heading(line, offset) {
             add_heading(&mut document, &heading, pending_anchor.take());
-        } else if let Some(attribute) = parse_attribute(line, offset) {
+        } else if let Some(mut attribute) = parse_attribute(line, offset) {
+            if let Some(value) = &attribute.value {
+                let (value, again) = without_continuation(value);
+                continuing = again;
+                attribute.value = Some(value.to_owned()).filter(|value| !value.is_empty());
+            }
             document.attributes.push(attribute);
         } else if !trimmed.is_empty() && !anchor_only && !is_block_metadata(trimmed) {
             pending_anchor = None;
@@ -166,6 +185,17 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
 
     document.diagnostics = duplicate_anchors(text, &document.anchors);
     ParseResult { document }
+}
+
+/// An attribute value's text without the ` \` that continues it on the next line, and whether
+/// it had one.
+fn without_continuation(value: &str) -> (&str, bool) {
+    match value.strip_suffix('\\') {
+        Some(before) if before.is_empty() || before.ends_with([' ', '\t']) => {
+            (before.trim_end(), true)
+        }
+        _ => (value, false),
+    }
 }
 
 /// Records `heading`: the document's title, when it is the first at level 0, else a section
@@ -1017,6 +1047,71 @@ image::diagram.png[Architecture]\n";
 
         let conditional: Vec<_> = document.includes.iter().map(|i| i.conditional).collect();
         assert_eq!(conditional, [true, false]);
+    }
+
+    /// A continued attribute value runs on to the next line, which is no body text (#532).
+    #[test]
+    fn a_continued_attribute_value_takes_the_next_line() {
+        let source = ":desc: one \\\ntwo <<x>> \\\nthree\nBody <<y>>.\n";
+        let document = parse("file:///doc.adoc", source).document;
+        let attribute = &document.attributes[0];
+        assert_eq!(attribute.name, "desc");
+        assert_eq!(attribute.value.as_deref(), Some("one two <<x>> three"));
+        assert_eq!(
+            &source[attribute.range.start..attribute.range.end],
+            ":desc: one \\\ntwo <<x>> \\\nthree"
+        );
+        assert_eq!(reference_targets(source), ["y"]);
+    }
+
+    /// An attribute entry's name starts with a word character, and a space or the end of the
+    /// line follows its second colon (#532).
+    #[test]
+    fn text_that_only_looks_like_an_attribute_entry_is_not_one() {
+        let document = parse(
+            "file:///doc.adoc",
+            ":a:b\n\n:30:00 is the time\n\n:-x: y\n\n:ok:\n:v:\tvalue\n",
+        )
+        .document;
+        let attributes: Vec<_> = document
+            .attributes
+            .iter()
+            .map(|attribute| (attribute.name.as_str(), attribute.value.as_deref()))
+            .collect();
+        assert_eq!(attributes, [("ok", None), ("v", Some("value"))]);
+    }
+
+    /// `== Title ==` closes with its marker, and a tab may follow the marker (#532).
+    #[test]
+    fn a_heading_may_close_with_its_marker_or_open_with_a_tab() {
+        let source = "= Doc =\n\n== Title ==\n\n==\tTabbed\n\n== Uneven ===\n";
+        let document = parse("file:///doc.adoc", source).document;
+        assert_eq!(document.title.unwrap().text, "Doc");
+        let titles: Vec<_> = document
+            .sections
+            .iter()
+            .map(|section| &source[section.selection_range.start..section.selection_range.end])
+            .collect();
+        assert_eq!(titles, ["Title", "Tabbed", "Uneven ==="]);
+    }
+
+    /// A line comment is `//` not followed by a third `/` (#532).
+    #[test]
+    fn three_slashes_are_text() {
+        assert_eq!(reference_targets("/// see <<x>>\n// see <<y>>\n"), ["x"]);
+    }
+
+    /// A macro's target neither starts nor ends with a space, and a block image ends its line
+    /// (#532).
+    #[test]
+    fn spaced_targets_and_trailing_text_are_not_macros() {
+        let document = parse(
+            "file:///doc.adoc",
+            "include:: foo.adoc[]\n\nimage::a.png[] trailing\n\nimage:: b.png[]\n",
+        )
+        .document;
+        assert!(document.includes.is_empty(), "{:?}", document.includes);
+        assert!(document.images.is_empty(), "{:?}", document.images);
     }
 
     #[test]
