@@ -738,6 +738,24 @@ impl ProtocolServer {
             ids::SPELLING_ADD_TO_WORKSPACE
         };
         let range = SourceRange::new(start as usize, end as usize);
+        // The offsets are the page's when the action was listed. Misspellings move with edits,
+        // so a range that is no longer one names other text, which never goes in a word list.
+        if !self
+            .engine
+            .misspellings(id)
+            .iter()
+            .any(|misspelling| misspelling.range == range)
+        {
+            return (
+                Response::new_err(
+                    request,
+                    ErrorCode::RequestFailed as i32,
+                    "the page has changed since the word was found; ask for the action again"
+                        .to_owned(),
+                ),
+                Vec::new(),
+            );
+        }
         match self
             .engine
             .invoke(command, CommandArgs::Range { id, range })
@@ -2224,5 +2242,86 @@ mod tests {
         assert!(published
             .iter()
             .any(|(published, hints)| published == uri.as_str() && hints.is_empty()));
+    }
+
+    /// `adoc.spelling.addToWorkspace [uri, start, end]`.
+    fn add_to_workspace(
+        server: &mut ProtocolServer,
+        uri: &Uri,
+        start: usize,
+        end: usize,
+    ) -> lsp_server::Response {
+        server
+            .execute_command_response(Request::new(
+                RequestId::from(7),
+                ExecuteCommand::METHOD.to_owned(),
+                ExecuteCommandParams {
+                    command: crate::capabilities::ADD_TO_WORKSPACE_COMMAND.to_owned(),
+                    arguments: vec![
+                        serde_json::json!(uri.as_str()),
+                        serde_json::json!(start),
+                        serde_json::json!(end),
+                    ],
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                },
+            ))
+            .0
+    }
+
+    /// A page with its misspellings checked, in a workspace.
+    fn checked_page(text: &str) -> (tempfile::TempDir, std::path::PathBuf, Uri, ProtocolServer) {
+        let directory = tempfile::tempdir().unwrap();
+        let root = adoc_index::normalize_path(directory.path());
+        let page = root.join("page.adoc");
+        std::fs::write(&page, text).unwrap();
+        let mut server = spelling_server(&root);
+        server.open_workspace(vec![root.clone()]);
+        let uri = file_uri(&page);
+        open(&mut server, uri.as_str(), text);
+        server.tick();
+        assert!(server
+            .engine
+            .wait_for_workers(std::time::Duration::from_secs(30)));
+        server.published(None);
+        (directory, root, uri, server)
+    }
+
+    #[test]
+    fn adding_a_word_at_offsets_inside_a_character_answers_an_error() {
+        let (_directory, root, uri, mut server) = checked_page("= Page\n\né qwzxy\n");
+
+        // Byte 9 is inside `é`.
+        let response = add_to_workspace(&mut server, &uri, 9, 10);
+
+        assert!(response.response_result.is_err(), "{response:?}");
+        assert!(!root.join(adoc_engine::WORKSPACE_WORDS_FILE).exists());
+        // And the server goes on answering.
+        assert!(!document_symbols_of(&server, uri.as_str()).is_empty());
+    }
+
+    #[test]
+    fn adding_a_word_from_a_stale_range_adds_nothing() {
+        let text = "= Page\n\nWe recieve it.\n";
+        let (_directory, root, uri, mut server) = checked_page(text);
+        let start = text.find("recieve").unwrap();
+        // The action was listed; then `é` is typed before the word.
+        server
+            .handle_notification(Notification::new(
+                DidChangeTextDocument::METHOD.to_owned(),
+                DidChangeTextDocumentParams {
+                    text_document: VersionedTextDocumentIdentifier::new(uri.clone(), 2),
+                    content_changes: vec![TextDocumentContentChangeEvent {
+                        range: Some(Range::new(Position::new(2, 3), Position::new(2, 3))),
+                        range_length: None,
+                        text: "é".to_owned(),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let response = add_to_workspace(&mut server, &uri, start, start + "recieve".len());
+
+        assert!(response.response_result.is_err(), "{response:?}");
+        assert!(!root.join(adoc_engine::WORKSPACE_WORDS_FILE).exists());
     }
 }

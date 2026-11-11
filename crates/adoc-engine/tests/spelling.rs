@@ -354,6 +354,28 @@ fn adding_a_word_to_the_user_dictionary_needs_a_settings_file() {
         .is_err());
 }
 
+/// A range from a front end can be stale or wrong: one inside a character is refused, never a
+/// panic.
+#[test]
+fn adding_a_word_at_offsets_inside_a_character_is_refused() {
+    let (_directory, root, path) = workspace_page("é qwzxy\n");
+    let (mut engine, _clock) = engine_with_clock();
+    engine.open_workspace(vec![root.clone()]).unwrap();
+    let id = engine.open(&path).unwrap();
+
+    assert_eq!(engine.text_in(id, SourceRange::new(1, 2)), None);
+    assert!(engine
+        .invoke(
+            ids::SPELLING_ADD_TO_WORKSPACE,
+            CommandArgs::Range {
+                id,
+                range: SourceRange::new(1, 2),
+            },
+        )
+        .is_err());
+    assert!(!root.join(WORKSPACE_WORDS_FILE).exists());
+}
+
 #[test]
 fn an_edited_workspace_list_is_read_again() {
     let (_directory, root, path) = workspace_page("= Page\n\nWe use Qwzxy daily.\n");

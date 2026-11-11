@@ -1090,7 +1090,14 @@ impl Engine {
         if range.end > document.text.len() || range.start > range.end {
             return None;
         }
-        Some(document.text.slice(range.start..range.end).to_string())
+        // A range from a front end may end inside a character: none, never a panic.
+        Some(
+            document
+                .text
+                .try_slice(range.start..range.end)
+                .ok()?
+                .to_string(),
+        )
     }
 }
 

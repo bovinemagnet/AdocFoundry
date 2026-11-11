@@ -412,9 +412,12 @@ impl Engine {
         range: SourceRange,
         user: bool,
     ) -> Result<(), EngineError> {
-        let word = self
-            .text_in(id, range)
-            .ok_or(EngineError::UnknownDocument(id))?;
+        if self.document(id).is_none() {
+            return Err(EngineError::UnknownDocument(id));
+        }
+        let word = self.text_in(id, range).ok_or_else(|| {
+            EngineError::InvalidRequest("the range is not a range of the page".to_owned())
+        })?;
         if word.is_empty() || word.chars().any(char::is_whitespace) || word.chars().count() > 100 {
             return Err(EngineError::InvalidRequest(format!(
                 "`{word}` is not a word"
