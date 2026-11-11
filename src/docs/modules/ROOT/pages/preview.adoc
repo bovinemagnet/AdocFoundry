@@ -190,16 +190,27 @@ Includes resolve through the Antora catalog.
 That covers `partial$` and `example$` targets, and qualified ids such as `include::developer:example$flow.mmd[]` and `include::other:partial$x.adoc[]`.
 Images and attachments are found in a module's `images` and `attachments` directories, and also in the older `assets/images` and `assets/attachments`.
 When both hold a file with the same name, the standard directory wins.
+When `imagesdir` is a URL, such as `https://example.com/images`, images are read from that address rather than from disk, as Asciidoctor reads them.
 See xref:antora-support.adoc[Antora support].
 
 == Section numbers
 
 With `:sectnums:`, sections are numbered as Asciidoctor numbers them, in the preview, the HTML from the command line and PDF export alike.
 Special sections, such as a `[preface]`, `[glossary]` or `[bibliography]`, and the sections inside them are not numbered and do not count towards the chapters.
-An `[appendix]` is lettered `Appendix A:`, with its sections `A.1.`; `appendix-caption` changes the word.
+A section is numbered by the value of `sectnums` where it starts, so `:sectnums!:` before a section and `:sectnums:` after it leave that section unnumbered without breaking the count; `numbered`, the older name, works as `sectnums` does.
+An `[appendix]` is lettered `Appendix A:` whether or not sections are numbered; its own sections are numbered `A.1.` only under `sectnums`.
+`appendix-caption` changes the word.
 `sectnumlevels` (3 unless set) limits the levels that show a number; deeper sections are counted but show none, and the table of contents agrees.
+A titled diagram block is captioned and counted as a figure (`Figure 2.`), as Asciidoctor Diagram makes it.
 Blocks are labelled from `figure-caption`, `table-caption`, `example-caption` and `listing-caption`; unsetting one removes the label and the number, and setting one changes the word.
 See xref:pdf-export.adoc[Exporting to PDF] for the details.
+
+== Table of contents
+
+With `:toc:`, the contents are shown at the top of the page.
+With `:toc: macro`, they are shown only where the page's `toc::[]` block is, and a `toc::[]` is otherwise ignored, as Asciidoctor places them.
+The title is `toc-title`: "Table of Contents" unless set, and none when unset with `:toc-title!:`.
+An exported HTML page nests each level's entries in its own list.
 
 == Source blocks
 
