@@ -54,13 +54,17 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut conditionals = 0_usize;
     // The last attribute entry's value ended in ` \`, so the next line continues it.
     let mut continuing = false;
+    // Whether body content has begun, so an include can no longer be in the header.
+    let mut body = false;
+    // The block attribute lines since the last block, for the block image that may follow.
+    let mut block_attributes: Vec<String> = Vec::new();
     // Asciidoctor drops a leading byte order mark; ranges still count it.
-    let (body, mut offset) = match text.strip_prefix('\u{feff}') {
-        Some(body) => (body, '\u{feff}'.len_utf8()),
+    let (source, mut offset) = match text.strip_prefix('\u{feff}') {
+        Some(source) => (source, '\u{feff}'.len_utf8()),
         None => (text, 0),
     };
 
-    for line in body.split_inclusive('\n') {
+    for line in source.split_inclusive('\n') {
         let line_content = content(line);
         let trimmed = line_content.trim();
 
@@ -78,6 +82,7 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                             .into_iter()
                             .map(|include| IncludeDirective {
                                 conditional: true,
+                                before_body: !body,
                                 ..include
                             });
                     document.includes.extend(found);
@@ -110,11 +115,12 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             continue;
         }
         let conditional = conditionals > 0;
-        let includes = |line: &str, offset: usize| {
+        let includes = |line: &str, offset: usize, body: bool| {
             find_includes(line, offset)
                 .into_iter()
                 .map(move |include| IncludeDirective {
                     conditional,
+                    before_body: !body,
                     ..include
                 })
         };
@@ -123,6 +129,10 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             Verbatim::No => {}
             Verbatim::Underline(marker_level) => {
                 if let Some((start, title_line, pending)) = previous.take() {
+                    if marker_level != 1 || document.title.is_some() {
+                        body = true;
+                    }
+                    block_attributes.clear();
                     let raw_title = title_line.trim_end();
                     let title = raw_title.trim_start();
                     let selection_start = start + raw_title.len() - title.len();
@@ -147,16 +157,23 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                 // A comment block between an anchor and its block is no content.
                 if !trimmed.starts_with('/') {
                     pending_anchor = None;
+                    body = true;
+                    block_attributes.clear();
                 }
                 offset += line.len();
                 continue;
             }
             kind => {
+                // A comment block's lines are no content.
+                if kind != Verbatim::Comment {
+                    body = true;
+                    block_attributes.clear();
+                }
                 // Asciidoctor processes includes inside listing, literal and passthrough
                 // blocks — a code sample pulled into a `[source]` block is the commonest
                 // use of the `example$` family. Everything else in the block is content.
                 if kind == Verbatim::Content {
-                    document.includes.extend(includes(line, offset));
+                    document.includes.extend(includes(line, offset, body));
                     pending_anchor = None;
                 }
                 offset += line.len();
@@ -185,8 +202,26 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
             document.anchors.push(anchor);
         }
 
+        // Block metadata, attribute entries and includes leave the body unbegun, and block
+        // metadata reaches past blank lines to the block it belongs to.
+        let mut metadata = trimmed.is_empty() || anchor_only || is_block_metadata(trimmed);
+        if let Some(inside) = trimmed
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            if !trimmed.starts_with("[[") {
+                block_attributes.push(inside.to_owned());
+            }
+            metadata = true;
+        }
+        let line_includes: Vec<_> = includes(line, offset, body).collect();
+        let mut header_line = metadata || !line_includes.is_empty();
+
         if let Some(heading) = parse_heading(line, offset).filter(|_| !verbatim.in_compound_block())
         {
+            if heading.marker_level == 1 && document.title.is_none() {
+                header_line = true;
+            }
             add_heading(&mut document, &heading, pending_anchor.take());
         } else if let Some(mut attribute) = parse_attribute(line, offset) {
             if let Some(value) = &attribute.value {
@@ -195,13 +230,23 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                 attribute.value = Some(value.to_owned()).filter(|value| !value.is_empty());
             }
             document.attributes.push(attribute);
+            header_line = true;
         } else if !trimmed.is_empty() && !anchor_only && !is_block_metadata(trimmed) {
             pending_anchor = None;
         }
 
         document.references.extend(find_references(&inline, offset));
-        document.includes.extend(includes(line, offset));
-        document.images.extend(find_images(&inline, offset));
+        document.includes.extend(line_includes);
+        for mut image in find_images(&inline, offset) {
+            if !image.inline {
+                image.block_attributes.clone_from(&block_attributes);
+            }
+            document.images.push(image);
+        }
+        if !metadata {
+            block_attributes.clear();
+        }
+        body |= !header_line;
         offset += line.len();
     }
 
@@ -470,6 +515,60 @@ image::diagram.png[Architecture]\n";
                 (ReferenceKind::LocalAnchor, "other.adoc", None),
             ]
         );
+    }
+
+    #[test]
+    fn block_images_record_the_attribute_lines_above_them() {
+        let source = "[alt=\"A sunset\"]\nimage::a.png[]\n\n.Caption\n[#fig,alt=Sunset]\n\nimage::b.png[]\n\nText.\n\nimage::c.png[]\n[.right]\n// note\n[A sunset]\nimage::e.png[] \n\n[.left]\nSee image:d.png[] inline.\n";
+        let document = parse("file:///images.adoc", source).document;
+
+        let attributes: Vec<(&str, Vec<&str>)> = document
+            .images
+            .iter()
+            .map(|image| {
+                (
+                    image.target.as_str(),
+                    image.block_attributes.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            attributes,
+            [
+                ("a.png", vec!["alt=\"A sunset\""]),
+                ("b.png", vec!["#fig,alt=Sunset"]),
+                ("c.png", vec![]),
+                ("e.png", vec![".right", "A sunset"]),
+                ("d.png", vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_includes_before_the_body_are_before_it() {
+        let source = "// header\n:toc:\n\ninclude::partial$header.adoc[]\nifdef::x[]\ninclude::partial$maybe.adoc[]\nendif::[]\n[[top]]\nSome text.\n\ninclude::partial$footer.adoc[]\n";
+        let document = parse("file:///page.adoc", source).document;
+        let before: Vec<(&str, bool)> = document
+            .includes
+            .iter()
+            .map(|include| (include.target.as_str(), include.before_body))
+            .collect();
+        assert_eq!(
+            before,
+            [
+                ("partial$header.adoc", true),
+                ("partial$maybe.adoc", true),
+                ("partial$footer.adoc", false),
+            ]
+        );
+
+        let listing = "[source,java]\n----\ninclude::example$Demo.java[]\n----\n";
+        let document = parse("file:///page.adoc", listing).document;
+        assert!(!document.includes[0].before_body, "inside a listing block");
+
+        let section = "== Section\ninclude::partial$a.adoc[]\n";
+        let document = parse("file:///page.adoc", section).document;
+        assert!(!document.includes[0].before_body, "after a section");
     }
 
     #[test]

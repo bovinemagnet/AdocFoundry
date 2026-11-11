@@ -1517,7 +1517,8 @@ The queries are:
 * `graph_report`, in `report.rs`, which writes the snapshot as the JSON and DOT that `adocfoundry-cli graph` prints and `adoc-mcp`'s `link_graph` returns.
 
 `src/page_age.rs` keeps each page's age for the graph, per working tree.
-It runs `Repository::last_changed` on a worker, started from Git discovery and from a refresh that sees `HEAD`'s commit move, and drops the results of superseded runs.
+It runs `Repository::last_changed_since` on a worker, started from Git discovery and from a refresh that sees `HEAD`'s commit move, and drops the results of superseded runs.
+When the new `HEAD` descends by first parent from the commit last read, only the commits since are read, and a page none of them changed keeps the age it had, under its name there; otherwise the whole history is read again.
 `Engine::page_age(path)` gives a `LastChanged`, with a page that has changes not committed (on disk or unsaved) as `Uncommitted`, and `Engine::has_page_ages()` says whether any are known.
 When ages arrive or the Git status changes, the graph's revision is bumped and `EngineEvent::GraphChanged` follows.
 With Git off there are no ages.

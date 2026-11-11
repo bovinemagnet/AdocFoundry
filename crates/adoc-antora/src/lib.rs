@@ -22,8 +22,10 @@ pub use discovery::{
     page_aliases, DiscoveryResult,
 };
 pub use module::Module;
-pub use nav::{parse_nav, NavEntry};
-pub use nav_tree::{nav_tree, nav_trees_of, NavError, NavItem, NavTree};
+pub use nav::{parse_nav, parse_nav_and_includes, NavEntry};
+pub use nav_tree::{
+    nav_tree, nav_tree_each, nav_trees_of, NavError, NavItem, NavTree, Unfollowed, UnfollowedKind,
+};
 pub use playbook::{
     parse_playbook, read_playbook, BranchVersions, ContentSource, Playbook, PublishedVersions,
     PLAYBOOK_FILE,

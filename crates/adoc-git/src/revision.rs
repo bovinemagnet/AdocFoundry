@@ -83,7 +83,7 @@ impl Repository {
             .map_err(GitError::git)?
             .into_iter()
             .filter(|entry| entry.mode.is_blob())
-            .map(|entry| relative_path(entry.filepath.as_bstr()))
+            .filter_map(|entry| relative_path(entry.filepath.as_bstr()))
             .collect();
         files.sort();
         Ok(files)
@@ -113,6 +113,7 @@ impl Repository {
             .diff_tree_to_tree(&old, &new, options)
             .map_err(GitError::git)?;
         let mut found = Vec::new();
+        // A name no path here can hold is left out (see `relative_path`).
         for change in changes {
             match change {
                 ChangeDetached::Addition {
@@ -120,14 +121,14 @@ impl Repository {
                     entry_mode,
                     ..
                 } if entry_mode.is_blob() => {
-                    found.push(TreeChange::Added(relative_path(location.as_bstr())))
+                    found.extend(relative_path(location.as_bstr()).map(TreeChange::Added))
                 }
                 ChangeDetached::Deletion {
                     location,
                     entry_mode,
                     ..
                 } if entry_mode.is_blob() => {
-                    found.push(TreeChange::Removed(relative_path(location.as_bstr())))
+                    found.extend(relative_path(location.as_bstr()).map(TreeChange::Removed))
                 }
                 ChangeDetached::Modification {
                     location,
@@ -136,7 +137,9 @@ impl Repository {
                     ..
                 } => {
                     // A file that became a link or a submodule is no longer a file, and back.
-                    let path = relative_path(location.as_bstr());
+                    let Some(path) = relative_path(location.as_bstr()) else {
+                        continue;
+                    };
                     match (previous_entry_mode.is_blob(), entry_mode.is_blob()) {
                         (true, true) => found.push(TreeChange::Modified(path)),
                         (true, false) => found.push(TreeChange::Removed(path)),
@@ -152,19 +155,22 @@ impl Repository {
                     copy,
                     ..
                 } if entry_mode.is_blob() => {
-                    let to = relative_path(location.as_bstr());
-                    if copy {
-                        found.push(TreeChange::Added(to));
-                    } else {
-                        found.push(TreeChange::Renamed {
-                            from: relative_path(source_location.as_bstr()),
+                    let Some(to) = relative_path(location.as_bstr()) else {
+                        continue;
+                    };
+                    let from = relative_path(source_location.as_bstr());
+                    match from {
+                        Some(from) if !copy => found.push(TreeChange::Renamed {
+                            from,
                             to,
                             // Git gives no measure for a move found by its object id: the
                             // text is the same.
                             similarity: Some(diff.map_or(100, |diff| {
                                 (diff.similarity * 100.0).round().clamp(0.0, 100.0) as u8
                             })),
-                        });
+                        }),
+                        // A copy, or a move from a name left out, adds a file.
+                        _ => found.push(TreeChange::Added(to)),
                     }
                 }
                 _ => {}

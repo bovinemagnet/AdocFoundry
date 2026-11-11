@@ -154,12 +154,9 @@ impl Engine {
         for folder in &self.unreadable {
             let in_scope = match scope {
                 AuditScope::Workspace => true,
-                AuditScope::Component { name, version } => {
-                    self.workspace.antora.components().any(|descriptor| {
-                        descriptor.name == *name
-                            && version.as_ref().is_none_or(|version| {
-                                descriptor.version.as_deref() == Some(version.as_str())
-                            })
+                AuditScope::Component { .. } => {
+                    self.workspace.antora.all_descriptors().any(|descriptor| {
+                        scope.covers(&descriptor.name, descriptor.version.as_deref())
                             && folder.starts_with(normalize_path(&descriptor.root))
                     })
                 }
@@ -473,23 +470,13 @@ impl Engine {
 
     /// The file a finding's location names: its path from its root, joined to the root.
     fn audit_path(&self, location: &adoc_audit::Location) -> Option<PathBuf> {
-        let root = self.roots.get(location.root)?;
-        Some(
-            location
-                .path
-                .split('/')
-                .fold(root.clone(), |path, step| path.join(step)),
-        )
+        adoc_audit::file_at(&self.roots, location)
     }
 
     /// The root and the path from it with `/` separators that the audit names the file at
     /// `path` by: the first root holding it, as `adoc_audit` places a finding.
     fn audit_location(&self, path: &Path) -> Option<(usize, String)> {
-        self.roots.iter().enumerate().find_map(|(index, root)| {
-            path.strip_prefix(root)
-                .ok()
-                .map(|relative| (index, adoc_audit::portable_path(relative)))
-        })
+        adoc_audit::locate(&self.roots, path)
     }
 
     /// The text of the file at `path` as the audit read it: an open document's buffer, the
@@ -510,7 +497,7 @@ impl Engine {
         paths
             .iter()
             .flat_map(|path| {
-                catalog.components().filter(move |descriptor| {
+                catalog.all_descriptors().filter(move |descriptor| {
                     descriptor
                         .nav
                         .iter()

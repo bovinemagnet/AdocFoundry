@@ -576,7 +576,8 @@ fn find_entry<'a>(items: &'a [NavItem], page: &AntoraCoordinate) -> Option<&'a N
 fn collect_entries<'a>(items: &'a [NavItem], page: &AntoraCoordinate, into: &mut Vec<&'a NavItem>) {
     for item in items {
         let links = item.target.as_ref().is_some_and(|target| {
-            target.component.as_deref() == Some(page.component.as_str())
+            target.family == Some(ResourceFamily::Page)
+                && target.component.as_deref() == Some(page.component.as_str())
                 && target.version == page.version
                 && target.module.as_deref() == Some(page.module.as_str())
                 && Path::new(&target.path) == page.relative_path

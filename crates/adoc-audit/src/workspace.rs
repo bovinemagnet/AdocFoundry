@@ -78,11 +78,12 @@ pub fn audit(input: &AuditInput<'_>, scope: AuditScope) -> AuditBuilder {
             audit_version(input, &descriptor.name, descriptor.version.as_deref())
         })
         .collect();
-    assemble(
+    put_together(
         input,
         scope,
         files.iter().map(|(path, part)| (path.as_path(), part)),
         &versions,
+        true,
     )
 }
 
@@ -147,6 +148,18 @@ pub fn assemble<'p>(
     files: impl IntoIterator<Item = (&'p Path, &'p FileAudit)>,
     versions: impl IntoIterator<Item = &'p VersionAudit>,
 ) -> AuditBuilder {
+    put_together(input, scope, files, versions, false)
+}
+
+/// [`assemble`], told whether `files` are already those in scope, so that [`audit`], which
+/// chose them, does not look each up in the catalog again.
+fn put_together<'p>(
+    input: &AuditInput<'_>,
+    scope: AuditScope,
+    files: impl IntoIterator<Item = (&'p Path, &'p FileAudit)>,
+    versions: impl IntoIterator<Item = &'p VersionAudit>,
+    files_in_scope: bool,
+) -> AuditBuilder {
     let workspace = input.workspace;
     let mut builder = AuditBuilder::new(
         scope.clone(),
@@ -162,7 +175,7 @@ pub fn assemble<'p>(
         return builder;
     }
     for (path, part) in files {
-        if context.includes_path(path) {
+        if files_in_scope || context.includes_path(path) {
             for finding in &part.findings {
                 builder.finding(finding.clone());
             }
@@ -199,18 +212,7 @@ impl Context<'_> {
 
     /// Whether the scope covers `component` at `version`.
     pub(crate) fn includes(&self, component: &str, version: Option<&str>) -> bool {
-        match &self.scope {
-            AuditScope::Workspace => true,
-            AuditScope::Component {
-                name,
-                version: wanted,
-            } => {
-                name == component
-                    && wanted
-                        .as_deref()
-                        .is_none_or(|wanted| Some(wanted) == version)
-            }
-        }
+        self.scope.covers(component, version)
     }
 
     /// Whether the scope covers the file at `path`: every file for the workspace; for a
@@ -223,7 +225,7 @@ impl Context<'_> {
         if let Some(context) = catalog.context_for_path(path) {
             return self.includes(&context.component, context.version.as_deref());
         }
-        catalog.components().any(|descriptor| {
+        catalog.all_descriptors().any(|descriptor| {
             normalize_path(&descriptor.root.join("antora.yml")) == path
                 && self.includes(&descriptor.name, descriptor.version.as_deref())
         })
@@ -235,7 +237,8 @@ impl Context<'_> {
             return None;
         };
         let catalog = &self.workspace().antora;
-        let known = match version {
+        let known = match version.as_deref() {
+            Some("~") => catalog.component(name, None).is_some(),
             Some(version) => catalog.component(name, Some(version)).is_some(),
             None => !catalog.versions_of(name).is_empty(),
         };
@@ -268,24 +271,14 @@ impl Context<'_> {
     /// Where `path` is: its root's place and the path relative to it. An indexed file is always
     /// beneath a root; anything else is named by its file name alone, never by its full path.
     pub(crate) fn location(&self, path: &Path, range: Option<SourceRange>) -> Location {
-        let path = normalize_path(path);
-        let found = self
-            .input
-            .roots
-            .iter()
-            .enumerate()
-            .find_map(|(index, root)| {
-                path.strip_prefix(normalize_path(root))
-                    .ok()
-                    .map(|relative| (index, portable_path(relative)))
+        let (root, relative) =
+            locate(self.input.roots, &normalize_path(path)).unwrap_or_else(|| {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (0, name)
             });
-        let (root, relative) = found.unwrap_or_else(|| {
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            (0, name)
-        });
         Location::new(root, relative, range)
     }
 
@@ -295,7 +288,6 @@ impl Context<'_> {
     pub(crate) fn relative_paths(&self, message: &str) -> String {
         let mut message = message.to_owned();
         for root in self.input.roots {
-            let root = normalize_path(root);
             let absolute = root.to_string_lossy().into_owned();
             if absolute.is_empty() || !message.contains(&absolute) {
                 continue;
@@ -313,7 +305,10 @@ impl Context<'_> {
                         rewritten.push_str(&after[..end].replace('\\', "/"));
                         rest = &after[end..];
                     }
-                    None => rewritten.push_str(&root_name(&root)),
+                    // The root on its own, not the start of a longer name such as another
+                    // root's (`/work/docs` in `/work/docs-internal`).
+                    None if ends_a_path(rest) => rewritten.push_str(&root_name(root)),
+                    None => rewritten.push_str(&absolute),
                 }
             }
             rewritten.push_str(rest);
@@ -328,6 +323,42 @@ impl Context<'_> {
             .antora
             .resource_for_path(path)
             .map(|resource| Coordinate::from(&resource.coordinate))
+    }
+}
+
+/// The root and the path from it with `/` separators that a report names the file at `path` by:
+/// the first of `roots` (normalised, as [`AuditInput::roots`] are) holding it, or `None` for a
+/// file beneath none of them.
+#[must_use]
+pub fn locate(roots: &[PathBuf], path: &Path) -> Option<(usize, String)> {
+    roots.iter().enumerate().find_map(|(index, root)| {
+        path.strip_prefix(root)
+            .ok()
+            .map(|relative| (index, portable_path(relative)))
+    })
+}
+
+/// The file a report's `location` names: its path from its root, joined to the root, or `None`
+/// for a root not among `roots`. The inverse of [`locate`].
+#[must_use]
+pub fn file_at(roots: &[PathBuf], location: &Location) -> Option<PathBuf> {
+    let root = roots.get(location.root)?;
+    Some(
+        location
+            .path
+            .split('/')
+            .fold(root.clone(), |path, step| path.join(step)),
+    )
+}
+
+/// Whether a path named in a message ends where `rest` begins: at the end of the message,
+/// whitespace, a quote or punctuation, or a full stop ending a sentence.
+fn ends_a_path(rest: &str) -> bool {
+    let mut characters = rest.chars();
+    match characters.next() {
+        None => true,
+        Some('.') => characters.next().is_none_or(char::is_whitespace),
+        Some(next) => next.is_whitespace() || "`'\",;:)]".contains(next),
     }
 }
 
@@ -392,6 +423,51 @@ mod tests {
         assert_eq!(
             context.relative_paths("/elsewhere/x.adoc"),
             "/elsewhere/x.adoc"
+        );
+    }
+
+    #[test]
+    fn a_file_is_located_and_found_again_by_its_first_root() {
+        let roots = [
+            normalize_path(Path::new("/work/docs")),
+            normalize_path(Path::new("/work/docs/inner")),
+        ];
+        let path = roots[1].join("a").join("b.adoc");
+        assert_eq!(
+            locate(&roots, &path),
+            Some((0, "inner/a/b.adoc".to_owned()))
+        );
+        let location = Location::new(0, "inner/a/b.adoc", None);
+        assert_eq!(file_at(&roots, &location), Some(path));
+        assert_eq!(locate(&roots, Path::new("/elsewhere/x.adoc")), None);
+        assert_eq!(file_at(&roots, &Location::new(2, "x.adoc", None)), None);
+    }
+
+    #[test]
+    fn a_root_is_a_prefix_of_a_path_not_of_text() {
+        let workspace = WorkspaceState::new();
+        let roots = [
+            normalize_path(Path::new("/work/docs")),
+            normalize_path(Path::new("/work/docs-internal")),
+        ];
+        let read = |_: &Path| Ok(String::new());
+        let input = AuditInput {
+            workspace: &workspace,
+            roots: &roots,
+            read: &read,
+        };
+        let context = Context {
+            input: &input,
+            scope: AuditScope::Workspace,
+        };
+        let internal = roots[1].display().to_string();
+        assert_eq!(
+            context.relative_paths(&format!("see {internal}/a.adoc")),
+            "see a.adoc"
+        );
+        assert_eq!(
+            context.relative_paths(&format!("Nothing under {internal}.")),
+            "Nothing under docs-internal."
         );
     }
 }

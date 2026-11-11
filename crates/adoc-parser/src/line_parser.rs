@@ -411,6 +411,7 @@ pub(crate) fn find_includes(line: &str, offset: usize) -> Vec<IncludeDirective> 
             attributes: nonempty(mac.attributes),
             range: mac.range,
             conditional: false,
+            before_body: false,
         })
         .collect()
 }
@@ -432,6 +433,7 @@ pub(crate) fn find_images(line: &str, offset: usize) -> Vec<ImageDirective> {
             attributes: nonempty(mac.attributes),
             range: mac.range,
             inline: false,
+            block_attributes: Vec::new(),
         })
         .collect();
     let inline = find_inline_images(line, offset);
@@ -478,6 +480,7 @@ fn find_inline_images(line: &str, offset: usize) -> Vec<ImageDirective> {
             attributes: nonempty(&line[open + 1..close]),
             range: SourceRange::new(offset + start, offset + close + 1),
             inline: true,
+            block_attributes: Vec::new(),
         });
         cursor = close + 1;
     }
@@ -747,7 +750,7 @@ pub(crate) fn is_line_comment(trimmed: &str) -> bool {
 }
 
 /// A `.Title` line.
-fn is_block_title(line: &str) -> bool {
+pub(crate) fn is_block_title(line: &str) -> bool {
     line.strip_prefix('.')
         .and_then(|title| title.chars().next())
         .is_some_and(|first| first != '.' && !first.is_whitespace())
