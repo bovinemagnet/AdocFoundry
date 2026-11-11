@@ -656,25 +656,11 @@ impl Server {
     )]
     async fn read_page(&self, Parameters(args): Parameters<ReadPageArgs>) -> Answer {
         self.run(move |state| {
-            let path = match (&args.path, &args.resource_id) {
-                (Some(path), _) => state.confine(path)?,
-                (None, Some(id)) => {
-                    let from = args
-                        .from
-                        .as_deref()
-                        .map(|from| state.confine(from))
-                        .transpose()?;
-                    let path = state
-                        .engine
-                        .resolve_resource_id(id, from.as_deref())
-                        .map_err(|error| match error {
-                            adoc_engine::EngineError::InvalidRequest(_) => Failure::from(error),
-                            _ => Failure::not_found(error.to_string()),
-                        })?;
-                    state.confine(&path.to_string_lossy())?
-                }
-                (None, None) => return Err(Failure::invalid("give a `path` or a `resource_id`")),
-            };
+            let path = state.target(
+                args.path.as_deref(),
+                args.resource_id.as_deref(),
+                args.from.as_deref(),
+            )?;
             let text = state.text(&path)?;
             let file = state.engine.workspace().index.file(&path);
             let document = file.map(|file| &file.document);

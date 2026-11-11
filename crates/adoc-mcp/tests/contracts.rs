@@ -266,6 +266,14 @@ fn mcp_structured_result_matches_text_fallback() {
             "not_found",
         ),
         ("read_page", json!({}), "invalid_argument"),
+        (
+            "read_page",
+            json!({
+                "path": "modules/ROOT/pages/index.adoc",
+                "resource_id": "latest@demo:security:page$authentication.adoc",
+            }),
+            "invalid_argument",
+        ),
         ("check", json!({ "fail_on": "fatal" }), "invalid_argument"),
         (
             "check",
