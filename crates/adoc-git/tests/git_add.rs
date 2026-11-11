@@ -366,6 +366,58 @@ fn a_path_inside_the_git_folder_is_refused() {
 }
 
 #[test]
+fn a_file_replaced_by_a_folder_leaves_the_index() {
+    if !has_git() {
+        return;
+    }
+    let (entries, _) = assert_stages_like_git_add(&["guide/index.adoc"], |dir| {
+        init(dir, &[]);
+        fs::write(dir.join("guide"), "a file\n").unwrap();
+        commit_all(dir);
+        fs::remove_file(dir.join("guide")).unwrap();
+        fs::create_dir(dir.join("guide")).unwrap();
+        fs::write(dir.join("guide/index.adoc"), "= Guide\n").unwrap();
+    });
+    assert!(!entries.contains("\tguide\n"), "{entries}");
+}
+
+#[test]
+fn a_folder_replaced_by_a_file_leaves_the_index() {
+    if !has_git() {
+        return;
+    }
+    let (entries, _) = assert_stages_like_git_add(&["guide"], |dir| {
+        init(dir, &[]);
+        fs::create_dir_all(dir.join("guide/deeper")).unwrap();
+        fs::write(dir.join("guide/index.adoc"), "= Guide\n").unwrap();
+        fs::write(dir.join("guide/deeper/page.adoc"), "= Page\n").unwrap();
+        fs::write(dir.join("guide.adoc"), "= Beside\n").unwrap();
+        commit_all(dir);
+        fs::remove_dir_all(dir.join("guide")).unwrap();
+        fs::write(dir.join("guide"), "a file\n").unwrap();
+    });
+    assert!(!entries.contains("guide/"), "{entries}");
+}
+
+#[test]
+fn a_file_inside_a_submodule_is_refused_and_the_submodule_kept() {
+    if !has_git() {
+        return;
+    }
+    let error = assert_refused_like_git_add(&["sub/page.adoc"], |dir| {
+        init(dir, &[]);
+        fs::write(dir.join("page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        let head = git_ok(dir, &["rev-parse", "HEAD"]);
+        let gitlink = format!("160000,{},sub", head.trim());
+        git_ok(dir, &["update-index", "--add", "--cacheinfo", &gitlink]);
+        fs::create_dir(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/page.adoc"), "two\n").unwrap();
+    });
+    assert!(error.contains("submodule"), "{error}");
+}
+
+#[test]
 fn changes_in_a_folder_are_staged_so_git_sees_them() {
     if !has_git() {
         return;

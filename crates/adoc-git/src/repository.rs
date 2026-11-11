@@ -391,8 +391,9 @@ impl Repository {
     /// endings, `ident` and `working-tree-encoding` applied by the repository's attributes and
     /// configuration, and a link staged as a link. A file under a named `filter` (Git LFS, say)
     /// is refused, since that would mean running a command the repository's configuration names,
-    /// and so is a path Git never stores, one inside `.git`. Nothing is staged unless every path
-    /// can be.
+    /// and so is a path Git never stores, one inside `.git`, or one inside a submodule. A file
+    /// staged where the index has a file at one of its folders, or a folder at its path, replaces
+    /// them. Nothing is staged unless every path can be.
     pub fn stage(&self, paths: &[&Path]) -> Result<(), GitError> {
         let mut index = self.index_file()?;
         let capabilities = self.repo.filesystem_options().map_err(GitError::git)?;
@@ -409,6 +410,15 @@ impl Repository {
                     },
                 )?;
             }
+            if let Some(submodule) = index.entries().iter().find(|entry| {
+                entry.mode == gix::index::entry::Mode::COMMIT
+                    && holds(entry.path(&index), name.as_ref())
+            }) {
+                return Err(GitError::Unstorable {
+                    path: relative,
+                    reason: format!("it is in the submodule {}", submodule.path(&index)),
+                });
+            }
             let file = self.workdir.join(&relative);
             let Ok(metadata) = gix::index::fs::Metadata::from_path_no_follow(&file) else {
                 index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
@@ -423,7 +433,12 @@ impl Repository {
             let id = self.repo.write_blob(bytes).map_err(GitError::git)?.detach();
             let stat = gix::index::entry::Stat::from_fs(&metadata).unwrap_or_default();
             let mode = staged_mode(&metadata, in_index, capabilities);
-            index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
+            // A file cannot live beside a file at one of its folders, nor a folder at its path.
+            index.remove_entries(|_, entry_path, _| {
+                entry_path == name.as_slice()
+                    || holds(entry_path, name.as_ref())
+                    || holds(name.as_ref(), entry_path)
+            });
             index.dangerously_push_entry(
                 stat,
                 id,
@@ -804,6 +819,11 @@ fn worktree_change(
         EntryStatus::IntentToAdd => Some(Change::Added),
         EntryStatus::NeedsUpdate(_) => None,
     }
+}
+
+/// Whether `path` is inside the folder `folder`, both `/`-separated and relative.
+fn holds(folder: &BStr, path: &BStr) -> bool {
+    path.len() > folder.len() && path.starts_with(folder) && path[folder.len()] == b'/'
 }
 
 /// Writes `index` after its entries changed. Its cached trees (the `TREE` extension) are dropped,
