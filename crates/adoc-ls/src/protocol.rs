@@ -204,18 +204,26 @@ impl ProtocolServer {
 
     /// Opens the workspace folders that exist and waits for them to be indexed, so the first
     /// requests already see every page. Returns why the workspace could not be opened.
-    pub(crate) fn open_workspace(&mut self, roots: Vec<PathBuf>) -> Option<String> {
+    /// Opens and indexes `roots`, and gives the problems to show the user: why the workspace
+    /// could not be opened, or what the settings left out (a settings file that does not
+    /// parse is skipped, the folder still opening, so it can be fixed).
+    pub(crate) fn open_workspace(&mut self, roots: Vec<PathBuf>) -> Vec<String> {
         let roots: Vec<PathBuf> = roots.into_iter().filter(|root| root.is_dir()).collect();
         if roots.is_empty() {
-            return None;
+            return Vec::new();
         }
         if let Err(error) = self.engine.open_workspace(roots) {
-            return Some(format!("adoc-ls could not open the workspace: {error}"));
+            return vec![format!("adoc-ls could not open the workspace: {error}")];
         }
         self.engine.wait_for_workers(INDEX_TIMEOUT);
         // Nothing is open yet, so there is nothing to publish.
         self.events.try_iter().for_each(drop);
-        None
+        self.engine
+            .settings()
+            .warnings
+            .iter()
+            .map(|warning| format!("adoc-ls: {warning}"))
+            .collect()
     }
 
     /// Whether this build exports PDF: the engine has Typst.
