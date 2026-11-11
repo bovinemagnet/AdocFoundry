@@ -98,7 +98,7 @@ pub fn nav_tree(
         .nav
         .iter()
         .map(|entry| {
-            let path = normalise(&descriptor.root.join(entry));
+            let path = crate::discovery::normalize_path(&descriptor.root.join(entry));
             let text = read(&path).map_err(|error| NavError::Read {
                 path: path.clone(),
                 message: error.to_string(),
@@ -118,7 +118,7 @@ pub fn nav_trees_of(
     files
         .iter()
         .map(|path| {
-            let path = normalise(path);
+            let path = crate::discovery::normalize_path(path);
             let context = catalog
                 .context_for_path(&path)
                 .ok_or_else(|| NavError::OutsideModules { path: path.clone() })?;
@@ -246,20 +246,4 @@ fn slash_path(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn normalise(path: &Path) -> PathBuf {
-    let mut normalised = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if !normalised.pop() {
-                    normalised.push("..");
-                }
-            }
-            other => normalised.push(other),
-        }
-    }
-    normalised
 }

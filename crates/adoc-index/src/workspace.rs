@@ -1,9 +1,9 @@
 use std::{
     fs, io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
-pub use adoc_core::DEFAULT_IGNORED_DIRECTORIES;
+pub use adoc_core::{normalize_path, DEFAULT_IGNORED_DIRECTORIES};
 
 #[must_use]
 pub fn is_asciidoc_path(path: &Path) -> bool {
@@ -94,38 +94,11 @@ pub fn list_directory(directory: &Path) -> Vec<DirectoryEntry> {
     listed
 }
 
-pub fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => match normalized.components().next_back() {
-                // `a/..` is nothing.
-                Some(Component::Normal(_)) => {
-                    normalized.pop();
-                }
-                // Above the root is the root.
-                Some(Component::RootDir | Component::Prefix(_)) => {}
-                // A relative path keeps every leading `..`.
-                _ => normalized.push(component.as_os_str()),
-            },
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    // `.` and `docs/..` name the current directory; an empty path names nothing.
-    if normalized.as_os_str().is_empty() && !path.as_os_str().is_empty() {
-        normalized.push(Component::CurDir.as_os_str());
-    }
-    normalized
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::{is_asciidoc_path, normalize_path};
+    use super::is_asciidoc_path;
 
     #[test]
     fn recognizes_supported_suffixes() {
@@ -133,42 +106,6 @@ mod tests {
         assert!(is_asciidoc_path(Path::new("guide.asciidoc")));
         assert!(is_asciidoc_path(Path::new("guide.ad")));
         assert!(!is_asciidoc_path(Path::new("guide.md")));
-    }
-
-    #[test]
-    fn normalizes_dot_components() {
-        assert_eq!(
-            normalize_path(Path::new("docs/./pages/../index.adoc")),
-            Path::new("docs/index.adoc")
-        );
-    }
-
-    #[test]
-    fn keeps_leading_parent_components() {
-        for (path, expected) in [
-            ("../a", "../a"),
-            ("../../a", "../../a"),
-            ("../../../a/b", "../../../a/b"),
-            ("a/../../b", "../b"),
-            ("../a/../b", "../b"),
-            // Above the root is the root.
-            ("/..", "/"),
-            ("/a/../../b", "/b"),
-        ] {
-            assert_eq!(
-                normalize_path(Path::new(path)),
-                Path::new(expected),
-                "{path}"
-            );
-        }
-    }
-
-    #[test]
-    fn keeps_the_current_directory() {
-        for path in [".", "./", "docs/..", "./docs/./.."] {
-            assert_eq!(normalize_path(Path::new(path)), Path::new("."), "{path}");
-        }
-        assert_eq!(normalize_path(Path::new("")), Path::new(""));
     }
 
     #[test]

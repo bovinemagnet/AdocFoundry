@@ -1,15 +1,17 @@
 mod access;
 mod diagnostic;
 mod document;
+mod path;
 pub mod probe;
 mod reference;
 mod symbol;
 
-pub use access::{lexical, FileAccess};
+pub use access::FileAccess;
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Related};
 pub use document::{
     AttributeDeclaration, Document, DocumentTitle, LineIndex, Location, SourceRange,
 };
+pub use path::normalize_path;
 pub use reference::{ImageDirective, IncludeDirective, Reference, ReferenceKind};
 pub use symbol::{
     alphanumeric_id, asciidoctor_id, canonical_id, section_ids, Anchor, IdStyle, Section,

@@ -626,7 +626,7 @@ impl Loader {
                         base.join(format!("{extend}-theme.yml"))
                     };
                     let dir = file.parent().map(Path::to_path_buf);
-                    (ThemeFile::Path(adoc_core::lexical(&file)), dir)
+                    (ThemeFile::Path(adoc_core::normalize_path(&file)), dir)
                 };
                 if let ThemeFile::Path(file) = &target {
                     if !file.is_file() {

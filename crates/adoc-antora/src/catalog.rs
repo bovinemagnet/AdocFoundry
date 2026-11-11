@@ -1,13 +1,14 @@
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use crate::{
-    discovery::discover_component, read_component_descriptor, AntoraContext, AntoraCoordinate,
-    AntoraResolver, AntoraResource, AntoraResourceId, ComponentDescriptor, DescriptorError,
-    DescriptorErrorKind, Module, ResolutionError, ResolutionResult, ResourceFamily,
+    discovery::{discover_component, normalize_path},
+    read_component_descriptor, AntoraContext, AntoraCoordinate, AntoraResolver, AntoraResource,
+    AntoraResourceId, ComponentDescriptor, DescriptorError, DescriptorErrorKind, Module,
+    ResolutionError, ResolutionResult, ResourceFamily,
 };
 
 /// A successful resolution, and whether it went through a `page-aliases` entry.
@@ -505,24 +506,6 @@ impl AntoraCatalog {
     pub fn is_empty(&self) -> bool {
         self.resources.is_empty()
     }
-}
-
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push(component.as_os_str());
-                }
-            }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-    normalized
 }
 
 /// Orders component versions so that the greater one is the later: released above prerelease,

@@ -5,8 +5,10 @@
 
 use std::{
     fs, io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
+
+use crate::normalize_path;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum FileAccess {
@@ -27,11 +29,20 @@ impl FileAccess {
         let Self::Within(roots) = self else {
             return true;
         };
-        let normal = lexical(path);
-        let Some(root) = roots.iter().find(|root| normal.starts_with(lexical(root))) else {
+        // Absolute, so a relative path and a relative root are compared from the same place,
+        // and a leading `..` is never resolved against nothing.
+        let Ok(given) = std::path::absolute(path) else {
             return false;
         };
-        let mut existing = normal.as_path();
+        let normal = normalize_path(&given);
+        let Some(root) = roots.iter().find(|root| {
+            std::path::absolute(root).is_ok_and(|root| normal.starts_with(normalize_path(&root)))
+        }) else {
+            return false;
+        };
+        // The path as given, not its lexical form: the system resolves a `..` after a link
+        // from where the link leads.
+        let mut existing = given.as_path();
         // `symlink_metadata`, not `exists`, which follows links and so takes a link to
         // nothing for a path that is not there yet.
         while fs::symlink_metadata(existing).is_err() {
@@ -68,25 +79,6 @@ impl FileAccess {
             ))
         }
     }
-}
-
-/// `path` with `.` and `..` resolved lexically, without touching the file system, as
-/// `adoc_index::normalize_path` does.
-#[must_use]
-pub fn lexical(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push("..");
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -129,6 +121,16 @@ mod tests {
             std::os::unix::fs::symlink(directory.join("outside.adoc"), root.join("link.adoc"))
                 .unwrap();
             std::os::unix::fs::symlink(&directory, root.join("escape")).unwrap();
+            fs::create_dir_all(directory.join("sub")).unwrap();
+            std::os::unix::fs::symlink(directory.join("sub"), root.join("deep")).unwrap();
+            assert!(
+                !access.permits(&root.join("deep/../outside.adoc")),
+                "`..` after a link climbs from where the link leads"
+            );
+            assert!(
+                !access.permits(&root.join("deep/../new.pdf")),
+                "a new file `..` from a link"
+            );
             assert!(
                 !access.permits(&root.join("link.adoc")),
                 "a link to a file outside"
@@ -161,6 +163,22 @@ mod tests {
             );
         }
         fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_relative_root_refuses_paths_climbing_out_of_it() {
+        // Issue #528. Tests run in the crate's folder, which holds `src/lib.rs`; two folders
+        // up is the repository, whose `src` is another folder.
+        let src = FileAccess::Within(vec![PathBuf::from("src")]);
+        assert!(src.permits(Path::new("src/lib.rs")));
+        assert!(src.permits(Path::new("./src/../src/lib.rs")));
+        assert!(!src.permits(Path::new("../../src/lib.rs")));
+        assert!(src.read_to_string(Path::new("../../src/lib.rs")).is_err());
+
+        let here = FileAccess::Within(vec![PathBuf::from(".")]);
+        assert!(here.permits(Path::new("src/lib.rs")));
+        assert!(!here.permits(Path::new("../../src/lib.rs")));
+        assert!(!here.permits(Path::new("../outside.pdf")));
     }
 
     /// A fresh directory under the system's temporary directory; `adoc-core` has no dependencies,

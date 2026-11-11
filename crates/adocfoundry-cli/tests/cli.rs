@@ -800,6 +800,34 @@ fn pdf_profile_writes_what_the_app_writes() {
 }
 
 #[test]
+fn pdf_profile_from_inside_the_workspace_writes_only_inside_it() {
+    // Issue #528: from a relative root, `../../out` was read as `out` and permitted.
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("a/b/book");
+    copy_tree(&repository_root().join("tests/fixtures/pdf/book"), &root);
+    std::fs::create_dir_all(directory.path().join("a/out")).unwrap();
+    std::fs::create_dir_all(root.join("out")).unwrap();
+    std::fs::write(
+        root.join(".adocfoundry.toml"),
+        "[pdf.profiles.manual]\nnav = [\"guide/modules/ROOT/nav.adoc\"]\noutput = \"../../out/manual.pdf\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_adocfoundry-cli"))
+        .current_dir(&root)
+        .args(["pdf", "--profile", "manual"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "{}", stdout(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("outside the workspace"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!directory.path().join("a/out/manual.pdf").exists());
+    assert!(!root.join("out/manual.pdf").exists());
+}
+
+#[test]
 fn new_module_makes_a_module_through_the_engine_command() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("docs");

@@ -394,22 +394,15 @@ fn is_ignored(name: &OsStr, ignore: &[impl AsRef<str>]) -> bool {
         .is_some_and(|name| ignore.iter().any(|ignored| ignored.as_ref() == name))
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push(component.as_os_str());
-                }
-            }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
+/// `path` resolved lexically by [`adoc_core::normalize_path`], keeping its leading `..`, with
+/// the current directory as the empty path, which every path of a relative root starts with.
+pub(crate) fn normalize_path(path: &Path) -> PathBuf {
+    let normalized = adoc_core::normalize_path(path);
+    if normalized == Path::new(".") {
+        PathBuf::new()
+    } else {
+        normalized
     }
-    normalized
 }
 
 #[cfg(test)]
@@ -419,6 +412,23 @@ mod tests {
     use crate::{
         discover_antora_workspace, parse_resource_id, AntoraContext, AntoraResolver, ResourceFamily,
     };
+
+    #[test]
+    fn a_relative_path_keeps_its_leading_parents() {
+        // Issue #528: `../../x` is not `x`.
+        for (path, expected) in [
+            ("../../docs", "../../docs"),
+            ("./a/../../b", "../b"),
+            (".", ""),
+            ("docs/./modules/..", "docs"),
+        ] {
+            assert_eq!(
+                super::normalize_path(Path::new(path)),
+                Path::new(expected),
+                "{path}"
+            );
+        }
+    }
 
     /// Only the header is read for `:page-aliases:`: a body that is not text, or an attribute
     /// line after the header, makes no difference.

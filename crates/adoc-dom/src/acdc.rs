@@ -140,7 +140,7 @@ fn parse(input: &ParseInput<'_>) -> Dom {
     // Resolved without touching the file system, as acdc resolves the base it joins include
     // targets onto.
     let absolute_base =
-        adoc_core::lexical(&std::path::absolute(&base).unwrap_or_else(|_| base.clone()));
+        adoc_core::normalize_path(&std::path::absolute(&base).unwrap_or_else(|_| base.clone()));
     let resolved: ResolvedIncludes = Arc::default();
     let loader = {
         let resolver: Arc<dyn IncludeResolver> = input.includes.clone();
