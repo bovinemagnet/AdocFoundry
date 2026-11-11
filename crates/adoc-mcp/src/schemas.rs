@@ -230,6 +230,20 @@ pub fn edit_page() -> Arc<JsonObject> {
     )
 }
 
+pub fn revert_page() -> Arc<JsonObject> {
+    object(
+        json!({
+            "path": { "type": "string" },
+            "reverted": {
+                "type": "boolean",
+                "description": "Whether the buffer differed from the file and was put back.",
+            },
+            "length": { "type": "integer" },
+        }),
+        &["path", "reverted", "length"],
+    )
+}
+
 pub fn rename_page() -> Arc<JsonObject> {
     object(
         json!({

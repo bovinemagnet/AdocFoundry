@@ -322,6 +322,7 @@ fn write_tools_need_allow_write_over_http() {
         "edit_page",
         "export_pdf",
         "rename_page",
+        "revert_page",
     ] {
         assert!(names.iter().any(|name| name == tool), "{names:?}");
     }

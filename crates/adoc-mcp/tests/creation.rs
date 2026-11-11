@@ -8,7 +8,7 @@ mod common;
 use common::{scratch, Client};
 use serde_json::{json, Value};
 
-const MUTATING: [&str; 8] = [
+const MUTATING: [&str; 9] = [
     "apply_changes",
     "create_module",
     "create_page",
@@ -17,6 +17,7 @@ const MUTATING: [&str; 8] = [
     "edit_page",
     "export_pdf",
     "rename_page",
+    "revert_page",
 ];
 
 fn error_code(result: &Value) -> &str {

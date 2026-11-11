@@ -47,7 +47,7 @@ const EXISTING_READ_TOOLS: [&str; 10] = [
     "symbols",
 ];
 
-const WRITE_TOOLS: [&str; 8] = [
+const WRITE_TOOLS: [&str; 9] = [
     "apply_changes",
     "create_module",
     "create_page",
@@ -56,6 +56,7 @@ const WRITE_TOOLS: [&str; 8] = [
     "edit_page",
     "export_pdf",
     "rename_page",
+    "revert_page",
 ];
 
 /// A call of each read tool on `antora-single-component`.

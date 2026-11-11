@@ -44,8 +44,9 @@ use crate::{
 };
 
 /// The tools that change files, listed and callable only with `--allow-write`.
-const WRITE_TOOLS: [&str; 8] = [
+const WRITE_TOOLS: [&str; 9] = [
     "edit_page",
+    "revert_page",
     "rename_page",
     "export_pdf",
     "apply_changes",
@@ -271,6 +272,12 @@ struct EditPageArgs {
     /// Write the page to disk afterwards; otherwise the edits stay in the engine's buffer.
     #[serde(default)]
     save: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct RevertPageArgs {
+    /// The page, absolute or relative to the first root.
+    path: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -1057,7 +1064,7 @@ impl Server {
     }
 
     #[tool(
-        description = "Edit a page: each edit replaces text that occurs exactly once, or a byte range, through the engine's edit command, in order. With `save`, the page is written to disk.",
+        description = "Edit a page: each edit replaces text that occurs exactly once, or a byte range, through the engine's edit command, in order. With `save`, the page is written to disk. All or nothing: when an edit or the save fails, this call's edits are undone and the page is as it was before the call (a save fails with `conflict` when the file changed on disk; `revert_page` puts the page back to the file).",
         output_schema = schemas::edit_page(),
         annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false)
     )]
@@ -1124,19 +1131,19 @@ impl Server {
                         })?;
                     applied += 1;
                 }
+                if args.save {
+                    state
+                        .engine
+                        .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))?;
+                }
                 Ok(())
             })();
             if let Err(error) = result {
-                // All or nothing: the edits already made are undone.
+                // All or nothing, the save included: the edits already made are undone.
                 for _ in 0..applied {
                     state.engine.undo(id);
                 }
                 return Err(error);
-            }
-            if args.save {
-                state
-                    .engine
-                    .invoke(ids::DOCUMENT_SAVE, CommandArgs::Document(id))?;
             }
             let length = state
                 .engine
@@ -1147,6 +1154,32 @@ impl Server {
                 "edits": applied,
                 "saved": args.save,
                 "length": length,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Put a page's buffer back to the file on disk, discarding its unsaved edits, which every session shares: the way out when a save conflicts because the file changed on disk. `reverted` is false when the page had nothing unsaved.",
+        output_schema = schemas::revert_page(),
+        annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn revert_page(&self, Parameters(args): Parameters<RevertPageArgs>) -> Answer {
+        self.run(move |state| {
+            let path = state.confine(&args.path)?;
+            // A page that is not open has no buffer: it reads as its file already.
+            let before = state.text(&path)?;
+            if let Some(id) = state.engine.document_for_path(&path) {
+                state
+                    .engine
+                    .invoke(ids::DOCUMENT_RELOAD, CommandArgs::Document(id))?;
+            }
+            let text = state.text(&path)?;
+            let reverted = text != before;
+            Ok(json!({
+                "path": state.shown(&path),
+                "reverted": reverted,
+                "length": text.len(),
             }))
         })
         .await
