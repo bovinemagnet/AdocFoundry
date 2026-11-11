@@ -6,9 +6,9 @@ use adoc_core::{
 };
 
 use crate::line_parser::{
-    conditional_directive, content, find_anchors, find_images, find_includes, find_references,
-    is_block_metadata, is_dynamic_id, is_line_comment, mask_passthroughs, parse_attribute,
-    parse_heading, trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
+    content, find_anchors, find_images, find_includes, find_references, is_block_metadata,
+    is_dynamic_id, is_line_comment, mask_passthroughs, parse_attribute, parse_heading,
+    trailing_anchor, Conditional, Heading, Verbatim, VerbatimBlocks,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,17 +64,38 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         let line_content = content(line);
         let trimmed = line_content.trim();
 
-        // The preprocessor reads conditionals everywhere but in comment blocks, and removes
-        // their lines before the parser sees them.
-        if verbatim.next() != Verbatim::Comment {
-            if let Some(directive) = conditional_directive(line_content) {
-                conditionals = match directive {
-                    Conditional::Open => conditionals + 1,
-                    Conditional::Close => conditionals.saturating_sub(1),
-                };
-                offset += line.len();
-                continue;
+        if let Some(directive) = verbatim.directive(line_content) {
+            match directive {
+                Conditional::Open => conditionals += 1,
+                Conditional::Close => conditionals = conditionals.saturating_sub(1),
+                // The text is a conditional line of its own: what it includes, declares and
+                // references, read as any line is, unless it stands in a verbatim block,
+                // where only an include counts.
+                Conditional::Line { start, text } => {
+                    let at = offset + start;
+                    let found =
+                        find_includes(text, at)
+                            .into_iter()
+                            .map(|include| IncludeDirective {
+                                conditional: true,
+                                ..include
+                            });
+                    document.includes.extend(found);
+                    if verbatim.next() == Verbatim::No {
+                        let inline = mask_passthroughs(text);
+                        document
+                            .anchors
+                            .extend(find_anchors(&inline, at).into_iter().map(|anchor| Anchor {
+                                conditional: true,
+                                ..anchor
+                            }));
+                        document.references.extend(find_references(&inline, at));
+                        document.images.extend(find_images(&inline, at));
+                    }
+                }
             }
+            offset += line.len();
+            continue;
         }
         if continuing {
             if let Some(attribute) = document.attributes.last_mut() {
@@ -1031,6 +1052,38 @@ image::diagram.png[Architecture]\n";
 
     /// `ifdef::attr[text]` is a single line, not the start of a conditional block, and
     /// directives are lines of their own.
+    /// A single-line conditional's text is a line of its own, conditional: an include in it is
+    /// recorded, and anchors in two of them do not collide (#532).
+    #[test]
+    fn a_single_line_conditional_holds_a_conditional_line() {
+        let source = "ifdef::x[include::part.adoc[]]\nifdef::x[[[a]]]\nifndef::x[[[a]]]\n";
+        let document = parse("file:///demo.adoc", source).document;
+
+        let includes: Vec<_> = document
+            .includes
+            .iter()
+            .map(|include| {
+                (
+                    include.target.as_str(),
+                    include.conditional,
+                    &source[include.range.start..include.range.end],
+                )
+            })
+            .collect();
+        assert_eq!(includes, [("part.adoc", true, "include::part.adoc[]")]);
+        let anchors: Vec<_> = document
+            .anchors
+            .iter()
+            .map(|anchor| (anchor.id.as_str(), anchor.conditional))
+            .collect();
+        assert_eq!(anchors, [("a", true), ("a", true)]);
+        assert!(
+            document.diagnostics.is_empty(),
+            "{:?}",
+            document.diagnostics
+        );
+    }
+
     #[test]
     fn single_line_and_indented_directives_open_nothing() {
         let source = "ifdef::x[Some text.]\n  ifdef::y[]\n[[a]]\ninclude::a.adoc[]\n";

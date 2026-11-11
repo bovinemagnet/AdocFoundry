@@ -484,10 +484,11 @@ fn find_inline_images(line: &str, offset: usize) -> Vec<ImageDirective> {
     found
 }
 
-/// How a preprocessor conditional line changes the nesting: `ifdef::attr[]`, `ifndef::attr[]`
-/// and `ifeval::[…]` open a block (`ifdef::attr[text]` is a whole conditional on one line)
-/// and `endif::[]` closes one. Directives start their line.
-pub(crate) fn conditional_directive(line: &str) -> Option<Conditional> {
+/// The preprocessor conditional `line` is: `ifdef::attr[]`, `ifndef::attr[]` and
+/// `ifeval::[…]` open a block and `endif::[]` closes one, while `ifdef::attr[text]` is a whole
+/// conditional on one line, whose text the preprocessor reads as a line of its own.
+/// Directives start their line.
+pub(crate) fn conditional_directive(line: &str) -> Option<Conditional<'_>> {
     let line = line.trim_end();
     if !line.ends_with(']') {
         return None;
@@ -501,14 +502,27 @@ pub(crate) fn conditional_directive(line: &str) -> Option<Conditional> {
     let rest = line
         .strip_prefix("ifdef::")
         .or_else(|| line.strip_prefix("ifndef::"))?;
-    let (_, text) = rest.split_once('[')?;
-    (text == "]").then_some(Conditional::Open)
+    let open = line.len() - rest.len() + rest.find('[')?;
+    let text = &line[open + 1..line.len() - 1];
+    Some(if text.is_empty() {
+        Conditional::Open
+    } else {
+        Conditional::Line {
+            start: open + 1,
+            text,
+        }
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Conditional {
+pub(crate) enum Conditional<'a> {
     Open,
     Close,
+    /// A single-line conditional's text, starting at byte `start` of its line.
+    Line {
+        start: usize,
+        text: &'a str,
+    },
 }
 
 /// Where a line falls among the blocks whose content Asciidoctor does not parse: listing,
@@ -619,6 +633,16 @@ impl<'a> VerbatimBlocks<'a> {
             self.in_text = true;
             self.title = Some(trimmed);
         }
+    }
+
+    /// The preprocessor conditional `line` is, which the preprocessor reads everywhere but in
+    /// a comment block and removes before blocks are read. Whoever follows the blocks asks
+    /// here first and gives the line no further.
+    pub(crate) fn directive<'l>(&self, line: &'l str) -> Option<Conditional<'l>> {
+        if self.next() == Verbatim::Comment {
+            return None;
+        }
+        conditional_directive(line)
     }
 
     /// What a line of text typed next would be.
