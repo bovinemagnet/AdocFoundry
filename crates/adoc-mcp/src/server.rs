@@ -1265,12 +1265,65 @@ impl Server {
 
 /// `file://` URI of `path`.
 fn file_uri(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    if text.starts_with('/') {
-        format!("file://{text}")
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        uri_of(&text.replace('\\', "/"))
     } else {
-        format!("file:///{text}")
+        uri_of(&text)
     }
+}
+
+/// `file://` URI of a path written with `/`: every byte but the unreserved ones, `/` and `:`
+/// percent-encoded (spaces, `%`, `#`, `?`, non-ASCII letters), a Windows drive as `/C:/`.
+fn uri_of(path: &str) -> String {
+    let mut uri = String::from("file://");
+    if !path.starts_with('/') {
+        uri.push('/');
+    }
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/:".contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
+}
+
+/// The path a `file:` URI names, percent-decoded, with `/` between its parts: `/C:/…` read as
+/// the Windows drive `C:/…`; a `localhost` host allowed. `None` when it is not a `file:` URI or
+/// its decoding is not UTF-8.
+fn path_of_uri(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
+    let rest = if rest.starts_with("localhost/") {
+        &rest["localhost".len()..]
+    } else {
+        rest
+    };
+    // What follows `?` or `#` is a query or a fragment, not the path.
+    let rest = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
+    let mut bytes = Vec::with_capacity(rest.len());
+    let mut input = rest.bytes();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let high = char::from(input.next()?).to_digit(16)?;
+            let low = char::from(input.next()?).to_digit(16)?;
+            bytes.push(u8::try_from(high * 16 + low).ok()?);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    let path = String::from_utf8(bytes).ok()?;
+    let drive = path.as_bytes();
+    if drive.len() >= 3
+        && drive[0] == b'/'
+        && drive[1].is_ascii_alphabetic()
+        && drive[2] == b':'
+        && drive.get(3).is_none_or(|next| *next == b'/')
+    {
+        return Some(path[1..].to_owned());
+    }
+    Some(path)
 }
 
 /// The file a resource URI names, `file://` or `antora:`, inside the roots; a path outside them
@@ -1281,8 +1334,11 @@ fn resource_path(state: &State, uri: &str) -> Result<PathBuf, Failure> {
             .engine
             .resolve_resource_id(id, None)
             .map_err(|error| Failure::not_found(error.to_string()))?
-    } else if let Some(path) = uri.strip_prefix("file://") {
-        PathBuf::from(path)
+    } else if uri.starts_with("file://") {
+        PathBuf::from(
+            path_of_uri(uri)
+                .ok_or_else(|| Failure::not_found(format!("unknown resource {uri}")))?,
+        )
     } else {
         return Err(Failure::not_found(format!("unknown resource {uri}")));
     };
@@ -1538,6 +1594,45 @@ mod tests {
             .as_ref()
             .map(|value| value["error"]["code"].clone())
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn resource_uris_are_encoded_and_read_back_on_every_platform() {
+        for (path, uri) in [
+            ("/docs/a.adoc", "file:///docs/a.adoc"),
+            (
+                "/docs/release notes.adoc",
+                "file:///docs/release%20notes.adoc",
+            ),
+            ("/docs/überblick.adoc", "file:///docs/%C3%BCberblick.adoc"),
+            ("/docs/50% #1?.adoc", "file:///docs/50%25%20%231%3F.adoc"),
+            ("C:/docs/a b.adoc", "file:///C:/docs/a%20b.adoc"),
+        ] {
+            assert_eq!(uri_of(path), uri);
+            assert_eq!(path_of_uri(uri).as_deref(), Some(path), "{uri}");
+        }
+        // Forms other clients write.
+        assert_eq!(
+            path_of_uri("file://localhost/docs/a.adoc").as_deref(),
+            Some("/docs/a.adoc")
+        );
+        assert_eq!(
+            path_of_uri("file://C:/docs/a.adoc").as_deref(),
+            Some("C:/docs/a.adoc")
+        );
+        assert_eq!(
+            path_of_uri("file:///c:/docs/a.adoc#top").as_deref(),
+            Some("c:/docs/a.adoc")
+        );
+        for bad in [
+            "file:///a%2",
+            "file:///a%zz",
+            "file:///a%FF",
+            "antora:x",
+            "/a",
+        ] {
+            assert_eq!(path_of_uri(bad), None, "{bad}");
+        }
     }
 
     /// A text about `len` bytes long in which no byte of `offsets` (at most two) falls on a

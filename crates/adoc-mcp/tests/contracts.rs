@@ -488,3 +488,38 @@ fn check_pages_its_diagnostics_with_a_cursor() {
     );
     client.stop();
 }
+
+#[test]
+fn every_listed_resource_uri_reads_back() {
+    let (_directory, root) = scratch("references");
+    std::fs::write(root.join("release notes.adoc"), "= Release notes\n").unwrap();
+    std::fs::write(root.join("überblick.adoc"), "= Überblick\n").unwrap();
+    std::fs::write(root.join("50% off #1?.adoc"), "= Sale\n").unwrap();
+    let mut client = Client::start(&root, false);
+    let (uris, _) = all_resources(&mut client);
+    assert_eq!(uris.len(), 6, "{uris:?}");
+    for uri in &uris {
+        // A URI: nothing a client would read as a fragment, a query or a separator.
+        assert!(
+            uri.starts_with("file:///") && !uri.contains([' ', '#', '?']) && uri.is_ascii(),
+            "{uri}"
+        );
+        let read = client.request("resources/read", json!({ "uri": uri }));
+        assert!(read.get("error").is_none(), "{uri}: {read}");
+        let text = read["result"]["contents"][0]["text"].as_str().unwrap();
+        assert!(!text.is_empty(), "{uri}");
+    }
+    assert!(uris
+        .iter()
+        .any(|uri| uri.ends_with("/release%20notes.adoc")));
+    assert!(uris.iter().any(|uri| uri.ends_with("/%C3%BCberblick.adoc")));
+    assert!(uris
+        .iter()
+        .any(|uri| uri.ends_with("/50%25%20off%20%231%3F.adoc")));
+    let subscribed = client.request(
+        "resources/subscribe",
+        json!({ "uri": uris.iter().find(|uri| uri.contains("%20")).unwrap() }),
+    );
+    assert!(subscribed.get("error").is_none(), "{subscribed}");
+    client.stop();
+}
