@@ -729,14 +729,21 @@ impl Repository {
             .map(|url| url.to_bstring().to_string()))
     }
 
-    /// `path` relative to the working tree: an absolute path inside it, or a relative one as is.
+    /// `path` relative to the working tree: an absolute path inside it, or a relative one taken
+    /// from the working tree. `.` and `..` are resolved lexically, so a path that leaves the
+    /// working tree is refused however it is spelt.
     pub(crate) fn relative(&self, path: &Path) -> Result<PathBuf, GitError> {
-        if path.is_relative() {
-            return Ok(path.to_path_buf());
-        }
-        path.strip_prefix(&self.workdir)
-            .map(Path::to_path_buf)
-            .map_err(|_| GitError::OutsideWorkdir(path.to_path_buf()))
+        let outside = || GitError::OutsideWorkdir(path.to_path_buf());
+        let joined = self.workdir.join(path);
+        let normalised =
+            gix::path::normalize(joined.as_path().into(), &self.workdir).ok_or_else(outside)?;
+        let relative = normalised
+            .strip_prefix(&self.workdir)
+            .map_err(|_| outside())?;
+        Ok(relative
+            .components()
+            .filter(|component| *component != Component::CurDir)
+            .collect())
     }
 }
 
