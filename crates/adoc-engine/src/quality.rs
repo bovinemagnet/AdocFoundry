@@ -154,12 +154,9 @@ impl Engine {
         for folder in &self.unreadable {
             let in_scope = match scope {
                 AuditScope::Workspace => true,
-                AuditScope::Component { name, version } => {
-                    self.workspace.antora.components().any(|descriptor| {
-                        descriptor.name == *name
-                            && version.as_ref().is_none_or(|version| {
-                                descriptor.version.as_deref() == Some(version.as_str())
-                            })
+                AuditScope::Component { .. } => {
+                    self.workspace.antora.all_descriptors().any(|descriptor| {
+                        scope.covers(&descriptor.name, descriptor.version.as_deref())
                             && folder.starts_with(normalize_path(&descriptor.root))
                     })
                 }

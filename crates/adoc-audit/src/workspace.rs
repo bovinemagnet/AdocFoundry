@@ -199,18 +199,7 @@ impl Context<'_> {
 
     /// Whether the scope covers `component` at `version`.
     pub(crate) fn includes(&self, component: &str, version: Option<&str>) -> bool {
-        match &self.scope {
-            AuditScope::Workspace => true,
-            AuditScope::Component {
-                name,
-                version: wanted,
-            } => {
-                name == component
-                    && wanted
-                        .as_deref()
-                        .is_none_or(|wanted| Some(wanted) == version)
-            }
-        }
+        self.scope.covers(component, version)
     }
 
     /// Whether the scope covers the file at `path`: every file for the workspace; for a
@@ -235,7 +224,8 @@ impl Context<'_> {
             return None;
         };
         let catalog = &self.workspace().antora;
-        let known = match version {
+        let known = match version.as_deref() {
+            Some("~") => catalog.component(name, None).is_some(),
             Some(version) => catalog.component(name, Some(version)).is_some(),
             None => !catalog.versions_of(name).is_empty(),
         };

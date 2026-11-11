@@ -296,6 +296,23 @@ fn a_component_scope_reports_only_that_component_version() {
 }
 
 #[test]
+fn a_scope_names_the_versionless_version_as_tilde() {
+    let report = run(
+        &workspace(),
+        AuditScope::Component {
+            name: "guide".to_owned(),
+            version: Some("~".to_owned()),
+        },
+    );
+    assert!(report.completeness().is_complete(), "{report:#?}");
+    assert_eq!(report.coverage().len(), 1);
+    assert_eq!(
+        skipped(&report, UNLISTED),
+        ["guide/modules/ROOT/pages/extra.adoc"]
+    );
+}
+
+#[test]
 fn a_component_not_in_the_catalog_is_unavailable() {
     let report = run(
         &workspace(),
