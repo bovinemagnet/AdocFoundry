@@ -207,6 +207,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::NAVIGATE_FOLLOW_LINK),
             Command(ids::NAVIGATE_PEEK_INCLUDE),
             Command(ids::NAVIGATE_FIND_REFERENCES),
+            Command(ids::NAVIGATE_INSPECT_ATTRIBUTE),
             Separator,
             Command(ids::NAVIGATE_GO_TO_SYMBOL),
             Command(ids::NAVIGATE_GO_TO_SYMBOL_IN_PAGE),

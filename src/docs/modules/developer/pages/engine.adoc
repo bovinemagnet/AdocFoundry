@@ -1106,6 +1106,7 @@ The engine delegates definition, hover, completion and diagnostics to `adoc-lang
 That is why the editor, the command-line checker and the language server give identical answers.
 For an open page the engine calls `adoc_lang::definition_in`, `hover_in` and `completion_in` with the page's own parse; `definition_at_offset`, `hover_at_offset` and `completion_at_offset` take text, parse it with `with_document` and call them, and `adoc-ls` uses those.
 `Engine::completes_after(id, offset, typed)` reads only the caret's line (`adoc_parser::completion_context`) and says whether typing `typed` there is inside something that completes: a target being typed, `<<`, or an attribute reference.
+`Engine::inspect_attribute` and `Engine::effective_values` (`src/attribute_inspection.rs`) answer Inspect Attribute and the MCP `get_page_context` tool from `adoc_lang::effective`, with the playbook's and the component's `AttributeEntry`s and the page's includes.
 
 `adoc-ls` is a front end of the engine.
 It opens workspace folders with the engine, and keeps client buffers in it with `Engine::open_text(path, text)`, which works for a file that does not exist.

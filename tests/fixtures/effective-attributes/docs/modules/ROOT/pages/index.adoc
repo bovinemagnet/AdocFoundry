@@ -1,0 +1,12 @@
+= Index
+:edition: Enterprise
+:product: Page Product
+:company: Someone Else
+
+The {edition} edition of {product} by {company}, {locked} and {support}.
+
+include::partial$terms.adoc[]
+
+:edition: Later
+
+Now {edition}.

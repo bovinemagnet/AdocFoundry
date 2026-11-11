@@ -631,6 +631,7 @@ mod tests {
             start_page: None,
             nav: Vec::new(),
             asciidoc_attributes: BTreeMap::new(),
+            attribute_entries: BTreeMap::new(),
             prerelease: false,
         });
         catalog.insert_module(Module {
@@ -695,6 +696,7 @@ mod tests {
             start_page: None,
             nav: Vec::new(),
             asciidoc_attributes: BTreeMap::new(),
+            attribute_entries: BTreeMap::new(),
             prerelease: false,
         });
         catalog.insert_module(Module {
@@ -736,6 +738,7 @@ mod tests {
             start_page: None,
             nav: Vec::new(),
             asciidoc_attributes: BTreeMap::new(),
+            attribute_entries: BTreeMap::new(),
             prerelease: false,
         });
         for module in ["ROOT", "security"] {

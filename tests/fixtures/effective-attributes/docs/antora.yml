@@ -1,0 +1,9 @@
+name: guide
+version: '1.0'
+title: Guide
+asciidoc:
+  attributes:
+    product: Guide
+    edition: Standard@
+    locked: component
+    support: help desk

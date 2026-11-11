@@ -51,6 +51,7 @@ pub mod ids {
     pub const NAVIGATE_FORWARD: CommandId = CommandId::new("navigate.forward");
     pub const NAVIGATE_PEEK_INCLUDE: CommandId = CommandId::new("navigate.peek_include");
     pub const NAVIGATE_FIND_REFERENCES: CommandId = CommandId::new("navigate.find_references");
+    pub const NAVIGATE_INSPECT_ATTRIBUTE: CommandId = CommandId::new("navigate.inspect_attribute");
     pub const NAVIGATE_GO_TO_SYMBOL: CommandId = CommandId::new("navigate.go_to_symbol");
     pub const NAVIGATE_GO_TO_SYMBOL_IN_PAGE: CommandId =
         CommandId::new("navigate.go_to_symbol_in_page");
@@ -169,7 +170,7 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
     use CommandCategory::{Document, Edit, Help, Navigate, View, Workspace};
     use CommandContext::{ActiveDocument, ActiveTab, Always};
 
-    let builtin: [(CommandSpec, Run); 41] = [
+    let builtin: [(CommandSpec, Run); 42] = [
         (
             spec(
                 ids::WORKSPACE_SEARCH,
@@ -269,6 +270,16 @@ pub(crate) fn register_builtin(registry: &mut CommandRegistry) {
                 ActiveDocument,
             ),
             navigate_find_references,
+        ),
+        (
+            spec(
+                ids::NAVIGATE_INSPECT_ATTRIBUTE,
+                "Inspect Attribute",
+                Navigate,
+                None,
+                ActiveDocument,
+            ),
+            navigate_inspect_attribute,
         ),
         (
             spec(
@@ -911,6 +922,25 @@ fn navigate_find_references(
         .ok_or(EngineError::UnknownDocument(id))?;
     Ok(CommandOutcome::References(
         engine.reference_matches(id, offset),
+    ))
+}
+
+/// Where the value of the attribute at the offset comes from.
+fn navigate_inspect_attribute(
+    engine: &mut Engine,
+    args: CommandArgs,
+) -> Result<CommandOutcome, EngineError> {
+    let CommandArgs::Offset { id, offset } = args else {
+        return Err(invalid(
+            ids::NAVIGATE_INSPECT_ATTRIBUTE,
+            "a document and offset",
+        ));
+    };
+    engine
+        .document(id)
+        .ok_or(EngineError::UnknownDocument(id))?;
+    Ok(CommandOutcome::Attribute(
+        engine.inspect_attribute(id, offset).map(Box::new),
     ))
 }
 

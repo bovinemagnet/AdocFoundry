@@ -1,0 +1,5 @@
+:support-line: call us
+
+ifdef::edition[]
+Terms for the {edition} edition.
+endif::[]

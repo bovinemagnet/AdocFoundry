@@ -9,7 +9,10 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::{descriptor::RawAsciidoc, DescriptorError, DescriptorErrorKind};
+use crate::{
+    descriptor::{attribute_entries, RawAsciidoc},
+    AttributeEntry, DescriptorError, DescriptorErrorKind,
+};
 
 /// The file name a playbook is discovered by at a workspace root.
 pub const PLAYBOOK_FILE: &str = "antora-playbook.yml";
@@ -20,6 +23,9 @@ pub struct Playbook {
     /// `asciidoc.attributes`, read as Antora reads them: `true` sets an empty value, `false`
     /// and `~` unset. A value ending in `@` is soft-set, so a component or page may override it.
     pub asciidoc_attributes: BTreeMap<String, String>,
+    /// Every key under `asciidoc.attributes`, unsets included, with its strength and where it
+    /// is written.
+    pub attribute_entries: BTreeMap<String, AttributeEntry>,
     /// `content.sources`, in order.
     pub sources: Vec<ContentSource>,
     /// `site.url`: where the site is published, which references out of an exported PDF lead
@@ -307,6 +313,7 @@ pub fn parse_playbook(path: &Path, source: &str) -> Result<Playbook, DescriptorE
     Ok(Playbook {
         path: path.to_path_buf(),
         asciidoc_attributes,
+        attribute_entries: attribute_entries(source),
         sources,
         site_url: site_url.filter(|url| !url.trim().is_empty()),
         site_title,
@@ -326,6 +333,31 @@ pub fn read_playbook(path: &Path) -> Result<Playbook, DescriptorError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn records_attribute_entries_unsets_included() {
+        let source = "asciidoc:\n  attributes:\n    company: Foundry Ltd\n    release: One@\n    hidden: false\n    gone: ~\n";
+        let playbook = parse_playbook(Path::new("antora-playbook.yml"), source).unwrap();
+        let entries = &playbook.attribute_entries;
+        let start = source.find("release").unwrap();
+        assert_eq!(
+            entries["release"],
+            AttributeEntry {
+                value: Some("One".to_owned()),
+                soft: true,
+                range: adoc_core::SourceRange::new(start, start + "release".len()),
+            }
+        );
+        assert!(!entries["company"].soft);
+        assert_eq!(
+            (entries["hidden"].value.as_deref(), entries["hidden"].soft),
+            (None, true)
+        );
+        assert_eq!(
+            (entries["gone"].value.as_deref(), entries["gone"].soft),
+            (None, false)
+        );
+    }
 
     #[test]
     fn reads_hard_and_soft_attributes() {
