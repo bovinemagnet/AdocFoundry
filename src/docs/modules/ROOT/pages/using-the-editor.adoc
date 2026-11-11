@@ -1962,7 +1962,7 @@ Save and Commit (`git.save_and_commit`, in the Document category) saves the acti
 The page title is the document title, or the file name when the page has none.
 
 A commit needs an author.
-The name and address come from `user.name` and `user.email` in the usual Git configuration scopes.
+The name and address come from `user.name` and `user.email` in the usual Git configuration scopes, or as Git takes them from `author.*` and `committer.*` or the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` environment variables.
 Without them the commit is refused with a message that says how to set them:
 
 [source,sh]
