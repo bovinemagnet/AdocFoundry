@@ -157,6 +157,9 @@ enum Operation {
         file_name: Option<String>,
         #[serde(default)]
         add_to_navigation: bool,
+        /// The page's text after its title (`= Title` and a blank line); the title alone
+        /// without it.
+        body: Option<String>,
     },
     /// Make a partial in a module's `partials` folder.
     CreatePartial {
@@ -240,6 +243,19 @@ pub(crate) fn module_root(
                 version.as_deref().unwrap_or("~")
             ))
         })
+}
+
+/// What follows a new page's `= Title` line for `body`: a blank line and the body, ending with
+/// a line break; nothing for an empty body.
+pub(crate) fn after_title(body: &str) -> String {
+    if body.is_empty() {
+        return String::new();
+    }
+    let mut text = format!("\n{body}");
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text
 }
 
 /// A plain relative file name, with no `..`, root or drive.
@@ -332,13 +348,14 @@ fn stage(state: &mut State, operation: &Operation) -> Result<ChangeSet, Failure>
             title,
             file_name,
             add_to_navigation,
+            body,
         } => {
             let root = module_root(state, component, version.as_deref(), module)?;
             let file = file_name.as_deref().map(plain).transpose()?;
             if let Some(file) = &file {
                 state.confine(&root.join("pages").join(file).to_string_lossy())?;
             }
-            state
+            let mut changes = state
                 .engine
                 .stage_new_page(&NewPage {
                     module: root,
@@ -346,7 +363,12 @@ fn stage(state: &mut State, operation: &Operation) -> Result<ChangeSet, Failure>
                     add_to_nav: *add_to_navigation,
                     file,
                 })
-                .map_err(engine_failure)
+                .map_err(engine_failure)?;
+            // The page is the one file made; its text is part of what is made and checked.
+            if let (Some(body), Some(page)) = (body, changes.creates.first_mut()) {
+                page.text.push_str(&after_title(body));
+            }
+            Ok(changes)
         }
         Operation::CreatePartial {
             component,

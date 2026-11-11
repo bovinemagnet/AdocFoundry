@@ -309,7 +309,7 @@ pub fn prompt_text(name: &str, arguments: &Map<String, Value>) -> Option<Result<
                 "Write a how-to page about {topic} in the `{module}` module of the `{component}` component.\n\n\
                  1. Call `list_pages` with `component: \"{component}\"` and `module: \"{module}\"` to see the pages there and how they are titled. Read one or two similar pages with `get_page_context` (and `read_page` for their text) to match their style.\n\
                  2. Call `get_outline` on the module's navigation file to choose where the page belongs.\n\
-                 3. Call `preview_changes` with a `create_page` operation (`add_to_navigation: true`) and, in the same preview, a `replace` operation on the new page's text if it needs more than its title; check each file's `diff` and `diagnostics`.\n\
+                 3. Call `preview_changes` with a `create_page` operation (`add_to_navigation: true`) whose `body` is the page's text after its title; check each file's `diff` and `diagnostics`.\n\
                  4. Show the user the preview. When they agree, call `apply_changes` with its `preview_id`.\n\
                  5. Check the result with `find_references` on the new page and `quality_audit` with `component: \"{component}\"`.\n\n\
                  {permission}"

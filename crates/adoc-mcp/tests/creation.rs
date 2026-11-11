@@ -147,6 +147,30 @@ fn create_page_resolves_and_is_listed_in_its_navigation() {
 }
 
 #[test]
+fn create_page_writes_its_body_after_the_title() {
+    let (_directory, root) = scratch("discovery");
+    let mut client = Client::start(&root, true);
+    let made = client
+        .call(
+            "create_page",
+            json!({
+                "component": "product",
+                "version": "~",
+                "module": "ROOT",
+                "title": "Rotating Keys",
+                "body": "Rotate the keys every month.\n",
+            }),
+        )
+        .unwrap();
+    assert_eq!(made["saved"], true);
+    let page =
+        std::fs::read_to_string(root.join("product/main/modules/ROOT/pages/rotating-keys.adoc"))
+            .unwrap();
+    assert_eq!(page, "= Rotating Keys\n\nRotate the keys every month.\n");
+    client.stop();
+}
+
+#[test]
 fn create_partial_gives_the_include_that_names_it() {
     let (_directory, root) = scratch("discovery");
     let mut client = Client::start(&root, true);

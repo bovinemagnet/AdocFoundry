@@ -221,6 +221,77 @@ fn mcp_apply_rejects_stale_revision() {
     client.stop();
 }
 
+/// The `create_howto` prompt's recipe, run as it says: a page with its text after the title
+/// and its navigation entry, previewed and made as one change.
+#[test]
+fn a_page_with_a_body_is_previewed_and_made_as_the_how_to_prompt_says() {
+    let (_directory, root) = scratch("discovery");
+    let mut client = Client::start(&root, true);
+    let prompt = client.request(
+        "prompts/get",
+        json!({ "name": "create_howto", "arguments": { "component": "product", "topic": "authentication" } }),
+    );
+    let recipe = prompt["result"]["messages"][0]["content"]["text"]
+        .as_str()
+        .unwrap();
+    assert!(recipe.contains("`body`"), "{recipe}");
+    assert!(
+        !recipe.contains("`replace` operation on the new page"),
+        "{recipe}"
+    );
+
+    // The recipe it gave before: a `replace` on a page the same preview makes, which cannot
+    // be read yet.
+    let refused = client.call_result(
+        "preview_changes",
+        json!({ "operations": [
+            { "kind": "create_page", "component": "product", "version": "~", "module": "ROOT",
+              "title": "Configuring Authentication" },
+            { "kind": "replace", "path": NEW_PAGE, "old_text": "= Configuring Authentication",
+              "new_text": "= Configuring Authentication\n\nText." },
+        ] }),
+    );
+    assert_eq!(error_code(&refused), "not_found");
+
+    let body = "Turn authentication on in the settings.\n\n== Check it\n\nSign in again.";
+    let preview = client
+        .call(
+            "preview_changes",
+            json!({ "operations": [{
+                "kind": "create_page",
+                "component": "product",
+                "version": "~",
+                "module": "ROOT",
+                "title": "Configuring Authentication",
+                "add_to_navigation": true,
+                "body": body,
+            }] }),
+        )
+        .unwrap();
+    let page = file(&preview, NEW_PAGE);
+    assert_eq!(page["kind"], "create");
+    assert!(
+        page["diff"].as_str().unwrap().contains("+== Check it"),
+        "{page}"
+    );
+    assert!(file(&preview, NAV)["diff"]
+        .as_str()
+        .unwrap()
+        .contains("+* xref:configuring-authentication.adoc[]"));
+    let applied = client
+        .call(
+            "apply_changes",
+            json!({ "preview_id": preview["preview_id"] }),
+        )
+        .unwrap();
+    assert_eq!(applied["changed"], json!([NAV, NEW_PAGE]));
+    assert_eq!(
+        read(&root, NEW_PAGE),
+        format!("= Configuring Authentication\n\n{body}\n")
+    );
+    client.stop();
+}
+
 #[test]
 fn an_idempotency_key_names_one_preview_and_only_a_change_made_is_replayed() {
     let (_directory, root) = scratch("discovery");
