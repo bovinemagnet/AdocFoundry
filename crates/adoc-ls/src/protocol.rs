@@ -2808,9 +2808,9 @@ mod tests {
                 partial_result_params: PartialResultParams::default(),
             })
             .into_iter()
-            .filter_map(|action| match action {
-                CodeActionOrCommand::CodeAction(action) => Some(action.title),
-                CodeActionOrCommand::Command(command) => Some(command.title),
+            .map(|action| match action {
+                CodeActionOrCommand::CodeAction(action) => action.title,
+                CodeActionOrCommand::Command(command) => command.title,
             })
             .collect()
     }
