@@ -12,7 +12,7 @@
 use std::{
     env,
     ffi::OsString,
-    io::{BufRead as _, BufReader, Read},
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -38,6 +38,13 @@ pub const DEFAULT_BUILD_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// The most a build may write, both outputs together, before it is stopped.
 pub const MAX_BUILD_OUTPUT: usize = 8 * 1024 * 1024;
+
+/// The longest line of the build's output; a longer one is sent in pieces this long.
+const MAX_LINE: usize = 16 * 1024;
+
+/// How long a step's output may stay open after the step has exited, held by a process it
+/// left behind, before that process's group is stopped.
+const READERS_GRACE: Duration = Duration::from_secs(1);
 
 /// How often a running step is checked for having finished.
 const POLL: Duration = Duration::from_millis(20);
@@ -413,8 +420,16 @@ fn run_step(
         }
         thread::sleep(POLL);
     };
-    let _ = stdout.join();
-    let _ = stderr.join();
+    // The readers end at the end of the pipes, which never comes while a process the step left
+    // behind (a server, a watcher) holds them: they are given a moment, then the step's group is
+    // stopped, and they are not waited for after that, as above.
+    let finished = Instant::now() + READERS_GRACE;
+    while !(stdout.is_finished() && stderr.is_finished()) && Instant::now() < finished {
+        thread::sleep(POLL);
+    }
+    if !(stdout.is_finished() && stderr.is_finished()) {
+        adoc_diagrams::process::stop(&mut child);
+    }
     if overflow.load(Ordering::Relaxed) {
         return Err(format!(
             "the build wrote more than {} MiB and was stopped",
@@ -428,8 +443,9 @@ fn run_step(
     }
 }
 
-/// Sends each line of `pipe` until it ends or the build's output passes [`MAX_BUILD_OUTPUT`],
-/// when `overflow` is set.
+/// Sends each line of `pipe`, ended by `\n`, `\r` or both, until it ends or the build's output
+/// passes [`MAX_BUILD_OUTPUT`], when `overflow` is set. Bytes count as they are read, and a line
+/// longer than [`MAX_LINE`] is sent in pieces, so output without newlines is bounded too.
 fn read_lines(
     pipe: Option<Box<dyn Read + Send>>,
     sender: &crate::worker::WorkerSender,
@@ -437,29 +453,59 @@ fn read_lines(
     written: &AtomicUsize,
     overflow: &AtomicBool,
 ) {
-    let Some(pipe) = pipe else {
+    let Some(mut pipe) = pipe else {
         return;
     };
-    let mut reader = BufReader::new(pipe);
-    let mut bytes = Vec::new();
+    let send = |line: &[u8]| {
+        let line = String::from_utf8_lossy(line).into_owned();
+        sender
+            .send(WorkerMessage::SiteBuildLine { generation, line })
+            .is_ok()
+    };
+    let mut chunk = [0; 8192];
+    let mut line = Vec::new();
+    let mut after_return = false;
     loop {
-        bytes.clear();
-        let read = match reader.read_until(b'\n', &mut bytes) {
-            Ok(0) | Err(_) => return,
+        let read = match pipe.read(&mut chunk) {
+            Ok(0) => {
+                if !line.is_empty() {
+                    send(&line);
+                }
+                return;
+            }
             Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return,
         };
         if written.fetch_add(read, Ordering::Relaxed) + read > MAX_BUILD_OUTPUT {
             overflow.store(true, Ordering::Relaxed);
             return;
         }
-        let line = String::from_utf8_lossy(&bytes)
-            .trim_end_matches(['\n', '\r'])
-            .to_owned();
-        if sender
-            .send(WorkerMessage::SiteBuildLine { generation, line })
-            .is_err()
-        {
-            return;
+        for &byte in &chunk[..read] {
+            // `\r\n` ends one line, not two.
+            let ends = byte == b'\r' || (byte == b'\n' && !(after_return && line.is_empty()));
+            after_return = byte == b'\r';
+            if ends {
+                if !send(&line) {
+                    return;
+                }
+                line.clear();
+            } else if byte != b'\n' {
+                line.push(byte);
+                if line.len() >= MAX_LINE {
+                    // Cut where a character ends, so each piece reads as the line did.
+                    let cut = match std::str::from_utf8(&line) {
+                        Err(error) if error.error_len().is_none() && error.valid_up_to() > 0 => {
+                            error.valid_up_to()
+                        }
+                        _ => line.len(),
+                    };
+                    if !send(&line[..cut]) {
+                        return;
+                    }
+                    line.drain(..cut);
+                }
+            }
         }
     }
 }

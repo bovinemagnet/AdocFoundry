@@ -265,3 +265,98 @@ fn build_site_finds_the_site_in_the_playbook_s_output_dir() {
         build.log
     );
 }
+
+/// Writes stand-ins for `node` and for npm, whose `run build` runs `build`, into a folder of
+/// their own, returning it and the `node` to name in `[tools] node`.
+#[cfg(unix)]
+fn stub_tools(build: &str) -> (tempfile::TempDir, PathBuf) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tools = tempfile::tempdir().unwrap();
+    let node = tools.path().join("node");
+    let npm = tools.path().join("npm");
+    fs::write(&node, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(
+        &npm,
+        format!(
+            "#!/bin/sh\n\
+             case \"$1\" in\n\
+             install) mkdir -p node_modules ;;\n\
+             run) {build} ;;\n\
+             esac\n"
+        ),
+    )
+    .unwrap();
+    for tool in [&node, &npm] {
+        fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (tools, node)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_build_that_leaves_a_process_holding_its_output_still_finishes() {
+    let guard = SPAWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // The build writes the site, then leaves a server behind that holds both outputs, as
+    // `antora … && serve build/site &` would; progress written with `\r` is a line each.
+    let (_tools, node) = stub_tools(
+        "mkdir -p build/site && echo '<html></html>' > build/site/index.html; \
+         printf 'one\\rtwo\\r\\nthree\\n'; \
+         sleep 60 &",
+    );
+    let (_project, root, mut engine) = project(&node, 40);
+    let started = Instant::now();
+    engine
+        .invoke(ids::PROJECT_BUILD_SITE, CommandArgs::None)
+        .unwrap();
+    assert!(
+        engine.wait_for_workers(Duration::from_secs(30)),
+        "the build never finished"
+    );
+    drop(guard);
+    assert!(started.elapsed() < Duration::from_secs(30));
+    let build = engine.site_build().unwrap();
+    assert_eq!(
+        build.state,
+        SiteBuildState::Built {
+            site: Some(root.join("build/site/index.html"))
+        },
+        "{:?}",
+        build.log
+    );
+    for line in ["one", "two", "three"] {
+        assert!(
+            build.log.iter().any(|logged| logged == line),
+            "{line}: {:?}",
+            build.log
+        );
+    }
+    assert!(engine.command_available(ids::PROJECT_BUILD_SITE));
+}
+
+#[cfg(unix)]
+#[test]
+fn output_without_newlines_is_stopped_at_the_cap() {
+    let guard = SPAWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // 16 MiB with no newline, then the build waits far longer than it may run.
+    let (_tools, node) = stub_tools("head -c 16777216 /dev/zero | tr '\\0' x; sleep 60");
+    let (_project, _root, mut engine) = project(&node, 40);
+    let started = Instant::now();
+    engine
+        .invoke(ids::PROJECT_BUILD_SITE, CommandArgs::None)
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(35)));
+    drop(guard);
+    let build = engine.site_build().unwrap();
+    assert!(
+        matches!(&build.state, SiteBuildState::Failed(message) if message.contains("MiB")),
+        "{:?}",
+        build.state
+    );
+    assert!(started.elapsed() < Duration::from_secs(30));
+    assert!(build.log.iter().all(|line| line.len() <= 64 * 1024));
+}
