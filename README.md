@@ -327,8 +327,8 @@ adocfoundry-cli follow <file> <byte-offset> [--root <dir>]
 adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser acdc|asciidoc-parser]
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
-    [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
-adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
+    [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>] [--fail-on none|warning|error]
+adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>] [--fail-on none|warning|error]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--ages]
     [--format json|dot|svg] [--no-partials] [--no-nav] [--unresolved] [--dark]
@@ -341,7 +341,7 @@ adocfoundry-cli doctor [<root>] [--format text|json]
 
 `render` writes a page as a standalone HTML file, as the preview renders it, waiting for its diagrams; without `--output` it writes to standard output. Without `--root`, the workspace is the folder above the page's Antora component, or the page's own folder outside Antora. `--parser asciidoc-parser` renders with the second document parser, for comparison; the app always uses `acdc`.
 
-`pdf` exports a page to `<page>.pdf` beside it, or a component directory (or `--component`) as a book to `<name>.pdf`, and prints the file and its page count. Warnings print as `path:line: warning: message`; the exit code is 1 when the export fails. `--typst` also writes the generated Typst, for inspection.
+`pdf` exports a page to `<page>.pdf` beside it, or a component directory (or `--component`) as a book to `<name>.pdf`, and prints the file and its page count. Warnings print as `path:line: warning: message`, among them every diagram that could not be rendered, wherever it sits (a list item, a table cell, any other block); the exit code is 1 when the export fails, or when a diagnostic meets `--fail-on` (`none` by default; `warning` refuses a PDF with a diagram left as its source, though the PDF is still written). `--typst` also writes the generated Typst, for inspection.
 
 `git-status` prints the branch of the repository holding the root and its changed AsciiDoc files as `git status --short` does, with the number of changed line runs against `HEAD` in each (`branch main`, ` M docs/page.adoc (2 changed)`); `--format json` gives the same as an object. The other commands do not look at Git.
 

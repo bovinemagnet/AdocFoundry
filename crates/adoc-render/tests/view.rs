@@ -424,6 +424,41 @@ fn block_at_finds_the_innermost_block() {
 }
 
 #[test]
+fn each_block_visits_blocks_in_every_container() {
+    let text = "= Page\n\n== Section\n\n* item\n+\nin-list\n\nTerm:: description\n+\nin-description\n\n----\ncode <1>\n----\n<1> callout\n+\nin-callout\n\n|===\na|in-cell\n|===\n\n****\nin-sidebar\n****\n";
+    let view = view_of(Path::new("/page.adoc"), text, &LocalResolver);
+    let mut paragraphs = Vec::new();
+    let mut depth_first = Vec::new();
+    view.each_block(&mut |block| {
+        if let ViewKind::Paragraph(content) = &block.kind {
+            paragraphs.push(ViewInline::plain_text(content));
+        }
+        depth_first.push(block.span.line);
+    });
+    assert_eq!(
+        paragraphs,
+        [
+            "in-list",
+            "in-description",
+            "in-callout",
+            "in-cell",
+            "in-sidebar"
+        ]
+    );
+    // Each block comes before the blocks it holds: the section first.
+    assert!(matches!(view.blocks[0].kind, ViewKind::Section { .. }));
+    assert_eq!(depth_first.first(), Some(&view.blocks[0].span.line));
+    // The same blocks as following `child_refs` down from the top.
+    fn count(blocks: Vec<&adoc_render::ViewBlock>) -> usize {
+        blocks
+            .into_iter()
+            .map(|block| 1 + count(block.child_refs()))
+            .sum()
+    }
+    assert_eq!(depth_first.len(), count(view.blocks.iter().collect()));
+}
+
+#[test]
 fn the_block_index_finds_what_block_at_finds() {
     let partial = fixtures().join("render/partials/included.adoc");
     for name in [

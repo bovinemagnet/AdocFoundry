@@ -19,7 +19,9 @@ adocfoundry-cli render <file> [--root <dir>] [--output <file.html>] [--parser ac
 adocfoundry-cli pdf <file|component-dir> [--root <dir>] [--component [<version>@]<name>]
     [--theme <name|file.yml>] [--fonts-dir <dir>] [--output <file.pdf>]
     [--standard pdf-a-1b|pdf-a-1a|pdf-a-2a|pdf-ua-1] [--typst <file.typ>]
+    [--fail-on none|warning|error]
 adocfoundry-cli pdf --profile <name> [<root>] [--output <file.pdf>] [--typst <file.typ>]
+    [--fail-on none|warning|error]
 adocfoundry-cli git-status <root> [--format text|json]
 adocfoundry-cli graph <root> [--page <file> [--depth <n>] | --path <from> <to> [--undirected]] [--format json|dot|svg]
     [--no-partials] [--no-nav] [--unresolved] [--ages] [--dark]
@@ -356,11 +358,14 @@ Without a version, `--component` uses the latest version of the component.
 
 |`--typst <file.typ>`
 |Also write the generated Typst source, for inspection.
+
+|`--fail-on none\|warning\|error`
+|Exit with 1 when the export reports a diagnostic at least this severe, so CI can refuse a PDF with, for example, a diagram left as its source. The PDF is written all the same. The default, `none`, never fails for a diagnostic.
 |===
 
 The command waits for diagrams to render, then prints `<output> (<n> pages)` on standard output.
-Warnings, such as an unknown theme key or a missing image, print on standard error as `path:line: warning: message`.
-An export that fails exits with 1, and a usage error exits with 2.
+Warnings, such as an unknown theme key, a missing image or a diagram that could not be rendered (wherever it sits: in a list, a table cell or any other block), print on standard error as `path:line: warning: message`.
+An export that fails, or reports a diagnostic that meets `--fail-on`, exits with 1, and a usage error exits with 2.
 
 [[git-status]]
 == git-status
