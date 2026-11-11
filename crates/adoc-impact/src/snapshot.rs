@@ -21,12 +21,15 @@ pub struct DependencySnapshot<'a> {
     roots: Vec<PathBuf>,
 }
 
-/// A reference that leads to a file: who writes it, where, and its target as written.
+/// A reference that leads to a file: who writes it, where, its target as written, and how many
+/// references (or includes) with that target come before it in the file. The target and the
+/// ordinal identify it on either side, where its range belongs to one side's text alone.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Referrer {
     pub(crate) path: PathBuf,
     pub(crate) range: SourceRange,
     pub(crate) written: String,
+    pub(crate) ordinal: usize,
 }
 
 impl<'a> DependencySnapshot<'a> {
@@ -183,6 +186,7 @@ impl<'a> DependencySnapshot<'a> {
                 path: location.path.to_path_buf(),
                 range: location.include.range,
                 written: location.include.target.clone(),
+                ordinal: self.include_ordinal(&location.path, &location.include),
             })
             .collect();
         found.sort();
@@ -194,10 +198,14 @@ impl<'a> DependencySnapshot<'a> {
     pub(crate) fn referrers(&self, path: &Path) -> Vec<Referrer> {
         let mut found: Vec<Referrer> = adoc_lang::references_to(&self.state, path)
             .into_iter()
-            .map(|location| Referrer {
-                written: self.written(&location.path, location.range),
-                path: location.path,
-                range: location.range,
+            .map(|location| {
+                let written = self.written(&location.path, location.range);
+                Referrer {
+                    ordinal: self.reference_ordinal(&location.path, &written, location.range),
+                    written,
+                    path: location.path,
+                    range: location.range,
+                }
             })
             .collect();
         found.sort();
@@ -214,6 +222,11 @@ impl<'a> DependencySnapshot<'a> {
                     path: location.path.to_path_buf(),
                     range: location.reference.range,
                     written: location.reference.target.clone(),
+                    ordinal: self.reference_ordinal(
+                        location.path,
+                        &location.reference.target,
+                        location.reference.range,
+                    ),
                 })
                 .collect();
         found.sort();
@@ -235,6 +248,34 @@ impl<'a> DependencySnapshot<'a> {
             .unwrap_or_default()
     }
 
+    /// How many references of the file at `path` with the target `written` come before the one
+    /// at `range`.
+    fn reference_ordinal(&self, path: &Path, written: &str, range: SourceRange) -> usize {
+        self.state.index.file(path).map_or(0, |file| {
+            file.document
+                .references
+                .iter()
+                .filter(|reference| {
+                    reference.target == written && reference.range.start < range.start
+                })
+                .count()
+        })
+    }
+
+    /// How many include directives of the file at `path` with `include`'s target come before
+    /// it.
+    fn include_ordinal(&self, path: &Path, include: &adoc_core::IncludeDirective) -> usize {
+        self.state.index.file(path).map_or(0, |file| {
+            file.document
+                .includes
+                .iter()
+                .filter(|other| {
+                    other.target == include.target && other.range.start < include.range.start
+                })
+                .count()
+        })
+    }
+
     /// The ids the page at `path` can be reached by: its anchors and its sections' ids.
     pub(crate) fn anchors(&self, path: &Path) -> BTreeSet<String> {
         let Some(file) = self.state.index.file(path) else {
@@ -252,14 +293,24 @@ impl<'a> DependencySnapshot<'a> {
             .collect()
     }
 
-    /// Whether the file at `from` still writes a reference with the target `written`, and where.
-    pub(crate) fn still_writes(&self, from: &Path, written: &str) -> Option<SourceRange> {
+    /// Whether the file at `from` still writes the `ordinal`th reference with the target
+    /// `written`, and where.
+    pub(crate) fn still_writes(
+        &self,
+        from: &Path,
+        written: &str,
+        ordinal: usize,
+    ) -> Option<SourceRange> {
         self.state.index.file(from).and_then(|file| {
-            file.document
+            let mut matching: Vec<SourceRange> = file
+                .document
                 .references
                 .iter()
-                .find(|reference| reference.target == written)
+                .filter(|reference| reference.target == written)
                 .map(|reference| reference.range)
+                .collect();
+            matching.sort_by_key(|range| range.start);
+            matching.get(ordinal).copied()
         })
     }
 

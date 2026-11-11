@@ -65,9 +65,33 @@ struct Found {
     origin: PathBuf,
     sides: BTreeSet<Side>,
     via: Vec<PathBuf>,
-    source: Option<(PathBuf, adoc_core::SourceRange)>,
+    source: Option<Source>,
     anchor: Option<String>,
     publication: Option<String>,
+}
+
+/// The reference or include an impact rests on. Its target as written and its ordinal among
+/// those with that target identify it on both sides; its range is the side's that found it,
+/// head's whenever head has it.
+#[derive(Clone, Debug)]
+struct Source {
+    path: PathBuf,
+    range: adoc_core::SourceRange,
+    side: Side,
+    written: String,
+    ordinal: usize,
+}
+
+impl Source {
+    fn of(referrer: &Referrer, side: Side) -> Self {
+        Self {
+            path: referrer.path.clone(),
+            range: referrer.range,
+            side,
+            written: referrer.written.clone(),
+            ordinal: referrer.ordinal,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -82,7 +106,7 @@ type Key = (
     PathBuf,
     Option<String>,
     Option<String>,
-    Option<(PathBuf, usize)>,
+    Option<(PathBuf, String, usize)>,
 );
 
 #[derive(Default)]
@@ -102,11 +126,22 @@ impl Gathered {
             found
                 .source
                 .as_ref()
-                .map(|(path, range)| (path.clone(), range.start)),
+                .map(|source| (source.path.clone(), source.written.clone(), source.ordinal)),
         );
         match self.found.get_mut(&key) {
             Some(known) => {
                 known.sides.extend(found.sides);
+                let head_source = found
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| source.side == Side::Head);
+                let base_source = known
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| source.side == Side::Base);
+                if head_source && base_source {
+                    known.source = found.source;
+                }
                 if found.via.len() < known.via.len() {
                     known.via = found.via;
                 }
@@ -276,7 +311,7 @@ fn render(
                     side,
                     next.clone(),
                 );
-                impact.source = Some((includer.path.clone(), includer.range));
+                impact.source = Some(Source::of(&includer, side));
                 gathered.add(impact);
             }
             queue.push_back(next);
@@ -322,7 +357,7 @@ fn referrer_impact(
         vec![target.to_path_buf(), referrer.path.clone()],
     );
     impact.status = Some(status);
-    impact.source = Some((referrer.path.clone(), referrer.range));
+    impact.source = Some(Source::of(referrer, side));
     impact
 }
 
@@ -342,9 +377,9 @@ fn moved_or_removed(
         }
         let still = head
             .has(&referrer.path)
-            .then(|| head.still_writes(&referrer.path, &referrer.written))
+            .then(|| head.still_writes(&referrer.path, &referrer.written, referrer.ordinal))
             .flatten();
-        let (status, side, source) = match still {
+        let (status, side, range) = match still {
             None => (ImpactStatus::ResolvedByChange, Side::Base, referrer.range),
             Some(range) => match head.resolves(&referrer.path, &referrer.written) {
                 Some(now) if to.is_some_and(|to| to == now) => {
@@ -356,7 +391,11 @@ fn moved_or_removed(
         };
         let mut impact = referrer_impact(base, &referrer, old, old, Side::Base, status);
         impact.sides.insert(side);
-        impact.source = Some((referrer.path.clone(), source));
+        impact.source = Some(Source {
+            range,
+            side,
+            ..Source::of(&referrer, side)
+        });
         gathered.add(impact);
     }
 }
@@ -378,7 +417,7 @@ fn removed_anchors(
             for referrer in snapshot.anchor_referrers(path, id) {
                 let still = head
                     .has(&referrer.path)
-                    .then(|| head.still_writes(&referrer.path, &referrer.written))
+                    .then(|| head.still_writes(&referrer.path, &referrer.written, referrer.ordinal))
                     .flatten()
                     .is_some();
                 let status = if still {
@@ -637,9 +676,9 @@ fn finish(
                 origin: display(&found.origin),
                 evidence: evidence(&found.sides),
                 via: found.via.iter().map(|path| display(path)).collect(),
-                source: found.source.map(|(path, range)| SourceSpan {
-                    path: display(&path),
-                    range: range.into(),
+                source: found.source.map(|source| SourceSpan {
+                    path: display(&source.path),
+                    range: source.range.into(),
                 }),
                 anchor: found.anchor,
             }

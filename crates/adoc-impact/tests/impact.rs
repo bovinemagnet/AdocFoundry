@@ -51,6 +51,15 @@ impl Revisions {
         }
     }
 
+    /// Takes the files as they are now as the base.
+    fn rebase(&mut self) {
+        self.base = state(&self.root);
+    }
+
+    fn read(&self, relative: &str) -> String {
+        fs::read_to_string(self.path(relative)).unwrap()
+    }
+
     fn path(&self, relative: &str) -> PathBuf {
         self.root.join(relative)
     }
@@ -74,6 +83,15 @@ impl Revisions {
 
     /// The report of `changes`, the head side indexed from the files as they are now.
     fn report(&self, changes: &[Change], publications: &[Publication]) -> ImpactReport {
+        self.report_within(changes, publications, Limits::default())
+    }
+
+    fn report_within(
+        &self,
+        changes: &[Change],
+        publications: &[Publication],
+        limits: Limits,
+    ) -> ImpactReport {
         let head = state(&self.root);
         let roots = [self.root.clone()];
         analyse(
@@ -81,7 +99,7 @@ impl Revisions {
             Some(&DependencySnapshot::borrowed(&self.base, &roots)),
             &DependencySnapshot::borrowed(&head, &roots),
             publications,
-            Limits::default(),
+            limits,
         )
     }
 }
@@ -452,4 +470,113 @@ fn impact_report_is_deterministic() {
         "no absolute path"
     );
     insta::assert_snapshot!("impact_report", first);
+}
+
+/// The text `source` spans in the file as it is now.
+fn spanned(revisions: &Revisions, impact: &Impact) -> String {
+    let source = impact.source.as_ref().expect("a source span");
+    let text = revisions.read(&source.path);
+    text[source.range.start..source.range.end].to_owned()
+}
+
+#[test]
+fn impact_include_moved_in_its_consumer_is_one_impact() {
+    // #536: the consumer's text shifted, so its include sits at another byte in head.
+    let revisions = Revisions::new();
+    revisions.write(
+        INTRO,
+        "An introduction, changed.\n\ninclude::partial$nested.adoc[]\n",
+    );
+    revisions.write(
+        INDEX,
+        &revisions
+            .read(INDEX)
+            .replacen("= Product\n", "= Product\n\nA new paragraph.\n", 1),
+    );
+    let report = revisions.report(
+        &[
+            revisions.change(INTRO, ChangeKind::Modified),
+            revisions.change(INDEX, ChangeKind::Modified),
+        ],
+        &[],
+    );
+    let from_intro: Vec<&Impact> = of_kind(&report, ImpactKind::Render)
+        .into_iter()
+        .filter(|impact| impact.origin == INTRO)
+        .collect();
+    assert_eq!(paths(&from_intro), [INDEX, INSTALL], "{from_intro:#?}");
+    assert_eq!(from_intro[0].evidence, EvidenceSide::Both);
+    assert_eq!(
+        spanned(&revisions, from_intro[0]),
+        "include::partial$intro.adoc[]"
+    );
+}
+
+#[test]
+fn impact_anchor_reference_moved_in_its_consumer_is_one_impact() {
+    // #536: the referrer's text shifted, so its xref sits at another byte in head.
+    let revisions = Revisions::new();
+    revisions.write(
+        INSTALL,
+        "= Installing\n\ninclude::partial$intro.adoc[]\n\n== Getting ready\n\nSteps.\n",
+    );
+    revisions.write(
+        INDEX,
+        &revisions
+            .read(INDEX)
+            .replacen("= Product\n", "= Product\n\nA new paragraph.\n", 1),
+    );
+    let report = revisions.report(
+        &[
+            revisions.change(INSTALL, ChangeKind::Modified),
+            revisions.change(INDEX, ChangeKind::Modified),
+        ],
+        &[],
+    );
+    let references = of_kind(&report, ImpactKind::ReferenceIntegrity);
+    assert_eq!(paths(&references), [INDEX], "{references:#?}");
+    assert_eq!(references[0].evidence, EvidenceSide::Both);
+    assert_eq!(references[0].anchor.as_deref(), Some("setup"));
+    assert_eq!(
+        spanned(&revisions, references[0]),
+        "xref:install.adoc#setup[setting up]"
+    );
+}
+
+#[test]
+fn impact_two_references_with_one_target_are_two_impacts() {
+    // #542: each reference keeps its own place.
+    let mut revisions = Revisions::new();
+    revisions.write(
+        GUIDE,
+        "= Guide\n\nRead xref:install.adoc[] first.\n\nThen xref:install.adoc[] again.\n",
+    );
+    revisions.rebase();
+    let moved = "v1/modules/ROOT/pages/setup.adoc";
+    let text = revisions.read(INSTALL);
+    revisions.remove(INSTALL);
+    revisions.write(moved, &text);
+    let report = revisions.report(
+        &[revisions.change(
+            moved,
+            ChangeKind::Renamed {
+                from: revisions.path(INSTALL),
+            },
+        )],
+        &[],
+    );
+    let from_guide: Vec<&Impact> = of_kind(&report, ImpactKind::ReferenceIntegrity)
+        .into_iter()
+        .filter(|impact| impact.path == GUIDE)
+        .collect();
+    assert_eq!(from_guide.len(), 2, "{from_guide:#?}");
+    let starts: Vec<usize> = from_guide
+        .iter()
+        .map(|impact| impact.source.as_ref().unwrap().range.start)
+        .collect();
+    assert_ne!(starts[0], starts[1]);
+    for impact in from_guide {
+        assert_eq!(impact.status, Some(ImpactStatus::Broken));
+        assert_eq!(spanned(&revisions, impact), "xref:install.adoc[]");
+    }
 }
