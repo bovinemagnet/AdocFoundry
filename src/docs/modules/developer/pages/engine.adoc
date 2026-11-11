@@ -1355,20 +1355,37 @@ A save of the page in flight is waited for before the file moves.
 The move falls back to copy-and-remove across file systems.
 
 Each deletion is a folder named `<milliseconds>-<process id>-<count>` in `DELETED_DIR` (`deleted`) under `Settings::state_dir`, beside local history.
-It holds `file`, the contents, and `path`, the original path, which is for information only.
+It holds `file`, the contents, and `path`, the original path as UTF-8 text, which restoring reads.
+`path` is written to `path.partial` and renamed before the file is moved, and a deletion is refused if it cannot be written.
+A path that is not UTF-8 is not recorded, so that deletion can only be undone in its session.
+The folder's name gives the time of the deletion.
 Without a state folder `Engine::can_delete_files()` is false and nothing is deleted.
-Copies from earlier sessions are removed once older than `[history] keep_days`, and are not offered for undo.
+Copies from earlier sessions are removed once older than `[history] keep_days`, and are not offered for undo, though they can be restored.
 
 `Engine::undo_delete() -> Result<PathBuf, EngineError>` puts back the latest deletion made since the engine started, reopening the file if it had a tab.
 It refuses, keeping the deletion, while a file exists at that path again.
 `Engine::last_deleted() -> Option<&Path>` names the file it would put back.
 The events are `EngineEvent::FileDeleted(PathBuf)` and `EngineEvent::FileRestored(PathBuf)`.
 
-The commands are `file.delete` (`CommandArgs::Path`, or none for the active tab's file) and `file.undo_delete`.
-`CommandContext::Deletion` holds while a tab is active and there is a state folder, and `CommandContext::DeletedFile` while a deletion can be put back.
+`Engine::kept_deletions() -> Vec<KeptDeletion>` lists the deletions kept for the roots, newest first.
+`KeptDeletion` is `{ id: String, path: PathBuf, deleted: SystemTime, occupied: bool }`, exported from `adoc_engine`, and `occupied` says a file is at the path now.
+It reads only the state folder and whether a file is at each path.
+An entry with no `path` record, a name not of the form above, or anything else it cannot trust is left out.
+
+The store is read as untrusted.
+No link inside it is followed: an entry folder, `file` or `path` that is a link is skipped.
+A recorded path is listed or restored only when it is absolute, has no `..` component and lies in a root reached without a link, the Files view's `listable` check.
+The path restored is the normalised one.
+
+The commands are `file.delete` (`CommandArgs::Path`, or none for the active tab's file), `file.undo_delete` and `file.restore_deleted`.
+`file.restore_deleted` takes `CommandArgs::Custom({"deletion": "<id>"})`.
+It puts the file back, making any folders that have gone, refuses while a file exists at the path, and removes the entry's folder.
+It returns `CommandOutcome::Opened(id)` when it opened a page and `CommandOutcome::Done` otherwise, emits `EngineEvent::FileRestored(PathBuf)`, and drops a matching deletion from this session's undo list.
+`CommandContext::Deletion` holds while a tab is active and there is a state folder, `CommandContext::DeletedFile` while a deletion can be put back, and `CommandContext::KeptDeletions` while a workspace is open and there is a state folder.
 Only the app deletes: the command line, `adoc-ls` and `adoc-mcp` have no state folder and never invoke the command.
 
 The app's side is `crates/adocfoundry/src/workspace_view/delete_file.rs`: the confirmation, which reads `Engine::impact_inspection` for the `ChangeSource::Removal` of the path (see <<impact-inspection>>), and the notification with its Undo.
+The Restore Deleted File… picker is `on_restore_deleted_file` in the same module, on gpui-component's `Command` list as Select Font Set… is, with the action `RestoreDeletedFile`.
 
 [#panel-menus]
 === The panels' file commands

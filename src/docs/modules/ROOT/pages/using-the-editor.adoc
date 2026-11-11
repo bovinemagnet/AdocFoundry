@@ -1659,8 +1659,29 @@ It reopens the file when it had a tab.
 It refuses, and keeps the deletion, while a file exists at that path again.
 
 Undo Delete is separate from Edit > Undo because undo history belongs to each page, and a deleted page has no tab left.
-Deletions from earlier sessions are not offered for undo.
+Deletions from earlier sessions are not offered for undo, but File > Restore Deleted File… can put them back (see <<restore-deleted-file>>).
 Their copies are removed once they are older than `[history] keep_days`, the local history setting.
+
+[[restore-deleted-file]]
+=== Restore Deleted File
+
+File > Restore Deleted File… (`file.restore_deleted`) lists the deletions kept for files of the open workspace's folders.
+It lists those of this session and of earlier ones, newest first.
+Each row shows the file's path, relative to its workspace folder, and how long ago it was deleted.
+A row whose path has a file at it now says "a file is there now".
+
+Choosing a row puts the file back.
+Any folders it was in that have since gone are made again.
+The file is opened if it is a page, an AsciiDoc file.
+The index, the catalogue, the graph, the problems and the Files panel change as they do for Undo Delete.
+
+It refuses, and keeps the deletion, while a file exists at the path.
+It also refuses a path outside the workspace's folders, or reached through a linked folder.
+When nothing is kept, a notification says "No deleted files of this workspace are kept."
+
+Restoring one of this session's deletions this way also takes it off Undo Delete's list.
+Deletions are still removed once they are older than `[history] keep_days`.
+Deletions made by 0.9.0 can be restored too.
 
 [[application-menu]]
 == The application menu
@@ -1681,7 +1702,7 @@ An item whose command cannot run just now is greyed out instead of hidden, for e
 A command the build lacks, such as PDF export in a build without Typst, is left out.
 
 File::
-Open, New Page, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, delete a file, settings and re-indexing.
+Open, New Page, save, reload, local history, recovering unsaved changes, export to PDF or HTML, close, delete or restore a file, settings and re-indexing.
 It ends with Quit, after a separator, named as the platform names it: "Quit AdocFoundry" on macOS, "Exit" on Windows and "Quit" on Linux.
 
 Edit::

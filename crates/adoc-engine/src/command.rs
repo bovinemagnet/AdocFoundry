@@ -56,6 +56,9 @@ pub enum CommandContext {
     Deletion,
     /// A file deleted since the engine started can be put back.
     DeletedFile,
+    /// A workspace is open and deleted files are kept (there is a state folder), so one kept
+    /// from this session or an earlier one can be restored.
+    KeptDeletions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

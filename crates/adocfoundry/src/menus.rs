@@ -94,6 +94,7 @@ const MENUS: &[(&str, &[Entry])] = &[
             Command(ids::DOCUMENT_CLOSE_CLEAN),
             Command(ids::DOCUMENT_CLOSE_ALL),
             Command(ids::FILE_DELETE),
+            Command(ids::FILE_RESTORE_DELETED),
             Separator,
             Command(ids::SETTINGS_OPEN),
             Command(ids::SETTINGS_RELOAD),

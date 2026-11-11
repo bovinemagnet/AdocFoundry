@@ -395,7 +395,7 @@ fn size(bytes: u64) -> String {
     }
 }
 
-fn seconds(time: SystemTime) -> i64 {
+pub(crate) fn seconds(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH).map_or(0, |since| {
         i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
     })

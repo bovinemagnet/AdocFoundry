@@ -7,6 +7,7 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 ### Added
 
 - Find in Workspace has an All files option, which searches every text file in the open folders, such as `antora.yml`, the playbook and examples, rather than only the AsciiDoc pages (#434). The folders are walked on the search worker, never entering a folder named in `[workspace] ignore` or a link, and binary and non-UTF-8 files are left out, as the editor will not open them. Replace reaches the same files. `SearchRequest` gains `all_text_files`.
+- File › Restore Deleted File… puts back a deleted file kept from any session, where Undo Delete reaches only the latest deletion of the one that made it (#434). It lists the deletions the state folder keeps for the workspace's files, newest first, each with its path and when it was deleted, and a row whose path has a file at it again says so; choosing one puts the file back, making any folders it was in, and opens it if it is a page. It refuses, keeping the deletion, while a file is at the path, and for a path outside the workspace's folders or through a linked folder. Deletions made by 0.9.0 can be restored too. The state folder is read as untrusted: no link in it is followed, and a recorded path that is relative or climbs with `..` is never restored. `adoc-engine` gains `file.restore_deleted`, `Engine::kept_deletions`, `KeptDeletion` and `CommandContext::KeptDeletions`, and writes each deletion's record of its path whole, before moving the file.
 
 ### Fixed
 

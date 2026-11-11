@@ -8996,6 +8996,66 @@ fn delete_file_lists_what_breaks_and_undo_puts_it_back(cx: &mut TestAppContext) 
         .is_some_and(|(path, _)| path == install)));
 }
 
+/// #434: File › Restore Deleted File… lists the deletions an earlier session left, newest
+/// first, and puts back the one chosen, opening it.
+#[gpui::test]
+fn restore_deleted_file_puts_back_an_earlier_sessions_deletion(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(&directory.path().join("impact"));
+    copy_tree(&fixture("impact"), &root);
+    let settings = Settings::default()
+        .with_git_opt_in()
+        .with_state_dir(Some(directory.path().join("state")));
+    let pages = root.join("v1/modules/ROOT/pages");
+    let (guide, install) = (pages.join("guide.adoc"), pages.join("install.adoc"));
+    let text = std::fs::read_to_string(&install).unwrap();
+    {
+        let mut earlier = Engine::new(settings.clone());
+        earlier.open_workspace(vec![root.clone()]).unwrap();
+        for page in [&guide, &install] {
+            earlier
+                .invoke(ids::FILE_DELETE, CommandArgs::Path(page.clone()))
+                .unwrap();
+        }
+    }
+    let app = app_with(Engine::new(settings), cx);
+    let mut workspace = None;
+    let window = cx.open_window(size(px(1400.), px(900.)), |window, cx| {
+        let view =
+            cx.new(|cx| WorkspaceView::new(app.clone(), Some(root.clone()), vec![], window, cx));
+        workspace = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let workspace = workspace.unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    assert!(drain_until(&app, &mut cx, |cx| cx.update(|_, cx| app
+        .read(cx)
+        .engine
+        .command_available(ids::FILE_RESTORE_DELETED))));
+
+    cx.update(|window, cx| {
+        let focus = gpui::Focusable::focus_handle(workspace.read(cx), cx);
+        window.focus(&focus, cx);
+    });
+    cx.dispatch_action(crate::editor::bindings::RestoreDeletedFile);
+    redraw(&app, &mut cx);
+    assert!(cx.update(gpui_component::WindowExt::has_active_dialog));
+    // The newest first: Install.
+    cx.simulate_keystrokes("enter");
+    redraw(&app, &mut cx);
+    assert!(!cx.update(gpui_component::WindowExt::has_active_dialog));
+    assert_eq!(std::fs::read_to_string(&install).unwrap(), text);
+    assert!(!guide.exists(), "only the one chosen");
+    assert!(drain_until(&app, &mut cx, |cx| active_page(&app, cx)
+        .is_some_and(|(path, _)| path == install)));
+    let kept = cx.update(|_, cx| app.read(cx).engine.kept_deletions());
+    assert_eq!(
+        kept.iter().map(|kept| &kept.path).collect::<Vec<_>>(),
+        [&guide]
+    );
+}
+
 /// `window_with_an_unsaved_page` (or one with nothing unsaved) as the app opens it: the window
 /// known as the main one, and the app's own actions bound, so Quit goes the way it does there.
 fn as_main_window(

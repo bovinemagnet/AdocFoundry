@@ -1,16 +1,38 @@
 //! Delete File (#100): the confirmation lists what removing the file would break, from Inspect
 //! Impact's analysis (`impact.inspect`, which the Impact panel then holds too), before the
 //! engine's `file.delete` moves it aside; the notification after offers Undo, which is
-//! `file.undo_delete`, as Edit › Undo Delete is.
+//! `file.undo_delete`, as Edit › Undo Delete is. File › Restore Deleted File… (#434) lists the
+//! deletions the engine keeps for the workspace's files, from this session or earlier ones,
+//! and puts back the one chosen through `file.restore_deleted`.
+
+use std::{rc::Rc, time::SystemTime};
 
 use adoc_engine::{
     impact::{Impact, ImpactKind},
-    ChangeSource, InspectionState,
+    ChangeSource, InspectionState, KeptDeletion,
 };
-use gpui_component::button::ButtonVariant;
+use gpui_component::{button::ButtonVariant, command::CommandItem};
 
 use super::*;
-use crate::editor::bindings::{DeleteFile, UndoDelete};
+use crate::{
+    editor::{
+        bindings::{DeleteFile, RestoreDeletedFile, UndoDelete},
+        blame::relative_time,
+    },
+    history_view::seconds,
+};
+
+/// A kept deletion's row in Restore Deleted File…: where it was and when it went, and whether
+/// a file is at its path now, which restoring refuses to replace.
+fn kept_label(kept: &KeptDeletion, roots: &[PathBuf], now: i64) -> String {
+    let path = sidebar::display_path(&kept.path, roots);
+    let when = relative_time(seconds(kept.deleted), now);
+    if kept.occupied {
+        format!("{path} — deleted {when}; a file is there now")
+    } else {
+        format!("{path} — deleted {when}")
+    }
+}
 
 /// How many of the things it would break the confirmation lists.
 const LISTED: usize = 8;
@@ -111,6 +133,65 @@ impl WorkspaceView {
         cx: &mut Context<Self>,
     ) {
         self.invoke(ids::FILE_UNDO_DELETE, CommandArgs::None, window, cx);
+    }
+
+    /// File › Restore Deleted File…: the deletions kept for the workspace's files, newest
+    /// first; the one chosen is put back, and opened if it is a page.
+    pub(super) fn on_restore_deleted_file(
+        &mut self,
+        _: &RestoreDeletedFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = &self.app.read(cx).engine;
+        if !engine.command_available(ids::FILE_RESTORE_DELETED) {
+            return;
+        }
+        let kept = engine.kept_deletions();
+        if kept.is_empty() {
+            window.push_notification("No deleted files of this workspace are kept.", cx);
+            return;
+        }
+        let roots = engine.roots().to_vec();
+        let now = seconds(SystemTime::now());
+        let items: Vec<CommandItem> = kept
+            .iter()
+            .map(|kept| {
+                let path = sidebar::display_path(&kept.path, &roots);
+                CommandItem::new()
+                    .label(kept_label(kept, &roots, now))
+                    .keywords([SharedString::from(path)])
+            })
+            .collect();
+        let kept = Rc::new(kept);
+        let state = cx.new(|cx| CommandState::new(window, cx));
+        let focus = state.read(cx).focus_handle(cx);
+        let workspace = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, window, cx| {
+            window.focus(&focus, cx);
+            dialog.close_button(false).p_0().child(
+                Command::new(&state)
+                    .bordered(false)
+                    .placeholder("Restore a deleted file")
+                    .max_h(px(420.))
+                    .items(items.clone())
+                    .on_confirm({
+                        let (kept, workspace) = (kept.clone(), workspace.clone());
+                        move |index, window, cx| {
+                            let Some(kept) = kept.get(index.row) else {
+                                return;
+                            };
+                            let args = CommandArgs::Custom(
+                                serde_json::json!({ "deletion": kept.id.clone() }),
+                            );
+                            window.close_dialog(cx);
+                            let _ = workspace.update(cx, |workspace, cx| {
+                                workspace.invoke(ids::FILE_RESTORE_DELETED, args, window, cx);
+                            });
+                        }
+                    }),
+            )
+        });
     }
 
     /// Asks before deleting the file at `path`, listing what removing it would break, worked

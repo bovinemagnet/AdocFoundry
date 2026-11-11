@@ -63,6 +63,7 @@ pub mod ids {
     pub const PAGE_RENAME: CommandId = CommandId::new("page.rename");
     pub const FILE_DELETE: CommandId = CommandId::new("file.delete");
     pub const FILE_UNDO_DELETE: CommandId = CommandId::new("file.undo_delete");
+    pub const FILE_RESTORE_DELETED: CommandId = CommandId::new("file.restore_deleted");
     pub const PAGE_NEW: CommandId = CommandId::new("page.new");
     pub const PAGE_NEW_PARTIAL: CommandId = CommandId::new("page.new_partial");
     pub const FILE_NEW: CommandId = CommandId::new("file.new");
