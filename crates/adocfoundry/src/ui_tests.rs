@@ -5016,17 +5016,27 @@ fn an_unfinishable_reveal_leaves_the_selection_alone(cx: &mut TestAppContext) {
         files_rows(&files, cx).contains(&"  linked →".to_owned())
     }));
     let beneath = root.join("linked/modules/ROOT/pages/index.adoc");
+    // Each folder listed again is a rebuild of the tree.
+    let settle = |cx: &mut VisualTestContext| {
+        for _ in 0..40 {
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain(cx)));
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
     cx.update(|_, cx| files.update(cx, |files, cx| files.reveal(&beneath, cx)));
-    cx.run_until_parked();
-
-    click_files_row(&files, "blob.bin", 1, &mut cx);
+    settle(&mut cx);
     let selected =
         |cx: &mut VisualTestContext| cx.update(|_, cx| files.read(cx).selected_for_test(cx));
+    // The nearest row, the link, is selected once, and the reveal given up.
+    assert_eq!(selected(&mut cx), Some(root.join("linked")));
+    assert!(!cx.update(|_, cx| files.read(cx).reveal_pending_for_test()));
+
+    click_files_row(&files, "blob.bin", 1, &mut cx);
     assert_eq!(selected(&mut cx), Some(root.join("blob.bin")));
     // Listing the folders again rebuilds the tree; the user's selection stays.
     cx.update(|_, cx| files.update(cx, |files, cx| files.refresh(cx)));
-    cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear(cx));
+    settle(&mut cx);
     assert_eq!(selected(&mut cx), Some(root.join("blob.bin")));
 }
 

@@ -164,6 +164,7 @@ impl FilesView {
                 let Some(row) = this.rows.get(id).cloned() else {
                     return;
                 };
+                this.pending_reveal = None;
                 if open {
                     this.expanded.insert(row.path.clone());
                     this.request(&row.path, cx);
@@ -268,6 +269,19 @@ impl FilesView {
             .as_deref()
             .zip(target_id.as_ref())
             .is_some_and(|(path, id)| self.rows.get(id).is_some_and(|row| row.path == path));
+        // A reveal that can no longer finish selects the nearest row this once and is given
+        // up: the folder above the path is listed, or cannot be, and the path is not in it, or
+        // the way down passes a link.
+        let unfinishable = reveal.is_some() && !revealed && {
+            let engine = &self.app.read(cx).engine;
+            match target_id.as_ref().and_then(|id| self.rows.get(id)) {
+                Some(row) if matches!(row.kind, RowKind::Root | RowKind::Directory) => matches!(
+                    engine.directory_with_excluded(&row.path),
+                    Some(Listing::Loaded(_) | Listing::Failed(_))
+                ),
+                _ => true,
+            }
+        };
         self.tree.update(cx, |tree, cx| {
             tree.set_items(items, cx);
             let index = target_id.as_ref().and_then(|id| tree.index_of(id));
@@ -278,7 +292,7 @@ impl FilesView {
                 }
             }
         });
-        if revealed {
+        if revealed || unfinishable {
             self.pending_reveal = None;
         }
         cx.notify();
@@ -555,6 +569,11 @@ impl FilesView {
         let item = self.tree.read(cx).selected_item()?;
         self.rows.get(&item.id).map(|row| row.path.clone())
     }
+
+    #[cfg(test)]
+    pub fn reveal_pending_for_test(&self) -> bool {
+        self.pending_reveal.is_some()
+    }
 }
 
 /// A root's name: its folder's, with the folder above when another root has the same name.
@@ -829,7 +848,11 @@ impl Render for FilesView {
                 )
                 .on_click(move |event, window, cx| {
                     let keep = event.click_count() > 1;
-                    let _ = files.update(cx, |files, cx| files.activate(&id, keep, window, cx));
+                    let _ = files.update(cx, |files, cx| {
+                        // The user's choice of row replaces any reveal still waiting.
+                        files.pending_reveal = None;
+                        files.activate(&id, keep, window, cx);
+                    });
                 })
         })
         .context_menu(row_menu);
