@@ -35,8 +35,8 @@ An entry naming a partial or an attachment does not list the page of the same na
 A component version spread over several `antora.yml` files (the same `name` and `version`) is listed in the navigation files of each, each read from its own folder.
 
 `quality.page.missing-title`::
-A published page with no document title.
-An empty `=` line is no title.
+A published page with no document title, written `= Title` or, in Markdown style, `# Title`.
+An empty `=` or `#` line is no title.
 It is skipped when an include that may be in the header may supply one.
 That is an include before any body content, outside listing, literal and passthrough blocks.
 Only blank lines, comments, attribute entries, block attribute lines and other includes may come before it.

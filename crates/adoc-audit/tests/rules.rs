@@ -619,6 +619,24 @@ fn an_empty_title_line_is_no_title() {
 }
 
 #[test]
+fn a_markdown_style_title_is_a_title() {
+    let report = audit_files(
+        &[
+            DOCS,
+            ("docs/modules/ROOT/pages/index.adoc", "# Docs\n\nText.\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    let titles: Vec<&str> = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.code == TITLE)
+        .map(|finding| finding.message.as_str())
+        .collect();
+    assert!(titles.is_empty(), "{titles:?}");
+}
+
+#[test]
 fn images_in_hidden_pages_are_checked_as_partials_are() {
     let report = audit_files(
         &[

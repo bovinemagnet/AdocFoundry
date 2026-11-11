@@ -10,6 +10,8 @@ pub(crate) struct Heading<'a> {
     pub title: &'a str,
     pub range: SourceRange,
     pub selection_range: SourceRange,
+    /// Marked with Markdown's `#`, which is a heading only where a block begins.
+    pub markdown: bool,
 }
 
 pub(crate) fn content(line: &str) -> &str {
@@ -18,7 +20,12 @@ pub(crate) fn content(line: &str) -> &str {
 
 pub(crate) fn parse_heading(line: &str, offset: usize) -> Option<Heading<'_>> {
     let line = content(line);
-    let marker_len = line.bytes().take_while(|byte| *byte == b'=').count();
+    // `=` or, as Asciidoctor also reads, Markdown's `#`.
+    let marker = match line.bytes().next() {
+        Some(marker @ (b'=' | b'#')) => marker,
+        _ => return None,
+    };
+    let marker_len = line.bytes().take_while(|byte| *byte == marker).count();
     if !(1..=6).contains(&marker_len)
         || !matches!(line.as_bytes().get(marker_len), Some(b' ' | b'\t'))
     {
@@ -45,6 +52,7 @@ pub(crate) fn parse_heading(line: &str, offset: usize) -> Option<Heading<'_>> {
         title,
         range: SourceRange::new(offset, offset + line.len()),
         selection_range: SourceRange::new(selection_start, selection_start + title.len()),
+        markdown: marker == b'#',
     })
 }
 
@@ -638,7 +646,7 @@ impl<'a> VerbatimBlocks<'a> {
         self.follow_compound(trimmed);
         if trimmed.is_empty()
             || is_compound_delimiter(trimmed)
-            || parse_heading(trimmed, 0).is_some()
+            || parse_heading(trimmed, 0).is_some_and(|heading| self.begins_block(&heading))
         {
             self.in_text = false;
         } else if !self.in_text
@@ -668,6 +676,12 @@ impl<'a> VerbatimBlocks<'a> {
     /// block, where Asciidoctor reads a heading as text.
     pub(crate) fn in_compound_block(&self) -> bool {
         !self.compound.is_empty()
+    }
+
+    /// Whether `heading`, on the line about to be read, is one: a `#` line within a block of
+    /// text is part of it, as Asciidoctor reads it.
+    pub(crate) fn begins_block(&self, heading: &Heading<'_>) -> bool {
+        !heading.markdown || !self.in_text
     }
 
     /// The preprocessor conditional `line` is, which the preprocessor reads everywhere but in
