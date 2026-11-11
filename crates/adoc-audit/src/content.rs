@@ -1,12 +1,12 @@
 //! Page content: `quality.page.missing-title` and `quality.image.missing-alt`.
 //!
 //! Titles are checked on published pages (an `.adoc` file whose name does not begin with `_` or
-//! `.`). An empty `=` line is reported; no title line at all
-//! is reported unless a `doctitle` attribute gives one, and skipped when an include that may be
+//! `.`). A page with no title line, an empty `=` line being none, is reported unless a `doctitle` attribute gives one, and skipped when an include that may be
 //! in the header (before any body content, outside verbatim blocks) may supply it.
 //!
 //! Alternative text is checked on the block (`image::`) and inline (`image:`) image macros of
-//! published pages and of partials, which pages include. Text counts as the author's whenever
+//! published pages, of partials and of hidden pages (a name beginning with `_`), which pages
+//! include. Text counts as the author's whenever
 //! it is written: a first positional attribute (`image::a.png[What it shows]`,
 //! `image:a.png[What it shows]`), a named `alt`, an attribute reference, or text explicitly
 //! quoted empty (`[""]`), the author's statement that an image is decorative. A block image's
@@ -36,6 +36,10 @@ pub(crate) fn file(context: &Context<'_>, path: &Path, document: &Document, part
             images(context, path, document, part);
         }
         ResourceFamily::Partial => images(context, path, document, part),
+        // A hidden page is included by others, as a partial is.
+        ResourceFamily::Page if hidden_page(&coordinate.relative_path) => {
+            images(context, path, document, part);
+        }
         ResourceFamily::Page
         | ResourceFamily::Example
         | ResourceFamily::Image
@@ -44,25 +48,8 @@ pub(crate) fn file(context: &Context<'_>, path: &Path, document: &Document, part
 }
 
 fn title(context: &Context<'_>, path: &Path, document: &Document, part: &mut FileAudit) {
-    let finding = |message: &str, range| {
-        let mut finding = Finding::new(
-            FindingCode::Rule(RuleId::MISSING_TITLE),
-            RuleId::MISSING_TITLE.spec().default_severity,
-            message,
-            context.location(path, range),
-        );
-        finding.coordinate = context.coordinate(path);
-        finding.remediation =
-            Some("Give the page a title on its first line: `= What the page is about`".to_owned());
-        finding
-    };
-    if let Some(title) = &document.title {
-        if title.text.trim().is_empty() {
-            part.findings.push(finding(
-                "The page's document title is empty",
-                Some(title.range),
-            ));
-        }
+    // The parser reads no title from an empty `=` line, so a title it read is never empty.
+    if document.title.is_some() {
         return;
     }
     let titled_by_attribute = document.attributes.iter().any(|attribute| {
@@ -84,10 +71,35 @@ fn title(context: &Context<'_>, path: &Path, document: &Document, part: &mut Fil
             code: FindingCode::Rule(RuleId::MISSING_TITLE),
             reason: format!("The title may come from `{}`", include.target),
         }),
-        None => part
-            .findings
-            .push(finding("The page has no document title", None)),
+        None => {
+            let mut finding = Finding::new(
+                FindingCode::Rule(RuleId::MISSING_TITLE),
+                RuleId::MISSING_TITLE.spec().default_severity,
+                "The page has no document title",
+                context.location(path, None),
+            );
+            finding.coordinate = context.coordinate(path);
+            finding.remediation = Some(
+                "Give the page a title on its first line: `= What the page is about`".to_owned(),
+            );
+            part.findings.push(finding);
+        }
     }
+}
+
+/// Whether a file in a `pages` folder is a hidden page: an `.adoc` file Antora reads but does
+/// not publish, its name or a folder on its path beginning with `_`, and none with `.`.
+fn hidden_page(relative: &Path) -> bool {
+    let parts = || {
+        relative
+            .components()
+            .filter_map(|component| component.as_os_str().to_str())
+    };
+    relative
+        .extension()
+        .is_some_and(|extension| extension == "adoc")
+        && parts().any(|part| part.starts_with('_'))
+        && !parts().any(|part| part.starts_with('.'))
 }
 
 fn images(context: &Context<'_>, path: &Path, document: &Document, part: &mut FileAudit) {

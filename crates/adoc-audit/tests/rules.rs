@@ -601,6 +601,47 @@ fn a_title_comes_only_from_an_include_before_the_body() {
 }
 
 #[test]
+fn an_empty_title_line_is_no_title() {
+    let report = audit_files(
+        &[
+            DOCS,
+            ("docs/modules/ROOT/pages/index.adoc", "= \n\nText.\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    let messages: Vec<&str> = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.code == TITLE)
+        .map(|finding| finding.message.as_str())
+        .collect();
+    assert_eq!(messages, ["The page has no document title"]);
+}
+
+#[test]
+fn images_in_hidden_pages_are_checked_as_partials_are() {
+    let report = audit_files(
+        &[
+            DOCS,
+            (
+                "docs/modules/ROOT/pages/index.adoc",
+                "= Docs\n\ninclude::_fragment.adoc[]\n",
+            ),
+            (
+                "docs/modules/ROOT/pages/_fragment.adoc",
+                "image::shot.png[]\n",
+            ),
+        ],
+        AuditScope::Workspace,
+    );
+    assert_eq!(
+        found(&report, ALT),
+        ["docs/modules/ROOT/pages/_fragment.adoc"]
+    );
+    assert!(found(&report, TITLE).is_empty(), "a hidden page needs none");
+}
+
+#[test]
 fn an_entry_naming_a_partial_does_not_list_the_page_of_its_name() {
     let report = audit_files(
         &[
