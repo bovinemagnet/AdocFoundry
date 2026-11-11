@@ -229,7 +229,13 @@ pub fn analyse(
                 || snapshot.is_listed_nav(path)
                 || snapshot.is_descriptor(path)
         };
-        if !known(head, path) && !base.is_some_and(|base| known(base, old_path(change))) {
+        let has_components =
+            head.has_components() || base.is_some_and(DependencySnapshot::has_components);
+        if has_components
+            && could_be_content(path)
+            && !known(head, path)
+            && !base.is_some_and(|base| known(base, old_path(change)))
+        {
             gathered.gaps.push(Gap {
                 reason: "not-in-catalog",
                 detail: format!(
@@ -255,6 +261,25 @@ pub fn analyse(
     }
     publications_of(&mut gathered, base, head, publications);
     finish(gathered, &changes, base, head, limits)
+}
+
+/// Whether a component could hold the file at `path`, were it in one: an AsciiDoc file, a
+/// descriptor or playbook, or anything under a `modules` folder. A changed README, source file
+/// or CI file is not documentation, and leaves the report complete.
+fn could_be_content(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    matches!(extension.as_str(), "adoc" | "asciidoc" | "asc")
+        || name == "antora.yml"
+        || (name.contains("playbook") && matches!(extension.as_str(), "yml" | "yaml"))
+        || path.components().any(|part| part.as_os_str() == "modules")
 }
 
 fn old_path(change: &Change) -> &Path {

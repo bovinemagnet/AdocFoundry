@@ -37,10 +37,17 @@ struct Revisions {
 
 impl Revisions {
     fn new() -> Self {
+        Self::of("impact")
+    }
+
+    /// A copy of `tests/fixtures/<fixture>`.
+    fn of(fixture: &str) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let root = normalize_path(&directory.path().join("docs"));
         copy_tree(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/impact"),
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/fixtures")
+                .join(fixture),
             &root,
         );
         let base = state(&root);
@@ -805,4 +812,40 @@ fn impact_two_references_with_one_target_are_two_impacts() {
         assert_eq!(impact.status, Some(ImpactStatus::Broken));
         assert_eq!(spanned(&revisions, impact), "xref:install.adoc[]");
     }
+}
+
+#[test]
+fn impact_outside_antora_follows_includes() {
+    // #541: in a plain folder every indexed AsciiDoc file is a page.
+    let revisions = Revisions::of("includes");
+    revisions.write("partials/intro.adoc", "Changed content.\n");
+    let report = revisions.report(
+        &[revisions.change("partials/intro.adoc", ChangeKind::Modified)],
+        &[],
+    );
+    assert!(report.is_complete(), "{:#?}", report.completeness);
+    let render = of_kind(&report, ImpactKind::Render);
+    let index = render
+        .iter()
+        .find(|impact| impact.path == "index.adoc")
+        .unwrap_or_else(|| panic!("{render:#?}"));
+    assert_eq!(index.via, ["partials/intro.adoc", "index.adoc"]);
+    assert_eq!(index.evidence, EvidenceSide::Both);
+}
+
+#[test]
+fn impact_ignores_files_no_component_could_hold() {
+    // #542: a changed README or CI file is not documentation, and leaves the report complete.
+    let revisions = Revisions::new();
+    revisions.write("README.md", "# Read me\n");
+    revisions.write(".github/workflows/ci.yml", "on: push\n");
+    let report = revisions.report(
+        &[
+            revisions.change("README.md", ChangeKind::Added),
+            revisions.change(".github/workflows/ci.yml", ChangeKind::Added),
+        ],
+        &[],
+    );
+    assert!(report.is_complete(), "{:#?}", report.completeness);
+    assert!(report.impacts.is_empty(), "{:#?}", report.impacts);
 }

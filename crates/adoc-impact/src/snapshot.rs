@@ -89,9 +89,26 @@ impl<'a> DependencySnapshot<'a> {
         self.state.antora.resource_for_path(path)
     }
 
+    /// A page of the catalog, or, outside every component version's tree (a folder of
+    /// AsciiDoc files with no `antora.yml`), any AsciiDoc file the index holds.
     pub(crate) fn is_page(&self, path: &Path) -> bool {
-        self.resource(path)
-            .is_some_and(|resource| resource.coordinate.family == ResourceFamily::Page)
+        match self.resource(path) {
+            Some(resource) => resource.coordinate.family == ResourceFamily::Page,
+            None => self.state.index.file(path).is_some() && !self.in_component_tree(path),
+        }
+    }
+
+    /// Whether `path` lies under a component version's folder.
+    fn in_component_tree(&self, path: &Path) -> bool {
+        self.state
+            .antora
+            .components()
+            .any(|component| path.starts_with(&component.root))
+    }
+
+    /// Whether the revision has any component version.
+    pub(crate) fn has_components(&self) -> bool {
+        self.state.antora.components().next().is_some()
     }
 
     pub(crate) fn is_asset(&self, path: &Path) -> bool {
