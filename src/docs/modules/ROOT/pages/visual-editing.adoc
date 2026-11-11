@@ -47,6 +47,7 @@ After an hour in the visual editor, the Git diff touches only the lines you chan
 
 Text the editor does not understand is left alone and shown read-only; see <<read-only-content>>.
 
+[[changed-blocks]]
 == Changed blocks
 
 A block whose source lines have changed since the last commit has a bar at its left edge, in the same colours as the source editor: green for added, blue for modified.

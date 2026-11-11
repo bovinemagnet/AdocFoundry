@@ -29,6 +29,7 @@ The sidebar updates without a restart.
 A descriptor that cannot be read produces an `adoc.antora.invalid-descriptor` diagnostic.
 Problems inside a readable descriptor, such as a missing `name`, an unknown key or a `nav` file that does not exist, are reported in `antora.yml` itself; see xref:diagnostics.adoc[Diagnostics].
 
+[[resource-ids]]
 == Resource IDs
 
 A resource ID has up to five coordinates.
