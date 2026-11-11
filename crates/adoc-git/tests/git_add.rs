@@ -375,6 +375,64 @@ fn unstaging_in_a_folder_leaves_no_stale_tree() {
     assert!(status.starts_with(" M docs/page.adoc"), "{status}");
 }
 
+#[test]
+fn unstaging_a_new_file_leaves_it_untracked() {
+    if !has_git() {
+        return;
+    }
+    let (entries, _) = assert_unstages_like_git_restore(&["new.adoc"], |dir| {
+        init(dir, &[]);
+        fs::write(dir.join("page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        fs::write(dir.join("new.adoc"), "new\n").unwrap();
+        git_ok(dir, &["add", "new.adoc"]);
+    });
+    assert!(!entries.contains("new.adoc"), "{entries}");
+}
+
+#[test]
+fn unstaging_a_submodule_keeps_it_a_submodule() {
+    if !has_git() {
+        return;
+    }
+    let (entries, _) = assert_unstages_like_git_restore(&["sub"], |dir| {
+        init(dir, &[]);
+        fs::write(dir.join("page.adoc"), "one\n").unwrap();
+        commit_all(dir);
+        let first = git_ok(dir, &["rev-parse", "HEAD"]);
+        let gitlink = format!("160000,{},sub", first.trim());
+        git_ok(dir, &["update-index", "--add", "--cacheinfo", &gitlink]);
+        git_ok(dir, &["commit", "-q", "-m", "second"]);
+        let second = git_ok(dir, &["rev-parse", "HEAD"]);
+        let gitlink = format!("160000,{},sub", second.trim());
+        git_ok(dir, &["update-index", "--cacheinfo", &gitlink]);
+    });
+    assert!(entries.starts_with("100644 "), "{entries}");
+    assert!(entries.contains("160000 "), "{entries}");
+}
+
+#[test]
+fn unstaging_a_folder_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    init(dir.path(), &[]);
+    fs::create_dir(dir.path().join("docs")).unwrap();
+    fs::write(dir.path().join("docs/page.adoc"), "one\n").unwrap();
+    commit_all(dir.path());
+    fs::write(dir.path().join("docs/page.adoc"), "two\n").unwrap();
+    git_ok(dir.path(), &["add", "docs/page.adoc"]);
+    let before = state(dir.path());
+    let repo = Repository::discover_isolated(dir.path()).unwrap().unwrap();
+    let error = repo
+        .unstage(&[dir.path().join("docs").as_path()])
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("folder"), "{error}");
+    assert_eq!(state(dir.path()), before, "nothing is unstaged");
+}
+
 #[cfg(unix)]
 mod unix {
     use std::os::unix::fs::{symlink, PermissionsExt as _};
@@ -446,6 +504,39 @@ mod unix {
             fs::write(dir.join("link.adoc"), "other.adoc").unwrap();
         });
         assert!(entries.starts_with("120000 "), "{entries}");
+    }
+
+    #[test]
+    fn unstaging_a_link_keeps_it_a_link() {
+        if !has_git() {
+            return;
+        }
+        let (entries, _) = assert_unstages_like_git_restore(&["link.adoc"], |dir| {
+            init(dir, &[]);
+            fs::write(dir.join("target.adoc"), "target\n").unwrap();
+            symlink("target.adoc", dir.join("link.adoc")).unwrap();
+            commit_all(dir);
+            fs::remove_file(dir.join("link.adoc")).unwrap();
+            symlink("other.adoc", dir.join("link.adoc")).unwrap();
+            stage(dir, &["link.adoc"]).unwrap();
+        });
+        assert!(entries.starts_with("120000 "), "{entries}");
+    }
+
+    #[test]
+    fn unstaging_an_executable_file_keeps_it_executable() {
+        if !has_git() {
+            return;
+        }
+        let (entries, _) = assert_unstages_like_git_restore(&["run.sh"], |dir| {
+            init(dir, &[]);
+            fs::write(dir.join("run.sh"), "#!/bin/sh\n").unwrap();
+            fs::set_permissions(dir.join("run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+            commit_all(dir);
+            fs::write(dir.join("run.sh"), "#!/bin/sh\n# changed\n").unwrap();
+            git_ok(dir, &["add", "run.sh"]);
+        });
+        assert!(entries.starts_with("100755 "), "{entries}");
     }
 
     #[test]

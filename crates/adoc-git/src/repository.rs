@@ -454,7 +454,8 @@ impl Repository {
     }
 
     /// Puts `paths` back in the index as they are in `HEAD`, leaving the working tree alone, as
-    /// `git restore --staged` would.
+    /// `git restore --staged` would, a link as a link and a submodule as a submodule. A path that
+    /// is a folder in `HEAD` is refused, and nothing is unstaged unless every path can be.
     pub fn unstage(&self, paths: &[&Path]) -> Result<(), GitError> {
         let mut index = self.index_file()?;
         let head_tree = if self.repo.head().map_err(GitError::git)?.is_unborn() {
@@ -475,10 +476,14 @@ impl Repository {
             else {
                 continue;
             };
-            let mode = if entry.mode().is_executable() {
-                gix::index::entry::Mode::FILE_EXECUTABLE
-            } else {
-                gix::index::entry::Mode::FILE
+            use gix::index::entry::Mode;
+            use gix::object::tree::EntryKind;
+            let mode = match entry.mode().kind() {
+                EntryKind::Blob => Mode::FILE,
+                EntryKind::BlobExecutable => Mode::FILE_EXECUTABLE,
+                EntryKind::Link => Mode::SYMLINK,
+                EntryKind::Commit => Mode::COMMIT,
+                EntryKind::Tree => return Err(GitError::Folder(relative)),
             };
             // A zeroed stat makes the next status compare the file's content.
             index.dangerously_push_entry(

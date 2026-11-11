@@ -19,6 +19,8 @@ pub enum GitError {
         path: PathBuf,
         filter: String,
     },
+    /// `path` is a folder in `HEAD`, which unstaging takes only a file at a time.
+    Folder(PathBuf),
     /// `spec` names no commit in the repository.
     UnknownRevision {
         spec: String,
@@ -50,6 +52,11 @@ impl fmt::Display for GitError {
             Self::FilterNotRun { path, filter } => write!(
                 formatter,
                 "{} uses Git's `{filter}` filter, which AdocFoundry does not run: stage it with git add",
+                path.display()
+            ),
+            Self::Folder(path) => write!(
+                formatter,
+                "{} is a folder: unstage the files in it one at a time",
                 path.display()
             ),
             Self::UnknownRevision { spec, message } => {
