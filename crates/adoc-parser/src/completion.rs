@@ -65,7 +65,12 @@ enum BlockState {
 
 fn block_state(text: &str, line_start: usize) -> BlockState {
     let mut verbatim = VerbatimBlocks::default();
-    for line in text[..line_start].split_inclusive('\n') {
+    let before = &text[..line_start];
+    for line in before
+        .strip_prefix('\u{feff}')
+        .unwrap_or(before)
+        .split_inclusive('\n')
+    {
         verbatim.line(content(line).trim());
     }
     match verbatim.next() {
@@ -263,6 +268,13 @@ mod tests {
 
         assert_eq!(context.kind, CompletionKind::LocalAnchor);
         assert_eq!(context.prefix, "int");
+    }
+
+    #[test]
+    fn reads_a_delimiter_on_the_first_line_after_a_byte_order_mark() {
+        let text = "\u{feff}----\nSee xref:get";
+
+        assert_eq!(completion_context(text, text.len()), None);
     }
 
     #[test]

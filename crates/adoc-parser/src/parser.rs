@@ -48,9 +48,13 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
     let mut pending_anchor: Option<String> = None;
     // How many `ifdef`, `ifndef` and `ifeval` blocks are open.
     let mut conditionals = 0_usize;
-    let mut offset = 0;
+    // Asciidoctor drops a leading byte order mark; ranges still count it.
+    let (body, mut offset) = match text.strip_prefix('\u{feff}') {
+        Some(body) => (body, '\u{feff}'.len_utf8()),
+        None => (text, 0),
+    };
 
-    for line in text.split_inclusive('\n') {
+    for line in body.split_inclusive('\n') {
         let line_content = content(line);
         let trimmed = line_content.trim();
 
@@ -230,6 +234,30 @@ image::diagram.png[Architecture]\n";
         assert_eq!(document.includes[0].target, "partials/setup.adoc");
         assert_eq!(document.images[0].target, "diagram.png");
         assert!(document.diagnostics.is_empty());
+    }
+
+    /// A byte order mark is dropped, as Asciidoctor drops it, and every range still points
+    /// into the text as given (#525).
+    #[test]
+    fn reads_the_first_line_after_a_byte_order_mark() {
+        let source = "\u{feff}= Bom\n\n== S\n";
+        let document = parse("file:///a.adoc", source).document;
+        let title = document.title.expect("a title");
+        assert_eq!(title.text, "Bom");
+        assert_eq!(title.range, SourceRange::new(3, 8));
+        assert_eq!(title.selection_range, SourceRange::new(5, 8));
+        assert_eq!(document.sections[0].title, "S");
+
+        let document = parse("file:///a.adoc", "\u{feff}:toc: left\n").document;
+        assert_eq!(document.attributes[0].name, "toc");
+        assert_eq!(document.attributes[0].range.start, 3);
+
+        let document = parse("file:///a.adoc", "\u{feff}include::part.adoc[]\n").document;
+        assert_eq!(document.includes[0].target, "part.adoc");
+        assert_eq!(document.includes[0].range.start, 3);
+
+        let document = parse("file:///a.adoc", "\u{feff}----\n<<x>>\n----\n").document;
+        assert!(document.references.is_empty());
     }
 
     #[test]
