@@ -528,6 +528,10 @@ impl Server {
         self.permissions.write
     }
 
+    pub(crate) fn allow_build(&self) -> bool {
+        self.permissions.build
+    }
+
     /// Runs `work` with the engine on the runtime's blocking threads, so a long render, search
     /// or export never holds up the runtime: other requests and sessions are answered meanwhile,
     /// and wait only for the engine itself, and that for at most [`LOCK_WAIT`].

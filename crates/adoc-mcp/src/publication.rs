@@ -2,7 +2,7 @@
 //! documentation is ready to publish, put together from what the engine already checks (the
 //! quality audit, each component version's navigation and start page, the publication
 //! profiles) with no rule of its own, and the workflow prompts, recipes over the tools that
-//! grant nothing. An Antora build (`build_site`) waits for #293.
+//! grant nothing.
 
 use std::path::Path;
 
@@ -25,14 +25,25 @@ use crate::{
 
 const SCHEMA_VERSION: u32 = 1;
 
-/// What a native validation cannot see, said with every report.
-const NOT_CHECKED: [&str; 3] = [
-    "The Antora build itself is not run: extensions, the UI bundle, the playbook's content \
-     sources and remote components are not checked (`build_site` waits for issue #293).",
-    "Pages are checked as AsciiDoc sources and rendered natively, not by Asciidoctor; what the \
-     native renderer approximates is not reported (the `compatibility` provider, issue #104).",
-    "External links are not requested (the `external-links` provider, issue #86).",
-];
+/// What a native validation cannot see, said with every report; how to run the Antora build
+/// depends on whether this server offers `build_site` (`build`).
+fn not_checked(build: bool) -> [&'static str; 3] {
+    [
+        if build {
+            "This report does not build the site: extensions, the UI bundle, the playbook's \
+             content sources and remote components are checked only by an Antora build, which \
+             `build_site` runs."
+        } else {
+            "This report does not build the site: extensions, the UI bundle, the playbook's \
+             content sources and remote components are checked only by an Antora build, which \
+             this server runs (with `build_site`) only when started with --allow-build."
+        },
+        "Pages are checked as AsciiDoc sources and rendered natively, not by Asciidoctor; what \
+         the native renderer approximates is not reported (the `compatibility` provider, issue \
+         #104).",
+        "External links are not requested (the `external-links` provider, issue #86).",
+    ]
+}
 
 #[derive(Deserialize, JsonSchema)]
 struct ValidateArgs {
@@ -130,6 +141,7 @@ impl Server {
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn validate_publication(&self, Parameters(args): Parameters<ValidateArgs>) -> Answer {
+        let build = self.allow_build();
         self.run(move |state| {
             state.indexed()?;
             let audited = audit_for(
@@ -194,7 +206,7 @@ impl Server {
                 "audit": audit,
                 "navigation": navigation,
                 "profiles": profiles,
-                "not_checked": NOT_CHECKED,
+                "not_checked": not_checked(build),
                 "workspace_revision": state.engine.workspace_revision(),
             }))
         })
@@ -251,7 +263,7 @@ pub fn prompts() -> Vec<Prompt> {
         prompt(
             "review_documentation_change",
             "Review a documentation change",
-            "Review changed pages: what links to them, what they include, and what the audit says about them.",
+            "Review changed pages: what links to them, what they include, what the audit says about them, and what else the change affects.",
             vec![argument(
                 "pages",
                 "The changed pages' paths or resource ids, separated by commas.",
@@ -313,7 +325,7 @@ pub fn prompt_text(name: &str, arguments: &Map<String, Value>) -> Option<Result<
                 "Prepare a release of the documentation with {scope}.\n\n\
                  1. Call `validate_publication` with {scope}. Report its `outcome`, and every item it marks not ready: start pages that do not resolve, missing navigation files, publication profiles with problems.\n\
                  2. If the audit's outcome is not `pass`, call `quality_audit` with {scope} and list the findings by rule, most severe first, with each page and line. Say plainly when the audit is partial and why (its `completeness`).\n\
-                 3. Say what `not_checked` lists: this is not an Antora build.\n\
+                 3. Say what `not_checked` lists. If `build_site` is offered, offer to build the site with it and report its `outcome` and the end of its log; it runs the project's own npm scripts and Antora, so run it only when the user agrees.\n\
                  4. Propose fixes as `preview_changes` previews, one concern at a time; apply them only when the user agrees.\n\n\
                  {permission}"
             )
@@ -337,7 +349,7 @@ pub fn prompt_text(name: &str, arguments: &Map<String, Value>) -> Option<Result<
                 "Review a change to these pages: {pages}.\n\n\
                  1. For each page, call `get_page_context` (its navigation places, includes and incoming references) and `find_references` to see every page that links to or includes it; a change to a partial reaches every page that includes it.\n\
                  2. Call `check` for the pages' diagnostics, and `quality_audit` with `rules` for the rules that concern the change.\n\
-                 3. Report what else the change may affect, and say that impact analysis across Git revisions (`analyse_impact`) is not available yet, so this review follows the current workspace only.\n\n\
+                 3. Call `analyse_impact` with `source: {{\"type\": \"working_tree\"}}` for changes not yet committed, or `{{\"type\": \"git_refs\", \"base\": \"main\", \"head\": \"HEAD\"}}` for a branch's, and report what else the change affects (the pages that render it, the references it breaks, navigation and publications) and the report's `gaps`, which say what it could not trace.\n\n\
                  {permission}"
             )
         }
