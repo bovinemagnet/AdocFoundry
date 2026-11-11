@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use adoc_antora::{AntoraResource, ResourceFamily};
+use adoc_antora::{AntoraResource, ComponentDescriptor, ResourceFamily};
 use adoc_core::SourceRange;
 use adoc_index::normalize_path;
 use adoc_lang::{graph::LinkKind, WorkspaceState};
@@ -161,6 +161,26 @@ impl<'a> DependencySnapshot<'a> {
                 .antora
                 .components()
                 .any(|component| component.root.join("antora.yml") == path)
+    }
+
+    /// The component version whose `antora.yml` is at `path`.
+    pub(crate) fn descriptor(&self, path: &Path) -> Option<&ComponentDescriptor> {
+        self.state
+            .antora
+            .components()
+            .find(|component| component.root.join("antora.yml") == path)
+    }
+
+    /// The pages of a component version, through the catalog's ordered ranges.
+    pub(crate) fn version_pages(&self, component: &str, version: Option<&str>) -> Vec<PathBuf> {
+        let antora = &self.state.antora;
+        antora
+            .modules_of(component, version)
+            .flat_map(|module| {
+                antora.resources_in(component, version, &module.name, ResourceFamily::Page)
+            })
+            .map(|resource| normalize_path(&resource.source_path))
+            .collect()
     }
 
     /// The navigation files a component version's `antora.yml` lists.

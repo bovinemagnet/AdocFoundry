@@ -197,6 +197,9 @@ pub fn analyse(
                     lost_referrers(&mut gathered, base, head, path, path);
                 }
                 removed_anchors(&mut gathered, base, head, path);
+                if let Some(base) = base {
+                    descriptor(&mut gathered, base, head, path);
+                }
                 navigation(&mut gathered, base, head, path);
             }
             ChangeKind::Removed => match base {
@@ -436,6 +439,66 @@ fn lost_referrers(
             ..Source::of(&referrer, side)
         });
         gathered.add(impact);
+    }
+}
+
+/// A modified `antora.yml`, compared between the sides beyond its navigation files' listings:
+/// a new name or version moves every page of the version, so the references that led to them
+/// by the old coordinate are reviewed; a new title, version, start page or navigation list is
+/// a navigation impact on the version; changed attributes may change any page that reads
+/// them, which the index cannot say, so they are a gap.
+fn descriptor(
+    gathered: &mut Gathered,
+    base: &DependencySnapshot<'_>,
+    head: &DependencySnapshot<'_>,
+    path: &Path,
+) {
+    let (Some(before), Some(after)) = (base.descriptor(path), head.descriptor(path)) else {
+        return;
+    };
+    let moved = (&before.name, &before.version) != (&after.name, &after.version);
+    if moved {
+        for page in base.version_pages(&before.name, before.version.as_deref()) {
+            lost_referrers(gathered, base, head, &page, path);
+        }
+    }
+    let navigation_changed = moved
+        || before.title != after.title
+        || before.display_version != after.display_version
+        || before.start_page != after.start_page
+        || before.nav != after.nav
+        || before.prerelease != after.prerelease;
+    if navigation_changed {
+        gathered.add(Found {
+            sides: BTreeSet::from([Side::Base, Side::Head]),
+            ..found(
+                ImpactKind::Navigation,
+                path,
+                path,
+                Side::Head,
+                vec![path.to_path_buf()],
+            )
+        });
+    }
+    let attributes = |descriptor: &adoc_antora::ComponentDescriptor| {
+        descriptor
+            .attribute_entries
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry.value.clone(), entry.soft))
+            .collect::<Vec<_>>()
+    };
+    if before.asciidoc_attributes != after.asciidoc_attributes
+        || attributes(before) != attributes(after)
+    {
+        gathered.gaps.push(Gap {
+            reason: "attribute-consumers-not-analysed",
+            detail: format!(
+                "{} changes the version's AsciiDoc attributes; which pages read them is not \
+                 traced",
+                head.display(path)
+            ),
+            affected: vec![head.display(path)],
+        });
     }
 }
 

@@ -601,6 +601,62 @@ fn impact_dropped_page_alias_breaks_its_references() {
     );
 }
 
+const DESCRIPTOR: &str = "v1/antora.yml";
+
+#[test]
+fn impact_new_version_breaks_versioned_references() {
+    // #538: every resource of the version has a new coordinate.
+    let mut revisions = Revisions::new();
+    let other = "v2/modules/ROOT/pages/index.adoc";
+    revisions.write(
+        other,
+        "= Product 2\n\nSee xref:install.adoc[].\n\nOr xref:1.0@product:ROOT:install.adoc[the old steps].\n",
+    );
+    revisions.rebase();
+    revisions.write(
+        DESCRIPTOR,
+        &revisions.read(DESCRIPTOR).replace("'1.0'", "'1.1'"),
+    );
+    let report = revisions.report(
+        &[revisions.change(DESCRIPTOR, ChangeKind::Modified)],
+        &book_and_nav_profiles(&revisions),
+    );
+    let references = of_kind(&report, ImpactKind::ReferenceIntegrity);
+    assert_eq!(paths(&references), [other], "{references:#?}");
+    assert_eq!(references[0].status, Some(ImpactStatus::Broken));
+    assert_eq!(
+        spanned(&revisions, references[0]),
+        "xref:1.0@product:ROOT:install.adoc[the old steps]"
+    );
+    assert!(
+        of_kind(&report, ImpactKind::Navigation)
+            .iter()
+            .any(|impact| impact.path == DESCRIPTOR),
+        "{:#?}",
+        report.impacts
+    );
+    assert!(profiles(&report).contains(&"book-1".to_owned()));
+}
+
+#[test]
+fn impact_changed_version_attributes_are_not_complete_and_empty() {
+    // #538: which pages read an attribute is not known, so the report says so.
+    let revisions = Revisions::new();
+    revisions.write(
+        DESCRIPTOR,
+        &format!(
+            "{}asciidoc:\n  attributes:\n    product-name: Widget\n",
+            revisions.read(DESCRIPTOR)
+        ),
+    );
+    let report = revisions.report(&[revisions.change(DESCRIPTOR, ChangeKind::Modified)], &[]);
+    let Completeness::Partial { gaps } = &report.completeness else {
+        panic!("{report:#?}");
+    };
+    assert_eq!(gaps[0].reason, "attribute-consumers-not-analysed");
+    assert_eq!(gaps[0].affected, [DESCRIPTOR]);
+}
+
 /// The text `source` spans in the file as it is now.
 fn spanned(revisions: &Revisions, impact: &Impact) -> String {
     let source = impact.source.as_ref().expect("a source span");
