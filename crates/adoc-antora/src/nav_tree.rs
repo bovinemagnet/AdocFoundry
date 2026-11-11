@@ -27,8 +27,9 @@ pub struct NavTree {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NavItem {
     pub title: String,
-    /// The fully qualified page the entry links to, or `None` for a title, plain text or a
-    /// target that does not resolve.
+    /// The fully qualified resource the entry links to, in its own family (a page, or the
+    /// attachment or partial an entry names), or `None` for a title, plain text or a target
+    /// that does not resolve.
     pub target: Option<AntoraResourceId>,
     /// The fragment the entry's link names after `#`, if any.
     pub fragment: Option<String>,
@@ -199,7 +200,7 @@ fn build_tree(
                             version: coordinate.version.clone(),
                             component: Some(coordinate.component.clone()),
                             module: Some(coordinate.module.clone()),
-                            family: Some(ResourceFamily::Page),
+                            family: Some(coordinate.family),
                             path: slash_path(&coordinate.relative_path),
                         })
                     }

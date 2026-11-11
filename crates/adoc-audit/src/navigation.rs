@@ -218,7 +218,8 @@ fn collect_listed(
             if target.component.as_deref() == Some(descriptor.name.as_str())
                 && target.version == descriptor.version
             {
-                if let Some(module) = &target.module {
+                if let (Some(module), Some(ResourceFamily::Page)) = (&target.module, target.family)
+                {
                     listed.insert((module.clone(), target.path.clone()));
                 }
             }

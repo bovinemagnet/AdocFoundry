@@ -582,3 +582,27 @@ fn a_title_comes_only_from_an_include_before_the_body() {
         ["docs/modules/ROOT/pages/header-include.adoc"]
     );
 }
+
+#[test]
+fn an_entry_naming_a_partial_does_not_list_the_page_of_its_name() {
+    let report = audit_files(
+        &[
+            (
+                "docs/antora.yml",
+                "name: docs\nversion: ~\nnav:\n- modules/ROOT/nav.adoc\n",
+            ),
+            (
+                "docs/modules/ROOT/nav.adoc",
+                "* xref:partial$snippet.adoc[]\n",
+            ),
+            ("docs/modules/ROOT/pages/index.adoc", "= Docs\n"),
+            ("docs/modules/ROOT/pages/snippet.adoc", "= Snippet\n"),
+            ("docs/modules/ROOT/partials/snippet.adoc", "Snippet.\n"),
+        ],
+        AuditScope::Workspace,
+    );
+    assert_eq!(
+        found(&report, UNLISTED),
+        ["docs/modules/ROOT/pages/snippet.adoc"]
+    );
+}
