@@ -159,6 +159,12 @@ pub(crate) enum WorkerMessage {
         workdir: PathBuf,
         result: Result<String, String>,
     },
+    #[cfg(feature = "git")]
+    Committed {
+        workdir: PathBuf,
+        saved: Vec<PathBuf>,
+        result: Result<String, String>,
+    },
     ImpactInspected {
         generation: u64,
         result: Result<Box<adoc_impact::ImpactReport>, String>,
@@ -780,6 +786,12 @@ impl Engine {
             } => self.page_ages_read(workdir, run, commit, found),
             #[cfg(feature = "git")]
             WorkerMessage::Pushed { workdir, result } => self.pushed(workdir, result),
+            #[cfg(feature = "git")]
+            WorkerMessage::Committed {
+                workdir,
+                saved,
+                result,
+            } => self.committed(workdir, saved, result),
             WorkerMessage::SiteBuildLine { generation, line } => {
                 self.site_build_line(generation, line);
             }

@@ -99,6 +99,8 @@ pub struct GitState {
     blame_stamp: u64,
     /// When each page last changed, by repository (`page_age.rs`).
     pub(crate) page_ages: crate::page_age::PageAges,
+    /// A signed commit is being made on a worker; another is refused until it ends.
+    pub(crate) committing: bool,
 }
 
 impl GitState {

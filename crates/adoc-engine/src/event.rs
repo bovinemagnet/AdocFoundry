@@ -118,6 +118,13 @@ pub enum EngineEvent {
     /// The blame of an open document is ready from `Engine::blame_for`, or was forgotten.
     GitBlameChanged(DocumentId),
     #[cfg(feature = "git")]
+    /// A signed commit started by `git.commit` (`CommandOutcome::CommitStarted`) was made;
+    /// `saved` are the open documents saved before it.
+    GitCommitted {
+        commit: String,
+        saved: Vec<PathBuf>,
+    },
+    #[cfg(feature = "git")]
     /// A push finished; `message` says what was pushed where.
     GitPushed {
         message: String,

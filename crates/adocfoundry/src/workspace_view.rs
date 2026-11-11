@@ -263,6 +263,8 @@ pub struct WorkspaceView {
     graph: Entity<GraphView>,
     /// The graph window, while it is open.
     graph_window: Option<(gpui::WindowHandle<gpui_component::Root>, Entity<GraphView>)>,
+    /// A signed commit is being made, to be pushed once it is (Commit and Push).
+    push_after_commit: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -574,6 +576,7 @@ impl WorkspaceView {
             revealed: None,
             graph,
             graph_window: None,
+            push_after_commit: false,
             app,
             _subscriptions: subscriptions,
         };
@@ -755,6 +758,9 @@ impl WorkspaceView {
                 self.show_quality(cx);
             }
             EngineEvent::CommandFailed { command, error } => {
+                if *command == ids::GIT_COMMIT {
+                    self.push_after_commit = false;
+                }
                 window.push_notification(format!("{command}: {error}"), cx);
             }
             EngineEvent::PreviewLayoutChanged => {
@@ -763,6 +769,10 @@ impl WorkspaceView {
                 self.reveal_active_tab(cx);
             }
             EngineEvent::GitPushed { message } => window.push_notification(message.clone(), cx),
+            EngineEvent::GitCommitted { commit, saved } => {
+                let push = std::mem::take(&mut self.push_after_commit);
+                self.committed(commit, saved, push, window, cx);
+            }
             EngineEvent::ExportFinished { output, result } => {
                 Self::export_finished(output, result, window, cx);
             }
@@ -1712,11 +1722,29 @@ impl WorkspaceView {
             .map(|path| path.display().to_string())
             .collect();
         let args = CommandArgs::Custom(serde_json::json!({ "message": message, "paths": paths }));
-        let Some(CommandOutcome::Committed { commit, saved }) =
-            self.invoke(ids::GIT_COMMIT, args, window, cx)
-        else {
-            return;
-        };
+        match self.invoke(ids::GIT_COMMIT, args, window, cx) {
+            Some(CommandOutcome::Committed { commit, saved }) => {
+                self.committed(&commit, &saved, push, window, cx);
+            }
+            // A signed commit, which may wait for a passphrase or a security key: the engine
+            // reports it with `GitCommitted`.
+            Some(CommandOutcome::CommitStarted { .. }) => {
+                self.push_after_commit = push;
+                window.push_notification("Signing the commit…", cx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Says that `commit` was made, after saving `saved`, then pushes when asked.
+    fn committed(
+        &mut self,
+        commit: &str,
+        saved: &[std::path::PathBuf],
+        push: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let short = &commit[..commit.len().min(7)];
         let note = if saved.is_empty() {
             format!("Committed {short}")

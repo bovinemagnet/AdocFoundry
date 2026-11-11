@@ -141,7 +141,14 @@ pub struct ToolSettings {
     pub node: String,
     /// Seconds a site build may run, `npm install` included, before it is stopped.
     pub build_timeout: u64,
+    /// Seconds a signed commit's `git commit` may run, waiting for a passphrase or a security
+    /// key, before it is stopped.
+    pub commit_timeout: u64,
 }
+
+/// How long a signed commit may take unless `[tools] commit_timeout` says: long enough to type
+/// a passphrase or touch a key.
+pub const DEFAULT_COMMIT_TIMEOUT: u64 = 120;
 
 impl Default for ToolSettings {
     fn default() -> Self {
@@ -154,6 +161,7 @@ impl Default for ToolSettings {
             diagram_timeout: adoc_diagrams::DEFAULT_TIMEOUT.as_secs(),
             node: String::new(),
             build_timeout: crate::site_build::DEFAULT_BUILD_TIMEOUT.as_secs(),
+            commit_timeout: DEFAULT_COMMIT_TIMEOUT,
         }
     }
 }
@@ -1036,6 +1044,7 @@ impl Settings {
             ("tools", "diagram_timeout") => self.tools.diagram_timeout = positive(value)?.into(),
             ("tools", "node") => self.tools.node = string(value)?,
             ("tools", "build_timeout") => self.tools.build_timeout = positive(value)?.into(),
+            ("tools", "commit_timeout") => self.tools.commit_timeout = positive(value)?.into(),
             ("git", "enabled") => {
                 self.git.enabled = boolean(value)?;
                 self.git_enabled_set = true;
@@ -1325,6 +1334,7 @@ fn is_known(section: &str, key: &str) -> bool {
                     | "diagram_timeout"
                     | "node"
                     | "build_timeout"
+                    | "commit_timeout"
             )
             | (
                 "git",
@@ -1829,15 +1839,17 @@ mod tests {
     fn the_diagram_timeout_is_read_in_seconds() {
         assert_eq!(Settings::default().tools.diagram_timeout, 30);
         assert_eq!(Settings::default().tools.build_timeout, 600);
+        assert_eq!(Settings::default().tools.commit_timeout, 120);
         let directory = tempfile::tempdir().unwrap();
         let user = directory.path().join("adocfoundry.toml");
         fs::write(
             &user,
-            "[tools]\ndiagram_timeout = 5\nbuild_timeout = 90\nnode = \"/opt/node/bin/node\"\n",
+            "[tools]\ndiagram_timeout = 5\nbuild_timeout = 90\ncommit_timeout = 15\nnode = \"/opt/node/bin/node\"\n",
         )
         .unwrap();
         let settings = Settings::load(Some(&user), None).unwrap();
         assert_eq!(settings.tools.build_timeout, 90);
+        assert_eq!(settings.tools.commit_timeout, 15);
         assert_eq!(settings.tools.node, "/opt/node/bin/node");
         assert_eq!(settings.tools.diagram_timeout, 5);
         fs::write(&user, "[tools]\ndiagram_timeout = 0\n").unwrap();

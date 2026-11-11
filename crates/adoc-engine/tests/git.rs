@@ -924,3 +924,149 @@ fn a_renamed_page_is_compared_with_its_new_path_in_head() {
         engine.git().hunks_for(id)
     );
 }
+
+/// The first `git` on `PATH`, for a stand-in to hand a commit on to.
+#[cfg(unix)]
+fn real_git() -> Option<std::path::PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|directory| directory.join("git"))
+        .find(|candidate| candidate.is_file())
+}
+
+/// A repository that signs its commits, with a staged change, open in an engine whose `git` is
+/// a stand-in script running `body`, with `[tools] commit_timeout = timeout`.
+#[cfg(unix)]
+fn signing_repository(dir: &Path, config: &Path, body: &str, timeout: u64) -> (TestRepo, Engine) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let test = TestRepo::init(dir);
+    test.set_identity("Ada Writer", "ada@example.com");
+    test.write("docs/page.adoc", "= Page\n");
+    test.commit_all("first");
+    let git_config = dir.join(".git/config");
+    let mut text = fs::read_to_string(&git_config).unwrap();
+    text.push_str("[commit]\n\tgpgsign = true\n");
+    fs::write(&git_config, text).unwrap();
+    test.write("docs/page.adoc", "= Page\n\nEdited.\n");
+    test.stage("docs/page.adoc");
+
+    let stub = config.join("git");
+    fs::write(&stub, format!("#!/bin/sh\n{body}\n")).unwrap();
+    fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+    let user = config.join("adocfoundry.toml");
+    fs::write(
+        &user,
+        format!(
+            "[tools]\ngit = \"{}\"\ncommit_timeout = {timeout}\n",
+            stub.display()
+        ),
+    )
+    .unwrap();
+    let mut engine = Engine::new(Settings::load(Some(&user), None).unwrap());
+    engine.open_workspace(vec![dir.to_path_buf()]).unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    (test, engine)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_signed_commit_runs_off_the_engine_thread() {
+    let Some(git) = real_git() else {
+        return; // No Git to hand the commit on to.
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let config = tempfile::tempdir().unwrap();
+    // Signing that takes a while; the commit itself is made unsigned, as no key is at hand.
+    let body = format!(
+        "sleep 2\nexec \"{}\" -c commit.gpgsign=false \"$@\"",
+        git.display()
+    );
+    let (_test, mut engine) = signing_repository(dir.path(), config.path(), &body, 60);
+    let events = engine.subscribe();
+
+    let started = Instant::now();
+    let outcome = engine
+        .invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({ "message": "docs: sign it" })),
+        )
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the commit waited for git on the engine thread: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        outcome,
+        adoc_engine::CommandOutcome::CommitStarted { saved: Vec::new() }
+    );
+    // A second commit is refused while the first is being made.
+    let error = engine
+        .invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({ "message": "again" })),
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("being made"), "{error}");
+
+    let mut committed = None;
+    assert!(pump_until(&mut engine, |_| {
+        for event in events.try_iter() {
+            if let EngineEvent::GitCommitted { commit, .. } = event {
+                committed = Some(commit);
+            }
+        }
+        committed.is_some()
+    }));
+    let head = adoc_git::Repository::discover(dir.path())
+        .unwrap()
+        .unwrap()
+        .head_commit_id()
+        .unwrap();
+    assert_eq!(committed.as_deref(), Some(head.as_str()));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_signed_commit_that_outlasts_its_timeout_is_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = tempfile::tempdir().unwrap();
+    // A passphrase prompt that never returns.
+    let (_test, mut engine) = signing_repository(dir.path(), config.path(), "sleep 30", 1);
+    let events = engine.subscribe();
+    let started = Instant::now();
+    engine
+        .invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({ "message": "docs: sign it" })),
+        )
+        .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(1));
+
+    let mut failed = None;
+    assert!(pump_until(&mut engine, |_| {
+        for event in events.try_iter() {
+            if let EngineEvent::CommandFailed { command, error } = event {
+                if command == ids::GIT_COMMIT {
+                    failed = Some(error);
+                }
+            }
+        }
+        failed.is_some()
+    }));
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    let error = failed.unwrap();
+    assert!(error.contains("commit_timeout"), "{error}");
+    assert!(error.contains("sign"), "{error}");
+    // Another commit can be started once it has failed.
+    assert!(engine
+        .invoke(
+            ids::GIT_COMMIT,
+            CommandArgs::Custom(serde_json::json!({ "message": "again" })),
+        )
+        .is_ok());
+}
