@@ -196,6 +196,36 @@ fn replace_applies_as_one_undo_group() {
     assert_eq!(selected.edits.len(), 1);
 }
 
+#[test]
+fn a_refused_replace_leaves_no_page_open() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("docs");
+    copy_tree(&fixture("antora-multi-component"), &root);
+    let mut engine = open_workspace(&root);
+    let preview = preview(
+        engine
+            .invoke(
+                ids::WORKSPACE_REPLACE,
+                CommandArgs::Custom(serde_json::json!({
+                    "request": { "query": "= (\\w+)", "regex": true },
+                    "replacement": "= Title: $1",
+                })),
+            )
+            .unwrap(),
+    );
+    assert!(preview.edits.len() >= 4);
+    // The last file the preview edits is rewritten after it was made.
+    fs::write(&preview.edits.last().unwrap().path, "= Rewritten\n").unwrap();
+    let tabs = engine.tab_order().to_vec();
+    let refused = apply(&mut engine, &preview);
+    assert!(
+        matches!(refused, Err(adoc_engine::EngineError::PreviewStale { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(engine.tab_order(), tabs);
+    assert_eq!(engine.documents().count(), 0);
+}
+
 fn preview_for_selection(engine: &mut Engine, path: &Path) -> EditPreview {
     preview(
         engine

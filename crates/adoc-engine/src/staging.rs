@@ -15,9 +15,7 @@ use adoc_index::{is_asciidoc_path, normalize_path};
 use ropey::Rope;
 use sha2::{Digest as _, Sha256};
 
-use crate::{
-    edit, DocumentId, Engine, EngineError, FileEdits, FileMove, NewPage, TextEdit, UndoGroup,
-};
+use crate::{edit, Engine, EngineError, FileEdits, FileMove, NewPage, TextEdit, UndoGroup};
 
 /// `edits`, checked against `base`, and the text they leave.
 fn edited(base: &str, edits: Vec<TextEdit>) -> Result<(Vec<TextEdit>, String), EngineError> {
@@ -341,18 +339,8 @@ impl Engine {
         for create in &changes.creates {
             self.check_new_file(&create.path)?;
         }
-        let mut targets: Vec<(DocumentId, Vec<TextEdit>)> = Vec::new();
-        for file in &changes.edits {
-            let document = self.open_unshown(&file.path)?;
-            let text = &self.documents[&document].text;
-            if *text != file.base.as_str() {
-                return Err(EngineError::PreviewStale {
-                    path: file.path.clone(),
-                });
-            }
-            targets.push((document, edit::validate(text, file.edits.clone())?));
-        }
         crate::search::validate_moves(&changes.moves)?;
+        let targets = self.open_checked(&changes.edits)?;
         self.applying = true;
         let group = self.new_group();
         let mut made = Vec::new();
