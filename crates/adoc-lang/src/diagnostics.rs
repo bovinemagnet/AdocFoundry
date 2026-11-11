@@ -223,6 +223,7 @@ pub fn playbook_diagnostics(antora: &AntoraCatalog, path: &Path) -> Vec<Diagnost
         return Vec::new();
     }
     vec![Diagnostic {
+        related: Vec::new(),
         code: DiagnosticCode::AntoraUnresolvedStartPage,
         severity: DiagnosticSeverity::Warning,
         message: format!(
@@ -254,6 +255,7 @@ pub fn descriptor_diagnostics(issues: &[DescriptorError], path: &Path) -> Vec<Di
             issue.kind != DescriptorErrorKind::MissingName || normalize_path(&issue.path) != path
         })
         .map(|issue| Diagnostic {
+            related: Vec::new(),
             code: DiagnosticCode::AntoraInvalidDescriptor,
             severity: DiagnosticSeverity::Warning,
             message: format!(
@@ -426,6 +428,7 @@ impl DiagnosticOutput<'_> {
                 DiagnosticSeverity::Warning
             };
             self.diagnostics.push(Diagnostic {
+                related: Vec::new(),
                 code,
                 severity,
                 message,
@@ -795,6 +798,32 @@ mod tests {
                 "= Home\n\nimage::missing.svg[]\n"
             ),
             vec![DiagnosticCode::UnresolvedImage]
+        );
+    }
+
+    #[test]
+    fn judges_inline_antora_images_as_block_ones() {
+        let (mut index, antora, root) = antora_single_component();
+        let home = root.join("modules/ROOT/pages/index.adoc");
+
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nSee image:architecture.svg[] and image:missing.svg[Missing].\n",
+            ),
+            vec![DiagnosticCode::UnresolvedImage]
+        );
+        assert_eq!(
+            codes_for(
+                &mut index,
+                &antora,
+                &home,
+                "= Home\n\nAn image:{icon}[] icon, image:nowhere:a.svg[] and `+image:x.svg[]+`.\n",
+            ),
+            vec![DiagnosticCode::AntoraUnknownModule],
+            "a dynamic target and a literal are left alone"
         );
     }
 

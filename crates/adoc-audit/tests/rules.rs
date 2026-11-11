@@ -243,12 +243,28 @@ fn images_without_alternative_text_are_found_in_pages_and_partials() {
                 images.find("image::a.png").unwrap()
             ),
             (
+                "product/modules/ROOT/pages/images.adoc",
+                images.find("image:c.png").unwrap()
+            ),
+            (
                 "product/modules/ROOT/partials/snippet.adoc",
                 snippet.find("image::p.png").unwrap()
             ),
         ],
         "described, named, attribute and explicitly empty texts are the author's; the \
-         inline `image:c.png[width=20]` is not checked, as the parser records block images only"
+         inline `image:c.png[width=20]` has none"
+    );
+    let remediations: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|finding| finding.code == ALT)
+        .filter_map(|finding| finding.remediation.as_deref())
+        .collect();
+    assert!(
+        remediations.contains(
+            &"Describe the image in the macro's first attribute: `image:c.png[What it shows]`"
+        ),
+        "an inline image's remedy is written inline: {remediations:?}"
     );
 }
 

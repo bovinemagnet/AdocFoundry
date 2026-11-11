@@ -307,6 +307,7 @@ fn push_unique(
 ) {
     if seen.insert((code, range)) {
         diagnostics.push(Diagnostic {
+            related: Vec::new(),
             code,
             severity: DiagnosticSeverity::Warning,
             message,
@@ -543,6 +544,29 @@ mod tests {
             );
         }
         assert_eq!(resolve_image_target(&remote_dir, path, "a.png"), None);
+    }
+
+    #[test]
+    fn reports_a_missing_inline_image() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/images");
+        let path = root.join("inline.adoc");
+        let mut index = WorkspaceIndex::new();
+        index.index_source(
+            &path,
+            "= Guide\n:imagesdir: media\n\nClick image:present.svg[] or \
+             image:missing.png[Missing], not image:{icon}[].\n",
+        );
+
+        let messages: Vec<_> = workspace_diagnostics(&index, &path)
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code == DiagnosticCode::UnresolvedImage)
+            .map(|diagnostic| diagnostic.message)
+            .collect();
+        assert_eq!(
+            messages,
+            ["Unresolved AsciiDoc image target: missing.png"],
+            "a present file and a dynamic target are not reported"
+        );
     }
 
     #[test]

@@ -296,6 +296,12 @@ The difference is that local images, diagrams and formula images are embedded in
 Remote images (`http` and `https` addresses) stay links.
 A local file that cannot be read, or that is not an image (PNG, JPEG, GIF, SVG, WebP, BMP, ICO or AVIF), keeps its `file://` address.
 
+A cross reference to another page is written as that page's published address when the site's address is known (`[pdf] site_url` in the xref:settings.adoc[settings], else the playbook's `site.url`), in Antora's layout `<site>/<component>/<version>/<module>/<page>.html`, with no `ROOT` module and no `~` version, as xref:pdf-export.adoc[PDF export] does.
+Otherwise it is the relative path to where that page's own export would sit beside its source, for example `../../security/pages/authentication.html` from `modules/ROOT/pages/index.adoc`.
+A cross reference within the page stays `#id`.
+An unresolved cross reference written as an Antora resource id, such as `security:missing.adoc`, gets no link, since a browser would read `security:` as an address scheme.
+An unresolved plain path keeps its name, with a trailing `.adoc` changed to `.html`.
+
 The export reads the open buffer, so unsaved edits are included.
 It waits until the render is current and every diagram has rendered, then writes the file in the background, so the application stays responsive.
 When it finishes, a notification says "Exported page.html" and has an Open button that opens the file with the system, normally in the browser.

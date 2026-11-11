@@ -16,7 +16,7 @@ use adoc_lang::{
 };
 
 use crate::{
-    preview::{scratch_directory, PreviewError, PreviewMode, PreviewSink},
+    preview::{PreviewError, PreviewMode, PreviewSink},
     state::document_path,
 };
 
@@ -34,7 +34,7 @@ pub fn render_preview(
     uri: &str,
     mode: PreviewMode,
 ) -> Result<PathBuf, PreviewError> {
-    let (source, request) = preview_request(engine, uri)?;
+    let (source, request) = preview_request(engine, uri, &sink.scratch_directory()?)?;
     let output = renderer.render(&request)?;
     sink.deliver(&output, &source, mode)
 }
@@ -59,10 +59,7 @@ fn engine_output(engine: &mut Engine, uri: &str) -> Result<(PathBuf, RenderOutpu
     let preview = engine
         .render_blocking(id, RENDER_TIMEOUT)
         .ok_or_else(|| PreviewError::NotRendered(source.clone()))?;
-    let html = adoc_render::to_html(
-        &preview.view,
-        &adoc_render::HtmlOptions { standalone: true },
-    );
+    let html = adoc_render::to_html(&preview.view, &engine.html_options(true));
     Ok((
         source,
         RenderOutput {
@@ -73,7 +70,11 @@ fn engine_output(engine: &mut Engine, uri: &str) -> Result<(PathBuf, RenderOutpu
 }
 
 /// The source path and render request for the document at `uri`.
-fn preview_request(engine: &Engine, uri: &str) -> Result<(PathBuf, RenderRequest), PreviewError> {
+fn preview_request(
+    engine: &Engine,
+    uri: &str,
+    scratch: &std::path::Path,
+) -> Result<(PathBuf, RenderRequest), PreviewError> {
     let source = document_path(uri);
     let open = engine
         .document_for_path(&source)
@@ -81,7 +82,7 @@ fn preview_request(engine: &Engine, uri: &str) -> Result<(PathBuf, RenderRequest
         .ok_or_else(|| PreviewError::NotOpen(uri.to_owned()))?;
     let antora = &engine.workspace().antora;
 
-    let text = source_for_render(open.parsed(), antora, &source, &scratch_directory());
+    let text = source_for_render(open.parsed(), antora, &source, scratch);
     let mut request = RenderRequest::from_source(source.clone(), text);
     // Component attributes first, so the page and family attributes Antora computes itself
     // win should `antora.yml` name one of them.
@@ -112,7 +113,7 @@ pub fn refresh_preview(
 ) -> Result<PathBuf, PreviewError> {
     let (source, output) = match renderer {
         Some(renderer) => {
-            let (source, request) = preview_request(engine, uri)?;
+            let (source, request) = preview_request(engine, uri, &sink.scratch_directory()?)?;
             (source, renderer.render(&request)?)
         }
         None => engine_output(engine, uri)?,
@@ -158,6 +159,10 @@ mod tests {
                 .unwrap()
                 .push((output.html.clone(), source.to_path_buf()));
             Ok(source.with_extension("html"))
+        }
+
+        fn scratch_directory(&self) -> Result<PathBuf, PreviewError> {
+            Ok(std::env::temp_dir().join("adoc-ls-test-includes"))
         }
     }
 

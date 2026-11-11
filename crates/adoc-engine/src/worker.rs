@@ -93,6 +93,7 @@ impl Engine {
                 ticket,
             } => {
                 self.parse_crashed(id, version, ticket);
+                self.preview_crashed(id, version);
                 Some((ids::VIEW_TOGGLE_PREVIEW, "the preview"))
             }
             // Its consumers go without, as each would had it parsed the page itself.

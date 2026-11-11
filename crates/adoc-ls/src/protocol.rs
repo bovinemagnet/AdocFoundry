@@ -26,14 +26,15 @@ use lsp_types::{
     },
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse, Command,
     CompletionItem, CompletionItemKind, CompletionList, CompletionParams, CompletionResponse,
-    CompletionTextEdit, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams,
-    InitializeParams, InitializeResult, Location, MarkupContent, MarkupKind, MessageType,
-    NumberOrString, PublishDiagnosticsParams, ReferenceParams, RenameFilesParams, RenameParams,
-    ServerInfo, ShowMessageParams, SymbolInformation, SymbolKind, TextDocumentContentChangeEvent,
-    TextEdit, Uri, WorkspaceEdit, WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    ExecuteCommandParams, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
+    HoverParams, InitializeParams, InitializeResult, Location, MarkupContent, MarkupKind,
+    MessageType, NumberOrString, PublishDiagnosticsParams, ReferenceParams, RenameFilesParams,
+    RenameParams, ServerInfo, ShowMessageParams, SymbolInformation, SymbolKind,
+    TextDocumentContentChangeEvent, TextEdit, Uri, WorkspaceEdit, WorkspaceSymbolParams,
+    WorkspaceSymbolResponse,
 };
 
 use crate::{
@@ -84,10 +85,7 @@ pub fn run_connection(connection: &Connection) -> Result<(), ServerError> {
     let mut server = ProtocolServer::new(
         encoding,
         engine,
-        Box::new(BrowserSink::new(
-            std::env::temp_dir().join("adoc-ls-preview"),
-            SystemLauncher,
-        )),
+        Box::new(BrowserSink::private(SystemLauncher)),
     );
     server.open_workspace(roots);
 
@@ -340,17 +338,27 @@ impl ProtocolServer {
                 .document(id)
                 .map(adoc_engine::OpenDocument::text_string)
                 .unwrap_or_default();
-            let (range, replacement) = change_range(&text, change, self.encoding)?;
-            self.engine
-                .invoke(
-                    ids::EDIT_REPLACE_RANGE,
-                    CommandArgs::Text {
-                        id,
-                        range,
-                        text: replacement,
-                    },
-                )
-                .map_err(|error| ServerError::InvalidChange(error.to_string()))?;
+            // A change that cannot be applied is reported and skipped: one bad notification
+            // never ends the server, and LSP offers no way to ask for the whole text again.
+            let applied =
+                change_range(&text, change, self.encoding).and_then(|(range, replacement)| {
+                    self.engine
+                        .invoke(
+                            ids::EDIT_REPLACE_RANGE,
+                            CommandArgs::Text {
+                                id,
+                                range,
+                                text: replacement,
+                            },
+                        )
+                        .map_err(|error| ServerError::InvalidChange(error.to_string()))
+                });
+            if let Err(error) = applied {
+                eprintln!(
+                    "adoc-ls: skipped a change to {}: {error}",
+                    params.text_document.uri.as_str()
+                );
+            }
         }
         if let Some((_, version)) = self.open.get_mut(&id) {
             *version = params.text_document.version;
@@ -415,6 +423,21 @@ impl ProtocolServer {
                     code: Some(NumberOrString::String(diagnostic.code.as_str().to_owned())),
                     source: Some("adoc-ls".to_owned()),
                     message: diagnostic.message.clone(),
+                    related_information: (!diagnostic.related.is_empty()).then(|| {
+                        diagnostic
+                            .related
+                            .iter()
+                            .filter_map(|related| {
+                                Some(DiagnosticRelatedInformation {
+                                    location: Location::new(
+                                        uri.clone(),
+                                        self.encoding.range(&lines, related.range)?,
+                                    ),
+                                    message: related.message.clone(),
+                                })
+                            })
+                            .collect()
+                    }),
                     ..Diagnostic::default()
                 })
             })
@@ -1309,6 +1332,14 @@ mod tests {
 
         assert_eq!(duplicate.severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(duplicate.range.start.line, 5);
+        // The first declaration, for the client to link to.
+        let related = duplicate
+            .related_information
+            .as_ref()
+            .expect("the first declaration is related");
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].location.uri, uri);
+        assert_eq!(related[0].location.range.start.line, 2);
 
         client_connection
             .sender

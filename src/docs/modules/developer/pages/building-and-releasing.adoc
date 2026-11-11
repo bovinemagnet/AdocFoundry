@@ -295,6 +295,7 @@ On macOS the certificate is imported into a temporary keychain that the job dele
 The app updates itself from the published DMG and MSI, checked against `SHA256SUMS` and the installers' signatures.
 Asset names must therefore stay as they are: `AdocFoundry-<version>-macos-universal.dmg`, `adocfoundry-<version>-<arch>.msi` and `SHA256SUMS`.
 The WiX source must keep its `MajorUpgrade` and upgrade code, which the xtask test `msi_has_a_major_upgrade` checks.
+The update passes `APPLICATIONFOLDER` (the folder holding `bin\adocfoundry.exe`) to `msiexec`, so the new version installs where the old one is; keep that property's name.
 
 Debug builds read the update feed from `ADOCFOUNDRY_UPDATE_FEED` when it is set, for trying an update against a feed of your own.
 Release builds always use the GitHub feed.

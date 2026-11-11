@@ -838,25 +838,28 @@ impl Server {
                     case_sensitive: args.case_sensitive,
                     whole_word: args.whole_word,
                     scope,
+                    all_text_files: false,
                 }),
             )?;
-            // The search runs on one worker, which reports its matches in batches.
-            if !state.engine.wait_for_workers(TIMEOUT) {
-                return Err(Failure::timeout("the search did not finish"));
-            }
+            // The search runs on one worker, which reports its matches in batches; this waits
+            // for its last, not for other workers such as a site build.
             let mut matches = Vec::new();
             let mut done = false;
-            for event in state.events.try_iter() {
-                if let EngineEvent::SearchResults {
-                    results,
-                    done: finished,
-                    ..
-                } = event
-                {
-                    matches.extend(results);
-                    done |= finished;
+            let events = &state.events;
+            state.engine.wait_until(Instant::now() + TIMEOUT, |_| {
+                for event in events.try_iter() {
+                    if let EngineEvent::SearchResults {
+                        results,
+                        done: finished,
+                        ..
+                    } = event
+                    {
+                        matches.extend(results);
+                        done |= finished;
+                    }
                 }
-            }
+                done
+            });
             if !done {
                 return Err(Failure::timeout("the search did not finish"));
             }
@@ -900,10 +903,7 @@ impl Server {
             let preview = rendered
                 .ok_or_else(|| Failure::timeout(format!("{} did not render", args.path)))?;
             let output = if html {
-                adoc_engine::to_html(
-                    &preview.view,
-                    &adoc_engine::HtmlOptions { standalone: true },
-                )
+                adoc_engine::to_html(&preview.view, &state.engine.html_options(true))
             } else {
                 adoc_engine::to_text(&preview.view)
             };
@@ -1191,6 +1191,14 @@ impl Server {
     async fn export_pdf(&self, Parameters(args): Parameters<ExportPdfArgs>) -> Answer {
         self.run(move |state| {
             let output = state.confine(&args.output)?;
+            // The name is the client's: a link planted there is refused rather than written
+            // through, as the batch export does.
+            if std::fs::symlink_metadata(&output).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                return Err(Failure::invalid(format!(
+                    "{} is a link, which is not written through",
+                    args.output
+                )));
+            }
             let target = match (&args.path, &args.component) {
                 (Some(path), None) => {
                     let path = state.confine(path)?;

@@ -24,12 +24,12 @@ lsp-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tempfile.workspace = true
 url.workspace = true
 
 [dev-dependencies]
 # The tests drive a server with every feature, so export and typeset STEM are covered.
 adoc-engine = { workspace = true, features = ["typst", "git"] }
-tempfile.workspace = true
 
 [lints]
 workspace = true

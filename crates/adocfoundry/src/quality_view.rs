@@ -338,9 +338,9 @@ mod tests {
         let labels = overview.labels();
         for expected in [
             "Errors: 0",
-            "Warnings: 6",
+            "Warnings: 7",
             "Information: 1",
-            "quality.image.missing-alt: 2",
+            "quality.image.missing-alt: 3",
             "guide: 2 of 3 pages listed, 1 undetermined",
             "product 3.0: 7 of 8 pages listed",
             "quality.navigation.unlisted-page: 1",

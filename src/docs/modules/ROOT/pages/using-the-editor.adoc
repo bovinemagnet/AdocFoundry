@@ -147,7 +147,7 @@ See <<the-files-view>>.
 
 Problems::
 Workspace diagnostics grouped by file, with a count in the tab title.
-Once the quality audit has run, the audit's own findings are listed too: pages in no navigation file, pages with no title and block images with no alternative text.
+Once the quality audit has run, the audit's own findings are listed too: pages in no navigation file, pages with no title and images with no alternative text.
 Each finding appears once, because the existing diagnostics the audit includes are not listed twice.
 A finding about a whole page (an unlisted page, a missing title) shows no line and column and opens the page at its start.
 Any other finding opens the file with its range selected.
@@ -887,7 +887,7 @@ Cmd-click (Ctrl-click on Linux and Windows), F12 or kbd:[Cmd+Enter] (kbd:[Ctrl+E
 * An `xref:` opens the target page and places the caret on the anchor, if there is one.
 * An `include::` opens the included file.
 * An `+{attribute}+` goes to the place the attribute is defined: the document, an included file, `antora.yml` or the playbook.
-* An `image::` opens the image in an image tab; see <<image-viewer>>.
+* An `image::` or `image:` opens the image in an image tab; see <<image-viewer>>.
 * An attachment opens in the system's default application.
 
 If the target cannot be resolved, the diagnostic is shown and nothing is opened.
@@ -1101,14 +1101,23 @@ See xref:antora-support.adoc#resource-ids[Resource IDs] for the coordinates a ta
 
 == Find and replace
 
-Find in Workspace (kbd:[Cmd+Shift+F] or kbd:[Ctrl+Shift+F]) searches every file in the workspace.
+Find in Workspace (kbd:[Cmd+Shift+F] or kbd:[Ctrl+Shift+F]) searches the indexed AsciiDoc files of the workspace.
 Regular expression, case-sensitive and whole-word options are available.
 Results arrive as the search runs, and clicking one opens it.
 A page with unsaved edits is searched as it is in the editor.
 The search stops after 10,000 matches and says so, so a narrower search finds the rest.
+Every result is listed in a scrolling list that draws only the rows in view.
+
+The All files option, off by default, searches every text file beneath the open folders instead, including `antora.yml`, the playbook, examples and other sources.
+It never enters a folder named in `[workspace] ignore` (see xref:settings.adoc[]) or a symbolic link, and it leaves out binary and non-UTF-8 files, which the editor does not open.
+An open file is searched with its unsaved text.
+
+Changing an option after a search has run, including All files, runs the search again, so the list always matches the options a replace will use.
 
 Replace in Workspace (kbd:[Cmd+Shift+H] or kbd:[Ctrl+Shift+H]) does not change anything immediately.
 It shows a preview listing every change; nothing is written until you apply it.
+Replace on a single result, and Replace All, reach the same files the search does, so with All files on they can change `antora.yml` and other text files.
+After a preview is applied the search runs again, so each result's position is current and a second Replace in the same file finds its match.
 Applying the preview is one undo step across every file it touches.
 Each page it changes opens as a tab, with its changes unsaved, beside the page you were working on, which stays the active tab.
 Save them as usual, for example with Save All.

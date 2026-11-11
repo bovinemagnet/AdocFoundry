@@ -18,8 +18,10 @@ pub enum FileAccess {
 }
 
 impl FileAccess {
-    /// Whether `path` may be read. Of a path that does not exist yet, the part that exists is
-    /// checked with its links followed, and the rest lexically.
+    /// Whether `path` may be read or written. Of a path that does not exist yet, the part that
+    /// exists is checked with its links followed, and the rest lexically. A symbolic link is
+    /// always part of what exists, so a link to nothing is refused rather than taken for a file
+    /// to be made: writing to it would create its target, wherever that is.
     #[must_use]
     pub fn permits(&self, path: &Path) -> bool {
         let Self::Within(roots) = self else {
@@ -30,7 +32,9 @@ impl FileAccess {
             return false;
         };
         let mut existing = normal.as_path();
-        while !existing.exists() {
+        // `symlink_metadata`, not `exists`, which follows links and so takes a link to
+        // nothing for a path that is not there yet.
+        while fs::symlink_metadata(existing).is_err() {
             match existing.parent() {
                 Some(parent) => existing = parent,
                 None => return false,
@@ -134,6 +138,24 @@ mod tests {
             assert!(
                 !access.permits(&root.join("escape/new.adoc")),
                 "a new file through a link"
+            );
+
+            // A link to nothing is a link, not a file to be made: writing to it would create
+            // its target, outside the roots.
+            std::os::unix::fs::symlink(directory.join("missing.pdf"), root.join("out.pdf"))
+                .unwrap();
+            assert!(
+                !access.permits(&root.join("out.pdf")),
+                "a dangling link to outside"
+            );
+            std::os::unix::fs::symlink(directory.join("gone"), root.join("gone")).unwrap();
+            assert!(
+                !access.permits(&root.join("gone/new.adoc")),
+                "a new file through a dangling folder link"
+            );
+            assert!(
+                !directory.join("missing.pdf").exists() && !directory.join("gone").exists(),
+                "checking creates nothing"
             );
         }
         fs::remove_dir_all(&directory).unwrap();

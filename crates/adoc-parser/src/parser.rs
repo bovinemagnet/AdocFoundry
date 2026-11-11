@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use adoc_core::{
     Anchor, Diagnostic, DiagnosticCode, DiagnosticSeverity, Document, DocumentTitle,
-    IncludeDirective, Section, SourceRange,
+    IncludeDirective, Related, Section, SourceRange,
 };
 
 use crate::line_parser::{
@@ -145,26 +145,34 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
         offset += line.len();
     }
 
-    document.diagnostics = duplicate_anchors(&document.anchors);
+    document.diagnostics = duplicate_anchors(text, &document.anchors);
     ParseResult { document }
 }
 
-/// A warning for each anchor whose id an earlier one declared. Anchors inside conditionals
-/// are left out: two branches commonly declare the same id, and only one is ever built.
-fn duplicate_anchors(anchors: &[Anchor]) -> Vec<Diagnostic> {
+/// A warning for each anchor whose id an earlier one declared, naming the first by its line and
+/// column and relating it, for a front end to link to. Anchors inside conditionals are left
+/// out: two branches commonly declare the same id, and only one is ever built.
+fn duplicate_anchors(text: &str, anchors: &[Anchor]) -> Vec<Diagnostic> {
     let mut first = HashMap::<&str, SourceRange>::new();
     let mut diagnostics = Vec::new();
     for anchor in anchors.iter().filter(|anchor| !anchor.conditional) {
         match first.get(anchor.id.as_str()) {
-            Some(first_range) => diagnostics.push(Diagnostic {
-                code: DiagnosticCode::DuplicateAnchor,
-                severity: DiagnosticSeverity::Warning,
-                message: format!(
-                    "duplicate anchor `{}`; first declared at byte {}",
-                    anchor.id, first_range.start
-                ),
-                range: anchor.range,
-            }),
+            Some(first_range) => {
+                let (line, column) = line_and_column(text, first_range.start);
+                diagnostics.push(Diagnostic {
+                    code: DiagnosticCode::DuplicateAnchor,
+                    severity: DiagnosticSeverity::Warning,
+                    message: format!(
+                        "duplicate anchor `{}`; first declared at line {line}, column {column}",
+                        anchor.id
+                    ),
+                    range: anchor.range,
+                    related: vec![Related {
+                        message: format!("`{}` is first declared here", anchor.id),
+                        range: *first_range,
+                    }],
+                });
+            }
             None => {
                 first.insert(&anchor.id, anchor.range);
             }
@@ -173,9 +181,20 @@ fn duplicate_anchors(anchors: &[Anchor]) -> Vec<Diagnostic> {
     diagnostics
 }
 
+/// The line and the character on it of `offset` in `text`, both counted from 1.
+fn line_and_column(text: &str, offset: usize) -> (usize, usize) {
+    let offset = text.floor_char_boundary(offset.min(text.len()));
+    let before = &text[..offset];
+    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    (
+        before.matches('\n').count() + 1,
+        before[line_start..].chars().count() + 1,
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use adoc_core::ReferenceKind;
+    use adoc_core::{ReferenceKind, SourceRange};
 
     use super::parse;
 
@@ -296,6 +315,110 @@ image::diagram.png[Architecture]\n";
             .map(|image| image.target)
             .collect();
         assert_eq!(targets, ["real.png", "cell.png", "styled.png"]);
+    }
+
+    /// The images a source records, as (target, inline, attributes).
+    fn images(source: &str) -> Vec<(String, bool, Option<String>)> {
+        parse("file:///doc.adoc", source)
+            .document
+            .images
+            .into_iter()
+            .map(|image| (image.target, image.inline, image.attributes))
+            .collect()
+    }
+
+    fn inline(target: &str, attributes: Option<&str>) -> (String, bool, Option<String>) {
+        (target.to_owned(), true, attributes.map(str::to_owned))
+    }
+
+    #[test]
+    fn records_inline_images_in_prose() {
+        let source = "= Demo\n\nClick image:icons/save.png[Save] to save.\n";
+        let document = parse("file:///doc.adoc", source).document;
+
+        assert_eq!(
+            images(source),
+            [inline("icons/save.png", Some("Save"))],
+            "{:?}",
+            document.images
+        );
+        let start = source.find("image:icons").unwrap();
+        let end = source.find("] to").unwrap() + 1;
+        assert_eq!(document.images[0].range, SourceRange::new(start, end));
+    }
+
+    #[test]
+    fn records_inline_images_in_a_table_cell_and_beside_a_block_image() {
+        let source = "|===\n| image:cell.png[] | b\n|===\n\nimage::block.png[Block]\n";
+        assert_eq!(
+            images(source),
+            [
+                inline("cell.png", None),
+                ("block.png".to_owned(), false, Some("Block".to_owned())),
+            ]
+        );
+    }
+
+    /// Asciidoctor shows an image inside plain monospace (`` `image:x.png[]` `` renders an
+    /// `<img>` inside `<code>`), but nothing inside a passthrough or literal monospace.
+    #[test]
+    fn inline_images_follow_asciidoctor_inside_monospace_and_passthroughs() {
+        assert_eq!(
+            images("Write `+image:literal.png[]+` or ++image:pass.png[]++ to show one.\n"),
+            []
+        );
+        assert_eq!(
+            images("The `image:shown.png[Shown]` icon.\n"),
+            [inline("shown.png", Some("Shown"))]
+        );
+    }
+
+    #[test]
+    fn records_no_inline_images_inside_verbatim_blocks() {
+        let source = "----\nimage:listing.png[]\n----\n\n....\nimage:literal.png[]\n....\n\n\
+                      [source]\nimage:styled.png[]\n\n////\nimage:comment.png[]\n////\n\
+                      // image:line-comment.png[]\n";
+        assert_eq!(images(source), []);
+    }
+
+    #[test]
+    fn half_typed_and_escaped_inline_images_record_nothing() {
+        for source in [
+            "image:foo\n",
+            "Text image:foo and more\n",
+            "image:\n",
+            "image:[]\n",
+            "image: spaced.png[]\n",
+            "image:trailing.png [x]\n",
+            "image:foo[unclosed\n",
+            "\\image:escaped.png[]\n",
+            "notimage:word.png[]\n",
+            "image:é\n",
+        ] {
+            assert_eq!(images(source), [], "{source:?}");
+        }
+    }
+
+    #[test]
+    fn block_image_is_not_also_inline() {
+        assert_eq!(
+            images("image::block.png[]\n"),
+            [("block.png".to_owned(), false, None)]
+        );
+        // A block macro in prose is neither: an inline target cannot start with `:`.
+        assert_eq!(images("Text image::prose.png[] here.\n"), []);
+    }
+
+    #[test]
+    fn records_several_inline_images_on_one_line() {
+        assert_eq!(
+            images("image:a.png[] and image:b.png[B, 20] and image:{icon}[]\n"),
+            [
+                inline("a.png", None),
+                inline("b.png", Some("B, 20")),
+                inline("{icon}", None),
+            ]
+        );
     }
 
     /// An include is a preprocessor directive: Asciidoctor recognises it only at the start of
@@ -551,6 +674,25 @@ image::diagram.png[Architecture]\n";
         assert_eq!(result.document.sections.len(), 2);
         assert_eq!(result.diagnostics().len(), 1);
         assert!(result.diagnostics()[0].message.contains("duplicate anchor"));
+    }
+
+    #[test]
+    fn a_duplicate_anchor_names_the_first_by_line_and_column_and_relates_it() {
+        let source = "= Guide\n\nSee é [[same]] here.\n\n[[same]]\n== Second\n";
+        let result = parse("file:///duplicates.adoc", source);
+        let duplicate = &result.diagnostics()[0];
+
+        assert_eq!(
+            duplicate.message,
+            "duplicate anchor `same`; first declared at line 3, column 7"
+        );
+        let first = source.find("[[same]]").unwrap();
+        assert_eq!(duplicate.related.len(), 1);
+        assert_eq!(duplicate.related[0].range.start, first);
+        assert_eq!(
+            duplicate.related[0].message,
+            "`same` is first declared here"
+        );
     }
 
     fn reference_targets(text: &str) -> Vec<String> {

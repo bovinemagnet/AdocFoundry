@@ -1,7 +1,11 @@
 //! HTML from the view tree, shaped like Asciidoctor's output (the same element structure and
 //! block class names) so it can be exported and diffed against Asciidoctor.
 
-use std::fmt::Write as _;
+use std::{
+    collections::HashMap,
+    fmt::Write as _,
+    path::{Component, Path, PathBuf},
+};
 
 use adoc_dom::{Align, CellStyle, ColumnWidth, ListKind, MediaKind, VAlign};
 
@@ -13,11 +17,31 @@ use crate::view::{
 pub struct HtmlOptions {
     /// A whole page with `<html>`, head and body, rather than the content alone.
     pub standalone: bool,
+    /// The published address of each page, by its source path (the site's, as PDF export
+    /// links to it). A cross-page xref to a page listed here leads there; one to any other page
+    /// leads to where that page's own export would sit beside its source.
+    pub page_urls: HashMap<PathBuf, String>,
+}
+
+/// The page being written, with the options it is written with.
+struct Page<'a> {
+    view: &'a ViewTree,
+    options: &'a HtmlOptions,
+}
+
+impl std::ops::Deref for Page<'_> {
+    type Target = ViewTree;
+
+    fn deref(&self) -> &ViewTree {
+        self.view
+    }
 }
 
 /// Renders `view` to HTML.
 #[must_use]
 pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
+    let page = Page { view, options };
+    let view = &page;
     let mut out = String::new();
     let title = view
         .title
@@ -65,7 +89,7 @@ pub fn to_html(view: &ViewTree, options: &HtmlOptions) -> String {
 
 const STYLE: &str = "<style>\nbody{font-family:sans-serif;max-width:60em;margin:auto;padding:1em;line-height:1.5}\npre{background:#f6f6f6;padding:.6em;overflow:auto}\n.admonitionblock td.icon{font-weight:bold;padding-right:1em}\n.admonitionblock td.icon i.fa::before{content:attr(title);font-style:normal}\ntable.tableblock{border-collapse:collapse}td.tableblock,th.tableblock{border:1px solid #ccc;padding:.3em}\n.title{font-style:italic}\n.sidebarblock{border:1px solid #ccc;padding:.6em}\n.exampleblock{border:1px solid #ddd;padding:.6em}\n</style>\n";
 
-fn toc(out: &mut String, view: &ViewTree) {
+fn toc(out: &mut String, view: &Page<'_>) {
     out.push_str("<div id=\"toc\" class=\"toc\">\n<div id=\"toctitle\">Table of Contents</div>\n<ul class=\"sectlevel1\">\n");
     for entry in &view.toc {
         let number = entry
@@ -102,7 +126,7 @@ fn classes(base: &str, block: &ViewBlock) -> String {
     classes
 }
 
-fn block_title(out: &mut String, view: &ViewTree, block: &ViewBlock) {
+fn block_title(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
     if block.title.is_empty() {
         return;
     }
@@ -119,13 +143,13 @@ fn block_title(out: &mut String, view: &ViewTree, block: &ViewBlock) {
     );
 }
 
-fn render_blocks(out: &mut String, view: &ViewTree, blocks: &[ViewBlock]) {
+fn render_blocks(out: &mut String, view: &Page<'_>, blocks: &[ViewBlock]) {
     for block in blocks {
         render_block(out, view, block);
     }
 }
 
-fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
+fn render_block(out: &mut String, view: &Page<'_>, block: &ViewBlock) {
     let id = id_attribute(block);
     match &block.kind {
         ViewKind::Section {
@@ -645,7 +669,7 @@ fn render_block(out: &mut String, view: &ViewTree, block: &ViewBlock) {
 
 fn container(
     out: &mut String,
-    view: &ViewTree,
+    view: &Page<'_>,
     block: &ViewBlock,
     class: &str,
     blocks: &[ViewBlock],
@@ -766,20 +790,71 @@ fn img(image: &ViewImage) -> String {
     )
 }
 
-fn xref_href(target: &str, link: &ResolvedLink) -> String {
-    match (&link.fragment, target.split_once('#')) {
-        (Some(fragment), _) if !target.contains(".adoc") && !target.contains('$') => {
-            format!("#{fragment}")
+/// Where an xref leads: `#id` in the page; for a page that resolves, its published address
+/// (`HtmlOptions::page_urls`), else the path from this page's export to that page's, each
+/// beside its source; for one that does not, the target as written with a trailing `.adoc` made
+/// `.html`. None for an unresolved Antora resource id, which no address could stand for (a
+/// browser would read `security:` as a URL scheme).
+fn xref_href(target: &str, link: &ResolvedLink, page: Option<&Page<'_>>) -> Option<String> {
+    let (file, fragment) = match target.split_once('#') {
+        Some((file, fragment)) => (file, Some(fragment)),
+        None => (target, None),
+    };
+    if let Some(fragment) = &link.fragment {
+        if !file.contains(".adoc") && !file.contains('$') {
+            return Some(format!("#{fragment}"));
         }
-        (_, Some((file, fragment))) => format!("{}#{fragment}", file.replace(".adoc", ".html")),
-        _ => target.replace(".adoc", ".html"),
     }
+    let with_fragment = |mut href: String| {
+        if let Some(fragment) = fragment {
+            href.push('#');
+            href.push_str(fragment);
+        }
+        href
+    };
+    if let (Some(location), Some(page)) = (&link.target, page) {
+        if let Some(url) = page.options.page_urls.get(&location.path) {
+            return Some(with_fragment(url.clone()));
+        }
+        let from = page.view.source.parent().unwrap_or(Path::new(""));
+        return Some(with_fragment(relative_href(
+            from,
+            &location.path.with_extension("html"),
+        )));
+    }
+    if file.contains(['$', ':', '@']) {
+        return None;
+    }
+    let file = match file.strip_suffix(".adoc") {
+        Some(stem) => format!("{stem}.html"),
+        None => file.to_owned(),
+    };
+    Some(with_fragment(file))
+}
+
+/// `to` relative to the folder `from`, with `/` separators.
+fn relative_href(from: &Path, to: &Path) -> String {
+    let parts = |path: &Path| -> Vec<String> {
+        path.components()
+            .filter(|component| !matches!(component, Component::CurDir))
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect()
+    };
+    let (from, to) = (parts(from), parts(to));
+    let shared = from
+        .iter()
+        .zip(&to)
+        .take_while(|(from, to)| from == to)
+        .count();
+    let mut href: Vec<String> = vec!["..".to_owned(); from.len() - shared];
+    href.extend(to[shared..].iter().cloned());
+    href.join("/")
 }
 
 /// HTML for a run of inlines.
 #[must_use]
 pub fn inlines(content: &[ViewInline]) -> String {
-    inlines_with(content, false)
+    inlines_with(content, None)
 }
 
 /// Whether the page asks for font icons (`icons=font`), which Asciidoctor writes as Font
@@ -791,21 +866,21 @@ fn font_icons(view: &ViewTree) -> bool {
 }
 
 /// HTML for a run of inlines on the page `view`.
-fn page_inlines(view: &ViewTree, content: &[ViewInline]) -> String {
-    inlines_with(content, font_icons(view))
+fn page_inlines(view: &Page<'_>, content: &[ViewInline]) -> String {
+    inlines_with(content, Some(view))
 }
 
-fn inlines_with(content: &[ViewInline], font_icons: bool) -> String {
+fn inlines_with(content: &[ViewInline], page: Option<&Page<'_>>) -> String {
     let mut out = String::new();
     for inline in content {
-        inline_html(&mut out, inline, font_icons);
+        inline_html(&mut out, inline, page);
     }
     out
 }
 
-fn inline_html(out: &mut String, inline: &ViewInline, font_icons: bool) {
+fn inline_html(out: &mut String, inline: &ViewInline, page: Option<&Page<'_>>) {
     let wrap = |out: &mut String, tag: &str, content: &[ViewInline]| {
-        let _ = write!(out, "<{tag}>{}</{tag}>", inlines_with(content, font_icons));
+        let _ = write!(out, "<{tag}>{}</{tag}>", inlines_with(content, page));
     };
     match inline {
         ViewInline::Text(text) => out.push_str(&escape(text)),
@@ -820,7 +895,7 @@ fn inline_html(out: &mut String, inline: &ViewInline, font_icons: bool) {
                 out,
                 "<span class=\"{}\">{}</span>",
                 escape(&roles.join(" ")),
-                inlines_with(content, font_icons)
+                inlines_with(content, page)
             );
         }
         ViewInline::Link { url, content } => {
@@ -828,7 +903,7 @@ fn inline_html(out: &mut String, inline: &ViewInline, font_icons: bool) {
                 out,
                 "<a href=\"{}\" class=\"bare\">{}</a>",
                 escape(url),
-                inlines_with(content, font_icons)
+                inlines_with(content, page)
             );
         }
         ViewInline::Xref {
@@ -842,12 +917,10 @@ fn inline_html(out: &mut String, inline: &ViewInline, font_icons: bool) {
             } else {
                 ""
             };
-            let _ = write!(
-                out,
-                "<a href=\"{}\"{class}>{}</a>",
-                escape(&xref_href(target, link)),
-                inlines_with(content, font_icons)
-            );
+            let href = xref_href(target, link, page)
+                .map(|href| format!(" href=\"{}\"", escape(&href)))
+                .unwrap_or_default();
+            let _ = write!(out, "<a{href}{class}>{}</a>", inlines_with(content, page));
         }
         ViewInline::Anchor(id) => {
             let _ = write!(out, "<a id=\"{}\"></a>", escape(id));
@@ -855,7 +928,7 @@ fn inline_html(out: &mut String, inline: &ViewInline, font_icons: bool) {
         ViewInline::Image(image) => {
             let _ = write!(out, "<span class=\"image\">{}</span>", img(image));
         }
-        ViewInline::Icon(name) if font_icons => {
+        ViewInline::Icon(name) if page.is_some_and(|page| font_icons(page)) => {
             let _ = write!(
                 out,
                 "<span class=\"icon\"><i class=\"fa fa-{}\"></i></span>",
@@ -929,7 +1002,7 @@ fn inline_html(out: &mut String, inline: &ViewInline, font_icons: bool) {
         }
         ViewInline::Raw(text) => out.push_str(text),
         // Asciidoctor's HTML shows a flow term's text and nothing else.
-        ViewInline::IndexTerm { content, .. } => out.push_str(&inlines_with(content, font_icons)),
+        ViewInline::IndexTerm { content, .. } => out.push_str(&inlines_with(content, page)),
     }
 }
 
@@ -1008,6 +1081,138 @@ pub fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use adoc_core::{Location, SourceRange};
+
+    fn resolved(path: &str) -> ResolvedLink {
+        ResolvedLink {
+            target: Some(Location {
+                path: std::path::PathBuf::from(path),
+                range: SourceRange::new(0, 0),
+            }),
+            ..ResolvedLink::default()
+        }
+    }
+
+    fn unresolved() -> ResolvedLink {
+        ResolvedLink {
+            unresolved: true,
+            ..ResolvedLink::default()
+        }
+    }
+
+    /// The `href` of each `(target, link)` written on the page at `source`.
+    fn hrefs(
+        source: &str,
+        options: &HtmlOptions,
+        links: &[(&str, ResolvedLink)],
+    ) -> Vec<Option<String>> {
+        let view = ViewTree {
+            source: std::path::PathBuf::from(source),
+            ..ViewTree::default()
+        };
+        let page = Page {
+            view: &view,
+            options,
+        };
+        links
+            .iter()
+            .map(|(target, link)| xref_href(target, link, Some(&page)))
+            .collect()
+    }
+
+    #[test]
+    fn cross_page_xrefs_lead_to_where_the_page_is_exported() {
+        let source = "/docs/modules/ROOT/pages/index.adoc";
+        let found = hrefs(
+            source,
+            &HtmlOptions::default(),
+            &[
+                (
+                    "security:authentication.adoc",
+                    resolved("/docs/modules/security/pages/authentication.adoc"),
+                ),
+                (
+                    "2.0@api:ROOT:index.adoc#start",
+                    resolved("/api/modules/ROOT/pages/index.adoc"),
+                ),
+                (
+                    "other.adoc",
+                    resolved("/docs/modules/ROOT/pages/other.adoc"),
+                ),
+                (
+                    "notes.adoc.adoc#x",
+                    resolved("/docs/modules/ROOT/pages/notes.adoc.adoc"),
+                ),
+                (
+                    "guide/setup.adoc",
+                    resolved("/docs/modules/ROOT/pages/guide/setup.adoc"),
+                ),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                Some("../../security/pages/authentication.html".to_owned()),
+                Some("../../../../api/modules/ROOT/pages/index.html#start".to_owned()),
+                Some("other.html".to_owned()),
+                Some("notes.adoc.html#x".to_owned()),
+                Some("guide/setup.html".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn with_published_addresses_cross_page_xrefs_lead_there() {
+        let target = "/docs/modules/security/pages/authentication.adoc";
+        let options = HtmlOptions {
+            page_urls: std::collections::HashMap::from([(
+                std::path::PathBuf::from(target),
+                "https://docs.example.com/guide/security/authentication.html".to_owned(),
+            )]),
+            ..HtmlOptions::default()
+        };
+        assert_eq!(
+            hrefs(
+                "/docs/modules/ROOT/pages/index.adoc",
+                &options,
+                &[("security:authentication.adoc#tokens", resolved(target))],
+            ),
+            [Some(
+                "https://docs.example.com/guide/security/authentication.html#tokens".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn unresolved_xrefs_never_become_a_scheme_or_lose_inner_adoc() {
+        assert_eq!(
+            hrefs(
+                "/docs/index.adoc",
+                &HtmlOptions::default(),
+                &[
+                    ("security:missing.adoc", unresolved()),
+                    ("2.0@api::index.adoc", unresolved()),
+                    ("partial$note.adoc", unresolved()),
+                    ("drafts.adoc/missing.adoc#x", unresolved()),
+                    (
+                        "#local",
+                        ResolvedLink {
+                            fragment: Some("local".to_owned()),
+                            ..ResolvedLink::default()
+                        }
+                    ),
+                ],
+            ),
+            [
+                None,
+                None,
+                None,
+                Some("drafts.adoc/missing.html#x".to_owned()),
+                Some("#local".to_owned()),
+            ]
+        );
+    }
 
     fn file_src(path: &std::path::Path) -> String {
         format!("<img src=\"{}\" alt=\"x\">", escape(&file_url(path)))

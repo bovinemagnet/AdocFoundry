@@ -66,8 +66,25 @@ impl Client {
 
     /// A client of a server on `root` started with `options`, such as `--allow-build`.
     pub fn start_with_options(root: &Path, options: &[&str], version: &str) -> (Self, Value) {
+        Self::start_with_env(root, options, version, &[])
+    }
+
+    /// A client of a server on `root` started with `options` and its environment changed by
+    /// `env`, where `None` removes a variable.
+    pub fn start_with_env(
+        root: &Path,
+        options: &[&str],
+        version: &str,
+        env: &[(&str, Option<&std::ffi::OsStr>)],
+    ) -> (Self, Value) {
         let mut command = Command::new(env!("CARGO_BIN_EXE_adoc-mcp"));
         command.arg(root).args(options);
+        for (name, value) in env {
+            match value {
+                Some(value) => command.env(name, value),
+                None => command.env_remove(name),
+            };
+        }
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

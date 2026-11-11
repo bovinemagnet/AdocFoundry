@@ -365,6 +365,47 @@ fn render_writes_html() {
 }
 
 #[test]
+fn render_to_a_file_embeds_local_images_unless_asked_to_link_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let output_path = directory.path().join("guide.html");
+    let render = |extra: &[&str]| {
+        let mut arguments = vec![
+            "render",
+            "tests/fixtures/images/guide.adoc",
+            "--output",
+            output_path.to_str().unwrap(),
+        ];
+        arguments.extend_from_slice(extra);
+        let output = cli(&arguments);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::read_to_string(&output_path).unwrap()
+    };
+
+    // A file is meant to be moved or published, so it carries its images.
+    let embedded = render(&[]);
+    assert!(
+        embedded.contains("src=\"data:image/svg+xml;base64,"),
+        "{embedded}"
+    );
+    assert!(
+        !embedded.contains("present.svg\""),
+        "the image is not linked: {embedded}"
+    );
+
+    let linked = render(&["--link-images"]);
+    assert!(linked.contains("src=\"file://"), "{linked}");
+    assert!(linked.contains("present.svg\""), "{linked}");
+
+    // On standard output, images stay linked, as before.
+    let output = cli(&["render", "tests/fixtures/images/guide.adoc"]);
+    assert!(stdout(&output).contains("src=\"file://"));
+}
+
+#[test]
 fn check_accepts_the_current_directory_as_root() {
     let fixture = "tests/fixtures/antora-broken-references";
     let output = cli_in(fixture, &["check", ".", "--format", "json"]);
@@ -391,7 +432,11 @@ fn render_resolves_antora_resources_from_the_current_directory() {
         };
         let index = page("modules/ROOT/pages/index.adoc");
         assert!(
-            index.contains("<a href=\"security:authentication.html\">Authentication</a>"),
+            // To where the page's own export sits beside its source, never a resource id,
+            // which a browser would read as a URL scheme (#426).
+            index.contains(
+                "<a href=\"../../security/pages/authentication.html\">Authentication</a>"
+            ),
             "{root:?}: {index}"
         );
         assert!(!index.contains("class=\"unresolved\""), "{root:?}: {index}");

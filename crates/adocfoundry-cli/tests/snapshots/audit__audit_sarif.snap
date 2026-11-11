@@ -149,6 +149,38 @@ expression: "stdout(&cli(&[\"audit\", FIXTURE, \"--format\",\n\"sarif\"])).repla
           }
         },
         {
+          "ruleId": "quality.image.missing-alt",
+          "level": "warning",
+          "message": {
+            "text": "The image `c.png` has no alternative text"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "product/modules/ROOT/pages/images.adoc",
+                  "uriBaseId": "ROOT0"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 11,
+                  "endLine": 7,
+                  "endColumn": 32
+                }
+              }
+            }
+          ],
+          "properties": {
+            "coordinate": {
+              "component": "product",
+              "version": "3.0",
+              "module": "ROOT",
+              "family": "page",
+              "path": "images.adoc"
+            }
+          }
+        },
+        {
           "ruleId": "quality.navigation.unlisted-page",
           "level": "warning",
           "message": {
@@ -288,7 +320,7 @@ expression: "stdout(&cli(&[\"audit\", FIXTURE, \"--format\",\n\"sarif\"])).repla
         ],
         "counts": {
           "info": 1,
-          "warning": 6,
+          "warning": 7,
           "error": 0,
           "excluded": 0,
           "skipped": 2

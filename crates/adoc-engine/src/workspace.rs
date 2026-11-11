@@ -580,6 +580,24 @@ impl Engine {
         true
     }
 
+    /// Blocks until `done` holds, applying worker results as they arrive, or until `deadline`
+    /// passes, and says whether it held. Unlike [`Engine::wait_for_workers`] it waits for
+    /// nothing else, so a long-running worker (a site build, a slow diagram) holds up only
+    /// those waiting for it. For front ends without an event loop waiting for a job of their
+    /// own.
+    pub fn wait_until(&mut self, deadline: Instant, mut done: impl FnMut(&Self) -> bool) -> bool {
+        loop {
+            if done(self) {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.worker_receiver.recv_timeout(remaining) {
+                Ok(message) => self.apply_worker_message(message),
+                Err(_) => return done(self),
+            }
+        }
+    }
+
     pub(crate) fn apply_worker_message(&mut self, message: WorkerMessage) {
         if !matches!(
             message,

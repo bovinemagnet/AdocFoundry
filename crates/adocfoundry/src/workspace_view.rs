@@ -990,6 +990,11 @@ impl WorkspaceView {
     }
 
     #[cfg(test)]
+    pub fn search_view_for_test(&self) -> &Entity<SearchView> {
+        &self.search
+    }
+
+    #[cfg(test)]
     pub fn active_editor_for_test(&self) -> Option<&Entity<SourceEditorView>> {
         self.active_editor()
     }
@@ -2407,6 +2412,19 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.show_preview_then(preview, |_| {}, window, cx);
+    }
+
+    /// Shows a multi-file change for confirmation as [`WorkspaceView::show_preview`] does,
+    /// calling `applied_then` once it has been applied.
+    pub fn show_preview_then(
+        &mut self,
+        preview: EditPreview,
+        applied_then: impl Fn(&mut App) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let applied_then = Rc::new(applied_then);
         let app = self.app.clone();
         let roots = app.read(cx).engine.roots().to_vec();
         let id = preview.id;
@@ -2447,6 +2465,7 @@ impl WorkspaceView {
             let app_close = app.clone();
             let applied_ok = applied.clone();
             let applied_close = applied.clone();
+            let applied_then = applied_then.clone();
             dialog
                 .title(title.clone())
                 .width(px(720.))
@@ -2473,7 +2492,9 @@ impl WorkspaceView {
                     });
                     applied_ok.set(true);
                     // A failure is reported by the window.
-                    let _ = result;
+                    if result.is_ok() {
+                        applied_then(cx);
+                    }
                     true
                 })
                 .on_close(move |_, _, cx| {
@@ -2960,7 +2981,7 @@ impl WorkspaceView {
     /// come here: it keeps unsaved text for Recover Unsaved Changes.
     pub(crate) fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.may_leave(Leaving::App, window, cx) {
-            crate::app::quit_now(cx);
+            crate::app::quit_now(&self.app, cx);
         }
     }
 
@@ -3036,7 +3057,8 @@ impl WorkspaceView {
         false
     }
 
-    /// Closes the window, or quits, as `answer` says, once asked about unsaved pages.
+    /// Closes the window, or quits, as `answer` says, once asked about unsaved pages. A quit
+    /// that does not happen discards any update waiting for it.
     fn close_window(
         &mut self,
         answer: CloseAnswer,
@@ -3044,15 +3066,20 @@ impl WorkspaceView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let staying = |this: &Self, window: &mut Window, cx: &mut Context<Self>| {
+            if leaving == Leaving::App {
+                crate::updates::discard_staged(&this.app, window, cx);
+            }
+        };
         match answer {
-            CloseAnswer::Cancel => return,
+            CloseAnswer::Cancel => return staying(self, window, cx),
             // A page that changed on disk shows its own dialog, and the window stays.
             CloseAnswer::Save => {
                 if self
                     .invoke(ids::DOCUMENT_SAVE_ALL, CommandArgs::None, window, cx)
                     .is_none()
                 {
-                    return;
+                    return staying(self, window, cx);
                 }
                 self.write_session(cx);
             }
@@ -3068,7 +3095,7 @@ impl WorkspaceView {
         self.closing = true;
         match leaving {
             Leaving::Window => window.remove_window(),
-            Leaving::App => crate::app::quit_now(cx),
+            Leaving::App => crate::app::quit_now(&self.app, cx),
         }
     }
 

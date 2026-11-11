@@ -24,6 +24,11 @@ pub struct SearchRequest {
     pub whole_word: bool,
     /// Restricts the search to files beneath this directory, such as one component's root.
     pub scope: Option<PathBuf>,
+    /// Searches every text file beneath the roots (or the scope), not only the indexed
+    /// AsciiDoc files: `antora.yml`, the playbook, examples and the rest. Folders named in
+    /// `[workspace] ignore` and links are never entered, and binary or non-UTF-8 files are
+    /// left out, as the engine refuses to open them.
+    pub all_text_files: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
