@@ -97,6 +97,8 @@ If less than half of the saved place is on a display, because a screen has been 
 
 |Colour
 |Colours nodes by Component, Module or Family, and by Age where pages have xref:graph-view.adoc#graph-page-age[ages]. Clicking the button moves to the next.
+A component, module or family keeps its colour in every view of the workspace, local graphs, paths and exported images included.
+Past sixteen groups the colours are muted, each with a hue of its own.
 
 |Stale
 |Shows only the pages not changed for a long time, and their neighbours. It is there only where pages have xref:graph-view.adoc#graph-page-age[ages].
@@ -148,6 +150,7 @@ A radial map draws the same tree with the root in the middle and each level a ri
 The tree follows the root:
 
 * Rooted at a navigation file, the tree is the navigation's own nesting, following navigation links only.
+It follows only the entries that file lists, so another navigation file listing the same page adds nothing to it.
 An entry with no page, such as a plain-text heading, hands its entries to the entry above it, as the graph's navigation edges do.
 * Rooted at a page, the tree is the page and everything within the depth you choose, 1 to 3, following links of every kind in both directions.
 The window shows the depth buttons while it is laid out as a mind map.
@@ -323,6 +326,7 @@ Any other name gets an SVG.
 
 With the graph window open, the image is what the window shows: its scope (workspace or local), its filters, its colouring and every node where the layout has it, pinned nodes included.
 With no graph window, the whole workspace is laid out afresh with the `[graph]` settings.
+The layout keeps settling until it stops moving, for at most 3,000 steps.
 The image is drawn on a light or a dark background, following the app's theme.
 A notification says where the file was saved, with an Open button.
 
@@ -339,6 +343,8 @@ In a browser, hovering over a node shows its title.
 
 The image holds titles only, never file paths.
 The same layout always gives the same file.
+Laid out afresh, the same documentation gives the same file wherever it is checked out.
+The image makes room for labels in wide characters and for the bow of long navigation links.
 
 The same image is available without the app.
 `adocfoundry-cli graph --format svg` prints it, as described in xref:command-line.adoc#graph[the command line reference], and the xref:mcp-server.adoc[MCP server]'s `link_graph` tool returns it with `format: svg`.
