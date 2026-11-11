@@ -869,8 +869,14 @@ mod tests {
                 pid_file.display()
             ),
         );
-        let provider = ExternalProvider::new(vec!["plantuml"], &tool, Vec::new())
-            .with_timeout(std::time::Duration::from_secs(2));
+        // Run by `/bin/sh` rather than executed itself: macOS can take seconds to launch a
+        // program it has not seen before, which would let the deadline pass first.
+        let provider = ExternalProvider::new(
+            vec!["plantuml"],
+            "/bin/sh",
+            vec![tool.display().to_string()],
+        )
+        .with_timeout(std::time::Duration::from_secs(1));
         let error = provider
             .render(&DiagramRequest::new("plantuml", "A -> B"))
             .unwrap_err();
