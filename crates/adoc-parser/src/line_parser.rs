@@ -10,8 +10,6 @@ pub(crate) struct Heading<'a> {
     pub title: &'a str,
     pub range: SourceRange,
     pub selection_range: SourceRange,
-    /// Marked with Markdown's `#`, which is a heading only where a block begins.
-    pub markdown: bool,
 }
 
 pub(crate) fn content(line: &str) -> &str {
@@ -52,7 +50,6 @@ pub(crate) fn parse_heading(line: &str, offset: usize) -> Option<Heading<'_>> {
         title,
         range: SourceRange::new(offset, offset + line.len()),
         selection_range: SourceRange::new(selection_start, selection_start + title.len()),
-        markdown: marker == b'#',
     })
 }
 
@@ -646,7 +643,7 @@ impl<'a> VerbatimBlocks<'a> {
         self.follow_compound(trimmed);
         if trimmed.is_empty()
             || is_compound_delimiter(trimmed)
-            || parse_heading(trimmed, 0).is_some_and(|heading| self.begins_block(&heading))
+            || (self.begins_block() && parse_heading(trimmed, 0).is_some())
         {
             self.in_text = false;
         } else if !self.in_text
@@ -678,10 +675,11 @@ impl<'a> VerbatimBlocks<'a> {
         !self.compound.is_empty()
     }
 
-    /// Whether `heading`, on the line about to be read, is one: a `#` line within a block of
-    /// text is part of it, as Asciidoctor reads it.
-    pub(crate) fn begins_block(&self, heading: &Heading<'_>) -> bool {
-        !heading.markdown || !self.in_text
+    /// Whether the line about to be read may begin a block, and so be a heading: within a
+    /// block of text (a paragraph, a list item, the header's author and revision lines) a `=` or
+    /// `#` line is part of it, as Asciidoctor reads it.
+    pub(crate) fn begins_block(&self) -> bool {
+        !self.in_text
     }
 
     /// The preprocessor conditional `line` is, which the preprocessor reads everywhere but in

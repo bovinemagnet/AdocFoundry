@@ -125,8 +125,8 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                 })
         };
 
-        // Whether a `#` heading on this line begins a block, judged before the line is read.
-        let heading = parse_heading(line, offset).filter(|heading| verbatim.begins_block(heading));
+        // A heading only where a block begins, judged before the line is read.
+        let heading = parse_heading(line, offset).filter(|_| verbatim.begins_block());
         match verbatim.line(trimmed) {
             Verbatim::No => {}
             Verbatim::Underline(marker_level) => {
@@ -148,7 +148,6 @@ fn parse_document(uri: &str, text: &str) -> ParseResult {
                                 selection_start,
                                 selection_start + title.len(),
                             ),
-                            markdown: false,
                         },
                         pending,
                     );
@@ -417,11 +416,12 @@ image::diagram.png[Architecture]\n";
         );
     }
 
-    /// A block attribute line giving an id replaces an anchor before it; content clears it.
+    /// A block attribute line giving an id replaces an anchor before it; content clears it. (A
+    /// heading right under `Text.` would be part of its paragraph, so a blank line comes first.)
     #[test]
     fn a_later_block_id_replaces_an_anchor_and_content_clears_it() {
         assert_eq!(
-            section_ids_and_titles("[[a1]]\n[#b1]\n== Replaced\n\n[[gone]]\nText.\n== Plain\n"),
+            section_ids_and_titles("[[a1]]\n[#b1]\n== Replaced\n\n[[gone]]\nText.\n\n== Plain\n"),
             [section(Some("b1"), "Replaced"), section(None, "Plain")]
         );
     }
@@ -1306,6 +1306,38 @@ image::diagram.png[Architecture]\n";
         assert_eq!(
             sections,
             [(1, "Section One"), (2, "Sub"), (1, "Mixed level 1")]
+        );
+    }
+
+    /// A `=` heading, like a `#` one, is a heading only where a block begins: after a blank
+    /// line, block metadata, a comment, a delimited block or another heading. Within a paragraph,
+    /// a list item or the header's author and revision lines, Asciidoctor 2.0 reads it as text.
+    #[test]
+    fn equals_headings_are_headings_only_where_a_block_begins() {
+        let source = "= Doc\nAuthor Name\n:attr: x\n== After header lines\n\n\
+                      Para.\n== Mid paragraph\n\n* item\n== After list item\n\n\
+                      [[sec-id]]\n== After anchor\n\n.Title\n== After block title\n\n\
+                      // comment\n== After comment\n\n----\ncode\n----\n== After listing\n\n\
+                      == A\n== B directly after A\n\n|===\n| cell\n|===\n== After table\n\n\
+                      Para.\n= Level zero mid paragraph\n";
+        let document = parse("file:///doc.adoc", source).document;
+        assert_eq!(document.title.expect("a title").text, "Doc");
+        let sections: Vec<_> = document
+            .sections
+            .iter()
+            .map(|section| (section.level, section.title.as_str()))
+            .collect();
+        assert_eq!(
+            sections,
+            [
+                (1, "After anchor"),
+                (1, "After block title"),
+                (1, "After comment"),
+                (1, "After listing"),
+                (1, "A"),
+                (1, "B directly after A"),
+                (1, "After table"),
+            ]
         );
     }
 
