@@ -433,6 +433,87 @@ fn unstaging_a_folder_is_refused() {
     assert_eq!(state(dir.path()), before, "nothing is unstaged");
 }
 
+/// `Repository::commit` in `dir`, as the error's text when it refuses.
+fn commit(dir: &Path, message: &str) -> Result<String, String> {
+    let repo = Repository::discover_isolated(dir).unwrap().unwrap();
+    repo.commit(message).map_err(|error| error.to_string())
+}
+
+/// A repository on `main` whose branch `other` changes `page.adoc`, after `main` changed the file
+/// `ours` (the same one for a conflict).
+fn diverged(dir: &Path, ours: &str) {
+    init(
+        dir,
+        &[
+            ("user.name", "Ada Writer"),
+            ("user.email", "ada@example.com"),
+        ],
+    );
+    fs::write(dir.join("page.adoc"), "base\n").unwrap();
+    fs::write(dir.join("other.adoc"), "base\n").unwrap();
+    commit_all(dir);
+    git_ok(dir, &["checkout", "-q", "-b", "other"]);
+    fs::write(dir.join("page.adoc"), "theirs\n").unwrap();
+    git_ok(dir, &["commit", "-q", "-am", "theirs"]);
+    git_ok(dir, &["checkout", "-q", "main"]);
+    fs::write(dir.join(ours), "ours\n").unwrap();
+    git_ok(dir, &["commit", "-q", "-am", "ours"]);
+}
+
+#[test]
+fn a_commit_with_unresolved_conflicts_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path(), "page.adoc");
+    assert!(!git(dir.path(), &["merge", "-q", "other"]).status.success());
+    let head = git_ok(dir.path(), &["rev-parse", "HEAD"]);
+    let error = commit(dir.path(), "oops").unwrap_err();
+    assert!(error.contains("merge"), "{error}");
+    assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
+
+    // Without the merge's state, as `git merge --quit` or a conflicted `git stash pop` leave it.
+    git_ok(dir.path(), &["merge", "--quit"]);
+    let error = commit(dir.path(), "oops").unwrap_err();
+    assert!(error.contains("page.adoc"), "{error}");
+    assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn a_commit_during_a_merge_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path(), "other.adoc");
+    git_ok(
+        dir.path(),
+        &["merge", "-q", "--no-commit", "--no-ff", "other"],
+    );
+    let head = git_ok(dir.path(), &["rev-parse", "HEAD"]);
+    let error = commit(dir.path(), "merge other").unwrap_err();
+    assert!(error.contains("merge"), "{error}");
+    assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
+}
+
+#[test]
+fn a_commit_during_a_cherry_pick_is_refused() {
+    if !has_git() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path(), "page.adoc");
+    assert!(!git(dir.path(), &["cherry-pick", "other"]).status.success());
+    // Resolved and staged, so only the stopped pick remains.
+    fs::write(dir.path().join("page.adoc"), "resolved\n").unwrap();
+    git_ok(dir.path(), &["add", "page.adoc"]);
+    let head = git_ok(dir.path(), &["rev-parse", "HEAD"]);
+    let error = commit(dir.path(), "pick").unwrap_err();
+    assert!(error.contains("cherry-pick"), "{error}");
+    assert_eq!(git_ok(dir.path(), &["rev-parse", "HEAD"]), head);
+}
+
 #[cfg(unix)]
 mod unix {
     use std::os::unix::fs::{symlink, PermissionsExt as _};

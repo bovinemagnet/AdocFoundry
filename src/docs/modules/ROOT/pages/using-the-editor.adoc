@@ -1972,7 +1972,8 @@ git config --global user.email "you@example.com"
 ----
 
 A commit with nothing staged is refused with "nothing is staged to commit".
-When `commit.gpgsign` is `true`, the commit is made with the `git` executable so that it is signed with your key.
+A commit is also refused while files have unresolved conflicts, naming them, and while Git is part of the way through a merge, rebase, cherry-pick, revert or `git am`: finish or abort it in a Git client first.
+When `commit.gpgsign` is `true`, the commit is made with the `git` executable so that it is signed with your key, and Git itself decides what to do with conflicts or a merge in progress, as it would in a terminal.
 It runs in the background, so the window keeps working while Git signs.
 A notification says "Signing the commit…" and then reports the commit.
 *Commit and Push* pushes once the commit is made, and not if it failed.

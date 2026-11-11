@@ -519,10 +519,25 @@ impl Repository {
     }
 
     /// Commits the index on the current branch with `message`, as `git commit` would. Refuses
-    /// without an identity or when nothing is staged. Returns the commit's id.
+    /// without an identity, when nothing is staged, while a conflict is unresolved, and while Git
+    /// is part-way through a merge, rebase, cherry-pick, revert or `git am`, which are left for
+    /// Git to conclude. Returns the commit's id.
     pub fn commit(&self, message: &str) -> Result<String, GitError> {
         self.identity()?;
+        if let Some(operation) = self.operation_in_progress() {
+            return Err(GitError::InProgress(operation));
+        }
         let index = self.index_file()?;
+        let mut unmerged: Vec<PathBuf> = index
+            .entries()
+            .iter()
+            .filter(|entry| entry.stage_raw() != 0)
+            .map(|entry| relative_path(entry.path(&index)))
+            .collect();
+        if !unmerged.is_empty() {
+            unmerged.dedup();
+            return Err(GitError::Unmerged(unmerged));
+        }
         let mut editor = self
             .repo
             .edit_tree(gix::ObjectId::empty_tree(self.repo.object_hash()))
@@ -558,6 +573,23 @@ impl Repository {
             .commit("HEAD", message, tree, parents)
             .map_err(GitError::git)?;
         Ok(id.to_string())
+    }
+
+    /// The merge, rebase, cherry-pick, revert or patch series Git has stopped part-way, which a
+    /// commit would have to conclude as Git does; `None` when there is none. A bisection is not
+    /// one: committing during it is ordinary.
+    fn operation_in_progress(&self) -> Option<&'static str> {
+        use gix::state::InProgress;
+        Some(match self.repo.state()? {
+            InProgress::Merge => "a merge",
+            InProgress::Rebase | InProgress::RebaseInteractive | InProgress::ApplyMailboxRebase => {
+                "a rebase"
+            }
+            InProgress::CherryPick | InProgress::CherryPickSequence => "a cherry-pick",
+            InProgress::Revert | InProgress::RevertSequence => "a revert",
+            InProgress::ApplyMailbox => "git am",
+            InProgress::Bisect => return None,
+        })
     }
 
     /// How many commits branch `branch` has that `remote` does not, by its remote-tracking
