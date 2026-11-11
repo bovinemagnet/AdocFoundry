@@ -318,7 +318,7 @@ impl ProtocolServer {
         let uri = params.text_document.uri.as_str().to_owned();
         let id = self
             .engine
-            .open_text(&document_path(&uri), &params.text_document.text);
+            .open_client_text(&document_path(&uri), &params.text_document.text);
         self.open.insert(id, (uri, params.text_document.version));
         self.published(Some(id))
     }

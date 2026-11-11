@@ -332,6 +332,20 @@ impl Engine {
         id
     }
 
+    /// Opens the page at `path` with `text` as a language client's buffer, as
+    /// [`Engine::open_text`] does, and leaves the buffer to the client from then on: a change to
+    /// the file on disk never replaces it nor is reported for it (the client reloads its buffer
+    /// and sends the change, if it does), and the index keeps the buffer's parse until it is
+    /// closed. The engine never hears of the client's saves, so whether the buffer matches the
+    /// file says nothing.
+    pub fn open_client_text(&mut self, path: &Path, text: &str) -> DocumentId {
+        let id = self.open_text(path, text);
+        if let Some(state) = self.states.get_mut(&id) {
+            state.client_owned = true;
+        }
+        id
+    }
+
     /// Opens a new, empty document that has no file on disk.
     pub fn open_untitled(&mut self) -> DocumentId {
         let path = PathBuf::from(format!("Untitled-{}.adoc", self.next_untitled));
@@ -383,6 +397,7 @@ impl Engine {
                 saved_hash: hash_text(text),
                 saved_len: text.len(),
                 changed_on_disk: false,
+                client_owned: false,
             },
         );
         self.emit(EngineEvent::DocumentOpened(id));
@@ -819,6 +834,10 @@ impl Engine {
         };
         let defer = typed.is_some() || (self.typing && is_small(&edits));
         let applied = self.edit_document(id, edits, defer)?;
+        if self.states.get(&id).is_some_and(|state| state.client_owned) {
+            // The client keeps the undo history of its own buffer; nothing would read this one.
+            return Ok(());
+        }
         let now = self.clock.now();
         if let Some((offset, text)) = &typed {
             let coalesced = self.states.get_mut(&id).is_some_and(|state| {

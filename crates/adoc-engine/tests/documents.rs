@@ -190,6 +190,26 @@ fn closing_the_tabs_of_an_unknown_document_closes_nothing() {
     assert_eq!(open_ids(&engine), vec![a]);
 }
 
+/// A language client keeps its own undo history and sends each change, whole documents
+/// included: the engine keeps none for its buffer.
+#[test]
+fn a_client_s_buffer_keeps_no_undo_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("guide.adoc");
+    let mut engine = Engine::new(Settings::default());
+    let id = engine.open_client_text(&path, "= Guide\n");
+
+    insert(&mut engine, id, 8, "Typed.\n");
+    engine.open_client_text(&path, "= Guide\n\nReplaced whole.\n");
+
+    assert_eq!(text(&engine, id), "= Guide\n\nReplaced whole.\n");
+    assert!(engine.undo_stack(id).unwrap().is_empty());
+    // A desktop tab keeps its history as ever.
+    let other = engine.open_text(&directory.path().join("other.adoc"), "= Other\n");
+    insert(&mut engine, other, 8, "Typed.\n");
+    assert!(!engine.undo_stack(other).unwrap().is_empty());
+}
+
 #[test]
 fn undo_redo_single_group() {
     let mut engine = Engine::new(Settings::default());

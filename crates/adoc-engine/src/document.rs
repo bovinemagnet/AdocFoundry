@@ -83,6 +83,9 @@ pub(crate) struct DocumentState {
     /// The file was reported changed on disk under unsaved edits; it is not reported again
     /// until the page is saved or reloaded.
     pub(crate) changed_on_disk: bool,
+    /// The buffer is a language client's (see [`crate::Engine::open_client_text`]): the
+    /// client changes it and saves it, and the file on disk never replaces it.
+    pub(crate) client_owned: bool,
 }
 
 impl DocumentState {
