@@ -138,7 +138,9 @@ impl Repository {
                     rela_path, status, ..
                 }) => {
                     if let Some(change) = worktree_change(&status) {
-                        entry(&mut files, rela_path.as_ref()).worktree = change;
+                        if let Some(file) = entry(&mut files, rela_path.as_ref()) {
+                            file.worktree = change;
+                        }
                     }
                 }
                 Item::IndexWorktree(Worktree::DirectoryContents { entry: found, .. }) => {
@@ -147,7 +149,9 @@ impl Repository {
                         gix::dir::entry::Status::Ignored(_) => Change::Ignored,
                         _ => continue,
                     };
-                    entry(&mut files, found.rela_path.as_ref()).worktree = change;
+                    if let Some(file) = entry(&mut files, found.rela_path.as_ref()) {
+                        file.worktree = change;
+                    }
                 }
                 Item::IndexWorktree(Worktree::Rewrite {
                     source,
@@ -156,11 +160,10 @@ impl Repository {
                     ..
                 }) => {
                     // A copy leaves its source where it was: the new file is only untracked.
-                    entry(&mut files, dirwalk_entry.rela_path.as_ref()).worktree = if copy {
-                        Change::Untracked
-                    } else {
-                        Change::Renamed(relative_path(source.rela_path()))
-                    };
+                    let from = (!copy).then(|| relative_path(source.rela_path())).flatten();
+                    if let Some(file) = entry(&mut files, dirwalk_entry.rela_path.as_ref()) {
+                        file.worktree = from.map_or(Change::Untracked, Change::Renamed);
+                    }
                 }
                 Item::TreeIndex(change) => {
                     use gix::diff::index::Change as Index;
@@ -177,9 +180,14 @@ impl Repository {
                             source_location,
                             location,
                             ..
-                        } => (location, Change::Renamed(relative_path(source_location))),
+                        } => (
+                            location,
+                            relative_path(source_location).map_or(Change::Added, Change::Renamed),
+                        ),
                     };
-                    entry(&mut files, location.as_ref()).index = change;
+                    if let Some(file) = entry(&mut files, location.as_ref()) {
+                        file.index = change;
+                    }
                 }
             }
         }
@@ -212,7 +220,7 @@ impl Repository {
         let entry = attributes
             .at_path(relative.as_path(), None, &self.repo.objects)
             .map_err(GitError::git)?;
-        let name = unix_path(&relative);
+        let name = unix_path(&relative)?;
         let converted = pipeline
             .convert_to_worktree(
                 blob.as_bytes(),
@@ -342,7 +350,7 @@ impl Repository {
         let head = self.repo.head_id().map_err(GitError::git)?.detach();
         let outcome = self
             .repo
-            .blame_file(unix_path(relative).as_ref(), head, Default::default())
+            .blame_file(unix_path(relative)?.as_ref(), head, Default::default())
             .map_err(GitError::git)?;
         let mut commits: BTreeMap<gix::ObjectId, (String, i64, String)> = BTreeMap::new();
         let mut lines = Vec::new();
@@ -403,7 +411,7 @@ impl Repository {
         let protect = self.protect_options();
         for path in paths {
             let relative = self.relative(path)?;
-            let name = unix_path(&relative);
+            let name = unix_path(&relative)?;
             for component in name.split_str("/") {
                 gix::validate::path::component(component.as_bstr(), None, protect).map_err(
                     |error| GitError::Unstorable {
@@ -539,7 +547,7 @@ impl Repository {
             path: file.to_path_buf(),
             source,
         })?;
-        let name = unix_path(relative);
+        let name = unix_path(relative)?;
         let mut converted = Vec::new();
         pipeline
             .convert_to_git(
@@ -581,7 +589,7 @@ impl Repository {
         };
         for path in paths {
             let relative = self.relative(path)?;
-            let name = unix_path(&relative);
+            let name = unix_path(&relative)?;
             index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
             let Some(tree) = &head_tree else {
                 continue;
@@ -650,13 +658,16 @@ impl Repository {
             return Err(GitError::InProgress(operation));
         }
         let index = self.index_file()?;
-        let mut unmerged: Vec<PathBuf> = index
+        let conflicts: Vec<_> = index
             .entries()
             .iter()
             .filter(|entry| entry.stage_raw() != 0)
-            .map(|entry| relative_path(entry.path(&index)))
             .collect();
-        if !unmerged.is_empty() {
+        if !conflicts.is_empty() {
+            let mut unmerged: Vec<PathBuf> = conflicts
+                .iter()
+                .filter_map(|entry| relative_path(entry.path(&index)))
+                .collect();
             unmerged.dedup();
             return Err(GitError::Unmerged(unmerged));
         }
@@ -847,14 +858,18 @@ pub(crate) fn text_in(tree: &gix::Tree<'_>, relative: &Path) -> Result<Option<St
     Ok(object.data.to_str().ok().map(str::to_owned))
 }
 
-/// The status of `path` in `files`, added unmodified when it is not there yet.
-fn entry<'a>(files: &'a mut BTreeMap<PathBuf, FileStatus>, path: &BStr) -> &'a mut FileStatus {
-    let path = relative_path(path);
-    files.entry(path.clone()).or_insert(FileStatus {
+/// The status of `path` in `files`, added unmodified when it is not there yet; `None` for a
+/// name that is no path here (see [`relative_path`]).
+fn entry<'a>(
+    files: &'a mut BTreeMap<PathBuf, FileStatus>,
+    path: &BStr,
+) -> Option<&'a mut FileStatus> {
+    let path = relative_path(path)?;
+    Some(files.entry(path.clone()).or_insert(FileStatus {
         path,
         index: Change::Unmodified,
         worktree: Change::Unmodified,
-    })
+    }))
 }
 
 fn worktree_change(
@@ -893,13 +908,11 @@ fn write_changed_index(mut index: gix::index::File, lock: gix::lock::File) -> Re
     Ok(())
 }
 
-/// A relative platform path as Git writes it, `/`-separated.
-fn unix_path(path: &Path) -> gix::bstr::BString {
-    path.components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
-        .into()
+/// A relative platform path as Git writes it, `/`-separated, its bytes kept; an error for one
+/// that cannot be written as bytes (on Windows, one that is not Unicode).
+fn unix_path(path: &Path) -> Result<gix::bstr::BString, GitError> {
+    let name = gix::path::into_bstr(path).map_err(GitError::git)?;
+    Ok(gix::path::to_unix_separators_on_windows(name).into_owned())
 }
 
 /// What a link stores: its target as written, with `/` between its parts.
@@ -941,10 +954,12 @@ fn staged_mode(
     }
 }
 
-/// A repository-relative path (`/`-separated) as a platform path.
-pub(crate) fn relative_path(path: &BStr) -> PathBuf {
+/// A repository-relative path (`/`-separated) as a platform path, its bytes kept; `None` for a
+/// name no path here can hold (on Windows, one that is not UTF-8), which is left out rather than
+/// named as another file.
+pub(crate) fn relative_path(path: &BStr) -> Option<PathBuf> {
     path.split_str("/")
-        .map(|component| component.to_str_lossy().into_owned())
+        .map(|component| gix::path::from_byte_slice(component).ok())
         .collect()
 }
 
@@ -968,4 +983,20 @@ fn spelt_as(path: &Path, found: &Path) -> PathBuf {
             .collect();
     }
     found.to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Latin-1 name, which Git stores as its bytes, is not renamed on the way in or out.
+    #[cfg(unix)]
+    #[test]
+    fn names_that_are_not_utf8_keep_their_bytes() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+        let bytes = b"docs/caf\xe9.adoc";
+        let path = Path::new(OsStr::from_bytes(bytes));
+        assert_eq!(unix_path(path).unwrap().as_slice(), bytes);
+        assert_eq!(relative_path(bytes.as_bstr()).as_deref(), Some(path));
+    }
 }

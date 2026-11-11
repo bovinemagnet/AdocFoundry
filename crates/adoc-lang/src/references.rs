@@ -5,8 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use adoc_core::{
-    asciidoctor_id, canonical_id, section_ids, Document, IdStyle, Location, Reference,
-    ReferenceKind, Section, SourceRange,
+    section_ids, Document, IdStyle, Location, Reference, ReferenceKind, Section, SourceRange,
 };
 use adoc_index::{normalize_path, FileEntry, IncludeLocation, ReferenceLocation};
 
@@ -134,9 +133,10 @@ pub fn anchor_at(
         .iter()
         .position(|section| section.range.start <= offset && offset <= section.range.end)
     {
-        return Some(AnchorTarget {
+        let id = crate::xref::section_ids(&ws.antora, path, document).swap_remove(section);
+        return (!id.is_empty()).then(|| AnchorTarget {
             path: path.to_path_buf(),
-            id: crate::xref::section_ids(&ws.antora, path, document).swap_remove(section),
+            id,
         });
     }
     let reference = document
@@ -268,7 +268,9 @@ fn anchor_ids(ws: &WorkspaceState, anchor: &AnchorTarget) -> Vec<String> {
             let numbered = [IdStyle::Antora, IdStyle::Asciidoctor].map(|style| {
                 section_ids(&document.sections, &document.anchors, style).swap_remove(at)
             });
-            if numbered == [canonical_id(&section.title), asciidoctor_id(&section.title)] {
+            let unnumbered = [IdStyle::Antora, IdStyle::Asciidoctor]
+                .map(|style| style.generate(&section.title).unwrap_or_default());
+            if numbered == unnumbered {
                 ids.extend(section.implicit_ids());
             } else {
                 ids.extend(numbered);
@@ -328,7 +330,7 @@ fn fragment_target<'a>(
 }
 
 /// The range of `id` within `text[range]`: after its `#`, or after the opening `[[`, `[#`,
-/// `<<` or `xref:`.
+/// `<<`, `xref:` or `anchor:`.
 fn id_range(text: &str, range: SourceRange, id: &str) -> Option<SourceRange> {
     let source = text.get(range.start..range.end)?;
     let at = match source.find('#') {
@@ -338,7 +340,7 @@ fn id_range(text: &str, range: SourceRange, id: &str) -> Option<SourceRange> {
             let value = source.find("id=")? + 3;
             value + usize::from(source[value..].starts_with(['"', '\'']))
         }
-        _ => ["[[", "<<", "xref:"]
+        _ => ["[[", "<<", "xref:", "anchor:"]
             .iter()
             .filter_map(|opener| source.strip_prefix(opener).map(|_| opener.len()))
             .map(|start| start + (source[start..].len() - source[start..].trim_start().len()))
@@ -379,6 +381,19 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    /// An anchor macro's id and one given after a style are found for a rename (#522).
+    #[test]
+    fn finds_the_id_in_an_anchor_macro_and_after_a_style() {
+        let text = "See anchor:legacy[Label] here.\n[source#code,ruby]\n";
+        let start = text.find("anchor:").unwrap();
+        let range = id_range(text, SourceRange::new(start, start + 24), "legacy").unwrap();
+        assert_eq!(&text[range.start..range.end], "legacy");
+
+        let start = text.find("[source").unwrap();
+        let range = id_range(text, SourceRange::new(start, text.len() - 1), "code").unwrap();
+        assert_eq!(&text[range.start..range.end], "code");
     }
 
     #[test]

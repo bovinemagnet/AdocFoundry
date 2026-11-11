@@ -253,7 +253,7 @@ fn link_inputs(document: &adoc_core::Document) -> u64 {
 /// The navigation files the catalog lists, in its order.
 fn nav_files(ws: &WorkspaceState) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    for component in ws.antora.components() {
+    for component in ws.antora.all_descriptors() {
         for entry in &component.nav {
             let path = normalize_path(&component.root.join(entry));
             if !files.contains(&path) {

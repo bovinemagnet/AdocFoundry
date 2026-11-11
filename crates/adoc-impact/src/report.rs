@@ -36,7 +36,8 @@ pub enum ImpactKind {
     Render,
     /// A link to the changed resource or one of its anchors may no longer lead where it did.
     ReferenceIntegrity,
-    /// A component version's navigation changed, or lists a changed page.
+    /// A component version's navigation changed: a navigation file or descriptor changed, a
+    /// page is listed or no longer, or an entry leads to a moved or removed page.
     Navigation,
     /// A publication profile selects affected content.
     Publication,
@@ -137,8 +138,10 @@ pub struct Impact {
 /// Why the analysis did not cover everything.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Gap {
-    /// A stable name: `no-base-revision`, `base-unavailable`, `asset-consumers-not-analysed`,
-    /// `outside-every-root`.
+    /// A stable name: `no-base-revision`, `asset-consumers-not-analysed`,
+    /// `attribute-consumers-not-analysed`, `include-depth-exceeded`, `not-in-catalog`,
+    /// `outside-every-root`, or one a caller adds (the engine's
+    /// `revision-descriptor-unreadable`).
     pub reason: &'static str,
     pub detail: String,
     /// The root-relative paths it concerns.
@@ -149,8 +152,14 @@ pub struct Gap {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Completeness {
     Complete,
-    Partial { gaps: Vec<Gap> },
-    Unavailable { gaps: Vec<Gap> },
+    Partial {
+        gaps: Vec<Gap>,
+    },
+    /// Nothing could be analysed. `analyse` never gives it, since it always has a head side;
+    /// it is kept in the schema for a caller that cannot build one.
+    Unavailable {
+        gaps: Vec<Gap>,
+    },
 }
 
 /// A changed file as the report lists it.

@@ -75,6 +75,28 @@ pub enum AuditScope {
     },
 }
 
+impl AuditScope {
+    /// Whether the scope covers `component` at `version` (`None` being the versionless
+    /// version), which a scope names `~`, as a resource ID does.
+    #[must_use]
+    pub fn covers(&self, component: &str, version: Option<&str>) -> bool {
+        match self {
+            Self::Workspace => true,
+            Self::Component {
+                name,
+                version: wanted,
+            } => {
+                name == component
+                    && match wanted.as_deref() {
+                        None => true,
+                        Some("~") => version.is_none(),
+                        Some(wanted) => version == Some(wanted),
+                    }
+            }
+        }
+    }
+}
+
 /// The index and catalog revisions a report was made from, so a front end can tell it is stale.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Revision {

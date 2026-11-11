@@ -9,7 +9,7 @@ use std::{
 use adoc_core::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Location, SourceRange};
 
 use crate::{
-    parse_nav, parse_resource_id, AntoraCatalog, AntoraResourceId, ResolutionError, ResourceFamily,
+    parse_nav_and_includes, parse_resource_id, AntoraCatalog, AntoraResourceId, ResolutionError,
 };
 
 /// The navigation of one nav file of a component version.
@@ -22,13 +22,32 @@ pub struct NavTree {
     pub items: Vec<NavItem>,
     /// `adoc.antora.nav-unresolved` for each entry whose target does not resolve.
     pub diagnostics: Vec<Diagnostic>,
+    /// What only the build can follow, in the file's order: each `include::` line read as
+    /// navigation (outside comments and delimited blocks) and each entry naming an attribute.
+    pub unfollowed: Vec<Unfollowed>,
+}
+
+/// A line of a navigation file whose entries cannot be known without the build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Unfollowed {
+    pub range: SourceRange,
+    pub kind: UnfollowedKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnfollowedKind {
+    /// An `include::` line, which the navigation parser does not follow.
+    Include,
+    /// An entry whose target names an attribute.
+    Attribute,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NavItem {
     pub title: String,
-    /// The fully qualified page the entry links to, or `None` for a title, plain text or a
-    /// target that does not resolve.
+    /// The fully qualified resource the entry links to, in its own family (a page, or the
+    /// attachment or partial an entry names), or `None` for a title, plain text or a target
+    /// that does not resolve.
     pub target: Option<AntoraResourceId>,
     /// The fragment the entry's link names after `#`, if any.
     pub fragment: Option<String>,
@@ -78,7 +97,9 @@ impl fmt::Display for NavError {
 impl std::error::Error for NavError {}
 
 /// The navigation trees of `component` at `version`, one per file listed under `nav` in its
-/// `antora.yml`, in that order. An empty list means the component declares no navigation.
+/// `antora.yml`, in that order; a version spread over several `antora.yml` files has the files
+/// of each, each read from its own root, in root order. An empty list means the component
+/// declares no navigation.
 ///
 /// `read` supplies file contents, so that unsaved buffers can stand in for files on disk.
 pub fn nav_tree(
@@ -87,25 +108,43 @@ pub fn nav_tree(
     version: Option<&str>,
     read: &dyn Fn(&Path) -> io::Result<String>,
 ) -> Result<Vec<NavTree>, NavError> {
-    let descriptor =
-        catalog
-            .component(component, version)
-            .ok_or_else(|| NavError::UnknownComponent {
-                component: component.to_owned(),
-                version: version.map(str::to_owned),
-            })?;
-    descriptor
-        .nav
+    nav_tree_each(catalog, component, version, read)?
+        .into_iter()
+        .collect()
+}
+
+/// The navigation of `component` at `version` as [`nav_tree`] reads it, each file's tree or
+/// why it could not be read on its own, so that one file that cannot be read leaves the others'
+/// trees. The error is for a component version the catalog does not have.
+pub fn nav_tree_each(
+    catalog: &AntoraCatalog,
+    component: &str,
+    version: Option<&str>,
+    read: &dyn Fn(&Path) -> io::Result<String>,
+) -> Result<Vec<Result<NavTree, NavError>>, NavError> {
+    let descriptors = catalog.descriptors_of(component, version);
+    if descriptors.is_empty() {
+        return Err(NavError::UnknownComponent {
+            component: component.to_owned(),
+            version: version.map(str::to_owned),
+        });
+    }
+    Ok(descriptors
         .iter()
-        .map(|entry| {
-            let path = crate::discovery::normalize_path(&descriptor.root.join(entry));
+        .flat_map(|descriptor| {
+            descriptor
+                .nav
+                .iter()
+                .map(|entry| crate::discovery::normalize_path(&descriptor.root.join(entry)))
+        })
+        .map(|path| {
             let text = read(&path).map_err(|error| NavError::Read {
                 path: path.clone(),
                 message: error.to_string(),
             })?;
             Ok(build_tree(catalog, component, version, path, &text))
         })
-        .collect()
+        .collect())
 }
 
 /// The navigation trees of `files`, in the order given, each read in the component version and
@@ -146,7 +185,30 @@ fn build_tree(
 ) -> NavTree {
     let context = catalog.context_for_path(&path);
     let mut diagnostics = Vec::new();
-    let flat: Vec<(u8, NavItem)> = parse_nav(text)
+    let (entries, includes) = parse_nav_and_includes(text);
+    let mut unfollowed: Vec<Unfollowed> = includes
+        .into_iter()
+        .map(|range| Unfollowed {
+            range,
+            kind: UnfollowedKind::Include,
+        })
+        .collect();
+    unfollowed.extend(
+        entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .target
+                    .as_deref()
+                    .is_some_and(|target| target.contains('{'))
+            })
+            .map(|entry| Unfollowed {
+                range: SourceRange::new(entry.start, entry.end),
+                kind: UnfollowedKind::Attribute,
+            }),
+    );
+    unfollowed.sort_by_key(|unfollowed| unfollowed.range);
+    let flat: Vec<(u8, NavItem)> = entries
         .into_iter()
         .map(|entry| {
             let range = SourceRange::new(entry.start, entry.end);
@@ -179,7 +241,7 @@ fn build_tree(
                             version: coordinate.version.clone(),
                             component: Some(coordinate.component.clone()),
                             module: Some(coordinate.module.clone()),
-                            family: Some(ResourceFamily::Page),
+                            family: Some(coordinate.family),
                             path: slash_path(&coordinate.relative_path),
                         })
                     }
@@ -222,6 +284,7 @@ fn build_tree(
         path,
         items: nest(&flat, &mut position, None),
         diagnostics,
+        unfollowed,
     }
 }
 

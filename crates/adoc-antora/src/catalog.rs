@@ -40,7 +40,11 @@ struct ModuleKey {
 
 #[derive(Clone, Debug, Default)]
 pub struct AntoraCatalog {
+    /// Each component version's descriptor: the last one inserted when several declare it.
     components: BTreeMap<ComponentKey, ComponentDescriptor>,
+    /// Every descriptor of each component version, in root order: Antora lets one version be
+    /// spread over several `antora.yml` files, each listing its own navigation.
+    descriptors: BTreeMap<ComponentKey, Vec<ComponentDescriptor>>,
     modules: BTreeMap<ModuleKey, Module>,
     resources: BTreeMap<AntoraCoordinate, AntoraResource>,
     /// Each file → the coordinates of the resources read from it, so a file is looked up
@@ -61,17 +65,39 @@ impl AntoraCatalog {
         Self::default()
     }
 
+    /// Puts `component` in the catalog as its version's descriptor, keeping any other descriptor
+    /// of the same version from another root ([`AntoraCatalog::descriptors_of`]). Returns the
+    /// descriptor it replaces as the version's.
     pub fn insert_component(
         &mut self,
         component: ComponentDescriptor,
     ) -> Option<ComponentDescriptor> {
-        self.components.insert(
-            ComponentKey {
-                name: component.name.clone(),
-                version: component.version.clone(),
-            },
-            component,
-        )
+        let key = ComponentKey {
+            name: component.name.clone(),
+            version: component.version.clone(),
+        };
+        let all = self.descriptors.entry(key.clone()).or_default();
+        all.retain(|other| other.root != component.root);
+        all.push(component.clone());
+        all.sort_by(|left, right| left.root.cmp(&right.root));
+        self.components.insert(key, component)
+    }
+
+    /// Every descriptor of `name` at `version`, in root order: more than one when the version
+    /// is spread over several `antora.yml` files.
+    #[must_use]
+    pub fn descriptors_of(&self, name: &str, version: Option<&str>) -> &[ComponentDescriptor] {
+        self.descriptors
+            .get(&ComponentKey {
+                name: name.to_owned(),
+                version: version.map(str::to_owned),
+            })
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Every descriptor of every component version, each version's in root order.
+    pub fn all_descriptors(&self) -> impl Iterator<Item = &ComponentDescriptor> {
+        self.descriptors.values().flatten()
     }
 
     pub fn insert_module(&mut self, module: Module) -> Option<Module> {
@@ -327,13 +353,43 @@ impl AntoraCatalog {
     /// aliases, returning the coordinates of the removed resources.
     fn remove_component_at(&mut self, root: &Path) -> BTreeSet<AntoraCoordinate> {
         let removed_keys: Vec<ComponentKey> = self
-            .components
+            .descriptors
             .iter()
-            .filter(|(_, component)| normalize_path(&component.root) == root)
+            .filter(|(_, all)| {
+                all.iter()
+                    .any(|component| normalize_path(&component.root) == root)
+            })
             .map(|(key, _)| key.clone())
             .collect();
         let mut removed = BTreeSet::new();
         for key in removed_keys {
+            let all = self.descriptors.get_mut(&key).expect("listed above");
+            all.retain(|component| normalize_path(&component.root) != root);
+            if let Some(last) = all.last().cloned() {
+                // Another root still declares the version: only this root's part goes.
+                self.components.insert(key.clone(), last);
+                self.modules.retain(|module, value| {
+                    !(module.component == key.name
+                        && module.version == key.version
+                        && value.root.starts_with(root))
+                });
+                let mut paths = Vec::new();
+                self.resources.retain(|coordinate, resource| {
+                    let matches = coordinate.component == key.name
+                        && coordinate.version == key.version
+                        && resource.source_path.starts_with(root);
+                    if matches {
+                        removed.insert(coordinate.clone());
+                        paths.push((resource.source_path.clone(), coordinate.clone()));
+                    }
+                    !matches
+                });
+                for (path, coordinate) in paths {
+                    self.forget_path(&path, &coordinate);
+                }
+                continue;
+            }
+            self.descriptors.remove(&key);
             self.components.remove(&key);
             self.modules.retain(|module, _| {
                 !(module.component == key.name && module.version == key.version)
@@ -476,7 +532,7 @@ impl AntoraCatalog {
         self.modules
             .values()
             .any(|module| module.nav.as_deref() == Some(path.as_path()))
-            || self.components.values().any(|component| {
+            || self.all_descriptors().any(|component| {
                 component
                     .nav
                     .iter()

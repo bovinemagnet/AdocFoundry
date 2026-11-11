@@ -48,8 +48,7 @@ pub fn xref_to(
     let from = normalize_path(from);
     let to = normalize_path(to);
     let mut ids = section_ids(&ws.antora, &to, target);
-    // A title with no letter or digit has the empty id, which no link can name: the page is
-    // linked instead.
+    // A section whose id only rendering could tell is linked as its page.
     let section = section
         .and_then(|at| {
             target
@@ -57,7 +56,7 @@ pub fn xref_to(
                 .iter()
                 .position(|section| section.selection_range == at)
         })
-        .filter(|&section| !ids[section].is_empty());
+        .filter(|&at| !ids[at].is_empty());
     let page_title = || target.title.as_ref().map(|title| title.text.clone());
     let Some(section) = section else {
         if from == to {
@@ -83,7 +82,7 @@ pub fn xref_to(
 
 /// The id a reference to each section of `document`, the page at `path`, uses: its anchor,
 /// else the id the page's build generates, Antora's inside a module and plain Asciidoctor's
-/// elsewhere, numbered where an earlier one holds it.
+/// elsewhere, numbered where an earlier one holds it; empty where only rendering could tell.
 pub fn section_ids(antora: &AntoraCatalog, path: &Path, document: &Document) -> Vec<String> {
     let style = if antora.context_for_path(path).is_some() {
         IdStyle::Antora
@@ -335,6 +334,33 @@ mod tests {
             .map(|link| link.target),
             Some("other.adoc#_first_steps".to_owned())
         );
+    }
+
+    /// The id written is the one the site has, apostrophes and underscores as Antora treats
+    /// them; a title only rendering can tell is linked as its page (#529).
+    #[test]
+    fn a_section_link_uses_the_id_the_site_has() {
+        let (mut ws, root) = workspace("antora-multi-component");
+        let guide = root.join("alpha/modules/ROOT/pages/guide.adoc");
+        ws.index.index_source(
+            &guide,
+            "= Guide\n\n== What's new?\n\n== max_connections\n\n== Using {product}\n",
+        );
+        let document = ws.index.file(&guide).unwrap().document.clone();
+        let from = root.join("alpha/modules/ROOT/pages/index.adoc");
+        let link = |at: usize| {
+            xref_to(
+                &ws,
+                &from,
+                &guide,
+                &document,
+                Some(document.sections[at].selection_range),
+            )
+            .map(|link| link.target)
+        };
+        assert_eq!(link(0).as_deref(), Some("guide.adoc#whats-new"));
+        assert_eq!(link(1).as_deref(), Some("guide.adoc#max_connections"));
+        assert_eq!(link(2).as_deref(), Some("guide.adoc"));
     }
 
     #[test]

@@ -937,17 +937,21 @@ impl Engine {
     }
 }
 
-/// The range and text of the file part of the xref target in `text[reference]`: the target
-/// up to any `#fragment`.
+/// The range and text of the file part of the xref target in `text[reference]`, an
+/// `xref:target[…]` or `<<target,…>>`: the target up to any `#fragment`.
 fn xref_file_part(text: &str, reference: SourceRange) -> Option<(SourceRange, &str)> {
     let source = text.get(reference.start..reference.end)?;
-    let after_prefix = source.strip_prefix("xref:")?;
-    let open = after_prefix.find('[')?;
-    let raw_target = &after_prefix[..open];
+    let (prefix, raw_target) = match source.strip_prefix("xref:") {
+        Some(after_prefix) => ("xref:", &after_prefix[..after_prefix.find('[')?]),
+        None => {
+            let inside = source.strip_prefix("<<")?.strip_suffix(">>")?;
+            ("<<", inside.split(',').next()?)
+        }
+    };
     let leading = raw_target.len() - raw_target.trim_start().len();
     let target = raw_target.trim();
     let file_part = target.split_once('#').map_or(target, |(file, _)| file);
-    let start = reference.start + "xref:".len() + leading;
+    let start = reference.start + prefix.len() + leading;
     Some((SourceRange::new(start, start + file_part.len()), file_part))
 }
 
@@ -1183,6 +1187,16 @@ mod tests {
     fn finds_the_file_part_of_an_xref_target() {
         let text = "See xref:guide.adoc#setup[Setup].";
         let reference = SourceRange::new(4, 32);
+        let (range, file) = xref_file_part(text, reference).unwrap();
+        assert_eq!(file, "guide.adoc");
+        assert_eq!(&text[range.start..range.end], "guide.adoc");
+    }
+
+    /// `<<guide.adoc#setup,Setup>>` names a page as `xref:` does, so a rename rewrites it (#521).
+    #[test]
+    fn finds_the_file_part_of_a_double_angle_reference() {
+        let text = "See <<guide.adoc#setup,Setup>>.";
+        let reference = SourceRange::new(4, 30);
         let (range, file) = xref_file_part(text, reference).unwrap();
         assert_eq!(file, "guide.adoc");
         assert_eq!(&text[range.start..range.end], "guide.adoc");

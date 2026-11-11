@@ -13,9 +13,7 @@ pub use document::{
 };
 pub use path::normalize_path;
 pub use reference::{ImageDirective, IncludeDirective, Reference, ReferenceKind};
-pub use symbol::{
-    alphanumeric_id, asciidoctor_id, canonical_id, section_ids, Anchor, IdStyle, Section,
-};
+pub use symbol::{alphanumeric_id, canonical_id, section_ids, Anchor, IdStyle, Section};
 
 /// The folders a workspace leaves out unless `[workspace] ignore` says otherwise: the index,
 /// Antora discovery and the file watcher never enter them, and the Files view hides them.

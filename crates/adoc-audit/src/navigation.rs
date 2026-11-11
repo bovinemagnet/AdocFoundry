@@ -14,10 +14,9 @@
 use std::collections::BTreeSet;
 
 use adoc_antora::{
-    nav_tree, parse_nav, parse_resource_id, ComponentDescriptor, NavError, NavItem, NavTree,
-    ResourceFamily,
+    nav_tree_each, parse_resource_id, ComponentDescriptor, NavError, NavItem, ResourceFamily,
+    UnfollowedKind,
 };
-use adoc_core::SourceRange;
 
 use crate::{
     portable_path, workspace::published_page, workspace::Context, Evidence, Finding, FindingCode,
@@ -35,25 +34,35 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
     let mut skips = Vec::new();
     let catalog = &context.workspace().antora;
     let version = descriptor.version.as_deref();
-    let (trees, mut unknown) =
-        match nav_tree(catalog, &descriptor.name, version, context.input.read) {
-            Ok(trees) => (trees, None),
-            Err(error) => (
-                Vec::new(),
-                Some(Unknown {
+    // Each file is read on its own: one that cannot be read leaves what the others list
+    // listed, and only the pages none of them lists unknown.
+    let mut trees = Vec::new();
+    let mut unknown = None;
+    let each = nav_tree_each(catalog, &descriptor.name, version, context.input.read)
+        .unwrap_or_else(|error| vec![Err(error)]);
+    for tree in each {
+        match tree {
+            Ok(tree) => trees.push(tree),
+            Err(error) => {
+                unknown.get_or_insert(Unknown {
                     reason: unreadable(context, &error),
-                }),
-            ),
-        };
+                });
+            }
+        }
+    }
 
     for tree in &trees {
-        let dynamic = dynamic_entries(context, tree);
-        if let Some(first) = dynamic.first() {
+        // What the navigation parser read past, as it read it: an include in a comment or a
+        // listing block is not one.
+        if let Some(first) = tree.unfollowed.first() {
+            let what = match first.kind {
+                UnfollowedKind::Include => "includes another file",
+                UnfollowedKind::Attribute => "has an entry naming an attribute",
+            };
             unknown.get_or_insert(Unknown {
                 reason: format!(
-                    "{} {}, so what it lists is not known",
+                    "{} {what}, so what it lists is not known",
                     context.location(&tree.path, None).path,
-                    first.1
                 ),
             });
         }
@@ -67,11 +76,28 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
         collect_listed(&tree.items, descriptor, &mut listed);
     }
     let start = start_page(descriptor);
+    // A version spread over several `antora.yml` files lists the navigation of each.
+    let navigation_files: usize = catalog
+        .descriptors_of(&descriptor.name, version)
+        .iter()
+        .map(|descriptor| descriptor.nav.len())
+        .sum();
 
+    // Each unlisted page's finding names every navigation file looked in.
+    let evidence: Vec<Evidence> = trees
+        .iter()
+        .map(|tree| {
+            let nav = context.location(&tree.path, None);
+            Evidence {
+                message: format!("Not listed in {}", nav.path),
+                location: Some(nav),
+            }
+        })
+        .collect();
     let mut coverage = NavCoverage {
         component: descriptor.name.clone(),
         version: descriptor.version.clone(),
-        navigation_files: descriptor.nav.len(),
+        navigation_files,
         pages: 0,
         listed: 0,
         undetermined: 0,
@@ -93,7 +119,7 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
                 coverage.listed += 1;
                 continue;
             }
-            if descriptor.nav.is_empty() {
+            if navigation_files == 0 {
                 continue;
             }
             let location = context.location(&page.source_path, None);
@@ -118,16 +144,7 @@ pub(crate) fn version(context: &Context<'_>, descriptor: &ComponentDescriptor) -
                 location,
             );
             finding.coordinate = Some((&page.coordinate).into());
-            finding.evidence = trees
-                .iter()
-                .map(|tree| {
-                    let nav = context.location(&tree.path, None);
-                    Evidence {
-                        message: format!("Not listed in {}", nav.path),
-                        location: Some(nav),
-                    }
-                })
-                .collect();
+            finding.evidence.clone_from(&evidence);
             finding.remediation = Some(
                 "Add an entry for it to a navigation file, or exclude it under [quality] if it is \
                  meant to be unlisted"
@@ -160,41 +177,6 @@ fn unreadable(context: &Context<'_>, error: &NavError) -> String {
     }
 }
 
-/// The entries of `tree` whose targets cannot be known without the build: an `include::`
-/// line, which the navigation parser does not follow, or an entry naming an attribute. Each is
-/// its line's range and a description.
-fn dynamic_entries(context: &Context<'_>, tree: &NavTree) -> Vec<(SourceRange, &'static str)> {
-    let Ok(text) = (context.input.read)(&tree.path) else {
-        return Vec::new();
-    };
-    let mut found = Vec::new();
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        let content = line.trim_end_matches(['\r', '\n']);
-        if content.trim_start().starts_with("include::") {
-            found.push((
-                SourceRange::new(offset, offset + content.len()),
-                "includes another file",
-            ));
-        }
-        offset += line.len();
-    }
-    for entry in parse_nav(&text) {
-        if entry
-            .target
-            .as_deref()
-            .is_some_and(|target| target.contains('{'))
-        {
-            found.push((
-                SourceRange::new(entry.start, entry.end),
-                "has an entry naming an attribute",
-            ));
-        }
-    }
-    found.sort_by_key(|(range, _)| *range);
-    found
-}
-
 /// Every `(module, path)` of this component version an entry of `items` reaches.
 fn collect_listed(
     items: &[NavItem],
@@ -206,7 +188,8 @@ fn collect_listed(
             if target.component.as_deref() == Some(descriptor.name.as_str())
                 && target.version == descriptor.version
             {
-                if let Some(module) = &target.module {
+                if let (Some(module), Some(ResourceFamily::Page)) = (&target.module, target.family)
+                {
                     listed.insert((module.clone(), target.path.clone()));
                 }
             }

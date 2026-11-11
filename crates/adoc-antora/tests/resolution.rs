@@ -259,3 +259,55 @@ fn nav_tree_marks_unresolved() {
 
     assert!(nav_tree(&catalog, "nobody", None, &read).is_err());
 }
+
+#[test]
+fn a_version_spread_over_two_descriptors_keeps_both() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_path(directory.path());
+    for (folder, module) in [("one", "one"), ("two", "two")] {
+        let modules = root.join(folder).join("modules").join(module);
+        fs::create_dir_all(modules.join("pages")).unwrap();
+        fs::write(
+            root.join(folder).join("antora.yml"),
+            format!("name: docs\nversion: ~\nnav:\n- modules/{module}/nav.adoc\n"),
+        )
+        .unwrap();
+        fs::write(
+            modules.join("nav.adoc"),
+            format!("* xref:{module}.adoc[]\n"),
+        )
+        .unwrap();
+        fs::write(
+            modules.join("pages").join(format!("{module}.adoc")),
+            "= Page\n",
+        )
+        .unwrap();
+    }
+    let mut catalog = catalog(std::slice::from_ref(&root));
+    let roots: Vec<_> = catalog
+        .descriptors_of("docs", None)
+        .iter()
+        .map(|descriptor| descriptor.root.clone())
+        .collect();
+    assert_eq!(roots, [root.join("one"), root.join("two")]);
+    let trees = nav_tree(&catalog, "docs", None, &read).unwrap();
+    let listed: Vec<_> = trees
+        .iter()
+        .map(|tree| tree.items[0].target.as_ref().unwrap().path.clone())
+        .collect();
+    assert_eq!(listed, ["one.adoc", "two.adoc"], "each from its own root");
+
+    // Reloading one descriptor leaves the other's part of the version.
+    catalog
+        .reload_component(&root.join("one/antora.yml"))
+        .unwrap();
+    assert_eq!(catalog.descriptors_of("docs", None).len(), 2);
+    assert_eq!(catalog.len(), 2);
+    fs::remove_file(root.join("one/antora.yml")).unwrap();
+    assert!(catalog
+        .reload_component(&root.join("one/antora.yml"))
+        .is_err());
+    assert_eq!(catalog.descriptors_of("docs", None).len(), 1);
+    assert_eq!(catalog.len(), 1, "only the second root's page is left");
+    assert_eq!(nav_tree(&catalog, "docs", None, &read).unwrap().len(), 1);
+}

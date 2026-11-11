@@ -1,7 +1,8 @@
 //! When each file last changed: one walk of `HEAD`'s first-parent history, newest first, each
 //! commit's tree compared with its parent's, stopping once every file is found or after a
 //! limit. A file moved without a change is followed to its earlier name, so a move does not
-//! make a page new. Object data only, as in `revision.rs`.
+//! make a page new. Given a commit read before, the walk stops there, so a caller reads only
+//! the commits since. Object data only, as in `revision.rs`.
 
 use std::{
     collections::HashMap,
@@ -34,6 +35,9 @@ pub struct LastChanges {
     /// `HEAD` still not found: the time of the oldest commit read, which those files are at
     /// least as old as.
     pub cut_short: Option<i64>,
+    /// When the walk reached the commit it was given to stop at: each file asked for that no
+    /// later commit changed, by the path it was asked for, with its name at that commit.
+    pub unchanged_since: Option<HashMap<PathBuf, PathBuf>>,
 }
 
 impl Repository {
@@ -41,6 +45,20 @@ impl Repository {
     /// in `HEAD`'s history, reading at most `limit` commits. A path not in `HEAD` is left out;
     /// with no commit yet, nothing is found.
     pub fn last_changed(&self, paths: &[PathBuf], limit: usize) -> Result<LastChanges, GitError> {
+        self.last_changed_since(paths, None, limit)
+    }
+
+    /// As [`Repository::last_changed`], but when `HEAD` descends by first parent from the
+    /// commit `since` (in hex), read only the commits after it: the files none of them changed
+    /// are in [`LastChanges::unchanged_since`], for the caller to keep what it found at `since`.
+    /// From any other commit, or one beyond `limit`, the whole history is read as before.
+    pub fn last_changed_since(
+        &self,
+        paths: &[PathBuf],
+        since: Option<&str>,
+        limit: usize,
+    ) -> Result<LastChanges, GitError> {
+        let since = since.and_then(|since| gix::ObjectId::from_hex(since.as_bytes()).ok());
         let mut found = LastChanges::default();
         let Ok(head) = self.repo.head_id() else {
             return Ok(found);
@@ -79,6 +97,14 @@ impl Repository {
                 break;
             }
             let info = info.map_err(GitError::git)?;
+            if since == Some(info.id) {
+                let unchanged = wanted
+                    .drain()
+                    .map(|(name, asked)| (asked.to_path_buf(), name))
+                    .collect();
+                found.unchanged_since = Some(unchanged);
+                break;
+            }
             let commit = info.object().map_err(GitError::git)?;
             let time = commit.time().map_err(GitError::git)?.seconds;
             oldest = Some(time);
@@ -91,6 +117,7 @@ impl Repository {
                 found.cut_short = oldest;
                 break;
             }
+            adoc_core::probe::hit(adoc_core::probe::Probe::HistoryCommit);
             let tree = commit.tree().map_err(GitError::git)?;
             let parent = match info.parent_ids().next() {
                 Some(parent) => parent
@@ -128,13 +155,15 @@ impl Repository {
                     }
                     ChangeDetached::Deletion { .. } => continue,
                 };
-                let at = relative_path(location.as_bstr());
-                let Some(asked) = wanted.remove(&at) else {
+                let Some(asked) =
+                    relative_path(location.as_bstr()).and_then(|at| wanted.remove(&at))
+                else {
                     continue;
                 };
-                match moved_from {
+                // A move from a name no path here can hold is taken as a change.
+                match moved_from.and_then(|from| relative_path(from.as_bstr())) {
                     Some(from) => {
-                        wanted.insert(relative_path(from.as_bstr()), asked);
+                        wanted.insert(from, asked);
                     }
                     None => {
                         found.changes.insert(asked.to_path_buf(), change.clone());
@@ -222,6 +251,72 @@ mod tests {
             .last_changed(std::slice::from_ref(&absolute), HISTORY_LIMIT)
             .unwrap();
         assert!(found.changes.contains_key(&absolute));
+    }
+
+    #[test]
+    fn last_changed_since_reads_only_the_new_commits() {
+        use adoc_core::probe::{count, reset, Probe};
+        let directory = tempfile::tempdir().unwrap();
+        let repo = TestRepo::init(directory.path());
+        repo.write("a.adoc", "= A\n");
+        repo.write("b.adoc", "= B\n");
+        repo.commit_all_at("First", DAY);
+        repo.write("b.adoc", "= B\n\nDay 2.\n");
+        repo.commit_all_at("Second", 2 * DAY);
+        repo.write("c.adoc", "= C\n");
+        let third = repo.commit_all_at("Third", 3 * DAY);
+        let repository = Repository::discover(directory.path()).unwrap().unwrap();
+        let paths = [
+            PathBuf::from("a.adoc"),
+            PathBuf::from("b.adoc"),
+            PathBuf::from("c.adoc"),
+        ];
+        reset();
+        let all = repository.last_changed(&paths, HISTORY_LIMIT).unwrap();
+        assert_eq!(count(Probe::HistoryCommit), 3);
+        assert_eq!(all.changes[Path::new("a.adoc")].time, DAY);
+        assert_eq!(all.unchanged_since, None);
+
+        // One new commit: an edit, and a move without one.
+        repo.write("b.adoc", "= B\n\nDay 4.\n");
+        repo.remove("a.adoc");
+        repo.write("moved.adoc", "= A\n");
+        let fourth = repo.commit_all_at("Fourth", 4 * DAY);
+        let paths = [
+            PathBuf::from("moved.adoc"),
+            PathBuf::from("b.adoc"),
+            PathBuf::from("c.adoc"),
+        ];
+        reset();
+        let since = repository
+            .last_changed_since(&paths, Some(&third), HISTORY_LIMIT)
+            .unwrap();
+        assert_eq!(count(Probe::HistoryCommit), 1, "only the new commit");
+        assert_eq!(
+            since.changes.keys().collect::<Vec<_>>(),
+            [Path::new("b.adoc")]
+        );
+        assert_eq!(since.changes[Path::new("b.adoc")].commit, fourth);
+        let unchanged = HashMap::from([
+            (PathBuf::from("moved.adoc"), PathBuf::from("a.adoc")),
+            (PathBuf::from("c.adoc"), PathBuf::from("c.adoc")),
+        ]);
+        assert_eq!(
+            since.unchanged_since,
+            Some(unchanged),
+            "each file not changed since, by its name then"
+        );
+        assert_eq!(since.cut_short, None);
+
+        // A commit `HEAD` does not descend from by first parent: everything is read.
+        reset();
+        let elsewhere = repository
+            .last_changed_since(&paths, Some(&"1".repeat(40)), HISTORY_LIMIT)
+            .unwrap();
+        assert_eq!(count(Probe::HistoryCommit), 4);
+        assert_eq!(elsewhere.unchanged_since, None);
+        assert_eq!(elsewhere.changes[Path::new("moved.adoc")].time, DAY);
+        assert_eq!(elsewhere.changes[Path::new("c.adoc")].time, 3 * DAY);
     }
 
     #[test]

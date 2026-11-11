@@ -1,0 +1,56 @@
+= Section Ids
+
+== What's new?
+
+== Don't *panic*
+
+== max_connections
+
+== Use `foo_bar` now
+
+== Input/Output
+
+== Q&A
+
+== (Optional) Settings
+
+== .NET setup
+
+== `code` usage
+
+== "Quoted" title
+
+== [[lead]]Title
+
+== Title [[custom]]
+
+== Step 1: Install
+
+== Tom & Jerry
+
+== 1.2.3 Release notes
+
+== a -- b and c--d...e -> f
+
+== _em_ and __un__der
+
+== Snake_case_ word
+
+== Ünïcode Straße
+
+== [.r]#Marked# text
+
+== The (C) mark
+
+== Parameters
+
+=== Parameters
+
+[[first]]
+[discrete]
+== Overview
+
+== Overview
+
+Section
+-------

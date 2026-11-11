@@ -1,6 +1,6 @@
 use adoc_core::SourceRange;
 
-use crate::line_parser::{content, is_boundary, Verbatim, VerbatimBlocks};
+use crate::line_parser::{content, is_boundary, is_line_comment, Verbatim, VerbatimBlocks};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompletionKind {
@@ -65,13 +65,22 @@ enum BlockState {
 
 fn block_state(text: &str, line_start: usize) -> BlockState {
     let mut verbatim = VerbatimBlocks::default();
-    for line in text[..line_start].split_inclusive('\n') {
-        verbatim.line(content(line).trim());
+    let before = &text[..line_start];
+    for line in before
+        .strip_prefix('\u{feff}')
+        .unwrap_or(before)
+        .split_inclusive('\n')
+    {
+        let line = content(line);
+        // Conditional lines are removed first, as `parse_document` removes them.
+        if verbatim.directive(line).is_none() {
+            verbatim.line(line.trim());
+        }
     }
     match verbatim.next() {
         Verbatim::Comment => BlockState::Comment,
         Verbatim::Content => BlockState::Verbatim,
-        Verbatim::No | Verbatim::Delimiter => BlockState::Body,
+        Verbatim::No | Verbatim::Delimiter | Verbatim::Underline(_) => BlockState::Body,
     }
 }
 
@@ -84,7 +93,11 @@ fn line_context(
     // A name being typed after `{` is an attribute reference even inside a macro target,
     // where Asciidoctor substitutes it before resolving the target.
     let trimmed = typed.trim_start();
-    if !trimmed.starts_with("//") && (!includes_only || trimmed.starts_with("include::")) {
+    // The parser records nothing on a line comment.
+    if is_line_comment(trimmed) {
+        return None;
+    }
+    if !includes_only || trimmed.starts_with("include::") {
         if let Some(context) = attribute_context(typed, line_start, offset) {
             return Some(context);
         }
@@ -114,7 +127,11 @@ fn line_context(
     }
 
     if !includes_only {
-        if let Some(start) = typed.rfind("<<") {
+        // `<<<` is a page break, and `\<<` shows the brackets as written.
+        if let Some(start) = typed
+            .rfind("<<")
+            .filter(|&start| !typed[..start].ends_with(['<', '\\']))
+        {
             if best.is_none_or(|(existing, _, _)| start > existing) {
                 best = Some((start, start + 2, Marker::Anchor));
             }
@@ -263,6 +280,49 @@ mod tests {
 
         assert_eq!(context.kind, CompletionKind::LocalAnchor);
         assert_eq!(context.prefix, "int");
+    }
+
+    #[test]
+    fn reads_a_delimiter_on_the_first_line_after_a_byte_order_mark() {
+        let text = "\u{feff}----\nSee xref:get";
+
+        assert_eq!(completion_context(text, text.len()), None);
+    }
+
+    /// A two-line title's underline opens no listing block (#526).
+    #[test]
+    fn completes_after_a_two_line_title() {
+        let text = "Section\n-------\n\nSee xref:get";
+        let context = completion_context(text, text.len()).expect("a context");
+
+        assert_eq!(context.kind, CompletionKind::XrefTarget);
+    }
+
+    /// Nothing is completed on a line comment, where the parser records nothing (#532).
+    #[test]
+    fn offers_nothing_on_a_comment_line() {
+        let text = "// TODO xref:ge";
+
+        assert_eq!(completion_context(text, text.len()), None);
+    }
+
+    /// `<<<` is a page break, and `\<<` shows the brackets as written (#532).
+    #[test]
+    fn offers_no_anchor_after_a_page_break_or_an_escape() {
+        for text in ["<<<", "\\<<int"] {
+            assert_eq!(completion_context(text, text.len()), None, "{text}");
+        }
+    }
+
+    /// Conditional lines are removed before blocks are read, as the parser removes them, so
+    /// a styled block inside one ends where it would without them (#532).
+    #[test]
+    fn conditional_lines_are_skipped_as_the_parser_skips_them() {
+        let text =
+            "[source]\nifdef::x[]\n----\ncode\n\nmore lines\n----\nendif::[]\n\nSee xref:get";
+        let context = completion_context(text, text.len()).expect("a context");
+
+        assert_eq!(context.kind, CompletionKind::XrefTarget);
     }
 
     #[test]

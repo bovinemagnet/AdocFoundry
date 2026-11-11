@@ -1548,6 +1548,10 @@ One undo restores every page.
 
 A section without an explicit anchor has a generated id.
 Inside an Antora module it takes Antora's form, so `== First Steps` gives `first-steps`; elsewhere it takes Asciidoctor's form, `_first_steps`.
+The id is generated as Asciidoctor generates it, so apostrophes and other punctuation are dropped rather than becoming separators (`What's new?` gives `whats-new`, `Input/Output` gives `inputoutput`).
+An underscore is kept in Antora's form (`max_connections`).
+Ending the title line with `+[[custom-id]]+` sets the section's id.
+A title holding an attribute reference or a macro has no generated id offered, since only rendering can tell it: completion offers none, and a link to that section is made to its page.
 A later section whose generated id an earlier section or anchor already holds is numbered, as Asciidoctor numbers it (`parameters-2`, `_parameters_2`), and renaming it rewrites only the references that use its numbered id.
 Renaming a generated id adds `+[[new-id]]+` on the line above the heading and rewrites the references that used the generated id.
 

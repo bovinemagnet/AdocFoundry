@@ -18,6 +18,18 @@ The editor does not evaluate the condition, and only one branch is built.
 * A reference to a version of a known component that is not in the workspace produces none either, unless the playbook and repository say another branch publishes it (`adoc.antora.version-not-on-branch`).
 * Includes are recognised only as whole-line directives, and block images only at the start of a line or table cell, matching Asciidoctor.
 Inline images are recognised anywhere in text except inside passthroughs, literal monospace and verbatim blocks.
+* An anchor is `+[[id]]+`, `+[[id,reftext]]+`, `+anchor:id[]+`, the `#id` shorthand of a block attribute line, or `+[id=...]+`.
+The shorthand is recognised also after a style or role (`+[source#id,ruby]+`, `+[.lead#id]+`) and in the attribute list straight before a formatting mark (`+[#id]#text#+`).
+Text that only looks like an anchor is not one: link text such as `+https://example.com/issues/12[#12]+`, an escaped `+\[[id]]+`, or an id Asciidoctor would not accept, since it must start with a letter, `_` or `:`.
+An id made with an attribute reference (`+[[{prefix}-a]]+`) is never a duplicate, since its value is not known.
+* A `+<<...>>+` reference whose target has a `#` after its start (`+<<other.adoc#details>>+`) names another page, as an `xref:` does.
+Any other target (`+<<intro>>+`, `+<<other.adoc>>+`) is an id in the page itself.
+A target must start straight after `+<<+` or `xref:` with a word character or one of `#/.:{`, so shift operators such as `x << 2` are not references.
+Nothing inside a `$$...$$` passthrough is a reference.
+* A section's id is its anchor, else the id the build generates from the title.
+The anchor is a line above the section, past block attribute lines, block titles, comments and attribute entries, or a `+[[id]]+` ending its title line.
+Two-line (underlined) titles are read as titles.
+A page saved with a byte order mark is read after it.
 
 Codes are stable strings, so you can filter on them in scripts.
 
