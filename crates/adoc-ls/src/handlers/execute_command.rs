@@ -59,10 +59,7 @@ fn engine_output(engine: &mut Engine, uri: &str) -> Result<(PathBuf, RenderOutpu
     let preview = engine
         .render_blocking(id, RENDER_TIMEOUT)
         .ok_or_else(|| PreviewError::NotRendered(source.clone()))?;
-    let html = adoc_render::to_html(
-        &preview.view,
-        &adoc_render::HtmlOptions { standalone: true },
-    );
+    let html = adoc_render::to_html(&preview.view, &engine.html_options(true));
     Ok((
         source,
         RenderOutput {

@@ -83,10 +83,7 @@ fn a_page_exports_as_the_cli_renders_it_with_images_embedded() {
     let events = engine.subscribe();
     // What `adocfoundry-cli render` writes for the same page.
     let rendered = engine.render_blocking(id, Duration::from_secs(10)).unwrap();
-    let cli = adoc_render::to_html(
-        &rendered.view,
-        &adoc_render::HtmlOptions { standalone: true },
-    );
+    let cli = adoc_render::to_html(&rendered.view, &engine.html_options(true));
     assert!(cli.contains("src=\"file://"), "{cli}");
 
     let output = directory.path().join("out/page.html");
@@ -149,4 +146,69 @@ fn a_failed_write_is_reported() {
     let (_, result) = export(&mut engine, &events, id, &output);
     let error = result.unwrap_err();
     assert!(error.contains("missing-folder"), "{error}");
+}
+
+/// An Antora workspace whose page links to a page in another module, with a playbook giving the
+/// site's address when `site` is set.
+fn linked_workspace(directory: &Path, site: Option<&str>) -> PathBuf {
+    let write = |path: &str, text: &str| {
+        let path = directory.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("docs/antora.yml", "name: guide\nversion: '1.0'\n");
+    write(
+        "docs/modules/ROOT/pages/index.adoc",
+        "= Index\n\nSee xref:security:authentication.adoc#tokens[Auth].\n",
+    );
+    write(
+        "docs/modules/security/pages/authentication.adoc",
+        "= Authentication\n\n[#tokens]\n== Tokens\n",
+    );
+    if let Some(site) = site {
+        write(
+            "antora-playbook.yml",
+            &format!("site:\n  title: Docs\n  url: {site}\ncontent:\n  sources:\n  - url: .\n    start_path: docs\n"),
+        );
+    }
+    adoc_engine::normalize_path(&directory.join("docs/modules/ROOT/pages/index.adoc"))
+}
+
+fn exported_html(directory: &Path, page: &Path) -> String {
+    let mut engine = Engine::new(Settings::default().with_git_opt_in());
+    engine
+        .open_workspace(vec![adoc_engine::normalize_path(directory)])
+        .unwrap();
+    assert!(engine.wait_for_workers(Duration::from_secs(10)));
+    let id = engine.open(page).unwrap();
+    let events = engine.subscribe();
+    let output = directory.join("out.html");
+    let (_, result) = export(&mut engine, &events, id, &output);
+    result.unwrap();
+    std::fs::read_to_string(output).unwrap()
+}
+
+#[test]
+fn a_cross_module_xref_leads_to_the_page_s_export_not_a_resource_id() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = linked_workspace(directory.path(), None);
+    let html = exported_html(directory.path(), &page);
+    assert!(
+        html.contains("<a href=\"../../security/pages/authentication.html#tokens\">Auth</a>"),
+        "{html}"
+    );
+    assert!(!html.contains("security:authentication"), "{html}");
+}
+
+#[test]
+fn with_the_site_s_address_a_cross_module_xref_leads_to_the_published_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let page = linked_workspace(directory.path(), Some("https://docs.example.com"));
+    let html = exported_html(directory.path(), &page);
+    assert!(
+        html.contains(
+            "<a href=\"https://docs.example.com/guide/1.0/security/authentication.html#tokens\">Auth</a>"
+        ),
+        "{html}"
+    );
 }

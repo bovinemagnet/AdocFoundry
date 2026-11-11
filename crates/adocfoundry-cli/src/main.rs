@@ -843,10 +843,7 @@ fn render(arguments: &[String]) -> Result<ExitCode, String> {
     let preview = engine
         .render_blocking(id, INDEX_TIMEOUT)
         .ok_or_else(|| format!("{} did not render", file.display()))?;
-    let html = adoc_render::to_html(
-        &preview.view,
-        &adoc_render::HtmlOptions { standalone: true },
-    );
+    let html = adoc_render::to_html(&preview.view, &engine.html_options(true));
     match option(&options, "output") {
         Some(output) => {
             std::fs::write(output, html).map_err(|error| format!("{output}: {error}"))?;

@@ -391,7 +391,11 @@ fn render_resolves_antora_resources_from_the_current_directory() {
         };
         let index = page("modules/ROOT/pages/index.adoc");
         assert!(
-            index.contains("<a href=\"security:authentication.html\">Authentication</a>"),
+            // To where the page's own export sits beside its source, never a resource id,
+            // which a browser would read as a URL scheme (#426).
+            index.contains(
+                "<a href=\"../../security/pages/authentication.html\">Authentication</a>"
+            ),
             "{root:?}: {index}"
         );
         assert!(!index.contains("class=\"unresolved\""), "{root:?}: {index}");

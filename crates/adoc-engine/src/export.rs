@@ -932,13 +932,7 @@ impl Engine {
                 standards.push(*standard);
             }
         }
-        // The settings' site, else the playbook's.
-        let site_url = self.settings.pdf.site_url.clone().or_else(|| {
-            self.workspace
-                .antora
-                .playbook()
-                .and_then(|playbook| playbook.site_url.clone())
-        });
+        let site_url = self.site_url();
         let page_urls = site_url
             .as_deref()
             .map(|site| self.page_urls(site))
@@ -987,43 +981,6 @@ impl Engine {
         };
         fonts_dirs.push(PathBuf::from("GEM_FONTS_DIR"));
         fonts_dirs
-    }
-
-    /// The published address of every page in the catalogue, as Antora lays out a site:
-    /// `<site>/<component>/<version>/<module>/<page>.html`, without `ROOT` or `~`.
-    fn page_urls(&self, site: &str) -> HashMap<PathBuf, String> {
-        let site = site.trim_end_matches('/');
-        self.workspace
-            .antora
-            .resources()
-            .filter(|resource| resource.coordinate.family == crate::ResourceFamily::Page)
-            .map(|resource| {
-                let coordinate = &resource.coordinate;
-                let mut url = format!("{site}/{}", coordinate.component);
-                if let Some(version) = coordinate
-                    .version
-                    .as_deref()
-                    .filter(|version| *version != "~")
-                {
-                    url.push('/');
-                    url.push_str(version);
-                }
-                if coordinate.module != "ROOT" {
-                    url.push('/');
-                    url.push_str(&coordinate.module);
-                }
-                let page = coordinate
-                    .relative_path
-                    .with_extension("html")
-                    .components()
-                    .map(|component| component.as_os_str().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join("/");
-                url.push('/');
-                url.push_str(&page);
-                (resource.source_path.clone(), url)
-            })
-            .collect()
     }
 }
 
