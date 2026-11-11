@@ -223,6 +223,7 @@ pub fn playbook_diagnostics(antora: &AntoraCatalog, path: &Path) -> Vec<Diagnost
         return Vec::new();
     }
     vec![Diagnostic {
+        related: Vec::new(),
         code: DiagnosticCode::AntoraUnresolvedStartPage,
         severity: DiagnosticSeverity::Warning,
         message: format!(
@@ -254,6 +255,7 @@ pub fn descriptor_diagnostics(issues: &[DescriptorError], path: &Path) -> Vec<Di
             issue.kind != DescriptorErrorKind::MissingName || normalize_path(&issue.path) != path
         })
         .map(|issue| Diagnostic {
+            related: Vec::new(),
             code: DiagnosticCode::AntoraInvalidDescriptor,
             severity: DiagnosticSeverity::Warning,
             message: format!(
@@ -426,6 +428,7 @@ impl DiagnosticOutput<'_> {
                 DiagnosticSeverity::Warning
             };
             self.diagnostics.push(Diagnostic {
+                related: Vec::new(),
                 code,
                 severity,
                 message,
