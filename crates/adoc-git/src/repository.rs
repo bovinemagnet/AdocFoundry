@@ -390,15 +390,25 @@ impl Repository {
     /// tree, as `git add` would: new and changed files are added and missing ones removed, line
     /// endings, `ident` and `working-tree-encoding` applied by the repository's attributes and
     /// configuration, and a link staged as a link. A file under a named `filter` (Git LFS, say)
-    /// is refused, since that would mean running a command the repository's configuration names.
-    /// Nothing is staged unless every path can be.
+    /// is refused, since that would mean running a command the repository's configuration names,
+    /// and so is a path Git never stores, one inside `.git`. Nothing is staged unless every path
+    /// can be.
     pub fn stage(&self, paths: &[&Path]) -> Result<(), GitError> {
         let mut index = self.index_file()?;
         let capabilities = self.repo.filesystem_options().map_err(GitError::git)?;
         let (mut pipeline, mut attributes) = self.to_git_pipeline()?;
+        let protect = self.protect_options();
         for path in paths {
             let relative = self.relative(path)?;
             let name = unix_path(&relative);
+            for component in name.split_str("/") {
+                gix::validate::path::component(component.as_bstr(), None, protect).map_err(
+                    |error| GitError::Unstorable {
+                        path: relative.clone(),
+                        reason: error.to_string(),
+                    },
+                )?;
+            }
             let file = self.workdir.join(&relative);
             let Ok(metadata) = gix::index::fs::Metadata::from_path_no_follow(&file) else {
                 index.remove_entries(|_, entry_path, _| entry_path == name.as_slice());
@@ -423,6 +433,19 @@ impl Repository {
             );
         }
         write_changed_index(index)
+    }
+
+    /// The names Git refuses to store, by `core.protectHFS` and `core.protectNTFS` with Git's
+    /// defaults: `.git` in every spelling the file systems Git protects would take for it.
+    fn protect_options(&self) -> gix::validate::path::component::Options {
+        let config = self.repo.config_snapshot();
+        gix::validate::path::component::Options {
+            protect_windows: cfg!(windows),
+            protect_hfs: config
+                .boolean("core.protectHFS")
+                .unwrap_or(cfg!(target_os = "macos")),
+            protect_ntfs: config.boolean("core.protectNTFS").unwrap_or(true),
+        }
     }
 
     /// The conversions `git add` applies, with the attributes they read. Its drivers are dropped:

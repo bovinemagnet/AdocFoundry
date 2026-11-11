@@ -334,6 +334,37 @@ fn a_removed_file_is_staged_as_deleted() {
     });
 }
 
+/// Builds the repository `setup` makes, and checks that `git add` stages nothing of `paths`
+/// (refusing them, or passing over them in silence), that `stage` refuses them, and that
+/// neither changes anything. Returns `stage`'s error.
+fn assert_refused_like_git_add(paths: &[&str], setup: impl Fn(&Path)) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path());
+    let before = state(dir.path());
+    let mut add = vec!["add", "--"];
+    add.extend_from_slice(paths);
+    git(dir.path(), &add);
+    assert_eq!(state(dir.path()), before, "git add stages nothing");
+    let error = stage(dir.path(), paths).expect_err("stage refuses");
+    assert_eq!(state(dir.path()), before, "nothing is staged");
+    error
+}
+
+#[test]
+fn a_path_inside_the_git_folder_is_refused() {
+    if !has_git() {
+        return;
+    }
+    for path in [".git/config", "pages/.git/page.adoc"] {
+        let error = assert_refused_like_git_add(&[path], |dir| {
+            init(dir, &[]);
+            fs::create_dir_all(dir.join("pages/.git")).unwrap();
+            fs::write(dir.join("pages/.git/page.adoc"), "one\n").unwrap();
+        });
+        assert!(error.contains(".git"), "{error}");
+    }
+}
+
 #[test]
 fn changes_in_a_folder_are_staged_so_git_sees_them() {
     if !has_git() {
