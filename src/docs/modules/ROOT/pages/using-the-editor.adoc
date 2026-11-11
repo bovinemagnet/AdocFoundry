@@ -675,7 +675,7 @@ The window opens first, with the sidebar and an empty tab strip, and the tabs fi
 A page in visual or split mode behind the active tab gets its visual editor when you switch to it.
 
 The session is saved when the app quits and when the main window closes.
-Launched with a folder or files (`adocfoundry [folder [file...]]`), the app opens those instead and does not restore the session.
+Launched with a folder or files (`adocfoundry [folder] [file...]`), the app opens those instead and does not restore the session.
 
 The session is kept in `session.json` in the app's state folder (see xref:settings.adoc#state-folder[Settings]), never in the repository.
 Only the app reads or writes it, never the command line tool, `adoc-ls` or `adoc-mcp`.

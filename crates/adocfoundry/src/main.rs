@@ -1,6 +1,7 @@
 //! AdocFoundry: a desktop editor for AsciiDoc documentation laid out the Antora way.
 //!
-//! `adocfoundry [folder [file…]]` opens the folder as a workspace and the files in tabs.
+//! `adocfoundry [folder] [file…]` opens the folder as a workspace and the files in tabs; files
+//! with no folder open in the workspace they belong to.
 
 mod about;
 mod app;
@@ -41,9 +42,7 @@ fn main() {
         println!("adocfoundry {}", env!("CARGO_PKG_VERSION"));
         return;
     }
-    let mut arguments = std::env::args_os().skip(1).map(PathBuf::from);
-    let folder = arguments.next();
-    let files: Vec<PathBuf> = arguments.collect();
+    let launch = adoc_engine::launch_targets(std::env::args_os().skip(1).map(PathBuf::from));
     let settings = match Settings::load(Settings::default_user_file().as_deref(), None) {
         Ok(settings) => settings,
         Err(error) => {
@@ -55,17 +54,31 @@ fn main() {
     .with_state_dir(Settings::default_state_dir());
     let engine = Engine::new(settings);
 
-    gpui_platform::application()
-        .with_assets(Assets)
-        .run(move |cx| {
-            gpui_component::init(cx);
-            editor::language::register();
-            editor::bindings::bind(&engine, cx);
-            let app = cx.new(|cx| app::AppState::new(engine, cx));
-            app::bind_app_actions(&app, cx);
-            app::open_main_window(app, folder, files, cx);
-            cx.activate(true);
-        });
+    let application = gpui_platform::application().with_assets(Assets);
+    // Files the system hands over, from Finder on macOS, at launch or while running.
+    let (handed, handed_over) = smol::channel::unbounded::<Vec<String>>();
+    application.on_open_urls(move |urls| {
+        let _ = handed.try_send(urls);
+    });
+    application.run(move |cx| {
+        gpui_component::init(cx);
+        editor::language::register();
+        editor::bindings::bind(&engine, cx);
+        let app = cx.new(|cx| app::AppState::new(engine, cx));
+        app::bind_app_actions(&app, cx);
+        app::open_main_window(app.clone(), launch.folder, launch.files, cx);
+        cx.spawn(async move |cx| {
+            while let Ok(urls) = handed_over.recv().await {
+                let paths = urls
+                    .iter()
+                    .filter_map(|url| adoc_engine::file_url_path(url))
+                    .collect();
+                cx.update(|cx| app::open_paths(&app, paths, cx));
+            }
+        })
+        .detach();
+        cx.activate(true);
+    });
 }
 
 // The icons the app uses beyond gpui-component's own.

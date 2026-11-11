@@ -9312,6 +9312,56 @@ fn as_main_window(
     crate::app::QUIT_ASKED.with(|asked| asked.set(false));
 }
 
+/// A file the system hands over (Finder's open event on macOS) opens in a tab of the main
+/// window, with the workspace it belongs to when none is open; a second keeps that workspace.
+#[gpui::test]
+fn files_handed_over_by_the_system_open_in_the_main_window(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let root = adoc_index::normalize_path(directory.path());
+    let pages = root.join("docs/modules/ROOT/pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    std::fs::write(root.join("antora-playbook.yml"), "site:\n  title: Docs\n").unwrap();
+    std::fs::write(root.join("docs/antora.yml"), "name: docs\nversion: ~\n").unwrap();
+    std::fs::write(pages.join("index.adoc"), "= Index\n").unwrap();
+    std::fs::write(pages.join("guide.adoc"), "= Guide\n").unwrap();
+    let app = app_with(Engine::new(Settings::default().with_git_opt_in()), cx);
+    let (workspace, mut cx) = workspace_window(&app, Vec::new(), cx);
+    cx.run_until_parked();
+    as_main_window(&app, &workspace, &mut cx);
+    let open = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let engine = &app.read(cx).engine;
+            let paths: Vec<PathBuf> = engine
+                .documents()
+                .map(|document| document.path.clone())
+                .collect();
+            (engine.roots().to_vec(), paths)
+        })
+    };
+
+    let url = format!("file://{}", pages.join("index.adoc").display());
+    let path = adoc_engine::file_url_path(&url).unwrap();
+    cx.cx
+        .update(|cx| crate::app::open_paths(&app, vec![path], cx));
+    cx.run_until_parked();
+    assert_eq!(
+        open(&mut cx),
+        (vec![root.clone()], vec![pages.join("index.adoc")])
+    );
+
+    cx.cx
+        .update(|cx| crate::app::open_paths(&app, vec![pages.join("guide.adoc")], cx));
+    cx.run_until_parked();
+    let (roots, mut paths) = open(&mut cx);
+    paths.sort();
+    assert_eq!(roots, vec![root]);
+    assert_eq!(
+        paths,
+        vec![pages.join("guide.adoc"), pages.join("index.adoc")]
+    );
+}
+
 fn quit_asked() -> bool {
     crate::app::QUIT_ASKED.with(std::cell::Cell::get)
 }

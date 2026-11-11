@@ -168,7 +168,7 @@ If you cloned without `--recurse-submodules`, run `git submodule update --init` 
 
 ## Using it
 
-`adocfoundry [folder [file…]]` opens a folder as the workspace and any files in tabs. Open Folder (Cmd/Ctrl-Shift-O) does the same from inside the app. Launched with neither, it reopens the last session.
+`adocfoundry [folder] [file…]` opens a folder as the workspace and any files in tabs; files given without a folder open in the workspace the first belongs to (the nearest folder above it with a playbook or `.adocfoundry.toml`, else an `antora.yml`, else its own folder), as when an AsciiDoc file is opened from a file manager or from Finder, which also hands files to the app while it runs. Open Folder (Cmd/Ctrl-Shift-O) does the same from inside the app. Launched with neither, it reopens the last session.
 
 | Command | macOS | Linux and Windows |
 |---|---|---|

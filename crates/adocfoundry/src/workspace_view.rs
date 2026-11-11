@@ -2423,6 +2423,32 @@ impl WorkspaceView {
         );
     }
 
+    /// Opens `paths` handed over by the system: a folder as the workspace, and files in tabs,
+    /// opening the workspace the first belongs to when no folder is open.
+    pub(crate) fn open_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let launch = adoc_engine::launch_targets(paths);
+        let folder_given = launch.files.is_empty();
+        if let Some(folder) = launch.folder {
+            if folder_given || self.app.read(cx).engine.roots().is_empty() {
+                self.open_folder(folder, window, cx);
+            }
+        }
+        for file in launch.files {
+            self.open_at(
+                &file,
+                SourceRange::default(),
+                OpenDisposition::Persistent,
+                window,
+                cx,
+            );
+        }
+    }
+
     /// Opens `path` as `disposition` says and selects `range` in it: a page in a source tab, an
     /// image in an image tab, as the engine decides. Browsing shows it in the preview tab.
     pub fn open_at(
