@@ -16,7 +16,7 @@ AdocFoundry is a Rust workspace: a GPUI desktop editor for AsciiDoc and Antora d
 - `crates/adocfoundry/languages/` holds the tree-sitter queries. tree-sitter is for highlighting, folding, outline hints and injections only.
 - `vendor/` holds `evalexpr` (an Apache-2.0 stand-in for the AGPL crate acdc-parser pulls in) and a patched `comemo`, both applied through `[patch.crates-io]` in `Cargo.toml`; see `vendor/README.md` before touching either.
 - `tests/fixtures/` holds small AsciiDoc and Antora workspaces, grouped by scenario.
-- `src/docs/` is the user and developer documentation, an Antora site (`./gradlew antora` builds it to `build/site`; Gradle is used for nothing else).
+- `src/docs/` is the user and developer documentation, an Antora site (`./gradlew antora` builds it to `build/site`; Gradle is used for nothing else), published to GitHub Pages from `main` by `.github/workflows/docs.yml`.
 - `docs/design/` is the architecture, `docs/prd/` the phase and feature specifications (the source of truth for scope), `docs/qa/` the manual QA records.
 - `packaging/` holds icons, the desktop entry, the macOS bundle script, the Flatpak manifest and the release smoke tests; `crates/adocfoundry/wix/` the Windows installer source; `xtask/` the `layers`, `package`, `run`, `notices` and `bump` tasks.
 

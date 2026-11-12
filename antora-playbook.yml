@@ -3,7 +3,7 @@ antora:
     - require: "@antora/lunr-extension"
       index_latest_only: true
     - require: "@sntke/antora-mermaid-extension"
-      mermaid_library_url: https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs
+      mermaid_library_url: https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.esm.min.mjs
       script_stem: header-scripts
       mermaid_initialize_options:
         start_on_load: true
@@ -15,6 +15,9 @@ site:
   title: AdocFoundry Documentation
   url: https://bovinemagnet.github.io/AdocFoundry
   start_page: adocfoundry::index.adoc
+  keys:
+    tagline: A native desktop editor for AsciiDoc and Antora documentation.
+    repo_url: https://github.com/bovinemagnet/AdocFoundry
 
 content:
   sources:
@@ -24,8 +27,8 @@ content:
 
 ui:
   bundle:
-    url: https://gitlab.com/antora/antora-ui-default/-/jobs/artifacts/HEAD/raw/build/ui-bundle.zip?job=bundle-stable
-    snapshot: true
+    # A release asset never changes, so it is not a snapshot.
+    url: https://github.com/bovinemagnet/snowed-under-antora-ui-bundle/releases/download/v0.2.0/ui-bundle.zip
 
 asciidoc:
   attributes:
