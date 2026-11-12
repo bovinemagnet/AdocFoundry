@@ -25,7 +25,7 @@ pub struct DocumentSymbol {
 #[must_use]
 pub fn document_symbols(document: &Document) -> Vec<DocumentSymbol> {
     let title = document.title.iter().map(|title| DocumentSymbol {
-        name: title.text.clone(),
+        name: adoc_core::plain_title(&title.text),
         detail: None,
         kind: DocumentSymbolKind::Document,
         level: 0,
@@ -34,7 +34,7 @@ pub fn document_symbols(document: &Document) -> Vec<DocumentSymbol> {
         children: Vec::new(),
     });
     let sections = document.sections.iter().map(|section| DocumentSymbol {
-        name: section.title.clone(),
+        name: adoc_core::plain_title(&section.title),
         detail: None,
         kind: DocumentSymbolKind::Section,
         level: section.level,
@@ -55,7 +55,7 @@ pub fn nav_symbols(document: &Document) -> Vec<DocumentSymbol> {
             .map(|entry| {
                 let range = SourceRange::new(entry.start, entry.end);
                 DocumentSymbol {
-                    name: entry.text,
+                    name: adoc_core::plain_title(&entry.text),
                     kind: if entry.target.is_some() {
                         DocumentSymbolKind::Page
                     } else {
@@ -134,6 +134,20 @@ mod tests {
         assert_eq!(shape(&symbols), "Guide(Start(Detail), Next)");
         assert_eq!(symbols[0].kind, DocumentSymbolKind::Document);
         assert_eq!(symbols[0].children[0].kind, DocumentSymbolKind::Section);
+    }
+
+    #[test]
+    fn names_titles_and_entries_without_their_formatting_marks() {
+        let text = "= The `adoc` *Guide*\n\n== The one `lsp-types` exception\n\n== A [.role]#marked# _word_\n";
+        let symbols = document_symbols(&parse("file:///guide.adoc", text).document);
+        assert_eq!(
+            shape(&symbols),
+            "The adoc Guide(The one lsp-types exception, A marked word)"
+        );
+
+        let nav = ".The `x` pages\n* xref:index.adoc[The `y` page]\n";
+        let symbols = nav_symbols(&parse("file:///nav.adoc", nav).document);
+        assert_eq!(shape(&symbols), "The x pages(The y page)");
     }
 
     #[test]

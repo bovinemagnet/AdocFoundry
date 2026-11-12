@@ -9,6 +9,11 @@ All notable changes are recorded here. Versions follow [Semantic Versioning](htt
 - Help › AdocFoundry Documentation (`app.documentation`, also in the command palette) opens the published documentation, <https://bovinemagnet.github.io/AdocFoundry/adocfoundry/index.html>, in the browser. About's Documentation button opens the same page.
 - A warning, `adoc.broken-code-span`, for a code span that does not close where it seems to (#593): a closing backtick followed by an apostrophe, which Asciidoctor reads as a curved apostrophe (`` `x`'s ``), or by a letter or digit, before which a constrained span cannot close (`` `x`s ``). Either way the rest of the line is formatted wrongly in the preview, the PDF and the published site alike. The message gives the unconstrained form to write instead (``` ``x``'s ```). It comes from the line parser, so it appears in Problems, in `adoc-ls`, in `adocfoundry-cli check`, in the MCP `check` tool and in the quality audit, and it is never given inside verbatim blocks, comments, passthroughs, attribute entries, block metadata, indented literal lines or STEM macros.
 
+### Fixed
+
+- The graph window has a title bar. Its toolbar began at the window's top edge, so on macOS the close, minimise and zoom buttons covered the search field, and on Windows and Linux the window had no window buttons or place to drag it by.
+- The Outline names headings as they read, without their formatting marks: "The one `lsp-types` exception" shows as "The one lsp-types exception" rather than with its backticks. Code, strong, emphasis, highlight and passthrough marks go, constrained or not, with any attribute list before a mark (`[.role]#text#`); marks that form nothing stay, as in `snake_case`. A navigation file's entries, `adoc-ls` document symbols and MCP `get_outline` titles are named the same way. `adoc-core` gains `plain_title`.
+
 ## 0.10.0 — 2026-11-12
 
 ### Added
