@@ -4,18 +4,20 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{mpsc::Receiver, Arc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use adoc_core::SourceRange;
 use adoc_diagrams::{DiagramCache, Diagrams, MermaidProvider};
 use adoc_engine::{
     commands::ids, CommandArgs, DocumentId, Engine, EngineEvent, ManualClock, Settings,
-    PREVIEW_SETTLE,
+    PREVIEW_SETTLE, WATCH_DEBOUNCE,
 };
 use adoc_render::{DiagramView, ViewBlock, ViewInline, ViewKind};
 
 const WAIT: Duration = Duration::from_secs(20);
+/// How long the watcher must report nothing before a test begins (see [`quiet`]).
+const QUIET: Duration = Duration::from_millis(300);
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1147,6 +1149,25 @@ fn opening_a_workspace_prunes_diagrams_not_read_for_the_period() {
 // --- the pause in typing (#401) ------------------------------------------------------------------
 
 /// A page shown in the preview, its preview up to date, with "Typed." just typed at its end.
+/// Applies what the watcher saw of the fixture's own files, which FSEvents and Windows can
+/// report after the watch began, until it reports nothing for [`QUIET`], so a test that
+/// expects nothing to be due counts only the work its own edits cause.
+fn quiet(engine: &mut Engine, clock: &ManualClock) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut since = Instant::now();
+    while since.elapsed() < QUIET && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+        engine.pump();
+        if engine.has_pending() {
+            clock.advance(WATCH_DEBOUNCE);
+            engine.pump();
+            assert!(engine.wait_for_workers(WAIT));
+            engine.pump();
+            since = Instant::now();
+        }
+    }
+}
+
 fn typed_in_preview(
     text: &str,
     also: &[(&str, &str)],
@@ -1160,6 +1181,7 @@ fn typed_in_preview(
     let (mut engine, clock) = engine_with_clock();
     engine.open_workspace(vec![root.clone()]).unwrap();
     assert!(engine.wait_for_workers(WAIT));
+    quiet(&mut engine, &clock);
     let id = engine.open(&root.join("page.adoc")).unwrap();
     engine.request_preview(id);
     engine.pump();
