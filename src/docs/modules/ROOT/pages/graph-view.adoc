@@ -76,6 +76,9 @@ There is one graph window for each workspace window.
 Choosing Show Graph again brings it to the front.
 The window shows "Building graph…" until the first build is done.
 
+.The graph window
+image::app-graph-window.png["The graph window with its toolbar of search, Partials, Navigation, Orphans, Unresolved, component, colour, group, workspace and layout controls, a force-directed graph with the AdocFoundry home page selected and its neighbours labelled, and a side panel listing its Links out (15) and Backlinks (3)"]
+
 The window remembers its size and position, and keeps them with the last session, so after a restart it comes back on the screen you put it on.
 The first time it opens at 1100 by 760 pixels, centred.
 If less than half of the saved place is on a display, because a screen has been unplugged, it opens centred on the main display and is made smaller to fit.
@@ -141,6 +144,9 @@ Labels show when you have zoomed in, and always for the hovered and selected nod
 The Layout button chooses how the graph is drawn: by force, as a mind map or as a radial map.
 Clicking it moves from Force to Mind Map, to Radial and back to Force.
 Both the graph window and the Graph panel have it, and nodes glide into their new places.
+
+.The graph window as a mind map
+image::app-graph-mind-map.png["The graph window with Layout set to Mind Map at depth 1, the home page on the left and the pages it links to in a labelled column to its right"]
 
 A mind map draws the graph as a tree from one root, left to right.
 The root is on the left and each level is a column to its right.
@@ -399,6 +405,9 @@ It shows the active page and the pages linked to it, to the depth you set, from 
 It follows the active tab.
 When an image or a file that is not AsciiDoc is active, it says "No page".
 Partials and Navigation toggles hide those nodes, and a button opens the graph window.
+
+.The Graph tab in the sidebar
+image::app-graph-panel.png["The Graph tab of the sidebar with depth buttons 1, 2 and 3, Partials, Navigation and Layout controls, a small graph of the active page, its place in the navigation as nav.adoc, User guide, Using the editor, and lists of Links out (11) and Backlinks (13), each marked xref or nav"]
 
 Below the canvas is the page's place in the navigation, drawn as trails:
 

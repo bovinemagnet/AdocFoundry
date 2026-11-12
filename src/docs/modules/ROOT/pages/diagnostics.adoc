@@ -140,6 +140,9 @@ The tab updates when typing pauses and shows each problem's line and column, the
 * In the output of `adocfoundry-cli check`.
 * In any editor using xref:language-server.adoc[the language server].
 
+.The Problems panel, grouped by file
+image::app-problems.png["The Problems panel listing warnings for several pages, grouped by file, each row with its line and column and an adoc.broken-code-span message saying a code span does not close here, a Filter menu at the top and Problems (54) in the tab"]
+
 Diagnostics inside `antora.yml` itself (`adoc.antora.missing-key`, `adoc.antora.unknown-key`, `adoc.antora.missing-nav-file` and `adoc.antora.invalid-attribute-value`) appear at the line where each problem is written.
 They are read from the file on disk, not from an unsaved buffer, and are recomputed when the descriptor changes on disk.
 A descriptor that is not valid YAML gets only `adoc.antora.invalid-descriptor`.

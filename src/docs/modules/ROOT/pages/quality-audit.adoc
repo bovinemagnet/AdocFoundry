@@ -10,6 +10,9 @@ The quality audit is an offline, deterministic assessment of an Antora workspace
 `adocfoundry-cli audit` runs it (see xref:command-line.adoc#audit[]).
 In the app, Run Audit runs it, and the Quality panel and Problems show the result (see xref:using-the-editor.adoc[]).
 
+.The Quality panel after Run Audit
+image::app-quality.png["The Quality panel after Run Audit, reading Complete: everything in the workspace was audited, with findings by severity of 0 errors, 54 warnings and 0 information, findings by rule showing adoc.broken-code-span 54 times, and navigation coverage of 25 of 25 pages listed"]
+
 The command line and the app share one implementation.
 For the same workspace and policy they report the same findings, counts and coverage.
 MCP clients get the same report through the MCP server's `quality_audit` tool (see xref:mcp-server.adoc#quality-audit[]).

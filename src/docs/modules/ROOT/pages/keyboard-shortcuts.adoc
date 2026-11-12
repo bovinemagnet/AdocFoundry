@@ -7,6 +7,9 @@ Bindings come from the engine's command definitions, so the command palette and 
 In the engine, `cmd` means the platform's primary modifier: Command on macOS and Control on Linux and Windows.
 Two bindings, Go Back and Go Forward, use Control on every platform.
 
+.The command palette filtered by preview
+image::app-command-palette.png["The command palette filtered by the word preview, listing Pin Preview, Retry Failed Diagrams, Detach Preview, Toggle PDF Preview, Toggle PDF Preview Window, Toggle Preview and Toggle Preview Scroll Sync"]
+
 == Commands
 
 [cols="3,2,2,3"]
