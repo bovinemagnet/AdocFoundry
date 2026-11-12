@@ -523,6 +523,58 @@ fn inline_stem_carries_its_metrics() {
     assert_eq!(rendered(), image);
 }
 
+/// Issue #473: a formula's image is read for its measures once, not on every view build: the
+/// cache names images by their content, so the measures never change.
+#[test]
+fn a_formulas_image_is_read_once() {
+    use adoc_core::probe::{self, Probe};
+
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    fs::write(&page, "= Page\n\nInline stem:[x^2] here.\n").unwrap();
+    let (mut engine, _clock) = engine_with_clock();
+    engine.set_diagrams(
+        Diagrams::with_providers(
+            DiagramCache::new(directory.path().join("cache")),
+            Vec::new(),
+        )
+        .with_provider(Box::new(adoc_engine::StemProvider)),
+    );
+    let inline_rendered = |engine: &Engine, id| {
+        blocks(engine, id).iter().any(|block| match &block.kind {
+            ViewKind::Paragraph(content) => content.iter().any(|inline| {
+                matches!(
+                    inline,
+                    ViewInline::Stem {
+                        rendered: Some(_),
+                        ..
+                    }
+                )
+            }),
+            _ => false,
+        })
+    };
+    let id = engine.open(&page).unwrap();
+    probe::reset();
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    assert!(inline_rendered(&engine, id));
+    assert_eq!(
+        probe::count(Probe::FormulaRead),
+        1,
+        "read once it was typeset"
+    );
+
+    // Built again, from the cache.
+    engine.release_preview(id);
+    engine.request_preview(id);
+    engine.pump();
+    assert!(engine.wait_for_workers(WAIT));
+    assert!(inline_rendered(&engine, id));
+    assert_eq!(probe::count(Probe::FormulaRead), 1, "not read again");
+}
+
 #[test]
 fn asciidoctor_is_the_configured_one_when_set() {
     let directory = tempfile::tempdir().unwrap();

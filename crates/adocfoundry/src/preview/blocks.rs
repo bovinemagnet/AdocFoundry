@@ -47,7 +47,7 @@ pub struct BlockContext<'a> {
     pub inline_cache: Option<Rc<inlines::InlineCache>>,
 }
 
-/// The element id of the block at `trail`, as [`adoc_render::block_at`] returns it.
+/// The element id of the block at `trail`, as [`adoc_render::BlockIndex::block_at`] returns it.
 #[must_use]
 pub fn block_id(trail: &[usize]) -> ElementId {
     let path: Vec<String> = trail.iter().map(usize::to_string).collect();

@@ -1092,16 +1092,17 @@ impl VisualView {
         self.formula_gaps = self
             .shown
             .as_ref()
-            .map_or_else(text::FormulaGaps::new, |shown| {
-                shown
+            .map_or_else(text::FormulaGaps::new, |shown| text::FormulaGaps {
+                gaps: shown
                     .view
                     .inline_formulas()
                     .into_iter()
-                    .map(|(source, image)| {
+                    .map(|(key, image)| {
                         let gap = crate::preview::inlines::Gap::measure(&image, &font, window);
-                        (source, (gap, image.path))
+                        (key, (gap, image.path))
                     })
-                    .collect()
+                    .collect(),
+                stem_latex: shown.view.stem_is_latex(),
             });
         self.measured = measured;
     }

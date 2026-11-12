@@ -16,7 +16,10 @@ use adoc_diagrams::{DiagramCache, DiagramRequest, Diagrams, ToolPaths};
 use adoc_dom::{AcdcParser, DocumentParser, Dom, IncludeResolver, ParseInput};
 use adoc_index::normalize_path;
 use adoc_lang::WorkspaceState;
-use adoc_render::{build_view, DiagramView, ResolvedLink, ViewResolver, ViewTree};
+use adoc_render::{
+    build_view, formula_image, inline_stem_attributes, stem_kind, DiagramView, FormulaImage,
+    ResolvedLink, ViewResolver, ViewTree,
+};
 use ropey::Rope;
 
 use crate::{
@@ -146,6 +149,9 @@ pub(crate) struct PreviewState {
     running: usize,
     /// Diagrams that could not be rendered, so they are not tried again on every rebuild.
     failed: FailedDiagrams,
+    /// The measures of each typeset inline formula's image, by path, so a view build does not
+    /// read the image again: the cache names images by their content, so they never change.
+    formulas: RefCell<HashMap<PathBuf, FormulaImage>>,
 }
 
 /// The most diagrams rendered at once, however many a page holds.
@@ -783,6 +789,7 @@ impl Engine {
             diagrams: &diagrams,
             failed: &self.rendered.failed,
             formulas,
+            measures: &self.rendered.formulas,
             wanted: RefCell::default(),
             inputs: RefCell::default(),
             directory: path.parent().map(Path::to_path_buf),
@@ -1022,6 +1029,8 @@ struct EngineResolver<'e> {
     failed: &'e FailedDiagrams,
     /// Whether formulas are rendered as images for this view.
     formulas: bool,
+    /// The measures of the inline formulas' images read so far.
+    measures: &'e RefCell<HashMap<PathBuf, FormulaImage>>,
     /// Diagrams to render, gathered while building because the view is built immutably.
     wanted: RefCell<Vec<(String, DiagramRequest)>>,
     /// The files the view's diagrams read.
@@ -1139,6 +1148,21 @@ impl ViewResolver for EngineResolver<'_> {
             kind: kind.to_owned(),
             source: source.to_owned(),
         }
+    }
+
+    fn formula(&self, latex: bool, source: &str) -> Option<FormulaImage> {
+        let DiagramView::Svg(path) =
+            self.diagram(stem_kind(latex), source, &inline_stem_attributes())
+        else {
+            return None;
+        };
+        if let Some(image) = self.measures.borrow().get(&path) {
+            return Some(image.clone());
+        }
+        // Only what was read is kept, so an image not yet readable is read again next time.
+        let image = formula_image(&path)?;
+        self.measures.borrow_mut().insert(path, image.clone());
+        Some(image)
     }
 }
 

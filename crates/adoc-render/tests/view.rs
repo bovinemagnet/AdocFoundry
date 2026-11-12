@@ -9,8 +9,8 @@ use adoc_antora::{discover_antora_workspace, parse_resource_id, AntoraCatalog, A
 use adoc_core::{Location, SourceRange};
 use adoc_dom::{AcdcParser, DocumentParser, ParseInput};
 use adoc_render::{
-    block_at, block_by_trail, build_view, to_html, BlockIndex, DiagramView, HtmlOptions,
-    LocalResolver, ResolvedLink, ViewInline, ViewKind, ViewResolver, ViewTree,
+    block_by_trail, build_view, to_html, BlockIndex, DiagramView, HtmlOptions, LocalResolver,
+    ResolvedLink, ViewInline, ViewKind, ViewResolver, ViewTree,
 };
 
 fn fixtures() -> PathBuf {
@@ -421,10 +421,13 @@ fn html_contains_every_block_kind() {
 #[test]
 fn block_at_finds_the_innermost_block() {
     let (path, text, view) = corpus();
+    let index = BlockIndex::new(&view);
     let at = |needle: &str| {
         let offset = text.find(needle).unwrap();
-        let trail = block_at(&view, &path, offset).unwrap_or_else(|| panic!("nothing at {needle}"));
-        block_by_trail(&view, &trail).unwrap().clone()
+        let trail = index
+            .block_at(&path, offset)
+            .unwrap_or_else(|| panic!("nothing at {needle}"));
+        block_by_trail(&view, trail).unwrap().clone()
     };
 
     let block = at("Sidebar text.");
@@ -452,12 +455,12 @@ fn block_at_finds_the_innermost_block() {
     // Blocks from a partial are found by the partial's path, not the page's.
     let partial = fixtures().join("render/partials/included.adoc");
     let partial = adoc_render_path(&view, &partial);
-    let trail = block_at(&view, &partial, 0).unwrap();
+    let trail = index.block_at(&partial, 0).unwrap();
     assert!(matches!(
-        block_by_trail(&view, &trail).unwrap().kind,
+        block_by_trail(&view, trail).unwrap().kind,
         ViewKind::Paragraph(_)
     ));
-    assert_eq!(block_at(&view, Path::new("/elsewhere.adoc"), 0), None);
+    assert_eq!(index.block_at(Path::new("/elsewhere.adoc"), 0), None);
 }
 
 #[test]
@@ -495,8 +498,40 @@ fn each_block_visits_blocks_in_every_container() {
     assert_eq!(depth_first.len(), count(view.blocks.iter().collect()));
 }
 
+/// The trail of the innermost block whose span in `path` contains `offset`, found by walking
+/// the tree: the oracle the block index is checked against. Where two sibling blocks' spans
+/// overlap, as after an include that could not be read, it finds the first and the index the
+/// last, so it is compared only over fixtures without such spans.
+fn walked_block_at(view: &ViewTree, path: &Path, offset: usize) -> Option<Vec<usize>> {
+    fn search(
+        blocks: &[&adoc_render::ViewBlock],
+        path: &Path,
+        offset: usize,
+        trail: &mut Vec<usize>,
+    ) -> bool {
+        for (index, block) in blocks.iter().enumerate() {
+            trail.push(index);
+            if search(&block.child_refs(), path, offset, trail) {
+                return true;
+            }
+            let range = block.span.range;
+            if block.span.path == path
+                && range.start <= offset
+                && offset < range.end.max(range.start + 1)
+            {
+                return true;
+            }
+            trail.pop();
+        }
+        false
+    }
+    let roots: Vec<&adoc_render::ViewBlock> = view.blocks.iter().collect();
+    let mut trail = Vec::new();
+    search(&roots, path, offset, &mut trail).then_some(trail)
+}
+
 #[test]
-fn the_block_index_finds_what_block_at_finds() {
+fn the_block_index_finds_what_walking_the_tree_finds() {
     let partial = fixtures().join("render/partials/included.adoc");
     for name in [
         "blocks.adoc",
@@ -514,7 +549,7 @@ fn the_block_index_finds_what_block_at_finds() {
             for offset in 0..=len {
                 assert_eq!(
                     index.block_at(file, offset),
-                    block_at(&view, file, offset).as_deref(),
+                    walked_block_at(&view, file, offset).as_deref(),
                     "{name}: {} at {offset}",
                     file.display()
                 );

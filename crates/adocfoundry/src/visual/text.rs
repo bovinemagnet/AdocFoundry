@@ -5,6 +5,7 @@
 use std::{cell::RefCell, collections::HashMap, ops::Range, path::PathBuf, rc::Rc};
 
 use adoc_engine::{Atom, BlockPath, Mark, MarkSet, Piece, TextBlock, TextContext};
+use adoc_render::FormulaKey;
 use gpui::{
     canvas, fill, px, size, AnyElement, Bounds, FontStyle, FontWeight, HighlightStyle, Hsla,
     IntoElement as _, ListState, ParentElement as _, Pixels, Point, SharedString, Styled as _,
@@ -16,8 +17,38 @@ use crate::preview::inlines::{place_formula, Gap, InlineStyle};
 /// The layout of every text block drawn in the last frame, by path.
 pub type Layouts = Rc<RefCell<HashMap<BlockPath, TextLayout>>>;
 
-/// The typeset inline formulas of the document, by source, each with its gap as last measured.
-pub type FormulaGaps = HashMap<String, (Gap, PathBuf)>;
+/// The typeset inline formulas of the document, by notation and source, each with its gap as
+/// last measured.
+#[derive(Clone, Debug, Default)]
+pub struct FormulaGaps {
+    pub gaps: HashMap<FormulaKey, (Gap, PathBuf)>,
+    /// Whether `stem:[…]` is LaTeX on the page ([`adoc_render::ViewTree::stem_is_latex`]).
+    pub stem_latex: bool,
+}
+
+impl FormulaGaps {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The formula a STEM macro named `name` with `source` draws. The view reads `:stem:` after
+    /// the header, so for `stem:[…]` the other notation's formula is taken when the page has
+    /// none in this one, as when a body attribute entry changes `:stem:`.
+    fn get(&self, name: &str, source: &str) -> Option<&(Gap, PathBuf)> {
+        let key = FormulaKey::of_macro(name, source, self.stem_latex);
+        self.gaps.get(&key).or_else(|| {
+            (name == "stem")
+                .then(|| {
+                    self.gaps.get(&FormulaKey {
+                        latex: !key.latex,
+                        ..key
+                    })
+                })
+                .flatten()
+        })
+    }
+}
 
 /// A typeset formula shown over a gap in place of its macro's text.
 #[derive(Clone, Debug, PartialEq)]
@@ -152,9 +183,14 @@ pub fn shown(block: &TextBlock, composing: Option<(usize, &str)>, formulas: &For
     let mut after_break = false;
     for run in runs_of(block) {
         let part = &block.display[run.range.clone()];
-        let formula = (block.context != TextContext::Verbatim && is_formula(run.atom))
-            .then(|| formulas.get(part.trim()))
-            .flatten();
+        let formula = match run.atom {
+            Some(Atom::Macro { name })
+                if block.context != TextContext::Verbatim && is_formula(run.atom) =>
+            {
+                formulas.get(name, part)
+            }
+            _ => None,
+        };
         if let Some((gap, path)) = formula {
             let start = text.len();
             text.push_str(&gap.text);
@@ -738,7 +774,13 @@ mod tests {
             size: size(px(8.), px(10.)),
             baseline: px(7.),
         };
-        let formulas = FormulaGaps::from([("x^2".to_owned(), (gap, PathBuf::from("/x.svg")))]);
+        let formulas = FormulaGaps {
+            gaps: HashMap::from([(
+                FormulaKey::of_macro("stem", "x^2", false),
+                (gap, PathBuf::from("/x.svg")),
+            )]),
+            stem_latex: false,
+        };
 
         let plain = shown(&block, None, &formulas);
         assert_eq!(plain.text, "a \u{a0}\u{a0} b");
@@ -775,6 +817,88 @@ mod tests {
         assert_eq!(before.text, "a é\u{a0}\u{a0} b");
         assert_eq!(before.formulas[0].shown, 4..8);
         assert_eq!(before.index(5), 8);
+    }
+
+    /// Issue #473: `stem:[x/2]` and `latexmath:[x/2]` are drawn with their own formulas.
+    #[test]
+    fn each_notation_draws_its_own_formula() {
+        // `stem:[x/2] latexmath:[x/2]`, each macro showing its source.
+        let atom = |name: &str, range| Piece::Atom {
+            atom: Atom::Macro {
+                name: name.to_owned(),
+            },
+            range,
+            shown: "x/2".to_owned(),
+        };
+        let block = TextBlock {
+            range: SourceRange::new(0, 26),
+            pieces: vec![
+                atom("stem", SourceRange::new(0, 10)),
+                Piece::Text {
+                    range: SourceRange::new(10, 11),
+                },
+                atom("latexmath", SourceRange::new(11, 26)),
+            ],
+            plain: false,
+            display: "x/2 x/2".to_owned(),
+            context: TextContext::Flow,
+        };
+        let gap = Gap {
+            text: "\u{a0}".to_owned(),
+            first: (1, px(4.)),
+            width: px(4.),
+            size: size(px(4.), px(10.)),
+            baseline: px(7.),
+        };
+        let entry = |latex: bool, path: &str| {
+            (
+                FormulaKey {
+                    latex,
+                    source: "x/2".to_owned(),
+                },
+                (gap.clone(), PathBuf::from(path)),
+            )
+        };
+        let both = FormulaGaps {
+            gaps: HashMap::from([entry(false, "/ascii.svg"), entry(true, "/latex.svg")]),
+            stem_latex: false,
+        };
+        let paths = |formulas: &FormulaGaps| {
+            shown(&block, None, formulas)
+                .formulas
+                .into_iter()
+                .map(|formula| formula.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            paths(&both),
+            [PathBuf::from("/ascii.svg"), PathBuf::from("/latex.svg")]
+        );
+        // On a page whose `:stem:` is `latexmath`, `stem:` is LaTeX too.
+        let latex_page = FormulaGaps {
+            stem_latex: true,
+            ..both.clone()
+        };
+        assert_eq!(
+            paths(&latex_page),
+            [PathBuf::from("/latex.svg"), PathBuf::from("/latex.svg")]
+        );
+        // `stem:` takes the other notation's formula when its own is not there: the page's
+        // `:stem:` was changed after the header.
+        let only_latex = FormulaGaps {
+            gaps: HashMap::from([entry(true, "/latex.svg")]),
+            stem_latex: false,
+        };
+        assert_eq!(
+            paths(&only_latex),
+            [PathBuf::from("/latex.svg"), PathBuf::from("/latex.svg")]
+        );
+        // `latexmath:` never does.
+        let only_ascii = FormulaGaps {
+            gaps: HashMap::from([entry(false, "/ascii.svg")]),
+            stem_latex: false,
+        };
+        assert_eq!(paths(&only_ascii), [PathBuf::from("/ascii.svg")]);
     }
 
     #[test]

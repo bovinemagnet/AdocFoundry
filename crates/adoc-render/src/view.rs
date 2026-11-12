@@ -367,6 +367,16 @@ pub trait ViewResolver {
         source: &str,
         attributes: &BTreeMap<String, String>,
     ) -> DiagramView;
+
+    /// An inline formula typeset as an image, with its measures; `None` until it is typeset.
+    /// By default its image is read for them each time; a resolver that keeps them may answer
+    /// from what it kept, as the image at a path never changes.
+    fn formula(&self, latex: bool, source: &str) -> Option<crate::FormulaImage> {
+        match self.diagram(stem_kind(latex), source, &inline_stem_attributes()) {
+            DiagramView::Svg(path) => crate::formula_image(&path),
+            _ => None,
+        }
+    }
 }
 
 /// The diagram kind a formula is rendered as: `stem-latex` or `stem-asciimath`, with
@@ -1093,14 +1103,7 @@ impl Builder<'_> {
             Inline::Stem { latex, source } => ViewInline::Stem {
                 latex: *latex,
                 source: source.clone(),
-                rendered: match self.resolver.diagram(
-                    stem_kind(*latex),
-                    source,
-                    &inline_stem_attributes(),
-                ) {
-                    DiagramView::Svg(path) => crate::formula_image(&path),
-                    _ => None,
-                },
+                rendered: self.resolver.formula(*latex, source),
             },
             Inline::Passthrough(text) => ViewInline::Raw(text.clone()),
             Inline::IndexTerm { terms, visible } => ViewInline::IndexTerm {
@@ -1160,34 +1163,9 @@ fn image_alt(target: &str) -> String {
     stem.replace(['-', '_'], " ")
 }
 
-/// The path, as child indices from the root, of the innermost block whose span in `path`
-/// contains `offset`. Used to keep the preview level with the caret.
-#[must_use]
-pub fn block_at(view: &ViewTree, path: &Path, offset: usize) -> Option<Vec<usize>> {
-    fn search(blocks: &[&ViewBlock], path: &Path, offset: usize, trail: &mut Vec<usize>) -> bool {
-        for (index, block) in blocks.iter().enumerate() {
-            trail.push(index);
-            if search(&block.child_refs(), path, offset, trail) {
-                return true;
-            }
-            let range = block.span.range;
-            if block.span.path == path
-                && range.start <= offset
-                && offset < range.end.max(range.start + 1)
-            {
-                return true;
-            }
-            trail.pop();
-        }
-        false
-    }
-    let roots: Vec<&ViewBlock> = view.blocks.iter().collect();
-    let mut trail = Vec::new();
-    search(&roots, path, offset, &mut trail).then_some(trail)
-}
-
 /// The blocks of a view tree by where their spans start, for finding the block at a source
-/// offset as [`block_at`] does without walking the tree: built once per view tree.
+/// offset without walking the tree: built once per view tree. Used to keep the preview level
+/// with the caret.
 #[derive(Debug, Default)]
 pub struct BlockIndex {
     by_path: HashMap<PathBuf, Vec<Indexed>>,
@@ -1291,7 +1269,7 @@ impl BlockIndex {
     }
 }
 
-/// The block at `trail`, as returned by [`block_at`].
+/// The block at `trail`, as returned by [`BlockIndex::block_at`].
 #[must_use]
 pub fn block_by_trail<'v>(view: &'v ViewTree, trail: &[usize]) -> Option<&'v ViewBlock> {
     let (first, rest) = trail.split_first()?;

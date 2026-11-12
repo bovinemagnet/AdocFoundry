@@ -52,9 +52,11 @@ pub enum Probe {
     FileExists,
     /// A commit's tree compared with its parent's by `adoc_git::Repository::last_changed`.
     HistoryCommit,
+    /// A typeset formula's image read for its measures, `adoc_render::formula_image`.
+    FormulaRead,
 }
 
-const PROBES: usize = 22;
+const PROBES: usize = 23;
 
 #[cfg(feature = "probe")]
 thread_local! {
@@ -96,4 +98,4 @@ pub fn reset() {
 }
 
 // Every probe has a counter.
-const _: () = assert!(Probe::HistoryCommit as usize == PROBES - 1);
+const _: () = assert!(Probe::FormulaRead as usize == PROBES - 1);

@@ -36,7 +36,7 @@ Add a test here rather than in the application crate whenever the behaviour can 
 It checks that resources are listed in coordinate order and resumed, that navigation membership is judged through a page's own version only, and that a listing reads only the resources it returns (counted by the `ListResource` probe).
 It also checks that incoming references are exact, and that outlines carry section ids.
 
-`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula, ChildRefs, InlineLayout, QuickOpenItem, DiagnoseOpen, GraphNode, AuditFile, AuditVersion, ListResource, IndexWalk, Watch, PreviewTypeset}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
+`adoc_core::probe` counts costly operations, so tests can assert how often each runs: `Probe::{Parse, HashText, Diff, Reconcile, Suggest, Walk, MeasureFormula, ChildRefs, InlineLayout, QuickOpenItem, DiagnoseOpen, GraphNode, AuditFile, AuditVersion, ListResource, FormulaRead, IndexWalk, Watch, PreviewTypeset}`, counted per thread with `probe::hit`, read with `probe::count` and cleared with `probe::reset`.
 Two `#[doc(hidden)]` hooks hold the engine's workers still: `Engine::hold_writer()` returns a `Sender<()>` and the writer waits before its next job until it is dropped, and `Engine::hold_next_index()` makes the next whole index wait, after reading the files and before reporting, until its sender is dropped.
 `renaming_a_page_waits_for_its_save_in_flight` (`tests/auto_save.rs`) and `a_page_changed_on_disk_while_the_workspace_is_indexed_is_not_lost` (`tests/workspace.rs`) use them.
 Tests that check work happens on a worker rather than the caller's thread (opening a workspace, the PDF preview) assert these counts are 0 on the test thread, rather than timing the call, so they hold however busy the machine is.
@@ -48,11 +48,13 @@ In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` typ
 `adoc-model`'s `tests/positions.rs` checks that `text_block_at` finds the block a walk finds at every offset of a page, and walks the model at most once over many lookups.
 `ui_tests::one_visual_frame_walks_the_model_at_most_twice` draws a 300-paragraph page in the visual editor.
 `ui_tests::formulas_are_measured_once` draws 20 inline formulas for 10 frames and expects at most 20 measurements.
+`FormulaRead` counts a typeset formula's image read for its measures (`adoc_render::formula_image`); the engine's resolver keeps the measures by path, so a view build reads an inline formula's image once per session.
+`tests/preview.rs`'s `a_formulas_image_is_read_once` builds a page's view twice and expects one read.
 `ui_tests::preview_draws_inline_stem_in_the_line` expects none in the preview's frames after the first.
 `ui_tests::preview_lays_out_inline_text_once_per_block` draws 300 paragraphs for 10 frames and expects at most 300 layouts.
 `ui_tests::typing_in_one_paragraph_does_not_rerender_the_preview` types 20 characters with scroll sync on and expects at most two renders of the preview (the existing `renders` counter).
 `ui_tests::reveal_source_is_logarithmic` moves the caret 200 times in 500 paragraphs and expects at most 1,800 lists of children.
-`adoc-render`'s `the_block_index_finds_what_block_at_finds` compares the index with `block_at` at every offset of the render fixtures and their partial.
+`adoc-render`'s `the_block_index_finds_what_walking_the_tree_finds` compares the index with a walk of the view tree, kept in the test as its oracle, at every offset of the render fixtures and their partial.
 
 == Benchmarks
 

@@ -127,7 +127,7 @@ Where it differs from the earlier sections of that specification, section 12 win
 
 |`block_at` result
 |`Option<BlockPath>`
-|`Option<Vec<usize>>` (child indices from the root), read back with `block_by_trail`
+|`BlockIndex::block_at` gives `Option<&[usize]>` (child indices from the root), read back with `block_by_trail`; the tree-walk `block_at` was removed (#473) and survives only in the tests, as the oracle the index is checked against
 |A plain index trail needs no new type; list items' and table cells' blocks count as children.
 
 |acdc spans
@@ -688,8 +688,8 @@ This section summarises section 9 of `docs/prd/PRD-AdocFoundry_Phase_6_Implement
 
 |Visual editor (WP 6.1)
 |looks the formula up by the atom's source span
-|by the formula's source text, from `ViewTree::inline_formulas`
-|The view tree's inline formulas carry no source span; a STEM macro's text is the formula's source.
+|by notation and source (`FormulaKey`), from `ViewTree::inline_formulas`: `latexmath` is LaTeX, `asciimath` AsciiMath, and `stem` follows the page's `:stem:` (`ViewTree::stem_is_latex`); because the view reads `:stem:` after the header, a `stem:` macro takes the other notation's formula when the page has none in its own, as when a body attribute entry changes `:stem:`, while `latexmath:` and `asciimath:` never do
+|The view tree's inline formulas carry no source span; a STEM macro's text is the formula's source. The same text in two notations is two formulas (`stem:[x/2]` and `latexmath:[x/2]` read differently), so keying by text alone drew whichever image was found last (#473).
 
 |Gap size in the visual editor (WP 6.1)
 |—
