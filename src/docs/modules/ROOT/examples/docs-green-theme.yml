@@ -1,0 +1,16 @@
+# The default theme in the green of this documentation's website.
+# Export a page with it: adocfoundry-cli pdf <page> --theme docs-green-theme.yml
+extends: default
+base:
+  font_color: '#1f2a24'
+heading:
+  font_color: '#0b7a52'
+  font_family: Noto Sans
+title_page:
+  title:
+    font_color: '#0b7a52'
+link:
+  font_color: '#0b7a52'
+code:
+  background_color: '#eef6f1'
+  border_color: '#cfe3d8'
