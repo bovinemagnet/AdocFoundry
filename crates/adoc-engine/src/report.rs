@@ -23,7 +23,7 @@ pub struct CheckEntry {
     pub range: CheckRange,
     /// One-based.
     pub line: usize,
-    /// One-based, in bytes.
+    /// One-based, in characters.
     pub column: usize,
     pub severity: &'static str,
     pub code: &'static str,
@@ -282,7 +282,7 @@ impl Engine {
                 .unwrap_or_default();
             let lines = LineIndex::new(&text);
             for diagnostic in diagnostics {
-                let (line, column) = lines.line_column(diagnostic.range.start);
+                let (line, column) = lines.line_character(&text, diagnostic.range.start);
                 entries.push((
                     path.clone(),
                     CheckEntry {

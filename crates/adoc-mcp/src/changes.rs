@@ -438,7 +438,7 @@ fn file_report(state: &State, file: &StagedFile) -> Value {
         .diagnostics
         .iter()
         .map(|diagnostic| {
-            let (line, column) = lines.line_column(diagnostic.range.start);
+            let (line, column) = lines.line_character(&file.after, diagnostic.range.start);
             json!({
                 "severity": severity(diagnostic.severity),
                 "code": diagnostic.code.as_str(),
