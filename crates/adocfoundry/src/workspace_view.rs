@@ -4497,6 +4497,19 @@ impl WorkspaceView {
         }
     }
 
+    fn on_show_documentation(
+        &mut self,
+        _: &ShowDocumentation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(CommandOutcome::Url(url)) =
+            self.invoke(ids::APP_DOCUMENTATION, CommandArgs::None, window, cx)
+        {
+            open_address(&url, window, cx);
+        }
+    }
+
     fn on_show_about(&mut self, _: &ShowAbout, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(CommandOutcome::About(about)) =
             self.invoke(ids::APP_ABOUT, CommandArgs::None, window, cx)
@@ -5809,6 +5822,7 @@ impl Render for WorkspaceView {
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_check_for_updates))
             .on_action(cx.listener(Self::on_show_diagnostics))
+            .on_action(cx.listener(Self::on_show_documentation))
             .on_action(cx.listener(Self::on_show_about))
             .on_action(cx.listener(Self::on_recover_unsaved))
             .on_action(cx.listener(Self::on_local_history))

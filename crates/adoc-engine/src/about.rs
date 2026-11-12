@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Where the documentation is published.
-pub const DOCUMENTATION: &str = "https://bovinemagnet.github.io/AdocFoundry";
+pub const DOCUMENTATION: &str = "https://bovinemagnet.github.io/AdocFoundry/adocfoundry/index.html";
 
 /// What Help › About shows.
 #[derive(Clone, Debug, PartialEq)]
@@ -134,5 +134,17 @@ pub(crate) fn register_about(registry: &mut CommandRegistry) {
             CommandContext::Always,
         ),
         |_, _| Ok(CommandOutcome::About(Box::default())),
+    );
+    // Help › Documentation: the front end opens the address in the browser.
+    register(
+        registry,
+        spec(
+            ids::APP_DOCUMENTATION,
+            "AdocFoundry Documentation",
+            CommandCategory::Help,
+            None,
+            CommandContext::Always,
+        ),
+        |_, _| Ok(CommandOutcome::Url(DOCUMENTATION.to_owned())),
     );
 }

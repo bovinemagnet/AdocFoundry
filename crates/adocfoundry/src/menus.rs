@@ -243,6 +243,8 @@ const MENUS: &[(&str, &[Entry])] = &[
     (
         "Help",
         &[
+            Command(ids::APP_DOCUMENTATION),
+            Separator,
             Command(ids::APP_CHECK_FOR_UPDATES),
             Command(ids::APP_DIAGNOSTICS),
             Separator,

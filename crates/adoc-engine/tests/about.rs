@@ -34,7 +34,7 @@ fn about_gives_the_licence_and_the_links() {
     );
     assert_eq!(
         about.documentation,
-        "https://bovinemagnet.github.io/AdocFoundry"
+        "https://bovinemagnet.github.io/AdocFoundry/adocfoundry/index.html"
     );
     assert_eq!(about.version, env!("CARGO_PKG_VERSION"));
     assert!(about.notices.components.is_empty());
@@ -107,4 +107,29 @@ fn quit_is_a_command_the_front_end_carries_out() {
         engine.invoke(ids::APP_QUIT, CommandArgs::None).unwrap(),
         CommandOutcome::Quit
     );
+}
+
+/// Help › Documentation opens the published documentation's home page, the address About's
+/// Documentation button opens too.
+#[test]
+fn documentation_is_a_command_that_gives_the_published_site() {
+    let mut engine = Engine::new(Settings::default());
+    let spec = engine
+        .commands()
+        .get(ids::APP_DOCUMENTATION)
+        .unwrap()
+        .spec()
+        .clone();
+    assert_eq!(spec.title, "AdocFoundry Documentation");
+    assert_eq!(spec.category, adoc_engine::CommandCategory::Help);
+    assert!(engine.command_available(ids::APP_DOCUMENTATION));
+    assert_eq!(
+        engine
+            .invoke(ids::APP_DOCUMENTATION, CommandArgs::None)
+            .unwrap(),
+        CommandOutcome::Url(
+            "https://bovinemagnet.github.io/AdocFoundry/adocfoundry/index.html".to_owned()
+        )
+    );
+    assert_eq!(about().documentation, adoc_engine::DOCUMENTATION);
 }
