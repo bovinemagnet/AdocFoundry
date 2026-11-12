@@ -18,7 +18,7 @@ References, images, diagrams, numbering, captions and footnotes are already reso
 == The crate
 
 `adoc-pdf` is at layer L2.
-It depends on `adoc-core`, `adoc-render` and Typst, with `serde`, `serde-saphyr` and `regex`.
+It depends on `adoc-core`, `adoc-math` (for typeset STEM maths), `adoc-render` and Typst, with `serde`, `serde-saphyr` and `regex`.
 `adoc-render` is a same-layer dependency, listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`.
 It knows nothing of the engine, the workspace or a UI framework: it is given a `Document`, a `LoadedTheme` and `PdfOptions`, and returns a `PdfOutput` with the bytes, the page count and diagnostics.
 
@@ -140,13 +140,13 @@ Its `link=` makes it a link, with the URL as a string literal.
 With `icons=font`, and no PDF/A-2a, the emitter passes `icon: true` to `adoc-admonition`, unless the block has an `icon` attribute.
 `icons.rs` merges each kind's `admonition_icon_<kind>` keys over asciidoctor-pdf's `AdmonitionIcons` (`admonition_icon`) into `doc.admonition-icons`: the family and glyph as string literals, the size in points and the colour, so no theme string is spliced into code.
 The template makes the label column `admonition_label_min_width` or 1.5 times the size wide, and shrinks the glyph to the block's height (asciidoctor-pdf's `fit_icon_to_bounds`), measured at the page's content width as `keep()` measures.
-`icons.rs`'s `SOLID`, `REGULAR` and `SHIMS` (Font Awesome 4 names) must match the script's lists; the unit test `every_glyph_is_in_its_subset` checks the fonts hold every glyph.
+`SOLID`, `REGULAR` and `SHIMS` in `icons.rs` (Font Awesome 4 names) must match the script's lists; the unit test `every_glyph_is_in_its_subset` checks the fonts hold every glyph.
 
 Every attribute value reaches Typst as a string literal or a parsed number.
 
 === Covers
 
-`document.rs`'s `cover` finds the cover (`Cover`, `CoverFit`, `Face`).
+`cover` in `document.rs` finds the cover (`Cover`, `CoverFit`, `Face`).
 The emitter's `cover` puts the image through `usable_image`, which applies the same confinement and decoding check as every image and lists the file in the World's files.
 It then writes the template's `adoc-cover`: a `page` with no margin, fill or background, so it has no running content, labelled `i` for the front cover.
 
@@ -238,7 +238,7 @@ Horizontal description lists stay a grid.
 
 The `World` in `world.rs` serves the generated main source, the theme's fonts and the files the document uses, each at a fixed virtual path.
 There are no packages, no network and no file system access.
-`PdfOptions::access` (a `FileAccess`) further restricts the files, images and fonts, and the `World`'s `file` returns `AccessDenied` for a path it does not permit; `load_theme_within` applies the same check to theme files and those named by `extends`.
+`PdfOptions::access` (a `FileAccess`) further restricts the files, images and fonts, and the `file` of the `World` returns `AccessDenied` for a path it does not permit; `load_theme_within` applies the same check to theme files and those named by `extends`.
 Typst's bundled fonts (`typst-assets`) are not enabled, so the output depends only on the theme's fonts.
 Typst interns file ids for the life of the process, so virtual paths are derived from the real path to stay stable between exports.
 

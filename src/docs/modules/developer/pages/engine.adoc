@@ -649,7 +649,7 @@ When a diagram finishes rendering, the models whose views were waiting for it re
 
 A visual command takes `CommandArgs::Visual(VisualArgs)`: the document, the version the selection is in, the selection as source offsets, the `MarkSet` that typed text carries, and a `VisualValue` (text, a link, a block type, a new block, an admonition kind, a table size, or an image).
 It returns `CommandOutcome::Selection`, the selection to use afterwards.
-From the source editor the same commands take `CommandArgs::Range` instead, and the engine calls `adoc-model`'s `toggle_mark_in_source`, `insert_block_in_source` or `insert_link_in_source` on the text, as one undo step.
+From the source editor the same commands take `CommandArgs::Range` instead, and the engine calls `toggle_mark_in_source`, `insert_block_in_source` or `insert_link_in_source` in `adoc-model` on the text, as one undo step.
 The visual editor's new-block skeletons and the source inserts share `new_block_body` in `adoc-model`, so both editors write the same source.
 
 The command asks the model for the step's result, which is source edits in pre-step coordinates, the selection after, and the updated model for a local step.
@@ -803,7 +803,7 @@ A workspace outside any repository, or with `git.enabled` turned off, has no rep
 
 The hunks of an open document are its changes against HEAD, computed from the buffer text and not from the file on disk.
 They are recomputed `GIT_SETTLE` (150 ms) after typing pauses, at once on open, save and any other edit, and after every status refresh.
-The engine keeps each open document's text in `HEAD`, read once and kept until `HEAD`'s commit moves (a commit, a branch switch or rediscovery).
+The engine keeps each open document's text in `HEAD`, read once and kept until the commit of `HEAD` moves (a commit, a branch switch or rediscovery).
 A recomputation therefore only diffs the buffer against that text, without opening the repository.
 The documents due are computed in one job per working tree, on a worker.
 A working tree still computing makes its documents wait for that job, so there is never more than one hunk job per repository.
@@ -868,7 +868,7 @@ A commit is refused with `GitError::NoIdentity`, `GitError::NothingToCommit`, `G
 Both `stage` and `unstage` drop the index's cached trees (its `TREE` extension) before writing it, since `gix` writes the extension as read and Git trusts it.
 Both take Git's `index.lock` before reading the index and write through it (`locked_index`, `write_changed_index`), so a `git add` or commit in a terminal meanwhile is refused rather than undone, and both resolve `.` and `..` lexically in `relative`, refusing with `GitError::OutsideWorkdir` a path that leaves the working tree.
 `stage` refuses with `GitError::Unstorable` a path with a component Git never stores (`.git` in any spelling, checked by `gix::validate::path::component` under `core.protectHFS` and `core.protectNTFS`), a path inside a submodule and a path beyond a linked folder; it stages a deletion only when the file is gone (`NotFound`, `NotADirectory`), returning any other error, and a file replaces the index's entries at its folders and under its own path, as `git add` replaces them.
-`Repository::stage` stages as `git add` does: it takes `gix`'s to-Git filter pipeline (line endings, `ident`, `working-tree-encoding`) with its drivers removed, so no command the configuration names can run.
+`Repository::stage` stages as `git add` does: it takes the to-Git filter pipeline of `gix` (line endings, `ident`, `working-tree-encoding`) with its drivers removed, so no command the configuration names can run.
 It reads the `filter` attribute first and refuses a file with a named filter, such as Git LFS, with `GitError::FilterNotRun`; if any path in a request is refused, nothing in it is staged, and a commit stages its paths the same way.
 A link is stored as its target, and `staged_mode` keeps the index's mode where the file system cannot show a link or an executable file (`core.symlinks=false`, `core.filemode=false`).
 `crates/adoc-git/tests/git_add.rs` checks conformance with the `git` executable by building the same repository twice and comparing `git ls-files --stage`, `git status --porcelain` and `git write-tree`, for staging against `git add` and unstaging against `git restore --staged`, and checks what `commit` refuses.
@@ -893,7 +893,7 @@ A `BlameLine` is `{ line, commit: Option<short id>, author, time (Unix seconds),
 `Engine::request_blame(id)` computes the HEAD blame lazily on a worker and publishes `EngineEvent::GitBlameChanged(id)` when it is ready.
 `Engine::blame_for(id)` returns the blame overlaid with the document's current hunks.
 It returns an `Arc<Vec<BlameLine>>`, built once for each version of the text, hunks and blame, so the front end can ask for it on every frame.
-The blame is forgotten on save, when `HEAD`'s commit moves and on rediscovery.
+The blame is forgotten on save, when the commit of `HEAD` moves and on rediscovery.
 A status refresh that leaves `HEAD` where it was (a save, staging) keeps it.
 
 `git.show_blame` (Toggle Blame, View category, no default binding) shows or hides the column in the front end.
@@ -1074,7 +1074,7 @@ The built-ins are in `crates/adoc-engine/templates/<id>/`, embedded by the crate
 The user's folder is relative to the user settings file, or `~/`; the workspace's must lie inside the workspace, else it is ignored with a warning.
 Folders are read each time `Engine::templates` is called.
 `NewProjectField::Template` carries a template's problem to the dialog.
-`adoc-antora`'s discovery also finds a playbook in a folder between a component's `antora.yml` and its workspace root.
+The discovery of `adoc-antora` also finds a playbook in a folder between a component's `antora.yml` and its workspace root.
 
 [[site-build]]
 == Site build
@@ -1222,7 +1222,7 @@ The probes `AuditFile` and `AuditVersion` count the parts audited, so `tests/aud
 
 === Adding an optional provider
 
-`adoc-audit`'s `providers.rs` holds the registry `PROVIDERS` of `ProviderSpec { id: ProviderId, summary, needs: Needs, issue }`.
+`providers.rs` in `adoc-audit` holds the registry `PROVIDERS` of `ProviderSpec { id: ProviderId, summary, needs: Needs, issue }`.
 `Needs` is `Tool(name)`, `Network`, `GitHistory` or `Workspace`.
 The `ProviderId` names are stable: `compatibility`, `external-links`, `page-age` and `vale`.
 `Policy::enable_provider(name)` and `provider_enabled(id)` hold which are enabled, read from `[quality] providers`.
@@ -1277,7 +1277,7 @@ The command line comes in a later work package.
 A `DependencySnapshot` is one side of a comparison: a `WorkspaceState` (index and catalog) at one revision, with the roots its paths are shown relative to.
 `DependencySnapshot::borrowed` takes the live workspace.
 `DependencySnapshot::owned` holds a revision built from Git objects.
-Every question goes through the index's reverse maps and `adoc-lang`'s resolution: `includes_of`, `references_to`, `references_to_anchor`, `reference_target_path`, section ids, and `graph::links_from` for a navigation file's entries.
+Every question goes through the index's reverse maps and the resolution of `adoc-lang`: `includes_of`, `references_to`, `references_to_anchor`, `reference_target_path`, section ids, and `graph::links_from` for a navigation file's entries.
 Nothing parses or resolves a second way, and nothing scans every file.
 
 `analyse(changes, base, head, publications, limits)` returns an `ImpactReport`.
@@ -1367,7 +1367,7 @@ The errors are:
 `impact_analysis.rs` works an analysis out in one function, `compute`, over inputs taken from the engine.
 It runs on the caller's thread (`Engine::analyse_impact`, as the command line and the MCP server call it) or on a worker.
 Revision snapshots built on the way go into the engine's cache afterwards.
-`adoc-impact`'s snapshot resolves a reference only to a file that side has (`DependencySnapshot::resolves`), because `adoc-lang`'s resolution falls back to the disk, which is neither a revision's files nor a workspace with a file taken out.
+The snapshot of `adoc-impact` resolves a reference only to a file that side has (`DependencySnapshot::resolves`), because the resolution of `adoc-lang` falls back to the disk, which is neither a revision's files nor a workspace with a file taken out.
 
 `impact_inspection.rs` keeps the app's inspection.
 `ImpactInspection { source, state }` is what the engine holds, and `Engine::impact_inspection` returns it.
@@ -1534,10 +1534,10 @@ The queries are:
 * `Engine::graph(scope, filter)`, where the scope is the whole workspace or a page with a depth of 1 to 3. A local scope walks outwards through the `LinkStore` and never visits the whole graph.
 * `Engine::graph_revision` and `Engine::is_graph_building`.
 * `Engine::nav_places`, the trails through the navigation that list a page, and `Engine::neighbours`, a page's links out and in with the kinds merged for each neighbour.
-* `graph_report`, in `report.rs`, which writes the snapshot as the JSON and DOT that `adocfoundry-cli graph` prints and `adoc-mcp`'s `link_graph` returns.
+* `graph_report`, in `report.rs`, which writes the snapshot as the JSON and DOT that `adocfoundry-cli graph` prints and `link_graph` in `adoc-mcp` returns.
 
 `src/page_age.rs` keeps each page's age for the graph, per working tree.
-It runs `Repository::last_changed_since` on a worker, started from Git discovery and from a refresh that sees `HEAD`'s commit move, and drops the results of superseded runs.
+It runs `Repository::last_changed_since` on a worker, started from Git discovery and from a refresh that sees the commit of `HEAD` move, and drops the results of superseded runs.
 When the new `HEAD` descends by first parent from the commit last read, only the commits since are read, and a page none of them changed keeps the age it had, under its name there; otherwise the whole history is read again.
 `Engine::page_age(path)` gives a `LastChanged`, with a page that has changes not committed (on disk or unsaved) as `Uncommitted`, and `Engine::has_page_ages()` says whether any are known.
 When ages arrive or the Git status changes, the graph's revision is bumped and `EngineEvent::GraphChanged` follows.

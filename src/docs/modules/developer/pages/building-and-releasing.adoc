@@ -98,7 +98,7 @@ Which jobs to cache is part of the build-time work in issue #391.
 On Ubuntu and macOS the tests run through `cargo test --workspace --exclude adocfoundry --no-fail-fast`. On Windows they run through `cargo nextest run --workspace --exclude adocfoundry --profile ci` (cargo-nextest 0.9.151, installed with `cargo install --locked` and kept in the cache), because `cargo test` there has hung in a different test each time until the job's time limit, naming none of them (#391). The `ci` profile in `.config/nextest.toml` stops any test still running after ten minutes and fails it by name; the slowest test seen on a Windows runner takes about three minutes.
 On Ubuntu it first installs Ruby, asciidoctor 2.0.26 and asciidoctor-pdf 2.3.15, so the fidelity test and `pdf_regression` run instead of skipping. These tools are needed only by CI, never at runtime.
 On macOS it also runs `cargo test -p adocfoundry`, which uses GPUI's test platform and needs no display.
-Each run restores the dependencies' build output with `Swatinem/rust-cache`, keyed by OS, Rust version and `Cargo.lock`; only runs on `main` save it, so pull requests reuse `main`'s cache. Only `test` is cached, to keep to the three caches; see the caching paragraph above (<<ci-caching>>).
+Each run restores the dependencies' build output with `Swatinem/rust-cache`, keyed by OS, Rust version and `Cargo.lock`; only runs on `main` save it, so pull requests reuse the cache of `main`. Only `test` is cached, to keep to the three caches; see the caching paragraph above (<<ci-caching>>).
 
 |`pdf-standards`
 |On Ubuntu: builds `adocfoundry-cli` in release mode and exports `tests/fixtures/pdf/reference/article.adoc` as PDF/A-2a and as PDF/UA-1, and as PDF/A-1b and PDF/A-1a. It exports the book fixture (`tests/fixtures/pdf/book`, component `guide`) with both of those standards too, but not under PDF/A-1, because its Mermaid diagram uses transparency. veraPDF 1.30.3 validates every file through the `verapdf/cli:v1.30.3` container image, and any failed check fails the job.
@@ -121,15 +121,15 @@ On a `v*` tag it runs `python3 packaging/release-version.py check "${GITHUB_REF_
 * a `## <version> ` section heading in `CHANGELOG.md`
 
 The `ci-passed` and `ci` jobs and the `macos-build`, `windows`, `linux` and `flatpak` jobs all wait for `version`, so a mismatched tag fails before anything is built.
-The check matters because the binaries report `Cargo.toml`'s version (`CARGO_PKG_VERSION`), while the packages are named after the tag, and the updater compares the running version with the release's tag.
+The check matters because the binaries report the version in `Cargo.toml` (`CARGO_PKG_VERSION`), while the packages are named after the tag, and the updater compares the running version with the release's tag.
 A release whose two versions differ would be offered to its own users again and again.
 On a manual (`workflow_dispatch`) run from a branch the check is skipped.
 
 The `ci-passed` job asks whether `ci.yml` already passed on the tagged commit, so a release does not repeat the tests that the push to `main` ran (#391).
-It runs `python3 packaging/ci-result.py "$GITHUB_REPOSITORY" "$GITHUB_SHA"`, which asks the GitHub API (`gh api`, with the job's token) for `ci.yml`'s runs for that commit.
+It runs `python3 packaging/ci-result.py "$GITHUB_REPOSITORY" "$GITHUB_SHA"`, which asks the GitHub API (`gh api`, with the job's token) for the runs of `ci.yml` for that commit.
 Only runs for a push to `main` count, since a pull request's run tested its merge with `main`, not the commit.
 If one passed, the job writes `passed=true` to its outputs.
-While one is queued or running, the script waits and asks again every 60 seconds, since the tag is usually pushed while `main`'s run for the release commit is still going.
+While one is queued or running, the script waits and asks again every 60 seconds, since the tag is usually pushed while the run on `main` for the release commit is still going.
 Otherwise the job writes `passed=false`: there was no run (a commit that changes only documentation, which CI's `paths` filters skip), or it failed or was cancelled.
 The job has read-only `actions` and `contents` permissions and a limit of 150 minutes.
 
@@ -138,7 +138,7 @@ The packages are still built and smoke-tested alongside from the start, and the 
 It runs on a tag when `smoke` succeeded and either `ci` succeeded or `ci-passed` said `passed`.
 A tag on a commit whose tests fail therefore still builds its artefacts, which can be downloaded from the workflow run, but publishes no release.
 To publish, re-run the failed `ci` or `ci-passed` job or the other failed jobs after a fix, or push a new tag.
-Reusing `main`'s run saves the release about 1.5 runner-hours, and a hang in the release's own Windows tests can no longer hold up publishing.
+Reusing the run on `main` saves the release about 1.5 runner-hours, and a hang in the release's own Windows tests can no longer hold up publishing.
 
 .The release pipeline
 [mermaid]
@@ -341,7 +341,7 @@ It then checks:
 Its signature checks, and where it finds the licence, have unit tests in `packaging/test_smoke_test.py`.
 `packaging/test_release_version.py` tests the tag check and the extraction of the changelog's notes.
 `packaging/test_ci_result.py` tests the decisions of `packaging/ci-result.py`.
-`packaging/test_workflows.py` checks that `release.yml` calls `ci.yml` only when `main`'s run did not pass (`test_ci_that_passed_on_main_is_not_run_again`) and that `publish` needs `ci-passed`, `ci` and `smoke`.
+`packaging/test_workflows.py` checks that `release.yml` calls `ci.yml` only when the run on `main` did not pass (`test_ci_that_passed_on_main_is_not_run_again`) and that `publish` needs `ci-passed`, `ci` and `smoke`.
 It also checks that the `version` job precedes every build (`test_tag_check_precedes_build`), that `publish` uses the changelog section, and that the smoke test is given the tag's version.
 It checks that the two macOS architectures build at once (`test_the_macos_architectures_build_at_once`) and that `publish` downloads only the packages (`test_only_the_packages_are_published`).
 The `lint` job runs them with `python3 -m unittest discover -s packaging -p 'test_*.py'`.

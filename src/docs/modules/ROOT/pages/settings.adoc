@@ -238,7 +238,7 @@ Choosing a theme in AdocFoundry takes this line out of the user settings file.
 
 |`appearance.mode`
 |`"auto"`, `"light"` or `"dark"`
-|`editor.theme`'s value, else `"auto"`
+|the value of `editor.theme`, else `"auto"`
 |Whether the application follows the system's light or dark appearance or stays light or dark.
 User file only.
 See xref:using-the-editor.adoc#themes[Themes].

@@ -1285,8 +1285,8 @@ The built-in templates are:
 |Product documentation
 |`product-docs`
 |One component in five modules, the Diátaxis split: `ROOT`, `get-started`, `how-to`, `reference` and `concepts`.
-Each has an index page and a navigation file, and all five are listed in `antora.yml`'s `nav`.
-`ROOT`'s index links to the other four.
+Each has an index page and a navigation file, and all five are listed in the `nav` of `antora.yml`.
+The index of `ROOT` links to the other four.
 `asciidoc.attributes` sets `product-name` (the title), `product-version` (the version, empty when unversioned) and `page-pagination: ""`.
 `modules/ROOT/partials/attributes.adoc` is included in the header of every page with `include::ROOT:partial$attributes.adoc[]`.
 

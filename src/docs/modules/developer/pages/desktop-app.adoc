@@ -148,7 +148,7 @@ Window creation lives in `app.rs`.
 `Mirror` is a read-only view of the active document that follows its edits.
 `Preview` is the rendered preview detached from the workspace window, and closing it docks the preview again.
 `Graph` is the link graph's window, one for each workspace window, which opening again focuses.
-It remembers its size and position (`session.json`'s `graph_window`, kept by the engine); `app.rs` checks the saved bounds against the displays and, when less than half lies on one, centres the window on the main display and shrinks it to fit.
+It remembers its size and position (`graph_window` in `session.json`, kept by the engine); `app.rs` checks the saved bounds against the displays and, when less than half lies on one, centres the window on the main display and shrinks it to fit.
 
 == The preview
 
