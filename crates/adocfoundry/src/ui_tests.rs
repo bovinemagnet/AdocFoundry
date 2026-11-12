@@ -5929,6 +5929,26 @@ fn diagnostics_show_the_report_and_copy_it(cx: &mut TestAppContext) {
     }
 }
 
+/// Help › Documentation opens the published documentation in the browser.
+#[gpui::test]
+fn help_documentation_opens_the_published_site(cx: &mut TestAppContext) {
+    init(cx);
+    let directory = tempfile::tempdir().unwrap();
+    let page = directory.path().join("page.adoc");
+    std::fs::write(&page, "= A Page\n").unwrap();
+    let app = app_with(Engine::new(Settings::default()), cx);
+    let (_workspace, mut cx) = workspace_window(&app, vec![page], cx);
+    cx.run_until_parked();
+    crate::files_view::OPENED_URLS.with(|opened| opened.borrow_mut().clear());
+
+    cx.dispatch_action(crate::editor::bindings::ShowDocumentation);
+    cx.run_until_parked();
+    assert_eq!(
+        crate::files_view::OPENED_URLS.with(|opened| opened.borrow().clone()),
+        ["https://bovinemagnet.github.io/AdocFoundry/adocfoundry/index.html"]
+    );
+}
+
 #[gpui::test]
 fn about_shows_the_version_and_each_components_licence(cx: &mut TestAppContext) {
     init(cx);

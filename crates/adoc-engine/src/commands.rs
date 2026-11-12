@@ -81,6 +81,7 @@ pub mod ids {
     pub const APP_CHECK_FOR_UPDATES: CommandId = CommandId::new("app.check_for_updates");
     pub const APP_DIAGNOSTICS: CommandId = CommandId::new("app.diagnostics");
     pub const APP_ABOUT: CommandId = CommandId::new("app.about");
+    pub const APP_DOCUMENTATION: CommandId = CommandId::new("app.documentation");
     pub const APP_QUIT: CommandId = CommandId::new("app.quit");
     pub const SETTINGS_RELOAD: CommandId = CommandId::new("settings.reload");
     pub const VIEW_TOGGLE_PREVIEW: CommandId = CommandId::new("view.toggle_preview");

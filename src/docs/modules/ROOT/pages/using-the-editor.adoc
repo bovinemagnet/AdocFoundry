@@ -1742,7 +1742,7 @@ Git::
 Refreshing status, staging, committing, pushing and the remote links.
 
 Help::
-Check for Updates, Show Diagnostics and About AdocFoundry.
+AdocFoundry Documentation, Check for Updates, Show Diagnostics and About AdocFoundry.
 
 === The macOS app menu
 
@@ -1754,10 +1754,13 @@ Every other menu stays in the ☰ menu in the title bar.
 [[about]]
 == About
 
+*Help > AdocFoundry Documentation*, also in the command palette as *AdocFoundry Documentation*, opens the published documentation's home page, https://bovinemagnet.github.io/AdocFoundry/adocfoundry/index.html, in the browser.
+It is the first item of the Help menu, followed by a separator, and has no default key.
+
 *Help > About AdocFoundry*, also in the command palette as *About AdocFoundry*, opens a dialog about the build.
 It is the last item of the Help menu, after a separator, and has no default key.
 It shows the name and version, the build (the target triple and profile, such as `x86_64-unknown-linux-gnu, release`) and the licence, Apache-2.0.
-*Repository* and *Documentation* open https://github.com/bovinemagnet/AdocFoundry and https://bovinemagnet.github.io/AdocFoundry.
+*Repository* and *Documentation* open https://github.com/bovinemagnet/AdocFoundry and https://bovinemagnet.github.io/AdocFoundry/adocfoundry/index.html.
 
 Below that is a list of every third-party component the application is built from, each with its version and licence.
 It holds the Rust crates of the release build, for every platform, and the bundled fonts (Noto Sans, Noto Serif, M+ 1mn and STIX Two Math), SCOWL dictionaries and Asciidoctor PDF themes.

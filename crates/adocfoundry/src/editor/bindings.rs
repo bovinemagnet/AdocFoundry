@@ -63,6 +63,7 @@ actions!(
         ReloadSettings,
         CheckForUpdates,
         ShowDiagnostics,
+        ShowDocumentation,
         ShowAbout,
         Quit,
         HideApp,
@@ -290,6 +291,7 @@ fn binding_for(id: CommandId, keys: &str, cx: &App) -> Option<KeyBinding> {
         ids::SETTINGS_OPEN => key_binding(keys, OpenSettings, workspace, cx),
         ids::APP_CHECK_FOR_UPDATES => key_binding(keys, CheckForUpdates, workspace, cx),
         ids::APP_DIAGNOSTICS => key_binding(keys, ShowDiagnostics, workspace, cx),
+        ids::APP_DOCUMENTATION => key_binding(keys, ShowDocumentation, workspace, cx),
         ids::APP_ABOUT => key_binding(keys, ShowAbout, workspace, cx),
         // From any window, the graph and the detached preview too: the app handles it.
         ids::APP_QUIT => key_binding(keys, Quit, None, cx),
@@ -401,6 +403,7 @@ pub fn action_for(id: CommandId) -> Option<Box<dyn gpui::Action>> {
         ids::SETTINGS_OPEN => Box::new(OpenSettings),
         ids::APP_CHECK_FOR_UPDATES => Box::new(CheckForUpdates),
         ids::APP_DIAGNOSTICS => Box::new(ShowDiagnostics),
+        ids::APP_DOCUMENTATION => Box::new(ShowDocumentation),
         ids::APP_ABOUT => Box::new(ShowAbout),
         ids::APP_QUIT => Box::new(Quit),
         ids::SETTINGS_RELOAD => Box::new(ReloadSettings),
