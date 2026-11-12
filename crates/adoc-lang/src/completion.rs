@@ -553,7 +553,8 @@ mod tests {
     fn a_conditional_anchor_does_not_number_the_section_offered() {
         // Issue #533: `_parameters_2` is the section's id only in a build setting `internal`.
         let path = Path::new("/docs/guide.adoc");
-        let text = "ifdef::internal[]\n[[_parameters]]\nInternal.\nendif::[]\n\n== Parameters\n\nSee <<";
+        let text =
+            "ifdef::internal[]\n[[_parameters]]\nInternal.\nendif::[]\n\n== Parameters\n\nSee <<";
         let mut index = WorkspaceIndex::new();
         index.index_source(path, text);
         let document = parse("file:///docs/guide.adoc", text).document;

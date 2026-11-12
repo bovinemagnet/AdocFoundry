@@ -326,7 +326,8 @@ const ALLOWED: &[Allowed] = &[
     },
     // acdc-parser 0.11.0 drops a table's last row when a row span from above fills its missing
     // cell (`group_cells_into_rows` counts the span's column but never marks the row filled);
-    // issue #481. Remove these three when a release of acdc-parser keeps the row.
+    // issue #481, reported upstream as https://github.com/nlopes/acdc/issues/506. Remove these
+    // three when a release of acdc-parser keeps the row.
     Allowed {
         page: "table-rowspan.adoc",
         kind: "presentation",

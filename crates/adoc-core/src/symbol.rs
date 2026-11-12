@@ -374,14 +374,21 @@ mod tests {
     /// attribute, so the id offered is the unnumbered one, and the numbered one is kept as well.
     #[test]
     fn a_conditional_anchor_numbers_the_section_only_with_conditionals() {
-        let sections = [section("Parameters", None, 20), section("Parameters", None, 40)];
+        let sections = [
+            section("Parameters", None, 20),
+            section("Parameters", None, 40),
+        ];
         let conditional = Anchor {
             conditional: true,
             ..anchor("parameters", 0)
         };
 
         assert_eq!(
-            section_ids(&sections, std::slice::from_ref(&conditional), IdStyle::Antora),
+            section_ids(
+                &sections,
+                std::slice::from_ref(&conditional),
+                IdStyle::Antora
+            ),
             ["parameters", "parameters-2"]
         );
         assert_eq!(

@@ -53,7 +53,7 @@ The default `text` format prints one line per diagnostic, with paths relative to
 path:line:col: severity code message
 ----
 
-Lines and columns are one-based, and the column counts bytes.
+Lines and columns are one-based, and the column counts characters, as editors and CI annotations count them.
 `severity` is `info`, `warning` or `error`.
 
 `--format json` prints an array of objects.
@@ -265,6 +265,7 @@ Information findings never fail the audit.
 == symbols
 
 `symbols` lists workspace symbols that match `<query>`, one per line, as kind, name and `path:line:col`.
+The line and column are one-based, and the column counts characters.
 
 [source,sh]
 ----
@@ -282,6 +283,8 @@ adocfoundry-cli follow tests/fixtures/xrefs/index.adoc 42
 ----
 
 For an `xref:`, `include::` or attribute it prints `path:line:col`.
+The line and column are one-based, and the column counts characters.
+The offset it takes is still in bytes.
 For an image or attachment it prints `external <path>`.
 If the offset is not on a followable reference, or the target does not resolve, it prints the reason on standard error and exits with 1.
 

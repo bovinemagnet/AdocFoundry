@@ -11,8 +11,8 @@ use std::{
 };
 
 use adoc_core::{
-    alphanumeric_id, canonical_id, section_ids, section_ids_with_conditionals, Document, IdStyle, IncludeDirective, Reference,
-    ReferenceKind, SourceRange,
+    alphanumeric_id, canonical_id, section_ids, section_ids_with_conditionals, Document, IdStyle,
+    IncludeDirective, Reference, ReferenceKind, SourceRange,
 };
 use adoc_parser::parse;
 
