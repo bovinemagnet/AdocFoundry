@@ -1,0 +1,44 @@
+classDiagram
+    class Document {
+        uri: String
+        text: Arc~str~
+        title: Option~DocumentTitle~
+    }
+    class Section {
+        level: u8
+        title: String
+        id: Option~String~
+    }
+    class Anchor {
+        id: String
+        conditional: bool
+    }
+    class Reference {
+        kind: ReferenceKind
+        target: String
+    }
+    class IncludeDirective {
+        target: String
+        before_body: bool
+    }
+    class ImageDirective {
+        target: String
+        inline: bool
+    }
+    class Diagnostic {
+        code: DiagnosticCode
+        severity: DiagnosticSeverity
+    }
+    class SourceRange {
+        start: usize
+        end: usize
+    }
+    Document "1" *-- "*" Section
+    Document "1" *-- "*" Anchor
+    Document "1" *-- "*" Reference
+    Document "1" *-- "*" IncludeDirective
+    Document "1" *-- "*" ImageDirective
+    Document "1" *-- "*" Diagnostic
+    Section ..> SourceRange : range
+    Reference ..> SourceRange : range
+    Diagnostic ..> SourceRange : range

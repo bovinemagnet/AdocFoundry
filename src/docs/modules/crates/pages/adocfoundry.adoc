@@ -1,0 +1,85 @@
+= adocfoundry
+Paul Snow
+:revnumber: 0.0.0
+:description: The desktop application: a thin GPUI shell over the engine that draws the editor, preview, visual editor and panels.
+
+`adocfoundry` is the native desktop editor.
+It sits at layer L4, the top of the crate ladder, and it is the only crate that imports `gpui`, `gpui-component` or any other UI framework.
+Nothing depends on it.
+
+== What it does
+
+The crate draws what the engine holds and sends the user's actions back to the engine as commands.
+Logic that could live in `adoc-engine` lives there, so the views stay thin.
+
+Its main parts are:
+
+* the workspace view (`workspace_view.rs` and its child modules), which holds the title bar, the sidebar panels, the tab strip and the dialogs such as New Antora Project and Delete File;
+* the source editor (`editor/`), over the editor widget of `gpui-component`, with the engine-backed providers for definition, hover and completion;
+* the visual editor (`visual/`), which draws the engine's `VisualDocument` through a list of rows so that only rows in view are laid out;
+* the preview (`preview/`), which draws the engine's view tree natively, docked or in its own window;
+* the panels and views for files, images, the graph, the quality overview, search, references and local history (`files_view.rs`, `image_view.rs`, `graph_view.rs`, `quality_view.rs` and others);
+* the menus (`menus.rs`), where every command with an action must appear in `MENUS` or in `NOT_IN_MENUS`;
+* appearance and fonts (`appearance.rs`, `fonts.rs`), updates (`updates.rs`, the only network code in the workspace, which runs the system's `curl`) and the Help diagnostics report (`diagnostics.rs`).
+
+The rules it keeps are:
+
+* Every change to a document is a command; no view writes to a buffer directly.
+* The pump task in `app.rs` sleeps until the engine's `next_due` or a wake, and `AppState::engine` wakes it on every mutable access.
+* The editor widget's own edits are sent to the engine as `edit.insert_text` and `edit.replace_range`, so the engine's undo history sees them.
+* Tests that need a display are avoided: behaviour that can be tested in `adoc-engine` is tested there.
+
+.How the application is built around the engine
+[mermaid]
+----
+include::example$adocfoundry-structure.mmd[]
+----
+
+== How to use it
+
+Run it from the repository with Cargo, passing a folder, and optionally files to open in tabs.
+
+[source,sh]
+----
+git submodule update --init
+cargo run -p adocfoundry -- path/to/docs
+cargo xtask run -- path/to/docs
+----
+
+`cargo xtask run` does the same from a development bundle in `target/`, so that the Dock on macOS shows the icon.
+An installed package provides the `adocfoundry` command, which takes the same arguments: `adocfoundry [folder] [file...]`.
+`adocfoundry --version` prints the version.
+
+See xref:ROOT:getting-started.adoc[Getting started] for installing a package, building from source and opening a workspace.
+See xref:developer:desktop-app.adoc[The desktop application] for how the pump, the editor synchronisation, the visual editor and the preview are built.
+
+== Where it sits
+
+It depends on `adoc-core`, `adoc-engine` (with its `typst` and `git` features), `adoc-index` and `adoc-render`, and on `lsp-types` as the vocabulary of the editor widget's provider traits.
+That last dependency is the one exception in `LSP_ALLOWED` in `xtask/src/layers.rs`, and it is confined to `editor/providers.rs`.
+It is also the one crate in `NETWORK_ALLOWED`, the only crate that may reach an HTTP client.
+It never names `adoc-audit` or `adoc-impact` directly; they come through `adoc-engine`.
+
+See xref:adoc-engine.adoc[adoc-engine] for what the views read and the commands they send.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adocfoundry
+----
+
+The tests in `src/ui_tests.rs` run on GPUI's test platform and need no display.
+In CI they run on macOS.
+The crate's `typing_bench.rs` holds the typing benchmark for the editor.
+Fixtures come from `tests/fixtures/`.
+
+== Related
+
+* xref:developer:desktop-app.adoc[The desktop application]
+* xref:developer:architecture.adoc[Architecture]
+* xref:developer:testing.adoc[Testing]
+* xref:ROOT:getting-started.adoc[Getting started]
+* xref:adoc-engine.adoc[adoc-engine]
+* xref:adoc-render.adoc[adoc-render]
+* xref:adocfoundry-cli.adoc[adocfoundry-cli]

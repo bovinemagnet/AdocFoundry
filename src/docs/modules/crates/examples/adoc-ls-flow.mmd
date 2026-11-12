@@ -1,0 +1,14 @@
+sequenceDiagram
+    participant Client as Editor client
+    participant LS as adoc-ls<br/>protocol.rs
+    participant Engine as adoc-engine
+    Client->>LS: didOpen, didChange
+    LS->>Engine: open_client_text, edit.replace_range
+    Engine-->>Engine: index and diagnose after typing pauses
+    LS->>Engine: pump when idle for 50 ms
+    Engine-->>LS: DiagnosticsUpdated
+    LS-->>Client: publishDiagnostics
+    Client->>LS: definition, hover, completion
+    LS->>Engine: query
+    Engine-->>LS: result on byte offsets
+    LS-->>Client: lsp-types response

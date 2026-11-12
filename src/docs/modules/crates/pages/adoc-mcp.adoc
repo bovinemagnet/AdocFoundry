@@ -1,0 +1,65 @@
+= adoc-mcp
+Paul Snow
+:revnumber: 0.0.0
+:description: The Model Context Protocol server that lets assistants read, check and, if allowed, edit a workspace.
+
+`adoc-mcp` is a Model Context Protocol server over standard input and output, or over Streamable HTTP.
+It sits at layer L4 and depends on `adoc-engine` and `adoc-core` only.
+
+== What it does
+
+Each tool locks the engine on tokio's blocking threads (`Server::blocking`), so a long render or export never stalls the runtime, and works through the engine's commands and queries.
+The engine is pumped before each tool's work, so changes on disk are seen.
+The tools fall into groups, each a router of its own: discovery (`list_pages`, `get_outline`, `get_page_context`, `find_references`), `quality_audit`, `analyse_impact`, `validate_publication` with prompts, staging (`preview_changes`, `apply_changes`), creation (`create_page`, `create_partial`, `create_module`, `create_project`) and `build_site`.
+
+The rules it keeps are:
+
+* Write tools (`edit_page`, `rename_page`, `export_pdf` and the creation tools) are removed unless `--allow-write` is given, and `build_site` is offered only with `--allow-build`.
+* Every path goes through `paths::confine`, inside a root lexically and once links are followed.
+* The HTTP listener binds loopback addresses only and answers 401 to any request without the bearer token (`ADOC_MCP_TOKEN`, else a random token printed once).
+* Answers follow one contract (`responses.rs`): JSON as text and as structured content, stable error codes, and opaque cursors bound to a query and the workspace revision.
+
+.A request through the server
+[mermaid]
+----
+include::example$adoc-mcp-flow.mmd[]
+----
+
+== How to use it
+
+[source,sh]
+----
+cargo run -p adoc-mcp -- tests/fixtures/references
+cargo run -p adoc-mcp -- <root>... --allow-write --http 127.0.0.1:8808
+----
+
+An installed package provides the `adoc-mcp` command, which an MCP client starts with one or more roots.
+See xref:ROOT:mcp-server.adoc[MCP server] for configuring a client, the tools, the permissions and example workflows, and xref:ROOT:mcp-server.adoc#http[Serving over HTTP] for the HTTP transport.
+
+== Where it sits
+
+It depends on `adoc-core` and `adoc-engine` (with `typst` and `git`), and on `rmcp`, `hyper` and `hyper-util`.
+It is the one crate allowed to reach `hyper` and `hyper-util`, for its listener (`NETWORK_SERVER_ALLOWED` in `xtask/src/layers.rs`), as long as its own build turns on none of their client features.
+Like every front end it reaches `adoc-audit` and `adoc-impact` through the engine only.
+Nothing depends on it.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-mcp
+cargo test -p adoc-mcp --test contracts
+cargo test -p adoc-mcp --test http
+----
+
+The integration tests share the stdio client in `tests/common/mod.rs`, and `contracts.rs` holds the protocol contracts.
+Fixtures include `tests/fixtures/discovery` and `tests/fixtures/references`; the tests that need a repository build one with `adoc_git::testing::TestRepo`.
+
+== Related
+
+* xref:ROOT:mcp-server.adoc[MCP server]
+* xref:ROOT:quality-audit.adoc[Quality audit]
+* xref:developer:architecture.adoc[Architecture]
+* xref:adoc-engine.adoc[adoc-engine]
+* xref:adocfoundry-cli.adoc[adocfoundry-cli]
+* xref:adoc-ls.adoc[adoc-ls]

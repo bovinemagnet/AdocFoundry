@@ -1,0 +1,96 @@
+= adoc-math
+Paul Snow
+:revnumber: 0.0.0
+:description: How the adoc-math crate converts AsciiMath and LaTeX to Typst maths markup and checks that the markup holds nothing but maths.
+
+`adoc-math` converts STEM notation (AsciiMath and LaTeX) to Typst maths markup, and refuses any markup that could run code.
+It is a layer 1 crate.
+`adoc-pdf` uses it to typeset formulas in PDFs, and `adoc-engine` uses it to draw formulas in the preview.
+
+== What it does
+
+The crate has one job: turn the text of a formula into Typst maths that is safe to evaluate.
+
+* `Notation` names the notation a formula is written in: `AsciiMath` or `Latex`.
+* `to_typst(notation, source)` converts a formula and returns a `TypstMath`, or a `MathError` carrying a message and, when the converter knows it, a byte offset into the source.
+AsciiMath goes through `asciimath-parser` and is converted in the crate (`asciimath.rs`); LaTeX goes through `mitex` (`latex.rs`).
+* `TypstMath` holds markup that passed `is_safe`; `TypstMath::as_str` reads it.
+There is no other way to make one, so a `TypstMath` is always checked.
+* `is_safe(markup)` is the check.
+It parses the markup as Typst maths and refuses embedded code (`#`), syntax errors, and any name longer than one letter that is not in Typst's maths scope or in `HELPERS`.
+* `HELPERS` lists the functions that LaTeX conversion calls and Typst's maths does not have, such as `pmatrix`, `mitexbold` and `xrightarrow`.
+Whoever evaluates the markup must define them in the scope it evaluates in.
+`adoc-pdf` does, in its `math.typ` template.
+
+`to_typst` also counts the arguments of each call against the function's parameters, as Typst would when it evaluates the formula, and refuses a call such as `+\frac{1}+` that Typst would refuse.
+
+The design rules the crate keeps:
+
+* A document can never make Typst run code.
+Only checked markup (`TypstMath`) reaches Typst's `eval`.
+* Half-typed formulas are normal input.
+A formula that cannot be converted is an error, never a panic, and the caller shows the formula's source instead.
+
+== How to use it
+
+[source,rust]
+----
+use adoc_math::{is_safe, to_typst, MathError, Notation};
+
+fn convert() -> Result<(), MathError> {
+    let ratio = to_typst(Notation::AsciiMath, "a/b")?;
+    assert_eq!(ratio.as_str(), "frac(a, b)");
+
+    let latex = to_typst(Notation::Latex, r"\frac{a}{b}")?;
+    assert_eq!(latex.as_str().trim_end(), "frac(a ,b )");
+
+    // Code is never maths.
+    assert!(!is_safe(r#"#read("x")"#));
+    Ok(())
+}
+----
+
+LaTeX conversion can leave trailing space in the markup, which the crate's tests trim before comparing.
+
+Evaluating the markup is the caller's job.
+In the PDF export the emitter writes each formula as a Typst string literal and calls `adoc-stem`, which evaluates it with `eval(source, mode: "math", scope: adoc-math-scope)`.
+The engine's `StemProvider` (`src/stem.rs`) is a `DiagramProvider` for the kinds `stem-asciimath` and `stem-latex`.
+It calls `to_typst`, then `adoc_pdf::render_math`, and returns the SVG that the preview draws.
+
+.From formula source to checked Typst maths
+[mermaid]
+----
+include::example$adoc-math-conversion.mmd[]
+----
+
+== Where it sits
+
+`adoc-math` is on layer 1 of the crate ladder and depends on no workspace crate.
+It depends on `asciimath-parser`, `mitex`, `typst-library` and `typst-syntax`.
+The two Typst crates supply the maths scope that `is_safe` checks names against and the parser that checks the markup's syntax.
+
+Two crates depend on it: `adoc-pdf` and `adoc-engine`.
+It is one of the crates the language server's default build leaves out, because `cargo xtask layers` checks that Typst is compiled only with the server's `typst` feature (`LEAN_EXCLUDED` in `xtask/src/layers.rs`).
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-math
+----
+
+`tests/convert.rs` holds the work package's acceptance tests:
+
+* `asciimath_converts_to_typst` and `latex_converts_to_typst` convert every sample in `tests/fixtures/stem/asciimath.txt` and `tests/fixtures/stem/latex.txt`, a source and its expected markup a tab apart.
+* `converted_maths_holds_no_code` feeds hostile sources (`#read(...)`, `\href`, `\boxed`) and checks that nothing that runs code reaches Typst.
+* `calls_short_of_an_argument_are_refused` checks the argument count rule.
+* `half_typed_maths_does_not_panic` runs truncated formulas through both converters.
+
+== Related
+
+* xref:developer:pdf.adoc[PDF export] describes how the emitter and template use `TypstMath` and the helpers.
+* xref:ROOT:preview.adoc[Preview] describes how STEM appears in the preview.
+* xref:developer:architecture.adoc[Architecture] lists the crate ladder and the layering rules.
+* xref:adoc-pdf.adoc[adoc-pdf] typesets the formulas.
+* xref:adoc-engine.adoc[adoc-engine] draws them for the preview.
+* xref:index.adoc[Crates]

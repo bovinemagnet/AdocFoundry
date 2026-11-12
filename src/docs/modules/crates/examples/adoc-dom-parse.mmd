@@ -1,0 +1,9 @@
+sequenceDiagram
+    participant Caller as Caller (engine, CLI)
+    participant Parser as AcdcParser
+    participant Resolver as IncludeResolver
+    Caller->>Parser: parse(ParseInput)
+    Parser->>Resolver: read(requested path)
+    Resolver-->>Parser: file and text, or None
+    Parser-->>Caller: Dom
+    Note over Parser,Caller: Blocks carry SourceSpans<br/>that map through includes.<br/>A panic becomes an Unsupported block<br/>and a DomWarning.

@@ -1,0 +1,63 @@
+= adoc-ls
+Paul Snow
+:revnumber: 0.0.0
+:description: The Language Server Protocol server, built from the engine, for editors such as Zed.
+
+`adoc-ls` is a language server that speaks the Language Server Protocol over standard input and output.
+It sits at layer L4 and is the only crate that knows about LSP.
+
+== What it does
+
+It keeps an `Engine` instead of state of its own.
+A client's buffers are opened through `Engine::open_client_text`, which the file watcher never replaces and which keeps no undo history; each incremental change becomes one `edit.replace_range`.
+`protocol.rs` maps the engine's results to `lsp-types` and publishes diagnostics from `DiagnosticsUpdated`, pumping the engine between messages.
+
+It provides definition, hover, completion, symbols, diagnostics, references, anchor rename and spelling actions, all computed by `adoc-lang` on byte offsets and converted to line and column at the edge.
+The command ids `adoc.renderPreview`, `adoc.renderLivePreview`, `adoc.stopLivePreview` and `--stdio` are kept for existing clients.
+The preview renders through Asciidoctor when `Engine::asciidoctor_executable` finds one, and otherwise through the engine.
+
+.A typed change through the server
+[mermaid]
+----
+include::example$adoc-ls-flow.mmd[]
+----
+
+== How to use it
+
+[source,sh]
+----
+cargo run -p adoc-ls -- --version
+cargo run -p adoc-ls -- --stdio
+----
+
+An installed package provides the `adoc-ls` command, which an editor starts with `--stdio`.
+Its `typst` and `git` features forward to the engine's and are off by default.
+Git is opt-in through `Settings::with_git_opt_in`.
+See xref:ROOT:language-server.adoc[Language server] for the features, commands and how to configure a client.
+
+== Where it sits
+
+It depends on `adoc-core`, `adoc-engine`, `adoc-index`, `adoc-lang` and `adoc-render`, and on `lsp-types` and `lsp-server`.
+Those two are allowed in no other crate, apart from the one exception of `adocfoundry` using `lsp-types` (`LSP_ALLOWED` in `xtask/src/layers.rs`).
+`cargo xtask layers` also checks that the default build compiles neither Typst nor Git.
+Nothing depends on it.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-ls
+cargo test -p adoc-ls --test stdio
+cargo test -p adoc-ls --test parity
+----
+
+`stdio.rs` drives the server through an initialise and shutdown lifecycle, `engine.rs` covers the engine-backed state and `parity.rs` compares answers with the engine's.
+
+== Related
+
+* xref:ROOT:language-server.adoc[Language server]
+* xref:ROOT:settings.adoc[Settings]
+* xref:developer:architecture.adoc[Architecture]
+* xref:adoc-lang.adoc[adoc-lang]
+* xref:adoc-engine.adoc[adoc-engine]
+* xref:adoc-mcp.adoc[adoc-mcp]

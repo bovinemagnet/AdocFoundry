@@ -1,0 +1,96 @@
+= adoc-dom
+Paul Snow
+:revnumber: 0.0.0
+:description: The full AsciiDoc document tree, with spans that map through includes, behind a parser trait that keeps the parser crate replaceable.
+
+`adoc-dom` is a layer L1 crate.
+It gives the whole document, every block and every inline with includes expanded, where xref:adoc-parser.adoc[adoc-parser] gives only a quick outline.
+The renderer, the visual editor's model, the PDF exporter and the command line's `render` command build on it.
+
+== What it does
+
+The crate defines the tree (`Dom`), the trait that produces it (`DocumentParser`) and the parser behind the trait.
+
+.Parsing a page into a tree
+[mermaid]
+----
+include::example$adoc-dom-parse.mmd[]
+----
+
+* `Dom` holds the title as `Vec<Inline>`, the document `attributes` after the header and the caller's attributes, the top-level `blocks` and any `warnings`.
+* A `Block` is a `BlockMeta` (its `SourceSpan`, `id`, `roles`, `title`, `style`, `attributes` and `options`) and a `BlockKind`: `Section`, `Heading`, `Paragraph`, lists, `Admonition`, `Listing`, `Table`, `Image`, `Diagram`, `Stem`, `Passthrough` and the others.
+* `BlockKind::Diagram` keeps a diagram block such as `[mermaid]` as source, for `adoc-diagrams` to draw.
+* `Inline` covers text, marks, links, xrefs, images, footnotes, keyboard and menu macros, STEM and index terms.
+* A `SourceSpan` names the file the content came from (the page or an included file), a byte range in that file, a one-based line, and the include targets, outermost first.
+  This is what lets a click in the preview or an edit in the visual editor reach the right file.
+* `IncludeResolver` supplies included files.
+  `NoIncludes` resolves nothing and `FileIncludes` reads from disk.
+  The engine supplies its own, which serves open buffers and Antora resource ids.
+* `ParseInput` is a path, the text, the attributes the caller sets (Antora's page and component attributes) and the resolver.
+* `replacement_spans` finds Asciidoctor's typographic replacements (`(C)`, dashes, ellipses, apostrophes, arrows), which the parser leaves to the converter.
+
+Design rules the crate keeps:
+
+* External parser crates are named only here.
+  `AcdcParser` (using `acdc-parser`) is the parser the engine uses.
+  `AsciidocParser` (using `asciidoc-parser`) is kept for comparison, behind the `comparison` feature, which only `adocfoundry-cli` turns on for `render --parser asciidoc-parser`.
+* `DocumentParser::parse` never panics.
+  `AcdcParser` catches a panic and returns the page as one `BlockKind::Unsupported` block with a `DomWarning`.
+* Nothing is dropped.
+  A construct the model does not represent is kept as `BlockKind::Unsupported`, with its source.
+
+== How to use it
+
+[source,rust]
+----
+use std::{path::Path, sync::Arc};
+use adoc_dom::{AcdcParser, BlockKind, DocumentParser, NoIncludes, ParseInput};
+
+let text = "= Guide\n\n== Setup\n\nRun it.\n";
+let mut input = ParseInput::new(Path::new("guide.adoc"), text);
+input.includes = Arc::new(NoIncludes); // `new` reads includes from disk
+let dom = AcdcParser.parse(&input);
+
+let section = &dom.blocks[0];
+assert!(matches!(section.kind, BlockKind::Section { .. }));
+assert_eq!(section.meta.span.line, 3);
+----
+
+The engine parses a snapshot of the page with `AcdcParser` on a worker, and builds a view tree from the `Dom` with xref:adoc-render.adoc[adoc-render].
+The `adocfoundry-cli render` command shows the same tree as HTML; see xref:ROOT:command-line.adoc[the command line].
+
+[NOTE]
+====
+`adoc_dom::DocumentParser` takes a `ParseInput` and returns a `Dom`.
+`adoc_parser::DocumentParser` is a different trait that takes a URI and text and returns a `ParseResult`.
+====
+
+== Where it sits
+
+`adoc-dom` depends on `adoc-core`, `acdc-parser` and, with `comparison`, `asciidoc-parser`.
+`adoc-render`, `adoc-model`, `adoc-engine` and `adocfoundry-cli` depend on it.
+`cargo xtask layers` fails the build if a parser crate appears outside it.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-dom
+cargo test -p adoc-dom --features comparison --test second_parser
+----
+
+`tests/acdc.rs` parses `tests/fixtures/render` and checks every block kind, inline formatting, spans through includes, Antora attributes, half-typed input, unsupported constructs, `ifeval` arithmetic and replacements.
+`tests/second_parser.rs` needs the `comparison` feature (`required-features`).
+The fuzz target `parse_dom` (`fuzz/fuzz_targets/parse_dom.rs`) checks that parsing never panics.
+
+== Related
+
+* xref:developer:architecture.adoc[Architecture]
+* xref:developer:testing.adoc#fuzzing[Fuzzing]
+* xref:developer:testing.adoc#_preview_and_render_tests[Preview and render tests]
+* xref:ROOT:preview.adoc[Preview]
+* xref:adoc-core.adoc[adoc-core]
+* xref:adoc-parser.adoc[adoc-parser], the fast outline parser
+* xref:adoc-render.adoc[adoc-render], which builds the view tree from a `Dom`
+* xref:adoc-model.adoc[adoc-model], the visual editor's model
+* xref:index.adoc[Crates]

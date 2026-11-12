@@ -1,0 +1,11 @@
+flowchart TD
+    Client["MCP client"] -->|"stdio"| Server["Server<br/>server.rs"]
+    Client -->|"Streamable HTTP<br/>bearer token"| Http["http.rs<br/>loopback only"]
+    Http --> Server
+    Server --> Perm{"Write or build<br/>tool?"}
+    Perm -->|"not allowed"| Refuse["permission_denied"]
+    Perm -->|"read, or allowed"| Confine["paths::confine"]
+    Confine --> Lock["Lock the engine<br/>on a blocking thread"]
+    Lock --> Engine["adoc-engine"]
+    Engine --> Answer["responses.rs<br/>text and structured JSON"]
+    Answer --> Client

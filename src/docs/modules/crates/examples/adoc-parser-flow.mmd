@@ -1,0 +1,8 @@
+flowchart LR
+    text["Page text<br/>(possibly half typed)"] --> parse["parse(uri, text)"]
+    parse --> doc["ParseResult<br/>holding a Document"]
+    doc --> outline["Title, sections,<br/>attributes, anchors"]
+    doc --> links["Xrefs, includes,<br/>images"]
+    doc --> diag["Duplicate anchor<br/>diagnostics"]
+    text2["Text and cursor offset"] --> ctx["completion_context"]
+    ctx --> ctxout["CompletionContext<br/>kind, prefix, range"]

@@ -1,0 +1,197 @@
+= adoc-engine
+Paul Snow
+:revnumber: 0.0.0
+:description: The headless engine behind every front end: workspace, open documents, commands, undo, settings, workers, the pump and the events it publishes.
+
+`adoc-engine` is the only entry point front ends use.
+It is at layer L3, above the language and rendering crates and below the four front ends: `adocfoundry` (the desktop app), `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`.
+This page is a map of the crate and a guide to driving it.
+The behaviour of each service is described in the developer guide's xref:developer:engine.adoc[engine page], which this page links to rather than repeats.
+
+== What it does
+
+The engine owns the workspace (its roots, Antora catalog and index), the open documents and their undo history, the command registry, the settings, the file watcher and the services built on them.
+It publishes `EngineEvent` values.
+Every user-visible action is a `Command` with a stable `CommandId`, so the app, the CLI, the language server and the MCP server all invoke commands and never reach into engine internals.
+There is no public way to change a document's text except through a command, and every mutation is recorded in undo history.
+
+=== Threading and the pump
+
+One `Engine` is owned by a front end and mutated through `&mut self` on one thread.
+Long work runs on workers, each started through `worker::spawn`, which turns a panic into the failure its job reports, so nothing waits for a worker that has gone.
+A worker sends its result over a channel, and the front end applies it by calling `Engine::pump()`.
+`next_due()` is the earliest deadline of every step of `pump`, `has_pending()` says whether to keep pumping, and `set_waker(f)` gives the engine a function that a worker, the writer or the watcher calls from any thread, so a front end sleeps until `next_due` or a wake rather than polling.
+A new step in `pump` needs its deadline in `next_due` and a test in `tests/wake.rs`.
+See xref:developer:engine.adoc#_threading_model[Threading model] and xref:developer:engine.adoc#_the_pump_and_worker_indexing[The pump and worker indexing].
+
+=== Modules by concern
+
+[cols="2,4"]
+|===
+|Concern |Modules and where to read more
+
+|Core
+|`engine.rs` (`Engine`, `INDEX_SETTLE`), `workspace.rs` (`open_workspace`, `pump`, `next_due`, `wait_for_workers`, `wait_until`), `document.rs`, `edit.rs`, `undo.rs`, `command.rs` and `commands.rs` (the registry and the built-in commands), `event.rs`, `error.rs`, `settings.rs`, `clock.rs`.
+See xref:developer:engine.adoc#_documents[Documents], xref:developer:engine.adoc#_commands[Commands], xref:developer:engine.adoc#undo-groups[Undo groups] and xref:developer:engine.adoc#_events[Events].
+
+|Persistence
+|`writer.rs` (the one writer thread), `auto_save.rs`, `recovery.rs`, `local_history.rs`, `session.rs`.
+See xref:developer:engine.adoc#writer[The writer], xref:developer:engine.adoc#crash-recovery[Crash recovery], xref:developer:engine.adoc#local-history[Local history] and xref:developer:engine.adoc#sessions[Sessions].
+
+|Parsing and indexing
+|`index_settle.rs`, `parses.rs`, `language.rs`, `problems.rs`, `inspect.rs`, `discovery.rs`, `search.rs`, `staging.rs`.
+See xref:developer:engine.adoc#_the_pump_and_worker_indexing[The pump], xref:developer:engine.adoc#problems[Problems] and xref:developer:engine.adoc#staged-changes[Staged changes].
+
+|Preview and visual editing
+|`preview.rs`, `rendered.rs`, `visual.rs`, `html_export.rs`, `stem.rs`, `pdf_preview.rs`, `words.rs`, `spelling.rs`.
+See xref:developer:engine.adoc#the-preview-service[The preview service] and xref:developer:engine.adoc#the-visual-model-service[The visual model service].
+
+|Export
+|`export.rs`, `profiles.rs`.
+See xref:developer:engine.adoc#the-export-service[The export service] and xref:developer:pdf.adoc[PDF export].
+
+|Git
+|`git.rs`, `commit.rs`, `page_age.rs`, `versions.rs`, with `git_off.rs` standing in without the `git` feature.
+See xref:developer:engine.adoc#git[Git].
+
+|Analyses
+|`quality.rs` (the audit), `impact_analysis.rs`, `impact_inspection.rs`, `deletion.rs`, `graph.rs`, `links.rs`.
+See xref:developer:engine.adoc#quality-audit[The quality audit], xref:developer:engine.adoc#impact-analysis[The impact analysis] and xref:developer:engine.adoc#the-link-graph[The link graph].
+
+|Projects and files
+|`new_page.rs`, `new_module.rs`, `new_project.rs`, `templates.rs`, `site_build.rs`, `place_images.rs`, `files.rs`, `images.rs`, `tabs.rs`, `expansion.rs`, `navigation.rs`.
+See xref:developer:engine.adoc#new-page[New Page], xref:developer:engine.adoc#new-project[New Project] and xref:developer:engine.adoc#site-build[Site build].
+
+|Application support
+|`appearance.rs`, `font_sets.rs`, `doctor.rs`, `about.rs`, `updates.rs`, `launch.rs`.
+|===
+
+=== Commands
+
+A `Command` has a `CommandSpec` (a stable `CommandId` such as `document.save`, a title, a category, a default binding and a `when` context) and a `run` function taking `&mut Engine` and `CommandArgs`.
+`commands::register_builtin` fills the `CommandRegistry` when an engine is made, and a duplicate id is a `RegistryError`.
+`Engine::invoke(id, args)` runs a command, flushes pending index work first unless the command is typing, refreshes stale visual models afterwards, and emits `CommandFailed` on error.
+Ids are constants in `commands::ids`.
+`CommandOutcome` reports what happened (`Done`, `Opened`, `Location`, `Url`, `Preview` and others).
+
+=== Events
+
+`Engine::subscribe()` returns a `std::sync::mpsc::Receiver<EngineEvent>`.
+Events include `WorkspaceIndexed`, `DocumentOpened`, `DocumentChanged` (with the version and the edits), `DiagnosticsUpdated`, `PreviewReady`, `ModelChanged`, `GraphChanged`, `AuditChanged`, `GitStatusChanged`, `ExportFinished` and `SettingsChanged`.
+The full list and meanings are in xref:developer:engine.adoc#_events[Events].
+
+=== Settings and features
+
+`Settings` loads a user layer and a workspace layer (`<root>/.adocfoundry.toml`) from TOML.
+Front ends never read the settings file themselves.
+The keys are in xref:ROOT:settings.adoc#_keys[Settings: keys], and the engine's side is in xref:developer:engine.adoc#settings[Settings].
+Two Cargo features, `typst` (PDF export and typeset STEM, through `adoc-pdf` and `adoc-math`) and `git` (`adoc-git`), are on by default for the crate and off in `[workspace.dependencies]`, so each front end names the ones it wants.
+Without `git` the engine behaves as with `[git] enabled = false`; without `typst` the export commands are not registered.
+See xref:developer:engine.adoc#_engine_features[Engine features].
+
+== How to use it
+
+A front end makes an engine from `Settings`, subscribes, opens a workspace, and then alternates between invoking commands and pumping.
+This follows the engine's own integration tests.
+
+[source,rust]
+----
+use std::{path::Path, time::Duration};
+
+use adoc_core::SourceRange;
+use adoc_engine::{commands::ids, CommandArgs, Engine, EngineEvent, Settings};
+
+let settings = Settings::load(None, None).expect("settings").with_git_opt_in();
+let mut engine = Engine::new(settings);
+let events = engine.subscribe();
+
+engine
+    .open_workspace(vec![Path::new("tests/fixtures/simple").to_path_buf()])
+    .expect("a folder");
+assert!(engine.wait_for_workers(Duration::from_secs(10)));
+
+let id = engine
+    .open(Path::new("tests/fixtures/simple/guide.adoc"))
+    .expect("a page");
+engine
+    .invoke(
+        ids::EDIT_INSERT_TEXT,
+        CommandArgs::Text {
+            id,
+            range: SourceRange::new(0, 0),
+            text: "// note\n".to_owned(),
+        },
+    )
+    .expect("edit");
+
+engine.pump();
+while let Ok(event) = events.try_recv() {
+    if let EngineEvent::DocumentChanged { .. } = event {
+        // Redraw from engine state.
+    }
+}
+----
+
+`Settings::with_git_opt_in()` keeps Git off unless a settings file turns it on, which is what a test that opens a fixture in place wants, since the fixtures lie inside a checkout.
+A GUI does not block: it calls `pump` from a task that sleeps until `next_due()` or a wake.
+A command line can block with `wait_for_workers`, `wait_until`, `render_blocking` or `export_blocking`.
+
+.How a front end drives the engine
+[mermaid]
+----
+include::example$adoc-engine-flow.mmd[]
+----
+
+The four front ends use it as follows.
+
+* `adocfoundry` pumps from a task in `src/app.rs` and draws from engine state.
+  See xref:developer:desktop-app.adoc[The desktop app].
+* `adocfoundry-cli` runs commands and blocks on workers.
+  See xref:adocfoundry-cli.adoc[adocfoundry-cli].
+* `adoc-ls` opens the client's buffers with `Engine::open_client_text`, which the watcher never replaces and which keeps no undo history, and publishes diagnostics from `DiagnosticsUpdated`.
+  See xref:adoc-ls.adoc[adoc-ls].
+* `adoc-mcp` locks the engine on a blocking thread for each tool call, and sets `FileAccess::Within(roots)` before it opens a workspace.
+  See xref:adoc-mcp.adoc[adoc-mcp].
+
+== Where it sits
+
+.The engine among the crates
+[mermaid]
+----
+include::example$adoc-engine-layers.mmd[]
+----
+
+`adoc-engine` depends on `adoc-core`, `adoc-antora`, `adoc-audit`, `adoc-impact`, `adoc-diagrams`, `adoc-dom`, `adoc-graph`, `adoc-index`, `adoc-lang`, `adoc-model`, `adoc-parser`, `adoc-render` and `adoc-spell`, and, behind features, `adoc-git` (`git`) and `adoc-pdf` and `adoc-math` (`typst`).
+It is the only crate allowed to depend on `adoc-audit` and `adoc-impact` (`ENGINE_ONLY` in `xtask/src/layers.rs`), and re-exports them as `adoc_engine::audit` and `adoc_engine::impact`.
+The front ends that depend on it are `adocfoundry`, `adocfoundry-cli`, `adoc-ls` and `adoc-mcp`.
+Nothing below the app may import a UI framework, nothing below `adoc-ls` may import LSP types, and no crate but the app may reach an HTTP client.
+Logic that a front end could need belongs here, never in a view.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-engine
+cargo test --release -p adoc-engine --test perf -- --ignored --nocapture
+cargo bench -p adoc-engine
+----
+
+Integration tests in `crates/adoc-engine/tests/` drive the engine headlessly through commands, one file per service (`documents.rs`, `keystroke.rs`, `preview.rs`, `visual.rs`, `export.rs`, `git.rs`, `audit.rs`, `impact.rs`, `graph.rs`, `wake.rs` and others).
+`keystroke.rs` counts parses per keystroke with a `ManualClock`, and `wake.rs` checks that the pump and `next_due` agree.
+`perf.rs` is a timing probe, ignored by default, and `benches/budgets.rs` holds engine paths to budgets (`BENCH_RECORD=1` only records).
+Snapshots use `insta` and live in `tests/snapshots/`; review a changed snapshot rather than overwriting it.
+Tests that open a fixture in place turn Git off with `Settings::with_git_opt_in()`.
+Fixtures are under `tests/fixtures/`.
+
+== Related
+
+* xref:developer:engine.adoc[The engine (developer guide)]
+* xref:developer:architecture.adoc[Architecture]
+* xref:developer:desktop-app.adoc[The desktop app]
+* xref:developer:testing.adoc[Testing]
+* xref:ROOT:settings.adoc[Settings]
+* xref:ROOT:command-line.adoc[Command line]
+* xref:adoc-core.adoc[adoc-core], xref:adoc-index.adoc[adoc-index], xref:adoc-lang.adoc[adoc-lang], xref:adoc-model.adoc[adoc-model], xref:adoc-render.adoc[adoc-render]
+* xref:adoc-git.adoc[adoc-git], xref:adoc-pdf.adoc[adoc-pdf], xref:adoc-audit.adoc[adoc-audit], xref:adoc-impact.adoc[adoc-impact]
+* xref:adocfoundry.adoc[adocfoundry], xref:adocfoundry-cli.adoc[adocfoundry-cli], xref:adoc-ls.adoc[adoc-ls], xref:adoc-mcp.adoc[adoc-mcp]
+* xref:index.adoc[Crates]

@@ -1,0 +1,28 @@
+.Crates
+* xref:crates:index.adoc[Crates overview]
+** L0
+*** xref:crates:adoc-core.adoc[adoc-core]
+** L1
+*** xref:crates:adoc-parser.adoc[adoc-parser]
+*** xref:crates:adoc-dom.adoc[adoc-dom]
+*** xref:crates:adoc-antora.adoc[adoc-antora]
+*** xref:crates:adoc-index.adoc[adoc-index]
+*** xref:crates:adoc-lang.adoc[adoc-lang]
+*** xref:crates:adoc-math.adoc[adoc-math]
+*** xref:crates:adoc-spell.adoc[adoc-spell]
+*** xref:crates:adoc-graph.adoc[adoc-graph]
+** L2
+*** xref:crates:adoc-render.adoc[adoc-render]
+*** xref:crates:adoc-diagrams.adoc[adoc-diagrams]
+*** xref:crates:adoc-model.adoc[adoc-model]
+*** xref:crates:adoc-git.adoc[adoc-git]
+*** xref:crates:adoc-pdf.adoc[adoc-pdf]
+*** xref:crates:adoc-audit.adoc[adoc-audit]
+*** xref:crates:adoc-impact.adoc[adoc-impact]
+** L3
+*** xref:crates:adoc-engine.adoc[adoc-engine]
+** L4
+*** xref:crates:adocfoundry.adoc[adocfoundry]
+*** xref:crates:adocfoundry-cli.adoc[adocfoundry-cli]
+*** xref:crates:adoc-ls.adoc[adoc-ls]
+*** xref:crates:adoc-mcp.adoc[adoc-mcp]

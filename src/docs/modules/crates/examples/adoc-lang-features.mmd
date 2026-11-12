@@ -1,0 +1,13 @@
+flowchart TD
+    ws["WorkspaceState<br/>index + catalog + descriptor problems"]
+    ws --> def["definition_at_offset"]
+    ws --> hov["hover_at_offset"]
+    ws --> comp["completion_at_offset"]
+    ws --> diag["diagnostics,<br/>workspace_diagnostics"]
+    ws --> refs["references_to, references_at,<br/>rename_anchor"]
+    ws --> links["graph::links_from"]
+    ws --> eff["effective::effective_attribute"]
+    ws --> sym["workspace_symbols"]
+    engine["adoc-engine"] --> ws
+    ls["adoc-ls"] --> ws
+    audit["adoc-audit, adoc-impact"] --> ws

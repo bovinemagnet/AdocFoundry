@@ -1,0 +1,142 @@
+= adoc-graph
+Paul Snow
+:revnumber: 0.0.0
+:description: How the adoc-graph crate keeps the links between files, builds filtered snapshots, lays them out and draws them, with no knowledge of AsciiDoc.
+
+`adoc-graph` is the general graph code behind the link graph: the keys, nodes and edges, a store of each file's links, filtered snapshots, groups, a deterministic force-directed layout, mind maps and SVG export.
+It is a layer 1 crate with no dependencies at all, and `adoc-engine` is its only user.
+
+== What it does
+
+The engine decides what the links are and when they change; this crate only keeps them and works on them.
+
+Types (`lib.rs`)::
+`GraphKey` is a node's identity: `File` (a normalised path), `Unresolved` (a target's text as written) or `Group` (a collapsed group's name).
+`EdgeKind` is `Xref`, `Include` or `Nav`, and `NodeKind` is `Page`, `Partial`, `Nav`, `Unresolved` or `Group`.
+`GraphNode` carries a title, its kind, an optional `NodeCoordinate` (component, version, module and family, filled by the engine from the Antora catalog), its link counts and an optional `LastChanged`.
+`GraphEdge` merges every link of one kind between two nodes and counts them.
+`GraphSnapshot` is the nodes and edges a query found, sorted, with `restrict(keep)` to cut it down and `along(steps)` to keep the part a path covers.
+`GraphFilter` says whether partials, navigation files, orphans and unresolved targets show, and which components.
+
+The link store (`store.rs`)::
+`LinkStore` keeps each file's links keyed by the file that owns them, as the workspace index keys its tables, so replacing or removing a file visits only what it contributed.
+A page owns the links from itself.
+A navigation file owns the links its tree makes.
+`set_links`, `set_owned_links` and `remove` change the store and report whether anything changed.
+`linking_to`, `links_from`, `links_to` and `is_linked` look up links through reverse maps, which are hashed because `Path` compares component by component.
+`neighbourhood` walks outwards to a depth, and `shortest_path` finds a stable shortest path as a list of `PathStep` values, which `GraphSnapshot::along` turns back into a snapshot.
+
+Snapshots (`snapshot.rs`)::
+`GraphSnapshot::build(revision, nodes, links, filter, centre)` takes `NodeInput` values and the store's links.
+A link to an unresolved target makes its node, a link to a file not among the nodes is left out, and a local graph's `centre` stays whatever the filter says.
+
+Groups (`group.rs`)::
+`GroupBy` is `Module` or `Component`.
+`group_name` names a node's group as a resource ID writes it, or `OTHER_GROUP` outside Antora, and `Groups::of` gives every node's group.
+`GraphSnapshot::collapse` draws named groups as single `GraphKey::Group` nodes with their links merged by kind and their counts summed.
+
+Layout (`layout.rs`)::
+`Layout` is seeded and deterministic, so the same snapshot and seed give the same picture.
+It is a force-directed layout, Barnes–Hut above 500 nodes, in `f32` only and with no trigonometry, which keeps results identical across platforms.
+`sync` takes a snapshot, `step` and `settle` advance it, `pin` holds a node, `position` and `positions` read it, and `node_at` hit-tests a point.
+`set_roots` seeds starting places from root-relative paths, `set_grouping` adds a pull to each group's centre and a push between groups, and `set_targets` eases nodes towards given places instead of moving them by force.
+
+Mind maps (`tree.rs`)::
+`MindMap::build(snapshot, root, depth, owned)` makes a spanning tree from a root.
+From a navigation file it follows that file's own navigation entries only.
+From any other node it follows every link both ways to a depth.
+A node reached by several links goes under the parent of the first, ranked navigation before xref before include.
+`positions(style, collapsed)` places the nodes for a `TreeStyle`, `Horizontal` or `Radial`, using polynomial sines so every platform gives the same bits.
+
+Style and drawing (`style.rs`, `svg.rs`)::
+`ColourBy` (component, module, family or age), `Palette`, `node_radius` and `colour_groups` give every drawing the same colours and sizes.
+`to_svg` draws a snapshot at given positions, and `to_svg_laid_out` lays it out first.
+Titles are escaped, and the same layout always gives the same bytes.
+
+Design rules the crate keeps:
+
+* No AsciiDoc knowledge and no internal dependencies.
+* No UI types, so the layout is tested and benchmarked headlessly.
+* Deterministic output: a seeded layout, `f32` only, and stable ties in searches.
+
+== How to use it
+
+[source,rust]
+----
+use std::{path::Path, sync::Arc};
+
+use adoc_graph::{
+    EdgeKind, GraphFilter, GraphKey, GraphSnapshot, Layout, LinkStore, NodeInput, NodeKind,
+};
+
+let guide: Arc<Path> = Arc::from(Path::new("/docs/guide.adoc"));
+let intro: Arc<Path> = Arc::from(Path::new("/docs/intro.adoc"));
+
+let mut store = LinkStore::new();
+store.set_links(guide.clone(), vec![(GraphKey::File(intro.clone()), EdgeKind::Xref)]);
+
+let node = |path: &Arc<Path>, title: &str| NodeInput {
+    key: GraphKey::File(path.clone()),
+    title: title.to_owned(),
+    kind: NodeKind::Page,
+    coordinate: None,
+    orphan: false,
+    last_changed: None,
+};
+let snapshot = GraphSnapshot::build(
+    1,
+    [node(&guide, "Guide"), node(&intro, "Intro")],
+    store.links(),
+    &GraphFilter::default(),
+    None,
+);
+
+let mut layout = Layout::new(42);
+layout.sync(&snapshot);
+layout.settle(500);
+let at = layout.position(&GraphKey::File(guide));
+----
+
+The engine's `src/graph.rs` does this for a workspace.
+It resolves each file's links with `adoc_lang::graph::links_from`, keeps the `LinkStore` current as files change, and answers `Engine::graph`, `graph_path`, `neighbours` and `nav_places`.
+Front ends redraw on `EngineEvent::GraphChanged`.
+
+.From links to a drawing
+[mermaid]
+----
+include::example$adoc-graph-pipeline.mmd[]
+----
+
+The app's Export Graph, `adocfoundry-cli graph --format svg` and the MCP `link_graph` tool all draw with `to_svg`, so they agree.
+
+== Where it sits
+
+`adoc-graph` is on layer 1 and depends on no crate, internal or external.
+`adoc-engine` is the only crate that depends on it, and the app reaches it through the engine.
+`adocfoundry` draws the graph in `src/graph_view.rs`.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-graph
+cargo bench -p adoc-graph
+----
+
+The unit tests are next to the code and cover the store, snapshots, groups, layout, mind maps, style and SVG output.
+`cargo bench -p adoc-graph` holds one layout step for 2,000 nodes and 6,000 edges to 8 ms, grouped or not, and the same budget for building and laying out a mind map, syncing an unchanged snapshot, collapsing half the modules and a path search that fails through a 2,000-entry navigation file.
+Laying out until settled and drawing for export must stay under 6 s.
+`BENCH_RECORD=1` records without failing.
+
+The engine's graph tests run over `tests/fixtures/graph/` (`guide`, `reference` and `loose`).
+See xref:developer:testing.adoc#graph-tests[Graph tests].
+
+== Related
+
+* xref:ROOT:graph-view.adoc[Graph view] is the user guide, with xref:ROOT:graph-view.adoc#graph-mind-map[mind maps], xref:ROOT:graph-view.adoc#graph-groups[groups] and xref:ROOT:graph-view.adoc#graph-page-age[page age].
+* xref:developer:engine.adoc#the-link-graph[The link graph] describes how the engine keeps the store current.
+* xref:developer:architecture.adoc[Architecture] lists the crate ladder and the layering rules.
+* xref:adoc-engine.adoc[adoc-engine] owns the graph state.
+* xref:adoc-lang.adoc[adoc-lang] resolves each file's links.
+* xref:adocfoundry-cli.adoc[adocfoundry-cli] prints the graph as JSON, DOT or SVG.
+* xref:index.adoc[Crates]

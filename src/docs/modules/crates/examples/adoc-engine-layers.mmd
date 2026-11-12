@@ -1,0 +1,8 @@
+flowchart TD
+    fe["Front ends<br/>adocfoundry, adocfoundry-cli,<br/>adoc-ls, adoc-mcp"] --> engine["adoc-engine"]
+    engine --> l2["adoc-render, adoc-diagrams, adoc-model,<br/>adoc-audit, adoc-impact"]
+    engine -.->|"feature git"| git["adoc-git"]
+    engine -.->|"feature typst"| pdf["adoc-pdf, adoc-math"]
+    engine --> l1["adoc-parser, adoc-dom, adoc-antora,<br/>adoc-index, adoc-lang, adoc-spell, adoc-graph"]
+    l2 --> core["adoc-core"]
+    l1 --> core

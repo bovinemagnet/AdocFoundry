@@ -1,0 +1,16 @@
+flowchart TD
+    roots["Workspace roots"] --> discover["discover_antora_workspace"]
+    files["A revision's files<br/>and their text"] --> discoverfiles["discover_antora_files"]
+    discover --> result["DiscoveryResult"]
+    discoverfiles --> result
+    result --> catalog["AntoraCatalog"]
+    result --> issues["DescriptorErrors"]
+    catalog --> comps["ComponentDescriptor<br/>per component version"]
+    catalog --> mods["Module"]
+    catalog --> res["AntoraResource<br/>per coordinate"]
+    catalog --> pb["Playbook"]
+    catalog --> resolve["resolve_detailed<br/>(AntoraResolver)"]
+    id["parse_resource_id"] --> resolve
+    resolve --> resolved["Resolved, or<br/>ResolutionError"]
+    catalog --> navtree["nav_tree"]
+    navtree --> tree["NavTree of NavItems"]

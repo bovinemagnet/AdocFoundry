@@ -1,0 +1,128 @@
+= adoc-pdf
+Paul Snow
+:revnumber: 0.0.0
+:description: PDF export: asciidoctor-pdf themes loaded as YAML, the view tree written as Typst, and Typst compiled in process with bundled fonts.
+
+`adoc-pdf` turns a rendered view tree into a PDF styled by an asciidoctor-pdf theme.
+It is at layer L2, beside `adoc-render`, which it reads.
+`adoc-engine` calls it behind the `typst` feature, and the app's live PDF preview and the CLI's `pdf` command reach it through the engine.
+
+== What it does
+
+The crate is given a `Document`, a `LoadedTheme` and `PdfOptions`.
+It returns a `PdfOutput` with the bytes, the page count and diagnostics, or a `PdfError`.
+It knows nothing of the engine, the workspace or a UI framework.
+
+[cols="1,3"]
+|===
+|Part |Responsibility
+
+|`theme/`
+|`load_theme` reads asciidoctor-pdf 2.3 YAML themes exactly as its `ThemeLoader` does, including `extends`, and the tests check it key by key against golden maps.
+`KeptTheme` keeps a loaded theme and loads it again only when its files change.
+
+|`emit.rs`, `document.rs`
+|`to_typst` writes a `Document` (an article, or a `Book` of parts, headings and pages) as Typst source, with a `SourceMap` back to the AsciiDoc.
+
+|`adoc.typ`, `math.typ`
+|The Typst templates: the functions the emitter calls and the styling, reading the theme's keys as `t` and the document's facts as `doc`.
+
+|`running.rs`, `icons.rs`, `highlight/`
+|Running headers and footers, the title page, admonition icons, and source highlighting with tree-sitter grammars.
+
+|`world.rs`, `fonts.rs`
+|The Typst `World`: only listed files, fonts registered under the theme's family names, no packages.
+
+|`export.rs`
+|`compile` and `export`, PDF standards (`PdfStandard`: PDF/A-1b, A-1a, A-2a and UA-1), and Typst's errors mapped back to AsciiDoc lines as `PdfDiagnostic` values.
+`typeset_pages` and `preview_pages` give laid-out pages for the app's PDF preview.
+|===
+
+The design rules are these.
+Every document string is written as a Typst string literal, so a document can never inject Typst code; only numbers and enum values are ever spliced into the source.
+STEM goes through `adoc-math` and only checked markup reaches Typst.
+The template reproduces Prawn's spacing model, which asciidoctor-pdf uses, so read the PDF page of the developer guide before changing spacing.
+Typst's process-wide cache is emptied after an export, because a large book would otherwise leave gigabytes in memory.
+
+.From view tree to PDF
+[mermaid]
+----
+include::example$adoc-pdf-modules.mmd[]
+----
+
+== How to use it
+
+Build a view tree with `adoc-render`, wrap it in a `PageView`, load a theme and export.
+This is how the crate's own tests do it.
+
+[source,rust]
+----
+use std::path::Path;
+
+use adoc_dom::{AcdcParser, DocumentParser as _, ParseInput};
+use adoc_pdf::{export, load_theme, Document, PageView, PdfOptions, ThemeSource};
+use adoc_render::{build_view, LocalResolver};
+
+let path = Path::new("tests/fixtures/pdf/reference/article.adoc");
+let text = std::fs::read_to_string(path).expect("readable");
+let dom = AcdcParser.parse(&ParseInput::new(path, &text));
+let view = build_view(path, &dom, &LocalResolver);
+
+let document = Document::Article(PageView {
+    key: "p0".to_owned(),
+    view,
+    depth: 0,
+});
+let theme = load_theme(&ThemeSource::Bundled("default".into())).expect("bundled theme");
+let output = export(&document, &theme, &PdfOptions::default()).expect("typeset");
+std::fs::write("article.pdf", &output.bytes).expect("written");
+println!("{} pages, {} warnings", output.pages, output.diagnostics.len());
+----
+
+`to_typst` gives the Typst source without compiling it, and `compile` takes it from there.
+Bundled themes are `default`, `default-sans`, `default-for-print` and `base`; `ThemeSource::File` loads a theme file.
+`PdfOptions` holds the PDF standards, the font directories, the pages a cross-reference may link to, a fixed date for reproducible output, and the `FileAccess` that limits which files an export reads.
+
+Most people never call it directly.
+Use the command line or the app.
+
+[source,sh]
+----
+cargo run -p adocfoundry-cli -- pdf tests/fixtures/pdf/reference/article.adoc --output /tmp/article.pdf
+----
+
+== Where it sits
+
+`adoc-pdf` depends on `adoc-core`, `adoc-math` and `adoc-render`, with Typst, the tree-sitter grammars for highlighting, and `serde-saphyr` for themes.
+`adoc-render` is a same-layer dependency, listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`.
+`adoc-engine` (optional, feature `typst`) and `adocfoundry` depend on it.
+`adoc-dom` is a dev-dependency only, for the tests.
+The `fuzzing` feature exposes the Typst literal writers to the fuzz targets and is not an API.
+Typst is pinned at 0.15.1, and `vendor/comemo` is patched in so that evicted caches free their memory.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-pdf
+cargo test -p adoc-pdf --test themes
+cargo test -p adocfoundry-cli --test pdf_regression
+ADOC_PDF_OUT=/tmp cargo test -p adoc-pdf --test reference -- --ignored
+----
+
+The test files are `compile.rs` (compiling in process, the world, error mapping), `emit.rs`, `themes.rs` and `theme_keys.rs` (the loader against golden maps), `running.rs`, `standards.rs`, `stem.rs` and `preview.rs`.
+`pdf_regression` in `adocfoundry-cli` rasterises PDFs against asciidoctor-pdf and skips itself without it.
+The fixtures are `tests/fixtures/pdf/` (`reference/article.adoc`, `book/`, `themes/`) and `tests/fixtures/stem`.
+
+== Related
+
+* xref:developer:pdf.adoc[PDF export (developer guide)], for the emitter, the template, spacing and the export service
+* xref:developer:pdf.adoc#_the_theme_loader[The theme loader]
+* xref:ROOT:pdf-export.adoc[PDF export (user guide)], for themes, profiles, standards and what is not supported
+* xref:ROOT:pdf-theme-keys.adoc[PDF theme keys]
+* xref:developer:testing.adoc#pdf-tests[Testing: PDF tests]
+* xref:adoc-render.adoc[adoc-render], which builds the view tree
+* xref:adoc-math.adoc[adoc-math], for STEM
+* xref:adoc-engine.adoc[adoc-engine], which runs exports and the live preview
+* xref:adocfoundry-cli.adoc[adocfoundry-cli], for the `pdf` command
+* xref:index.adoc[Crates]

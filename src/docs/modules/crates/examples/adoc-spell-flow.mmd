@@ -1,0 +1,17 @@
+flowchart LR
+    prose["Prose of a text block<br/>(OBJECT for atoms)"]
+    words["words<br/>byte ranges worth checking"]
+    resolve["Dictionaries::resolve<br/>page lang, else configured"]
+    load["Dictionaries::load<br/>Checker, parsed once"]
+    check["Checker::check"]
+    lists["WordList::contains<br/>workspace and user lists"]
+    suggest["Checker::suggest<br/>at most MAX_SUGGESTIONS"]
+    found["Misspelling<br/>built by the engine"]
+
+    resolve --> load
+    prose --> words
+    words --> check
+    load --> check
+    check -->|unknown| lists
+    lists -->|not listed| suggest
+    suggest --> found

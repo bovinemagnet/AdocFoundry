@@ -1,0 +1,12 @@
+flowchart TD
+    ws["WorkspaceState<br/>(index and catalog)"] --> input["AuditInput<br/>workspace, roots, read"]
+    input --> file["audit_file<br/>FileAudit per file"]
+    input --> version["audit_version<br/>VersionAudit per component version"]
+    file --> assemble["assemble or audit<br/>for an AuditScope"]
+    version --> assemble
+    assemble --> builder["AuditBuilder<br/>findings, skips, gaps"]
+    policy["Policy<br/>severities, exclusions, fail_on"] --> finish["finish"]
+    builder --> finish
+    finish --> report["AuditReport"]
+    report --> verdict["verdict: Pass, Fail,<br/>Untrustworthy"]
+    report --> sarif["to_sarif"]

@@ -1,0 +1,105 @@
+= adoc-index
+Paul Snow
+:revnumber: 0.0.0
+:description: The workspace index of parsed documents, with reverse maps that find references, includes and symbols without scanning every file.
+
+`adoc-index` is a layer L1 crate.
+It keeps the parse of every AsciiDoc file in a workspace and answers questions across files.
+xref:adoc-lang.adoc[adoc-lang] builds the language features on it, and the engine, the language server, the command line and the app use it.
+
+== What it does
+
+`WorkspaceIndex` is a set of tables, each keyed by file or holding the file's one shared `Arc<Path>`, so replacing or removing a file visits only what it contributed.
+
+.The tables of the index
+[mermaid]
+----
+include::example$adoc-index-tables.mmd[]
+----
+
+* Files: `FileEntry` holds the path, the URI and the `Document` parse.
+  `index_roots` and `index_roots_with` read and parse every AsciiDoc file beneath the roots on up to four threads, never entering a folder named in `ignore` or a link, and return an `IndexReport` of the files indexed and the `unreadable` folders left out.
+  `on_directory` sees each folder before it is read, so a watch placed there misses nothing.
+* Replacing: `replace` keeps an open page's text, `replace_from_disk` and `index_file` keep the parse but not the text, and `remove` takes a file out.
+  `revision` changes with every file added, replaced or removed.
+* Reverse maps: `xrefs_naming` finds the xrefs whose target ends with a file name, `references_with_fragment` the references with an anchor id as their fragment, `includes_naming` the include directives naming a file, and `includers` the files that include a path.
+  `references` walks every reference, for callers that really want all of them.
+* Anchors: `resolve_anchor` finds where an id is declared in a file, either as an explicit anchor or as a section's generated id.
+* Symbols: `symbols_matching` returns `WorkspaceSymbol` values (title, section, anchor and attribute kinds) whose names have a word starting with each word of the query.
+  An empty query finds nothing.
+* Diagnostics: `workspace_diagnostics` returns a file's parse diagnostics plus unresolved anchors, xrefs, includes and images.
+  It resolves each file that a page's xrefs name once per page.
+* Includes and images: `resolve_include_target` and `resolve_image_target` give the file a target names in a plain workspace, or `None` when only Antora resolution could tell.
+* Files and paths: `is_asciidoc_path`, `list_directory` (a shallow listing for path completion), `normalize_path` and `DEFAULT_IGNORED_DIRECTORIES` (re-exported from xref:adoc-core.adoc[adoc-core]).
+
+An open page's entry can be built away from the index as a `PreparedFile` (the parse, its anchors with section ids, its symbols and words, its include targets) and filed with `insert_prepared`.
+Prepared against the index's `shared_path` for the file, it visits only the keys that changed and returns what it replaced as `Retired`, to be freed on a worker.
+
+Design rules the crate keeps:
+
+* Never add a feature that scans every document.
+  Add a reverse map instead.
+* A file indexed from disk keeps its parse but not its text.
+  Read the text with `FileEntry::text`, which reads the file back and returns `None` once the file no longer holds the text parsed.
+  Never read an indexed `document.text` directly.
+* `normalize_path` is lexical and never canonicalises, so unsaved files work.
+* Diagnostics are conservative: no diagnostic for a dynamic target such as `+include::{attr}/x.adoc[]+`, and no unresolved-include warning for a conditional include.
+
+== How to use it
+
+This example, run from the repository root, indexes the references fixture.
+
+[source,rust]
+----
+use adoc_index::{WorkspaceIndex, DEFAULT_IGNORED_DIRECTORIES};
+use std::path::PathBuf;
+
+let root = PathBuf::from("tests/fixtures/references");
+let mut index = WorkspaceIndex::new();
+let report = index.index_roots_with(&[root.clone()], DEFAULT_IGNORED_DIRECTORIES, |_folder| {});
+assert_eq!(report.files, 3);
+
+let page = root.join("index.adoc");
+assert!(index.resolve_anchor(&page, "setup").is_some());
+for found in index.xrefs_naming("other.adoc") {
+    println!("{} names other.adoc", found.path.display());
+}
+for symbol in index.symbols_matching("setup") {
+    println!("{} ({:?})", symbol.name, symbol.kind);
+}
+----
+
+Most callers hold the index inside an `adoc_lang::WorkspaceState`, next to the Antora catalog, and call the language features instead.
+
+== Where it sits
+
+`adoc-index` depends on xref:adoc-core.adoc[adoc-core] and xref:adoc-parser.adoc[adoc-parser].
+The dependency on `adoc-parser` is one of the same-layer pairs listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`.
+`adoc-lang`, `adoc-audit`, `adoc-impact`, `adoc-engine`, `adoc-ls`, `adocfoundry-cli` and `adocfoundry` depend on it.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-index
+----
+
+The unit tests in `src/index.rs` cover replacing a file's contributions, the revision, folders such as `build` inside a module, indexing that enters each folder kept, the reverse maps, and a deterministic scan of `tests/fixtures/simple`.
+Two probes are ignored by default and print figures without asserting any:
+
+[source,sh]
+----
+PROBE_FILE=<file.adoc> cargo test --release -p adoc-index --test replace_timing -- --ignored --nocapture
+PROBE_PAGES=10000 cargo test --release -p adoc-index --test memory -- --ignored --nocapture
+----
+
+== Related
+
+* xref:developer:architecture.adoc[Architecture]
+* xref:developer:testing.adoc#_performance_probe[Performance probe]
+* xref:developer:engine.adoc#_the_pump_and_worker_indexing[The pump and worker indexing], for how the engine keeps the index current
+* xref:adoc-core.adoc[adoc-core]
+* xref:adoc-parser.adoc[adoc-parser], which makes each entry
+* xref:adoc-lang.adoc[adoc-lang]
+* xref:adoc-engine.adoc[adoc-engine]
+* xref:index.adoc[Crates]

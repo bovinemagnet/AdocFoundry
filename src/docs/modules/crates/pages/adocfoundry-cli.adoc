@@ -1,0 +1,74 @@
+= adocfoundry-cli
+Paul Snow
+:revnumber: 0.0.0
+:description: The headless command line front end that checks, audits, renders and exports a workspace through the engine.
+
+`adocfoundry-cli` is a headless binary over `adoc-engine`.
+It sits at layer L4 and needs no display, so it is used in continuous integration and for dogfooding.
+
+== What it does
+
+It opens a workspace in an `Engine`, runs one command and exits with a code that says how it went.
+All of its work goes through the engine, so its answers agree with the desktop application and the other front ends.
+The subcommands are:
+
+* `check`, `audit` and `impact`, which report problems, the documentation quality audit and the impact of a change, as text, JSON or (for `audit`) SARIF;
+* `symbols` and `follow`, which search a workspace's symbols and follow the link at a byte offset;
+* `render`, which writes a page as HTML, and `pdf`, which exports a page, a component version or a PDF profile;
+* `git-status` and `graph`, the Git state and the link graph (JSON, DOT or SVG);
+* `new-module` and `new-project`, which create content through `module.new` and `project.new`;
+* `doctor`, the support report.
+
+Only `git-status` turns Git on.
+`audit` reads its policy from the workspace's `.adocfoundry.toml` only.
+The reports behind `check` and `git-status` live in the engine (`report.rs`), so `adoc-mcp` shares them.
+
+.From arguments to an exit code
+[mermaid]
+----
+include::example$adocfoundry-cli-commands.mmd[]
+----
+
+== How to use it
+
+Run it from the repository with Cargo.
+
+[source,sh]
+----
+cargo run -p adocfoundry-cli -- check tests/fixtures/antora-single-component
+cargo run -p adocfoundry-cli -- pdf tests/fixtures/pdf/reference/article.adoc --output /tmp/article.pdf
+----
+
+An installed package provides the `adocfoundry-cli` command, so the same checks run as `adocfoundry-cli check <root> --fail-on warning`.
+See xref:ROOT:command-line.adoc[Command line] for every subcommand and option, and xref:ROOT:command-line.adoc#_using_it_in_ci[Using it in CI] for exit codes.
+
+== Where it sits
+
+It depends on `adoc-core`, `adoc-dom` (with its `comparison` feature, only so that `render --parser asciidoc-parser` works), `adoc-engine` (with `typst` and `git`), `adoc-index` and `adoc-render`.
+Nothing depends on it.
+As a front end it reaches `adoc-audit` and `adoc-impact` through the engine only (`ENGINE_ONLY` in `xtask/src/layers.rs`).
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adocfoundry-cli --test cli
+cargo test -p adocfoundry-cli --test audit
+cargo test -p adocfoundry-cli --test impact
+cargo test -p adocfoundry-cli --test fidelity
+cargo test -p adocfoundry-cli --test pdf_regression
+----
+
+`cli.rs` drives the built binary through `CARGO_BIN_EXE_adocfoundry-cli`, with `insta` snapshots in `tests/snapshots/`.
+`fidelity` compares the rendering with Asciidoctor and `pdf_regression` compares PDFs with asciidoctor-pdf; each skips itself when the tool is missing.
+Fixtures are under `tests/fixtures/`, such as `antora-single-component`, `pdf/reference` and `impact`.
+
+== Related
+
+* xref:ROOT:command-line.adoc[Command line]
+* xref:ROOT:quality-audit.adoc[Quality audit]
+* xref:ROOT:pdf-export.adoc[PDF export]
+* xref:developer:testing.adoc[Testing]
+* xref:developer:architecture.adoc[Architecture]
+* xref:adoc-engine.adoc[adoc-engine]
+* xref:adoc-mcp.adoc[adoc-mcp]

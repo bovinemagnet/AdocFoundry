@@ -1,0 +1,136 @@
+= adoc-model
+Paul Snow
+:revnumber: 0.0.0
+:description: How the adoc-model crate describes a page as typed, losslessly scanned blocks and turns visual edits into the smallest source edits.
+
+`adoc-model` is the editable document model behind the visual editor.
+The page text stays the source of truth.
+The crate reads it into typed blocks whose text is scanned losslessly, and turns each visual edit into the smallest source edits that make it, so text the model does not touch is never rewritten.
+It is a layer 2 crate, and `adoc-engine` is its only user.
+
+== What it does
+
+A `Model` (`tree.rs`) holds the page's path, its text, its document attributes and a tree of `Node` values.
+A node has a `NodeKind` (a title, section, paragraph, list, table, image, code block and so on), the byte range of its whole source, an `Access` and, for text, a `TextBlock`.
+`Access` is `Editable` or `ReadOnly` with a `ReadOnly` reason: `Verbatim` (diagrams, STEM, passthroughs), `Included` (content from another file), `Inactive` (a conditional) or `Unchecked` (text whose reading disagrees with the parser's).
+
+A `TextBlock` is a list of pieces that tile the block's source exactly: text, mark delimiters (`Mark`: strong, emphasis, code, highlight, superscript, subscript and role spans) and atoms (`Atom`: xrefs, links, images, footnotes, anchors, attribute references, replacements, escapes, passthroughs, macros and the like).
+Because every piece knows the source bytes it came from, a block can be written back byte for byte.
+
+The main modules:
+
+`build.rs`::
+`Model::build(path, source, dom)` builds the model from the page text and the `adoc-dom` tree.
+Its scanner (`scan.rs`) reads each text block into pieces, and the build checks that reading against the DOM.
+A block where they disagree becomes read-only (`Unchecked`), and its text is drawn from the view tree as the parser read it (`Node::drawn_from_view`, at the place `view_text` names), never from the disagreeing pieces.
+It never panics, because half-typed input is normal.
+
+`step.rs`::
+`Model::apply(&Step)` gives a `StepResult`: the sorted `SourceEdit` values in the coordinates of the text before, the selection after, and the updated model for steps that change no structure (structural steps leave `model` as `None`, and the engine rebuilds).
+`Step` covers typing, `Delete`, toggling marks, links, splitting and joining blocks, inserting blocks, block types, lists, tables and images, and `Replace` for raw edits, which is the form an inverse takes.
+A `StepError` says why a step was refused: `NotEditable`, `OutOfRange`, `WouldChangeMeaning` or `Unsupported`.
+Inline edits are verified by rescanning: typed markup is escaped only where it would form a construct, marks keep their delimiters, and a step that cannot keep the meaning of the text around it is refused.
+`Delete` across blocks (`delete_across`, in `block.rs`) rewrites what is left of both ends as one block through the same rescan and has no local model.
+It refuses comments and read-only content between the ends, and the edge of a delimited block.
+
+`mapping.rs`::
+`SourceEdit`, `apply_edits`, `invert` and `Mapping`.
+`Mapping` maps source offsets through batches of edits, with an `Assoc` choosing the side of an insertion.
+The selection in the visual editor is a pair of source offsets mapped through edits made elsewhere.
+
+`serialise.rs`::
+`Model::serialise` writes the page from the model.
+An untouched node is written as its source slice, and what lies between nodes (blank lines, comments, attribute entries, directives) is kept as it is.
+Serialising a model built from a page gives the page back exactly.
+
+`text.rs`, `words.rs`::
+Caret geometry: `Segment` values for drawing, `display_offset` and `source_offset` between displayed text and source, `caret_stops`, and the word helpers `next_word_end`, `previous_word_start` and `word_at`.
+
+`source_blocks.rs`, `source_marks.rs`::
+`toggle_mark_in_source` and `insert_link_in_source` make the same edits for the source editor's shortcuts, returning a `SourceToggle` (edits and selection), and `insert_block_in_source` writes a `NewBlock` there.
+Both editors write the same source.
+
+Design rules the crate keeps:
+
+* The page text is the source of truth.
+A visual edit is a set of source edits, and an untouched line stays unchanged in the Git diff.
+* Byte offsets everywhere (`SourceRange`).
+* A construct the model cannot read with certainty is read-only, never guessed.
+
+== How to use it
+
+[source,rust]
+----
+use std::path::Path;
+
+use adoc_dom::{AcdcParser, DocumentParser, ParseInput};
+use adoc_model::{apply_edits, Mark, MarkSet, Model, Step};
+
+let path = Path::new("page.adoc");
+let text = "A paragraph.\n\nAnother one.\n";
+
+let dom = AcdcParser.parse(&ParseInput::new(path, text));
+let model = Model::build(path, text, &dom);
+
+let at = text.find("graph").unwrap();
+let result = model
+    .apply(&Step::InsertText {
+        at,
+        text: "ra".to_owned(),
+        marks: MarkSet::EMPTY,
+    })
+    .expect("the paragraph is editable");
+
+let after = apply_edits(&model.source, &result.edits);
+assert_eq!(after, "A pararagraph.\n\nAnother one.\n");
+assert_eq!(model.serialise(), text);
+----
+
+The engine keeps a `VisualDocument` for each page shown visually.
+Visual commands take a selection in source offsets and the document version it belongs to, apply a `Step` and send the edits through the ordinary edit path, so one undo history serves both editors.
+The app draws the model's rows and reads read-only nodes through the preview's block renderer.
+
+.From a page to a step's source edits
+[mermaid]
+----
+include::example$adoc-model-steps.mmd[]
+----
+
+== Where it sits
+
+`adoc-model` is on layer 2.
+It depends on `adoc-core`, `adoc-dom` and `unicode-segmentation`.
+`adoc-engine` is the only crate that depends on it, and the app reaches the model through the engine.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-model
+cargo test -p adoc-model --test roundtrip
+----
+
+The integration tests are in `crates/adoc-model/tests/`:
+
+* `build.rs` builds the model over the fixture corpus and this repository's documentation.
+* `blocks.rs` covers structural steps: splitting and joining blocks, block types and lists.
+* `steps.rs` checks each step's edits, that its inverse restores the text, and that the local model equals a rebuild.
+* `tables.rs` covers rows, columns, new tables and image macros.
+* `positions.rs` finds the text block at a source offset.
+* `source_marks.rs` covers marks toggled in source text.
+* `roundtrip.rs` holds the round-trip properties, which are the visual editor's definition of done in test form: serialising gives the page back, a step's edits stay inside the block it touches, and a long editing session changes only the lines that were edited.
+
+`roundtrip.rs` reads every fixture under `tests/fixtures/` and every page of `src/docs`, so editing a documentation page changes what it exercises.
+Keep these tests passing.
+See xref:developer:testing.adoc#round-trip-tests[Round-trip property tests].
+
+== Related
+
+* xref:ROOT:visual-editing.adoc[Visual editing] is the user guide, including xref:ROOT:visual-editing.adoc#read-only-content[read-only content].
+* xref:developer:engine.adoc#the-visual-model-service[The visual model service] describes how the engine keeps the model current.
+* xref:developer:desktop-app.adoc[The desktop app] describes how the app draws it.
+* xref:developer:architecture.adoc[Architecture] lists the crate ladder and the layering rules.
+* xref:adoc-dom.adoc[adoc-dom] supplies the parsed tree.
+* xref:adoc-engine.adoc[adoc-engine] owns the visual documents.
+* xref:adoc-spell.adoc[adoc-spell] checks the prose the engine reads from the model's text blocks.
+* xref:index.adoc[Crates]

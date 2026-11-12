@@ -1,0 +1,8 @@
+flowchart TD
+    theme["theme/<br/>load_theme, KeptTheme"] --> typst["to_typst<br/>(document.rs, emit.rs, adoc.typ)"]
+    view["ViewTree from adoc-render<br/>in a PageView"] --> typst
+    options["PdfOptions<br/>standards, fonts_dirs, access"] --> typst
+    typst --> compile["compile<br/>(world.rs, fonts.rs)"]
+    compile --> out["PdfOutput<br/>bytes, pages, diagnostics"]
+    compile --> err["PdfError<br/>Compile or Pdf"]
+    compile --> pages["typeset_pages, preview_pages<br/>(laid-out pages for the app)"]

@@ -1,0 +1,98 @@
+= adoc-spell
+Paul Snow
+:revnumber: 0.0.0
+:description: How the adoc-spell crate checks words against Hunspell dictionaries and keeps lists of accepted words, with no knowledge of AsciiDoc.
+
+`adoc-spell` checks spelling for plain prose.
+It wraps the `spellbook` Hunspell implementation, bundles British and American English dictionaries, and knows nothing about AsciiDoc.
+It is a layer 1 crate, and `adoc-engine` is its only user.
+
+== What it does
+
+The crate answers three questions, each in its own module.
+
+`dictionaries.rs`::
+Which dictionaries exist, and is a word in one?
+`Dictionaries` holds the bundled SCOWL `en_GB` and `en_US` dictionaries and every `name.aff` with a `name.dic` beside it in a folder (a dictionary in the folder replaces a bundled one of the same name).
+`Dictionaries::list` describes them as `DictionaryInfo` (a name and a `DictionarySource`, `Bundled` or `File`), and `Dictionaries::load` parses one on first use and keeps it as an `Arc<Checker>`.
+`Dictionaries::resolve(lang, configured)` picks the dictionary for a page: the page's `lang`, else the configured name, comparing tags without regard to case or to `-` against `_`.
+A bare language such as `en` takes the configured dictionary when it is of that language, else the first dictionary of that language by name.
+`Checker::check(word)` is Hunspell's check, and `Checker::suggest(word)` gives at most `MAX_SUGGESTIONS` replacements, found once per word and remembered.
+`SpellError` covers an unreadable file, a dictionary that does not parse, and an unknown name.
+
+`words.rs`::
+Which words in a run of text are worth checking?
+`words(text)` yields byte ranges, split by Unicode word boundaries.
+It skips a word that holds a digit, `_` or `.`, has fewer than two letters, is all capitals, has a capital after its first letter, or touches `OBJECT`.
+`OBJECT` (U+FFFC) is the character a caller puts in the text where something that is not prose was, such as a macro, a reference or inline code.
+It breaks words, and a word touching it is never checked, because it is part of something larger.
+
+`list.rs`::
+Which words are accepted beyond the dictionary?
+`WordList` is a sorted set of words kept in a plain-text file, one word a line, with blank lines and lines starting with `#` ignored.
+`WordList::read` treats a missing file as an empty list, `insert` adds a word, and `write` saves the list.
+`contains` accepts a word listed as written, a word listed in lower case and written capitalised or in capitals, a word listed capitalised and written in capitals, and a possessive ending (an apostrophe and an s) after any of these.
+
+Right single quotation marks are read as apostrophes everywhere, because dictionaries and word lists spell them that way.
+
+Because the crate has no notion of AsciiDoc, the engine decides what is prose.
+Its `src/spelling.rs` reads the text blocks of the visual model, replaces atoms and inline code with `OBJECT`, and checks open pages on a worker.
+
+== How to use it
+
+[source,rust]
+----
+use adoc_spell::{words, Dictionaries, SpellError};
+
+fn misspellings(text: &str) -> Result<Vec<String>, SpellError> {
+    let dictionaries = Dictionaries::new(None);
+    let name = dictionaries
+        .resolve(Some("en-GB"), "en_GB")
+        .ok_or_else(|| SpellError::Unknown("en-GB".to_owned()))?;
+    let checker = dictionaries.load(&name)?;
+    Ok(words(text)
+        .map(|range| &text[range])
+        .filter(|word| !checker.check(word))
+        .map(str::to_owned)
+        .collect())
+}
+----
+
+Pass a folder to `Dictionaries::new` to add dictionaries of your own.
+Offer `checker.suggest(word)` for the words that fail, and consult a `WordList` before reporting one.
+
+.How the engine checks one block of prose
+[mermaid]
+----
+include::example$adoc-spell-flow.mmd[]
+----
+
+== Where it sits
+
+`adoc-spell` is on layer 1.
+It depends on `adoc-core` (for the engine's test probes), `spellbook` and `unicode-segmentation`.
+`adoc-engine` is the only crate that depends on it.
+
+`spellbook` is named only in this crate, and `cargo xtask layers` fails the build if any other crate depends on it.
+The bundled dictionaries are in `crates/adoc-spell/dictionaries/`, and their notices are part of the release notices checked by the xtask tests.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-spell
+----
+
+The tests are unit tests next to the code in `words.rs`, `list.rs` and `dictionaries.rs`, and need no fixtures.
+They use `tempfile` for dictionary folders and the `probe` feature of `adoc-core` to count suggestion lookups.
+The engine's behaviour (which text is prose, how lists are found, when a page is checked) is tested in `adoc-engine`.
+
+== Related
+
+* xref:ROOT:using-the-editor.adoc#spelling[Spelling] describes spelling in the editor.
+* xref:ROOT:settings.adoc[Settings] lists the spelling settings.
+* xref:developer:architecture.adoc[Architecture] lists the crate ladder and the layering rules.
+* xref:developer:building-and-releasing.adoc[Building and releasing] covers the notices for the bundled dictionaries.
+* xref:adoc-engine.adoc[adoc-engine] runs the checks.
+* xref:adoc-model.adoc[adoc-model] supplies the text blocks the engine reads prose from.
+* xref:index.adoc[Crates]

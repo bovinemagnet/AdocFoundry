@@ -1,0 +1,101 @@
+= adoc-render
+Paul Snow
+:revnumber: 0.0.0
+:description: How the adoc-render crate builds the framework-free view tree from the document model and writes it as HTML or text, and how it runs Asciidoctor when asked to.
+
+`adoc-render` turns the document model into a view tree that every renderer draws from, and writes that tree as HTML or plain text.
+It is a layer 2 crate.
+The engine builds view trees for the preview, `adoc-pdf` typesets them, the app draws them natively, `adocfoundry-cli render` writes them as HTML, and `adoc-ls` uses its Asciidoctor renderer for the language server's preview.
+
+== What it does
+
+`view.rs`::
+`build_view(source, dom, resolver)` builds a `ViewTree` from an `adoc_dom::Dom`.
+The tree holds the title, the blocks (`ViewBlock`, with a `ViewKind` and `ViewInline` content), the table of contents, footnotes, the document's attributes and the images that `IMAGE_ATTRIBUTES` name.
+References, images, diagrams, numbering and the table of contents are resolved while the tree is built.
+The tree knows nothing about a UI framework.
+`ViewResolver` is the trait that supplies what needs the workspace: `xref` (a `ResolvedLink`), `image`, `diagram` (a `DiagramView`: `Svg`, `Pending` or `Failed`) and `formula`.
+`LocalResolver` resolves only what needs no workspace, images relative to the page, and leaves diagrams pending.
+`BlockIndex::new(view)` indexes blocks by where their spans start, and `block_at(path, offset)` finds the innermost block at a source offset, which keeps the preview level with the caret.
+`block_by_trail` and `each_block` walk the tree.
+
+`html.rs`::
+`to_html(view, &HtmlOptions)` is the HTML backend.
+`HtmlOptions::standalone` writes a whole page, and `page_urls` maps source paths to published addresses so cross-page xrefs lead to the right place.
+`embed_local_files` turns local `file://` images into `data:` URIs for the app's HTML export, and `escape` and `inlines_html` are the lower-level writers.
+
+`text.rs`::
+`to_text(view)` writes the tree as plain text for tools that read pages rather than display them, such as the `render_page` tool of `adoc-mcp`.
+
+`formula.rs`::
+Inline formulas are typeset to SVG elsewhere and drawn over gaps in the text.
+`FormulaImage` holds an image's path, size and baseline, `with_baseline` records the baseline on the SVG's root element so a formula read back from the diagram cache still knows where it sits, and `formula_image` reads it back.
+`stem_kind` and `inline_stem_attributes` name the diagram kind and attributes a formula is requested with, `stem-latex` or `stem-asciimath`.
+
+`asciidoctor.rs`, `request.rs`, `result.rs`::
+The optional external renderer.
+`Renderer` is a trait over `RenderRequest` (a source file or text, attributes, a `RenderSafeMode`, a stylesheet and a safe-mode base directory), giving a `RenderOutput` (HTML and warnings) or a `RenderError`.
+`SystemAsciidoctor` runs the `asciidoctor` executable and stops it after `ASCIIDOCTOR_TIMEOUT`, and `MockRenderer` serves tests.
+
+The crate re-exports the DOM value types the view shares (`ListKind`, `Align`, `AdmonitionKind` and others), so renderers need not depend on `adoc-dom`.
+
+== How to use it
+
+[source,rust]
+----
+use std::path::Path;
+
+use adoc_dom::{AcdcParser, DocumentParser, ParseInput};
+use adoc_render::{build_view, to_html, HtmlOptions, LocalResolver};
+
+let path = Path::new("page.adoc");
+let text = "= Title\n\nA paragraph with *bold* text.\n";
+
+let dom = AcdcParser.parse(&ParseInput::new(path, text));
+let view = build_view(path, &dom, &LocalResolver);
+let html = to_html(&view, &HtmlOptions { standalone: true, ..HtmlOptions::default() });
+----
+
+For a workspace, pass a resolver that knows the Antora catalog and the diagram cache.
+The engine does this in its preview service, and `render_blocking` renders a page without an event loop.
+A diagram that is not rendered yet is `DiagramView::Pending`, and the preview shows its source until the result arrives.
+
+.From the document model to its renderers
+[mermaid]
+----
+include::example$adoc-render-flow.mmd[]
+----
+
+== Where it sits
+
+`adoc-render` is on layer 2.
+It depends on `adoc-core`, `adoc-dom`, `base64` and `url`, and on `adoc-antora` in its tests only.
+
+`adoc-pdf` is on the same layer and depends on it, the one same-layer pair the ladder allows for this crate (`SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`).
+Crates that depend on `adoc-render` are `adoc-engine`, `adoc-pdf`, `adoc-ls`, `adocfoundry` and `adocfoundry-cli`.
+Tests that spawn a real process take the crate-private `spawn_guard()` mutex, which works around `ETXTBSY`; do not add an unguarded one.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-render
+cargo test -p adocfoundry-cli --test fidelity
+----
+
+`tests/view.rs` builds view trees over the render fixtures in `tests/fixtures/render/`.
+Its tests cover sections, the table of contents and numbering, xref resolution, Antora images, remote images, every block kind in the HTML, `block_at` and `each_block`.
+The fidelity harness, `crates/adocfoundry-cli/tests/fidelity.rs`, compares the HTML with Asciidoctor's over the same corpus and skips itself when Asciidoctor is not installed.
+See xref:developer:testing.adoc#render-tests[Render tests].
+
+== Related
+
+* xref:ROOT:preview.adoc[Preview] and xref:ROOT:preview.adoc#exporting-html[Exporting to HTML] describe what the renderers show.
+* xref:ROOT:command-line.adoc[Command line] documents `render`.
+* xref:developer:engine.adoc#the-preview-service[The preview service] describes how the engine builds the tree.
+* xref:developer:architecture.adoc[Architecture] lists the crate ladder and the layering rules.
+* xref:adoc-dom.adoc[adoc-dom] supplies the document model.
+* xref:adoc-diagrams.adoc[adoc-diagrams] renders the diagrams a view tree names.
+* xref:adoc-pdf.adoc[adoc-pdf] typesets view trees.
+* xref:adoc-engine.adoc[adoc-engine] builds them.
+* xref:index.adoc[Crates]

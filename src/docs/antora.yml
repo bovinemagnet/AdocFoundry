@@ -6,3 +6,4 @@ display_version: '0.10.0'
 nav:
   - modules/ROOT/nav.adoc
   - modules/developer/nav.adoc
+  - modules/crates/nav.adoc

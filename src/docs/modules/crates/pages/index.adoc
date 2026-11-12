@@ -1,0 +1,52 @@
+= Crates
+Paul Snow
+:revnumber: 0.0.0
+:description: One page for each crate in the AdocFoundry workspace, grouped by layer, saying what it does and how to use it.
+
+AdocFoundry is a workspace of 21 crates arranged as a ladder of layers.
+A crate may depend only on crates in the layers below it, apart from the same-layer pairs the layering check allows.
+Each page in this module covers one crate: what it does, how to use it, where it sits, how to test it and where the main documentation says more.
+
+.The crate layers
+[mermaid]
+----
+include::developer:example$crate-layers.mmd[]
+----
+
+See xref:developer:architecture.adoc[Architecture] for the layering rules and how `cargo xtask layers` enforces them.
+
+== L0: domain types
+
+* xref:adoc-core.adoc[adoc-core]: domain types only, with no internal dependencies.
+
+== L1: parsing, resolution and language features
+
+* xref:adoc-parser.adoc[adoc-parser]: the line-oriented semantic parser that runs on every keystroke.
+* xref:adoc-dom.adoc[adoc-dom]: the full AST behind the `DocumentParser` trait.
+* xref:adoc-antora.adoc[adoc-antora]: `antora.yml`, the playbook, the catalog and resource ID resolution.
+* xref:adoc-index.adoc[adoc-index]: the workspace index with replacement-based updates.
+* xref:adoc-lang.adoc[adoc-lang]: editor-agnostic language features on byte offsets.
+* xref:adoc-math.adoc[adoc-math]: STEM notation converted to Typst maths markup.
+* xref:adoc-spell.adoc[adoc-spell]: spell checking with no AsciiDoc knowledge.
+* xref:adoc-graph.adoc[adoc-graph]: general graph code, layout and SVG drawing.
+
+== L2: rendering, editing models and analysis
+
+* xref:adoc-render.adoc[adoc-render]: the view tree and the HTML backend.
+* xref:adoc-diagrams.adoc[adoc-diagrams]: Mermaid, Graphviz, PlantUML and D2 diagrams with a cache.
+* xref:adoc-model.adoc[adoc-model]: the visual editor's model and its editing steps.
+* xref:adoc-git.adoc[adoc-git]: Git state and history over `gix`.
+* xref:adoc-pdf.adoc[adoc-pdf]: PDF export through Typst with asciidoctor-pdf themes.
+* xref:adoc-audit.adoc[adoc-audit]: the documentation quality audit's model.
+* xref:adoc-impact.adoc[adoc-impact]: the documentation impact analysis's model.
+
+== L3: the engine
+
+* xref:adoc-engine.adoc[adoc-engine]: the only entry point front ends use.
+
+== L4: front ends
+
+* xref:adocfoundry.adoc[adocfoundry]: the desktop application.
+* xref:adocfoundry-cli.adoc[adocfoundry-cli]: the headless command line.
+* xref:adoc-ls.adoc[adoc-ls]: the language server.
+* xref:adoc-mcp.adoc[adoc-mcp]: the MCP server.

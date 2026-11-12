@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant Caller as Caller (engine)
+    participant D as Diagrams
+    participant C as DiagramCache
+    participant P as DiagramProvider
+
+    Caller->>D: render(request)
+    D->>D: checksum(request)
+    D->>C: get(checksum)
+    alt cached
+        C-->>D: path of the SVG
+    else not cached
+        D->>P: render(request)
+        P-->>D: SVG text, or DiagramError
+        D->>C: put(checksum, svg)
+        C-->>D: path of the SVG
+    end
+    D-->>Caller: path of the SVG

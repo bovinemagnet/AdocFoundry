@@ -1,0 +1,116 @@
+= adoc-lang
+Paul Snow
+:revnumber: 0.0.0
+:description: The editor-agnostic language features for AsciiDoc and Antora: definition, hover, completion, diagnostics, symbols, references and anchor renames.
+
+`adoc-lang` is a layer L1 crate.
+It answers the questions an editor asks about a page, working on byte offsets and a `WorkspaceState`, with no knowledge of the Language Server Protocol, URLs or any UI framework.
+xref:adoc-engine.adoc[adoc-engine] and xref:adoc-ls.adoc[adoc-ls] both call it, and neither re-implements it.
+It began as the handlers and the non-protocol parts of the state of the language server.
+
+== What it does
+
+`WorkspaceState` holds the `WorkspaceIndex` from xref:adoc-index.adoc[adoc-index], the `AntoraCatalog` from xref:adoc-antora.adoc[adoc-antora], the descriptor errors found while discovering components, and the problems inside each readable `antora.yml`.
+Its `index_roots` and `index_roots_with` index the files and discover the components together, `replace_document` and `remove_document` follow edits, and `reload_descriptor` re-reads one `antora.yml`.
+
+.The features over one workspace state
+[mermaid]
+----
+include::example$adoc-lang-features.mmd[]
+----
+
+Every feature takes the state, a path and either the page text with a byte offset or an already parsed `Document`.
+Where the indexed parse has the same text, it is reused, so a feature does not parse a page it already has.
+
+* Definition: `definition_at_offset` and `definition_in` give a `DefinitionTarget` for the xref, include, image, attachment or attribute reference at the offset, either a `Location` to open in the editor or an `External` file to open with the system.
+  `reference_target_path`, `resolve_reference` and `resolve_include` in `definition` resolve a target, through the catalog in an Antora component and by relative path elsewhere.
+* Hover: `hover_at_offset` returns a `Hover` of Markdown and the range it describes.
+  Targets are resolved exactly as definition resolves them, so a hover never describes a different target.
+* Completion: `completion_at_offset` returns `CompletionItem` values for xref and include targets, resource id families, directories, anchors and attribute names, using `completion_context` from xref:adoc-parser.adoc[adoc-parser] to read the half-typed macro.
+* Diagnostics: `diagnostics` gives a file's diagnostics, including problems with an `antora.yml` and with the playbook's start page.
+  `workspace_diagnostics` does this for every file.
+  `diagnosed_with` gives the files an edit to a path can change the diagnostics of, so a front end re-diagnoses those and not every file.
+* Symbols: `document_symbols` nests sections under the title, `nav_symbols` does the same for a navigation file, and `workspace_symbols` searches the index.
+* References and renames: `references_to` finds every xref that resolves to a file, `references::references_at` the references to the anchor or page at an offset, and `rename_anchor` returns the edits that rename an anchor and every reference to it.
+  Candidates come from the index's reverse maps, and resolving each decides which reach the target, so no request visits every document.
+* Attributes: `attributes::attribute_definitions` gives the definitions a page can reference without declaring them, including Antora's.
+  `effective::effective_attribute` gives an attribute's value at a place and every step that set it, following Antora's order of playbook, component version and page, with `@` marking a soft set value.
+* Links: `graph::links_from` resolves each xref and include of a file to the file it reaches, or keeps the target unresolved.
+  The link graph in xref:adoc-graph.adoc[adoc-graph] is built from these.
+  `graph::missing_page` and `graph::missing_include` say which file a ghost node's links expect.
+* Includes: `includes::composed_files` gives every file composed into a page, so an anchor in an included partial is a valid target, and `include_map` gives what the page's includes resolve to.
+* Xrefs: `xref_to` writes the xref one page needs to reach another, naming the shortest resource id that resolves from where it is written.
+* Render source: `render_source::source_for_render` rewrites Antora family includes so a stock Asciidoctor can resolve them, copying only the files that need rewriting into a scratch folder.
+
+Design rules the crate keeps:
+
+* Byte offsets everywhere.
+  Conversion to lines and columns happens at the edge.
+* Editor-agnostic.
+  `cargo xtask layers` fails the build if `adoc-lang` depends on `url` or its sources mention `lsp_types`, `lsp_server` or `url::`.
+* Conservative diagnostics: prefer no diagnostic to a false positive, warnings to errors for unresolved references, and none at all for dynamic constructs.
+* Half-typed input is normal, so nothing here may panic on it.
+
+== How to use it
+
+This example, run from the repository root, indexes the references fixture and asks the questions an editor would.
+
+[source,rust]
+----
+use adoc_lang::WorkspaceState;
+use std::path::PathBuf;
+
+let root = PathBuf::from("tests/fixtures/references");
+let mut ws = WorkspaceState::new();
+ws.index_roots(&[root.clone()]).unwrap();
+
+let index = root.join("index.adoc");
+let text = std::fs::read_to_string(&index).unwrap();
+
+// Go to definition on the `other.adoc` of an xref.
+let offset = text.find("other.adoc").unwrap();
+let target = adoc_lang::definition_at_offset(&ws, &index, &text, offset);
+assert!(target.is_some());
+
+// Every xref in the workspace that reaches other.adoc.
+let references = adoc_lang::references_to(&ws, &root.join("other.adoc"));
+assert!(!references.is_empty());
+
+// The diagnostics of the page.
+for diagnostic in adoc_lang::diagnostics(&ws, &index) {
+    println!("{}", diagnostic.message);
+}
+----
+
+Front ends do not build a `WorkspaceState` themselves.
+The engine keeps one, and the commands and queries of xref:adoc-engine.adoc[adoc-engine] call these functions with the page's open buffer.
+
+== Where it sits
+
+`adoc-lang` depends on xref:adoc-core.adoc[adoc-core], xref:adoc-parser.adoc[adoc-parser], xref:adoc-index.adoc[adoc-index] and xref:adoc-antora.adoc[adoc-antora].
+Its dependencies on `adoc-parser`, `adoc-index` and `adoc-antora` are same-layer pairs listed in `SAME_LAYER_ALLOWED` in `xtask/src/layers.rs`.
+`adoc-engine` and `adoc-ls` depend on it, and so do `adoc-audit` and `adoc-impact`, which are reached by front ends only through `adoc-engine` (the `ENGINE_ONLY` rule).
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-lang
+cargo test -p adoc-lang xref_to_version_on_other_branch_warns
+----
+
+The tests are unit tests beside each feature, over the fixtures under `tests/fixtures/`, among them `references`, `xrefs`, `attributes`, `images`, `antora-single-component`, `antora-multi-component`, `antora-nested-pages`, `antora-versions`, `effective-attributes` and `graph`.
+`crates/adoc-ls/tests/parity.rs` runs the command-line checker and the language server over the fixtures and asserts that they report the same diagnostics, which is what keeps the one implementation honest.
+
+== Related
+
+* xref:ROOT:language-server.adoc[Language server], for how the features reach an editor
+* xref:ROOT:diagnostics.adoc[Diagnostics], for the codes and severities
+* xref:ROOT:antora-support.adoc[Antora support]
+* xref:developer:architecture.adoc[Architecture]
+* xref:developer:testing.adoc#_language_server_tests[Language server tests]
+* xref:adoc-index.adoc[adoc-index]
+* xref:adoc-antora.adoc[adoc-antora]
+* xref:adoc-ls.adoc[adoc-ls]
+* xref:adoc-engine.adoc[adoc-engine]
+* xref:index.adoc[Crates]

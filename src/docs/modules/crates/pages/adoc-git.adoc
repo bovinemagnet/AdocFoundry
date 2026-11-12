@@ -1,0 +1,117 @@
+= adoc-git
+Paul Snow
+:revnumber: 0.0.0
+:description: Git for AdocFoundry over gix: repository discovery, status, line diffs, blame, revisions read from objects, staging and committing, with no git executable.
+
+`adoc-git` reads and writes Git state for a workspace root.
+It is at layer L2 and depends only on `adoc-core` and `gix`.
+Only `adoc-engine` calls it, behind the engine's `git` feature, from worker threads.
+`adoc-mcp`, `adocfoundry` and `adocfoundry-cli` also name it, for its types and for `testing::TestRepo` in their tests.
+
+== What it does
+
+The crate finds the repository that holds a folder and answers questions about it.
+Everything goes through `gix`, in process, with no network transports.
+It never runs the `git` executable.
+The one place AdocFoundry runs `git` is `git.push` (and a commit when `commit.gpgsign` is set), which lives in the engine.
+
+[cols="1,3"]
+|===
+|Module |Responsibility
+
+|`repository.rs`
+|`Repository`: discovery, `head`, `branches`, `status`, the text of a file in `HEAD` (`head_content`, `head_text`), `line_diff`, `file_at` a branch, `stage`, `unstage`, `commit`, `identity`, `remote_url`, `is_pushed` and `unpushed`.
+
+|`diff.rs`
+|`line_hunks`: the `Hunk` values (kind, 0-based lines, byte range, and the lines of `HEAD` they replace) between two texts.
+
+|`blame.rs`
+|`BlameLine`, and `blame_through`, which carries the blame of `HEAD` through the hunks of an edited buffer.
+
+|`revision.rs`
+|Revisions read from objects alone: `resolve_revision` gives a `Revision` (the spec, commit id and tree id), `tree_files` lists a tree, `text_at` reads a file, and `tree_changes` compares two trees as `TreeChange` values, with renames.
+
+|`history.rs`
+|`last_changed`: when each of a set of files last changed, in one first-parent walk of `HEAD` that follows unchanged moves and reads at most `HISTORY_LIMIT` commits.
+
+|`remote.rs`
+|`remote_link_for_line`: the web address of a line on a hosting service, by `HostKind`.
+
+|`testing.rs`
+|`TestRepo`, behind the `test-support` feature: temporary repositories built with `gix`.
+|===
+
+Two rules shape the code.
+`stage` goes through gix's to-Git filter pipeline with its drivers removed, and refuses a file under a named `filter` with `GitError::FilterNotRun`, so it never runs a configured command.
+Tests never run against a developer's checkout: they build a `TestRepo` in a temporary folder.
+
+.What a Repository answers
+[mermaid]
+----
+include::example$adoc-git-api.mmd[]
+----
+
+== How to use it
+
+Discover the repository from any path inside it, then ask it questions.
+`discover` returns `Ok(None)` when the folder is not in a repository.
+
+[source,rust]
+----
+use std::path::Path;
+
+use adoc_git::Repository;
+
+fn changed_lines(folder: &Path, page: &Path, buffer: &str) {
+    let Some(repository) = Repository::discover(folder).expect("readable") else {
+        return;
+    };
+    println!("on {}", repository.head().expect("head"));
+    for status in repository.status().expect("status") {
+        println!("{}: {:?} {:?}", status.path.display(), status.index, status.worktree);
+    }
+    // The line changes of an unsaved buffer against HEAD.
+    for hunk in repository.line_diff(page, Some(buffer)).expect("diff") {
+        println!("{:?} lines {:?}", hunk.kind, hunk.lines);
+    }
+}
+----
+
+To compare two revisions without touching the working tree, resolve each and ask for the tree changes.
+
+[source,rust]
+----
+let base = repository.resolve_revision("main")?;
+let head = repository.resolve_revision("HEAD")?;
+let changes = repository.tree_changes(&base, &head)?;
+let text = repository.text_at(&head, Path::new("docs/modules/ROOT/pages/index.adoc"))?;
+----
+
+`adoc-impact` reads revisions this way, through the engine, for `adocfoundry-cli impact --base <ref> --head <ref>`.
+
+== Where it sits
+
+`adoc-git` is a leaf of the ladder with one internal dependency, `adoc-core` (for `SourceRange`).
+No UI, LSP or engine type appears in it.
+`adoc-engine` owns the repositories of the workspace's roots in `Engine::git()`, runs discovery, status and diffs on workers, and watches `.git/HEAD`, `index`, `packed-refs` and `refs/`.
+Without the engine's `git` feature the engine behaves as with `[git] enabled = false`, and `cargo xtask layers` checks that a lean build compiles neither `adoc-git` nor `gix` (`LEAN_EXCLUDED`).
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-git --features test-support
+----
+
+The integration tests are `tests/repository.rs` (discovery, status, diffs, branches, revisions), `tests/reading.rs` and `tests/git_add.rs`, which compares `stage` with the `git` executable.
+They build their repositories with `TestRepo`.
+
+== Related
+
+* xref:developer:engine.adoc#git[The engine: Git], for state, hunks, staging, committing and pushing
+* xref:developer:architecture.adoc[Architecture], for the crate ladder
+* xref:ROOT:command-line.adoc#_git_status[Command line: git-status]
+* xref:adoc-core.adoc[adoc-core]
+* xref:adoc-impact.adoc[adoc-impact], which compares revisions read through this crate
+* xref:adoc-engine.adoc[adoc-engine], which owns the repositories
+* xref:index.adoc[Crates]
