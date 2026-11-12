@@ -426,6 +426,40 @@ fn inline_images_keep_alt_and_antora_targets() {
     );
 }
 
+/// A macro written as passthrough text (`+image:ROOT:x.svg[]+`), as a page documenting the
+/// syntax does, is text, not an image to find.
+#[test]
+fn an_inline_image_in_passthrough_text_stays_text() {
+    let text =
+        "Inline (`+image:ROOT:x.svg[]+`) and +image:a$b.png[]+ and image:ROOT:real.svg[Real].\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let BlockKind::Paragraph { inlines } = &dom.blocks[0].kind else {
+        panic!("{:?}", dom.blocks[0].kind);
+    };
+    let images: Vec<&str> = inlines
+        .iter()
+        .filter_map(|inline| match inline {
+            Inline::Image { target, .. } => Some(target.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images, ["ROOT:real.svg"]);
+    assert_eq!(
+        Inline::plain_text(inlines),
+        "Inline (image:ROOT:x.svg[]) and image:a$b.png[] and Real."
+    );
+}
+
+/// The same in a table cell, where this repository's implementation notes write it.
+#[test]
+fn an_inline_image_in_passthrough_text_in_a_cell_stays_text() {
+    let text = "[cols=\"1,1\"]\n|===\n|acdc image targets\n|block (`+image::ROOT:image$x.svg[]+`) and inline (`+image:ROOT:x.svg[]+`) images\n|===\n";
+    let dom = AcdcParser.parse(&ParseInput::new(Path::new("/page.adoc"), text));
+    let debug = format!("{:?}", dom.blocks);
+    assert!(!debug.contains("Image {"), "{debug}");
+    assert!(debug.contains("image:ROOT:x.svg[]"), "{debug}");
+}
+
 #[test]
 fn replacements_apply_outside_verbatim_content() {
     let text = "Copyright (C) -- it's done...\n\n[source]\n----\na -> b ... (C)\n----\n\n[literal]\nx -> y\n\nkeep \\(C) and +(R)+\n";
