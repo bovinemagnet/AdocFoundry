@@ -30,6 +30,9 @@ Nothing inside a `$$...$$` passthrough is a reference.
 The anchor is a line above the section, past block attribute lines, block titles, comments and attribute entries, or a `+[[id]]+` ending its title line.
 Two-line (underlined) titles are read as titles.
 A page saved with a byte order mark is read after it.
+* A constrained code span whose closing backtick is followed by an apostrophe or a letter or digit is reported as `adoc.broken-code-span`.
+The message gives the unconstrained form to write instead.
+It is left alone inside listing, literal, passthrough and comment blocks, in comments, in inline passthroughs (the plus form and `+pass:[...]+`), for unconstrained spans, escaped backticks, curved quotes and a curved apostrophe, in attribute entries, block attribute lines and indented literal lines, and on a line with a STEM macro.
 
 Codes are stable strings, so you can filter on them in scripts.
 
@@ -59,6 +62,12 @@ A page named without its extension before a `#`, as in `+xref:other#details[]+`,
 |`adoc.duplicate-anchor`
 |Warning
 |The same anchor id is defined more than once in a document.
+
+|`adoc.broken-code-span`
+|Warning
+|The closing backtick of a code span is followed by an apostrophe or a letter or digit, as in `+`adoc-render`'s+` or `+`EngineEvent`s+`.
+Asciidoctor reads the apostrophe as a curved one and cannot close a constrained span before a letter, so the rest of the line is formatted wrongly in the preview, the PDF and the published site.
+Write the unconstrained form, `+``adoc-render``'s+` or `+``EngineEvent``s+`, or reword the sentence.
 
 |`adoc.antora.unknown-module`
 |Warning

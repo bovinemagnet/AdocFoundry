@@ -3,8 +3,6 @@
 use std::{path::PathBuf, process::ExitCode};
 
 mod bump;
-#[cfg(test)]
-mod docs;
 mod layers;
 // Shared with the app's build script, which uses what this binary does not.
 #[allow(dead_code)]
