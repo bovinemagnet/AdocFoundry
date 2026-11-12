@@ -1,0 +1,21 @@
+flowchart LR
+    source["Formula source<br/>and its Notation"]
+    asciimath["asciimath::convert<br/>(asciimath-parser)"]
+    latex["latex::convert<br/>(mitex)"]
+    safe["is_safe<br/>no code, only maths names"]
+    arity["Argument count check<br/>against Typst's maths scope"]
+    typst["TypstMath"]
+    error["MathError<br/>formula shown as its source"]
+    pdf["adoc-pdf<br/>eval with the HELPERS in scope"]
+    stem["adoc-engine StemProvider<br/>formula images"]
+
+    source -->|AsciiMath| asciimath
+    source -->|Latex| latex
+    asciimath --> safe
+    latex --> safe
+    safe -->|accepted| arity
+    safe -->|refused| error
+    arity -->|fits| typst
+    arity -->|wrong count| error
+    typst --> pdf
+    typst --> stem

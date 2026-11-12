@@ -1,0 +1,12 @@
+flowchart LR
+    changes["Change list<br/>added, modified, removed, renamed"] --> analyse["analyse"]
+    base["Base DependencySnapshot<br/>(absent for explicit paths)"] --> analyse
+    head["Head DependencySnapshot"] --> analyse
+    pubs["Publications"] --> analyse
+    limits["Limits<br/>depth, impacts"] --> analyse
+    analyse --> report["ImpactReport"]
+    report --> render["Render impacts<br/>through includes"]
+    report --> integrity["ReferenceIntegrity reviews<br/>removed or moved targets and anchors"]
+    report --> nav["Navigation impacts<br/>per component version"]
+    report --> publication["Publication impacts"]
+    report --> gaps["Gaps<br/>what was not analysed"]

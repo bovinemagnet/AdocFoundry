@@ -795,4 +795,28 @@ libc = "=0.2.0"
         }
         assert_eq!(missing, Vec::<String>::new());
     }
+
+    /// Issue #589: the documentation's `crates` module has a page for every crate in
+    /// `LAYERS`, named after it and listed in the module's navigation, and the component
+    /// lists that navigation.
+    #[test]
+    fn every_crate_has_a_page() {
+        let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/docs");
+        let mut missing = Vec::new();
+        let component = fs::read_to_string(docs.join("antora.yml")).unwrap();
+        if !component.contains("modules/crates/nav.adoc") {
+            missing.push("antora.yml does not list modules/crates/nav.adoc".to_owned());
+        }
+        let nav = fs::read_to_string(docs.join("modules/crates/nav.adoc")).unwrap_or_default();
+        for (name, _) in LAYERS {
+            let page = format!("{name}.adoc");
+            if !docs.join("modules/crates/pages").join(&page).is_file() {
+                missing.push(format!("no page crates/pages/{page}"));
+            }
+            if !nav.contains(&format!("xref:crates:{page}[")) {
+                missing.push(format!("crates/nav.adoc does not list {page}"));
+            }
+        }
+        assert_eq!(missing, Vec::<String>::new());
+    }
 }

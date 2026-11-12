@@ -1,0 +1,19 @@
+flowchart LR
+    dom["Dom<br/>from adoc-dom"]
+    resolver["ViewResolver<br/>xrefs, images, diagrams, formulas"]
+    build["build_view"]
+    tree["ViewTree"]
+    html["to_html<br/>HtmlOptions"]
+    text["to_text"]
+    index["BlockIndex<br/>block_at for scroll sync"]
+    pdf["adoc-pdf<br/>emitter"]
+    app["Preview in the app"]
+
+    dom --> build
+    resolver --> build
+    build --> tree
+    tree --> html
+    tree --> text
+    tree --> index
+    tree --> pdf
+    tree --> app

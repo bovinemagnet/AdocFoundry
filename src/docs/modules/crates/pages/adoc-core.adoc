@@ -1,0 +1,91 @@
+= adoc-core
+Paul Snow
+:revnumber: 0.0.0
+:description: The domain types and shared helpers that every other AdocFoundry crate builds on.
+
+`adoc-core` is layer L0, the bottom of the crate ladder.
+It holds the plain data types that describe a parsed page and the few helpers that every layer needs.
+Every other crate depends on it, and it depends on nothing.
+
+== What it does
+
+The crate defines what a parse of an AsciiDoc page looks like, without saying how it was made.
+
+.The types of a parsed page
+[mermaid]
+----
+include::example$adoc-core-types.mmd[]
+----
+
+* `Document` is one parsed page: its `uri`, its text (an `Arc<str>` shared by every copy), the title, `sections`, `attributes`, `anchors`, `references`, `includes`, `images` and `diagnostics`.
+* `SourceRange` is a pair of byte offsets, and `Location` is a range in a file.
+  `LineIndex` converts offsets to lines and columns: `line_column` counts the column in bytes, `line_character` counts it in characters (as editors and CI annotations do), and `offset` goes back from a line and column.
+* `Section`, `Anchor`, `Reference` (with its `ReferenceKind`, of which the parser makes `Xref` and `LocalAnchor`), `IncludeDirective` and `ImageDirective` are the things a parse finds.
+  An `IncludeDirective` records whether it sits in a conditional block (`conditional`) and whether it may supply the document header (`before_body`).
+* `Diagnostic` carries a `DiagnosticCode`, a `DiagnosticSeverity`, a message, a range and `Related` places.
+  Diagnostic codes are stable strings such as `adoc.unresolved-xref-file` and `adoc.antora.unknown-module`; `DiagnosticCode::as_str` gives the string and `DiagnosticCode::from_name` reads it back.
+* Section ids come from `IdStyle` (`Antora` or `Asciidoctor`), `canonical_id`, `alphanumeric_id`, `section_ids` and `section_ids_with_conditionals`.
+* `xref_file` gives the page file an xref target names, as Asciidoctor 2.0 and Antora 3.2 read it.
+* `normalize_path` tidies a path lexically, never touching the file system.
+* `DEFAULT_IGNORED_DIRECTORIES`, `BUILD_OUTPUT_DIRECTORIES` and `is_ignored_beneath` are the one rule for folders that the index, Antora discovery and the file watcher skip.
+* `FileAccess` says which files a front end may read: `Any`, or `Within` a list of roots, checked lexically and again with links followed.
+  The MCP server uses it to confine a model to its workspace.
+* The `probe` module counts costly operations (`Probe::Parse`, `Probe::HashText`, and others) so a test can assert how often one runs.
+  The counters do nothing unless the `probe` feature is on, which only dev-dependencies turn on.
+
+Design rules the crate keeps:
+
+* Byte offsets everywhere.
+  Conversion to lines and columns happens at the edge, with `LineIndex`.
+* No dependencies, and no editor, LSP or UI types.
+* Diagnostic codes are stable: a code is never renamed.
+  Adding one means adding it to `DiagnosticCode::ALL`, which a test keeps in step with the enum.
+* `normalize_path` is lexical and never canonicalises, so unsaved files and paths that do not exist yet work.
+
+== How to use it
+
+Other crates take the types as they are.
+This example finds where a cross reference sits and works out the section id a build would give a title.
+
+[source,rust]
+----
+use adoc_core::{normalize_path, xref_file, IdStyle, LineIndex};
+use std::path::Path;
+
+let text = "= Page\n\nSee xref:other.adoc[].\n";
+let index = LineIndex::new(text);
+let at = text.find("xref").unwrap();
+assert_eq!(index.line_column(at), (2, 4)); // 0-based line, column in bytes
+
+assert_eq!(IdStyle::Antora.generate("Resource IDs").as_deref(), Some("resource-ids"));
+assert_eq!(IdStyle::Asciidoctor.generate("Resource IDs").as_deref(), Some("_resource_ids"));
+
+assert_eq!(xref_file("other#details"), "other.adoc");
+assert_eq!(normalize_path(Path::new("/docs/a/../b/c.adoc")), Path::new("/docs/b/c.adoc"));
+----
+
+`IdStyle::generate` gives `None` when only rendering could tell the id, for example a title holding an attribute reference.
+
+== Where it sits
+
+`adoc-core` is the only L0 crate.
+`cargo xtask layers` fails the build if it gains any dependency.
+Everything above it, from xref:adoc-parser.adoc[adoc-parser] to the front ends, depends on it.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-core
+----
+
+The tests are unit tests beside the code: `LineIndex` offsets and columns, section id generation, `xref_file`, path normalisation, the ignore rule and `FileAccess`.
+Because other crates' tests turn on the `probe` feature, a test elsewhere can assert that a keystroke parses a page once.
+
+== Related
+
+* xref:developer:architecture.adoc[Architecture], for the crate ladder and the layering rules
+* xref:developer:testing.adoc[Testing]
+* xref:adoc-parser.adoc[adoc-parser], which makes a `Document`
+* xref:adoc-index.adoc[adoc-index], which indexes many of them
+* xref:index.adoc[Crates]

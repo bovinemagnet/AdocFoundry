@@ -1,0 +1,10 @@
+flowchart LR
+    repo["Repository::discover(path)"] --> head["head, branches"]
+    repo --> status["status<br/>(FileStatus per file)"]
+    repo --> diff["head_text, line_diff<br/>(Hunk per changed run)"]
+    repo --> blame["blame, head_blame<br/>(BlameLine per line)"]
+    repo --> rev["resolve_revision, tree_files,<br/>text_at, tree_changes"]
+    repo --> hist["last_changed<br/>(first-parent walk of HEAD)"]
+    repo --> write["stage, unstage, commit"]
+    repo --> remote["remote_url, is_pushed, unpushed"]
+    remote --> link["remote_link_for_line<br/>(HostKind)"]

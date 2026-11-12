@@ -1,0 +1,96 @@
+= adoc-parser
+Paul Snow
+:revnumber: 0.0.0
+:description: The fast, line-oriented semantic parser that reads titles, sections, anchors and links from half-typed AsciiDoc.
+
+`adoc-parser` is a layer L1 crate.
+It turns the text of a page into an `adoc_core::Document` quickly enough to run on every keystroke.
+The index, the language features and the engine use it, and it depends only on xref:adoc-core.adoc[adoc-core].
+
+== What it does
+
+The parser is line-oriented and deliberately not a full syntax tree, and not tree-sitter.
+It extracts what editor features and diagnostics need and nothing more:
+
+* the document title and the sections, with explicit ids and their ranges
+* attribute entries, including values that continue over several lines
+* anchors (`+[[id]]+` and `[#id]`)
+* cross references (`xref:` and `+<<...>>+`), which become `ReferenceKind::Xref`, and references to an anchor in the same page, which become `ReferenceKind::LocalAnchor`
+* `include::` directives and block and inline images, with their attributes
+* a duplicate anchor diagnostic, with the first declaration as a related place
+
+.What the parser reads
+[mermaid]
+----
+include::example$adoc-parser-flow.mmd[]
+----
+
+It reads half-typed input without panicking.
+Inside listing, literal, passthrough and comment blocks it reads only include directives (none in comment blocks), because a block closes on a line matching its own delimiter.
+It tracks `ifdef`, `ifndef` and `ifeval` blocks, so an anchor or include that a build may not see is marked `conditional`.
+A leading byte order mark is skipped, and ranges still count it.
+
+`completion_context` is the other entry point.
+Given text and a cursor offset, it says what the cursor sits inside (`CompletionKind::XrefTarget`, `XrefAnchor`, `IncludeTarget`, `ImageTarget`, `LocalAnchor` or `AttributeName`), the prefix typed so far and the range an accepted completion replaces.
+It does not reuse a parse, because a parse records only complete macros and completion happens while one is half-typed.
+
+Design rules the crate keeps:
+
+* It is fast and never panics.
+  A fuzz target, `parse_source`, checks that every range it returns lies on character boundaries within the text.
+* It does not evaluate attributes, expand includes, resolve Antora coordinates or render.
+  Those belong to xref:adoc-lang.adoc[adoc-lang], xref:adoc-antora.adoc[adoc-antora] and xref:adoc-dom.adoc[adoc-dom].
+
+== How to use it
+
+[source,rust]
+----
+use adoc_parser::{completion_context, parse};
+
+let text = "= Guide\n\n[[setup]]\n== Setup\n\nSee xref:other.adoc[] and <<setup>>.\n";
+let document = parse("file:///guide.adoc", text).document;
+
+assert_eq!(document.title.as_ref().unwrap().text, "Guide");
+assert_eq!(document.sections[0].title, "Setup");
+assert_eq!(document.anchors[0].id, "setup");
+assert_eq!(document.references[0].target, "other.adoc");
+
+// The cursor is inside an xref that is not finished yet.
+let half = "See xref:oth";
+let context = completion_context(half, half.len()).unwrap();
+assert_eq!(context.prefix, "oth");
+----
+
+`parse(uri, text)` returns a `ParseResult` whose `document` is the parse and whose `diagnostics()` are the document's.
+`AsciiDocParser` implements this crate's `DocumentParser` trait, which takes a URI and text.
+That trait is a different one from `adoc_dom::DocumentParser`, which takes a path and returns a full tree.
+
+Each call to `parse` counts a `Probe::Parse`, which tests use to assert that a keystroke parses a page once.
+
+== Where it sits
+
+`adoc-parser` depends on `adoc-core` only.
+`adoc-index` and `adoc-lang` call it, and so does `adoc-engine`.
+Two same-layer exceptions in `xtask/src/layers.rs` let `adoc-index` and `adoc-lang` depend on it.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-parser
+----
+
+The tests are unit tests beside the code, in `src/parser.rs` and `src/completion.rs`.
+`cargo bench -p adoc-engine` times `adoc_parser::parse` as `parse_whole`, at 1,000 to 100,000 lines.
+The fuzz target is `fuzz/fuzz_targets/parse_source.rs`.
+Every panic fixed gets a regression test, because incomplete AsciiDoc is normal input.
+
+== Related
+
+* xref:developer:architecture.adoc[Architecture]
+* xref:developer:testing.adoc#fuzzing[Fuzzing] and xref:developer:testing.adoc#_benchmarks[Benchmarks]
+* xref:ROOT:diagnostics.adoc[Diagnostics], for the codes the parser and the layers above it raise
+* xref:adoc-core.adoc[adoc-core], for `Document` and the types it holds
+* xref:adoc-index.adoc[adoc-index], which indexes parses
+* xref:adoc-dom.adoc[adoc-dom], for the full tree
+* xref:index.adoc[Crates]

@@ -1,0 +1,20 @@
+flowchart LR
+    page["Page text"]
+    dom["Dom<br/>from adoc-dom"]
+    build["Model::build<br/>scanned and checked against the Dom"]
+    model["Model<br/>typed nodes, pieces, atoms"]
+    apply["Model::apply(Step)"]
+    result["StepResult<br/>edits, selection, optional model"]
+    edits["SourceEdit list<br/>smallest edits"]
+    engine["adoc-engine<br/>applies edits as one undo step"]
+    rebuild["Rebuild from new text<br/>when result.model is None"]
+
+    page --> build
+    dom --> build
+    build --> model
+    model --> apply
+    apply --> result
+    result --> edits
+    edits --> engine
+    engine --> rebuild
+    rebuild --> model

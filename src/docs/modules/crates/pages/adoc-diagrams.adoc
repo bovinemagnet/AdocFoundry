@@ -1,0 +1,107 @@
+= adoc-diagrams
+Paul Snow
+:revnumber: 0.0.0
+:description: How the adoc-diagrams crate renders Mermaid in process and Graphviz, PlantUML and D2 through optional tools, and caches the SVG on disk by checksum.
+
+`adoc-diagrams` renders diagram blocks to SVG for the preview.
+Mermaid is rendered in process, Graphviz, PlantUML and D2 through tools found on the `PATH`, and every result is cached on disk by a checksum of what affects it.
+It is a layer 2 crate, and `adoc-engine` is its only user.
+
+== What it does
+
+`DiagramRequest` is one diagram block: its `kind` (`mermaid`, `graphviz`, `plantuml` and so on), its `source`, the block's attributes and the `directory` of the page.
+`DiagramRequest::checksum` is a SHA-256 of the kind, the source and the attributes that change the image.
+Attributes that only place or label it, such as `align`, `width` and `title`, are left out.
+A `RENDER_REVISION` constant is part of the hash and changes whenever rendering changes for the same input, so cached images are rendered again.
+
+`DiagramProvider` is the trait a renderer implements: the `kinds` it handles, `render` to SVG text, and optional `identity`, `look_again` and `inputs`.
+`identity` is what else decides the image, such as which program draws it, and joins the cache key.
+`inputs` lists the local files a diagram names (a PlantUML `!include`, a Graphviz image, a D2 import), so a change to one shows the diagram again.
+`reads.rs` finds them conservatively: a name with a variable, a URL or a path outside the page's folder is left out.
+
+The providers:
+
+* `MermaidProvider` renders in process through `merman` as SVG whose labels are text rather than HTML, so native renderers draw it completely.
+A render still going after its timeout stops.
+* `ExternalProvider` runs a program with the source on standard input and reads SVG from standard output.
+`ExternalProvider::for_tools(&ToolPaths)` makes Graphviz (`dot -Tsvg`, kinds `graphviz` and `dot`), PlantUML (`-tsvg -pipe`, kinds `plantuml` and `uml`) and D2 (kind `d2`).
+A program that is not found fails with `DiagramError::ToolMissing`, and one that runs too long is stopped (`TimedOut`) with its whole process group.
+Output beyond `MAX_OUTPUT` is refused.
+`ToolPaths` holds the programs and the timeout, from the engine's `[tools]` settings.
+
+`Diagrams` joins the providers and a `DiagramCache`.
+`render(request)` returns the path of the SVG, rendering and caching it when it is not cached.
+`cached` looks without rendering, `supports(kind)` asks whether a provider handles a kind, `in_use` lists the checksums shown since it was made (which pruning keeps), and `look_for_tools_again` makes every provider look for its tools again.
+`with_provider` adds a provider for kinds a layer above renders; the engine adds `StemProvider` for formulas this way.
+
+`DiagramCache` keeps `<workspace>/.cache/adocfoundry/diagrams` (`DiagramCache::for_workspace`) or any folder (`DiagramCache::new`).
+Images are named by their checksum, so an image in the cache is never out of date.
+The cache folder usually lies inside a workspace that someone else's repository may have filled, so nothing is read, written or removed through a link, and only regular files named as the cache names them are touched.
+`prune(unused_for, keep)` removes images not used for a while, and `usage` reports the entries and bytes.
+
+Design rules the crate keeps:
+
+* Every diagram renders on the user's machine.
+Nothing is sent to an online service.
+* External tools are optional and discovered, never assumed.
+* No render blocks the caller.
+The engine runs renders on workers.
+
+== How to use it
+
+[source,rust]
+----
+use std::path::Path;
+
+use adoc_diagrams::{DiagramCache, DiagramError, DiagramRequest, Diagrams};
+
+fn draw() -> Result<(), DiagramError> {
+    let cache = DiagramCache::for_workspace(Path::new("/work/docs"));
+    let diagrams = Diagrams::in_process(cache);
+
+    let request = DiagramRequest::new("mermaid", "flowchart LR\n  a --> b");
+    let svg = diagrams.render(&request)?;
+    println!("{}", svg.display());
+    Ok(())
+}
+----
+
+`Diagrams::in_process` never runs an external tool.
+`Diagrams::new` and `Diagrams::with_tools` add Graphviz, PlantUML and D2.
+The engine chooses between them by file access: a workspace that may only read inside its roots gets the in-process renderer alone.
+
+.How a diagram is rendered and cached
+[mermaid]
+----
+include::example$adoc-diagrams-render.mmd[]
+----
+
+== Where it sits
+
+`adoc-diagrams` is on layer 2.
+It depends on `merman` and `sha2`, and on `rustix` on Unix to stop a tool's whole process group.
+It depends on no workspace crate, so the view tree reaches it only through the `ViewResolver` of `adoc-render`, which the engine implements.
+`adoc-engine` is the only crate that depends on it.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-diagrams
+----
+
+The tests are unit tests next to the code.
+They cover the checksum, provider choice, caching, pruning, links in the cache folder, timeouts and process-group stopping, and the files a diagram reads.
+They use `tempfile` for cache folders and small shell scripts as stand-in tools, so they do not need Graphviz, PlantUML or D2.
+A test that spawns a process takes the crate's `spawn_guard()` mutex.
+The engine's `tests/preview.rs` covers diagram completion in the preview.
+
+== Related
+
+* xref:ROOT:preview.adoc[Preview] lists the diagram kinds, their tools and Retry Failed Diagrams.
+* xref:ROOT:settings.adoc[Settings] lists the `[tools]` settings.
+* xref:developer:engine.adoc#the-preview-service[The preview service] describes how renders are scheduled.
+* xref:developer:architecture.adoc[Architecture] lists the crate ladder and the layering rules.
+* xref:adoc-render.adoc[adoc-render] defines `ViewResolver` and `DiagramView`.
+* xref:adoc-engine.adoc[adoc-engine] runs the renders.
+* xref:index.adoc[Crates]

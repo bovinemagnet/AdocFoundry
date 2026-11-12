@@ -1,0 +1,128 @@
+= adoc-audit
+Paul Snow
+:revnumber: 0.0.0
+:description: The documentation quality audit's model: rules, findings, completeness, policy, verdict and SARIF output, pure and synchronous.
+
+`adoc-audit` is the model of the documentation quality audit.
+It is at layer L2 and is reached only through `adoc-engine`, which re-exports it as `adoc_engine::audit`.
+The CLI's `audit` command, the app's Quality panel and the MCP `quality_audit` tool all read the same report because they all ask the engine.
+
+== What it does
+
+The crate is pure and synchronous.
+It starts no threads, reads no settings file, writes nothing, runs no subprocess and uses no network.
+`xtask/src/layers.rs` forbids those paths in it (`ADOC_AUDIT_FORBIDDEN_PATHS`), and the test `audit_is_offline` checks it.
+
+[cols="1,3"]
+|===
+|Part |Responsibility
+
+|`rules.rs`
+|Stable rule IDs and the registry: `RuleId`, `RULES`, `RuleSpec`, `Category`, and `FindingCode`, which is either a `quality.*` rule or an existing `DiagnosticCode`.
+A finding for an existing diagnostic carries that diagnostic's own severity and message, and is never restated as a rule.
+
+|`navigation.rs`
+|`quality.navigation.unlisted-page`: a published `.adoc` page that no navigation file of its own component version reaches, the start page being listed.
+A navigation file with an `include::`, an `+{attribute}+` target or an unreadable file turns what it cannot assert into skips.
+
+|`content.rs`
+|`quality.page.missing-title` on published pages, and `quality.image.missing-alt` on block and inline image macros with no text written at all.
+
+|`report.rs`
+|`AuditBuilder` collects findings, skips and gaps in any order.
+`finish` applies the `Policy` and sorts.
+`AuditReport` is immutable, serialisable and versioned by `SCHEMA_VERSION`, with root-relative `/` paths and no absolute path.
+`AuditReport::verdict` is the CI table.
+
+|`policy.rs`
+|`Policy`: rule severities, validated `Exclusion` values by resource ID with a reason, `fail_on`, `require_complete`, and enabled providers.
+`Verdict` is `Pass`, `Fail` or `Untrustworthy`, with `exit_code` 0, 1 or 2.
+
+|`providers.rs`
+|The optional providers (`PROVIDERS`: compatibility, external links, page age and Vale), off until the policy enables them.
+None runs in this crate; whoever runs one reports its state to the builder.
+
+|`sarif.rs`
+|`to_sarif` writes SARIF 2.1.0, with excluded findings as suppressed results and gaps as notifications.
+|===
+
+Completeness is about coverage.
+A construct a rule cannot assert, such as a dynamic include, is a `Skip` and does not make a report partial.
+A scope that was not analysed is a `Gap` with a stable `GapReason`.
+
+== How to use it
+
+An audit is made of parts that never depend on the scope: `audit_file` gives a `FileAudit` and `audit_version` gives a `VersionAudit`.
+`assemble` puts the parts in scope together, and `audit` computes and assembles them in one call.
+The input is the `WorkspaceState`, the roots and a reader for navigation files, so the crate does no IO of its own.
+This is how the crate's tests run it over `tests/fixtures/audit`.
+
+[source,rust]
+----
+use std::{fs, path::Path};
+
+use adoc_audit::{audit, AuditInput, AuditScope, Policy};
+use adoc_lang::WorkspaceState;
+
+let root = adoc_index::normalize_path(Path::new("tests/fixtures/audit"));
+let mut workspace = WorkspaceState::new();
+workspace.index_roots(&[root.clone()]).expect("indexed");
+
+let roots = [root];
+let read = |path: &Path| fs::read_to_string(path);
+let input = AuditInput {
+    workspace: &workspace,
+    roots: &roots,
+    read: &read,
+};
+let report = audit(&input, AuditScope::Workspace).finish(&Policy::default());
+for finding in report.findings() {
+    println!("{}: {}", finding.location.path, finding.code);
+}
+std::process::exit(i32::from(report.verdict().exit_code()));
+----
+
+A front end does not do this itself.
+The engine keeps the parts current (`quality.rs`), and `Engine::audit_report(&scope)`, `Engine::audit_now(scope)` and `Engine::audit_now_with(scope, &policy)` assemble them under the `[quality]` settings.
+From the command line:
+
+[source,sh]
+----
+cargo run -p adocfoundry-cli -- audit tests/fixtures/audit --format json --fail-on warning
+----
+
+.How an audit is put together
+[mermaid]
+----
+include::example$adoc-audit-parts.mmd[]
+----
+
+== Where it sits
+
+`adoc-audit` depends on `adoc-core`, `adoc-antora`, `adoc-index` and `adoc-lang`.
+It is listed in `ENGINE_ONLY` in `xtask/src/layers.rs`, so only `adoc-engine` may depend on it; `adoc-ls`, `adoc-mcp`, `adocfoundry-cli` and `adocfoundry` read it through `adoc_engine::audit`.
+No provider's work may run here: the engine, or the caller, runs it.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-audit
+cargo test -p adoc-engine --test audit
+----
+
+`tests/rules.rs` runs the rules over `tests/fixtures/audit`, as the Quality PRD's acceptance tests name them.
+Snapshots are in `crates/adoc-audit/src/snapshots`.
+`crates/adoc-engine/tests/audit.rs` counts the parts audited, so an edit that re-audits too much fails.
+
+== Related
+
+* xref:developer:engine.adoc#quality-audit[The engine: the quality audit], including how to add an optional provider
+* xref:ROOT:quality-audit.adoc[Quality audit (user guide)]
+* xref:ROOT:quality-audit.adoc#_the_policy[The policy]
+* xref:ROOT:quality-audit.adoc#_using_it_in_ci[Using it in CI]
+* xref:ROOT:command-line.adoc#_audit[Command line: audit]
+* xref:adoc-lang.adoc[adoc-lang], which supplies the existing diagnostics
+* xref:adoc-index.adoc[adoc-index] and xref:adoc-antora.adoc[adoc-antora]
+* xref:adoc-engine.adoc[adoc-engine], which keeps the audit current
+* xref:index.adoc[Crates]

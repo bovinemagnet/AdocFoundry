@@ -1,0 +1,21 @@
+flowchart TD
+    store["LinkStore<br/>links kept by owning file"]
+    nodes["NodeInput<br/>supplied by the engine"]
+    build["GraphSnapshot::build<br/>with a GraphFilter"]
+    snapshot["GraphSnapshot<br/>nodes and merged edges"]
+    shape["restrict, along, collapse<br/>narrower snapshots"]
+    layout["Layout<br/>force-directed, seeded"]
+    mind["MindMap<br/>tree positions"]
+    svg["to_svg, to_svg_laid_out<br/>standalone SVG"]
+    walks["neighbourhood, shortest_path<br/>walks over the store"]
+
+    store --> build
+    nodes --> build
+    store --> walks
+    build --> snapshot
+    snapshot --> shape
+    shape --> layout
+    snapshot --> mind
+    mind -->|set_targets| layout
+    layout --> svg
+    shape --> svg

@@ -1,0 +1,105 @@
+= adoc-antora
+Paul Snow
+:revnumber: 0.0.0
+:description: Antora descriptors, playbooks, the resource catalog, resource id resolution and navigation trees, following Antora 3.2.
+
+`adoc-antora` is a layer L1 crate.
+It reads a workspace the way Antora does and answers where a resource id points.
+It runs no Node.js and clones no repository.
+xref:adoc-lang.adoc[adoc-lang] and xref:adoc-engine.adoc[adoc-engine] use it, as do `adoc-audit`, `adoc-impact` and `adoc-render`.
+
+== What it does
+
+.From a workspace to a resolved resource
+[mermaid]
+----
+include::example$adoc-antora-catalog.mmd[]
+----
+
+* Descriptors: `parse_component_descriptor`, `read_component_descriptor` and `check_component_descriptor` read `antora.yml` (with `serde-saphyr`) into a `ComponentDescriptor`, report a missing or unknown key as a `DescriptorError` or a diagnostic, and keep the attribute entries with their ranges.
+* The playbook: `parse_playbook` and `read_playbook` read `antora-playbook.yml` into a `Playbook`: `asciidoc.attributes` (a value ending in `@` is soft set), `content.sources`, `site.title`, `site.url`, `site.start_page` and `output.dir`.
+  `ContentSource` matches branch globs, and `BranchVersions` records which branch publishes which version when a repository is known.
+* Discovery: `discover_antora_workspace` and `discover_antora_workspace_ignoring` walk the roots, never entering an ignored folder.
+  `discover_antora_files` applies the same rules to a list of files and their text, with no file system access, so a Git revision can be catalogued.
+  Each returns a `DiscoveryResult` of an `AntoraCatalog` and the `DescriptorError` values found.
+* The catalog: `AntoraCatalog` holds every component version's descriptors, `Module` values and `AntoraResource` values, keyed by `AntoraCoordinate`, with a lookup from a source file to its resources and page aliases (`page_aliases`).
+  Its `revision` counts changes, so a cache built from it can tell it is stale.
+  `reload_component` re-reads one descriptor and returns a `ReloadReport` of the resource ids added and removed.
+* Resource ids: `parse_resource_id` reads `version@component:module:family$path` into an `AntoraResourceId`.
+  The family is one of `ResourceFamily::{Page, Partial, Example, Image, Attachment}`, each with its `directories`.
+* Resolution: `AntoraCatalog::resolve_detailed` follows Antora 3.2.
+  An omitted component and version mean the current component version, a component without a version means its latest version, a module left out is `ROOT` and a family left out is `page`.
+  A miss falls back to page aliases and then fails with a `ResolutionError` (`UnknownComponent`, `UnknownVersion`, `UnknownModule` or `UnknownResource`).
+  The `Resolved` result says whether a `page-aliases` entry was used (`via_alias`).
+  `compare_versions` orders versions: a released version sorts above a prerelease, and numbers compare as dotted integers.
+* Navigation: `parse_nav` reads a navigation file into `NavEntry` values, and `nav_tree` builds each navigation file of a component version into a `NavTree` of `NavItem` values, taking file contents from a closure so unsaved buffers can stand in for files.
+  An entry that does not resolve is kept and reported as `adoc.antora.nav-unresolved`.
+  Entries only the build can follow (an `include::` line or an attribute) are listed as `Unfollowed`.
+
+Design rules the crate keeps:
+
+* Resolution follows Antora 3.2.
+  The user guide states the rules, in xref:ROOT:antora-support.adoc[Antora support], and they are not re-derived here.
+* Paths are lexical and never canonicalised, and resource ids always use `/`.
+* Nothing is cloned and no project script is run.
+
+== How to use it
+
+This example, run from the repository root, discovers the multi-component fixture and resolves a resource id from a page in `alpha`.
+
+[source,rust]
+----
+use adoc_antora::{
+    discover_antora_workspace, parse_resource_id, AntoraContext, ResourceFamily,
+};
+use std::path::PathBuf;
+
+let root = PathBuf::from("tests/fixtures/antora-multi-component");
+let found = discover_antora_workspace(&[root]).unwrap();
+assert!(found.issues.is_empty());
+
+let id = parse_resource_id("beta:api:reference.adoc").unwrap();
+let from = AntoraContext {
+    component: "alpha".to_owned(),
+    version: Some("1.0".to_owned()),
+    module: "ROOT".to_owned(),
+    family: ResourceFamily::Page,
+};
+let resolved = found.catalog.resolve_detailed(&id, &from).unwrap();
+assert!(!resolved.via_alias);
+assert!(resolved.resource.source_path.ends_with("beta/modules/api/pages/reference.adoc"));
+----
+
+`AntoraCatalog` also implements the `AntoraResolver` trait, whose `resolve` returns the resource or a `ResolutionError`.
+`context_for_path` gives the `AntoraContext` of a source file, which is how a page's own coordinates become the context of its xrefs.
+
+Most callers reach the catalog through `adoc_lang::WorkspaceState`, which discovers and checks descriptors together with indexing.
+
+== Where it sits
+
+`adoc-antora` depends on `adoc-core`, `globset`, `serde` and `serde-saphyr`.
+`adoc-lang`, `adoc-render`, `adoc-audit`, `adoc-impact` and `adoc-engine` depend on it.
+It has no same-layer dependency.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-antora
+cargo test -p adoc-antora resolves_cross_component
+----
+
+`tests/resolution.rs` resolves cross-component ids, the latest version, prerelease ordering, page aliases and descriptor reloads, and builds navigation trees, over `tests/fixtures/antora-multi-component` and `tests/fixtures/antora-versions`, and in a temporary folder for reloads.
+`tests/discovery_from_files.rs` checks discovery from a file list.
+The fuzz target `antora_resource_id` checks that an accepted resource id keeps Antora's rules and survives being written out and parsed again.
+
+== Related
+
+* xref:ROOT:antora-support.adoc[Antora support], the user guide for discovery, resource ids, versions, aliases and playbook attributes
+* xref:ROOT:antora-support.adoc#_navigation_trees[Navigation trees]
+* xref:developer:architecture.adoc#_antora_resolution[Antora resolution], with the resolution flow
+* xref:developer:testing.adoc#_unit_tests[Unit tests]
+* xref:adoc-core.adoc[adoc-core]
+* xref:adoc-lang.adoc[adoc-lang], which resolves xrefs and includes through the catalog
+* xref:adoc-index.adoc[adoc-index]
+* xref:index.adoc[Crates]

@@ -1,0 +1,125 @@
+= adoc-impact
+Paul Snow
+:revnumber: 0.0.0
+:description: The documentation impact analysis's model: which pages, navigation trees, component versions and publications a change may affect, with the evidence for each.
+
+`adoc-impact` works out what a change to the documentation may affect, and why.
+It is at layer L2 and is reached only through `adoc-engine`, which re-exports it as `adoc_engine::impact`.
+The CLI's `impact` command, the app's Impact panel and Delete File's confirmation, and the MCP `analyse_impact` tool all ask the engine.
+
+== What it does
+
+The crate is pure and synchronous, like `adoc-audit`: no threads, Git, files written, processes or network.
+`xtask/src/layers.rs` applies the same forbidden paths to it.
+The caller gives the changes and the dependency evidence of each side of the comparison.
+The crate asks only the index's reverse maps and the resolution in `adoc-lang` (`includes_of`, `references_to`, `references_to_anchor`), so nothing is parsed or resolved a second way and nothing scans every file.
+
+The semantics follow the Impact PRD.
+
+* An *include* is rendered content, so a change reaches every page that includes the file, transitively.
+  Cycles and depth are bounded.
+* An *xref* is a link, so a change to the target's prose reaches nothing else.
+  A removed or moved target, or a removed anchor, makes its referrers a reference-integrity review, worked out from the base side.
+* A *navigation* entry is site structure, scoped to its component version and compared between base and head.
+* A *publication* is affected when its selection holds an affected page, and is `potential` when the selection names content head lacks.
+
+[cols="1,3"]
+|===
+|Type |Role
+
+|`DependencySnapshot`
+|One side of a comparison: a `WorkspaceState` at one revision, borrowed (`borrowed`, the live workspace) or owned (`owned`, a revision built from Git objects), with the roots paths are shown relative to.
+
+|`Change`, `ChangeKind`
+|A changed file by absolute path: `Added`, `Modified`, `Removed` or `Renamed { from }`.
+
+|`Limits`
+|`depth` of includes followed (32 by default) and the number of `impacts` reported (1,000 by default).
+
+|`Publication`, `PublicationSelection`
+|A publication profile and what it selects: a page, a component version or navigation files.
+
+|`ImpactReport`
+|Schema-versioned (`SCHEMA_VERSION`), with root-relative paths, sorted: `changes`, `impacts`, `counts`, `completeness` and the `source` that was compared.
+
+|`Impact`, `ImpactKind`
+|One affected item: `Render`, `ReferenceIntegrity`, `Navigation` or `Publication`, with a `Confidence`, the `evidence` side (`EvidenceSide`), the `via` path from the changed file, and the `source` span of the reference that links them.
+
+|`Gap`, `Completeness`
+|What was not analysed.
+Reasons include `no-base-revision`, `asset-consumers-not-analysed`, `attribute-consumers-not-analysed`, `include-depth-exceeded`, `not-in-catalog` and `outside-every-root`.
+|===
+
+.From changes to a report
+[mermaid]
+----
+include::example$adoc-impact-flow.mmd[]
+----
+
+== How to use it
+
+Build a snapshot for each side, list the changes and call `analyse`.
+This sketch uses explicit paths, so there is no base side.
+`tests/impact.rs` builds a base and a head from copies of `tests/fixtures/impact`.
+
+[source,rust]
+----
+use std::path::{Path, PathBuf};
+
+use adoc_impact::{analyse, Change, ChangeKind, DependencySnapshot, Limits};
+use adoc_lang::WorkspaceState;
+
+let root = adoc_index::normalize_path(Path::new("tests/fixtures/impact/v1"));
+let mut state = WorkspaceState::new();
+state.index_roots(&[root.clone()]).expect("indexed");
+
+let head = DependencySnapshot::borrowed(&state, &[root.clone()]);
+let changes = [Change {
+    path: root.join("modules/ROOT/partials/intro.adoc"),
+    kind: ChangeKind::Modified,
+}];
+let report = analyse(&changes, None, &head, &[], Limits::default());
+for impact in &report.impacts {
+    println!("{:?}: {} via {:?}", impact.kind, impact.path, impact.via);
+}
+println!("complete: {}", report.is_complete());
+----
+
+Front ends call `Engine::analyse_impact(&ChangeSource, Limits)` instead.
+A `ChangeSource` is `GitRefs { base, head }` (both snapshots read from Git objects, never the working tree), `WorkingTree` (`HEAD` against the live workspace, unsaved buffers included), `Paths` (no base) or `Removal` (what taking files out would affect, which Inspect Impact and Delete File use).
+
+[source,sh]
+----
+cargo run -p adocfoundry-cli -- impact tests/fixtures/impact/v1 --changed-file tests/fixtures/impact/v1/modules/ROOT/partials/intro.adoc
+----
+
+== Where it sits
+
+`adoc-impact` depends on `adoc-core`, `adoc-antora`, `adoc-index` and `adoc-lang`.
+It is listed in `ENGINE_ONLY` in `xtask/src/layers.rs`, so only `adoc-engine` may depend on it.
+The engine builds the two snapshots (`src/impact_analysis.rs`): from the revisions that `adoc-git` reads and `adoc_antora::discover_antora_files`, which applies the disk discovery's rules to a file list, cached by tree id.
+`src/impact_inspection.rs` keeps the app's one analysis.
+
+== Testing
+
+[source,sh]
+----
+cargo test -p adoc-impact
+cargo test -p adoc-engine --test impact --test impact_inspection
+----
+
+`tests/impact.rs` copies `tests/fixtures/impact` twice, changes the copy on disk and indexes it again as the head, then checks each rule; its snapshots are in `crates/adoc-impact/tests/snapshots`.
+In the fixture, `product` 1.0 (`v1`) has `index` and `install` including `partial$intro.adoc`, which includes `nested.adoc`, and `product` 2.0 (`v2`) lists only its own `index`.
+The engine's tests read revisions from repositories built with `adoc_git::testing::TestRepo`.
+
+== Related
+
+* xref:developer:engine.adoc#impact-analysis[The engine: the impact analysis]
+* xref:developer:engine.adoc#impact-change-sources[Change sources and revision snapshots]
+* xref:developer:engine.adoc#impact-inspection[The inspector]
+* xref:ROOT:command-line.adoc#_impact[Command line: impact]
+* xref:adoc-lang.adoc[adoc-lang], xref:adoc-index.adoc[adoc-index] and xref:adoc-antora.adoc[adoc-antora]
+* xref:adoc-git.adoc[adoc-git], which reads the revisions
+* xref:adoc-audit.adoc[adoc-audit], its sibling
+* xref:adoc-engine.adoc[adoc-engine]
+* xref:index.adoc[Crates]

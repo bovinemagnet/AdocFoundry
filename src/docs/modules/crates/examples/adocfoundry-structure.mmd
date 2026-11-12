@@ -1,0 +1,7 @@
+flowchart TD
+    User["Keystrokes and clicks"] --> Views["Views<br/>workspace, editor, preview,<br/>visual editor, graph"]
+    Views -->|"commands"| Engine["adoc-engine"]
+    Engine -->|"EngineEvent"| Pump["Pump task<br/>app.rs"]
+    Pump -->|"redraw"| Views
+    Views -->|"reads state"| Engine
+    Engine --> Disk["Workspace files"]

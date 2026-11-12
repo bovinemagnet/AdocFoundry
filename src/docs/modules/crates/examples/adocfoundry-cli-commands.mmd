@@ -1,0 +1,10 @@
+flowchart LR
+    Args["Command line"] --> Cli["adocfoundry-cli<br/>main.rs"]
+    Cli --> Open["Open a workspace<br/>in an Engine"]
+    Open --> Check["check, audit,<br/>impact, symbols,<br/>follow, graph"]
+    Open --> Render["render, pdf"]
+    Open --> Other["git-status, doctor,<br/>new-module, new-project"]
+    Check --> Out["Text, JSON, SARIF,<br/>DOT or SVG"]
+    Render --> Files["HTML or PDF file"]
+    Other --> Out
+    Out --> Exit["Exit code"]

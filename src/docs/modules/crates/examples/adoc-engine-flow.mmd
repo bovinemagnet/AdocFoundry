@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant F as Front end
+    participant E as Engine
+    participant W as Workers and watcher
+    F->>E: new engine, subscribe, set_waker
+    F->>E: open_workspace with the roots
+    E->>W: index on a worker
+    W-->>E: result over a channel, waker called
+    F->>E: pump
+    E-->>F: event WorkspaceIndexed
+    F->>E: invoke with a command id and CommandArgs
+    E->>E: command runs, document edited, undo recorded
+    E-->>F: event DocumentChanged
+    E->>W: parse, diagnose, render after a settle
+    F->>E: next_due, then sleep until it or a wake
+    W-->>E: result
+    F->>E: pump
+    E-->>F: PreviewReady, DiagnosticsUpdated
