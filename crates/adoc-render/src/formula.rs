@@ -72,11 +72,44 @@ fn measures(head: &str) -> Option<(f32, f32, f32)> {
     Some((points("width")?, points("height")?, points(BASELINE)?))
 }
 
-impl ViewTree {
-    /// Every typeset inline formula, by its source as written (trimmed): what the visual editor
-    /// draws in place of a STEM macro, whose text is that source.
+/// An inline formula as written: its notation and its source (trimmed). AsciiMath and LaTeX read
+/// the same source differently, so both name the formula.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct FormulaKey {
+    pub latex: bool,
+    pub source: String,
+}
+
+impl FormulaKey {
+    /// The formula a STEM macro named `name` (`stem`, `latexmath` or `asciimath`) with `source`
+    /// writes, `stem` being LaTeX when `stem_latex` (from [`ViewTree::stem_is_latex`]).
     #[must_use]
-    pub fn inline_formulas(&self) -> HashMap<String, FormulaImage> {
+    pub fn of_macro(name: &str, source: &str, stem_latex: bool) -> Self {
+        Self {
+            latex: match name {
+                "latexmath" => true,
+                "asciimath" => false,
+                _ => stem_latex,
+            },
+            source: source.trim().to_owned(),
+        }
+    }
+}
+
+impl ViewTree {
+    /// Whether `stem:[…]` is LaTeX on this page: when its `:stem:` is `latexmath`, as the parser
+    /// reads it, else AsciiMath.
+    #[must_use]
+    pub fn stem_is_latex(&self) -> bool {
+        self.attributes
+            .get("stem")
+            .is_some_and(|value| value == "latexmath")
+    }
+
+    /// Every typeset inline formula, by its notation and source: what the visual editor draws in
+    /// place of a STEM macro, whose text is that source.
+    #[must_use]
+    pub fn inline_formulas(&self) -> HashMap<FormulaKey, FormulaImage> {
         let mut out = HashMap::new();
         if let Some(title) = &self.title {
             formulas_in(title, &mut out);
@@ -91,15 +124,19 @@ impl ViewTree {
     }
 }
 
-fn formulas_in(inlines: &[ViewInline], out: &mut HashMap<String, FormulaImage>) {
+fn formulas_in(inlines: &[ViewInline], out: &mut HashMap<FormulaKey, FormulaImage>) {
     for inline in inlines {
         match inline {
             ViewInline::Stem {
+                latex,
                 source,
                 rendered: Some(image),
-                ..
             } => {
-                out.insert(source.trim().to_owned(), image.clone());
+                let key = FormulaKey {
+                    latex: *latex,
+                    source: source.trim().to_owned(),
+                };
+                out.insert(key, image.clone());
             }
             ViewInline::Strong(content)
             | ViewInline::Emphasis(content)
@@ -179,7 +216,7 @@ mod tests {
         };
         assert_eq!(
             tree.inline_formulas(),
-            HashMap::from([("x^2".to_owned(), image)])
+            HashMap::from([(FormulaKey::of_macro("asciimath", "x^2", false), image)])
         );
     }
 
@@ -218,7 +255,52 @@ mod tests {
         };
         assert_eq!(
             tree.inline_formulas(),
-            HashMap::from([("x".to_owned(), image)])
+            HashMap::from([(FormulaKey::of_macro("asciimath", "x", false), image)])
+        );
+    }
+
+    /// Issue #473: AsciiMath and LaTeX read the same text differently, so `stem:[x/2]` and
+    /// `latexmath:[x/2]` on one page are two formulas, each with its own image.
+    #[test]
+    fn the_same_source_in_two_notations_is_two_formulas() {
+        let image = |name: &str| FormulaImage {
+            path: PathBuf::from(format!("/cache/{name}.svg")),
+            width: 1.0,
+            height: 2.0,
+            baseline: 1.5,
+        };
+        let stem = |latex: bool, rendered: FormulaImage| ViewInline::Stem {
+            latex,
+            source: "x/2".to_owned(),
+            rendered: Some(rendered),
+        };
+        let tree = ViewTree {
+            title: Some(vec![
+                stem(false, image("asciimath")),
+                stem(true, image("latex")),
+            ]),
+            ..ViewTree::default()
+        };
+        let formulas = tree.inline_formulas();
+        assert_eq!(formulas.len(), 2);
+        assert_eq!(
+            formulas[&FormulaKey::of_macro("latexmath", "x/2", false)],
+            image("latex")
+        );
+        assert_eq!(
+            formulas[&FormulaKey::of_macro("asciimath", "x/2", true)],
+            image("asciimath")
+        );
+        // `stem:[…]` takes the page's `:stem:`.
+        assert!(!tree.stem_is_latex());
+        let latex_page = ViewTree {
+            attributes: [("stem".to_owned(), "latexmath".to_owned())].into(),
+            ..ViewTree::default()
+        };
+        assert!(latex_page.stem_is_latex());
+        assert_eq!(
+            formulas[&FormulaKey::of_macro("stem", " x/2 ", latex_page.stem_is_latex())],
+            image("latex")
         );
     }
 
