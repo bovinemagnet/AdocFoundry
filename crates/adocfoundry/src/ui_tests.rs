@@ -7734,6 +7734,22 @@ fn graph_window_opens_and_shows_the_workspace(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_graph_window_has_a_title_bar_above_its_toolbar(cx: &mut TestAppContext) {
+    // The window's title bar is transparent, so without a drawn one its toolbar sat under the
+    // macOS window buttons, and on Windows and Linux there were no window buttons at all.
+    let (_directory, _root, _app, workspace, mut cx) = graph_workspace(&[], cx);
+    let (_, _view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
+    let search = graph_cx
+        .debug_bounds("graph-search")
+        .expect("the search field is shown");
+    assert!(
+        search.origin.y >= gpui_component::TITLE_BAR_HEIGHT,
+        "the search field starts at {:?}, inside the title bar",
+        search.origin.y
+    );
+}
+
+#[gpui::test]
 fn clicking_a_node_opens_its_page_as_a_preview(cx: &mut TestAppContext) {
     let (_directory, root, app, workspace, mut cx) = graph_workspace(&[], cx);
     let (_, view, mut graph_cx) = open_graph_window(&workspace, &mut cx);
