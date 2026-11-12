@@ -367,6 +367,16 @@ pub trait ViewResolver {
         source: &str,
         attributes: &BTreeMap<String, String>,
     ) -> DiagramView;
+
+    /// An inline formula typeset as an image, with its measures; `None` until it is typeset.
+    /// By default its image is read for them each time; a resolver that keeps them may answer
+    /// from what it kept, as the image at a path never changes.
+    fn formula(&self, latex: bool, source: &str) -> Option<crate::FormulaImage> {
+        match self.diagram(stem_kind(latex), source, &inline_stem_attributes()) {
+            DiagramView::Svg(path) => crate::formula_image(&path),
+            _ => None,
+        }
+    }
 }
 
 /// The diagram kind a formula is rendered as: `stem-latex` or `stem-asciimath`, with
@@ -1093,14 +1103,7 @@ impl Builder<'_> {
             Inline::Stem { latex, source } => ViewInline::Stem {
                 latex: *latex,
                 source: source.clone(),
-                rendered: match self.resolver.diagram(
-                    stem_kind(*latex),
-                    source,
-                    &inline_stem_attributes(),
-                ) {
-                    DiagramView::Svg(path) => crate::formula_image(&path),
-                    _ => None,
-                },
+                rendered: self.resolver.formula(*latex, source),
             },
             Inline::Passthrough(text) => ViewInline::Raw(text.clone()),
             Inline::IndexTerm { terms, visible } => ViewInline::IndexTerm {

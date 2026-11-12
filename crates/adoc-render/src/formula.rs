@@ -42,6 +42,7 @@ pub fn with_baseline(svg: &str, baseline: f64) -> String {
 /// size or a baseline.
 #[must_use]
 pub fn formula_image(path: &Path) -> Option<FormulaImage> {
+    adoc_core::probe::hit(adoc_core::probe::Probe::FormulaRead);
     // Read as bytes: the head may end inside a character.
     let mut head = Vec::new();
     std::fs::File::open(path)
