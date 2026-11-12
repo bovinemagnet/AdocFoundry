@@ -44,17 +44,17 @@ They count only with adoc-core's `probe` feature, which the dev-dependencies of 
 `tests/keystroke.rs` asserts them: `one_keystroke_parses_at_most_once`, `typing_never_hashes_the_document`, `completion_during_typing_does_not_reparse` and `only_typing_inside_something_that_completes_asks_for_completions`.
 In the application crate, `ui_tests::typing_diffs_once_and_never_reconciles` types 20 characters and expects 20 diffs and no reconcile, then expects an edit from the engine to reconcile once.
 `Suggest` counts a dictionary searching for replacements for a misspelt word, `Walk` a walk over every node of a visual model (`Model::walk`), and `MeasureFormula` a typeset formula's gap measured in a font (`Gap::measure`), `ChildRefs` a list of a view block's children (`ViewBlock::child_refs`), `InlineLayout` inline content laid out as styled text for the preview, and `QuickOpenItem` a file's Quick Open item made from the index.
-`tests/quick_open.rs`'s `a_keystroke_makes_no_items_and_an_edit_remakes_none` asserts it.
-`adoc-model`'s `tests/positions.rs` checks that `text_block_at` finds the block a walk finds at every offset of a page, and walks the model at most once over many lookups.
+`a_keystroke_makes_no_items_and_an_edit_remakes_none` in `tests/quick_open.rs` asserts it.
+`tests/positions.rs` in `adoc-model` checks that `text_block_at` finds the block a walk finds at every offset of a page, and walks the model at most once over many lookups.
 `ui_tests::one_visual_frame_walks_the_model_at_most_twice` draws a 300-paragraph page in the visual editor.
 `ui_tests::formulas_are_measured_once` draws 20 inline formulas for 10 frames and expects at most 20 measurements.
 `FormulaRead` counts a typeset formula's image read for its measures (`adoc_render::formula_image`); the engine's resolver keeps the measures by path, so a view build reads an inline formula's image once per session.
-`tests/preview.rs`'s `a_formulas_image_is_read_once` builds a page's view twice and expects one read.
+`a_formulas_image_is_read_once` in `tests/preview.rs` builds a page's view twice and expects one read.
 `ui_tests::preview_draws_inline_stem_in_the_line` expects none in the preview's frames after the first.
 `ui_tests::preview_lays_out_inline_text_once_per_block` draws 300 paragraphs for 10 frames and expects at most 300 layouts.
 `ui_tests::typing_in_one_paragraph_does_not_rerender_the_preview` types 20 characters with scroll sync on and expects at most two renders of the preview (the existing `renders` counter).
 `ui_tests::reveal_source_is_logarithmic` moves the caret 200 times in 500 paragraphs and expects at most 1,800 lists of children.
-`adoc-render`'s `the_block_index_finds_what_walking_the_tree_finds` compares the index with a walk of the view tree, kept in the test as its oracle, at every offset of the render fixtures and their partial.
+`the_block_index_finds_what_walking_the_tree_finds` in `adoc-render` compares the index with a walk of the view tree, kept in the test as its oracle, at every offset of the render fixtures and their partial.
 
 == Benchmarks
 
@@ -77,11 +77,11 @@ CI's `bench` job runs it on Ubuntu.
 | 100 µs at 20,000 lines; recorded at the other sizes
 
 | `settle_index`
-| The two `pump`s that settle a keystroke on a 20,000-line page: the one at `INDEX_SETTLE` that hands the page to a worker, and the one that files the worker's answer and diagnoses (not the worker's time between them)
+| The two `pump` calls that settle a keystroke on a 20,000-line page: the one at `INDEX_SETTLE` that hands the page to a worker, and the one that files the worker's answer and diagnoses (not the worker's time between them)
 | 2 ms (the parse and the index entry are prepared on a worker, #238; a CI runner's median varies nearly threefold between runs)
 
 | `settle_preview`
-| The `pump`s that settle a keystroke on a 20,000-line page with the preview shown: the one at `PREVIEW_SETTLE` that hands the page to a worker, and the one that files the answer and builds the input of the preview's parse (not the view tree built from that parse)
+| The `pump` calls that settle a keystroke on a 20,000-line page with the preview shown: the one at `PREVIEW_SETTLE` that hands the page to a worker, and the one that files the answer and builds the input of the preview's parse (not the view tree built from that parse)
 | 2 ms (as `settle_index`)
 
 | `settle_git`
@@ -742,7 +742,7 @@ Whatever `adoc_math::is_safe` accepts, or `to_typst` returns, is checked by an i
 The first byte of an input chooses Typst markup, AsciiMath or LaTeX.
 
 `pdf_literal`::
-`adoc-pdf`'s Typst string literal writer, exposed only under its `fuzzing` feature, parses back as exactly one string holding the text, in code and behind `#` in markup, and two in a row stay two strings.
+The Typst string literal writer of `adoc-pdf`, exposed only under its `fuzzing` feature, parses back as exactly one string holding the text, in code and behind `#` in markup, and two in a row stay two strings.
 
 Run one target from the repository root.
 

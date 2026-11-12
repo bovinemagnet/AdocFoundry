@@ -495,3 +495,24 @@ fn adoc_audit_path(path: &Path) -> String {
         .collect::<Vec<_>>()
         .join("/")
 }
+
+/// Issue #593: the audit reports the broken code spans `check` finds, with their own code and
+/// severity, as it reports every diagnostic.
+#[test]
+fn audit_reports_broken_code_spans() {
+    let output = cli(&[
+        "audit",
+        "tests/fixtures/broken-code-spans",
+        "--format",
+        "json",
+    ]);
+    let report = json(&output);
+    let found: Vec<_> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["code"] == "adoc.broken-code-span")
+        .collect();
+    assert_eq!(found.len(), 2, "{report:#}");
+    assert!(found.iter().all(|finding| finding["severity"] == "warning"));
+}

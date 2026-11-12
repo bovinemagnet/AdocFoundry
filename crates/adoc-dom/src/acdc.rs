@@ -1172,9 +1172,33 @@ impl Converter<'_> {
     // --- inlines ---------------------------------------------------------------------------
 
     fn inlines(&self, nodes: &[acdc::InlineNode<'_>]) -> Vec<Inline> {
-        let mut out: Vec<Inline> = Vec::new();
+        // Runs of text, each marked with whether it may hold an image macro acdc left as
+        // text. Passthrough, escaped and verbatim text never does: `+image:ROOT:x.svg[]+`
+        // writes the macro out.
+        let mut runs: Vec<(Inline, bool)> = Vec::new();
         for node in nodes {
+            let scanned = matches!(node, acdc::InlineNode::PlainText(text)
+                if !text.escaped && !self.verbatim.get());
             for inline in self.inline(node) {
+                if let (Inline::Text(next), Some((Inline::Text(previous), previous_scanned))) =
+                    (&inline, runs.last_mut())
+                {
+                    if *previous_scanned == scanned {
+                        previous.push_str(next);
+                        continue;
+                    }
+                }
+                runs.push((inline, scanned));
+            }
+        }
+        let mut out: Vec<Inline> = Vec::new();
+        for (run, scanned) in runs {
+            let pieces = if scanned {
+                split_inline_images(run)
+            } else {
+                vec![run]
+            };
+            for inline in pieces {
                 // Adjacent text runs merge, so renderers see words, not fragments.
                 if let (Inline::Text(next), Some(Inline::Text(previous))) =
                     (&inline, out.last_mut())
@@ -1185,7 +1209,7 @@ impl Converter<'_> {
                 }
             }
         }
-        out.into_iter().flat_map(split_inline_images).collect()
+        out
     }
 
     /// Whether STEM of `style` is LaTeX: `latexmath` and `asciimath` name their notation, and

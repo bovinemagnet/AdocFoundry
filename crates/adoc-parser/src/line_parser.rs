@@ -850,6 +850,82 @@ fn find_delimited<'a>(
     found
 }
 
+/// The constrained code spans of `line` (passthroughs already blanked) that Asciidoctor does
+/// not close where they seem to close (#593): a closing backtick followed by an apostrophe,
+/// which it reads as a curved apostrophe (`` `x`'s ``), or by a word character, before which a
+/// constrained span cannot close (`` `x`s ``). Each is the span from its opening backtick to
+/// the character after the closing one, with a message giving the unconstrained form.
+///
+/// It follows Asciidoctor's constrained monospace: an opening backtick at the start or after a
+/// character other than a word character or one of ``;:"'`}``, then a non-space character.
+/// Anything else is left alone: a lone or escaped backtick, curved quotes (`` '`x`' ``), a
+/// curved apostrophe (``Sam`'s``) and unconstrained spans (``` ``x`` ```).
+pub(crate) fn broken_code_spans(line: &str, offset: usize) -> Vec<(SourceRange, String)> {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let char_at = |at: usize| line.get(at..).and_then(|rest| rest.chars().next());
+    let char_before = |at: usize| line[..at].chars().next_back();
+    let mut found = Vec::new();
+    let mut index = 0;
+    while let Some(relative) = line[index..].find('`') {
+        let open = index + relative;
+        // An unconstrained span is read first and holds anything.
+        if line[open + 1..].starts_with('`') {
+            index = match line[open + 2..].find("``") {
+                Some(end) => open + 2 + end + 2,
+                None => open + 2,
+            };
+            continue;
+        }
+        let opens = !char_before(open).is_some_and(|c| is_word(c) || ";:\"'`}\\".contains(c))
+            && char_at(open + 1).is_some_and(|c| !c.is_whitespace());
+        if !opens {
+            index = open + 1;
+            continue;
+        }
+        let Some(relative) = line[open + 1..].find('`') else {
+            break;
+        };
+        let close = open + 1 + relative;
+        let last = char_before(close).unwrap_or(' ');
+        if last.is_whitespace() || last == '\\' {
+            // Not where a span closes: read on from that backtick afresh.
+            index = close;
+            continue;
+        }
+        let after = char_at(close + 1);
+        let reason = match after {
+            Some('\'') => {
+                "Asciidoctor reads a backtick followed by an apostrophe as a curved apostrophe"
+            }
+            Some(c) if is_word(c) => {
+                "a backtick followed by a letter or digit cannot close a code span"
+            }
+            _ => {
+                index = close + 1;
+                continue;
+            }
+        };
+        index = close + 1;
+        // What follows the span, to write after its unconstrained form: `'s`, `s`, `2`.
+        let rest = &line[close + 1..];
+        let suffix_len = rest
+            .char_indices()
+            .find(|(at, c)| !(is_word(*c) || (*at == 0 && *c == '\'')))
+            .map_or(rest.len(), |(at, _)| at);
+        let suffix = &rest[..suffix_len];
+        let content = &line[open + 1..close];
+        let end = close + 1 + after.map_or(0, char::len_utf8);
+        found.push((
+            SourceRange::new(offset + open, offset + end),
+            format!(
+                "code span `{content}` does not close here: {reason}; \
+                 write ``{content}``{suffix} or reword it"
+            ),
+        ));
+    }
+    found
+}
+
 /// `line` with every inline passthrough blanked to spaces of the same byte length.
 ///
 /// Asciidoctor extracts passthroughs before any other substitution, so nothing inside one is a

@@ -20,11 +20,14 @@ pub enum DiagnosticCode {
     AntoraMissingNavFile,
     AntoraInvalidAttributeValue,
     AntoraUnresolvedStartPage,
+    /// A constrained code span whose closing backtick is followed by an apostrophe or a word
+    /// character, so Asciidoctor does not close it there (#593).
+    BrokenCodeSpan,
 }
 
 impl DiagnosticCode {
     /// Every code, in declaration order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::UnresolvedXrefFile,
         Self::UnresolvedAnchor,
         Self::UnresolvedInclude,
@@ -43,6 +46,7 @@ impl DiagnosticCode {
         Self::AntoraMissingNavFile,
         Self::AntoraInvalidAttributeValue,
         Self::AntoraUnresolvedStartPage,
+        Self::BrokenCodeSpan,
     ];
 
     /// The code whose stable name ([`DiagnosticCode::as_str`]) is `name`.
@@ -72,6 +76,7 @@ impl DiagnosticCode {
             Self::AntoraMissingNavFile => "adoc.antora.missing-nav-file",
             Self::AntoraInvalidAttributeValue => "adoc.antora.invalid-attribute-value",
             Self::AntoraUnresolvedStartPage => "adoc.antora.unresolved-start-page",
+            Self::BrokenCodeSpan => "adoc.broken-code-span",
         }
     }
 }
@@ -127,6 +132,7 @@ mod tests {
             DiagnosticCode::AntoraMissingNavFile => 15,
             DiagnosticCode::AntoraInvalidAttributeValue => 16,
             DiagnosticCode::AntoraUnresolvedStartPage => 17,
+            DiagnosticCode::BrokenCodeSpan => 18,
         }
     }
 

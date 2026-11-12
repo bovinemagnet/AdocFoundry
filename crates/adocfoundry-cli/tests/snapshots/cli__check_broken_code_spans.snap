@@ -1,0 +1,30 @@
+---
+source: crates/adocfoundry-cli/tests/cli.rs
+expression: "check_json(\"broken-code-spans\")"
+---
+[
+  {
+    "path": "index.adoc",
+    "range": {
+      "start": 25,
+      "end": 39
+    },
+    "line": 3,
+    "column": 5,
+    "severity": "warning",
+    "code": "adoc.broken-code-span",
+    "message": "code span `adoc-render` does not close here: Asciidoctor reads a backtick followed by an apostrophe as a curved apostrophe; write ``adoc-render``'s or reword it"
+  },
+  {
+    "path": "index.adoc",
+    "range": {
+      "start": 64,
+      "end": 78
+    },
+    "line": 3,
+    "column": 44,
+    "severity": "warning",
+    "code": "adoc.broken-code-span",
+    "message": "code span `EngineEvent` does not close here: a backtick followed by a letter or digit cannot close a code span; write ``EngineEvent``s or reword it"
+  }
+]

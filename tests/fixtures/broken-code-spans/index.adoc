@@ -1,0 +1,9 @@
+= Broken Code Spans
+
+The `adoc-render`'s `ViewResolver` and the `EngineEvent`s it sends.
+
+Written well: the ``ViewResolver``'s field, ``EngineEvent``s and `+x`s+`.
+
+----
+In a listing `x`s is left alone.
+----

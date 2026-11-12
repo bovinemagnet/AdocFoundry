@@ -148,7 +148,7 @@ Window creation lives in `app.rs`.
 `Mirror` is a read-only view of the active document that follows its edits.
 `Preview` is the rendered preview detached from the workspace window, and closing it docks the preview again.
 `Graph` is the link graph's window, one for each workspace window, which opening again focuses.
-It remembers its size and position (`session.json`'s `graph_window`, kept by the engine); `app.rs` checks the saved bounds against the displays and, when less than half lies on one, centres the window on the main display and shrinks it to fit.
+It remembers its size and position (`graph_window` in `session.json`, kept by the engine); `app.rs` checks the saved bounds against the displays and, when less than half lies on one, centres the window on the main display and shrinks it to fit.
 
 == The preview
 
@@ -347,7 +347,7 @@ The command palette and the View menu dispatch those actions, which `WorkspaceVi
 `SidebarMenu` is bound to `shift-f10` in gpui-component's `Tree` key context, and `WorkspaceView` then opens the panel's menu as a `PopupMenu` drawn over the shown tree.
 Only chosen branches are saved, in a versioned JSON file written atomically 500 ms after the last change (`EXPANSION_SAVE_SETTLE`) and keyed by the workspace's roots; `open_workspace` loads it after writing the previous workspace's state.
 
-In the app, `sidebar.rs` builds `Node`s with stable keys taken from component@version, then module and family, or nav file and entry (title and link target, counted among alike siblings).
+In the app, `sidebar.rs` builds `Node` values with stable keys taken from component@version, then module and family, or nav file and entry (title and link target, counted among alike siblings).
 Keys never use row numbers.
 A node's tree item id is its key followed by its target.
 `WorkspaceView` resolves the nodes before showing them, so a rebuilt tree never flashes fully open, records `TreeEvent::Expanded` and `TreeEvent::Collapsed`, and shows a panel again on `ExpansionChanged`, keeping the selection or its nearest shown ancestor.
